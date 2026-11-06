@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { decideCuReap, createCuChecker } from '../../../../src/lib/drivers/codex-cu-reaper';
 import {
   configureLogger,
@@ -78,6 +78,30 @@ describe('decideCuReap', () => {
 });
 
 describe('createCuChecker', () => {
+  test('starts, checks and closes with a numeric timer handle', async () => {
+    const timer = 42 as unknown as ReturnType<typeof setInterval>;
+    const interval = spyOn(globalThis, 'setInterval').mockReturnValue(timer);
+    const clear = spyOn(globalThis, 'clearInterval').mockImplementation(() => {});
+    let checker: ReturnType<typeof createCuChecker> | undefined;
+    const notices: string[] = [];
+    try {
+      checker = createCuChecker({
+        read: async () => observation(),
+        auto: () => false,
+        notify: async (text) => void notices.push(text),
+        signal: () => {},
+      });
+      await checker.check();
+      expect(notices).toHaveLength(1);
+      await checker.close();
+      expect(clear).toHaveBeenCalledWith(timer);
+    } finally {
+      await checker?.close();
+      interval.mockRestore();
+      clear.mockRestore();
+    }
+  });
+
   test('a cancelled automatic action does not log a kill attempt', async () => {
     const previousConfig = getLoggerConfig();
     configureLogger({ level: LogLevel.WARN });

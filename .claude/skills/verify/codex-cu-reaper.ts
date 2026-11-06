@@ -15,6 +15,7 @@ const name = 'Codex Computer Use interaction';
 let young = false, recent = false, failSignal = false, denyRead = false, auto = false;
 let failNotice = false;
 let becomeYoungAfterRead = false;
+let numericTimers = false;
 let hold: Promise<void> | undefined;
 const commands: { file: string; args: string[] }[] = [];
 const notices: string[] = [];
@@ -60,10 +61,10 @@ const kill = spyOn(process, 'kill').mockImplementation((target, signal) => {
 const interval = spyOn(globalThis, 'setInterval').mockImplementation(((callback: () => void, delay: number) => {
   const timer = { callback, delay, unref: false, cleared: false };
   timers.push(timer);
-  return { unref: () => { timer.unref = true; }, timer };
+  return numericTimers ? timers.length : { unref: () => { timer.unref = true; }, timer };
 }) as typeof setInterval);
-const clear = spyOn(globalThis, 'clearInterval').mockImplementation(((handle: { timer: typeof timers[number] }) => {
-  handle.timer.cleared = true;
+const clear = spyOn(globalThis, 'clearInterval').mockImplementation(((handle: number | { timer: typeof timers[number] }) => {
+  (typeof handle === 'number' ? timers[handle - 1] : handle.timer).cleared = true;
 }) as typeof clearInterval);
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 Object.defineProperty(process, 'platform', { value: 'darwin' });
@@ -164,6 +165,14 @@ try {
     assert.equal(notices.length - beforeNotices, value === false ? 1 : 0);
     await closeAll.at(-1)!();
   }
+  numericTimers = true; settings = {};
+  registerDriverOperations(context);
+  const numericTimer = timers.at(-1)!;
+  const beforeNumericSignals = signals.length;
+  numericTimer.callback(); await settle();
+  assert.equal(signals.length - beforeNumericSignals, 1);
+  await closeAll.at(-1)!();
+  assert(numericTimer.cleared, 'Numeric timer handles must close with the driver');
   Object.defineProperty(process, 'platform', { value: 'linux' });
   const beforeNonMac = timers.length;
   await startCuChecker(() => true)();
