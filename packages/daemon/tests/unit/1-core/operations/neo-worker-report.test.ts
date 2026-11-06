@@ -351,6 +351,24 @@ test('only Neo turns a worker question into a card, in its own words, keeping th
   }
 });
 
+test('a relay uses the staged question once, whatever the language is by then', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    db.updateGlobalSettings({ language: input.question.language === 'en' ? 'zh-Hans' : 'en' });
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({ ok: true });
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('no_worker_question'),
+    });
+    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
 test('a new worker question on the same todo wakes Neo again, and a repeat does not', async () => {
   const { db, service, send } = await setup();
   try {

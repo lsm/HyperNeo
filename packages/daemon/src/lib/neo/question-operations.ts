@@ -49,7 +49,7 @@ const WorkerQuestion = z.strictObject({
     .refine((text) => text.trim().length > 0),
 });
 
-const expectedReportLanguage = (configured: LanguageSetting | undefined) =>
+export const expectedReportLanguage = (configured: LanguageSetting | undefined) =>
   configured === 'system' || !configured
     ? Intl.DateTimeFormat().resolvedOptions().locale.startsWith('zh')
       ? 'zh-Hans'

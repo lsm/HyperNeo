@@ -18,7 +18,11 @@ import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-rep
 import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
 import { decodeUlidTimestamp } from '../mailbox/ulid.ts';
-import { createNeoWorkerQuestionWriter, stageNeoWorkerQuestion } from './question-operations.ts';
+import {
+  createNeoWorkerQuestionWriter,
+  expectedReportLanguage,
+  stageNeoWorkerQuestion,
+} from './question-operations.ts';
 import {
   sessionSender,
   type SessionReportHandler,
@@ -565,14 +569,19 @@ export class NeoService {
     sessionId: string | undefined
   ) {
     const todo = this.todos.getTodo(input.todoId);
-    const staged = this.todoSessions.readNudge(input.todoId)?.workerQuestion;
+    const nudge = this.todoSessions.readNudge(input.todoId);
+    const staged = nudge?.workerQuestion;
     const ref = this.todoSessions.readRef(input.todoId);
     if (!todo || !staged || !ref || this.todos.getAsk(todo.askId)?.sessionId !== sessionId)
       return {
         ok: false,
         reason: 'no_worker_question: this todo has no worker question to relay.',
       };
-    return this.storeWorkerQuestion(ref, { ...staged, ...input });
+    const language = expectedReportLanguage(this.db.getGlobalSettings().language);
+    const result = await this.storeWorkerQuestion(ref, { ...staged, ...input, language });
+    if (result.ok)
+      this.todoSessions.recordNudge(input.todoId, { ...nudge, workerQuestion: undefined });
+    return result;
   }
 
   readonly handleWorkerQuestion = (superpipe({})('neo.workerQuestionReport') as PipelineAPI)
