@@ -70,7 +70,7 @@ import { connectionManager } from '../lib/connection-manager';
 import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
 import { navigateToSettings } from '../lib/router.ts';
 import type { SessionLoadErrorKind, SessionUnavailableKind } from '../lib/session-load-error.ts';
-import { type SessionStore, sessionStore } from '../lib/session-store.ts';
+import { LIVE_QUERY_MESSAGE_LIMIT, type SessionStore, sessionStore } from '../lib/session-store.ts';
 import { type SearchMessageLoadTarget, searchHighlightMessageIdSignal } from '../lib/signals.ts';
 import { connectionState, globalSettings } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -520,7 +520,7 @@ export default function ChatContainer({
 
       const { messages: olderMessages, hasMore } = await store.loadOlderMessages(
         beforeTimestamp,
-        100,
+        LIVE_QUERY_MESSAGE_LIMIT,
         undefined,
         oldestMessage?.rowid
       );
@@ -671,7 +671,7 @@ export default function ChatContainer({
       while (!cancelled) {
         const { messages: targetWindow, hasMore } = await store.loadOlderMessages(
           before,
-          100,
+          LIVE_QUERY_MESSAGE_LIMIT,
           searchLoadTarget.sessionId,
           beforeRowid
         );

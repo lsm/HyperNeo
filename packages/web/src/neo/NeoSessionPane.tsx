@@ -7,7 +7,7 @@ import { t } from '../lib/i18n/index.ts';
 import { useInputDraft } from '../hooks/useInputDraft.ts';
 import { useInterrupt } from '../hooks/useInterrupt.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
-import { SessionStore } from '../lib/session-store.ts';
+import { LIVE_QUERY_MESSAGE_LIMIT, SessionStore } from '../lib/session-store.ts';
 import type { MessageImage } from '@hyperneo/shared';
 import { NeoComposer } from './NeoComposer.tsx';
 import { restoreNeoImages } from './neo-attachments.ts';
@@ -128,7 +128,12 @@ export function NeoSessionPane({
     pinned.current = false;
     setOlderFailed(false);
     try {
-      const older = await store.loadOlderMessages(oldest.timestamp, 100, sessionId, oldest.rowid);
+      const older = await store.loadOlderMessages(
+        oldest.timestamp,
+        LIVE_QUERY_MESSAGE_LIMIT,
+        sessionId,
+        oldest.rowid
+      );
       if (older.messages.length) store.prependMessages(older.messages);
       requestAnimationFrame(() => {
         if (el) el.scrollTop = el.scrollHeight - fromBottom;

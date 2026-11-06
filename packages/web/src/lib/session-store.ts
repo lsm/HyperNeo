@@ -23,7 +23,7 @@ import { toast } from './toast';
 import type { StructuredError } from '../types/error';
 import { resolveChatDisplayMode } from '../components/sdk/chat-display-mode.ts';
 
-const LIVE_QUERY_MESSAGE_LIMIT = 200;
+export const LIVE_QUERY_MESSAGE_LIMIT = 50;
 
 const LIVE_QUERY_RESUBSCRIBE_MAX_ATTEMPTS = 3;
 const LIVE_QUERY_RESUBSCRIBE_RETRY_DELAY_MS = 500;
@@ -628,8 +628,11 @@ export class SessionStore {
 
     let next = this.sdkMessages.value.slice();
     let changed = false;
+    const windowFull = (event.rowCount ?? 0) >= LIVE_QUERY_MESSAGE_LIMIT;
+    const windowSlid = this.hasPaginatedOlder && windowFull && !!event.added?.length;
+    if (windowFull && !this.hasPaginatedOlder) this._hasMoreMessages.value = true;
 
-    if (event.removed?.length) {
+    if (event.removed?.length && !windowSlid) {
       const removedIds = new Set(
         (event.removed as Array<{ id?: unknown }>).map((r) => r.id).filter((id) => id != null)
       );
@@ -1079,7 +1082,7 @@ export class SessionStore {
 
   async loadOlderMessages(
     beforeTimestamp: number,
-    limit = 100,
+    limit = LIVE_QUERY_MESSAGE_LIMIT,
     sessionIdOverride?: string,
     beforeRowid?: number
   ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
