@@ -75,6 +75,7 @@ import {
   withClaudeIdentity,
   type ClaudeRuntimeIdentity,
 } from './claude-runtime-identity.ts';
+import { readClaudeTurnFacts } from './claude-turn-facts.ts';
 import { readTailLines } from './transcript-tail.ts';
 import { claudeInboxText, type ClaudeInboxSubmission } from './claude-inbox.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
@@ -445,7 +446,7 @@ export function claudeTranscriptPath(
   return join(projectsDir, cwd.replace(/[/.]/g, '-'), `${record.cliSessionId}.jsonl`);
 }
 
-function assistantText(line: string): string | null {
+export function assistantText(line: string): string | null {
   try {
     const entry = JSON.parse(line) as { type?: unknown; message?: { content?: unknown } };
     if (entry?.type !== 'assistant' || !Array.isArray(entry.message?.content)) return null;
@@ -468,7 +469,7 @@ export interface ClaudeTranscriptState extends ClaudeRuntimeIdentity {
   openedPrs?: string[];
 }
 
-interface ClaudeTranscriptEntry {
+export interface ClaudeTranscriptEntry {
   uuid?: unknown;
   type?: unknown;
   isSidechain?: unknown;
@@ -491,7 +492,7 @@ function queuedPeerText(entry: ClaudeTranscriptEntry): string | null {
   return typeof attachment.origin.body === 'string' ? attachment.origin.body : null;
 }
 
-function claudeInputText(entry: ClaudeTranscriptEntry): string | null {
+export function claudeInputText(entry: ClaudeTranscriptEntry): string | null {
   if (entry.type === 'attachment') return queuedPeerText(entry);
   if (entry.type !== 'user' || (entry.isMeta && !entry.turnOrigin && !entry.origin)) return null;
   const body = (entry.origin as { body?: unknown } | undefined)?.body;
@@ -794,7 +795,7 @@ export function claudeRelayedInput(
     : undefined;
 }
 
-function claudeTurnEnded(entry: ClaudeTranscriptEntry): boolean {
+export function claudeTurnEnded(entry: ClaudeTranscriptEntry): boolean {
   const stop = (entry.message as { stop_reason?: unknown } | undefined)?.stop_reason;
   return typeof stop === 'string' && stop !== 'tool_use';
 }
@@ -916,7 +917,7 @@ export function claudeCliFailure(output: { stdout?: string; stderr?: string }, f
   return reject('not_delivered', text || fallback);
 }
 
-async function locateClaudeTranscript(
+export async function locateClaudeTranscript(
   projectsDir: string,
   record: ClaudeTranscriptLocation
 ): Promise<string | null> {
@@ -1744,6 +1745,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
       'send',
       'steer',
       'status',
+      'turns',
       'archive',
       ...(deps.mods ? (['queue', 'stop', 'withdraw'] as const) : []),
     ],
@@ -1782,6 +1784,15 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
     send: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     steer: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     status: (ref, since, receipt) => runClaudeDesktopStatus(ref, deps, cache, since, receipt),
+    turns: async (ref, cursor) => {
+      const record = (await loadClaudeDesktopRecords(deps, cache)).find(
+        (row) => row.sessionId === ref.id
+      );
+      const path = record && (await locateClaudeTranscript(deps.projectsDir, record));
+      return path
+        ? { ok: true, value: { turns: await readClaudeTurnFacts(path, cursor) } }
+        : reject('not_found', `No transcript for Claude Desktop session ${ref.id}.`);
+    },
     archive: (ref, admit) => archiveClaudeSession(ref, admit, deps),
   };
 }

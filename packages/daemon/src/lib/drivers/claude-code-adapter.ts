@@ -8,7 +8,9 @@ import type { ClaudeDesktopRecord, ClaudeLiveSession } from './claude-desktop-ad
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { basename } from 'node:path';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
+import { locateClaudeTranscript } from './claude-desktop-adapter.ts';
 import { claudeTranscriptCwd, isTempCwd } from './claude-feed.ts';
+import { readClaudeTurnFacts } from './claude-turn-facts.ts';
 import { listFeedFilesAsync, readFeedPrefix } from './work-feed.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { mergePlaceGroups, withChatEvidence } from './places.ts';
@@ -301,6 +303,14 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
             (await scan()).find((record) => record.sessionId === id)?.folder ?? null,
         })
     : undefined;
+  const turns: WorkAdapter['turns'] = projectsDir
+    ? async (ref, cursor) => {
+        const path = await locateClaudeTranscript(projectsDir, { cliSessionId: ref.id });
+        return path
+          ? { ok: true, value: { turns: await readClaudeTurnFacts(path, cursor) } }
+          : reject('not_found', `No transcript for Claude Code session ${ref.id}.`);
+      }
+    : undefined;
   const sendInbox = deps.sendInbox;
   const send: WorkAdapter['send'] = sendInbox
     ? (ref, message, context) =>
@@ -311,10 +321,12 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
     capabilities: [
       'find',
       ...(status ? (['status'] as const) : []),
+      ...(turns ? (['turns'] as const) : []),
       ...(send ? (['send', 'steer'] as const) : []),
     ],
     ...(send ? { send, steer: send } : {}),
     ...(status ? { status } : {}),
+    ...(turns ? { turns } : {}),
     find: (query) => runClaudeCodeFind(query, deps, scan),
   };
 }

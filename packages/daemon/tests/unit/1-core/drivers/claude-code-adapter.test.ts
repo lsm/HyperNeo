@@ -96,7 +96,7 @@ describe('createClaudeCodeAdapter', () => {
         desktopSessions: async () => new Set(),
         liveSessions: async () => [{ sessionId, pid: 456, owner, status }],
       });
-      expect(adapter.capabilities).toEqual(['find', 'status']);
+      expect(adapter.capabilities).toEqual(['find', 'status', 'turns']);
       expect(await adapter.status!(ref, 0, receipt)).toMatchObject({
         ok: true,
         value: {
