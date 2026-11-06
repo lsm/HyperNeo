@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  NO_CALLER_SCOPE,
+  PLAIN_SESSION_SCOPE,
   resolveCallerIdentity,
   type CallerScopeResolver,
 } from '../../../../src/lib/operations/caller';
@@ -12,7 +12,10 @@ const scoped: CallerScopeResolver = (sessionId) =>
 
 describe('resolveCallerIdentity — agent door', () => {
   test('always carries the agent session id, even when no scope resolves', () => {
-    expect(resolveCallerIdentity(NO_CALLER_SCOPE, 'agent-9')).toEqual({ sessionId: 'agent-9' });
+    expect(resolveCallerIdentity(PLAIN_SESSION_SCOPE, 'agent-9')).toEqual({
+      sessionId: 'agent-9',
+      role: 'universal_read',
+    });
     expect(resolveCallerIdentity(scoped, 'agent-9')).toEqual({ sessionId: 'agent-9' });
   });
 

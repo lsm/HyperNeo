@@ -22,7 +22,10 @@ function fakeContext(): SpaceFamilyContext {
 }
 
 const allFamilyOperations = () => [
-  ...collectFamilyOperations(fakeContext()),
+  ...collectFamilyOperations({
+    ...fakeContext(),
+    sessionSpace: {} as SpaceFamilyContext['sessionSpace'],
+  }),
   ...collectSpaceFamilyOperations(fakeContext()),
 ];
 

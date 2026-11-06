@@ -1,7 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { SessionEventSubscriptionRepository } from '../../../storage/repositories/session-event-subscription-repository.ts';
-import { githubRepoOfTopic } from '../subscription-operations.ts';
+import { githubRepoOfTopic } from '../session-event-operations.ts';
 import type { GitHubWatchedRepo } from './github-repository.ts';
 import { deliverCodingHealth } from '../../neo/packs/coding/health-delivery.ts';
 import type { CodingPrLedgerRepository } from '../../neo/packs/coding/pr-ledger.ts';

@@ -20,7 +20,7 @@ export function requireLocalUser(
     : { reason: { ok: false, reason: 'This action needs the user.' } };
 }
 
-export const NO_CALLER_SCOPE: CallerScopeResolver = () => null;
+export const PLAIN_SESSION_SCOPE: CallerScopeResolver = () => ({ role: 'universal_read' });
 
 export function resolveCallerIdentity(
   resolveScope: CallerScopeResolver,
