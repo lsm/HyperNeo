@@ -238,6 +238,12 @@ export async function startDevServer(config: Config) {
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
 
+      const markdown = await daemonContext.handleAskMarkdown(
+        req,
+        server.requestIP(req)?.address ?? null
+      );
+      if (markdown) return markdown;
+
       try {
         const entry = resolveNeoEntry(url);
         if (entry?.kind === 'redirect') {

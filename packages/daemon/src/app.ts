@@ -16,6 +16,7 @@ import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { ensureLocalCredential } from './lib/pairing/local-credential.ts';
@@ -360,6 +361,7 @@ export interface CreateDaemonAppOptions {
 export interface DaemonAppContext {
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
+  handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   authenticateUpgrade: (
     req: Request,
     remoteAddress: string | null
@@ -1205,6 +1207,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       db: () => db.gateway,
       now: Date.now,
     });
+    const handleAskMarkdown = createAskMarkdownHandler(
+      () => sessionManager.getOperationRegistry(),
+      authenticateUpgrade
+    );
     if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
       await ensureLocalCredential(db.gateway);
     const guardRequest = createRequestGuard({
@@ -1282,6 +1288,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             },
           });
         }
+
+        const markdown = await handleAskMarkdown(req, client?.remoteAddress ?? null);
+        if (markdown) return markdown;
 
         if (url.pathname === '/ws') {
           const device = await authenticateUpgrade(req, client?.remoteAddress ?? null);
@@ -1744,6 +1753,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     return {
       server,
       handlePair,
+      handleAskMarkdown,
       authenticateUpgrade,
       guardRequest,
       db,

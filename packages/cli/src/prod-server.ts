@@ -186,6 +186,12 @@ export async function startProdServer(config: Config) {
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
 
+      const markdown = await daemonContext.handleAskMarkdown(
+        req,
+        server.requestIP(req)?.address ?? null
+      );
+      if (markdown) return markdown;
+
       return app.fetch(req);
     },
 
