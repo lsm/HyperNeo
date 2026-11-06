@@ -9,12 +9,13 @@ existing options; cleanup stops the owned timer before it fires.
 Finish startup body copying and stop processors. Seed existing non-polling
 watched rows in two synthetic Spaces. Through watchRepo update the primary row
 off, activate it again with polling, then update the peer. Owner/repo casing
-must retain id/canonical case/creation time; compare each actual UPDATE's bound
+must retain id/canonical case/creation time; compare the receipt's update
 clock to its committed row, unchanged last-poll time, public reply and saved
 listConfig. Peer row stays untouched by primary calls. Existing activation still
 adds the check-run cursor marker and retains unrelated cursor/ETag data. Expect
-three main UPDATEs before/after: this extraction makes no public off-main claim.
-Commit red helper failures first while the real RPC characterization passes.
+three native config-write posts and zero main UPDATEs after the writer activation.
+Exact SQL bindings remain covered by the scratch/unit contracts below. This
+retains the original extraction characterization on the current public path.
 
 Scratch SQLite has only the watched table. The helper retains supplied time,
 void result, flags, all unrelated fields, failure state and caller rollback.

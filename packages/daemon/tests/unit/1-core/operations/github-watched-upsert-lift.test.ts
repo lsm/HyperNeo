@@ -39,6 +39,8 @@ describe('GitHub watched UPSERT extraction', () => {
         pass: true,
         mainThreadMovementClaim: false,
         publicRpc: {
+          nativeConfigWrites: 3,
+          mainInserts: 0,
           newInsertsObserved: true,
           callerUuidTimeFallbackAndCursorPreserved: true,
           existingUpdateAndSavedConfigPreserved: true,

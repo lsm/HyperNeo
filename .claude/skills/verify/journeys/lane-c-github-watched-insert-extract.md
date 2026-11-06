@@ -8,12 +8,13 @@ the owned timer before it fires. Finish body copying and stop processors.
 
 Seed two synthetic Spaces with empty watch lists; disable the primary source.
 Through watchRepo create the primary with no enabled override (Space fallback
-false), enable that existing row (unchanged UPDATE), then create a polling peer
-(default Space true). Pin supplied UUID/creation time, initial bound creation
-and update times, defaults, caller fallback, existing identity and saved config.
-Existing cursor activation marker must equal the INSERT's caller time. Observe
-two main INSERTs before/after; public mutations remain on main in this extraction.
-Commit helper-availability failures first while legacy and real RPC proofs pass.
+false), enable that existing row, then create a polling peer (default Space true).
+Pin UUID/creation time, defaults, fallback, identity and saved config. Observe
+three native writer posts, two created rows and zero main INSERTs. Compare final
+row time with its receipt. A non-polling insert retains its initial clock; the
+polling peer may have a later update clock from cursor persistence. Its activation
+marker still equals creation time. Exact initial INSERT bindings remain in the
+scratch/unit contracts below. This retains extraction coverage after activation.
 
 Scratch SQLite has only the watched table. INSERT uses its supplied id, resolved Space
 flag and time even when params differ; no clock, UUID or initialization. Pin

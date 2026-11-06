@@ -39,6 +39,8 @@ describe('GitHub watched UPDATE SQL extraction', () => {
         pass: true,
         mainThreadMovementClaim: false,
         publicRpc: {
+          nativeConfigWrites: 3,
+          mainUpdates: 0,
           existingUpdatesObserved: true,
           identityTimeAndCursorPolicyPreserved: true,
           peerIsolationAndSavedConfigPreserved: true,
