@@ -8,12 +8,13 @@ import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/n
 import { workSessionWrites } from '../../../../src/storage/repositories/work-session-repository';
 import { syncWorkSessions, workSessionRows } from '../../../../src/lib/drivers/work-session-sync';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types';
+import { claudeCodeSessions } from '../../../../src/lib/drivers/claude-code-adapter';
 
 const adapter = (id: string, sessions?: WorkAdapter['sessions']) =>
   ({ id, capabilities: [], find: () => [], sessions }) as WorkAdapter;
 
 describe('workSessionRows', () => {
-  test('keeps named sessions under their adapter', () => {
+  test('keeps every session under its adapter, named or not', () => {
     expect(
       workSessionRows('codex-desktop', [
         { id: 'a', name: 'Alpha', status: 'running', lastActivityAt: 7 },
@@ -21,6 +22,24 @@ describe('workSessionRows', () => {
       ])
     ).toEqual([
       { adapter: 'codex-desktop', id: 'a', name: 'Alpha', status: 'running', lastActivityAt: 7 },
+      { adapter: 'codex-desktop', id: 'b', name: '', status: 'done', lastActivityAt: 8 },
+    ]);
+  });
+});
+
+describe('claudeCodeSessions', () => {
+  test('marks a session with no live process stopped, so refresh reads it once', () => {
+    expect(
+      claudeCodeSessions(
+        [
+          { sessionId: 'live', folder: '/a', at: 5 },
+          { sessionId: 'gone', folder: '/b', at: 6 },
+        ],
+        [{ sessionId: 'live', status: 'busy', name: 'Worker' }]
+      )
+    ).toEqual([
+      { id: 'live', name: 'Worker', status: 'running', lastActivityAt: 5 },
+      { id: 'gone', name: '', status: 'stopped', lastActivityAt: 6 },
     ]);
   });
 });
@@ -117,6 +136,11 @@ describe('workerName', () => {
       1
     );
     expect(repository.workerName(ref)).toBe('Synced');
+    new workSessionWrites.Repository(db).saveSessions(
+      [{ ...ref, name: '', status: 'done', lastActivityAt: 2 }],
+      2
+    );
+    expect(repository.workerName(ref)).toBe('Newer todo');
     expect(repository.workerName({ ...ref, daemon: 'other' })).toBeNull();
     db.close();
   });
