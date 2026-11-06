@@ -21,6 +21,7 @@ The wrapper saves evidence before removing synthetic data. No model call is need
 
 The driver script uses the repository's Vitest configuration in an isolated HOME
 and temporary directory, with a refusing GitHub stub. It covers the existing
-Codex, Copilot and generic adapter tests, including the retained OpenCode entry.
+Codex, Copilot and temporary discovery-adapter tests. OpenCode is absent from
+the registry. Copilot discovery still uses --acp until the following SDK slice.
 Use the Copilot owned-history journey separately for its real daemon/RPC path.
 Real accounts and real external worker turns are outside this synthetic proof.

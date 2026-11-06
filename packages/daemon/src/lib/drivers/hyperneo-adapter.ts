@@ -2,7 +2,7 @@ import { withWorkerProvenance } from './worker-provenance.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { WorktreeManager } from '../worktree-manager.ts';
-import { gitWorktreeProject } from './acp-agent-adapter.ts';
+import { gitWorktreeProject } from './worktree-project.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
 import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';

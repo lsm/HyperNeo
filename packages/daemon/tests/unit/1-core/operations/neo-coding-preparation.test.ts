@@ -1,5 +1,5 @@
 import { createCodexDesktopAdapter } from '../../../../src/lib/drivers/codex-desktop-adapter';
-import { gitWorktreeProject } from '../../../../src/lib/drivers/acp-agent-adapter';
+import { gitWorktreeProject } from '../../../../src/lib/drivers/worktree-project';
 import { workStartPreparation } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, describe, expect, test } from 'bun:test';
 import {

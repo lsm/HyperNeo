@@ -1,3 +1,5 @@
+import { findExecutable } from '../../../../src/lib/drivers/find-executable';
+import { gitWorktreeProject } from '../../../../src/lib/drivers/worktree-project';
 import { testDirectories } from '../../../helpers/temporary-directory';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,8 +12,6 @@ import {
   acpSessionTitle,
   copilotSessionFolder,
   createAcpAgentAdapter,
-  findAcpAgentBinary,
-  gitWorktreeProject,
   readAcpSessionPages,
   reuseAcpSessionList,
 } from '../../../../src/lib/drivers/acp-agent-adapter';
@@ -40,6 +40,10 @@ function adapter(sessions: AcpAgentSession[], own: string[] = [], deps = {}) {
 }
 
 describe('createAcpAgentAdapter.find', () => {
+  test('keeps only the temporary Copilot discovery registration', () => {
+    expect(ACP_AGENTS.map((agent) => agent.id)).toEqual(['copilot-cli']);
+  });
+
   test('groups agent sessions by project folder with live status and newest first', async () => {
     const groups = await adapter([
       session('old', '/repo', 'Old work'),
@@ -69,14 +73,13 @@ describe('createAcpAgentAdapter.find', () => {
   });
 
   test('links each session into the GitHub Copilot app when it is installed', async () => {
-    const [copilot, opencode] = ACP_AGENTS;
+    const [copilot] = ACP_AGENTS;
     const listed = [session('s/1', '/repo', 'Work')];
     const [linked] = await adapter(listed, [], { link: copilot.app?.link }).find({
       includeClosed: false,
       limit: 20,
     });
     expect(linked.work[0].link).toBe('ghapp://sessions/s%2F1');
-    expect(opencode.app).toBeUndefined();
     const [group] = await adapter(listed).find({ includeClosed: false, limit: 20 });
     expect(group.work[0].link).toBeUndefined();
   });
@@ -105,11 +108,11 @@ describe('ACP agent helpers', () => {
     expect(acpSessionTitle('x'.repeat(200))).toHaveLength(80);
   });
 
-  test('findAcpAgentBinary resolves the first PATH entry holding the binary', () => {
+  test('findExecutable resolves the first PATH entry holding the binary', () => {
     const dir = createTestDirectory(join(tmpdir(), 'acp-bin-'));
     writeFileSync(join(dir, 'copilot'), '');
-    expect(findAcpAgentBinary('copilot', `/nowhere:${dir}`)).toBe(join(dir, 'copilot'));
-    expect(findAcpAgentBinary('copilot', '/nowhere')).toBeNull();
+    expect(findExecutable('copilot', `/nowhere:${dir}`)).toBe(join(dir, 'copilot'));
+    expect(findExecutable('copilot', '/nowhere')).toBeNull();
   });
 
   test('gitWorktreeProject maps a linked worktree to its main repository', async () => {

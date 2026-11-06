@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import daemonPackage from '../../../package.json' with { type: 'json' };
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { codexStatePath } from '../../storage/codex-desktop-read.ts';
-import { findAcpAgentBinary } from './acp-agent-adapter.ts';
+import { findExecutable } from './find-executable.ts';
 import type { WorkAdapter } from './types.ts';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
 
@@ -37,7 +37,7 @@ async function clientVersions(id: string, home: string): Promise<Record<string, 
     }
     throw new Error(`${apps.join(' or ')} is not installed or its version cannot be read.`);
   }
-  const command = findAcpAgentBinary(id === 'claude-code' ? 'claude' : 'copilot');
+  const command = findExecutable(id === 'claude-code' ? 'claude' : 'copilot');
   if (!command) throw new Error(`${id} client is not installed on PATH.`);
   const { stdout } = await execute(command, ['--version'], { timeout: 3000, maxBuffer: 16384 });
   const version = stdout.match(/\d+\.\d+\.\d+(?:[-+][\w.-]+)?/)?.[0];

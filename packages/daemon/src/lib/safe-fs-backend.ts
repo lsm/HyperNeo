@@ -4,8 +4,6 @@ import { constants as osConstants } from 'node:os';
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
-const READ_BUFFER_BYTES = 64 * 1024;
-const MAX_WRITE_BYTES = 4 * 1024 * 1024;
 const AT_SYMLINK_NOFOLLOW = process.platform === 'darwin' ? 0x20 : 0x100;
 const STAT_MODE_OFFSET = process.platform === 'darwin' ? 8 : process.arch === 'arm64' ? 16 : 24;
 let darwinStatModeOffset: number | undefined;
@@ -34,7 +32,6 @@ interface LibcSymbols {
   fstatat: (fd: number, path: Buffer, stat: Buffer, flags: number) => number;
   mkdirat: (fd: number, path: Buffer, mode: number) => number;
   openat: (fd: number, path: Buffer, flags: number, mode: number) => number;
-  read: (fd: number, buffer: Buffer, length: number) => number | bigint;
   renameat: (oldFd: number, oldPath: Buffer, newFd: number, newPath: Buffer) => number;
   unlinkat: (fd: number, path: Buffer, flags: number) => number;
   write: (fd: number, buffer: Buffer, length: number) => number | bigint;
@@ -47,27 +44,10 @@ interface SafeFsBackend {
   errno: () => number;
 }
 
-export interface SafeFsReadOptions {
-  startLine: number;
-  lineLimit: number | undefined;
-  maxBytes: number;
-}
-
 export interface SafeFsBackendModule {
   replaceFileWithinWorkspace: typeof replaceFileWithinWorkspace;
   withArtifactDescriptor: typeof withArtifactDescriptor;
   withStoredArtifactDescriptor: typeof withStoredArtifactDescriptor;
-  readFileWithinWorkspace: (
-    workspace: string,
-    segments: string[],
-    options: SafeFsReadOptions
-  ) => Promise<string>;
-  writeFileWithinWorkspace: (
-    workspace: string,
-    segments: string[],
-    content: string,
-    signal: AbortSignal
-  ) => Promise<void>;
 }
 
 let backendPromise: Promise<SafeFsBackend> | undefined;
@@ -80,7 +60,9 @@ function throwFsError(operation: string, path: string, backend?: SafeFsBackend):
   const errno = backend?.errno();
   const code = Object.entries(osConstants.errno).find(([, value]) => value === errno)?.[0];
   throw Object.assign(
-    new Error(`${code ? `${code}: ` : ''}Unable to ${operation} ACP filesystem path: ${path}`),
+    new Error(
+      `${code ? `${code}: ` : ''}Unable to ${operation} workspace filesystem path: ${path}`
+    ),
     { code, errno }
   );
 }
@@ -106,7 +88,7 @@ function platformLibraryCandidates(): string[] {
 async function loadSafeFsBackend(): Promise<SafeFsBackend> {
   const candidates = platformLibraryCandidates();
   if (candidates.length === 0) {
-    throw new Error(`ACP safe filesystem operations are unavailable on ${process.platform}`);
+    throw new Error(`Safe filesystem operations are unavailable on ${process.platform}`);
   }
 
   try {
@@ -132,10 +114,6 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
       openat: {
         args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.i32, ffi.FFIType.u32],
         returns: ffi.FFIType.i32,
-      },
-      read: {
-        args: [ffi.FFIType.i32, ffi.FFIType.ptr, ffi.FFIType.u64],
-        returns: ffi.FFIType.i64,
       },
       renameat: {
         args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.i32, ffi.FFIType.cstring],
@@ -172,7 +150,7 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
     }
   } catch {}
 
-  throw new Error(`ACP safe filesystem operations are unavailable on ${process.platform}`);
+  throw new Error(`Safe filesystem operations are unavailable on ${process.platform}`);
 }
 
 function getSafeFsBackend(): Promise<SafeFsBackend> {
@@ -346,103 +324,6 @@ async function openWorkspacePath(
   }
 }
 
-export async function readFileWithinWorkspace(
-  workspace: string,
-  segments: string[],
-  options: SafeFsReadOptions
-): Promise<string> {
-  if (options.lineLimit === 0) return '';
-  const { symbols, directoryFd, fileName } = await openWorkspacePath(workspace, segments, false);
-  const fileFd = symbols.openat(
-    directoryFd,
-    cString(fileName),
-    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-    0
-  );
-  closeFile(symbols, directoryFd);
-  if (fileFd < 0) throwFsError('open', fileName);
-
-  const endLine =
-    options.lineLimit === undefined
-      ? Number.POSITIVE_INFINITY
-      : options.startLine + options.lineLimit;
-  const chunks: Buffer[] = [];
-  let scannedBytes = 0;
-  let selectedBytes = 0;
-  let line = 0;
-
-  try {
-    if (!fstatSync(fileFd).isFile()) throwFsError('read', fileName);
-    while (line < endLine) {
-      const remainingBytes = options.maxBytes - scannedBytes;
-      if (remainingBytes <= 0) {
-        const probe = Buffer.allocUnsafe(1);
-        const probed = Number(symbols.read(fileFd, probe, 1));
-        if (probed < 0) throwFsError('read', fileName);
-        if (probed > 0) {
-          throw new Error(`ACP filesystem scan exceeds ${options.maxBytes} bytes`);
-        }
-        break;
-      }
-      const buffer = Buffer.allocUnsafe(Math.min(READ_BUFFER_BYTES, remainingBytes));
-      const bytesRead = Number(symbols.read(fileFd, buffer, buffer.length));
-      if (bytesRead < 0) throwFsError('read', fileName);
-      if (bytesRead === 0) break;
-      scannedBytes += bytesRead;
-      const content = buffer.subarray(0, bytesRead);
-      let cursor = 0;
-      let selectionStart = -1;
-      let selectionEnd = -1;
-
-      for (let index = 0; index < content.length; index++) {
-        if (content[index] !== 10) continue;
-        if (line >= options.startLine && line < endLine) {
-          if (selectionStart < 0) selectionStart = cursor;
-          selectionEnd = index + 1;
-        }
-        line++;
-        cursor = index + 1;
-        if (line >= endLine) break;
-      }
-
-      if (line >= options.startLine && line < endLine && cursor < content.length) {
-        if (selectionStart < 0) selectionStart = cursor;
-        selectionEnd = content.length;
-      }
-
-      if (selectionStart >= 0) {
-        const chunk = content.subarray(selectionStart, selectionEnd);
-        selectedBytes += chunk.length;
-        if (selectedBytes > options.maxBytes) {
-          throw new Error(`ACP filesystem read exceeds ${options.maxBytes} bytes`);
-        }
-        chunks.push(Buffer.from(chunk));
-      }
-    }
-
-    return Buffer.concat(chunks, selectedBytes).toString('utf-8');
-  } finally {
-    closeFile(symbols, fileFd);
-  }
-}
-
-export async function writeFileWithinWorkspace(
-  workspace: string,
-  segments: string[],
-  content: string,
-  signal: AbortSignal
-): Promise<void> {
-  if (signal.aborted) throw new Error('ACP filesystem write cancelled');
-  if (content.length > MAX_WRITE_BYTES) {
-    throw new Error(`ACP filesystem write exceeds ${MAX_WRITE_BYTES} bytes`);
-  }
-  const data = Buffer.from(content);
-  if (data.length > MAX_WRITE_BYTES) {
-    throw new Error(`ACP filesystem write exceeds ${MAX_WRITE_BYTES} bytes`);
-  }
-  return replaceWorkspaceFile(workspace, segments, data, await getSafeFsBackend(), signal);
-}
-
 export async function replaceFileWithinWorkspace(
   workspace: string,
   segments: string[],
@@ -465,14 +346,14 @@ async function replaceWorkspaceFile(
   backend: SafeFsBackend,
   signal?: AbortSignal
 ) {
-  if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
+  if (signal?.aborted) throw new Error('workspace filesystem write cancelled');
   const { symbols, directoryFd, fileName } = await openWorkspacePath(
     workspace,
     segments,
     data !== null,
     backend
   );
-  const temporaryName = `.acp-${randomUUID()}`;
+  const temporaryName = `.workspace-${randomUUID()}`;
   let temporaryExists = false;
 
   try {
@@ -482,7 +363,7 @@ async function replaceWorkspaceFile(
       return;
     }
     const mode = replacementMode(symbols, directoryFd, fileName);
-    if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
+    if (signal?.aborted) throw new Error('workspace filesystem write cancelled');
     const fileFd = symbols.openat(
       directoryFd,
       cString(temporaryName),
@@ -500,7 +381,7 @@ async function replaceWorkspaceFile(
     try {
       let offset = 0;
       while (offset < data.length) {
-        if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
+        if (signal?.aborted) throw new Error('workspace filesystem write cancelled');
         const written = Number(symbols.write(fileFd, data.subarray(offset), data.length - offset));
         if (written <= 0) throwFsError('write', fileName, backend);
         offset += written;
@@ -511,7 +392,7 @@ async function replaceWorkspaceFile(
     }
     if (closed !== 0) throwFsError('write', fileName, backend);
 
-    if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
+    if (signal?.aborted) throw new Error('workspace filesystem write cancelled');
     if (
       symbols.renameat(directoryFd, cString(temporaryName), directoryFd, cString(fileName)) !== 0
     ) {

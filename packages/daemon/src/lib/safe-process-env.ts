@@ -1,6 +1,4 @@
-export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
-
-const ACP_SAFE_ENV_KEYS = [
+const SAFE_PROCESS_ENV_KEYS = [
   'HYPERNEO_WORKTREES',
   'HYPERNEO_EVIDENCE',
   'HYPERNEO_BUILDS',
@@ -33,8 +31,8 @@ const ACP_SAFE_ENV_KEYS = [
   'COMSPEC',
 ] as const;
 
-export function buildAcpSafeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function buildSafeProcessEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   return Object.fromEntries(
-    ACP_SAFE_ENV_KEYS.flatMap((key) => (env[key] === undefined ? [] : [[key, env[key]]]))
+    SAFE_PROCESS_ENV_KEYS.flatMap((key) => (env[key] === undefined ? [] : [[key, env[key]]]))
   );
 }

@@ -3,7 +3,7 @@ import { Logger } from '../logger.ts';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { AcpTransport } from '../acp/acp-transport.ts';
+import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 
 const log = new Logger('codex-send');
@@ -43,7 +43,7 @@ export async function startCodexBootstrapServer(
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
   });
-  const transport = new AcpTransport({
+  const transport = new ProcessJsonRpcTransport({
     command,
     args: ['app-server', '--listen', 'stdio://'],
     requestTimeoutMs: CALL_TIMEOUT_MS,

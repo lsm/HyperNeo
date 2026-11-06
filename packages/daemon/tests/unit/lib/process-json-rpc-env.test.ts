@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { acpProcessGroupAlive } from '../../../../src/lib/acp/acp-process-tree';
-import { AcpTransport, buildAcpProcessEnv } from '../../../../src/lib/acp/acp-transport';
+import { processGroupAlive } from '../../../src/lib/process-tree';
+import { ProcessJsonRpcTransport, buildProcessEnv } from '../../../src/lib/process-json-rpc';
 
-describe('buildAcpProcessEnv', () => {
+describe('buildProcessEnv', () => {
   it('removes provider-managed routing env from ACP subprocess env', () => {
-    const env = buildAcpProcessEnv({
+    const env = buildProcessEnv({
       ANTHROPIC_BASE_URL: undefined,
       ANTHROPIC_AUTH_TOKEN: undefined,
       ANTHROPIC_DEFAULT_SONNET_MODEL: undefined,
@@ -21,7 +21,7 @@ describe('buildAcpProcessEnv', () => {
   it('replaces the inherited process env instead of merging when replaceEnv is set', () => {
     process.env.ACP_PROBE_TEST_SECRET = 'secret';
     try {
-      const env = buildAcpProcessEnv({ PATH: '/safe/bin', HOME: '/safe/home' }, true);
+      const env = buildProcessEnv({ PATH: '/safe/bin', HOME: '/safe/home' }, true);
 
       expect(env).toEqual({ PATH: '/safe/bin', HOME: '/safe/home' });
     } finally {
@@ -30,13 +30,13 @@ describe('buildAcpProcessEnv', () => {
   });
 });
 
-describe('AcpTransport replaceEnv spawn', () => {
+describe('ProcessJsonRpcTransport replaceEnv spawn', () => {
   it('spawns a real subprocess that cannot see non-allowlisted process env vars', async () => {
     process.env.ACP_PROBE_TEST_SECRET = 'secret';
-    let transport: AcpTransport | undefined;
+    let transport: ProcessJsonRpcTransport | undefined;
     try {
       const exited = new Promise<number | null>((resolve) => {
-        transport = new AcpTransport({
+        transport = new ProcessJsonRpcTransport({
           command: 'sh',
           args: ['-c', '[ -z "$ACP_PROBE_TEST_SECRET" ]'],
           env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
@@ -53,19 +53,19 @@ describe('AcpTransport replaceEnv spawn', () => {
   });
 });
 
-describe('acpProcessGroupAlive', () => {
+describe('processGroupAlive', () => {
   it('probes the direct pid on win32 instead of a POSIX process group', async () => {
-    expect(acpProcessGroupAlive(process.pid, 'win32')).toBe(true);
+    expect(processGroupAlive(process.pid, 'win32')).toBe(true);
 
     const child = spawn('true', [], { stdio: 'ignore' });
     await new Promise<void>((resolve) => child.on('exit', () => resolve()));
-    expect(acpProcessGroupAlive(child.pid!, 'win32')).toBe(false);
+    expect(processGroupAlive(child.pid!, 'win32')).toBe(false);
   });
 });
 
-describe('AcpTransport.sendRequest onSubmitted', () => {
+describe('ProcessJsonRpcTransport.sendRequest onSubmitted', () => {
   it('rejects when the onSubmitted callback throws instead of pending until timeout (#3744105279)', async () => {
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'sleep',
       args: ['30'],
       requestTimeoutMs: 60_000,
@@ -84,7 +84,7 @@ describe('AcpTransport.sendRequest onSubmitted', () => {
   });
 
   const answeringAgent = () =>
-    new AcpTransport({
+    new ProcessJsonRpcTransport({
       command: 'sh',
       args: [
         '-c',
@@ -112,7 +112,7 @@ describe('AcpTransport.sendRequest onSubmitted', () => {
   });
 
   it('times out when an async onSubmitted never settles after the response arrived', async () => {
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'sh',
       args: [
         '-c',

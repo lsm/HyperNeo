@@ -1,31 +1,3 @@
-export interface AcpJsonRpcRequest<T = unknown> {
-  jsonrpc: '2.0';
-  id: number | string | null;
-  method: string;
-  params?: T;
-}
-
-interface AcpJsonRpcResponseBase {
-  jsonrpc: '2.0';
-  id: number | string | null;
-}
-
-export type AcpJsonRpcResponse<T = unknown> =
-  | ({ result: T } & AcpJsonRpcResponseBase)
-  | ({ error: AcpJsonRpcError } & AcpJsonRpcResponseBase);
-
-export interface AcpJsonRpcNotification<T = unknown> {
-  jsonrpc: '2.0';
-  method: string;
-  params?: T;
-}
-
-export interface AcpJsonRpcError {
-  code: number;
-  message: string;
-  data?: unknown;
-}
-
 export interface AcpInitializeParams {
   protocolVersion: number;
   clientCapabilities?: AcpClientCapabilities;

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { vi } from 'vitest';
-import { gitWorktreeProject } from '../../../../src/lib/drivers/acp-agent-adapter.ts';
+import { gitWorktreeProject } from '../../../../src/lib/drivers/worktree-project.ts';
 import { EventLoopActivity } from '../../../../src/lib/event-loop-activity.ts';
 import { findLocally } from '../../../../src/lib/drivers/find-operation.ts';
 import { delayedWorktree, syntheticCodex } from '../../../helpers/worktree-delay.ts';
