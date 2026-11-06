@@ -215,6 +215,14 @@ const askArticle = (id: string) =>
     item.getAttribute('data-public-entry')?.includes(`"ask","${id}"`)
   )! as HTMLElement;
 describe('NeoLive durable conversation activation', () => {
+  it('opens legacy settings from the Neo connection error', () => {
+    error.value = 'Synthetic connection failure';
+    render(<NeoLive />);
+    expect(screen.getByRole('link', { name: 'HyperNeo settings ↗' }).getAttribute('href')).toBe(
+      '/settings'
+    );
+  });
+
   it('never shows the SDK transcript for a root without a durable conversation identity', async () => {
     source.value = { ...source.value, sessionId: 'neo:legacy' };
     sessionId.value = 'neo:legacy';
