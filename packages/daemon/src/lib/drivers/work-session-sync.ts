@@ -6,8 +6,10 @@ import {
   type WorkSessionRow,
   workSessionWrites,
 } from '../../storage/repositories/work-session-repository.ts';
+import { Logger } from '../logger.ts';
 import type { WorkAdapter, WorkSessionFact } from './types.ts';
 
+const logger = new Logger('work-session-sync');
 const WORK_SESSION_SYNC = 'work.sessions.sync';
 const WORK_SESSION_SYNC_INTERVAL_MS = 60_000;
 
@@ -65,5 +67,7 @@ export function startWorkSessionSync(
       await scheduleWorkSessionSync(gateway, WORK_SESSION_SYNC_INTERVAL_MS);
     }
   });
-  void scheduleWorkSessionSync(gateway, 0);
+  void scheduleWorkSessionSync(gateway, 0).catch((error) =>
+    logger.warn('Work session sync not scheduled', error)
+  );
 }
