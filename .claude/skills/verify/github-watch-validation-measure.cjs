@@ -3,22 +3,13 @@ const ts = require(process.cwd() + '/node_modules/typescript');
 const { createHash } = require('node:crypto');
 const hash = text => createHash('sha256').update(text).digest('hex');
 const file = 'packages/daemon/src/lib/external-events/github/github-event-extension.ts';
-const base = '24d78fdf4bf4d78c4fd7083c40756186abc2a839';
+const base = '995db89299b4f586ecf74714c7eeee5a5baf4c2b';
 const text = fs.readFileSync(file, 'utf8');
-const beforeHash = '7bc3d6d42159d35d1ed65b708bc0abdff35fe6c176915c7abf90bce8427eb2ee';
-const added = "import { gitHubWatchedRepoRead } from '../../../storage/repositories/github-watched-repo-read.ts';\n";
-const currentLookup = `const existingForValidation = await gatewayFor(this.db).run(gitHubWatchedRepoRead, {
-        spaceId: params.spaceId,
-        owner: params.owner,
-        repo: params.repo,
-      });`;
-const previousLookup = `const existingForValidation = this.repo.getWatchedRepo(
-        params.spaceId,
-        params.owner,
-        params.repo
-      );`;
-if (!text.includes(currentLookup) || hash(text.replace(added, '').replace(currentLookup, previousLookup)) !== beforeHash)
-  throw Error('Extension changed beyond the validation reader bridge');
+const added = "import { gitHubWatchedConfigWrite } from '../../../storage/repositories/github-watched-config-write.ts';\n";
+const callback = body => body.slice(body.indexOf("    hub.onRequest('space.github.watchRepo'"), body.indexOf("    hub.onRequest('space.github.autoConfigureWebhook'"));
+const outsideCallback = text.replace(added, '').replace(callback(text), '');
+if (hash(outsideCallback) !== '6e595f05c59edbf6ec52ff3517a5b5b24fc03f85d7ca997bc41abd01bf842345')
+  throw Error('Extension changed beyond the reviewed watch config callback');
 const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
 const lines = node => source.getLineAndCharacterOfPosition(node.end).line - source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
 let caller, admission;
@@ -40,7 +31,7 @@ const importsAndRegistrations = 3;
 const productionGraphLines = caller.lines + admission.lines + modules.reduce((n, row) => n + row.lines, importsAndRegistrations);
 if (productionGraphLines >= 200) throw Error('Validation reader owned graph must stay below 200 lines');
 const report = { base, caller, admission, modules, importsAndRegistrations, productionGraphLines, excludedLines: 0,
-  contract: 'One awaited query-only lookup before the existing interval gate; complete caller, admission gate, command, lookup and mapper modules included. Existing case/null/parse semantics and error propagation retained.',
-  limits: 'Framework transport, unrelated existing webhook/polling effects and startup are not re-audited by this slice. Their main SQL remains for subsequent rungs; no whole-runtime closure or final guard claim.' };
+  contract: 'Awaited query-only lookups before the interval gate and inside webhook serialization; complete caller, admission gate, command, lookup and mapper modules included. Existing case/null/parse semantics and error propagation retained.',
+  limits: 'Framework transport, unrelated existing webhook/polling effects and startup are not re-audited by this slice. Polling intent and snapshot main SQL remain for subsequent rungs; no whole-runtime closure or final guard claim.' };
 if (process.argv[2]) fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify(report, null, 2));

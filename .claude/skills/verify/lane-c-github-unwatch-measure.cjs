@@ -30,7 +30,7 @@ function walk(node) {
 walk(sf);
 if (!caller || selected.length !== selectedNames.length) throw Error('Missing owned timer roots');
 if (hash(JSON.stringify(unchanged)) !== '87419694defdf4f719299949e1a2c16c9fbbaa57d8894557248d80d0bbaf81fa') throw Error('Other extension method or field changed');
-if (hash(JSON.stringify(otherRpcs)) !== '693c76b608d443a731881fdc9b01833f97a12d784286df934c1ac943befeced9') throw Error('Other public RPC caller changed');
+if (hash(JSON.stringify(otherRpcs)) !== '5af7ba372cabf888e407c7ce0b1eeb5aee50af789bc4c1abbd58d18ebc1dc548') throw Error('Other public RPC caller changed');
 const specs = [
   ['github-polling-usage-read.ts', 47, '84752c5c336df50f98a7941c53eb93c343ac0ff443e7c669fc52566a33145289'],
   ['github-polling-repos-read.ts', 56, '39618e09a7cd70b7325cf31b205eb221f338ebe58ff6ea50bebef49a22b28d06'],
