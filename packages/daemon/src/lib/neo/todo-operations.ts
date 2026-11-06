@@ -841,7 +841,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.continue',
       description:
-        "Send a started todo's session its next step. The todo goes back to doing until the session reports again. An unstarted todo or settled ask returns a record without dispatching or approving a start.",
+        "Send a started todo's session its next step. The todo goes back to doing until the session reports again, and a card it was waiting on closes with it. An unstarted todo or settled ask returns a record without dispatching or approving a start.",
       inputSchema: Continue,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

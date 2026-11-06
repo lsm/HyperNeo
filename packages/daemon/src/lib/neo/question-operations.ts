@@ -753,6 +753,18 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
+      (question: NeoQuestion): Gate<NeoQuestion> => {
+        const todo = question.todoId ? store.getTodo(question.todoId) : null;
+        return todo?.state === 'blocked' && todo.blockedBy === 'needs-human'
+          ? fail(
+              'todo_waiting: this card is what its todo waits on. Settle the todo first: neo.todo.remove when it is no longer needed, neo.todo.continue to send its worker on, or neo.question.ask with replaces to ask differently. Finished work needs nothing: its passing check closes both.'
+            )
+          : { value: question };
+      },
+      'outcome',
+      'result:outcome'
+    )
+    .pipe(
       (question: NeoQuestion, input: z.infer<typeof Retire>): QuestionReceipt | Rejection => {
         const retired = store.retireQuestion(question, input.reason, null, Date.now());
         return retired
@@ -949,7 +961,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.retire',
       description:
-        'Retire an open question on an ask you own when it no longer needs an answer, with the reason in one short sentence. It leaves the open questions and shows in Details as no longer needed. An already closed question comes back unchanged.',
+        'Retire an open question on an ask you own when it no longer needs an answer, with the reason in one short sentence. It leaves the open questions and shows in Details as no longer needed. A card its todo is blocked on is refused until that todo is settled, so the work and the card end together. An already closed question comes back unchanged.',
       inputSchema: Retire,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
