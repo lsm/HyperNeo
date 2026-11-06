@@ -36,7 +36,9 @@ RSS. Queue time, SQL time and cloning are not measured separately.
 
 The measurement counts the whole watch callback/admission gate, both complete
 new modules, the reader bridge, legacy clear wrappers and import/registration
-lines. Require ownedRootLines below 200. It also reports the production diff. No prior audited-module exclusion grant is used.
+lines. Require ownedRootLines below 200. The CLI must reject a fixture whose
+complete watch callback exists but whose admission declaration is missing.
+It also reports the production diff. No prior audited-module exclusion grant is used.
 Existing upsert/default/cursor helpers are reused and covered by regression tests.
 This slice leaves polling intent and snapshot SQL to the next rung and makes no
 whole-runtime or final-guard claim. Retain evidence outside the worktree.

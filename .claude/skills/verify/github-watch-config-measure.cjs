@@ -41,7 +41,7 @@ function walk(node) {
   ts.forEachChild(node, walk);
 }
 walk(source);
-if (!callbackLines) throw Error('Missing complete public watch callback');
+if (!callbackLines || !admissionLines) throw Error('Missing complete caller or admission gate');
 const repository = ts.createSourceFile(allowed[1], fs.readFileSync(allowed[1], 'utf8'), ts.ScriptTarget.Latest, true);
 let wrapperLines = 0;
 function wrappers(node) {
