@@ -87,18 +87,18 @@ export class WorkTurnRepository {
       WHERE url >= ? AND url <= ?`);
     const before = this.db.prepare(`SELECT ${TURN_COLUMNS} FROM work_turns
       WHERE ref = ? AND ended_at < ? ORDER BY ended_at DESC LIMIT 1`);
-    return prefixes.flatMap((prefix) =>
-      (find.all(prefix, `${prefix}\uffff`) as (TurnRow & { ref: string })[]).map(
-        ({ ref, ...row }) => {
-          const fact = readTurnRow(row);
-          const previous = before.get(ref, fact.endedAt) as TurnRow | null;
-          return {
-            ...fact,
-            ref: JSON.parse(ref) as WorkRef,
-            previous: previous ? readTurnRow(previous) : null,
-          };
-        }
-      )
+    const found = prefixes.flatMap(
+      (prefix) => find.all(prefix, `${prefix}\uffff`) as (TurnRow & { ref: string })[]
     );
+    const unique = new Map(found.map((row) => [`${row.ref}\n${row.id}`, row]));
+    return [...unique.values()].map(({ ref, ...row }) => {
+      const fact = readTurnRow(row);
+      const previous = before.get(ref, fact.endedAt) as TurnRow | null;
+      return {
+        ...fact,
+        ref: JSON.parse(ref) as WorkRef,
+        previous: previous ? readTurnRow(previous) : null,
+      };
+    });
   }
 }

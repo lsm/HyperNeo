@@ -68,7 +68,7 @@ export const planCodingTurnUrls = (
 
 export function planCodingTurnFacts(
   todo: Pick<NeoTodo, 'id' | 'check'>,
-  own: readonly Pick<CodingTurn, 'complete'>[],
+  own: readonly Pick<CodingTurn, 'complete' | 'finalUrls'>[],
   urls: readonly string[],
   read: readonly NeoWorkPr[] | null,
   mentions: CodingTurnMentions,
@@ -76,9 +76,11 @@ export function planCodingTurnFacts(
 ): { prs: readonly NeoWorkPr[]; observedAt: number; incomplete?: true } {
   const unknown = { prs: [], observedAt, incomplete: true as const };
   const found = (url: string) => read?.find((pr) => codingPrKey(pr.url) === url);
-  if (own.some((turn) => !turn.complete) || urls.some((url) => !found(url))) return unknown;
   const named = new Set(namedPrKeys(todo));
-  const owners = urls.map((url) => ({
+  const reported = own.flatMap((turn) => turn.finalUrls.flatMap((url) => codingPrKey(url) ?? []));
+  if (own.some((turn) => !turn.complete) || !read) return unknown;
+  if ([...named, ...reported].some((url) => !found(url))) return unknown;
+  const owners = urls.filter(found).map((url) => ({
     url,
     owner: planCodingTurnOwner(found(url)!, mentions.turns, mentions.todos),
   }));
