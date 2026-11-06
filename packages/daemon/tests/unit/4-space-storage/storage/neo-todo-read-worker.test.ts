@@ -11,7 +11,7 @@ test('Neo snapshot facts, check lists and done-page facts come from a reader sna
   const dir = mkdtempSync(join(tmpdir(), 'neo-read-worker-'));
   const path = join(dir, 'synthetic.db');
   const db = new Database(path);
-  const gateway = new DbGateway(path, null);
+  let gateway = new DbGateway(path, db);
   try {
     db.exec('PRAGMA journal_mode=WAL');
     runMigrations(db, () => {});
@@ -47,6 +47,9 @@ test('Neo snapshot facts, check lists and done-page facts come from a reader sna
     expect(page.todos).toEqual(expected);
     expect(page.links).toBeInstanceOf(Map);
     expect((await todos.read('doneTodoFacts', 'missing')).ask).toBeNull();
+    await gateway.close();
+    gateway = new DbGateway(path, null);
+    bindGateway(db, gateway);
     const prepare = db.prepare.bind(db);
     db.prepare = ((sql: string) => {
       if (/neo_asks|neo_todos|neo_questions/.test(sql)) throw new Error('Plan facts read on main');

@@ -80,6 +80,14 @@ describe('neoPlanLines', () => {
 });
 
 describe('planNeoPlanContext', () => {
+  test('does not announce budget-omitted steps as finished', () => {
+    const lines = neoPlanLines(asks, [todo('first')], []);
+    const fitted = fitNeoPlanLines(lines, 1);
+    const delta = planNeoPlanContext(lines, fitted, 'prompt');
+    expect(delta).toContain('neo.ask.read ask-0');
+    expect(delta).not.toContain('no longer open or pending');
+  });
+
   test('sends full after compact, changed lines after, nothing when unchanged', () => {
     const lines = neoPlanLines(asks, [todo('first')], []);
     expect(planNeoPlanContext(lines, lines, 'compact')).toContain('ask-11');
