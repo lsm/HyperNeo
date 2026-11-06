@@ -217,7 +217,7 @@ test.each(['dead', 'expired', 'cleaned'] as const)(
       const recovered = await send(input);
       expect(recovered).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
       expect(recovered).not.toEqual(first);
-      expect(service.todos.listQuestions('ask')).toHaveLength(1);
+      expect(service.todos.listQuestions('ask')).toHaveLength(0);
       expect(service.todos.getTodo('todo')?.blockedBy).toBe('needs-human');
       expect(jobs.listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })).toHaveLength(1);
       expect(await send(input)).toEqual(recovered);
@@ -299,12 +299,12 @@ test('distinct image-only envelope reports retain their media and receive differ
   }
 });
 
-test('quiet worker blockers immediately create a held card with one durable wake across repeats and operation reconstruction', async () => {
+test('quiet worker blockers reach Neo, not a card, with one durable wake across repeats and operation reconstruction', async () => {
   const { db, service, send } = await setup();
   try {
     const first = await send(input);
     expect(first).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
-    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+    expect(service.todos.listQuestions('ask')).toHaveLength(0);
     expect(service.todos.getTodo('todo')).toMatchObject({
       state: 'blocked',
       blockedBy: 'needs-human',
@@ -320,10 +320,31 @@ test('quiet worker blockers immediately create a held card with one durable wake
             JSON.stringify(first.kind === 'completed' ? first.value : null)
       )
     ).toBe(true);
-    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+    expect(service.todos.listQuestions('ask')).toHaveLength(0);
     expect(
       db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
     ).toHaveLength(1);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('only Neo turns a worker question into a card, in its own words, keeping the answer route', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    expect(service.todos.listQuestions('ask')).toEqual([]);
+    const wake = db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' });
+    expect(JSON.stringify(wake)).toContain('neo.question.relay');
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    expect(await service.relayWorkerQuestion(words, 'someone-else')).toMatchObject({ ok: false });
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({
+      ok: true,
+      question: { text: 'Deploy where?', document: 'Original blocker report' },
+    });
+    const [card] = service.todos.listQuestions('ask');
+    expect(service.todos.questionAnswers.list(card.id)).toHaveLength(1);
   } finally {
     service.dispose();
     db.close();
