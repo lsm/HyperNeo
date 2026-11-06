@@ -56,6 +56,6 @@ test('source and compiled node workers execute TypeScript entrypoints as JavaScr
       'compiled-worker-ready'
     );
   } finally {
-    rmSync(run, { recursive: true, force: true });
+    rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
-}, 50_000);
+}, 52_000);

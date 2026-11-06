@@ -57,8 +57,8 @@ the private ACL. Reconnects of an unchanged file reuse only the ACL verdict.
 
 ## Compiled fixture timeout regression
 
-The fixture's outer test budget is 50 seconds: 10 for source execution, 30 for
-compilation and 10 for compiled execution. Each child retains its original limit
+The fixture's outer test budget is 52 seconds: 10 for source execution, 30 for
+compilation, 10 for compiled execution and 2 for cleanup. Each child retains its original limit
 and both `compiled-worker-ready` assertions remain required.
 
 Run `bun .claude/skills/verify/compiled-worker-timeout.ts <fresh-run>` to exercise
@@ -75,3 +75,29 @@ it does not claim to reproduce Windows runner load naturally.
 The Windows CI job runs that red reproduction and three separate green executions
 on the native Windows runner, then retains each log in its existing evidence
 artifact. A macOS/Linux pass alone does not verify Windows stability.
+
+## Cold-shell and cleanup resource bounds
+
+The cold PowerShell preflight gets 30 seconds. The actual ACL probe and daemon
+startup must still pass afterward. The fixture waits synchronously for its source,
+compiler and compiled child before cleanup. Its one directory removal allows five
+filesystem retries with 100 ms linear backoff, totaling at most 1.5 seconds of
+backoff for a transient lock. A persistent lock still fails the test.
+
+Run the resource regression helper with fresh directories:
+
+```sh
+bun .claude/skills/verify/windows-smoke-resources.ts "$RUN/resources-red" --reproduce
+bun .claude/skills/verify/windows-smoke-resources.ts "$RUN/resources-green"
+```
+
+The helper executes the actual preflight statement against a compiled child that
+takes 11 seconds. On Windows it also executes the fixture and both SDK runtime
+cleanup statements while a compiled executable in each directory runs for 500 ms.
+Reproduction restores the old bounds and requires ETIMEDOUT and EBUSY or EPERM. The normal
+run requires both operations to finish successfully. It waits for the locker to
+exit in finally and saves windows-resources.json. The Windows job runs both modes
+and uploads their evidence. Other platforms exercise only the preflight budget
+and explicitly leave Windows locking unverified. Injected delay and a known held
+directory reproduce the failure mechanisms; they do not identify which external
+runner process held the original fixture or naturally reproduce runner load.

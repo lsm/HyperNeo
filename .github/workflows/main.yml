@@ -656,6 +656,13 @@ jobs:
         run: bun scripts/build-binary.ts --target bun-windows-x64
         env:
           HYPERNEO_BUILD_COMMIT: ${{ github.sha }}
+      - name: Prove cold-shell and locked-directory resource bounds
+        shell: pwsh
+        run: |
+          bun .claude/skills/verify/windows-smoke-resources.ts (Join-Path $env:RUNNER_TEMP 'worker-resources-red') --reproduce
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun .claude/skills/verify/windows-smoke-resources.ts (Join-Path $env:RUNNER_TEMP 'worker-resources-green')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run isolated compiled startup smoke
         shell: pwsh
         run: |
@@ -674,6 +681,7 @@ jobs:
           path: |
             ${{ runner.temp }}/hyperneo-windows-smoke/evidence/
             ${{ runner.temp }}/worker-timeout-*/evidence/
+            ${{ runner.temp }}/worker-resources-*/evidence/
 
   # ============================================
   # GATE - All tests must pass (handles conditional job results)

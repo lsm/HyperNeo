@@ -18,7 +18,7 @@ const delayed = source.replace(
 );
 assert(delayed !== source, 'must inject delay into the actual compiler child');
 const configured = reproduce
-  ? delayed.replace(/\}, 50_000\);\s*$/, '}, 5000);\n')
+  ? delayed.replace(/\}, 52_000\);\s*$/, '}, 5000);\n')
   : delayed;
 if (reproduce) assert(configured !== delayed, 'must restore the explicit 5-second limit');
 writeFileSync(fixture, configured);

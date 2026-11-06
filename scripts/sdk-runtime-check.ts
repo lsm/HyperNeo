@@ -187,7 +187,7 @@ async function checkSlowInterruptedDownload(compiledBinary: string, copilotVersi
     );
   } finally {
     mirror.close();
-    rmSync(run, { recursive: true, force: true });
+    rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
@@ -200,7 +200,7 @@ export async function checkSdkRuntimes(compiledBinary: string, network = false):
     expectRuntimes(observed(await runBinary(binary, run)), 'cache', run, copilotCliVersion);
     console.log(`PASS: ${basename(compiledBinary)} started Claude and Copilot`);
   } finally {
-    rmSync(run, { recursive: true, force: true });
+    rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
   if (network) await checkSlowInterruptedDownload(compiledBinary, copilotCliVersion);
 }
