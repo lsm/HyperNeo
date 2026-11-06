@@ -3,7 +3,7 @@ import type { MessageHub, SpaceAgent } from '@hyperneo/shared';
 import {
   setupSpaceAgentV2Handlers,
   type SpaceAgentV2Deps,
-} from '../../../../src/lib/space/rpc/space-agent-v2-handlers';
+} from '../../../../../space/src/rpc/space-agent-v2-handlers';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/agents/worker-long-horizon-mapper';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';

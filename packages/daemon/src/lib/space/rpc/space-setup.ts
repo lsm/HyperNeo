@@ -21,8 +21,8 @@ import {
   type SessionInjectionOutcome,
 } from '../../messaging/session-message-delivery.ts';
 import { resolveDeliverySession } from '../../session-resolution/resolve-delivery-session.ts';
-import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts';
-import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
+import { setupSpaceWorkflowRunHandlers } from '../../../../../space/src/rpc/space-workflow-run-handlers.ts';
+import { setupNodeExecutionHandlers } from '../../../../../space/src/rpc/space-node-execution-handlers.ts';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
 import type { TaskAgentManagerConfig } from '../runtime/task-agent-manager.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
@@ -43,7 +43,7 @@ import { DirectTaskExecutionRepository } from '../../../storage/repositories/dir
 import type { SessionMetadata, SpaceTask } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
 import { Logger } from '../../logger.ts';
-import { setupSpaceHandlers } from './space-handlers.ts';
+import { setupSpaceHandlers } from '../../../../../space/src/rpc/space-handlers.ts';
 import { publishUnifiedAgentCreated } from '../../agents/unified-agent-events.ts';
 import { createResolveClones } from '../../session/clone-cascade.ts';
 import { nameClonedAgent } from '../../agents/agent-identity.ts';
@@ -73,14 +73,14 @@ import {
 } from '../../job-queue-constants.ts';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
-import { setupSpaceAgentReminderHandlers } from './space-agent-reminder-handlers.ts';
-import { setupSpaceAgentSubscriptionHandlers } from './space-agent-subscription-handlers.ts';
-import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers.ts';
+import { setupSpaceAgentReminderHandlers } from '../../../../../space/src/rpc/space-agent-reminder-handlers.ts';
+import { setupSpaceAgentSubscriptionHandlers } from '../../../../../space/src/rpc/space-agent-subscription-handlers.ts';
+import { setupSpaceAgentTemplateHandlers } from '../../../../../space/src/rpc/space-agent-template-handlers.ts';
 import {
   buildAgentCreate,
   type SpaceAgentV2Deps,
   setupSpaceAgentV2Handlers,
-} from './space-agent-v2-handlers.ts';
+} from '../../../../../space/src/rpc/space-agent-v2-handlers.ts';
 import { buildTemplateExtrasSeeder } from '../../agents/template-extras-seeding.ts';
 import { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import {
@@ -106,11 +106,11 @@ import {
 } from '../../../storage/repositories/space-agent-inactivity-repository.ts';
 import { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
-import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
+import { setupTaskScheduleHandlers } from '../../../../../space/src/rpc/task-schedule-handlers.ts';
+import { setupSpaceGoalHandlers } from '../../../../../space/src/rpc/space-goal-handlers.ts';
 import { subscribeAgentActivationOutcomeRedelivery } from '../../../../../space/src/goals/agent-activation-outcome-redelivery.ts';
 import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../../space/src/goals/owner-change-outcome-redelivery.ts';
-import { setupEvolutionHandlers } from './evolution-handlers.ts';
+import { setupEvolutionHandlers } from '../../../../../space/src/rpc/evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../../../../../space/src/evolution/conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
 import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service.ts';
@@ -132,8 +132,8 @@ import {
   collectSpaceFamilyOperations,
   createSessionSpacePort,
 } from '../../../../../space/src/rpc/family-operations/space.ts';
-import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
-import { archiveAgentSessions } from './space-agent-v2-handlers.ts';
+import { setupSpaceMcpHandlers } from '../../../../../space/src/rpc/space-mcp-handlers.ts';
+import { archiveAgentSessions } from '../../../../../space/src/rpc/space-agent-v2-handlers.ts';
 import type { SessionTarget } from '../../session-resolution/target.ts';
 import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';

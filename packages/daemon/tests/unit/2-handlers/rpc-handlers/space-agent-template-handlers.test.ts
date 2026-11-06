@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, SpaceAgentTemplate } from '@hyperneo/shared';
-import { setupSpaceAgentTemplateHandlers } from '../../../../src/lib/space/rpc/space-agent-template-handlers';
+import { setupSpaceAgentTemplateHandlers } from '../../../../../space/src/rpc/space-agent-template-handlers';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/agents/template-manager';
 import { RESERVED_SPACE_AGENT_HANDLES } from '../../../../src/lib/agents/slug';
 import type { SpaceManager } from '../../../../../space/src/managers/space-manager';

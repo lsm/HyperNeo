@@ -13,7 +13,7 @@ import {
 import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../../space/src/goals/owner-change-outcome-redelivery.ts';
 import type { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
 import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
-import { setupSpaceGoalHandlers } from '../../../../src/lib/space/rpc/space-goal-handlers.ts';
+import { setupSpaceGoalHandlers } from '../../../../../space/src/rpc/space-goal-handlers.ts';
 import { createCreateGoalOperation } from '../../../../../space/src/goals/create-goal-operation.ts';
 import { createGetGoalOperation } from '../../../../../space/src/goals/get-goal-operation.ts';
 import { createGetGoalOwnerOperation } from '../../../../../space/src/goals/get-goal-owner-operation.ts';

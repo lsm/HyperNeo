@@ -12,7 +12,7 @@ import { McpEnablementRepository } from '../../../../src/storage/repositories/mc
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository';
 import { WorkspaceHistoryRepository } from '../../../../src/storage/repositories/workspace-history-repository';
-import { setupSpaceMcpHandlers } from '../../../../src/lib/space/rpc/space-mcp-handlers';
+import { setupSpaceMcpHandlers } from '../../../../../space/src/rpc/space-mcp-handlers';
 import { McpImportService } from '../../../../src/lib/mcp/mcp-import-service';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import type { Database } from '../../../../src/storage/database';

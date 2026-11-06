@@ -1,9 +1,9 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
+import type { SpaceAgentReminderRepository } from '../../../daemon/src/storage/repositories/space-agent-reminder-repository.ts';
 import {
   prepareAgentReminderCreateInput,
   type AgentReminderCreateInput,
-} from '../../agents/reminder-create-input.ts';
+} from '../../../daemon/src/lib/agents/reminder-create-input.ts';
 
 const METHOD_PREFIX = 'spaceAgentReminder';
 

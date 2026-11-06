@@ -15,21 +15,24 @@ import type {
   SpaceWorkspaceRemoveParams,
   SpaceWorkspaceUpdateLabelParams,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import type { SessionManager } from '../../session-manager.ts';
-import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../daemon/src/lib/internal-event-bus.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../../../daemon/src/lib/workflows/workflow-manager.ts';
+import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../daemon/src/storage/repositories/space-workflow-run-repository.ts';
+import type { SessionManager } from '../../../daemon/src/lib/session-manager.ts';
+import type { SpaceRuntimeService } from '../../../daemon/src/lib/space/runtime/space-runtime-service.ts';
+import { runSpaceDeletion, type DeleteSpaceResult } from '../managers/delete-space-pipeline.ts';
 import {
-  runSpaceDeletion,
-  type DeleteSpaceResult,
-} from '../../../../../space/src/managers/delete-space-pipeline.ts';
-import { createSpace, type CreateSpaceDeps } from '../create-space-pipeline.ts';
-import { seedBuiltInWorkflows } from '../../workflows/seed-built-in-workflows.ts';
-import { Logger } from '../../logger.ts';
-import { assertNoToolSelectionDefaults } from '../../tools/session-tool-choice.ts';
+  createSpace,
+  type CreateSpaceDeps,
+} from '../../../daemon/src/lib/space/create-space-pipeline.ts';
+import { seedBuiltInWorkflows } from '../../../daemon/src/lib/workflows/seed-built-in-workflows.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
+import { assertNoToolSelectionDefaults } from '../../../daemon/src/lib/tools/session-tool-choice.ts';
 
 const log = new Logger('space-handlers');
 const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];

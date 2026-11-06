@@ -12,7 +12,7 @@ import { AppMcpServerRepository } from '../../../../src/storage/repositories/app
 import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { McpImportService } from '../../../../src/lib/mcp/mcp-import-service.ts';
-import { setupSpaceMcpHandlers } from '../../../../src/lib/space/rpc/space-mcp-handlers.ts';
+import { setupSpaceMcpHandlers } from '../../../../../space/src/rpc/space-mcp-handlers.ts';
 import { noOpReactiveDb } from '../../../helpers/reactive-database.ts';
 import { createTestSession } from '../../../helpers/database.ts';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';

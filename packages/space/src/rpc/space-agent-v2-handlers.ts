@@ -1,32 +1,38 @@
 import type { MessageHub, SessionMetadata, SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
-import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import type { SpaceAgentRepository } from '../../../daemon/src/storage/repositories/space-agent-repository.ts';
+import type { SpaceAgentReminderRepository } from '../../../daemon/src/storage/repositories/space-agent-reminder-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../daemon/src/storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceAgentTemplateRepository } from '../../../daemon/src/storage/repositories/space-agent-template-repository.ts';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../daemon/src/lib/internal-event-bus.ts';
 import {
   validateAgentModel,
   validateAgentModelPool,
   validateSpaceAgentTools,
-} from '../../agents/validation.ts';
+} from '../../../daemon/src/lib/agents/validation.ts';
 import {
   type BindableSession,
   buildCreateSpaceAgentPipeline,
   type CreateSpaceAgentInput,
   isCreateSpaceAgentRejection,
-} from '../../agents/create-agent-pipeline.ts';
+} from '../../../daemon/src/lib/agents/create-agent-pipeline.ts';
 import {
   buildUpdateSpaceAgentPipeline,
   type UpdateSpaceAgentInput,
-} from '../../agents/update-agent-pipeline.ts';
-import { resolveEffectiveSpaceAgentTemplate } from '../../agents/template-manager.ts';
+} from '../../../daemon/src/lib/agents/update-agent-pipeline.ts';
+import { resolveEffectiveSpaceAgentTemplate } from '../../../daemon/src/lib/agents/template-manager.ts';
 import type { WorktreeCommitStatus, WorktreeMetadata } from '@hyperneo/shared';
-import { isCloneChoice, type ResolveClones } from '../../session/clone-cascade.ts';
+import {
+  isCloneChoice,
+  type ResolveClones,
+} from '../../../daemon/src/lib/session/clone-cascade.ts';
 import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentDeleted,
   publishUnifiedAgentUpdated,
-} from '../../agents/unified-agent-events.ts';
+} from '../../../daemon/src/lib/agents/unified-agent-events.ts';
 
 const METHOD_PREFIX = 'spaceAgentV2';
 

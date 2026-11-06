@@ -7,7 +7,7 @@ import type {
   SpaceWorkspace,
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
-import { setupSpaceHandlers } from '../../../../src/lib/space/rpc/space-handlers';
+import { setupSpaceHandlers } from '../../../../../space/src/rpc/space-handlers';
 import {
   WorkspaceRegistrationError,
   WorkspaceRemovalBlockedError,
