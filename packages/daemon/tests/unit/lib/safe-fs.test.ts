@@ -30,6 +30,19 @@ const writeWorkspaceFile = (
   signal: AbortSignal
 ) => replaceFileWithinWorkspace(workspace, segments, Buffer.from(content), signal);
 
+test('reports an aborted replacement using the workspace filesystem error', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    replaceFileWithinWorkspace(
+      '/synthetic/workspace',
+      ['result'],
+      Buffer.from('text'),
+      controller.signal
+    )
+  ).rejects.toThrow('workspace filesystem write cancelled');
+});
+
 test('decodes regular-file mode bits from a stat buffer', () => {
   const buf = Buffer.alloc(256);
   buf.writeUInt16LE(0o100400, 8);
