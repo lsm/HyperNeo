@@ -1,5 +1,5 @@
 import { runMigration476 } from './m476-neo-todo-approved-at.ts';
-import { runMigration479 } from './m479-work-turn-urls.ts';
+import { runMigration480 } from './m480-work-turn-urls.ts';
 import { runMigration477 } from './m477-work-turns.ts';
 import { runMigration478 } from './m478-work-sessions.ts';
 import { runMigration479 } from './m479-work-session-activity.ts';
@@ -991,6 +991,10 @@ export function runMigrations(
   run(migrationMarkerKey(477), () => runMigration477(db));
   run(migrationMarkerKey(478), () => runMigration478(db));
   run(migrationMarkerKey(479), () => runMigration479(db));
+  run(migrationMarkerKey(480), () => {
+    runMigration480(db);
+    runMigration479(db);
+  });
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
