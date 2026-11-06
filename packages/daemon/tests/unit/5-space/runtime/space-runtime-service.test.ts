@@ -43,10 +43,10 @@ import type { SpaceManager } from '../../../../../space/src/managers/space-manag
 import { SpaceManager as SpaceMgr } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/workflows/workflow-manager.ts';
-import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+import type { SpaceRuntimeServiceConfig } from '../../../../../space/src/runtime/space-runtime-service.ts';
 import { createAgentSubscriptionOperations } from '../../../../../space/src/external-events/agent-subscription-operations.ts';
 import { isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
-import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+import { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';

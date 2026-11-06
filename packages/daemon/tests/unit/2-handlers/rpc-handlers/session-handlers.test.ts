@@ -25,7 +25,7 @@ import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/sessio
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
-import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';

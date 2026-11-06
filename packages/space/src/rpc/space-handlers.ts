@@ -24,7 +24,7 @@ import type { SpaceWorkflowManager } from '../../../daemon/src/lib/workflows/wor
 import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../daemon/src/storage/repositories/space-workflow-run-repository.ts';
 import type { SessionManager } from '../../../daemon/src/lib/session-manager.ts';
-import type { SpaceRuntimeService } from '../../../daemon/src/lib/space/runtime/space-runtime-service.ts';
+import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
 import { runSpaceDeletion, type DeleteSpaceResult } from '../managers/delete-space-pipeline.ts';
 import {
   createSpace,

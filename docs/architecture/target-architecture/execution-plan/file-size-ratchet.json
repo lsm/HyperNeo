@@ -31,8 +31,8 @@
       "maxLines": 2700,
       "followUp": "M1 shared boundary split"
     },
-    "packages/daemon/src/lib/space/runtime/space-runtime-service.ts": {
-      "maxLines": 2067,
+    "packages/space/src/runtime/space-runtime-service.ts": {
+      "maxLines": 1603,
       "followUp": "M9 runtime component extraction"
     },
     "packages/daemon/src/lib/space/tools/node-agent-tools.ts": {

@@ -82,7 +82,7 @@ import {
   reserveModelPoolSlot,
 } from '../../session/model-pool-scheduler.ts';
 import { readRestartRecoveryNote } from '../../tasks/restart-recovery-note.ts';
-import type { SpaceRuntimeService } from './space-runtime-service.ts';
+import type { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service.ts';
 import type { NodeAgentTemplateSource } from '../../tasks/spawn-slot-resolution.ts';
 export interface SubSessionMemberInfo {
   agentId?: string;

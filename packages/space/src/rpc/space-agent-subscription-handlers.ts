@@ -6,7 +6,7 @@ import {
   validateGlobPattern,
   validateSource,
 } from '../../../daemon/src/lib/external-events/topic-validator.ts';
-import type { SpaceRuntimeService } from '../../../daemon/src/lib/space/runtime/space-runtime-service.ts';
+import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
 
 const METHOD_PREFIX = 'spaceAgentSubscription';
 
