@@ -102,6 +102,27 @@ describe('Neo composer send slot', () => {
     expect(input.getAttribute('rows')).toBe('1');
   });
 
+  it('says there is no network and will not send until it is back', () => {
+    const { store } = mount(false, 'Hello');
+    const send = () => screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement;
+    expect(send().disabled).toBe(false);
+    act(() => {
+      store.agentState.value = {
+        status: 'rate_limit_cooldown',
+        reason: 'network',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: 1,
+      } as never;
+    });
+    expect(screen.getByRole('status').textContent).toContain('No network');
+    expect(send().disabled).toBe(true);
+    act(() => {
+      store.agentState.value = { status: 'idle' };
+    });
+    expect(send().disabled).toBe(false);
+  });
+
   it('offers Stop for a session’s running turn when the pane can stop it', () => {
     const onStop = vi.fn();
     mount(false, '', onStop);

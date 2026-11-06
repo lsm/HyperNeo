@@ -8,8 +8,8 @@ import {
   NetworkOutagePause,
   networkProbeDelayMs,
   networkProbeHost,
+  providerProbeUrl,
   planNetworkOutageTick,
-  providerProbeHost,
 } from '../../../../src/lib/agent/network-outage-pause';
 import { resultNetworkOutage } from '../../../../src/lib/agent/sdk-message-handler';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -38,38 +38,32 @@ describe('isNetworkUnreachableError', () => {
   });
 });
 
+describe('providerProbeUrl', () => {
+  test('probes the upstream behind a local key bridge, never the bridge', () => {
+    expect(providerProbeUrl('http://127.0.0.1:51234', 'https://open.bigmodel.cn/api')).toBe(
+      'https://open.bigmodel.cn/api'
+    );
+  });
+
+  test('keeps the session URL otherwise', () => {
+    expect(providerProbeUrl('https://proxy.example', 'https://open.bigmodel.cn')).toBe(
+      'https://proxy.example'
+    );
+    expect(providerProbeUrl('http://127.0.0.1:8000', undefined)).toBe('http://127.0.0.1:8000');
+    expect(providerProbeUrl('http://127.0.0.1:8000', 'http://localhost:1')).toBe(
+      'http://127.0.0.1:8000'
+    );
+    expect(providerProbeUrl(undefined, undefined)).toBe('https://api.anthropic.com');
+  });
+});
+
 describe('networkProbeHost', () => {
-  test('probes the host the failure names, else the Anthropic API', () => {
+  test('names the host in the failure, else leaves the provider to be probed', () => {
     expect(networkProbeHost('getaddrinfo ENOTFOUND chatgpt.com')).toBe('chatgpt.com');
     expect(networkProbeHost('connect ECONNREFUSED 10.0.0.5:443')).toBe('10.0.0.5');
-    expect(networkProbeHost('API Error: Connection error.')).toBe('api.anthropic.com');
-    expect(networkProbeHost('connect ENETUNREACH 2606:4700::1:443')).toBe('api.anthropic.com');
-    expect(networkProbeHost('API Error: Connection error.', 'open.bigmodel.cn')).toBe(
-      'open.bigmodel.cn'
-    );
-    expect(networkProbeHost('API Error: Connection error.', false)).toBeNull();
-    expect(networkProbeHost('getaddrinfo ENOTFOUND chatgpt.com', false)).toBe('chatgpt.com');
+    expect(networkProbeHost('API Error: Connection error.')).toBeNull();
+    expect(networkProbeHost('connect ENETUNREACH 2606:4700::1:443')).toBeNull();
     expect(networkProbeHost('connect ECONNREFUSED 127.0.0.1:51234')).toBeNull();
-  });
-});
-
-describe('providerProbeHost', () => {
-  test('takes the provider host from its base URL, but never a local bridge', () => {
-    expect(providerProbeHost('https://open.bigmodel.cn/api/anthropic')).toBe('open.bigmodel.cn');
-    expect(providerProbeHost('http://127.0.0.1:51234')).toBe(false);
-    expect(providerProbeHost('http://localhost:8080')).toBe(false);
-    expect(providerProbeHost(undefined)).toBeNull();
-  });
-});
-
-describe('planNetworkOutageTick', () => {
-  test('raises the popup once, only after the long threshold', () => {
-    expect(planNetworkOutageTick(0, NETWORK_OUTAGE_POPUP_AFTER_MS - 1, false).popup).toBe(false);
-    expect(planNetworkOutageTick(0, NETWORK_OUTAGE_POPUP_AFTER_MS, false)).toEqual({
-      popup: true,
-      nextProbeAt: NETWORK_OUTAGE_POPUP_AFTER_MS + NETWORK_PROBE_EVERY_MS,
-    });
-    expect(planNetworkOutageTick(0, NETWORK_OUTAGE_POPUP_AFTER_MS, true).popup).toBe(false);
   });
 });
 
@@ -103,7 +97,7 @@ describe('resultNetworkOutage', () => {
 });
 
 describe('NetworkOutagePause', () => {
-  function harness(reachable: () => boolean, fallback: string | false | null = null) {
+  function harness(reachable: () => boolean) {
     let now = 1_000;
     const timers: Array<() => void> = [];
     const events: string[] = [];
@@ -114,7 +108,6 @@ describe('NetworkOutagePause', () => {
     const resumed: unknown[] = [];
     const pause = new NetworkOutagePause({
       now: () => now,
-      fallbackHost: () => fallback,
       probe: async (host) => {
         events.push(`probe ${host}`);
         return reachable();
@@ -200,16 +193,14 @@ describe('NetworkOutagePause', () => {
     expect(h.pause.isActive()).toBe(true);
   });
 
-  test('with only a local bridge to blame, it holds without probing a host that proves nothing', async () => {
-    const h = harness(() => true, false);
+  test('with no host in the failure, it probes the provider and resumes on its own', async () => {
+    const h = harness(() => true);
     await h.pause.start('API Error: Connection error.', prompt);
     await h.tick(NETWORK_PROBE_EVERY_MS);
 
-    expect(h.events.filter((event) => event.startsWith('probe'))).toEqual([]);
-    expect(h.resumed).toEqual([]);
-    expect(h.pause.isActive()).toBe(true);
-    expect(await h.pause.resumeNow()).toBe(true);
+    expect(h.events).toContain('probe null');
     expect(h.resumed).toEqual([prompt]);
+    expect(h.pause.isActive()).toBe(false);
   });
 
   test('a cancel during the popup leaves the session out of its hold', async () => {

@@ -7,6 +7,7 @@ import {
   jobQueueWrites,
 } from '../../storage/repositories/job-queue-repository.ts';
 import { routeDriveTurnOutcome } from '../agent/handler-outcome-routing.ts';
+import type { HumanSendRoute } from '../agent/human-send-recovery.ts';
 import {
   asMessageDeliveryPayload,
   type DeliveryLoadResult,
@@ -32,6 +33,8 @@ export interface MessageDeliveryHandlerDeps {
   isSessionArchived?(sessionId: string): boolean;
   markDeliveryFailed?(sessionId: string, messageUuid: string): Promise<string | null>;
   publishStatusChanged?(sessionId: string, messageIds: string[]): Promise<unknown>;
+  prepareHumanSend?(sessionId: string): Promise<HumanSendRoute>;
+  watchHumanSend?(sessionId: string, messageUuid: string): void;
   metrics?: DeliveryMetrics;
 }
 
@@ -82,18 +85,37 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       return { outcome: 'archived' };
     }
 
+    const loaded = deps.getMessageContent(payload.sessionId, payload.messageUuid);
+    const human =
+      loaded?.inputKind === 'human' &&
+      (loaded.sendStatus === 'enqueued' || loaded.sendStatus === 'submitted');
+    const humanRoute = human ? await deps.prepareHumanSend?.(payload.sessionId) : undefined;
+    if (humanRoute === 'wait') {
+      if (!claimCurrent()) return { outcome: 'stale_attempt' };
+      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
+      const parked = await gatewayFor(deps.jobQueue.db).call(
+        jobQueueWrites,
+        'requeueWaiting',
+        job.id,
+        retryAt,
+        job.claimToken as string
+      );
+      if (!parked) return { outcome: 'stale_attempt' };
+      return { parked: 'no_network', retryAt };
+    }
     const session = await deps.getSession(payload.sessionId);
     if (!session) {
       throw new Error(`message_delivery: session ${payload.sessionId} not found`);
     }
-    const cooldownRetryAt = deps.getSessionCooldownRetryAt?.(payload.sessionId) ?? null;
+    const cooldownRetryAt = human
+      ? null
+      : (deps.getSessionCooldownRetryAt?.(payload.sessionId) ?? null);
     if (cooldownRetryAt !== null) {
       if (!claimCurrent()) return { outcome: 'stale_attempt' };
       const parked = await park(cooldownRetryAt);
       if (!parked) return { outcome: 'stale_attempt' };
       return { parked: 'rate_limit_cooldown', retryAt: cooldownRetryAt };
     }
-    const loaded = deps.getMessageContent(payload.sessionId, payload.messageUuid);
     if (loaded === null) {
       log.warn(`message_delivery: content for ${payload.messageUuid} not found; completing.`);
       metrics.recordReclaimSkip('noContent');
@@ -104,6 +126,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     const { sendStatus } = loaded;
 
     if (sendStatus === 'consumed') {
+      if (loaded.inputKind === 'human')
+        deps.watchHumanSend?.(payload.sessionId, payload.messageUuid);
       return { outcome: 'completed' };
     }
     if (sendStatus === 'deferred' || sendStatus === 'failed') {
@@ -152,6 +176,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
           : await park(route.retryAt);
       if (!parked) return { outcome: 'stale_attempt' };
     }
+    if (human && 'outcome' in route.result && route.result.outcome === 'completed')
+      deps.watchHumanSend?.(payload.sessionId, payload.messageUuid);
     return route.result;
   };
 }

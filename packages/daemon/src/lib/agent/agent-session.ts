@@ -65,8 +65,8 @@ import { SettingsManager } from '../settings-manager.ts';
 import {
   NETWORK_OUTAGE_NOTICE,
   NetworkOutagePause,
-  probeNetworkHost,
-  providerProbeHost,
+  probeProviderUrl,
+  providerProbeUrl,
 } from './network-outage-pause.ts';
 import { runRateLimitManualCancel } from './rate-limit-manual-cancel.ts';
 import { runRateLimitManualRetry } from './rate-limit-manual-retry.ts';
@@ -404,6 +404,8 @@ export class AgentSession
 
   private rateLimitWatchdog: RateLimitWatchdog;
   private networkPause: NetworkOutagePause;
+  private authRejected = false;
+  private interruptedAt = 0;
 
   queryObject: QueryLike | null = null;
   private queryPromiseValue: Promise<void> | null = null;
@@ -667,20 +669,7 @@ export class AgentSession
 
     this.networkPause = new NetworkOutagePause({
       now: () => Date.now(),
-      probe: probeNetworkHost,
-      fallbackHost: () => {
-        const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
-        try {
-          return providerProbeHost(
-            getProviderRegistry()
-              .get(provider)
-              ?.buildSdkConfig(this.session.config.model ?? 'sonnet')
-              .envVars.ANTHROPIC_BASE_URL?.toString()
-          );
-        } catch {
-          return null;
-        }
-      },
+      probe: (host) => (host ? probeProviderUrl(`https://${host}/`) : this.providerReachable()),
       schedule: (run, delayMs) => {
         const timer = setTimeout(run, delayMs);
         timer.unref?.();
@@ -1157,6 +1146,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.interruptRequests += 1;
+    this.interruptedAt = Date.now();
     try {
       this.rateLimitWatchdog.cancel();
       this.networkPause.stop();
@@ -1203,6 +1193,71 @@ export class AgentSession
     await this.stateManager.setIdle();
   }
 
+  async humanSendFacts() {
+    const stream = this.queryRunner instanceof QueryRunner ? this.queryRunner.streamFacts() : null;
+    const latched =
+      this.queryRunner instanceof QueryRunner && this.queryRunner.failureLatchedUntil() !== null;
+    const auth = await getProviderRegistry()
+      .get(this.providerId())
+      ?.getAuthStatus?.()
+      .catch(() => null);
+    return {
+      status: this.stateManager.getState().status,
+      held:
+        latched ||
+        this.authRejected ||
+        (typeof auth?.expiresAt === 'number' && auth.expiresAt <= Date.now()) ||
+        this.networkPause.isActive() ||
+        this.rateLimitWatchdog.isRecoveryPending(),
+      openTools: stream?.openTools.length ?? 0,
+      lastActivityAt: stream?.lastActivityAt ?? Date.now(),
+    };
+  }
+
+  lastInterruptAt(): number {
+    return this.interruptedAt;
+  }
+
+  lastSdkOutputAt(): number {
+    return this.queryRunner instanceof QueryRunner
+      ? (this.queryRunner.streamFacts().lastOutputAt ?? 0)
+      : Date.now();
+  }
+
+  providerId(): string {
+    return (this.session.config.provider as string | undefined) ?? 'anthropic';
+  }
+
+  async providerReachable(): Promise<boolean> {
+    const { getProviderService } = await import('../provider-service.ts');
+    const env = await getProviderService()
+      .resolveSessionProviderEnvVars(this.session)
+      .catch(() => null);
+    return probeProviderUrl(
+      providerProbeUrl(env?.ANTHROPIC_BASE_URL?.toString(), this.providerUpstreamUrl())
+    );
+  }
+
+  private providerUpstreamUrl(): string | undefined {
+    try {
+      return getProviderRegistry()
+        .get(this.providerId())
+        ?.buildSdkConfig(this.session.config.model ?? 'sonnet')
+        .envVars.ANTHROPIC_BASE_URL?.toString();
+    } catch {
+      return undefined;
+    }
+  }
+
+  async holdForNetwork(): Promise<void> {
+    if (!this.networkPause.isActive())
+      await this.networkPause.start('The model provider is unreachable', null);
+  }
+
+  async showNotice(text: string): Promise<void> {
+    await this.queryRunner.displayErrorAsAssistantMessage(text, { markAsError: true });
+  }
+
   async resetQuery(options?: {
     restartQuery?: boolean;
     hardReset?: boolean;
@@ -1211,6 +1266,8 @@ export class AgentSession
     this.networkPause.stop();
     if (options?.hardReset && this.queryRunner instanceof QueryRunner)
       await this.queryRunner.resetFailureEpisode();
+    if (options?.hardReset && this.stateManager.getState().status === 'rate_limit_cooldown')
+      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
 
     const restartQuery = options?.restartQuery ?? true;
     if (options?.hardReset && this.runtimeOptions.hardReset) {
@@ -2606,6 +2663,7 @@ export class AgentSession
     )
       this.networkPause.endOutage();
     if (isSDKResultSuccess(message) && message.is_error !== true) {
+      this.authRejected = false;
       const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
       if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {
@@ -2671,6 +2729,7 @@ export class AgentSession
 
   async onProviderAuthRejected(error: string, queryGeneration?: number): Promise<void> {
     if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) return;
+    this.authRejected = true;
     const providerId = this.session.config.provider ?? 'anthropic';
     if (providerId === 'anthropic') return;
     recordClassifiedProviderFailure(providerId, { errorKind: 'credential', message: error });

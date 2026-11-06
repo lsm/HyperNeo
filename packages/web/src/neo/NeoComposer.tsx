@@ -90,7 +90,9 @@ export function NeoComposer({
   const currentPreview = useRef(boundPreview);
   currentPreview.current = boundPreview;
   const needsDraft = hasAttachments || !!quote || !!boundPreview;
-  const attention = !!store.error.value || store.agentState.value.status === 'waiting_for_input';
+  const agentState = store.agentState.value;
+  const noNetwork = agentState.status === 'rate_limit_cooldown' && agentState.reason === 'network';
+  const attention = !!store.error.value || agentState.status === 'waiting_for_input' || noNetwork;
   const collapsed = !focused && !draft && !needsDraft && !attention;
   const draftContext = t(
     boundPreview
@@ -179,7 +181,7 @@ export function NeoComposer({
     const submitted = draft;
     const files = attachments.files;
     if (!submitted.trim() && !files.length) return;
-    if (voiceBusy) return;
+    if (voiceBusy || noNetwork) return;
     if (!connected) {
       onError(t('composer.reconnecting'));
       return;
@@ -226,7 +228,7 @@ export function NeoComposer({
     const composed =
       record.sendText ??
       combineVoiceSubmission(record.sendDraft ?? draft, transcript, record.sendContext?.suffix);
-    if (!composed.trim() || inFlight.current || sending || !connected)
+    if (!composed.trim() || inFlight.current || sending || !connected || noNetwork)
       return { kind: 'unconfirmed' };
     inFlight.current = true;
     setSending(true);
@@ -460,18 +462,20 @@ export function NeoComposer({
               ? voiceStatus
                 ? 'order-last flex w-full'
                 : 'hidden'
-              : store.error.value || store.agentState.value.status === 'waiting_for_input'
+              : store.error.value || agentState.status === 'waiting_for_input' || noNetwork
                 ? 'order-last flex w-full sm:order-none sm:w-auto sm:flex-1'
                 : 'hidden'
           }`}
         >
           {voiceBusy
             ? voiceStatus
-            : store.error.value
-              ? t('chat.notice.needs_you')
-              : store.agentState.value.status === 'waiting_for_input'
-                ? t('composer.question')
-                : null}
+            : noNetwork
+              ? t('composer.noNetwork')
+              : store.error.value
+                ? t('chat.notice.needs_you')
+                : agentState.status === 'waiting_for_input'
+                  ? t('composer.question')
+                  : null}
         </span>
         <div class="neo-composer-actions flex min-w-0 items-center gap-4 ml-auto">
           <NeoVoice
@@ -521,6 +525,7 @@ export function NeoComposer({
             <Button
               type="submit"
               size="sm"
+              disabled={noNetwork}
               class="h-11 min-w-11 shrink-0"
               aria-label={t(
                 recordingVoice && needsDraft

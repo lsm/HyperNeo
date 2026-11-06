@@ -4,10 +4,13 @@ import { render } from 'preact';
 import { App } from './App.tsx';
 import { PairPage } from './components/pairing/PairPage.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
+import { commandRegistry } from './lib/command-registry.ts';
+import { SPACE_COMMANDS } from './lib/space-commands.ts';
 import { spaceNav } from './lib/space-nav.tsx';
 import { declareExtensionNav, loadWebExtensions } from './lib/web-extensions.ts';
 
 declareExtensionNav(spaceNav);
+commandRegistry.registerAll(SPACE_COMMANDS);
 
 void loadWebExtensions(() => connectionManager.getHub(), {
   space: () => import('./lib/space-web-extension.ts').then((m) => m.spaceWebExtension),

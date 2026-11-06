@@ -68,7 +68,7 @@ export class QueryFailureGovernor {
     const episode = this.read();
     if (episode?.failed && episode.retryAt > Date.now())
       throw new QueryFailureCapError(
-        `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
+        `Query stopped after ${episode.failures} failures: ${episode.error}. Send a message to recover.`
       );
   }
 

@@ -488,6 +488,10 @@ export class QueryRunner {
     return this.failures.reset();
   }
 
+  streamFacts(): StreamSilenceState {
+    return this.streamSilence;
+  }
+
   failureLatchedUntil() {
     return this.failures.latchedUntil();
   }
@@ -770,7 +774,11 @@ export class QueryRunner {
     const silenceThresholdMs = getStreamSilenceTimeoutMs();
     const openToolStallMs = getOpenToolStallTimeoutMs();
     let lastStall: { silentMs: number; openToolCount: number } | null = null;
-    this.streamSilence = { lastActivityAt: Date.now(), openTools: [] };
+    this.streamSilence = {
+      lastActivityAt: Date.now(),
+      lastOutputAt: this.streamSilence.lastOutputAt,
+      openTools: [],
+    };
 
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
     let processExited = false;
@@ -1551,7 +1559,7 @@ export class QueryRunner {
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
       if (episode?.failed) {
         const terminal = new QueryFailureCapError(
-          `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
+          `Query stopped after ${episode.failures} failures: ${episode.error}. Send a message to recover.`
         );
         messageQueue.clear(terminal);
         await errorManager.handleError(

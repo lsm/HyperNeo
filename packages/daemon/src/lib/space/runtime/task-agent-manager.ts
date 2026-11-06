@@ -61,7 +61,7 @@ import {
 } from '../../providers/registry.js';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
-import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
+import { createDefaultSessionResolutionDeps } from './session-resolution-deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates.ts';

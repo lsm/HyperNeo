@@ -19,6 +19,7 @@ export function getOpenToolStallTimeoutMs(): number {
 
 export interface StreamSilenceState {
   lastActivityAt: number;
+  lastOutputAt?: number;
   openTools: readonly string[];
 }
 
@@ -27,6 +28,7 @@ interface WatchedMessage {
   subtype?: string;
   parent_tool_use_id?: string | null;
   retry_delay_ms?: number;
+  status?: string | null;
   message?: unknown;
 }
 
@@ -49,6 +51,11 @@ const blocks = (message: WatchedMessage, type: string, key: 'id' | 'tool_use_id'
     : [];
 };
 
+const MODEL_OUTPUT_TYPES: ReadonlySet<string> = new Set(['assistant', 'stream_event', 'result']);
+const isModelOutput = (message: WatchedMessage): boolean =>
+  MODEL_OUTPUT_TYPES.has(message.type) ||
+  (message.type === 'system' && message.status === 'compacting');
+
 export function noteStreamFed(state: StreamSilenceState, now: number): StreamSilenceState {
   return { ...state, lastActivityAt: Math.max(state.lastActivityAt, now) };
 }
@@ -60,18 +67,17 @@ export function noteStreamMessage(
 ): StreamSilenceState {
   const quietUntil = now + (message.subtype === 'api_retry' ? (message.retry_delay_ms ?? 0) : 0);
   const lastActivityAt = Math.max(state.lastActivityAt, quietUntil);
-  if (message.parent_tool_use_id) return { ...state, lastActivityAt };
-  if (message.type === 'result') return { lastActivityAt, openTools: [] };
+  const lastOutputAt = isModelOutput(message) ? now : state.lastOutputAt;
+  const next = { ...state, lastActivityAt, lastOutputAt };
+  if (message.parent_tool_use_id) return next;
+  if (message.type === 'result') return { ...next, openTools: [] };
   if (message.type === 'assistant')
-    return {
-      lastActivityAt,
-      openTools: [...state.openTools, ...blocks(message, 'tool_use', 'id')],
-    };
+    return { ...next, openTools: [...state.openTools, ...blocks(message, 'tool_use', 'id')] };
   if (message.type === 'user') {
     const done = new Set(blocks(message, 'tool_result', 'tool_use_id'));
-    return { lastActivityAt, openTools: state.openTools.filter((id) => !done.has(id)) };
+    return { ...next, openTools: state.openTools.filter((id) => !done.has(id)) };
   }
-  return { ...state, lastActivityAt };
+  return next;
 }
 
 export function planStreamSilence(input: {
