@@ -685,6 +685,35 @@ describe('NeoLive durable conversation activation', () => {
     await waitFor(() => expect(main.scrollTop).toBe(1000));
   });
 
+  it('keeps the bottom pin through nested message resizing without moving a manual reader', async () => {
+    const { container } = render(<NeoLive />);
+    const main = container.querySelector('main')!;
+    let height = 1000;
+    Object.defineProperties(main, {
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    await act(async () => {
+      asks.value = { ...asks.value, items: [ask('first')] };
+    });
+    await waitFor(() => expect(main.scrollTop).toBe(1000));
+    fireEvent.scroll(main);
+    height = 500;
+    main.scrollTop = 300;
+    publicView().append(document.createElement('p'));
+    await waitFor(() => expect(main.scrollTop).toBe(500));
+    height = 1200;
+    publicView().append(document.createElement('p'));
+    await waitFor(() => expect(main.scrollTop).toBe(1200));
+    fireEvent.scroll(main);
+    main.scrollTop = 10;
+    fireEvent.scroll(main);
+    height = 1400;
+    publicView().append(document.createElement('p'));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(main.scrollTop).toBe(10);
+  });
+
   it('keeps following new messages after a tap on an unavailable quote', async () => {
     const { container } = render(<NeoLive />);
     const main = container.querySelector('main')!;
