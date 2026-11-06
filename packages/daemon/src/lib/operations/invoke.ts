@@ -125,6 +125,7 @@ const DEVICE_OPERATIONS: Record<'relay' | 'daemon', ReadonlySet<string>> = {
     'work.send',
     'work.start',
     'work.status',
+    'work.turns',
     'work.stop',
     'work.withdraw',
   ]),
