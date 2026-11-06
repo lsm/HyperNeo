@@ -1,4 +1,4 @@
-import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import type { ExternalEventStore } from '../../../../../../space/src/external-events/external-event-store.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { DirectTaskWorkerIdentity } from '../../../tasks/direct-task-worker-identity.ts';
 import type { ChannelCycleRepository } from '../../../../storage/repositories/channel-cycle-repository.ts';
@@ -23,9 +23,9 @@ import type { TaskScheduleRepository } from '../../../../storage/repositories/ta
 import type { WorkflowRunArtifactRepository } from '../../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { SpaceAgentTemplateManager } from '../../../agents/template-manager.ts';
 import type { EvolutionEpisodeService } from '../../../../../../space/src/evolution/episode-service.ts';
-import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
-import type { GoalAutomationService } from '../../goals/automation-service.ts';
-import type { SpaceGoalService } from '../../goals/service.ts';
+import type { EvolutionScopeService } from '../../../../../../space/src/evolution/scope-service.ts';
+import type { GoalAutomationService } from '../../../../../../space/src/goals/automation-service.ts';
+import type { SpaceGoalService } from '../../../../../../space/src/goals/service.ts';
 import type { ReplyRoutingRegistry } from '../../../messaging/reply-routing-registry.ts';
 import type { ScheduleService } from '../../../schedule/schedule-service.ts';
 import type { SpaceRuntimeService } from '../../runtime/space-runtime-service.ts';

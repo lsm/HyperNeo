@@ -44,11 +44,11 @@ import {
 import { dbQueryCapabilityContribution } from '../../db-query/briefing.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
-import type { ExternalEventStore } from '../external-events/external-event-store.ts';
+import type { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store.ts';
 import {
   ExternalEventQueueMetrics,
   type QueueHealthSnapshot,
-} from '../external-events/queue-health-metrics.ts';
+} from '../../../../../space/src/external-events/queue-health-metrics.ts';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
@@ -81,8 +81,8 @@ import { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import { SpaceMessageResolver } from '../../messaging/space-adapter.ts';
-import { agentMemoryCapabilityContribution } from '../tools/agent-memory-briefing.ts';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
+import { agentMemoryCapabilityContribution } from '../../../../../space/src/tools/agent-memory-briefing.ts';
+import { createAgentMemoryMcpServer } from '../../../../../space/src/tools/agent-memory-tools.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../../tasks/direct-task-worker-identity.ts';
@@ -173,8 +173,8 @@ export interface SpaceRuntimeServiceConfig {
     workflowRunRepo: SpaceWorkflowRunRepository;
     nodeExecutionRepo: NodeExecutionRepository;
   };
-  goalService?: import('../goals/service.ts').SpaceGoalService;
-  evolutionScopeService?: import('../evolution/scope-service.ts').EvolutionScopeService;
+  goalService?: import('../../../../../space/src/goals/service.ts').SpaceGoalService;
+  evolutionScopeService?: import('../../../../../space/src/evolution/scope-service.ts').EvolutionScopeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;

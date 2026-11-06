@@ -107,6 +107,7 @@ export const WorkTurnFactSchema = z.object({
   ended: z.string(),
   inputs: z.array(z.string()),
   urls: z.array(z.string()),
+  finalUrls: z.array(z.string()),
   complete: z.boolean(),
   cursor: z.string().min(1),
 });
@@ -332,6 +333,7 @@ export interface WorkSessionFact {
   id: string;
   name: string;
   status: WorkStatus;
+  lastActivityAt: number;
 }
 
 export interface WorkAdapter {

@@ -21,7 +21,7 @@ type Row = ClaudeTranscriptEntry & {
 };
 type End = { row: Row; offset: number; interrupted?: boolean };
 type Open = { inputAt: number | null; firstAt: number | null; complete: boolean };
-type Turn = Open & { inputs: Set<string>; urls: Set<string> };
+type Turn = Open & { inputs: Set<string>; urls: Set<string>; finalUrls: Set<string> };
 
 const openTurn = (): Turn => ({
   inputAt: null,
@@ -29,6 +29,7 @@ const openTurn = (): Turn => ({
   complete: true,
   inputs: new Set(),
   urls: new Set(),
+  finalUrls: new Set(),
 });
 
 const rowTime = (row: Row) => (typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN);
@@ -87,6 +88,7 @@ function finishTurn(turn: Turn, end: End): WorkTurnFact {
     ended: end.interrupted ? 'interrupted' : String(end.row.message?.stop_reason),
     inputs: [...turn.inputs],
     urls: [...turn.urls],
+    finalUrls: [...turn.finalUrls],
     complete: turn.complete,
     cursor: JSON.stringify({ seq: end.offset, consumed: 0, at: endedAt }),
   };
@@ -127,7 +129,10 @@ export async function readClaudeTurnFacts(path: string, cursor?: string): Promis
       addRow(turn, row);
       if (row.type !== 'assistant' || !claudeTurnEnded(row) || !Number.isFinite(rowTime(row)))
         continue;
-      for (const url of readTurnUrls([assistantText(line) ?? ''])) turn.urls.add(url);
+      for (const url of readTurnUrls([assistantText(line) ?? ''])) {
+        turn.urls.add(url);
+        turn.finalUrls.add(url);
+      }
       end = { row, offset };
     }
     if (end) facts.push(finishTurn(turn, end));

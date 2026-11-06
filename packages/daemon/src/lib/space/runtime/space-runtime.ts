@@ -78,7 +78,7 @@ import { renderEventBlock } from '../../external-events/deferred-event-digest.ts
 import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
 import { eventMatchesFilter, subscriptionEventFilter } from '../../external-events/event-filter.ts';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
-import type { ExternalEventStore } from '../external-events/external-event-store.ts';
+import type { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store.ts';
 import { SESSION_EVENT_SCOPE } from '../../external-events/session-external-event-store.ts';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
@@ -86,7 +86,7 @@ import {
   ExternalEventQueueMetrics,
   type QueueHealthGauges,
   type QueueHealthSnapshot,
-} from '../external-events/queue-health-metrics.ts';
+} from '../../../../../space/src/external-events/queue-health-metrics.ts';
 import { TopicTrie } from '../../external-events/topic-trie.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import type {
@@ -150,11 +150,11 @@ import {
   isWorkflowTargetOwnedBySpace,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
-} from '../external-events/admission-gates.ts';
+} from '../../../../../space/src/external-events/admission-gates.ts';
 import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
-} from '../external-events/immediate-delivery-pipeline.ts';
+} from '../../../../../space/src/external-events/immediate-delivery-pipeline.ts';
 import {
   type RequeuePendingDeliveryDeps,
   runRequeuePendingDelivery,
@@ -278,10 +278,10 @@ export interface SpaceRuntimeConfig {
   }) => Promise<void> | void;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
   goalService?: Pick<
-    import('../goals/service.ts').SpaceGoalService,
+    import('../../../../../space/src/goals/service.ts').SpaceGoalService,
     'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask' | 'retryQueuedRunsForSpace'
   >;
-  evolutionScopeService?: import('../evolution/scope-service.ts').EvolutionScopeService;
+  evolutionScopeService?: import('../../../../../space/src/evolution/scope-service.ts').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
   deliverLongHorizonExternalEvent?: (args: {
     spaceId: string;

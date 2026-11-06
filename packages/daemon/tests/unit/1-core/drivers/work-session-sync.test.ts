@@ -3,6 +3,7 @@ import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { runMigration478 } from '../../../../src/storage/schema/m478-work-sessions';
+import { runMigration479 } from '../../../../src/storage/schema/m479-work-session-activity';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository';
 import { workSessionWrites } from '../../../../src/storage/repositories/work-session-repository';
 import { syncWorkSessions, workSessionRows } from '../../../../src/lib/drivers/work-session-sync';
@@ -15,10 +16,12 @@ describe('workSessionRows', () => {
   test('keeps named sessions under their adapter', () => {
     expect(
       workSessionRows('codex-desktop', [
-        { id: 'a', name: 'Alpha', status: 'running' },
-        { id: 'b', name: '', status: 'done' },
+        { id: 'a', name: 'Alpha', status: 'running', lastActivityAt: 7 },
+        { id: 'b', name: '', status: 'done', lastActivityAt: 8 },
       ])
-    ).toEqual([{ adapter: 'codex-desktop', id: 'a', name: 'Alpha', status: 'running' }]);
+    ).toEqual([
+      { adapter: 'codex-desktop', id: 'a', name: 'Alpha', status: 'running', lastActivityAt: 7 },
+    ]);
   });
 });
 
@@ -30,7 +33,7 @@ describe('syncWorkSessions', () => {
       [
         adapter('one', async () => {
           scans += 1;
-          return [{ id: 'a', name: 'Alpha', status: 'done' }];
+          return [{ id: 'a', name: 'Alpha', status: 'done', lastActivityAt: 1 }];
         }),
         adapter('none'),
         adapter('broken', async () => {
@@ -44,7 +47,9 @@ describe('syncWorkSessions', () => {
     );
     expect(scans).toBe(1);
     expect(changed).toBe(1);
-    expect(saved).toEqual([{ adapter: 'one', id: 'a', name: 'Alpha', status: 'done' }]);
+    expect(saved).toEqual([
+      { adapter: 'one', id: 'a', name: 'Alpha', status: 'done', lastActivityAt: 1 },
+    ]);
   });
 });
 
@@ -52,8 +57,9 @@ describe('saveSessions', () => {
   test('writes new and changed sessions, leaves unchanged rows alone', () => {
     const db = new Database(':memory:');
     runMigration478(db);
+    runMigration479(db);
     const repository = new workSessionWrites.Repository(db);
-    const row = { adapter: 'one', id: 'a', name: 'Alpha', status: 'done' };
+    const row = { adapter: 'one', id: 'a', name: 'Alpha', status: 'done', lastActivityAt: 1 };
     expect(repository.saveSessions([row], 1)).toBe(1);
     expect(repository.saveSessions([row], 2)).toBe(0);
     expect(repository.saveSessions([{ ...row, name: 'Beta' }], 3)).toBe(1);
@@ -107,7 +113,7 @@ describe('workerName', () => {
     );
     expect(repository.workerName({ adapter: 'claude-code', id: 'queued' })).toBe('Queued todo');
     new workSessionWrites.Repository(db).saveSessions(
-      [{ ...ref, name: 'Synced', status: 'done' }],
+      [{ ...ref, name: 'Synced', status: 'done', lastActivityAt: 1 }],
       1
     );
     expect(repository.workerName(ref)).toBe('Synced');

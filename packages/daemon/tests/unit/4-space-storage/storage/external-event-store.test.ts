@@ -1,6 +1,6 @@
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { ExternalEventStore } from '../../../../src/lib/space/external-events/external-event-store';
+import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
 import { ExternalEventValidationError } from '../../../../src/lib/external-events/event-validation';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import { externalEventSweeps } from '../../../../src/storage/repositories/space-external-event-sweep-repository';

@@ -33001,6 +33001,11 @@
                 ],
                 "type": "object"
               },
+              "document": {
+                "description": "Full detail shown apart from the short card text.",
+                "minLength": 1,
+                "type": "string"
+              },
               "focused": {
                 "type": "boolean"
               },
@@ -33082,7 +33087,7 @@
                 "type": "string"
               },
               "todoId": {
-                "description": "One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.",
+                "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -33172,6 +33177,11 @@
                   "sha256"
                 ],
                 "type": "object"
+              },
+              "document": {
+                "description": "Full detail shown apart from the short card text.",
+                "minLength": 1,
+                "type": "string"
               },
               "focused": {
                 "type": "boolean"
@@ -33263,7 +33273,7 @@
                 "type": "string"
               },
               "todoId": {
-                "description": "One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.",
+                "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
                 "minLength": 1,
                 "type": "string"
               }
@@ -33349,6 +33359,11 @@
                 ],
                 "type": "object"
               },
+              "document": {
+                "description": "Full detail shown apart from the short card text.",
+                "minLength": 1,
+                "type": "string"
+              },
               "focused": {
                 "type": "boolean"
               },
@@ -33426,7 +33441,7 @@
                 "type": "string"
               },
               "todoId": {
-                "description": "One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.",
+                "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
                 "minLength": 1,
                 "type": "string"
               }
@@ -57966,6 +57981,12 @@
                         "endedAt": {
                           "type": "number"
                         },
+                        "finalUrls": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
                         "id": {
                           "minLength": 1,
                           "type": "string"
@@ -57993,6 +58014,7 @@
                         "ended",
                         "inputs",
                         "urls",
+                        "finalUrls",
                         "complete",
                         "cursor"
                       ],

@@ -102,7 +102,11 @@ describe('card reply notices', () => {
       expect((await f.ask(replacementInput)).question.id).toBe(second.question.id);
       await f.ask({ replyTo: [human1] });
       expect(f.rows()[0].cardReply?.questionId).toBe(second.question.id);
-      await f.ask({ replyTo: [human2], text: 'A later human reply' });
+      await f.ask({
+        replyTo: [human2],
+        text: 'A later human reply?',
+        replaces: second.question.id,
+      });
       expect(f.rows()).toHaveLength(2);
       const { sequence: _sequence, createdAt: _createdAt, ...row } = f.rows()[0];
       const manual = f.publications.append({
@@ -150,10 +154,14 @@ describe('card reply notices', () => {
   test('recorded consumed input works without replyTo, background and rejected writes do not notify', async () => {
     const f = setup();
     try {
-      await f.ask({ text: 'Unrelated background question' });
+      const background = await f.ask({ text: 'Unrelated background question?' });
       expect(f.rows()).toHaveLength(0);
-      await f.ask({ replyTo: [crypto.randomUUID()] });
+      const stale = await f.ask({
+        replyTo: [crypto.randomUUID()],
+        replaces: background.question.id,
+      });
       expect(f.rows()).toHaveLength(0);
+      f.store.retireQuestion(stale.question, 'next case', null, 2);
       await f.ask({}, { ...owner, consumedInputId: human1 });
       expect(f.rows()).toHaveLength(1);
       const question = f.store.getQuestion(f.rows()[0].cardReply!.questionId)!;
@@ -343,7 +351,7 @@ describe('card reply notices', () => {
           id,
           'ask',
           {
-            text: 'Choose a path',
+            text: 'Choose a path?',
             kind: 'reply',
             options: null,
             multiple: false,
@@ -354,7 +362,7 @@ describe('card reply notices', () => {
           1
         )
       );
-      expect(f.rows()[0].shortText).toBe(`${expected} · Choose a path`);
+      expect(f.rows()[0].shortText).toBe(`${expected} · Choose a path?`);
       expect(f.rows()[0].fullText).toBe(f.rows()[0].shortText);
     } finally {
       locale.mockRestore();

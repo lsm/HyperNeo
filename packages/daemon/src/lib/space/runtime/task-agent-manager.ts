@@ -115,9 +115,9 @@ import {
   DEFAULT_CUSTOM_AGENT_MODEL,
   resolveAgentInit,
 } from '../../agents/custom-agent.ts';
-import type { EvolutionScopeService } from '../evolution/scope-service.ts';
+import type { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
+import { createAgentMemoryMcpServer } from '../../../../../space/src/tools/agent-memory-tools.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-validator.ts';
 import { runTemplateSnapshotRecord } from '../../workflows/run-template-snapshot.ts';
@@ -303,9 +303,9 @@ export interface TaskAgentManagerConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
-  goalService?: import('../goals/service.ts').SpaceGoalService;
+  goalService?: import('../../../../../space/src/goals/service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
-  externalEventStore?: import('../external-events/external-event-store.ts').ExternalEventStore;
+  externalEventStore?: import('../../../../../space/src/external-events/external-event-store.ts').ExternalEventStore;
 }
 
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;

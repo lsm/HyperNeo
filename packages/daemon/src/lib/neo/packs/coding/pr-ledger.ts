@@ -34,7 +34,8 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
 import type { LedgerQuota } from './ledger-quota.ts';
 import type { NeoSessionFacts } from '../../pack-contract.ts';
-import { CodingTodoPrRepository, codingPrKey } from './todo-prs.ts';
+import { codingPrKey } from './pr-key.ts';
+import { CodingTodoPrRepository } from './todo-prs.ts';
 import type { CodingLedgerRead } from './pr-ledger-source.ts';
 
 export {
