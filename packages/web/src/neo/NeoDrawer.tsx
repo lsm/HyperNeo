@@ -155,7 +155,7 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
     } else
       setError(
         result.reason.startsWith('not_paired')
-          ? 'Pair this browser in Settings → Devices to allow devices.'
+          ? 'Pair this browser in Settings → Connections & Services → Devices to allow devices.'
           : result.reason
       );
   };

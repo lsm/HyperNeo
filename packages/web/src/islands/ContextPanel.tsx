@@ -8,6 +8,7 @@ import {
 import { navigateToSettings } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
 import { SectionSwitcher } from '../components/SectionSwitcher.tsx';
+import { isConnectionsSection } from '../components/settings/ConnectionsServicesPage.tsx';
 import { SessionsSidebar } from './SessionsSidebar.tsx';
 import { extensionNav, shellExtensions } from '../lib/web-extensions.ts';
 
@@ -24,10 +25,9 @@ const SETTINGS_SECTIONS: Array<{
     icon: 'palette',
     accent: 'text-cat-purple bg-cat-purple/15',
   },
-  { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-info-soft bg-sky-500/15' },
   {
-    id: 'connections',
-    label: 'Connections',
+    id: 'providers',
+    label: 'Connections & Services',
     icon: 'plug',
     accent: 'text-accent-soft bg-accent/15',
   },
@@ -38,13 +38,6 @@ const SETTINGS_SECTIONS: Array<{
     label: 'MCP Servers',
     icon: 'server',
     accent: 'text-cat-violet bg-cat-violet/15',
-  },
-  { id: 'devices', label: 'Devices', icon: 'devices', accent: 'text-cat-cyan bg-cat-cyan/15' },
-  {
-    id: 'remote-daemons',
-    label: 'Remote Daemons',
-    icon: 'server',
-    accent: 'text-cat-teal bg-cat-teal/15',
   },
   { id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-success-soft bg-success/15' },
   {
@@ -79,17 +72,6 @@ function SectionIcon({ type }: { type: string }) {
           />
         </svg>
       );
-    case 'devices':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
-          />
-        </svg>
-      );
     case 'server':
       return (
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -98,17 +80,6 @@ function SectionIcon({ type }: { type: string }) {
             stroke-linejoin="round"
             stroke-width={2}
             d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
-          />
-        </svg>
-      );
-    case 'cloud':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
           />
         </svg>
       );
@@ -280,7 +251,9 @@ export function ContextPanel() {
               </div>
               <nav class="space-y-1" aria-label="Settings sections">
                 {SETTINGS_SECTIONS.map((section) => {
-                  const isActive = activeSettingsSection === section.id;
+                  const isActive =
+                    activeSettingsSection === section.id ||
+                    (section.id === 'providers' && isConnectionsSection(activeSettingsSection));
                   return (
                     <button
                       key={section.id}
@@ -302,7 +275,7 @@ export function ContextPanel() {
                         <SectionIcon type={section.icon} />
                       </span>
                       <span class="truncate text-sm font-medium">
-                        {section.id === 'connections' ? t('connections.title') : section.label}
+                        {section.id === 'providers' ? t('connections.page') : section.label}
                       </span>
                     </button>
                   );

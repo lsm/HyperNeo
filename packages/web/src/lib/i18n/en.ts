@@ -1,5 +1,9 @@
 export const en = {
-  'connections.title': 'Connections',
+  'connections.page': 'Connections & Services',
+  'connections.tabProviders': 'Providers',
+  'connections.tabAccounts': 'Accounts',
+  'connections.tabDevices': 'Devices',
+  'connections.tabRemoteDaemons': 'Remote Daemons',
   'connections.description': 'Connect Google accounts for this instance.',
   'connections.connect': 'Connect Google',
   'connections.reconnect': 'Reconnect',
