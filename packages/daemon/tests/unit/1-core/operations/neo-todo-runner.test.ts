@@ -1,22 +1,20 @@
-import { describe, expect, test } from 'bun:test';
+import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
+import { NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
+import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
+import { driverExchangeReport, readDriverLanded } from '../../../../src/lib/neo/driver-work.ts';
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
+import { planNudge } from '../../../../src/lib/neo/nudge.ts';
+import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
-import { qualifyRemoteOrigin, renderAddress } from '../../../../src/lib/mailbox/address.ts';
-import { sessionSender } from '../../../../src/lib/messaging/message-send.ts';
-import { driverExchangeReport, readDriverLanded } from '../../../../src/lib/neo/driver-work.ts';
-import { planNudge } from '../../../../src/lib/neo/nudge.ts';
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
-import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
-import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
-import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
-import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
-import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
-import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import {
   createNeoTodoRunner,
   neoTodoNote,
@@ -24,14 +22,16 @@ import {
   planNeoTodoSettled,
   requireNeoTodoStartable,
 } from '../../../../src/lib/neo/todo-runner.ts';
+import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
-import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
+import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
+import { qualifyRemoteOrigin, renderAddress } from '../../../../src/lib/mailbox/address.ts';
+import { sessionSender } from '../../../../src/lib/messaging/message-send.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
 const receipt = { executionId: ref.id, inputId: 'input-1' };

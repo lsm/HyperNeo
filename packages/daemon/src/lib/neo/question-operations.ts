@@ -1,38 +1,34 @@
+import { coreTodoPolicy } from './core-todo-checks.ts';
+import { planNeoTodoDraft, type NeoTodoPolicy } from './todo-operations.ts';
+import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
+import { isNeoTodoStalledCard } from './todo-state.ts';
+import { neoDerivedId } from './derived-id.ts';
+import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
+import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
+import type { NeoQuestionSource } from '@hyperneo/shared/types/neo-ask';
 import type {
   NeoAsk,
   NeoQuestion,
   NeoQuestionAnswer,
-  NeoQuestionSource,
   NeoTodo,
 } from '@hyperneo/shared/types/neo-ask';
-import { isAgentResolvedQuestion, neoLabelledOptions } from '@hyperneo/shared/types/neo-ask';
-import type { LanguageSetting } from '@hyperneo/shared/types/settings';
+import { neoLabelledOptions, isAgentResolvedQuestion } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
   NeoAskTodoRepository,
-  NeoCardReplyContext,
   NeoQuestionDraft,
+  NeoCardReplyContext,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import { requireLocalUser, isLocalUser } from '../operations/caller.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
+import { TodoCheck, requireNeoOpenAsk } from './todo-operations.ts';
+import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
 import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
-import { type WorkRef, WorkRefSchema } from '../drivers/types.ts';
-import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
-import { isLocalUser, requireLocalUser } from '../operations/caller.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { coreTodoPolicy } from './core-todo-checks.ts';
-import { neoDerivedId } from './derived-id.ts';
-import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
-import { type NeoInputReads, noNeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
-import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
-import {
-  type NeoTodoPolicy,
-  planNeoTodoDraft,
-  requireNeoOpenAsk,
-  TodoCheck,
-} from './todo-operations.ts';
-import { isNeoTodoStalledCard } from './todo-state.ts';
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
+import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 
 const ReportLine = z
   .string()

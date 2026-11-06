@@ -1,3 +1,10 @@
+import {
+  NEO_TODO_CANCELLED_DEPENDENCY,
+  neoTodoAfterRefusal,
+  neoTodoCancelledDependencies,
+  neoTodoDependencyRefusal,
+  planNeoTodoDependencies,
+} from './todo-dependencies.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -16,20 +23,13 @@ import { todoEvidenceFile } from '../work-locations.ts';
 import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import { neoUserFolder } from './folder.ts';
-import { type NeoInputReads, noNeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
+import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoMayFinish,
   sameNeoTodoCheck,
 } from './todo-completion.ts';
-import {
-  NEO_TODO_CANCELLED_DEPENDENCY,
-  neoTodoAfterRefusal,
-  neoTodoCancelledDependencies,
-  neoTodoDependencyRefusal,
-  planNeoTodoDependencies,
-} from './todo-dependencies.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { NEO_TODO_NOT_APPROVED, neoTodoStartRefusal } from './todo-start-gate.ts';
