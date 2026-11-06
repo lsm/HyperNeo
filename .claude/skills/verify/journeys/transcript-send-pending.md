@@ -16,9 +16,10 @@ staged photos, file text, quote and Preview when present. No message has sent ye
 Call `/release`. End state: exactly one `neo.message.send` operation carries the
 recording UUID as requestId, prefix plus final transcript, and the accepted
 context. The message is visible in the chat and that audio record is removed.
-Repeat at mobile width. Existing recording-arrow staging remains: while still
-recording, an attachment, reply or Preview sends the transcript into the draft;
-only a subsequent pending-transcription Send tap upgrades that intent.
+Repeat at mobile width. Send during recording now captures the whole composition,
+including attachments, reply and Preview, then submits after final ASR. Stop alone
+keeps the transcript in the draft. Follow voice-submit-context-matrix.md for the
+real browser matrix across batch and live streaming ASR.
 
 The component regressions also hold ASR, change later text/quote, and confirm
 the captured message sends while newer edits survive. ASR failure produces no

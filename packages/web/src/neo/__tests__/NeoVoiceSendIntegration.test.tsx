@@ -370,11 +370,11 @@ describe('NeoComposer and NeoVoice send integration', () => {
       expect(screen.getByText(/To Neo.*Current B/)).toBeTruthy();
     }
   );
-  it('sends the typed draft and transcript with the selected quote only through normal send', async () => {
+  it('Stop keeps quoted speech as a draft until the ordinary Send', async () => {
     const quote: NeoQuote = { author: 'Neo', text: 'Earlier answer', anchor: 'source' };
     const { current, onTranscript, onSend, rerender } = renderComposer('typed first', quote);
     const stop = await screen.findByRole('button', {
-      name: 'Stop recording and add it to your draft',
+      name: 'Stop recording and keep the text as a draft',
     });
     fireEvent.click(stop);
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken second'));
@@ -405,7 +405,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
       text: 'Earlier answer',
       anchor: 'source',
     });
-    await screen.findByRole('button', { name: 'Stop recording and add it to your draft' });
+    await awaitRecordingComposer();
     fireEvent.click(buttonNamed('Remove reply'));
     expect(onCancelQuote).toHaveBeenCalledTimes(1);
     rerender();
@@ -552,29 +552,14 @@ describe('NeoComposer and NeoVoice send integration', () => {
     }
   );
 
-  it('with attachments staged, the arrow adds the transcript to the draft instead of sending', async () => {
+  it('Stop keeps staged attachments and the transcript in the draft without sending', async () => {
     attachmentFiles.current = [{ id: 'f1', kind: 'text', name: 'notes.txt', text: 'hi' }];
     const { onTranscript, onError } = renderComposer();
-    await waitFor(() =>
-      expect(buttonNamed('Stop recording and add it to your draft')).toBeTruthy()
-    );
-    const arrow = buttonNamed('Stop recording and add it to your draft');
-    expect(arrow.disabled).toBe(false);
-    expect(arrow.title).toContain('attachments');
-    expect(screen.getByRole('status').textContent).toBe(
-      'Recording · Stop adds it to your draft; send it with your attachments'
-    );
-
-    fireEvent.click(arrow);
-
+    await waitFor(() => expect(stopControl().disabled).toBe(false));
+    fireEvent.click(stopControl());
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken second'));
     expect(asks()).toHaveLength(0);
-    expect(reportedErrors(onError)).toContain(
-      'Added to your draft so it goes out with your attachments. Click send when ready.'
-    );
-    expect(reportedErrors(onError)).not.toContain(
-      'Could not send that recording. It is saved below so you can retry.'
-    );
+    expect(reportedErrors(onError)).toEqual([]);
   });
 
   it('persists the typed draft at record creation, before transcription finishes', async () => {

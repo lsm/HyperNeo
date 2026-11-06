@@ -16,13 +16,18 @@ the quote, typed prefix and spoken words, leaving an empty composer. The baselin
 fails this assertion with no send and all words left in the draft.
 
 Run the same command with after to exercise plain, quote, image, file, quote plus
-image, quote plus file, and quote plus image plus file. Each runs with direct Send
+image, quote plus file, and quote plus image plus file. Image and file cases
+include two attachments each. Each runs with direct Send
 during recording, Send during held final ASR, immediate Stop then Send, and Enter
-on the focused Send control while ASR is pending. Stop alone keeps a draft.
+on the focused Send control while ASR is pending. Repeat all cases with batch
+and live streaming ASR. Stop alone must keep the complete draft and its context,
+then an ordinary Send submits it once. The web has no separate automatic voice
+conversation mode. Its live ASR uses the same recorder and submit path.
 
 matrix.json records case/action, ASR/audio evidence, sends, durable messages and
 remaining draft. receipts.json contains actual operation receipts and stored
 conversation inputs. The fixture observes the original operation unchanged.
+The matrix pauses after twenty batch requests to respect the daemon rate limit.
 Screenshots retain the composer and conversation outcomes. All ports are random,
 8399/8499 are refused, and finally closes browser, ASR and isolated daemon. The
 wrapper saves evidence and removes temporary data. Require its exitCode 0.

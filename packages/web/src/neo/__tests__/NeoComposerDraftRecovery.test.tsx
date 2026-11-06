@@ -661,7 +661,7 @@ describe('Neo real composer draft recovery', () => {
         view.model.value = { ...view.model.value };
       });
       const stop = await screen.findByRole('button', {
-        name: 'Stop recording and add it to your draft',
+        name: 'Stop recording and keep the text as a draft',
       });
       voice.recording = false;
       fireEvent.click(stop);
@@ -768,7 +768,7 @@ describe('Neo real composer draft recovery', () => {
           outcome: { kind: 'insert', transcript: 'Voice addition', autoSend: false },
         });
         const stop = await screen.findByRole('button', {
-          name: 'Stop recording and add it to your draft',
+          name: 'Stop recording and keep the text as a draft',
         });
         voice.recording = false;
         fireEvent.click(stop);

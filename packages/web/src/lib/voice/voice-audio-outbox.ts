@@ -196,7 +196,13 @@ async function refuseVoiceSend(
   text: string,
   reason: string
 ): Promise<VoiceSendOutcome> {
-  if (record.previewContext || record.sendContext) {
+  if (
+    record.previewContext ||
+    record.sendContext?.quote ||
+    record.sendContext?.images?.length ||
+    record.sendContext?.suffix ||
+    record.sendContext?.attachmentIds.length
+  ) {
     const retained = await putVoiceRecord({ ...record, sendText: text, sendRefusal: reason });
     return retained ? { kind: 'refused', reason, retained: true } : { kind: 'unconfirmed' };
   }
