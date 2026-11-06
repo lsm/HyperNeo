@@ -292,7 +292,7 @@ describe('Neo preview Work layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All · 1', exact: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Todo worker' }));
     expect(screen.queryByRole('dialog', { name: 'Existing task' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Close HyperNeo · worker' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Todo worker' }));
     expect(
       screen.getByRole('button', { name: 'Restore side by side' }).getAttribute('aria-pressed')
     ).toBe('true');
@@ -466,17 +466,17 @@ describe('Neo preview Work layout', () => {
     mount(false, true);
     expect(tabNames()).toEqual([]);
     openWorker();
-    expect(tabNames()).toEqual(['Your work · 1', 'HyperNeo · worker']);
-    const session = screen.getByRole('tab', { name: 'HyperNeo · worker' });
+    expect(tabNames()).toEqual(['Your work · 1', 'Todo worker']);
+    const session = screen.getByRole('tab', { name: 'Todo worker' });
     expect(session.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('button', { name: 'Close worker chat' })).toBeTruthy();
     await open('a');
-    expect(tabNames()).toEqual(['Your work · 1', 'HyperNeo · worker', 'File a']);
-    fireEvent.click(screen.getByRole('tab', { name: 'HyperNeo · worker' }));
-    expect(screen.getByRole('tabpanel', { name: 'HyperNeo · worker' })).toBeTruthy();
+    expect(tabNames()).toEqual(['Your work · 1', 'Todo worker', 'File a']);
+    fireEvent.click(screen.getByRole('tab', { name: 'Todo worker' }));
+    expect(screen.getByRole('tabpanel', { name: 'Todo worker' })).toBeTruthy();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(tabNames()).toHaveLength(3);
-    fireEvent.click(screen.getByRole('button', { name: 'Close HyperNeo · worker' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Todo worker' }));
     expect(tabNames()).toEqual(['Your work · 1', 'File a']);
     expect(screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')).toBe(
       'true'
@@ -491,7 +491,7 @@ describe('Neo preview Work layout', () => {
     viewport = 1500;
     mount(false, true);
     openWorker();
-    expect(tabNames()).toEqual(['Your work · 1', 'HyperNeo · worker']);
+    expect(tabNames()).toEqual(['Your work · 1', 'Todo worker']);
   });
 
   it('keeps a phone session full screen with no tab strip', () => {
@@ -517,7 +517,7 @@ describe('Neo preview Work layout', () => {
       'File a',
     ]);
     act(() => resize(1300));
-    expect(tabNames()).toEqual(['Your work · 1', 'File a', 'HyperNeo · second']);
+    expect(tabNames()).toEqual(['Your work · 1', 'File a', 'Second']);
   });
 
   it('carries the open session across the phone boundary', () => {
@@ -527,7 +527,7 @@ describe('Neo preview Work layout', () => {
     expect(tabNames()).toEqual([]);
     expect(screen.getByRole('button', { name: 'Close worker chat' })).toBeTruthy();
     act(() => resize(1300));
-    expect(tabNames()).toEqual(['Your work · 1', 'HyperNeo · worker']);
+    expect(tabNames()).toEqual(['Your work · 1', 'Todo worker']);
     expect(screen.getAllByRole('button', { name: 'Close worker chat' })).toHaveLength(1);
   });
 

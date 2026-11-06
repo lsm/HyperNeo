@@ -141,14 +141,14 @@ export function NeoLive() {
     setCardTarget(null);
     setCardUnavailable(false);
   }, [scenesOpen]);
-  const [chat, setChat] = useState<{ sessionId: string } | null>(null);
+  const [chat, setChat] = useState<{ sessionId: string; label?: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
-  const openSession = (link: string) => {
+  const openSession = (link: string, label?: string) => {
     if (!link.startsWith('/session/')) return window.open(link, '_blank', 'noopener');
     const sessionId = link.slice('/session/'.length);
     if (columns && previewDesktop)
-      openArtifactPreview({ kind: 'session', sessionId }, sessionTitle(sessionId));
-    else setChat({ sessionId });
+      openArtifactPreview({ kind: 'session', sessionId }, label ?? sessionTitle(sessionId));
+    else setChat({ sessionId, label });
   };
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const dragDepth = useRef(0);
@@ -464,13 +464,18 @@ export function NeoLive() {
       }
       const top = artifactPreviewStack.value.at(-1);
       if (top?.kind === 'session' && !(columns && previewWidth)) {
-        setChat({ sessionId: top.sessionId });
+        setChat({
+          sessionId: top.sessionId,
+          label: artifactPreviewWorkspace.state.value.files.find(
+            (file) => file.sessionId === top.sessionId
+          )?.title,
+        });
         for (const { sessionId } of artifactPreviewWorkspace.state.value.files)
           if (sessionId !== undefined) artifactPreviewWorkspace.close(sessionTabKey(sessionId));
       } else if (chat && columns && previewWidth) {
         openArtifactPreview(
           { kind: 'session', sessionId: chat.sessionId },
-          sessionTitle(chat.sessionId)
+          chat.label ?? sessionTitle(chat.sessionId)
         );
         setChat(null);
       }
@@ -1077,6 +1082,7 @@ export function NeoLive() {
             key={chat.sessionId}
             sessionId={chat.sessionId}
             title={sessionTitle(chat.sessionId)}
+            label={chat.label}
             onClose={closeChat}
           />
         )}
@@ -1191,9 +1197,19 @@ export function NeoLive() {
         }
         suspended={!!chat || referenceWork}
         work={columns ? { id: 'neo-preview-work-panel', count: workCount } : undefined}
-        renderSession={(sessionId) => (
-          <NeoSessionPane key={sessionId} sessionId={sessionId} title={sessionTitle(sessionId)} />
-        )}
+        renderSession={(sessionId) => {
+          const named = artifactPreviewWorkspace.state.value.files.find(
+            (file) => file.sessionId === sessionId
+          )?.title;
+          return (
+            <NeoSessionPane
+              key={sessionId}
+              sessionId={sessionId}
+              title={sessionTitle(sessionId)}
+              label={named === sessionTitle(sessionId) ? undefined : named}
+            />
+          );
+        }}
         markdownClass="neo-message-assistant neo-markdown neo-markdown-assistant text-base leading-relaxed"
       />
     </div>
