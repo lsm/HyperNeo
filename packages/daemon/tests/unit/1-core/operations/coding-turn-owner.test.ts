@@ -167,6 +167,22 @@ describe('planCodingTurnFacts', () => {
     ]);
   });
 
+  test('a PR only displayed and unreadable does not hold the check open', () => {
+    const shown = 'https://github.com/other/private/pull/1';
+    const own = [turn({ urls: [url, shown] })];
+    expect(planCodingTurnFacts(todo, own, [url, shown], [pr], mentions, 9)).toEqual({
+      prs: [pr],
+      observedAt: 9,
+    });
+  });
+
+  test('a reported PR that cannot be read stays incomplete', () => {
+    const reported = 'https://github.com/acme/app/pull/8';
+    const own = [turn({ urls: [url, reported], finalUrls: [url, reported] })];
+    const facts = planCodingTurnFacts(todo, own, [url, reported], [pr], mentions, 9);
+    expect(facts.incomplete).toBe(true);
+  });
+
   test('stays incomplete when a turn, a read or an owner is unknown', () => {
     const facts = (own: CodingTurn[], read: never[] | null, seen = mentions) =>
       planCodingTurnFacts(todo, own, [url], read, seen, 9);

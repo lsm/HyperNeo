@@ -75,6 +75,14 @@ describe('coding turn PRs', () => {
     db.close();
   });
 
+  test('a turn showing two looked-up URLs comes back once', () => {
+    const { db, record } = setup();
+    const other = 'https://github.com/acme/app/pull/8';
+    record(fact('t1', [], [url, other], 100));
+    expect(new WorkTurnRepository(db).mentioning([url, other]).map(({ id }) => id)).toEqual(['t1']);
+    db.close();
+  });
+
   test('re-recording a turn replaces its URLs', () => {
     const { db, record } = setup();
     record(fact('t1', [], [url], 100));
