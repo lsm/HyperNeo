@@ -22,6 +22,7 @@ import {
 } from './status-codes.ts';
 import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
+import { neoQuestionCoversTodo } from './todo-state.ts';
 import { todoEvidenceFile } from '../work-locations.ts';
 
 function internalCompletionEvidence(todo: NeoTodo): boolean {
@@ -92,6 +93,29 @@ export function neoAskEntryState(
   if (todos.some((todo) => todo.state === 'doing' || todo.state === 'blocked')) return 'doing';
   const live = todos.filter((todo) => todo.state !== 'removed');
   return live.length && live.every((todo) => todo.state === 'done') ? 'done' : 'todo';
+}
+
+const NEO_OWNED_BLOCKERS: readonly NeoTodo['blockedBy'][] = [
+  'needs-human',
+  'stalled',
+  'environment',
+];
+const neoHandlesBlocker = (todo: Pick<NeoTodo, 'state' | 'blockedBy'>) =>
+  todo.state === 'blocked' && NEO_OWNED_BLOCKERS.includes(todo.blockedBy);
+
+export function neoWorkCounts(
+  openTodos: readonly Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy'>[],
+  openQuestions: readonly Pick<NeoQuestion, 'askId' | 'state' | 'kind' | 'todoId' | 'startTodos'>[]
+): { needsYou: number; neoUnhandled: number } {
+  const cards = openQuestions.filter((question) => question.state === 'open');
+  return {
+    needsYou: new Set(cards.map((question) => question.askId)).size,
+    neoUnhandled: openTodos.filter(
+      (todo) =>
+        neoHandlesBlocker(todo) &&
+        !cards.some((card) => card.askId === todo.askId && neoQuestionCoversTodo(card, todo))
+    ).length,
+  };
 }
 
 export const NEO_DONE_TODOS_SHOWN = 3;
