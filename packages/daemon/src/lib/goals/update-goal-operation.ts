@@ -11,14 +11,14 @@ import {
   goalMutationContext,
   recordGoalAudit,
 } from './goal-operation-scope.ts';
-import { GOAL_WRITE_POLICY } from './goal-contract.ts';
-import { SpaceGoalSchema } from './goal-result-schemas.ts';
 import {
+  GOAL_WRITE_POLICY,
   GoalMetricsSchema,
   GoalPrioritySchema,
   GoalStatusSchema,
   GoalTypeSchema,
 } from './goal-contract.ts';
+import { SpaceGoalSchema } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 
 export const GoalWritableFieldsShape = {

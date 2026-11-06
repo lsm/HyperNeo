@@ -11,16 +11,17 @@ import {
   isAgentSessionCaller,
   type OperationCaller,
 } from '../operations/registry.ts';
-import { GOAL_READ_POLICY, GOAL_WRITE_POLICY } from './goal-contract.ts';
-import { SessionScheduleCadenceSchema } from '../scheduler/operations.ts';
-import { requireValidCadence } from '../scheduler/session-schedules.ts';
-import type { SessionGoalSchedules } from './session-goal-schedules.ts';
 import {
+  GOAL_READ_POLICY,
+  GOAL_WRITE_POLICY,
   GoalMetricsSchema,
   GoalPrioritySchema,
   GoalStatusSchema,
   GoalTypeSchema,
 } from './goal-contract.ts';
+import { SessionScheduleCadenceSchema } from '../scheduler/operations.ts';
+import { requireValidCadence } from '../scheduler/session-schedules.ts';
+import type { SessionGoalSchedules } from './session-goal-schedules.ts';
 
 type Rejection = { accepted: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
