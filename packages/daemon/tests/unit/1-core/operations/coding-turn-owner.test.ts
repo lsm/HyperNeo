@@ -15,6 +15,7 @@ const turn = (change: Partial<CodingTurn> = {}): CodingTurn => ({
   ended: 'success',
   inputs: ['receipt-a'],
   urls: [url],
+  finalUrls: [url],
   complete: true,
   cursor: '{}',
   previous: null,
@@ -43,6 +44,29 @@ describe('coding turn ownership', () => {
     expect(owner([turn({ urls: [`${url}/files`] })]).state).toBe('placed');
     expect(owner([turn({ urls: [`${url}3`] })])).toEqual({ state: 'none' });
     expect(owner([turn({ urls: [url.replace('acme', 'ACME')] })]).state).toBe('placed');
+  });
+
+  test('the turn that reports a PR owns it, not a turn that only displayed it', () => {
+    const other = { adapter: 'hyperneo', id: 's2' };
+    const shown = turn({ ref: other, inputs: ['receipt-b'], finalUrls: [] });
+    expect(owner([shown, turn()])).toEqual({ state: 'placed', session, todo: 'todo-a' });
+  });
+
+  test('two sessions reporting one PR stay unknown', () => {
+    const other = { adapter: 'hyperneo', id: 's2' };
+    expect(owner([turn(), turn({ ref: other })])).toEqual({ state: 'unknown' });
+  });
+
+  test('a PR only in tool output is placed when nothing else could claim it', () => {
+    expect(owner([turn({ finalUrls: [] })])).toEqual({ state: 'placed', session, todo: 'todo-a' });
+    expect(owner([turn({ finalUrls: ['https://example.com/report'] })]).state).toBe('placed');
+  });
+
+  test('a PR only in tool output is unknown beside a reported PR or a second turn', () => {
+    const other = 'https://github.com/acme/app/pull/8';
+    expect(owner([turn({ urls: [url, other], finalUrls: [other] })])).toEqual({ state: 'unknown' });
+    const shown = turn({ finalUrls: [] });
+    expect(owner([shown, { ...shown, id: 't2' }])).toEqual({ state: 'unknown' });
   });
 
   test('a turn with no recorded todo still names the session', () => {

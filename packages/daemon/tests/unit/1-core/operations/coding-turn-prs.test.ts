@@ -23,6 +23,7 @@ const fact = (id: string, inputs: string[], urls: string[], start: number, chang
   ended: 'success',
   inputs,
   urls,
+  finalUrls: urls,
   complete: true,
   cursor: `{"at":${start}}`,
   ...change,
