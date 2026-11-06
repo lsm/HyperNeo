@@ -15,7 +15,6 @@
     "packages/daemon": {
       "entry": [
         "main.ts",
-        "src/lib/space/daemon-module.ts",
         "vitest.online.config.ts",
         "scripts/**/*.ts",
         "tests/**/*.ts",
@@ -43,7 +42,8 @@
       "project": ["**/*.ts"]
     },
     "packages/space": {
-      "project": ["**/*.ts"]
+      "project": ["**/*.ts"],
+      "entry": ["src/daemon-module.ts"]
     },
     "packages/shared": {
       "entry": ["tests/**/*.ts"],
