@@ -76,7 +76,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
             input: {
               retireWhen: pendingTodoCheck,
               askId: 'costco',
-              text: phase === 'reply' ? '周六还是周日去 Costco？' : `Costco ${phase}`,
+              text: phase === 'reply' ? '周六还是周日去 Costco？' : `Costco ${phase} 怎么安排？`,
               kind: 'choice',
               options: ['周六', '周日'],
             },
@@ -300,6 +300,12 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
       items: [expect.objectContaining({ requestId, messageStatus: 'read' })],
     });
     expect((await read()).items).toEqual(page.items);
+    const nextPhase = (index: number) =>
+      hub.request('operation.invoke', {
+        name: 'neo.question.retire',
+        input: { questionId: todos.listQuestions('costco')[index].id, reason: 'Next phase.' },
+      });
+    await nextPhase(0);
     phase = 'background';
     rounds = 0;
     finished = false;
@@ -320,6 +326,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     );
     const afterBackground = await read();
     expect(todos.listQuestions('costco')).toHaveLength(2);
+    await nextPhase(1);
     expect(afterBackground.items).toEqual(page.items);
     phase = 'later';
     rounds = 0;
