@@ -24,7 +24,6 @@ function fixture() {
   git('config', 'user.email', 'fixture@example.invalid');
   git('config', 'user.name', 'Fixture');
   put('packages/daemon/src/main.ts', "db.prepare('SELECT 1');");
-  mkdirSync(join(root, 'packages/space/src'), { recursive: true });
   const baseline = { prepare: 1, transaction: 0, exec: 0, query: 0, run: 0, open: 0 };
   const save = () => put('scripts/db-main-thread-baseline.json', JSON.stringify(baseline));
   save();
