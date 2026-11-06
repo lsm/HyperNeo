@@ -2,6 +2,7 @@ import type { Session } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
+import type { SendStatus } from '../../storage/repositories/sdk-message-repository.ts';
 import type { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { buildPrEventTopicPattern, parseGitHubTopic, parsePrUrl } from '../github/parse-pr-url.ts';
 import {
@@ -35,6 +36,7 @@ export interface SessionEventDependencies extends OwnSubscriptionDependencies {
   events: Pick<SessionExternalEventStore, 'getById' | 'listRecent'>;
   getSession: (sessionId: string) => Session | null;
   deliveryJob: (messageUuid: string) => Job | null;
+  sendStatus: (sessionId: string, messageUuid: string) => SendStatus | null;
 }
 
 export const OutcomeSchema = z.union([
@@ -143,7 +145,6 @@ const DeliverySchema = z.object({
   eventId: z.string(),
   state: z.enum(['pending', 'delivered', 'failed']),
   failureReason: z.string().nullable(),
-  deliveredAt: z.number().nullable(),
   event: z.object({
     topic: z.string(),
     source: z.string(),
@@ -161,18 +162,23 @@ const DeliveryListInput = z
   })
   .strict();
 
-function jobDeliveryState(status: Job['status']): Delivery['state'] {
-  if (status === 'completed') return 'delivered';
-  return status === 'pending' || status === 'processing' ? 'pending' : 'failed';
+export function deliveryState(job: Job, sendStatus: SendStatus | null): Delivery['state'] {
+  if (sendStatus === 'consumed') return 'delivered';
+  return sendStatus === 'failed' || job.status === 'failed' || job.status === 'dead'
+    ? 'failed'
+    : 'pending';
 }
 
-function toDelivery({ event }: ExternalEventRecord, job: Job): Delivery {
-  const state = jobDeliveryState(job.status);
+function toDelivery(
+  { event }: ExternalEventRecord,
+  job: Job,
+  sendStatus: SendStatus | null
+): Delivery {
+  const state = deliveryState(job, sendStatus);
   return {
     eventId: event.id,
     state,
     failureReason: state === 'failed' ? job.error : null,
-    deliveredAt: state === 'delivered' ? job.completedAt : null,
     event: {
       topic: event.topic,
       source: event.source,
@@ -186,11 +192,12 @@ function toDelivery({ event }: ExternalEventRecord, job: Job): Delivery {
 export function readSessionDeliveries(
   sessionId: string,
   input: z.infer<typeof DeliveryListInput>,
-  deps: Pick<SessionEventDependencies, 'events' | 'deliveryJob'>
+  deps: Pick<SessionEventDependencies, 'events' | 'deliveryJob' | 'sendStatus'>
 ) {
   const deliveries = deps.events.listRecent(RECENT_EVENT_WINDOW).flatMap((record) => {
-    const job = deps.deliveryJob(sessionEventMessageUuid(record.event.id, sessionId));
-    return job ? [toDelivery(record, job)] : [];
+    const messageUuid = sessionEventMessageUuid(record.event.id, sessionId);
+    const job = deps.deliveryJob(messageUuid);
+    return job ? [toDelivery(record, job, deps.sendStatus(sessionId, messageUuid))] : [];
   });
   return {
     deliveries: deliveries
@@ -293,7 +300,7 @@ export function createSessionEventOperations(
     defineOperation({
       name: 'event.external.delivery.list',
       policy: { safetyClass: 'read', roles: SESSION_EVENT_ROLES },
-      description: `List the external events delivered to this session, newest first, with each delivery's state. Covers the ${RECENT_EVENT_WINDOW} most recent events while their mailbox jobs are retained. ${SESSION_DOC}`,
+      description: `List the external events delivered to this session, newest first, with each delivery's state: delivered once the session consumed the message, pending while it waits. Covers the ${RECENT_EVENT_WINDOW} most recent events while their mailbox jobs are retained. ${SESSION_DOC}`,
       inputSchema: DeliveryListInput,
       resultSchema: z.union([z.object({ deliveries: z.array(DeliverySchema) }), REJECTIONS]),
       execute: ownSessionPipeline('list-session-event-deliveries', deps, readSessionDeliveries),

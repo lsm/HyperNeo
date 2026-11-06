@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { deliveryState } from '../../../../src/lib/external-events/session-event-operations.ts';
 import { sessionEventMessageUuid } from '../../../../src/lib/external-events/session-event-delivery.ts';
 import {
   SESSION_EVENT_SCOPE,
@@ -16,6 +17,7 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import type { FamilyOperationContext } from '../../../../src/lib/rpc-handlers/family-operations/context.ts';
 import { registerSessionEventOperations } from '../../../../src/lib/rpc-handlers/family-operations/external-events.ts';
+import type { Job } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -148,11 +150,27 @@ describe('session event operations without Space', () => {
     job('mine', 's-plain');
     job('theirs', 's-other');
     expect(await run('event.external.delivery.list', {})).toMatchObject({
-      deliveries: [{ eventId: 'mine', state: 'pending', deliveredAt: null }],
+      deliveries: [{ eventId: 'mine', state: 'pending' }],
     });
     expect(await run('event.external.delivery.list', { state: 'delivered' })).toEqual({
       deliveries: [],
     });
+  });
+});
+
+describe('deliveryState', () => {
+  const job = (status: Job['status']) => ({ status }) as Job;
+
+  test('a saved or deferred message is pending until the session consumes it', () => {
+    expect(deliveryState(job('completed'), 'deferred')).toBe('pending');
+    expect(deliveryState(job('completed'), 'enqueued')).toBe('pending');
+    expect(deliveryState(job('completed'), null)).toBe('pending');
+    expect(deliveryState(job('completed'), 'consumed')).toBe('delivered');
+  });
+
+  test('a failed message or dead job is failed', () => {
+    expect(deliveryState(job('completed'), 'failed')).toBe('failed');
+    expect(deliveryState(job('dead'), null)).toBe('failed');
   });
 });
 

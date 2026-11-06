@@ -104,11 +104,17 @@ try {
   });
   for (let attempt = 0; attempt < 50; attempt++) {
     evidence.deliveries = await invoke('event.external.delivery.list');
-    if (evidence.deliveries.deliveries[0]?.state === 'delivered') break;
+    evidence.message = raw
+      .prepare(
+        "SELECT send_status FROM sdk_messages WHERE session_id = ? AND message_type = 'user' ORDER BY rowid DESC LIMIT 1"
+      )
+      .get(sessionId);
+    if (evidence.message && evidence.deliveries.deliveries.length > 0) break;
     await Bun.sleep(100);
   }
   assert.equal(evidence.deliveries.deliveries[0]?.eventId, 'proof-event');
-  assert.equal(evidence.deliveries.deliveries[0]?.state, 'delivered');
+  assert.equal(evidence.deliveries.deliveries[0]?.state, 'pending');
+  assert(evidence.message);
   evidence.get = await invoke('event.external.get', { eventId: 'proof-event' });
   assert.equal(evidence.get.event.id, 'proof-event');
 

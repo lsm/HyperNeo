@@ -15,6 +15,8 @@ export function registerSessionEventOperations(
     events: new SessionExternalEventStore(db.getDatabase()),
     getSession: (sessionId) => db.getSession(sessionId),
     deliveryJob: (messageUuid) => jobQueue.getLatestByPayload(MAILBOX_LANE, { messageUuid }),
+    sendStatus: (sessionId, messageUuid) =>
+      db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid)?.sendStatus ?? null,
     watchSessionRepo,
   });
 }

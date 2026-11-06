@@ -10,13 +10,17 @@ import { MessageHub, WebSocketClientTransport } from '../packages/shared/src/mod
 
 const run = resolve(process.argv[2] ?? '');
 const spaceOff = process.env.HYPERNEO_SPACE !== 'on';
-async function waitForMailboxJob(dbPath: string) {
+async function waitForMailboxJob(dbPath: string, sessionId: string) {
   const db = new Database(dbPath, { readonly: true });
   try {
     const read = () =>
-      db.prepare("SELECT status, error FROM job_queue WHERE queue = 'mailbox' LIMIT 1").get() as
-        | { status: string; error: string | null }
-        | undefined;
+      db
+        .prepare(
+          `SELECT status, error FROM job_queue
+            WHERE queue = 'mailbox' AND json_extract(payload, '$.to.sessionId') = ?
+            ORDER BY created_at DESC, rowid DESC LIMIT 1`
+        )
+        .get(sessionId) as { status: string; error: string | null } | undefined;
     for (let attempt = 0; attempt < 100 && read()?.status !== 'completed'; attempt++)
       await new Promise((done) => setTimeout(done, 50));
     return read();
@@ -218,7 +222,7 @@ try {
       name: 'message.send',
       input: { to: sessionId, text: 'Space-off mailbox probe', from: 'session:boot-probe' },
     });
-    evidence.mailbox = await waitForMailboxJob(join(run, 'data/daemon.db'));
+    evidence.mailbox = await waitForMailboxJob(join(run, 'data/daemon.db'), sessionId);
     assert.deepEqual(evidence.mailbox, { status: 'completed', error: null });
   }
   const db = new Database(join(run, 'data/daemon.db'), { readonly: true });
