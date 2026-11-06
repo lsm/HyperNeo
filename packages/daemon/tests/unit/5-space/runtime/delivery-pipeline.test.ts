@@ -3,7 +3,7 @@ import {
   classifyExternalEventDelivery,
   type ExternalEventDeliveryDecision,
   type ExternalEventDeliveryInput,
-} from '../../../../src/lib/space/external-events/delivery-pipeline';
+} from '../../../../../space/src/external-events/delivery-pipeline';
 
 function makeInput(
   overrides: Partial<ExternalEventDeliveryInput> = {}

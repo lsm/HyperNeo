@@ -9,7 +9,7 @@ import {
   admitEventCallerSpace,
   callerSessionActiveIn,
   type EventCallerDependencies,
-} from '../external-events/operation-admission.ts';
+} from '../../../../../space/src/external-events/operation-admission.ts';
 import {
   defineOperation,
   type OperationCaller,

@@ -8,7 +8,7 @@ import {
   prepareExternalEventTask,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
-} from '../../../../src/lib/space/external-events/admission-gates';
+} from '../../../../../space/src/external-events/admission-gates';
 import { isQueuedExternalEventExpired } from '../../../../src/lib/external-events/event-delivery-rules';
 
 function makeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {

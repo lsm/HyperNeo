@@ -1,10 +1,13 @@
 import type { Session } from '@hyperneo/shared';
-import type { OperationCaller, OperationCallerRole } from '../../operations/registry.ts';
-import { resolveSessionSpaceId } from '../../session-resolution/space-caller-scope.ts';
+import type {
+  OperationCaller,
+  OperationCallerRole,
+} from '../../../daemon/src/lib/operations/registry.ts';
+import { resolveSessionSpaceId } from '../../../daemon/src/lib/session-resolution/space-caller-scope.ts';
 import {
   resolveWorkflowExecution,
   type SpaceMcpSessionPolicyContext,
-} from '../../session-resolution/space-mcp-session-policy.ts';
+} from '../../../daemon/src/lib/session-resolution/space-mcp-session-policy.ts';
 
 export type EventCallerRejection = 'caller_denied';
 
