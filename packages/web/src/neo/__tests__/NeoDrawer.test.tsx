@@ -57,6 +57,35 @@ describe('NeoDrawer', () => {
     expect(screen.queryByRole('combobox', { name: /Move under/ })).toBeNull();
   });
 
+  it('denies a pending device from a button left of Allow', async () => {
+    const pending = { id: 'pending', kind: 'relay', name: 'Synthetic relay', expiresAt: 4e12 };
+    invoke
+      .mockResolvedValueOnce({ ok: true, pending: [pending] })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, pending: [] });
+    drawer();
+    const deny = await screen.findByRole('button', { name: 'Deny Synthetic relay' });
+    const allow = screen.getByRole('button', { name: 'Allow Synthetic relay' });
+    expect(deny.compareDocumentPosition(allow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(deny);
+    await waitFor(() => expect(screen.queryByText('Synthetic relay')).toBeNull());
+    expect(invoke).toHaveBeenCalledWith(hub, 'device.pair.deny', { codeId: 'pending' });
+    expect(invoke).not.toHaveBeenCalledWith(hub, 'device.pair.approve', expect.anything());
+  });
+
+  it('shows a Deny refusal and keeps the device listed', async () => {
+    invoke
+      .mockResolvedValueOnce({
+        ok: true,
+        pending: [{ id: 'pending', kind: 'daemon', name: 'Test daemon', expiresAt: 4e12 }],
+      })
+      .mockResolvedValueOnce({ ok: false, reason: 'not_pending: code expired' });
+    drawer();
+    fireEvent.click(await screen.findByRole('button', { name: 'Deny Test daemon' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('code expired');
+    expect(screen.getByText('Test daemon')).toBeTruthy();
+  });
+
   it('shows a refusal without pretending the device was allowed', async () => {
     invoke
       .mockResolvedValueOnce({

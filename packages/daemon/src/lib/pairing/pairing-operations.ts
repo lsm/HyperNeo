@@ -24,6 +24,9 @@ export interface PairingOperationDeps {
 export const ALLOW_NEEDS_PAIRED_HUMAN =
   'not_paired: only a paired human device can allow a code. Allow it on the phone or browser you paired first.';
 
+export const DENY_NEEDS_PAIRED_HUMAN =
+  'not_paired: only a paired human device can deny a code. Deny it on the phone or browser you paired first.';
+
 export const fromDoor = (caller: OperationCaller) =>
   caller.source === 'mcp' && caller.principal === SESSION_DOOR_PRINCIPAL;
 
@@ -60,6 +63,19 @@ export function createDevicePairingOperations({
     isLocalUser(caller) &&
     caller.device?.kind === 'human' &&
     pairing().isActiveDevice(caller.device.deviceId);
+  const decidePending = async (
+    caller: OperationCaller,
+    notPaired: string,
+    write: (deviceId: string) => Promise<'approved' | 'denied' | 'not_pending' | 'not_paired'>
+  ) => {
+    if (!isLocalUser(caller)) return refused;
+    if (caller.device?.kind !== 'human') return { ok: false as const, reason: notPaired };
+    const decided = await write(caller.device.deviceId);
+    if (decided === 'not_paired') return { ok: false as const, reason: notPaired };
+    return decided === 'not_pending'
+      ? { ok: false as const, reason: 'not_pending: no pending code with that id.' }
+      : { ok: true as const };
+  };
   return [
     defineOperation({
       name: 'device.pair.create',
@@ -124,17 +140,21 @@ export function createDevicePairingOperations({
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({ codeId: z.string().min(1) }).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
-      execute: async (input, caller) => {
-        if (!isLocalUser(caller)) return refused;
-        if (caller.device?.kind !== 'human')
-          return { ok: false as const, reason: ALLOW_NEEDS_PAIRED_HUMAN };
-        const approved = await pairing().approveAsync(input.codeId, caller.device.deviceId, now());
-        if (approved === 'not_paired')
-          return { ok: false as const, reason: ALLOW_NEEDS_PAIRED_HUMAN };
-        return approved === 'approved'
-          ? { ok: true as const }
-          : { ok: false as const, reason: 'not_pending: no pending code with that id.' };
-      },
+      execute: (input, caller) =>
+        decidePending(caller, ALLOW_NEEDS_PAIRED_HUMAN, (deviceId) =>
+          pairing().approveAsync(input.codeId, deviceId, now())
+        ),
+    }),
+    defineOperation({
+      name: 'device.pair.deny',
+      description: 'Deny a pending pairing code so its device can never pair with it.',
+      policy: { safetyClass: 'human_only' },
+      inputSchema: z.object({ codeId: z.string().min(1) }).strict(),
+      resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
+      execute: (input, caller) =>
+        decidePending(caller, DENY_NEEDS_PAIRED_HUMAN, (deviceId) =>
+          pairing().denyAsync(input.codeId, deviceId, now())
+        ),
     }),
     defineOperation({
       name: 'device.list',
