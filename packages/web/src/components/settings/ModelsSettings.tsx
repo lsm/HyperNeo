@@ -1066,7 +1066,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
 
   return (
     <SettingsSection
-      title="Models"
+      title="HyperNeo sessions"
       actions={
         <Button
           variant="secondary"

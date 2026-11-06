@@ -22,7 +22,7 @@ const SETTINGS_SECTIONS = new Set<SettingsSection>([
   'skills',
   'coding-pack',
   'neo-model',
-  'models',
+  'harness',
   'usage',
   'shortcuts',
   'about',
@@ -76,6 +76,7 @@ export function getSettingsSectionFromSearch(search: string): SettingsSection {
   const section = new URLSearchParams(search).get('tab');
   if (section === 'custom-endpoints') return 'providers';
   if (section === 'appearance') return 'preferences';
+  if (section === 'models') return 'harness';
   return section && SETTINGS_SECTIONS.has(section as SettingsSection)
     ? (section as SettingsSection)
     : 'preferences';

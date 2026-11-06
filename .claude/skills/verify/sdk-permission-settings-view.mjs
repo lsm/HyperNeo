@@ -23,9 +23,9 @@ const browser = await chromium.launch({
 const result = { cases: [] };
 try {
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
-  const select = page.locator('select').filter({ has: page.locator('option[value="acceptEdits"]') });
+  const select = page.locator('select').filter({ has: page.locator('option[value="acceptEdits"]') }).first();
   const open = async () => {
-    await page.goto(`http://127.0.0.1:${port}/settings?tab=general`);
+    await page.goto(`http://127.0.0.1:${port}/settings?tab=harness`);
     await select.waitFor({ timeout: 30000 });
     await page.waitForTimeout(800);
   };

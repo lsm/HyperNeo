@@ -54,7 +54,12 @@ const SETTINGS_SECTIONS: Array<{
     accent: 'text-cat-violet bg-cat-violet/15',
   },
   { id: 'neo-model', label: 'Neo model', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
-  { id: 'models', label: 'Models', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
+  {
+    id: 'harness',
+    label: 'Sessions & Harness',
+    icon: 'swap',
+    accent: 'text-cat-cyan bg-cat-cyan/15',
+  },
   { id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-warning bg-warning/15' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', accent: 'text-cat-pink bg-pink-500/15' },
   { id: 'about', label: 'About', icon: 'info', accent: 'text-fg-soft bg-fill' },
