@@ -115,7 +115,7 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.getAllByText('Todo internal').length).toBeGreaterThan(0);
-    expect(app.queryByText(/^Done =/)).toBeNull();
+    expect(app.queryByText(/^Done when:/)).toBeNull();
     expect(app.queryByRole('button', { name: /Open current file/ })).toBeNull();
   });
   it('loads todo bodies only after opening a summary without open questions', async () => {
