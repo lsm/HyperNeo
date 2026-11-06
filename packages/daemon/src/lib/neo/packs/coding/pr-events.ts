@@ -135,7 +135,7 @@ export class CodingPrEventRepository {
       const watchedRows = watched.filter(
         (row) =>
           !codingPrMayBeInRunningTurn(row.createdAt, lastTurnEnds) &&
-          planCodingLedgerTurnOwner(row, mentions).state !== 'unknown'
+          planCodingLedgerTurnOwner(row, mentions).state === 'none'
       );
       const notice = planCodingUnownedNotice(watchedRows);
       if (!notice) return null;
