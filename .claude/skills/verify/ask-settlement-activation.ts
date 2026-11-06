@@ -60,6 +60,13 @@ const result:Record<string,unknown>={surface:'Real WebSocket settle/Work-card RP
 try{
  await app.spaceRuntimeService.ready();await app.jobProcessor.stop();await transport.connect();
  await app.db.createSession({id:root,title:'Synthetic settlement activation',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
+ ask('unfinished');seed('unfinished-worker','unfinished');card('unfinished-card','unfinished','unfinished-worker');
+ const unfinishedBefore=await stable('unfinished'),stopsBefore=calls.length;
+ const denied=await settle('unfinished');assert(!denied.ok && denied.reason.startsWith('todos_unfinished:'));
+ assert.deepEqual(await stable('unfinished'),unfinishedBefore);assert.equal(calls.length,stopsBefore);
+ const deniedMcpReply=await mcp({name:'neo.ask.settle',input:{askId:'unfinished',status:'done',outcome:'Too soon'}});
+ const deniedMcp=JSON.parse(deniedMcpReply.content[0].text);assert(!deniedMcp.ok && deniedMcp.reason.startsWith('todos_unfinished:'));
+ assert.deepEqual(await stable('unfinished'),unfinishedBefore);assert.equal(calls.length,stopsBefore);result.unfinishedDoneRejectedBeforeStops=true;
  ask('atomic');seed('atomic-worker','atomic');card('atomic-card','atomic','atomic-worker');
  const before=await stable('atomic');db.exec("CREATE TRIGGER fail_atomic_card BEFORE UPDATE ON neo_questions WHEN OLD.ask_id='atomic' BEGIN SELECT RAISE(ABORT, 'synthetic late settlement rollback'); END");
  watch=true;await assert.rejects(settle('atomic'),/synthetic late settlement rollback/);watch=false;

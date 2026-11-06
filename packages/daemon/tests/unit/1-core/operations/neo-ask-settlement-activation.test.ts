@@ -164,6 +164,26 @@ describe('activated ask settlement', () => {
     );
   };
 
+  test.each(['rpc', 'mcp'] as const)(
+    '%s done refuses unfinished work before stopping any worker',
+    async (source) => {
+      question();
+      const before = snapshot();
+      const result = await ops
+        .find((op) => op.name === 'neo.ask.settle')!
+        .execute(
+          { askId: 'ask', status: 'done', outcome: 'Too soon' },
+          { source, principal: 'local', role: 'neo', sessionId: 'neo' }
+        );
+      expect(result).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('todos_unfinished:'),
+      });
+      expect(snapshot()).toEqual(before);
+      expect(effects).toEqual([]);
+    }
+  );
+
   test('current admission, sweeps and receipts avoid the main repository', async () => {
     const report = store.getTodo('first')!.report;
     vi.spyOn(store, 'getAsk').mockImplementation(() => {

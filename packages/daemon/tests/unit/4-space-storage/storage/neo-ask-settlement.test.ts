@@ -101,6 +101,43 @@ describe('Data-only atomic ask settlement', () => {
       );
   };
 
+  test.each(['todo', 'doing', 'blocked', 'failed', 'removed'] as const)(
+    'done refuses an unfinished %s row without changing work or cards',
+    async (state) => {
+      db.prepare('UPDATE neo_todos SET state = ?, reason = NULL WHERE id = ?').run(state, 'first');
+      store.updateTodo(store.getTodo('second')!, { state: 'done', evidence: 'Observed' }, 3);
+      const before = snapshot();
+      expect(await settle()).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('todos_unfinished:'),
+      });
+      expect(snapshot()).toEqual(before);
+      expect(changes).toEqual([]);
+    }
+  );
+
+  test('a todo added after the snapshot prevents done inside the writer transaction', async () => {
+    for (const todo of store.listTodos('ask'))
+      store.updateTodo(todo, { state: 'done', evidence: 'Observed' }, 3);
+    await run<Snapshot>('neo.askSettlementReads', 'snapshot', ['ask']);
+    store.addTodo(
+      'late',
+      'ask',
+      {
+        title: 'Late step',
+        doneWhen: 'Observed late work',
+        check: null,
+        instruction: null,
+        named: null,
+      },
+      4
+    );
+    const before = snapshot();
+    expect(await settle()).toMatchObject({ ok: false, reason: expect.stringContaining('late') });
+    expect(snapshot()).toEqual(before);
+    expect(changes).toEqual([]);
+  });
+
   test('a read snapshot preserves current full reports without a write', async () => {
     const report = 'Entire work 🦊\n'.repeat(20000);
     store.updateTodo(store.getTodo('first')!, { report }, 3);
