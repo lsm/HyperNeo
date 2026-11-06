@@ -8,7 +8,7 @@ import { pairingCodeCreateWrites, type PairingCodeCaller } from './pairing-code-
 import { pairingRevokeWrites } from './pairing-revoke-write.ts';
 import { pairingStateReads } from './pairing-state-read.ts';
 
-export type DeviceKind = 'human' | 'relay' | 'daemon';
+export type DeviceKind = 'human' | 'relay' | 'daemon' | 'agent';
 
 export interface PairedDevice {
   id: string;
@@ -34,14 +34,37 @@ function insertDevice(db: Database, device: PairedDevice, credential: string, re
 export const enrollLocalDevice = defineDbOp({
   name: 'pairing.enrollLocalDevice',
   mode: 'write',
-  run: (db: Database, { credential, now }: { credential: string; now: number }): void => {
+  run: (
+    db: Database,
+    {
+      credential,
+      now,
+      kind = 'human',
+    }: { credential: string; now: number; kind?: 'human' | 'agent' }
+  ): void => {
     insertDevice(
       db,
-      { id: `local-rpc:${randomUUID()}`, name: 'Local tools', kind: 'human', createdAt: now },
+      {
+        id: `${kind === 'agent' ? 'agent-read' : 'local-rpc'}:${randomUUID()}`,
+        name: kind === 'agent' ? 'Local agent reader' : 'Local tools',
+        kind,
+        createdAt: now,
+      },
       credential,
       true
     );
   },
+});
+
+export const deviceKindByCredential = defineDbOp({
+  name: 'pairing.deviceKindByCredential',
+  mode: 'read',
+  run: (db: Database, credential: string): DeviceKind | null =>
+    (
+      db.prepare('SELECT kind FROM paired_devices WHERE secret_hash = ?').get(hash(credential)) as {
+        kind: DeviceKind;
+      } | null
+    )?.kind ?? null,
 });
 
 export function normalizePairingCode(code: string): string {
@@ -243,7 +266,7 @@ export class DevicePairingRepository {
   countDevices(): { all: number; humans: number } {
     return this.db
       .prepare(
-        "SELECT COUNT(*) AS \"all\", COUNT(*) FILTER (WHERE kind = 'human' AND revoked_at IS NULL) AS humans FROM paired_devices WHERE id NOT LIKE 'local-rpc:%'"
+        "SELECT COUNT(*) AS \"all\", COUNT(*) FILTER (WHERE kind = 'human' AND revoked_at IS NULL) AS humans FROM paired_devices WHERE id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
       )
       .get() as { all: number; humans: number };
   }

@@ -128,7 +128,10 @@ import type { ExternalEventDeliveryState } from '../../external-events/types.ts'
 import type { SpaceRpcHost } from '../../rpc-handlers/space-rpc.ts';
 import { createSpaceSessionPort } from '../runtime/space-session-port.ts';
 import type { FamilyOperationContext } from '../../rpc-handlers/family-operations/context.ts';
-import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-operations/space.ts';
+import {
+  collectSpaceFamilyOperations,
+  createSessionSpacePort,
+} from '../../../../../space/src/rpc/family-operations/space.ts';
 import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
 import { archiveAgentSessions } from './space-agent-v2-handlers.ts';
 import type { SessionTarget } from '../../session-resolution/target.ts';

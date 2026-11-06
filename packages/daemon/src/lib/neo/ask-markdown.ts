@@ -4,6 +4,7 @@ import { LOCAL_RPC_PRINCIPAL } from '../operations/caller.ts';
 import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
 import { resolveOperationRegistry, type OperationRegistrySource } from '../operations/registry.ts';
 import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
+import { AGENT_READ_HINT } from '../pairing/agent-read.ts';
 
 function inline(text: string): string {
   return text.replace(/\s+/g, ' ').replace(/[\\`*_[\]<>#]/g, '\\$&');
@@ -74,7 +75,7 @@ export function createAskMarkdownHandler(
     .pipe(authenticateUpgrade, ['req', 'remoteAddress'], 'device')
     .pipe(
       (device: UpgradeIdentity | null) =>
-        device ? { value: device } : { reason: errorResponse('Device pairing required', 401) },
+        device ? { value: device } : { reason: errorResponse(AGENT_READ_HINT, 401) },
       'device',
       'result:response'
     )
@@ -95,7 +96,11 @@ export function createAskMarkdownHandler(
           resolveOperationRegistry(registry),
           'neo.ask.read',
           { askId },
-          { source: 'rpc', principal: LOCAL_RPC_PRINCIPAL, device }
+          {
+            source: 'rpc',
+            principal: LOCAL_RPC_PRINCIPAL,
+            ...(device.kind === 'agent' ? {} : { device }),
+          }
         ),
       ['response', 'device'],
       'outcome'

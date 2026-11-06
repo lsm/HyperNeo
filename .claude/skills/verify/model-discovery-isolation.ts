@@ -60,7 +60,7 @@ try {
       hostname: '127.0.0.1', port: 0,
       async fetch(req, upgrade, client) {
         const url = new URL(req.url);
-        const refused = daemon.guardRequest(req);
+        const refused = await daemon.guardRequest(req);
         if (refused) return refused;
         if (url.pathname === '/ws') return upgrade(req, {
           connectionSessionId: 'global', device: await daemon.authenticateUpgrade(req, client?.remoteAddress ?? null),
