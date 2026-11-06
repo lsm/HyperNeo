@@ -1,12 +1,10 @@
 const fs = require('node:fs');
-const cp = require('node:child_process');
 const ts = require(process.cwd() + '/node_modules/typescript');
 const { createHash } = require('node:crypto');
 const hash = text => createHash('sha256').update(text).digest('hex');
 const base = 'cef03ccace652a2701e9f1e65112f17395f88460';
 const extension = 'packages/daemon/src/lib/external-events/github/github-event-extension.ts';
 const writer = 'packages/daemon/src/storage/repositories/github-watch-polling-write.ts';
-const registry = 'packages/daemon/src/storage/db-gateway/db-ops.ts';
 const shared = 'packages/daemon/src/storage/repositories/github-polling-enabled-write.ts';
 const source = fs.readFileSync(extension, 'utf8');
 const pollingImport = "import { gitHubWatchPollingWrite } from '../../../storage/repositories/github-watch-polling-write.ts';\n";
@@ -38,15 +36,8 @@ const roots = [
 const importAndRegistrationLines = 3;
 const ownedRootLines = roots.reduce((n, row) => n + row.lines, importAndRegistrationLines);
 if (ownedRootLines >= 200) throw Error('Complete owned watch control roots exceed their budget');
-const diff = cp.execFileSync('git', ['diff', '--numstat', base, '--', 'packages/daemon/src'], { encoding: 'utf8' });
-const changes = diff.trim().split('\n').filter(Boolean).map(line => {
-  const [added, removed, file] = line.split('\t');
-  return { file, added: Number(added), removed: Number(removed) };
-});
-if (!changes.some(row => row.file === writer)) changes.push({ file: writer, added: writerText.trimEnd().split('\n').length, removed: 0 });
-if (changes.some(row => ![extension, writer, shared, registry].includes(row.file))) throw Error('Unexpected production scope');
-const report = { base, roots, importAndRegistrationLines, ownedRootLines, changedProductionLines: changes.reduce((n, row) => n + row.added + row.removed, 0), changes, sharedModuleSha256: hash(sharedText),
+const report = { base, roots, importAndRegistrationLines, ownedRootLines, sharedModuleSha256: hash(sharedText),
   contract: 'Whole watch callback and admission gate, complete polling writer module, complete shared snapshot helper and registration/import lines are counted. The intent command returns snapshot data after its commit. The caller awaits its injected config store, preserving the preceding watched commit on a later failure. Shared module is verified export-only against its prior full-file hash.',
-  limits: 'Named control roots measured independently of the diff. Reused SQL/mapper/projection leaves keep their interface proofs. Full transitive runtime closure, other RPCs, remote-webhook effects and startup remain outside this scope.' };
+  limits: 'Named control roots measured independently of the PR diff. Measure each rung production diff separately against its fresh dev base. The repository measurement pins every remaining method after the wrapper deletion. Reused SQL/mapper/projection leaves keep their interface proofs. Full transitive runtime closure, other RPCs, remote-webhook effects and startup remain outside this scope.' };
 if (process.argv[2]) fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify(report, null, 2));

@@ -39,8 +39,8 @@ the complete polling writer module, the complete shared snapshot helper and
 its import/registration lines. Require ownedRootLines below 200. It fingerprints
 the extension outside the callback and verifies the shared module's export-only
 change against its prior full-file hash. A CLI fixture with the callback but no
-admission declaration must reject. Production diff and control roots are
-reported separately. Reused SQL/mapping helpers retain interface tests.
+admission declaration must reject. Control roots are reported by the script without requiring historical Git objects.
+Measure each PR diff separately against its fresh dev base. Reused SQL/mapping helpers retain interface tests.
 
 ## Polling intent and saved configuration
 

@@ -1,3 +1,4 @@
+import { clearGitHubWebhookRegistration } from '../../../../src/storage/repositories/github-webhook-clear-persist';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createHash } from 'node:crypto';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
@@ -1170,7 +1171,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBe('missing events');
   });
 
-  test('clearWebhookRegistration clears the stale delivery timestamp', () => {
+  test('clearing webhook registration clears the stale delivery timestamp', () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
@@ -1183,7 +1184,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     });
     extension.repo.markWebhookReceived(repo.id);
     expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).not.toBeNull();
-    extension.repo.clearWebhookRegistration(repo.id, {});
+    clearGitHubWebhookRegistration(db, repo.id);
     expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).toBeNull();
   });
 
