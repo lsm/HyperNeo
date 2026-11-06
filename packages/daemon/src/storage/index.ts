@@ -505,6 +505,10 @@ export class Database {
     return this.getSDKReader().readHyperneoTurnFacts(sessionId, cursor, limit);
   }
 
+  readClaudeRecordsAsync(sessionsDir: string) {
+    return this.getSDKReader().readClaudeRecords(sessionsDir);
+  }
+
   readCodexSnapshotAsync(statePath: string, includeClosed: boolean, idPrefix?: string) {
     return this.getSDKReader().readCodexSnapshot(statePath, includeClosed, idPrefix);
   }
@@ -524,7 +528,7 @@ export class Database {
       undefined,
       this.options?.queryObservability,
       (args) =>
-        'codexSnapshot' in args
+        'codexSnapshot' in args || 'claudeRecords' in args
           ? Promise.resolve()
           : this.core.waitForSdkMessageColumns(
               'sessionId' in args
