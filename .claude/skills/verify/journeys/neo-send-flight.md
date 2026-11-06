@@ -35,7 +35,8 @@ At 390px, also enable reduced motion and require a visible accepted row with no
 flight overlay. Then delay another receipt while selecting a different quote and
 typing the next draft. The submitted quote must leave immediately, the newer
 selection must remain visible during the old send, and late acceptance must
-preserve both the new quote and its words. Retain those screenshots and results.
+preserve both the new quote and its words. Center history Reply actions before
+activating them so the floating header cannot obscure a touch target. Retain those screenshots and results.
 
 Run the approved plan's original baseline driver separately for plain words,
 quoted words, photos, files and sending while scrolled up. Unit/component
