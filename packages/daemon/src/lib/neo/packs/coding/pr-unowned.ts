@@ -6,6 +6,11 @@ import type { CodingSweepDeps } from './pr-sweep.ts';
 export type CodingUnownedPr = { repo: string; number: number; title: string };
 export type CodingUnownedNotice = { key: string; text: string };
 
+export const codingPrMayBeInRunningTurn = (
+  createdAt: number | null,
+  lastTurnEnds: readonly (number | null)[]
+) => lastTurnEnds.some((endedAt) => (endedAt ?? 0) < (createdAt ?? 0));
+
 export const codingUnownedPrKey = (row: CodingUnownedPr) =>
   `neo-pr-unowned:${row.repo}#${row.number}`;
 
