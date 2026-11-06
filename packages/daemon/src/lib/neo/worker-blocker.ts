@@ -1,5 +1,4 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
@@ -134,67 +133,27 @@ export const recordWorkerBlocker = (superpipe({})('neo.worker-final-blocker') as
   now: number
 ) => NeoTodo | null;
 
-export const escalateWorkerBlocker = (superpipe({})('neo.worker-blocker-fallback') as PipelineAPI)
-  .input(['store', 'sessions', 'todoId', 'now'])
-  .pipe(
-    (
-      store: NeoAskTodoRepository,
-      sessions: NeoTodoSessionRepository,
-      todoId: string,
-      now: number
-    ) => {
-      const todo = store.getTodo(todoId),
-        prior = sessions.readNudge(todoId)?.blockerReport;
-      const ref = sessions.readRef(todoId);
-      return todo?.state === 'blocked' &&
-        todo.blockedBy === 'needs-human' &&
-        store.getAsk(todo.askId)?.status === 'open' &&
-        prior?.triagedAt === todo.updatedAt &&
-        now - prior.triagedAt >= 60 * 60_000 &&
-        ref &&
-        sessions.inputs.list(todoId).at(-1)?.id === prior.dispatchId &&
-        !store.questionAnswers.pending().some((route) => route.todoId === todoId) &&
-        !store
-          .listQuestions(todo.askId)
-          .some(
-            (q) => q.state === 'open' && (q.todoId === todoId || q.startTodos?.includes(todoId))
-          )
-        ? { value: { todo, ref } }
-        : { reason: null };
-    },
-    ['store', 'sessions', 'todoId', 'now'],
-    'result:due'
-  )
-  .pipe(
-    (store: NeoAskTodoRepository, due: { todo: NeoTodo; ref: WorkRef }, now: number) => {
-      const { todo, ref } = due;
-      const source = { ...workerIdentity(ref, null), provider: ref.adapter, link: null };
-      const question = store.askQuestion(
-        crypto.randomUUID(),
-        todo.askId,
-        {
-          text: todo.blockedReason!,
-          kind: 'reply',
-          options: null,
-          multiple: false,
-          noLabel: null,
-          yesLabel: null,
-          startTodos: null,
-          todoId: todo.id,
-          document: todo.report,
-          sourceSession: source,
-        },
-        now
-      );
-      store.questionAnswers.bind(question.id, todo.id, source);
-      return question;
-    },
-    ['store', 'due', 'now'],
-    'result'
-  )
-  .end('result') as (
+export function workerBlockerReminderDue(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
   todoId: string,
   now: number
-) => unknown;
+): NeoTodo | null {
+  const todo = store.getTodo(todoId),
+    prior = sessions.readNudge(todoId)?.blockerReport;
+  return prior &&
+    prior.remindedAt === undefined &&
+    todo?.state === 'blocked' &&
+    todo.blockedBy === 'needs-human' &&
+    store.getAsk(todo.askId)?.status === 'open' &&
+    prior.triagedAt === todo.updatedAt &&
+    now - prior.triagedAt >= 60 * 60_000 &&
+    sessions.readRef(todoId) &&
+    sessions.inputs.list(todoId).at(-1)?.id === prior.dispatchId &&
+    !store.questionAnswers.pending().some((route) => route.todoId === todoId) &&
+    !store
+      .listQuestions(todo.askId)
+      .some((q) => q.state === 'open' && (q.todoId === todoId || q.startTodos?.includes(todoId)))
+    ? todo
+    : null;
+}

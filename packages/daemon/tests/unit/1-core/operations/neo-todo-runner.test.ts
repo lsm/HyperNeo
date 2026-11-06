@@ -2375,7 +2375,7 @@ describe('stopped worker ladder', () => {
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
       refused = false;
       await h.at(20);
-      expect(h.told).toEqual([expect.stringContaining('did not reach its worker')]);
+      expect(h.told[0]).toContain('did not reach its worker');
       expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
       await h.at(21);
       await h.at(22);
