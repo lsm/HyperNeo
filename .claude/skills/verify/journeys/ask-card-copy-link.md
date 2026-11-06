@@ -25,6 +25,9 @@ and the expected card heading. The fixture forwards that path to the real daemon
 HTTP handler supplied by the base branch. Inspect each saved
 menu PNG and browser.json. Component tests additionally cover settled cards and
 copying while mutation actions are disabled.
+Before capturing the menu, wait for finite UI animations to finish and require
+its horizontal bounds to fit the viewport. Keep the saved menu-bounds JSON so
+an opening animation cannot be mistaken for the settled layout.
 
 The helper closes its browser, listeners and daemon even on failure. The shared
 wrapper preserves evidence and removes its temporary HOME/DB. No provider keys,

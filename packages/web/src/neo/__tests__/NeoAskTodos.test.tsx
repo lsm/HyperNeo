@@ -1100,7 +1100,7 @@ describe('NeoAskTodos', () => {
   );
 
   it('marks an open ask done or drops it from its menu', () => {
-    const dropLabel = '放下这件事';
+    const dropLabel = '放弃这件事';
     const onSettle = vi.fn();
     const app = render(<NeoAskTodos entry={entry({})} onAnswer={() => {}} onSettle={onSettle} />);
     fireEvent.click(app.getByRole('button', { name: '更多操作' }));

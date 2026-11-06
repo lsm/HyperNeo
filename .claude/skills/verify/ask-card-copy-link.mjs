@@ -35,6 +35,14 @@ try {
       const label = language === 'en' ? 'Copy link' : '复制链接';
       await card.getByRole('button', { name: language === 'en' ? 'Ask actions' : '更多操作' }).click();
       await page.getByRole('menuitem', { name: label, exact: true }).waitFor();
+      await page.waitForFunction(() => !document.getAnimations().some(animation =>
+        animation.playState === 'running' && animation.effect?.getComputedTiming().endTime !== Infinity));
+      const bounds = await page.getByRole('menu').evaluate(menu => {
+        const rect = menu.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: innerWidth };
+      });
+      writeFileSync(`${run}/evidence/menu-bounds-${language}-${width}.json`, JSON.stringify(bounds));
+      assert(bounds.left >= 0 && bounds.right <= bounds.width, 'The settled menu must fit the viewport');
       await page.screenshot({ path: `${run}/evidence/menu-${language}-${width}.png`, animations: 'disabled' });
       const url = page.url();
       const count = operations.length;
