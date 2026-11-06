@@ -19,7 +19,7 @@ import {
   validateScheduleUpdate,
 } from './schedule-trigger.ts';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants.ts';
-import type { TaskScheduleFirePayload } from '../job-handlers/task-schedule-fire.handler.ts';
+import type { TaskScheduleFirePayload } from '../space/job-handlers/task-schedule-fire.handler.ts';
 
 export interface CreateScheduleInput {
   spaceId: string;
