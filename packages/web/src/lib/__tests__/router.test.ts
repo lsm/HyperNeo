@@ -6,6 +6,7 @@ import {
   initializeRouter,
   navigateBack,
   navigateToSession,
+  navigateToSessions,
   navigateToSettings,
 } from '../router';
 import { registerRouteExtension } from '../router';
@@ -344,6 +345,19 @@ describe('router', () => {
       { section: 'providers', path: '/settings?tab=providers', [IN_APP_HISTORY_DEPTH_KEY]: 2 },
       '',
       '/settings?tab=providers'
+    );
+  });
+
+  it('returns the legacy application home to /sessions', () => {
+    setPath('/settings?tab=devices');
+    initializeRouter();
+    navigateToSessions();
+    expect(navSectionSignal.value).toBe('chats');
+    expect(currentSessionIdSignal.value).toBeNull();
+    expect(window.history.pushState).toHaveBeenLastCalledWith(
+      { path: '/sessions', [IN_APP_HISTORY_DEPTH_KEY]: 1 },
+      '',
+      '/sessions'
     );
   });
 

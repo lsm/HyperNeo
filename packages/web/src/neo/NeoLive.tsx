@@ -746,7 +746,7 @@ export function NeoLive() {
               <Button variant="ghost" size="sm" class="mt-2" onClick={neo.retry}>
                 {t('live.reconnect')}
               </Button>
-              <a href="/" class="ml-3 text-accent" target="_blank" rel="noreferrer">
+              <a href="/settings" class="ml-3 text-accent" target="_blank" rel="noreferrer">
                 {t('live.settingsLink')}
               </a>
             </div>

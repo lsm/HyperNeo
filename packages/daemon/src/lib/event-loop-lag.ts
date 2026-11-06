@@ -166,6 +166,18 @@ export function startEventLoopLagLog(
   };
 }
 
+export function rpcActivityName(
+  message: { type?: string; method?: string; data?: unknown },
+  direction: string
+): string {
+  const operation = (message.data as { name?: unknown } | null | undefined)?.name;
+  return message.type === 'REQ' &&
+    message.method === 'operation.invoke' &&
+    typeof operation === 'string'
+    ? `rpc.${direction}:operation.invoke:${operation}`
+    : `rpc.${direction}:${message.method}`;
+}
+
 export function startDaemonLagDiagnostics(
   hub: Pick<MessageHub, 'onMessage'>,
   warn: (line: string) => void
@@ -173,7 +185,7 @@ export function startDaemonLagDiagnostics(
   const activity = new EventLoopActivity();
   const offRpc = hub.onMessage((message, direction) => {
     if (message.type === 'REQ' || message.type === 'RSP')
-      activity.record(`rpc.${direction}:${message.method}`);
+      activity.record(rpcActivityName(message, direction));
   });
   const offLogs = subscribeToStructuredLogs((event) => {
     const module = event.module?.match(/^hyperneo:daemon:[a-z0-9_-]+/)?.[0];
