@@ -411,7 +411,9 @@ describe('Neo quote reply through live chat and durable intake', () => {
     quote('You');
     fireEvent.click(screen.getByRole('button', { name: '编辑' }));
     await waitFor(() => expect(input.value).toBe('Please explain'));
-    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(shortReply);
+    expect((await screen.findByRole('region', { name: /^回复/ })).textContent).toContain(
+      shortReply
+    );
     expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain('Neo');
     fireEvent.click(screen.getByRole('button', { name: '移除回复' }));
     submit();
@@ -431,7 +433,9 @@ describe('Neo quote reply through live chat and durable intake', () => {
       });
       submit();
       const retry = await screen.findByRole('button', { name: '重试' });
-      expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(shortReply);
+      expect((await screen.findByRole('region', { name: /^回复/ })).textContent).toContain(
+        shortReply
+      );
       fireEvent.click(retry);
       await waitFor(() => expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull());
       expect(calls()[1][1].input).toEqual(calls()[0][1].input);
@@ -447,9 +451,10 @@ describe('Neo quote reply through live chat and durable intake', () => {
       const finish = deferredSend();
       submit();
       await waitFor(() => expect(calls()).toHaveLength(1));
-      expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(shortReply);
+      expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull();
       if (change === 'replacement') quote('You');
       if (change === 'cancel' || change === 'reselection') {
+        quote('You');
         fireEvent.click(screen.getByRole('button', { name: '移除回复' }));
         if (change === 'reselection') quote('Neo');
       }
@@ -462,6 +467,10 @@ describe('Neo quote reply through live chat and durable intake', () => {
         quote('You');
       }
       type('New draft');
+      if (change !== 'unchanged' && change !== 'cancel')
+        expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(
+          change === 'reselection' ? shortReply : originalText
+        );
       await finish();
       if (change === 'cancel' || change === 'unchanged') {
         await waitFor(() => expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull());
