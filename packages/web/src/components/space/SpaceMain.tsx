@@ -1,6 +1,6 @@
 import type { ComponentChild } from 'preact';
 import { lazy, Suspense } from 'preact/compat';
-import { SpacesHome } from '../../islands/SpacesHome.tsx';
+import { SpacesHome } from './SpacesHome.tsx';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
@@ -9,7 +9,7 @@ import {
   currentSpaceViewModeSignal,
 } from '../../lib/space-signals.ts';
 
-const SpaceIsland = lazy(() => import('../../islands/SpaceIsland.tsx'));
+const SpaceIsland = lazy(() => import('./SpaceIsland.tsx'));
 
 export function SpaceMain({ fallback }: { fallback: ComponentChild }) {
   const routeSpaceId = currentSpaceIdSignal.value;

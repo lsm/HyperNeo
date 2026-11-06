@@ -11,7 +11,7 @@ import { SessionStore } from '../lib/session-store.ts';
 import type { MessageImage } from '@hyperneo/shared';
 import { NeoComposer } from './NeoComposer.tsx';
 import { restoreNeoImages } from './neo-attachments.ts';
-import { NeoBusyRow } from './NeoBusyRow.tsx';
+import { NeoBusyRow, neoWaitingLine } from './NeoBusyRow.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoMessage } from './NeoMessage.tsx';
 import { NeoSessionStepsLine, NeoThinkingRow, NeoToolRow } from './NeoSessionSteps.tsx';
@@ -64,10 +64,12 @@ function SessionEntryView({ entry }: { entry: SessionEntry }) {
 export function NeoSessionPane({
   sessionId,
   title,
+  label: callerLabel,
   onClose,
 }: {
   sessionId: string;
   title: string;
+  label?: string;
   onClose?: () => void;
 }) {
   const overlay = !!onClose;
@@ -137,7 +139,7 @@ export function NeoSessionPane({
       setLoadingOlder(false);
     }
   }
-  const label = store.sessionState.value?.worker?.label ?? title;
+  const label = callerLabel ?? store.sessionState.value?.worker?.label ?? title;
   useEffect(() => {
     if (!overlay) artifactPreviewWorkspace.update({ sessionId, title: label });
   }, [overlay, sessionId, label]);
@@ -145,6 +147,7 @@ export function NeoSessionPane({
   const question = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
   const last = blocks.at(-1)?.at(-1);
   const showsRunningSteps = last?.type === 'steps' && last.steps.running;
+  const waitingLine = neoWaitingLine(state);
   const error = notice || store.error.value?.message;
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -167,7 +170,7 @@ export function NeoSessionPane({
       role={overlay ? 'dialog' : undefined}
       aria-modal={overlay ? true : undefined}
       class="neo-session-pane flex flex-col outline-none"
-      aria-label={t('session.chat', { title })}
+      aria-label={t('session.chat', { title: label })}
     >
       {overlay && (
         <header class="flex shrink-0 items-center gap-3 border-b border-line px-3 py-2">
@@ -240,7 +243,9 @@ export function NeoSessionPane({
               />
             </div>
           )}
-          {running && !showsRunningSteps && <NeoBusyRow words={[t('session.working')]} />}
+          {running && (waitingLine || !showsRunningSteps) && (
+            <NeoBusyRow words={[waitingLine ?? t('session.working')]} />
+          )}
           {error && (
             <p role="alert" class="text-sm text-danger">
               {error}

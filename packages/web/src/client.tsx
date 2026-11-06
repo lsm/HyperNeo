@@ -7,7 +7,7 @@ import { connectionManager } from './lib/connection-manager.ts';
 import { commandRegistry } from './lib/command-registry.ts';
 import { SPACE_COMMANDS } from './lib/space-commands.ts';
 import { registerRouteExtension } from './lib/router.ts';
-import { spaceNav } from './lib/space-nav.tsx';
+import { spaceNav } from './components/space/space-nav.tsx';
 import { spaceRoutes } from './lib/space-router.ts';
 import { declareExtensionNav, loadWebExtensions } from './lib/web-extensions.ts';
 

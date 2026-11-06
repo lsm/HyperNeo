@@ -5,6 +5,7 @@ import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
+import { closeArtifactPreview } from '../../lib/artifact-preview-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { testAskEntry, testTodo } from './neo-test-views.ts';
 import { locale } from '../../lib/i18n/index.ts';
@@ -26,8 +27,18 @@ vi.mock('../NeoConversation.tsx', () => ({
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 vi.mock('../NeoSessionPane.tsx', () => ({
-  NeoSessionPane: ({ sessionId, onClose }: { sessionId: string; onClose: () => void }) => (
-    <div data-testid="neo-chat-panel" data-session-id={sessionId}>
+  NeoSessionPane: ({
+    sessionId,
+    title,
+    label,
+    onClose,
+  }: {
+    sessionId: string;
+    title: string;
+    label?: string;
+    onClose: () => void;
+  }) => (
+    <div data-testid="neo-chat-panel" data-session-id={sessionId} data-title={label ?? title}>
       <button type="button" onClick={onClose}>
         Close chat
       </button>
@@ -183,6 +194,39 @@ describe('Neo desktop panes', () => {
     expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
     expect(screen.getByRole('region', { name: '工作场景' })).toBe(list);
     expect(within(list).getByRole('article', { name: 'Fictional proposal' })).toBeTruthy();
+  });
+
+  it('titles a work session tab with the worker title, not its session id', () => {
+    closeArtifactPreview();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches:
+        query === '(min-width: 720px)' ||
+        (query === '(min-width: 1120px)' && window.innerWidth >= 1120),
+    }));
+    const { model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('result', 'Fictional result', {
+              state: 'done',
+              doneCount: 1,
+              todos: [testTodo('result', { state: 'done', link: '/session/result-session' })],
+            }),
+          ],
+        },
+      };
+    });
+    fireEvent.click(
+      within(screen.getByRole('article', { name: 'Fictional result' })).getByRole('button', {
+        name: '全部 · 1',
+      })
+    );
+    fireEvent.click(screen.getByRole('button', { name: '打开 Todo result' }));
+    expect(screen.getByRole('tab', { selected: true }).textContent).toBe('Todo result');
+    expect(screen.getByTestId('neo-chat-panel').dataset.title).toBe('Todo result');
   });
 
   it('uses the chat scroll owner only at the actual desktop boundary and preserves a reader position', () => {

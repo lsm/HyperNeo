@@ -5,7 +5,7 @@ import {
   registerWebExtension,
   type SpaceWebExtension,
 } from '../../lib/web-extensions';
-import { spaceNav } from '../../lib/space-nav';
+import { spaceNav } from '../space/space-nav';
 
 declareExtensionNav(spaceNav);
 import { SectionSwitcher } from '../SectionSwitcher';

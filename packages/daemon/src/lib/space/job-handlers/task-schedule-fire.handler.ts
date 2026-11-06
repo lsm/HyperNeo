@@ -1,3 +1,4 @@
+import type { TaskScheduleFirePayload } from '../../schedule/schedule-service.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { SpaceGoal, TaskSchedule } from '@hyperneo/shared';
 import { TASK_SCHEDULE_FIRE } from '../../job-queue-constants.ts';
@@ -22,10 +23,6 @@ class ScheduleSupersededError extends Error {
     super(`Schedule ${scheduleId} superseded; job ${jobId} no longer the pending fire`);
     this.name = 'ScheduleSupersededError';
   }
-}
-
-export interface TaskScheduleFirePayload extends Record<string, unknown> {
-  scheduleId: string;
 }
 
 export interface TaskScheduleFireResult extends Record<string, unknown> {

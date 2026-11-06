@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import { createEvolutionScopeOperations } from '../../../../src/lib/evolution/scope-operations.ts';
-import { createEvolutionScopeGetOperation } from '../../../../src/lib/evolution/scope-get-operation.ts';
+import { createEvolutionScopeOperations } from '../../../../src/lib/space/evolution/scope-operations.ts';
+import { createEvolutionScopeGetOperation } from '../../../../src/lib/space/evolution/scope-get-operation.ts';
 import type {
   EvolutionAuditEntry,
   EvolutionAuditWriter,
-} from '../../../../src/lib/evolution/admission.ts';
-import { EvolutionEpisodeService } from '../../../../src/lib/evolution/episode-service.ts';
-import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service.ts';
+} from '../../../../src/lib/space/evolution/admission.ts';
+import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution/episode-service.ts';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution/scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/service.ts';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';

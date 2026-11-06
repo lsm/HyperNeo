@@ -52,7 +52,7 @@ import MainContent from '../MainContent';
 import { currentSessionIdSignal, navSectionSignal } from '../../lib/signals';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/space-signals';
 import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
-import { spaceNav } from '../../lib/space-nav';
+import { spaceNav } from '../../components/space/space-nav';
 import { navigateToSessions } from '../../lib/router';
 
 function makeTask(id: string, status: SpaceTask['status'], title = `Task ${id}`): SpaceTask {

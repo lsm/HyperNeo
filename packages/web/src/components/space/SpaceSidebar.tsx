@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { CheckGlyph, ChevronLeftGlyph } from '../icons/common-glyphs.tsx';
 import { SpaceCreateDialog } from './SpaceCreateDialog.tsx';
-import { SpaceDetailPanel } from '../../islands/SpaceDetailPanel.tsx';
+import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
 import {
   navigateToSpace,
   navigateToSpaceAgent,
