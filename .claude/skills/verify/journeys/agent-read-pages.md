@@ -59,3 +59,12 @@ and the second daemon must reject the first credential with 401. Inspect
 ownership.json and both cleanup receipts. The focused credential-creation tests
 also pause a temporary-file rewrite to prove a fresh published file stays readable,
 and verify that a dead descriptor owner permits a later origin rebind.
+
+For simultaneous startup, run `agent-credential-startup-race.ts` with the same
+wrapper. It pauses the first real descriptor publication immediately before its
+rename, starts a second daemon on a separate synthetic database and then releases
+the first writer. The contender must leave the pending ownership claim intact,
+the winner's actual CLI must read the card, and the contender must reject that
+token with 401. Inspect startup-race.json, both daemon cleanup receipts and
+race-cleanup.json. The pause changes only syscall scheduling at the publication
+boundary. Credential issuance, HTTP admission and CLI reading use production code.

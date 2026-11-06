@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { DatabaseLock } from '../storage/database-lock.ts';
 import { BUILD_METADATA } from './build-metadata.ts';
 import { getDataDir } from './data-dir.ts';
 
@@ -35,7 +36,8 @@ function isProcessAlive(pid: number): boolean {
 
 function readDescriptorPid(path: string): number | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<RuntimeDescriptor>;
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<RuntimeDescriptor> | number;
+    if (typeof parsed === 'number') return parsed;
     return typeof parsed.pid === 'number' ? parsed.pid : undefined;
   } catch {
     return undefined;
@@ -43,8 +45,10 @@ function readDescriptorPid(path: string): number | undefined {
 }
 
 export function hasOtherRuntimeOwner(dataDir: string = getDataDir()): boolean {
-  const pid = readDescriptorPid(descriptorFilePath(dataDir));
-  return pid !== undefined && pid !== process.pid && isProcessAlive(pid);
+  const path = descriptorFilePath(dataDir);
+  return [readDescriptorPid(`${path}.owner.lock`), readDescriptorPid(path)].some(
+    (pid) => pid !== undefined && pid !== process.pid && isProcessAlive(pid)
+  );
 }
 
 export function writeRuntimeDescriptor(
@@ -63,20 +67,26 @@ export function writeRuntimeDescriptor(
     startedAt: Date.now(),
   };
 
-  if (hasOtherRuntimeOwner(dataDir)) {
-    return () => {};
-  }
-
+  const lock = new DatabaseLock(`${path}.owner`);
   try {
+    lock.acquire();
+    if (hasOtherRuntimeOwner(dataDir)) {
+      lock.release();
+      return () => {};
+    }
     mkdirSync(dirname(path), { recursive: true });
     const staging = `${path}.${process.pid}.staging`;
     writeFileSync(staging, `${JSON.stringify(descriptor)}\n`, 'utf8');
     renameSync(staging, path);
   } catch {
+    lock.release();
     return () => {};
   }
 
-  return () => removeRuntimeDescriptor(path, process.pid);
+  return () => {
+    removeRuntimeDescriptor(path, process.pid);
+    lock.release();
+  };
 }
 
 function removeRuntimeDescriptor(path: string, pid: number): void {
