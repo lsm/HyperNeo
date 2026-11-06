@@ -4,6 +4,7 @@ import { readTurnUrls } from '../../storage/hyperneo-turn-facts-read.ts';
 import {
   assistantText,
   claudeInputText,
+  claudeNativeFingerprint,
   claudeTurnEnded,
   type ClaudeTranscriptEntry,
 } from './claude-desktop-adapter.ts';
@@ -13,9 +14,12 @@ const TURNS_PER_READ = 10;
 
 type Row = ClaudeTranscriptEntry & {
   isCompactSummary?: unknown;
+  operation?: unknown;
+  reason?: unknown;
+  commandUuid?: unknown;
   message?: { id?: unknown; content?: unknown; stop_reason?: unknown };
 };
-type End = { row: Row; offset: number };
+type End = { row: Row; offset: number; interrupted?: boolean };
 type Open = { inputAt: number | null; firstAt: number | null; complete: boolean };
 type Turn = Open & { inputs: Set<string>; urls: Set<string> };
 
@@ -29,11 +33,25 @@ const openTurn = (): Turn => ({
 
 const rowTime = (row: Row) => (typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN);
 
-const inputId = (row: Row) => {
+const INTERRUPTED = '[Request interrupted by user';
+
+function inputIds(row: Row): string[] {
+  if (row.type === 'queue-operation')
+    return row.operation === 'remove' &&
+      row.reason === 'absorbed_mid_turn' &&
+      typeof row.commandUuid === 'string'
+      ? [row.commandUuid]
+      : [];
+  const text = claudeInputText(row);
+  if (text === null) return [];
   const queued = (row.attachment as { source_uuid?: unknown } | undefined)?.source_uuid;
   const id = queued ?? row.uuid;
-  return typeof id === 'string' ? id : null;
-};
+  const native = claudeNativeFingerprint(text);
+  return [
+    ...(typeof id === 'string' ? [id] : []),
+    ...(native ? [`desktop-pending:${native}`] : []),
+  ];
+}
 
 const isToolOutput = (row: Row) =>
   row.type === 'user' &&
@@ -52,8 +70,7 @@ function parseRow(line: string): Row | null {
 function addRow(turn: Turn, row: Row) {
   const at = rowTime(row);
   if (Number.isFinite(at)) turn.firstAt ??= at;
-  const id = claudeInputText(row) === null ? null : inputId(row);
-  if (id) {
+  for (const id of inputIds(row)) {
     turn.inputs.add(id);
     if (Number.isFinite(at)) turn.inputAt ??= at;
   }
@@ -67,7 +84,7 @@ function finishTurn(turn: Turn, end: End): WorkTurnFact {
     id: String(end.row.uuid),
     startedAt: turn.inputAt ?? turn.firstAt ?? endedAt,
     endedAt,
-    ended: String(end.row.message?.stop_reason),
+    ended: end.interrupted ? 'interrupted' : String(end.row.message?.stop_reason),
     inputs: [...turn.inputs],
     urls: [...turn.urls],
     complete: turn.complete,
@@ -100,6 +117,10 @@ export async function readClaudeTurnFacts(path: string, cursor?: string): Promis
         turn = openTurn();
         end = null;
         if (facts.length === TURNS_PER_READ) break;
+      }
+      if (claudeInputText(row)?.startsWith(INTERRUPTED)) {
+        end = { row, offset, interrupted: true };
+        continue;
       }
       addRow(turn, row);
       if (row.type !== 'assistant' || !claudeTurnEnded(row)) continue;

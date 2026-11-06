@@ -864,15 +864,8 @@ export async function readClaudeInputEvidence(
       const lines = await readLinesAfter(path, Number(pending[1]), true);
       const input = lines.map(parseClaudeEntry).find((entry) => {
         const text = entry?.type === 'user' ? claudeInputText(entry) : null;
-        const native =
-          text &&
-          /<cross-session-message from="([^"]+)"[^>]*>\n([\s\S]*)\n<\/cross-session-message>$/.exec(
-            text
-          );
         return (
-          typeof entry?.uuid === 'string' &&
-          native &&
-          nativeInputFingerprint(native[1], native[2]) === pending[2]
+          typeof entry?.uuid === 'string' && !!text && claudeNativeFingerprint(text) === pending[2]
         );
       });
       if (!input) return { receipt, state: 'pending' };
@@ -1022,6 +1015,12 @@ async function relayClaudeMessage(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function claudeNativeFingerprint(text: string): string | null {
+  const native =
+    /<cross-session-message from="([^"]+)"[^>]*>\n([\s\S]*)\n<\/cross-session-message>$/.exec(text);
+  return native ? nativeInputFingerprint(native[1], native[2]) : null;
 }
 
 function nativeInputFingerprint(helperSessionId: string, message: string): string {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,6 +75,57 @@ describe('readClaudeTurnFacts', () => {
       ])
     );
     expect(turn.inputs).toEqual(['in-1', 'receipt-id']);
+  });
+
+  test('a message absorbed into the running turn is an input by its command id', async () => {
+    const [turn] = await readClaudeTurnFacts(
+      file([
+        human('in-1', 1, 'First'),
+        {
+          type: 'queue-operation',
+          operation: 'remove',
+          reason: 'absorbed_mid_turn',
+          commandUuid: 'absorbed-id',
+          timestamp: at(2),
+        },
+        reply('end-1', 3, 'Both'),
+      ])
+    );
+    expect(turn.inputs).toEqual(['in-1', 'absorbed-id']);
+  });
+
+  test('a relayed Desktop message also carries the id its pending receipt can match', async () => {
+    const body = 'Relayed work';
+    const text = `<cross-session-message from="helper" from-name="Neo">\n${body}\n</cross-session-message>`;
+    const [turn] = await readClaudeTurnFacts(
+      file([human('in-1', 1, text), reply('end-1', 2, 'Done')])
+    );
+    const hash = createHash('sha256')
+      .update(JSON.stringify(['helper', body]))
+      .digest('hex');
+    expect(turn.inputs).toEqual(['in-1', `desktop-pending:${hash}`]);
+  });
+
+  test('an interrupt ends the turn and is not an input of the next one', async () => {
+    const stopped = {
+      type: 'user',
+      uuid: 'stop',
+      timestamp: at(3),
+      message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] },
+    };
+    const turns = await readClaudeTurnFacts(
+      file([
+        human('in-1', 1, 'First'),
+        tool(2, PR),
+        stopped,
+        human('in-2', 4, 'Second'),
+        reply('end-2', 5, 'Done'),
+      ])
+    );
+    expect(turns.map((turn) => [turn.id, turn.ended, turn.inputs, turn.urls])).toEqual([
+      ['stop', 'interrupted', ['in-1'], [PR]],
+      ['end-2', 'end_turn', ['in-2'], []],
+    ]);
   });
 
   test('a compaction summary is not an input and does not split the turn', async () => {
