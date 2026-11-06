@@ -1,3 +1,8 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
@@ -178,5 +183,49 @@ describe('watchRepo atomic config writer', () => {
     gateway.release!();
     await result;
     expect(snapshot).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Watch config scope measurement', () => {
+  test('the CLI refuses a missing admission gate instead of reporting a null budget', () => {
+    const root = mkdtempSync(join(tmpdir(), 'watch-config-scope-'));
+    const repo = fileURLToPath(new URL('../../../../../../', import.meta.url));
+    const files = [
+      'lib/external-events/github/github-event-extension.ts',
+      'lib/external-events/github/github-repository.ts',
+      'storage/db-gateway/db-ops.ts',
+      'storage/repositories/github-watched-config-write.ts',
+      'storage/repositories/github-webhook-clear-persist.ts',
+      'storage/repositories/github-watched-repo-read.ts',
+    ];
+    try {
+      for (const file of files) {
+        const path = join(root, 'packages/daemon/src', file);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(
+          path,
+          file.endsWith('github-event-extension.ts')
+            ? "hub.onRequest('space.github.watchRepo', async () => {});\n"
+            : 'export {};\n'
+        );
+      }
+      mkdirSync(join(root, 'bin'));
+      writeFileSync(
+        join(root, 'bin/git'),
+        '#!/bin/sh\nif [ "$1" = diff ]; then exit 0; fi\nexit 1\n',
+        { mode: 0o700 }
+      );
+      symlinkSync(join(repo, 'node_modules'), join(root, 'node_modules'), 'dir');
+      const bun = execFileSync('bun', ['-p', 'process.execPath'], { encoding: 'utf8' }).trim();
+      expect(() =>
+        execFileSync(bun, [join(repo, '.claude/skills/verify/github-watch-config-measure.cjs')], {
+          cwd: root,
+          env: { ...process.env, PATH: join(root, 'bin') },
+          stdio: 'pipe',
+        })
+      ).toThrow('Missing complete caller or admission gate');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
