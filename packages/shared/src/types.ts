@@ -243,6 +243,8 @@ export const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = 
 );
 
 export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
+  harness?: 'sdk' | 'codex';
+
   toolSelection?: SessionToolSelection;
   toolProfile?: SessionToolProfile;
 
