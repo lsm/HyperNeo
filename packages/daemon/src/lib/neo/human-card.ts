@@ -30,8 +30,7 @@ type Card = Pick<NeoQuestionDraft, 'text' | 'kind' | 'confirm'>;
 type Gate<T> = { value: T } | { reason: { ok: false; reason: string } };
 
 const NEO_CARD_MAX_CHARS = 400;
-const INTERNAL_ID =
-  /\b(?=[0-9a-f-]*\d)(?=[0-9a-f-]*[a-f])[0-9a-f]{8}(?:-[0-9a-f]{4}){0,3}(?:-[0-9a-f]{12})?\b/;
+const INTERNAL_ID = /\b(?=[0-9a-f-]*\d)(?=[0-9a-f-]*[a-f])[0-9a-f]{7,}(?:-[0-9a-f]{4,})*\b/;
 const CJK = /[一-鿿]/g;
 
 const asksSomething = (card: Card) =>

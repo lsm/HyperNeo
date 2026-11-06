@@ -57,13 +57,19 @@ describe('requireHumanCard', () => {
   });
 
   test('internal ids stay off the card, except a home proposal that must show its hash', () => {
-    for (const id of ['44fe3547', '44fe3547-0fec-4428-920c-a4614ddac82b'])
+    for (const id of [
+      '44fe354',
+      '44fe3547',
+      '44fe3547-0fec-4428-920c-a4614ddac82b',
+      '594914c7d5e05615ff1d7d9d327d07875d613b46',
+    ])
       expect(reason(requireHumanCard(draft(`Card ${id} ok?`), [], null, undefined))).toMatch(
         /^card_internal_id/
       );
     expect(
       reason(requireHumanCard(draft('Merge #9930 for 12345678?'), [], null, undefined))
     ).toBeNull();
+    expect(reason(requireHumanCard(draft('Was it defaced?'), [], null, undefined))).toBeNull();
     const confirm = { path: 'a', sha256: 'b' } as never;
     expect(
       reason(requireHumanCard({ ...draft('Save 44fe3547?'), confirm }, [], null, undefined))
