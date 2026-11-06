@@ -22,6 +22,12 @@ const read = (cursor: string) =>
   invokeOperation(registry, 'work.turns', { ref, cursor }, { source: 'internal', role: 'neo' });
 
 describe('work.turns cursor', () => {
+  test('work.adapters lists the turns capability', async () => {
+    expect(
+      await invokeOperation(registry, 'work.adapters', {}, { source: 'internal', role: 'neo' })
+    ).toMatchObject({ value: { value: { adapters: [{ capabilities: ['find', 'turns'] }] } } });
+  });
+
   test('a cursor a reader wrote is accepted', async () => {
     expect(await read('{"seq":1}')).toMatchObject({ kind: 'completed', value: { ok: true } });
   });

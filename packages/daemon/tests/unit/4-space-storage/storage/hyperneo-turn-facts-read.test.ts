@@ -88,6 +88,21 @@ describe('HyperNeo turn facts', () => {
     expect(turns[1]).toMatchObject({ inputs: [], startedAt: 11_000, endedAt: 20_000 });
   });
 
+  test('a system input is not one of the turn inputs', () => {
+    write(
+      'user',
+      { message: { content: 'The human is now listening.' }, inputKind: 'system' },
+      10,
+      {
+        uuid: 'system',
+        consumed: 1,
+      }
+    );
+    input('in-1', 11, 2);
+    result('Done', 12, 2);
+    expect(read()[0].inputs).toEqual(['in-1']);
+  });
+
   test('a turn still running is not recorded yet', () => {
     input('in-1', 10, 1);
     toolOutput('https://example.com/early', 11);
