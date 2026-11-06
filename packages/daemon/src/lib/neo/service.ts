@@ -84,7 +84,7 @@ import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { driverWorkCaller } from './driver-work.ts';
 import { WorkDeliveryInputRepository } from '../../storage/repositories/work-delivery-input-repository.ts';
-import { catchUpWorkerTurns, recordWorkerTurns } from './turn-recording.ts';
+import { catchUpWorkerTurns, planTurnCatchUp, recordWorkerTurns } from './turn-recording.ts';
 import { neoFolderPath, neoUserFolder } from './folder.ts';
 import { openNeoDefaultSession } from './inbox.ts';
 import {
@@ -136,6 +136,8 @@ export class NeoService {
   readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;
   private disposed = false;
+  private catchingUpTurns = false;
+  private readonly turnsSeen = new Map<string, number>();
   filePacks: readonly NeoPack[] = [];
   readonly builtinPacks: NeoPack[];
   private readonly defaultPacks: readonly string[];
@@ -834,22 +836,36 @@ export class NeoService {
   private turnRecording() {
     return {
       turns: new WorkTurnRepository(this.db.getDatabase()),
-      read: (work: WorkRef, cursor: string | null) =>
+      read: (work: WorkRef, cursor: string | null, limit?: number) =>
         invokeOperation(
           this.sessions.getOperationRegistry(),
           'work.turns',
-          { ref: work, ...(cursor ? { cursor } : {}) },
+          { ref: work, ...(cursor ? { cursor } : {}), ...(limit ? { limit } : {}) },
           { source: 'internal', role: 'neo' }
         ),
     };
   }
 
+  private async catchUpOpenTodoTurns(): Promise<void> {
+    if (this.catchingUpTurns) return;
+    this.catchingUpTurns = true;
+    const workers = new WorkDeliveryInputRepository(this.db.getDatabase()).openWorkerRefs();
+    try {
+      for (const { ref, lastActivityAt } of planTurnCatchUp(workers, this.turnsSeen)) {
+        const caughtUp = await catchUpWorkerTurns(ref, this.turnRecording()).catch((error) => {
+          this.log.warn('Worker turns pending', error);
+          return false;
+        });
+        if (caughtUp && lastActivityAt !== null)
+          this.turnsSeen.set(JSON.stringify(ref), lastActivityAt);
+      }
+    } finally {
+      this.catchingUpTurns = false;
+    }
+  }
+
   async sweepPacks(): Promise<void> {
-    const deliveries = new WorkDeliveryInputRepository(this.db.getDatabase());
-    for (const ref of deliveries.openWorkerRefs())
-      await catchUpWorkerTurns(ref, this.turnRecording()).catch((error) =>
-        this.log.warn('Worker turns pending', error)
-      );
+    await this.catchUpOpenTodoTurns();
     for (const pack of this.packs())
       await pack
         .sweep?.(Date.now())

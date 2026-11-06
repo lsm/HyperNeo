@@ -112,15 +112,18 @@ export class WorkDeliveryInputRepository {
     ).map(readInput);
   }
 
-  openWorkerRefs(): WorkRef[] {
+  openWorkerRefs(): { ref: WorkRef; lastActivityAt: number | null }[] {
     const rows = this.db
-      .prepare(`SELECT DISTINCT json_extract(d.outcome, '$.ref') AS ref
+      .prepare(`SELECT DISTINCT json_extract(d.outcome, '$.ref') AS ref,
+          w.last_activity_at AS lastActivityAt
         FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
         JOIN work_delivery_inputs d ON d.todo_id = t.id
+        LEFT JOIN work_sessions w ON w.adapter = json_extract(d.outcome, '$.ref.adapter')
+          AND w.id = json_extract(d.outcome, '$.ref.id')
         WHERE a.status = 'open' AND t.state NOT IN ('done', 'closed_unverified', 'removed')
           AND json_extract(d.outcome, '$.ref') IS NOT NULL`)
-      .all() as { ref: string }[];
-    return rows.map((row) => JSON.parse(row.ref) as WorkRef);
+      .all() as { ref: string; lastActivityAt: number | null }[];
+    return rows.map((row) => ({ ...row, ref: JSON.parse(row.ref) as WorkRef }));
   }
 
   due(now: number, limit = 100) {
