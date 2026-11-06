@@ -61,10 +61,7 @@ export interface PostApprovalRouterDeps {
       transition: { fromStatus: SpaceTask['status']; updates: InternalUpdateSpaceTaskParams }
     ): object | null;
   };
-  evolutionScopeService?: Pick<
-    import('../evolution/scope-service.ts').EvolutionScopeService,
-    'captureCompletedTaskEvidence'
-  >;
+  evolutionScopeService?: { captureCompletedTaskEvidence(params: { taskId: string }): unknown };
   validateRecordedPointer?: (args: {
     sessionId: string;
     taskId: string;
