@@ -15,7 +15,7 @@ temporary daemon data. The browser stays on its isolated origin and delays the
 real send request by 1100ms without substituting its reply.
 
 At 1280px and 390px, send synthetic history, quote a message longer than the stored
-300-character excerpt and send a reply. Capture the pending row after 650ms and
+300-character excerpt and send plain and multiline replies. Capture the pending row after 650ms and
 the durable row after acceptance. Require identical composer/pending/durable quote
 text, row heights, and the bubble's offset from its row's bottom, within 2px.
 Inspect the pending/durable screenshots and evidence.json. Record text typography

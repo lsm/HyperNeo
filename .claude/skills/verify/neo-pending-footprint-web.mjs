@@ -38,9 +38,12 @@ try {
   }
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
+    for (const [kind, words] of [
+      ['plain', `Flying words at ${width}, delay 1000`],
+      ['multiline', `Multiline reply at ${width}\nSecond line\nThird line\nFourth line`],
+    ]) {
     await page.locator('[data-public-entry].neo-message-user').first().getByRole('button', { name: 'Reply to your message', exact: true }).click();
     await page.locator('form [data-quote-bar]').waitFor();
-    const words = `Flying words at ${width}, delay 1000`;
     await input.fill(words);
     await page.evaluate(() => {
       const rail = document.querySelector('.neo-chat-rail');
@@ -64,19 +67,20 @@ try {
       return { width: r.width, height: r.height, bubbleWidth: b.width, bubbleHeight: b.height, bottom: b.y - r.bottom, quote: bubble.querySelector('[data-quote-bar]')?.textContent, wordsStyle: style ? { font: style.font, lineHeight: style.lineHeight, letterSpacing: style.letterSpacing } : null };
     };
     const before = await pending.evaluate(measure);
-    await page.screenshot({ path: join(out, `pending-${width}.png`) });
+    await page.screenshot({ path: join(out, `pending-${kind}-${width}.png`) });
     const durable = page.locator(`[data-public-entry][data-message-ref="${id}"]`);
     await durable.waitFor();
     await page.waitForTimeout(250);
     const after = await durable.evaluate(measure);
-    await page.screenshot({ path: join(out, `durable-${width}.png`) });
-    results.push({ width, composerQuote, before, after, normalizedJump: after.bottom - before.bottom });
+    await page.screenshot({ path: join(out, `durable-${kind}-${width}.png`) });
+    results.push({ width, kind, composerQuote, before, after, normalizedJump: after.bottom - before.bottom });
     writeFileSync(join(out, 'evidence.json'), JSON.stringify(results, null, 2));
     assert.equal(before.quote, after.quote, 'Pending and durable quotes display different excerpts');
     assert.equal(composerQuote, after.quote, 'Composer and durable quotes display different excerpts');
     assert(Math.abs(after.bottom - before.bottom) < 2, 'Pending-to-durable bubble footprint changes after acceptance');
     assert(Math.abs(after.height - before.height) < 2, 'Pending and durable rows reserve different heights');
     delay = 0;
+    }
   }
   await context.close();
   console.log('PASS: pending/durable quote and row footprints match at 1280/390px; viewport scrolling/flight is verified separately');
