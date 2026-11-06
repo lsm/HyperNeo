@@ -7,7 +7,7 @@ import {
   requireAutomationThreshold,
   requireNoActiveAutomationReview,
   requireUnlockedAutomation,
-} from '../../../../src/lib/space/job-handlers/goal-automation-execute-admission';
+} from '../../../../../space/src/job-handlers/goal-automation-execute-admission';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
@@ -15,7 +15,7 @@ import { GOAL_AUTOMATION_EXECUTE } from '../../../../src/lib/job-queue-constants
 import {
   handleGoalAutomationExecute,
   type GoalAutomationExecutePayload,
-} from '../../../../src/lib/space/job-handlers/goal-automation-execute.handler';
+} from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
 import {
   GoalAutomationService,
   externalEventTriggerKey,
@@ -29,7 +29,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository';
-import { validateGoalAutomationSelfNagPolicy } from '../../../../src/lib/space/evolution/evolution-policy-validation';
+import { validateGoalAutomationSelfNagPolicy } from '../../../../../space/src/evolution/evolution-policy-validation';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../src/lib/space/goals/automation-schedule-sync';
 import { mergeEvolutionPolicy } from '../../../../src/lib/space/evolution/scope-service';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';

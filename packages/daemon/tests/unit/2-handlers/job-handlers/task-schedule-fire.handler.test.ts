@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { handleTaskScheduleFire } from '../../../../src/lib/space/job-handlers/task-schedule-fire.handler';
+import { handleTaskScheduleFire } from '../../../../../space/src/job-handlers/task-schedule-fire.handler.ts';
 import { TASK_SCHEDULE_FIRE } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';

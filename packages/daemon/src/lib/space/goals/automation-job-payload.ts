@@ -1,4 +1,4 @@
-import type { GoalAutomationExecutePayload } from '../job-handlers/goal-automation-execute.handler.ts';
+import type { GoalAutomationExecutePayload } from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
 
 export function uniqueJobMatchPayload(
   payload: GoalAutomationExecutePayload

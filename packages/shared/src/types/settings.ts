@@ -220,6 +220,7 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   neo?: NeoSettings;
 
   workFeedScope?: 'all' | 'own';
+  codexCuAutoReap?: boolean;
 }
 
 export interface SessionSettings extends GlobalSettings {

@@ -7,7 +7,7 @@ import type {
   TaskProposal,
 } from '@hyperneo/shared';
 import { z } from 'zod';
-import { EvolutionMetricValuesSchema } from '../../../daemon/src/lib/space/evolution/result-schemas.ts';
+import { EvolutionMetricValuesSchema } from './result-schemas.ts';
 
 export const EvolutionPrioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
 export const EvolutionEpisodeStatusSchema = z.enum(['draft', 'accepted', 'dismissed']);

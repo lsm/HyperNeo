@@ -9,7 +9,7 @@ import type { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import { LONG_HORIZON_AGENT_REMINDER_FIRE, TASK_SCHEDULE_FIRE } from '../job-queue-constants.ts';
-import { handleTaskScheduleFire } from './job-handlers/task-schedule-fire.handler.ts';
+import { handleTaskScheduleFire } from '../../../../space/src/job-handlers/task-schedule-fire.handler.ts';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
   enqueueLongHorizonAgentReminderScanIfMissing,
