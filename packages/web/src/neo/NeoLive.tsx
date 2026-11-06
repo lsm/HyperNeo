@@ -392,10 +392,7 @@ export function NeoLive() {
   });
   const attentionCount = view?.needsYou ?? 0;
   const neoUnhandled = view?.neoUnhandled ?? 0;
-  const ready =
-    !!neo.sessionId &&
-    neo.store.messagesLoaded.value &&
-    neo.store.activeSessionId.value === neo.sessionId;
+  const ready = !!neo.sessionId && neo.store.activeSessionId.value === neo.sessionId;
   const replyInComposer = (quote: NeoQuote) => {
     setQuoted({ scope: neo.sessionId!, quote });
     setScenesOpen(false);
@@ -441,10 +438,8 @@ export function NeoLive() {
     false,
     recoveryReady
   );
-  const messageCount = publicConversation?.entries.length ?? neo.store.sdkMessages.value.length;
+  const messageCount = publicConversation?.entries.length ?? 0;
   const lastPublicEntry = publicConversation?.entries.at(-1)?.key;
-  const conversationReady =
-    ready || (!!publicConversation && neo.store.activeSessionId.value === neo.sessionId);
   const connected = connectionState.value === 'connected';
   const firstConnect =
     !connected && getBannerLevel(connectionState.value, reconnectAttemptCount.value) === 'hidden';
@@ -759,7 +754,7 @@ export function NeoLive() {
               </Button>
             </div>
           )}
-          {conversationReady && neo.sessionId ? (
+          {ready && neo.sessionId ? (
             <NeoConversation
               onQuote={ready ? (quote) => setQuoted({ scope: neo.sessionId!, quote }) : undefined}
               store={neo.store}

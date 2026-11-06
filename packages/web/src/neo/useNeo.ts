@@ -18,7 +18,7 @@ import { projectNeoPublicConversation } from './public-conversation.ts';
 import { projectNeoPublicHolderConversation } from './public-holder-conversation.ts';
 
 export function useNeo() {
-  const store = useMemo(() => new SessionStore(), []);
+  const store = useMemo(() => new SessionStore({ transcript: false }), []);
   const [pendingAsks, setPendingAsks] = useState<readonly NeoPendingAsk[]>([]);
   const intake = useMemo(
     () => createNeoIntakeClient(() => connectionManager.getHub(), setPendingAsks),
