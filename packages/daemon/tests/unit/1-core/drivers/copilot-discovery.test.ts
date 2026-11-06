@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AcpClient } from '../../../../src/lib/acp/acp-client';
@@ -41,6 +42,54 @@ function clientFor(home: string) {
 }
 
 describe('Copilot discovery boundary', () => {
+  test('lists SDK metadata with the same titles and recovered project folders', async () => {
+    const { home, bin } = fixture();
+    const updatedAt = new Date().toISOString();
+    const sdk = fileURLToPath(new URL('../../../fixtures/copilot-sdk.ts', import.meta.url));
+    const command = join(bin, 'copilot');
+    writeFileSync(
+      command,
+      `#!/usr/bin/env bun\nprocess.argv.push('--production-version'); await import(${JSON.stringify(sdk)});\n`,
+      { mode: 0o700 }
+    );
+    writeFileSync(
+      join(home, 'copilot-list.json'),
+      JSON.stringify([
+        {
+          sessionId: copilotSession,
+          cwd: home,
+          title: '[User]: Synthetic\n sum task',
+          updatedAt,
+        },
+        {
+          sessionId: '22222222-2222-4222-8222-222222222222',
+          cwd: '/synthetic/other-project',
+          title: 'Other task',
+          updatedAt,
+        },
+      ])
+    );
+    const sessions = await listAcpAgentSessions(command, { args: [] }, home, 1500);
+    expect(sessions.map((session) => [session.sessionId, session.cwd, session.title])).toEqual([
+      [copilotSession, copilotFolder, 'Synthetic sum task'],
+      ['22222222-2222-4222-8222-222222222222', '/synthetic/other-project', 'Other task'],
+    ]);
+    const calls = readFileSync(join(home, 'calls.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(calls.map((call) => call.method)).toContain('session.list');
+    expect(
+      calls.some((call) =>
+        ['session.create', 'session.resume', 'session.send', 'initialize', 'session/list'].includes(
+          call.method
+        )
+      )
+    ).toBe(false);
+    for (const pid of new Set<number>(calls.map((call) => call.pid)))
+      expect(() => process.kill(pid, 0)).toThrow();
+  });
+
   test('pages over ACP and recovers cwd without claiming worker receipt support', async () => {
     const { home } = fixture();
     const client = clientFor(home);
