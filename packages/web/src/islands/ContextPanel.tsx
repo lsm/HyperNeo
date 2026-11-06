@@ -49,7 +49,7 @@ const SETTINGS_SECTIONS: Array<{
   { id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-success-soft bg-success/15' },
   {
     id: 'coding-pack',
-    label: 'Coding pack',
+    label: 'Pack settings',
     icon: 'plug',
     accent: 'text-cat-violet bg-cat-violet/15',
   },

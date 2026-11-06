@@ -95,6 +95,11 @@ unless VERIFY_CREDENTIAL selects a paired synthetic client. Set HYPERNEO_DATA_DI
 to the fresh run's data directory; anonymous WebSockets are refused. Never point
 a verification command at the real credential file.
 
+For headless browser pairing through an API request context, send the preview's
+Origin header with POST /pair. Browser-origin redemption installs an HttpOnly
+cookie in that context. A request without Origin returns a credential for native
+clients instead. Keep synthetic pairing codes and credentials out of evidence.
+
 ```bash
 VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
   '{"params":{"providerId":"anthropic","displayName":"Anthropic (dev proxy)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}'

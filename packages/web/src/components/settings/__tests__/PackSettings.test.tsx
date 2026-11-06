@@ -3,9 +3,13 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { NeoPackSetting } from '@hyperneo/shared/types/neo-snapshot';
 import { applyLanguage } from '../../../lib/i18n/index.ts';
 
-const { request, rows } = vi.hoisted(() => ({ request: vi.fn(), rows: [] as NeoPackSetting[] }));
+const { request, rows, connection } = vi.hoisted(() => ({
+  request: vi.fn(),
+  rows: [] as NeoPackSetting[],
+  connection: { ready: true },
+}));
 vi.mock('../../../lib/connection-manager', () => ({
-  connectionManager: { getHubIfConnected: () => ({ request }) },
+  connectionManager: { getHubIfConnected: () => (connection.ready ? { request } : null) },
 }));
 vi.mock('../CodingPackSettings.tsx', () => ({
   CodingPackSettings: () => <section aria-label="Coding pack settings">Coding controls</section>,
@@ -15,6 +19,7 @@ import { PackSettings } from '../PackSettings.tsx';
 const scope = { kind: 'global', key: '' } as const;
 const writes = () => request.mock.calls.filter(([, call]) => call.name === 'pack.preferences.set');
 beforeEach(() => {
+  connection.ready = true;
   rows.length = 0;
   applyLanguage('en');
   request.mockReset().mockImplementation(async (_method, { name, input }) => {
@@ -45,7 +50,7 @@ test('shows delegation beside existing coding settings with conservative unsaved
   expect(ui.getAllByRole('combobox')).toHaveLength(6);
   expect(ui.getByRole('option', { name: 'I sign in' })).toBeTruthy();
   expect(ui.getByRole('option', { name: 'Fill it, I press the last button' })).toBeTruthy();
-  expect(ui.getAllByText(/Unanswered/)).toHaveLength(6);
+  expect(ui.getAllByText('Unanswered', { exact: true })).toHaveLength(6);
   expect(writes()).toHaveLength(0);
 });
 
@@ -105,5 +110,12 @@ test('shows Chinese field names and choices', async () => {
   await waitFor(() => expect(ui.getAllByRole('combobox')).toHaveLength(6));
   expect(ui.getByRole('combobox', { name: '需要我操作时用什么设备？' })).toBeTruthy();
   expect(ui.getByRole('option', { name: '只发到我的手机' })).toBeTruthy();
+  expect(writes()).toHaveLength(0);
+});
+
+test('a disconnected page shows a reconnect error without writing settings', async () => {
+  connection.ready = false;
+  render(<PackSettings />);
+  expect((await screen.findByRole('alert')).textContent).toContain('Reconnect');
   expect(writes()).toHaveLength(0);
 });
