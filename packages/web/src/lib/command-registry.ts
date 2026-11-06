@@ -1,4 +1,4 @@
-export type CommandCategory = 'session' | 'navigation' | 'space' | 'settings' | 'tools' | 'help';
+export type CommandCategory = string;
 
 export interface CommandShortcut {
   code: string;
@@ -25,14 +25,13 @@ export interface RankedCommand {
 const CATEGORY_LABEL: Record<CommandCategory, string> = {
   session: 'Sessions',
   navigation: 'Navigation',
-  space: 'Spaces',
   settings: 'Settings',
   tools: 'Tools',
   help: 'Help',
 };
 
 export function categoryLabel(category: CommandCategory): string {
-  return CATEGORY_LABEL[category];
+  return CATEGORY_LABEL[category] ?? category;
 }
 
 function isMacPlatform(): boolean {

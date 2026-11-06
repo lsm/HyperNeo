@@ -1,4 +1,5 @@
 import { serve } from 'bun';
+import { resolveNeoEntry } from '@hyperneo/shared/web-entry';
 
 const DAEMON_URL = process.env.DAEMON_URL || 'http://localhost:8283';
 const PORT = process.env.PORT || 9283;
@@ -27,7 +28,11 @@ serve({
       }
     }
 
-    const path = url.pathname === '/' ? '/index.html' : url.pathname;
+    const entry = resolveNeoEntry(url);
+    if (entry?.kind === 'redirect') {
+      return Response.redirect(new URL(entry.location, url), 308);
+    }
+    const path = entry?.kind === 'entry' ? entry.path : url.pathname;
     const file = Bun.file(`./dist${path}`);
 
     if (await file.exists()) {

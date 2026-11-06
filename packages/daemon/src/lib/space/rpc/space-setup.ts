@@ -111,7 +111,7 @@ import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
 import { subscribeAgentActivationOutcomeRedelivery } from '../goals/agent-activation-outcome-redelivery.ts';
 import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../goals/owner-change-outcome-redelivery.ts';
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
-import { EvolutionConversationAnalysisService } from '../evolution/conversation-analysis-service.ts';
+import { EvolutionConversationAnalysisService } from '../../../../../space/src/evolution/conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../evolution/episode-service.ts';
 import { EvolutionScopeService } from '../evolution/scope-service.ts';
 import { EvolutionTraceEvidenceService } from '../evolution/trace-evidence-service.ts';

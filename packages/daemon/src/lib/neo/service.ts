@@ -18,7 +18,11 @@ import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-rep
 import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
 import { decodeUlidTimestamp } from '../mailbox/ulid.ts';
-import { createNeoWorkerQuestionWriter } from './question-operations.ts';
+import {
+  createNeoWorkerQuestionWriter,
+  expectedReportLanguage,
+  stageNeoWorkerQuestion,
+} from './question-operations.ts';
 import {
   sessionSender,
   type SessionReportHandler,
@@ -90,6 +94,7 @@ import { createNeoPublisher } from './publication-operation.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
+import { isNeoTodoStalledCard } from './todo-state.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 
 const MODEL_CHANGE_SOURCES = new Set([
@@ -560,6 +565,34 @@ export class NeoService {
     )(ref, report);
   }
 
+  async relayWorkerQuestion(
+    input: { todoId: string; title: string; options: string[] },
+    sessionId: string | undefined
+  ) {
+    const todo = this.todos.getTodo(input.todoId);
+    const staged = this.todoSessions.readNudge(input.todoId)?.workerQuestion;
+    const ref = this.todoSessions.readRef(input.todoId);
+    if (!todo || !staged || !ref || this.todos.getAsk(todo.askId)?.sessionId !== sessionId)
+      return {
+        ok: false,
+        reason: 'no_worker_question: this todo has no worker question to relay.',
+      };
+    const card = this.todos
+      .listQuestions(todo.askId)
+      .find((q) => q.state === 'open' && q.todoId === todo.id && !isNeoTodoStalledCard(q.text));
+    if (card)
+      return {
+        ok: false,
+        reason: `card_open: card ${card.id} is already waiting for the human on this todo; relay after it is answered.`,
+      };
+    const language = expectedReportLanguage(this.db.getGlobalSettings().language);
+    const result = await this.storeWorkerQuestion(ref, { ...staged, ...input, language });
+    const current = this.todoSessions.readNudge(input.todoId);
+    if (result.ok && current && JSON.stringify(current.workerQuestion) === JSON.stringify(staged))
+      this.todoSessions.recordNudge(input.todoId, { ...current, workerQuestion: undefined });
+    return result;
+  }
+
   readonly handleWorkerQuestion = (superpipe({})('neo.workerQuestionReport') as PipelineAPI)
     .input(['input', 'origin', 'retry'])
     .pipe(
@@ -664,13 +697,16 @@ export class NeoService {
             kind: 'rejected',
             reason: 'report_assignment: choose a todo owned by the receiving Neo.',
           };
-        const result = await this.storeWorkerQuestion(
+        const result = stageNeoWorkerQuestion(
+          this.todos,
+          this.todoSessions,
           sessionWorkerRef(sender, !!this.db.getSession(sender)),
           { ...input.question, kind: input.kind, report: text },
-          (question) =>
+          this.db.getGlobalSettings().language,
+          (staged, question, reportId) =>
             wake(
-              question.id,
-              `Worker needs a human decision. Read card ${question.id}: ${question.text}`
+              reportId,
+              `Worker question on todo ${staged.id}: ${question.title}\nOptions: ${question.options.join(' | ')}\nAnswer the worker and continue if you can. If only the human can decide, call neo.question.relay with your own plain words.`
             )
         );
         return result.ok ? receipt : { kind: 'rejected', reason: result.reason };

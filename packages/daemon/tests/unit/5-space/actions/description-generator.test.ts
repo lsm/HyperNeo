@@ -8,8 +8,8 @@ import {
   RESEARCH_HOT_ACTIONS,
   REVIEWER_HOT_ACTIONS,
   ROLE_HOT_ACTIONS,
-} from '../../../../src/lib/space/actions/description-generator.ts';
-import { WORKER_NODE_HOT_FILL } from '../../../../src/lib/space/actions/worker-contract-tools.ts';
+} from '../../../../../space/src/actions/description-generator.ts';
+import { WORKER_NODE_HOT_FILL } from '../../../../../space/src/actions/worker-contract-tools.ts';
 
 describe('role hot action seeds', () => {
   test('ROLE_HOT_ACTIONS contains all six preset roles', () => {

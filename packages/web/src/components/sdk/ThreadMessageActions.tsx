@@ -13,7 +13,7 @@ import { ResultInfoDropdown } from './ResultInfoDropdown';
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 
-interface SpaceTaskThreadMessageActionsProps {
+interface ThreadMessageActionsProps {
   timestamp: number;
   copyText: string;
   align?: 'left' | 'right';
@@ -34,7 +34,7 @@ function formatFullTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString();
 }
 
-export function SpaceTaskThreadMessageActions({
+export function ThreadMessageActions({
   timestamp,
   copyText,
   align = 'left',
@@ -42,7 +42,7 @@ export function SpaceTaskThreadMessageActions({
   openSessionTitle,
   sessionInit,
   resultInfo,
-}: SpaceTaskThreadMessageActionsProps) {
+}: ThreadMessageActionsProps) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
