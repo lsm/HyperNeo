@@ -11,15 +11,15 @@ import type {
   InternalUpdateSpaceTaskParams,
   UpdateSpaceGoalParams,
 } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository.ts';
-import type { SpaceGoalOutcomeNotificationRepository } from '../../storage/repositories/space-goal-outcome-notification-repository.ts';
-import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
-import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
-import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import type { ScheduleService } from '../schedule/schedule-service.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
+import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import type { ScheduleService } from '../../schedule/schedule-service.ts';
 import type { GoalAutomationService } from './automation-service.ts';
 import { updateScheduledCheckIn } from './check-in-schedule.ts';
 import type { ClaimAdmissionDenyReason } from './claim-admission-gates.ts';
@@ -117,11 +117,11 @@ export interface SpaceGoalServiceDeps {
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
   evolutionScopeService?: Pick<
-    import('../evolution/scope-service.ts').EvolutionScopeService,
+    import('../../evolution/scope-service.ts').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
   reactiveDb?: Pick<
-    import('../../storage/reactive-database.ts').ReactiveDatabase,
+    import('../../../storage/reactive-database.ts').ReactiveDatabase,
     'beginTransaction' | 'commitTransaction' | 'abortTransaction'
   >;
   resolveWorkspacePath?: (spaceId: string, rawPath: string) => Promise<string>;

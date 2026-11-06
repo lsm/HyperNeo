@@ -18,7 +18,7 @@ import {
   decideGoalOwnerResolution,
   type GoalOwnerAgentState,
   type GoalOwnerResolutionDecision,
-} from '../../lib/goals/owner-resolution.ts';
+} from './space-goal-owner-resolution.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 import {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session, SpaceGoal, SpaceGoalOutcomeNotification } from '@hyperneo/shared';
-import { createGoalOperations } from '../../../../src/lib/goals/operations.ts';
-import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
+import { createGoalOperations } from '../../../../src/lib/space/goals/operations.ts';
+import { SpaceGoalService } from '../../../../src/lib/space/goals/service.ts';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {

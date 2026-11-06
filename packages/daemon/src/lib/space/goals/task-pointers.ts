@@ -5,7 +5,7 @@ import type {
   SpaceTask,
   SpaceTaskStatus,
 } from '@hyperneo/shared';
-import { Logger } from '../logger.ts';
+import { Logger } from '../../logger.ts';
 import { recordGoalEvent } from './event-recording.ts';
 import { recordOutcomeNotification } from './outcome-notifications.ts';
 import { requireActiveSpaceForTaskCreation, requireGoal, runAtomic } from './persistence.ts';

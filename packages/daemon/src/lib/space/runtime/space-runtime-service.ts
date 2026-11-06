@@ -173,7 +173,7 @@ export interface SpaceRuntimeServiceConfig {
     workflowRunRepo: SpaceWorkflowRunRepository;
     nodeExecutionRepo: NodeExecutionRepository;
   };
-  goalService?: import('../../goals/service.ts').SpaceGoalService;
+  goalService?: import('../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;

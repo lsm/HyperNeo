@@ -10,7 +10,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../space/goals/automation-schedule-sync.ts';
 import { validateGoalAutomationSelfNagPolicy } from './evolution-policy-validation.ts';
 import {
   defineOperation,
