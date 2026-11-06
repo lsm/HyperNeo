@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
-import type { SpaceDaemonModule } from './space/daemon-module.ts';
+import type { SpaceDaemonModule } from '../../../space/src/daemon-module.ts';
 
-const SPACE_MODULE_PATH = ['.', 'space', 'daemon-module.ts'].join('/');
+const SPACE_MODULE_PATH = ['..', '..', '..', 'space', 'src', 'daemon-module.ts'].join('/');
 
 export async function loadSpaceDaemonModule(): Promise<SpaceDaemonModule> {
   const url = new URL(SPACE_MODULE_PATH, import.meta.url);
