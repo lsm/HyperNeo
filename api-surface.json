@@ -57966,6 +57966,12 @@
                         "endedAt": {
                           "type": "number"
                         },
+                        "finalUrls": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
                         "id": {
                           "minLength": 1,
                           "type": "string"
@@ -57993,6 +57999,7 @@
                         "ended",
                         "inputs",
                         "urls",
+                        "finalUrls",
                         "complete",
                         "cursor"
                       ],

@@ -70,6 +70,17 @@ describe('HyperNeo turn facts', () => {
     ]);
   });
 
+  test('final URLs come from the final message only', () => {
+    input('in-1', 10, 1);
+    toolOutput('Listed https://github.com/o/r/pull/8\n', 11);
+    result('Opened https://github.com/o/r/pull/7', 12, 1);
+    expect(read()[0].urls).toEqual([
+      'https://github.com/o/r/pull/8',
+      'https://github.com/o/r/pull/7',
+    ]);
+    expect(read()[0].finalUrls).toEqual(['https://github.com/o/r/pull/7']);
+  });
+
   test('several inputs share a turn, and an input queued earlier joins the turn that took it', () => {
     input('in-1', 10, 1);
     input('queued', 11, 3);

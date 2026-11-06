@@ -1,6 +1,6 @@
 import type { NeoSessionFacts } from '../../../packages/daemon/src/lib/neo/pack-contract.ts';
 import { codingRemoteRepo } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
-import { codingPrKey } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
+import { codingPrKey } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-key.ts';
 
 export function claudeOwnerSession(value: NeoSessionFacts, openedPrs: readonly string[] = []) {
   const keys = (urls: string[]) => urls.flatMap((url) => codingPrKey(url) ?? []);
