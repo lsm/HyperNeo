@@ -1,5 +1,13 @@
 const STEP = 20 * 60_000;
 
+export interface StagedWorkerQuestion {
+  kind: 'question' | 'blocked';
+  title: string;
+  options: string[];
+  language: 'en' | 'zh-Hans';
+  report: string;
+}
+
 export type FollowThroughIncident = {
   stallReminder?: {
     since: number;
@@ -8,6 +16,7 @@ export type FollowThroughIncident = {
     sessionId?: string;
   };
   checkOnlyReminder?: FollowThroughIncident['stallReminder'];
+  workerQuestion?: StagedWorkerQuestion;
   blockerReport?: {
     id: string;
     dispatchId: string;
