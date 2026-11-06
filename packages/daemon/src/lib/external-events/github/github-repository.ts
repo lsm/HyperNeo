@@ -1,7 +1,3 @@
-import {
-  clearGitHubWebhookRegistration,
-  clearGitHubWebhookDeliveryHistory,
-} from '../../../storage/repositories/github-webhook-clear-persist.ts';
 import { schemaTableExists } from '../../../storage/schema/extensions.ts';
 import {
   countGitHubSpacesWithPollingIntent,
@@ -142,10 +138,6 @@ export class GitHubEventExtensionRepository {
     webhookConfiguredAt?: number | null;
   }): GitHubWatchedRepo {
     return upsertGitHubWatchedRepo(this.db, params);
-  }
-
-  clearWebhookRegistration(id: string, options: { clearSecret?: boolean } = {}): void {
-    clearGitHubWebhookRegistration(this.db, id, options.clearSecret);
   }
 
   setRepoEnabled(spaceId: string, enabled: boolean): number {
@@ -319,10 +311,6 @@ export class GitHubEventExtensionRepository {
          WHERE id = ?`
       )
       .run(Date.now(), Date.now(), id);
-  }
-
-  clearWebhookDeliveryHistory(id: string): void {
-    clearGitHubWebhookDeliveryHistory(this.db, id);
   }
 
   updatePollCursor(id: string, cursor: PollCursor): void {
