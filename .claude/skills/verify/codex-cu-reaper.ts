@@ -22,6 +22,7 @@ const notices: string[] = [];
 const signals: { pid: number; signal: string }[] = [];
 const timers: { callback: () => void; delay: number; unref: boolean; cleared: boolean }[] = [];
 const events: unknown[] = [];
+let closeOnAction: (() => Promise<void>) | undefined;
 const realChild = await import('node:child_process');
 const fakeExecFile = Object.assign(() => { throw new Error('Use promisified fixture only'); }, {
   [promisify.custom]: async (file: string, args: string[], options: { timeout: number; maxBuffer: number }) => {
@@ -69,7 +70,12 @@ const clear = spyOn(globalThis, 'clearInterval').mockImplementation(((handle: nu
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 Object.defineProperty(process, 'platform', { value: 'darwin' });
 const { subscribeToStructuredLogs } = await import('../../../packages/daemon/src/lib/logger.ts');
-const unsubscribe = subscribeToStructuredLogs((event) => { if (event.module.includes('codex-cu')) events.push(event); });
+const unsubscribe = subscribeToStructuredLogs((event) => {
+  if (event.module.includes('codex-cu')) {
+    events.push(event);
+    if (event.message.includes('action: kill -TERM')) void closeOnAction?.();
+  }
+});
 const { startCuChecker } = await import('../../../packages/daemon/src/lib/drivers/codex-cu-reaper.ts');
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise<void>((resolve) => setImmediate(resolve)); };
 const closeAll: (() => Promise<void>)[] = [];
@@ -128,6 +134,19 @@ try {
     'A cancelled final recheck must not log a kill attempt');
   await closeCancelled();
   becomeYoungAfterRead = young = false;
+  for (const automatic of [false, true]) {
+    const closeDuringLog = startCuChecker(() => automatic); closeAll.push(closeDuringLog);
+    closeOnAction = closeDuringLog;
+    const beforeClosedNotices = notices.length, beforeClosedSignals = signals.length;
+    try {
+      timers.at(-1)!.callback(); await settle();
+      assert.equal(notices.length, beforeClosedNotices, 'Close must suppress the pending notification');
+      assert.equal(signals.length, beforeClosedSignals, 'Close must suppress the pending signal');
+    } finally {
+      closeOnAction = undefined;
+      await closeDuringLog();
+    }
+  }
   const beforeIndependentNotices = notices.length, beforeIndependentSignals = signals.length;
   for (let instance = 0; instance < 2; instance++) {
     const closeIndependent = startCuChecker(() => false); closeAll.push(closeIndependent);
@@ -144,8 +163,18 @@ try {
   const beforeHeld = commands.length;
   timer.callback(); timer.callback(); await settle();
   assert.equal(commands.length - beforeHeld, 1, 'Only one check may be in flight');
-  release(); await settle(); await end();
-  hold = undefined;
+  let closedDuringRead = false;
+  const closingDuringRead = end().then(() => { closedDuringRead = true; });
+  const beforeHeldNotices = notices.length, beforeHeldSignals = signals.length;
+  try {
+    await settle();
+    assert(closedDuringRead, 'Closing must not wait for the held OS command');
+  } finally {
+    release(); await settle(); await closingDuringRead;
+    hold = undefined;
+  }
+  assert.equal(notices.length, beforeHeldNotices);
+  assert.equal(signals.length, beforeHeldSignals);
   const { collectFamilyOperations } = await import('../../../packages/daemon/src/lib/rpc-handlers/family-operations/index.ts');
   const { registerDriverOperations } = await import('../../../packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts');
   type Context = Parameters<typeof collectFamilyOperations>[0];

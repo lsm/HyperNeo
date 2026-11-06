@@ -99,6 +99,63 @@ describe('startCuChecker', () => {
 });
 
 describe('createCuChecker', () => {
+  test('close returns while an observation is pending and suppresses its later effects', async () => {
+    let release!: (facts: ReturnType<typeof observation>) => void;
+    const pending = new Promise<ReturnType<typeof observation>>((resolve) => {
+      release = resolve;
+    });
+    const actions: string[] = [];
+    const checker = createCuChecker({
+      read: () => pending,
+      auto: () => true,
+      notify: async () => void actions.push('notify'),
+      signal: () => void actions.push('signal'),
+    });
+    const checking = checker.check();
+    let closed = false;
+    const closing = checker.close().then(() => {
+      closed = true;
+    });
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(closed).toBe(true);
+    } finally {
+      release(observation());
+      await checking;
+      await closing;
+    }
+    expect(actions).toEqual([]);
+  });
+
+  test('closing from an action log suppresses the subsequent notification or signal', async () => {
+    const previousConfig = getLoggerConfig();
+    configureLogger({ level: LogLevel.WARN });
+    try {
+      for (const auto of [false, true]) {
+        const actions: string[] = [];
+        const checker = createCuChecker({
+          read: async () => observation(),
+          auto: () => auto,
+          notify: async () => void actions.push('notify'),
+          signal: () => void actions.push('signal'),
+        });
+        const unsubscribe = subscribeToStructuredLogs((event) => {
+          if (event.module.includes('codex-cu')) void checker.close();
+        });
+        try {
+          await checker.check();
+          expect(actions).toEqual([]);
+        } finally {
+          unsubscribe();
+          await checker.close();
+        }
+      }
+    } finally {
+      configureLogger(previousConfig);
+    }
+  });
+
   test('starts, checks and closes with a numeric timer handle', async () => {
     const timer = 42 as unknown as ReturnType<typeof setInterval>;
     const interval = spyOn(globalThis, 'setInterval').mockReturnValue(timer);
