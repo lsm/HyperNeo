@@ -144,6 +144,22 @@ export function mergeSnapshotIntoTranscript(
   return descendants.length === 0 ? merged : insertByTimestampRowid(merged, descendants);
 }
 
+function slidOutOfWindow(
+  transcript: ChatMessage[],
+  removed: ChatMessage[],
+  added: ChatMessage[],
+  rowCount: number
+): boolean {
+  if (!removed.length || !added.length || rowCount < LIVE_QUERY_MESSAGE_LIMIT) return false;
+  const windowSize = rowCount - added.length + removed.length;
+  const edge = transcript.slice(-windowSize).slice(0, removed.length);
+  const edgeIds = new Set(edge.map(rowId));
+  return (
+    removed.every((row) => edgeIds.has(rowId(row))) &&
+    added.every((row) => compareByTimestampRowid(edge[edge.length - 1], row) < 0)
+  );
+}
+
 type MessageQuery = 'messages.bySession' | 'messages.bySession.compact';
 
 function messageQueryFor(mode: ChatDisplayMode): MessageQuery {
@@ -639,11 +655,15 @@ export class SessionStore {
 
     let next = this.sdkMessages.value.slice();
     let changed = false;
-    const windowFull = (event.rowCount ?? 0) >= LIVE_QUERY_MESSAGE_LIMIT;
-    const windowSlid = this.hasPaginatedOlder && windowFull && !!event.added?.length;
-    if (windowFull && !this.hasPaginatedOlder) this._hasMoreMessages.value = true;
+    const windowSlid = slidOutOfWindow(
+      next,
+      (event.removed ?? []) as ChatMessage[],
+      (event.added ?? []) as ChatMessage[],
+      event.rowCount ?? 0
+    );
+    if (windowSlid && !this.hasPaginatedOlder) this._hasMoreMessages.value = true;
 
-    if (event.removed?.length && !windowSlid) {
+    if (event.removed?.length && !(windowSlid && this.hasPaginatedOlder)) {
       const removedIds = new Set(
         (event.removed as Array<{ id?: unknown }>).map((r) => r.id).filter((id) => id != null)
       );
