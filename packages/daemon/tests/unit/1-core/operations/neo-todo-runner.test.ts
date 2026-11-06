@@ -1326,7 +1326,7 @@ describe('neo todo runner', () => {
         const input = {
           askId: 'ask',
           kind: 'reply',
-          text: 'Prepared',
+          text: 'Prepared?',
           todoId: todo.id,
           focused: true,
           sourceSession: ref,
@@ -3006,7 +3006,7 @@ describe('worker blocker ownership', () => {
         'older-card',
         'ask',
         {
-          text: 'Prior approval',
+          text: 'Prior approval?',
           kind: 'reply',
           options: null,
           multiple: false,
