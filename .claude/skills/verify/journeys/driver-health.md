@@ -50,7 +50,7 @@ directory's browser.json while it is running. Anonymous pages may read but canno
 run work.health, so pair the browser first: create a human code with
 `rpc.ts device.pair.create` against that port and the run's data directory, then
 POST it to `/pair` from the page. Keep the code out of evidence. Open the loopback
-URL, then Settings > Neo model, and inspect Worker client health. It must show client versions, concrete health
+URL, then Settings > Sessions & Harness, and inspect Worker client health. It must show client versions, concrete health
 reasons, and Codex's Unverified version warning. Save a screenshot and create
 browser.json's doneFile after observing the actual page. The helper then exits;
 the wrapper preserves evidence and deletes all temporary daemon data.
