@@ -1,3 +1,4 @@
+import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
 import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
@@ -393,12 +394,13 @@ function copilotAdapters(
 ): WorkAdapter[] {
   if (!findExecutable(COPILOT_CLIENT.bin)) return [];
   const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
-  const resolveCliPath = async () => (await resolveCopilotRuntime(process.env)).path;
+  const resolveCliPath = async (waitMs?: number) =>
+    (await resolveCopilotRuntime(process.env, waitMs)).path;
   const discovery = createCopilotDiscovery({
     machine: hostname(),
     now: Date.now,
     listSessions: reuseCopilotSessionList(
-      async () => listCopilotSessions(await resolveCliPath()),
+      async () => listCopilotSessions(await resolveCliPath(PACKAGE_DOWNLOAD_WAIT_MS)),
       Date.now
     ),
     ownSessions: () => {

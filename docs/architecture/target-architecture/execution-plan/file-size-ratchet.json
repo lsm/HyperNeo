@@ -331,10 +331,6 @@
       "maxLines": 696,
       "followUp": "M10 cleanup split when touched"
     },
-    "packages/shared/src/acp/acp-types.ts": {
-      "maxLines": 692,
-      "followUp": "M7 agent runtime boundary split"
-    },
     "packages/daemon/src/lib/space/rpc/space-task-message-handlers.ts": {
       "maxLines": 899,
       "followUp": "M2/M4 fabric bridge split"
