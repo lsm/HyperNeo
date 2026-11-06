@@ -2,7 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readClaudeDesktopRecordFiles } from '../../../../src/storage/claude-desktop-read';
+import {
+  type ClaudeDesktopRecord,
+  readClaudeDesktopRecordFiles,
+} from '../../../../src/storage/claude-desktop-read';
+import {
+  type ClaudeRecordCache,
+  withStartedRecords,
+} from '../../../../src/lib/drivers/claude-desktop-adapter';
 
 describe('readClaudeDesktopRecordFiles', () => {
   test('reads session files, skips bad ones, and follows edits and deletes', () => {
@@ -28,5 +35,21 @@ describe('readClaudeDesktopRecordFiles', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('withStartedRecords', () => {
+  const started = { sessionId: 'local_new', title: 'Just started' } as ClaudeDesktopRecord;
+
+  test('keeps a started session until a file registers it', () => {
+    const cache: ClaudeRecordCache = new Map([
+      ['started:local_new', { modifiedAt: 0, records: [started] }],
+    ]);
+    expect(withStartedRecords([], cache)).toEqual([started]);
+    expect(cache.size).toBe(1);
+
+    const file = { sessionId: 'local_new', title: 'Registered' } as ClaudeDesktopRecord;
+    expect(withStartedRecords([file], cache)).toEqual([file]);
+    expect(cache.size).toBe(0);
   });
 });

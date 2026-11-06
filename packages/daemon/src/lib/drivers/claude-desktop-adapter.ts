@@ -214,7 +214,16 @@ export async function readClaudeDesktopRecords(
   const present = new Set(files);
   for (const path of cache.keys())
     if (!present.has(path) && !path.startsWith(STARTED_KEY)) cache.delete(path);
-  const records = (await Promise.all(files.map((path) => readRecord(path, cache)))).flat();
+  return withStartedRecords(
+    (await Promise.all(files.map((path) => readRecord(path, cache)))).flat(),
+    cache
+  );
+}
+
+export function withStartedRecords(
+  records: ClaudeDesktopRecord[],
+  cache: ClaudeRecordCache
+): ClaudeDesktopRecord[] {
   const registered = new Set(records.map((record) => record.sessionId));
   const started = [...cache].flatMap(([key, entry]) => {
     if (!key.startsWith(STARTED_KEY)) return [];
@@ -1764,8 +1773,13 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
     sessions: async () => {
-      const records = await (deps.readRecords?.(deps.sessionsDir) ??
-        loadClaudeDesktopRecords(reused, cache));
+      const { readRecords } = deps;
+      const records = readRecords
+        ? withStartedRecords(
+            await runLagPhase('scanner:claude_desktop', () => readRecords(deps.sessionsDir)),
+            cache
+          )
+        : await loadClaudeDesktopRecords(reused, cache);
       const live = new Map(
         (await loadLiveClaudeSessions(reused, records)).map((row) => [row.sessionId, row.status])
       );
