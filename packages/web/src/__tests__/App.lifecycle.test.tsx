@@ -37,13 +37,6 @@ vi.mock('../lib/signals.ts', async () => {
   const { signal: make } = await import('@preact/signals');
   return {
     currentSessionIdSignal: make<string | null>(null),
-    currentSpaceAgentHandleSignal: make(null),
-    currentSpaceIdSignal: make(null),
-    currentSpaceSessionIdSignal: make(null),
-    currentSpaceSettingsTabSignal: make(null),
-    currentSpaceTaskIdSignal: make(null),
-    currentSpaceViewModeSignal: make(null),
-    currentSpaceTasksFilterTabSignal: make(null),
     navSectionSignal: make('chats'),
   };
 });
@@ -52,18 +45,7 @@ vi.mock('../lib/router.ts', () => {
   return {
     initializeRouter: () => null,
     navigateToSession: noop,
-    navigateToHome: noop,
     navigateToSessions: noop,
-    navigateToSpacesPage: noop,
-    navigateToSpace: noop,
-    navigateToSpaceConfigure: noop,
-    navigateToSpaceGoals: noop,
-    navigateToSpaceMemories: noop,
-    navigateToSpaceEvolve: noop,
-    navigateToSpaceTasks: noop,
-    navigateToSpaceAgent: noop,
-    navigateToSpaceSession: noop,
-    navigateToSpaceTask: noop,
     navigateToSettings: noop,
   };
 });

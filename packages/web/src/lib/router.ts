@@ -359,10 +359,6 @@ export function navigateToSession(sessionId: string, replace = false): void {
   }
 }
 
-export function navigateToHome(replace = false): void {
-  navigateToSpacesPage(replace);
-}
-
 export function navigateToSessions(replace = false): void {
   if (routerState.isNavigating) return;
 
