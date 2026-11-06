@@ -173,6 +173,20 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test('long worker instructions retain shared delegation data after message truncation', async () => {
+    const h = setup();
+    try {
+      h.packs.push(createDelegationPack(() => h.db));
+      await h.runner.start(h.add(null, 'Long task. '.repeat(2000)).id);
+      const message = String(h.calls.find((call) => call.name === 'work.start')!.input.message);
+      expect(message).toContain('"payment":{"value":"self","configured":false}');
+      expect(message).toContain('CAPTCHAs always belong to the human');
+      expect(message).toContain('Long task.');
+      expect(message.length).toBeLessThanOrEqual(20_000);
+    } finally {
+      h.db.close();
+    }
+  });
   test('coding workers receive shared delegation rules and the next worker sees changed values', async () => {
     const h = setup();
     try {
