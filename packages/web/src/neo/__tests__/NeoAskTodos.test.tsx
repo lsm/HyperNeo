@@ -249,9 +249,24 @@ describe('NeoAskTodos', () => {
           '[Review \\[iOS\\] \\\\ API next step](hyperneo://ask/ask)'
         )
       );
-      expect(app.queryByRole('menuitem', { name: label })).toBeNull();
+      await waitFor(() => expect(app.queryByRole('menuitem', { name: label })).toBeNull());
       expect(location.href).toBe(url);
       expect(answer).not.toHaveBeenCalled();
+    } finally {
+      copy.mockRestore();
+    }
+  });
+
+  it('copies a plain Unicode card title verbatim', async () => {
+    const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
+    const data = entry({});
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    try {
+      fireEvent.click(app.getByRole('button', { name: '更多操作' }));
+      fireEvent.click(app.getByRole('menuitem', { name: '复制链接' }));
+      await waitFor(() =>
+        expect(copy).toHaveBeenCalledWith(`[${data.ask.title}](hyperneo://ask/${data.ask.id})`)
+      );
     } finally {
       copy.mockRestore();
     }
@@ -1091,7 +1106,10 @@ describe('NeoAskTodos', () => {
         onSettle={onSettle}
       />
     );
-    expect(settled.queryByRole('button', { name: '更多操作' })).toBeNull();
+    fireEvent.click(settled.getByRole('button', { name: '更多操作' }));
+    expect(settled.getByRole('menuitem', { name: '复制链接' })).toBeTruthy();
+    expect(settled.queryByRole('menuitem', { name: '标记做完' })).toBeNull();
+    expect(settled.queryByRole('menuitem', { name: '放下这件事' })).toBeNull();
   });
 
   it('moves removed todos into Details, one line each with what replaced them', () => {

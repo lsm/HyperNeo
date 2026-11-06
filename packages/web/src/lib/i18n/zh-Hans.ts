@@ -87,6 +87,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'ask.state.dropped': '放弃了',
   'ask.state.todo': '没开始',
   'ask.actions': '更多操作',
+  'ask.copyLink': '复制链接',
   'ask.markDone': '标记做完',
   'ask.drop': '放弃这件事',
   'ask.all': '全部 · {count}',

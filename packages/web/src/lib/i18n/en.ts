@@ -87,6 +87,7 @@ export const en = {
   'ask.state.dropped': 'Dropped',
   'ask.state.todo': 'Not started',
   'ask.actions': 'Ask actions',
+  'ask.copyLink': 'Copy link',
   'ask.markDone': 'Mark done',
   'ask.drop': 'Drop this ask',
   'ask.all': 'All · {count}',
