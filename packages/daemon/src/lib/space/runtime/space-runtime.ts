@@ -142,9 +142,11 @@ import {
 } from '../../tasks/stuck-ladder-gates.ts';
 import {
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
+  isQueuedExternalEventExpired,
+} from '../../external-events/event-delivery-rules.ts';
+import {
   evaluateRequeueTaskLifecycle,
   isPublishedExternalEventExpired,
-  isQueuedExternalEventExpired,
   isWorkflowTargetOwnedBySpace,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,

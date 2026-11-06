@@ -20,13 +20,13 @@ import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts'
 import type { CredentialStore } from '../../credentials/credential-store.js';
 import { Logger } from '../../logger.ts';
 import { isRateLimitError } from '../../session/rate-limit-detector.ts';
-import type { ExternalEventStore } from '../external-event-store.ts';
 import { SESSION_EVENT_SCOPE } from '../session-external-event-store.ts';
 import type {
   ExternalEvent,
   ExternalEventExtensionContext,
   HttpExternalEventExtension,
   RpcExternalEventExtension,
+  ExternalEventReads,
 } from '../types.ts';
 import { normalizeSessionPrClosure } from './session-pr-closure.ts';
 import {
@@ -122,13 +122,8 @@ const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter(
 const REPO_HOOK_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'merge_group');
 const WEBHOOK_PATH = '/webhook/github/space';
 
-type GitHubSpaceEventReads = Pick<
-  ExternalEventStore,
-  'getByDedupe' | 'listDeliveryLog' | 'countDeliveryLog' | 'listEventCountsByTopic'
->;
-
 interface GitHubEventExtensionOptions {
-  spaceEvents?: GitHubSpaceEventReads;
+  spaceEvents?: ExternalEventReads;
   recordSessionClosure?: (event: ExternalEvent) => Promise<unknown>;
   replaySessionTerminals?: () => Promise<unknown>;
   collectPollPage?: GitHubPollCollector;
@@ -321,7 +316,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private pollCycleCredentialSource: string | null = null;
   private pollCycleAccessible = false;
   private readonly credentialStore?: CredentialStore;
-  private readonly eventStore: GitHubSpaceEventReads | null;
+  private readonly eventStore: ExternalEventReads | null;
 
   constructor(
     private readonly db: BunDatabase,
