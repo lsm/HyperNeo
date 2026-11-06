@@ -61,6 +61,34 @@ function createProvider(refreshResult: boolean | Error): Provider {
 }
 
 describe('OAuthRefreshScheduler', () => {
+  it('refreshNow waits its turn behind a running tick', async () => {
+    const manager = new FakeCredentialManager();
+    const registry = new ProviderRegistry();
+    let running = 0;
+    let overlapped = false;
+    const provider = {
+      ...createProvider(true),
+      refreshToken: async () => {
+        running += 1;
+        overlapped ||= running > 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        running -= 1;
+        return true;
+      },
+    };
+    registry.register(provider);
+    manager.credentials.set(provider.id, {
+      type: 'oauth',
+      accessToken: 'old',
+      refreshToken: 'refresh-token',
+      expiresAt: Date.now() - 1,
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, { registry });
+    await Promise.all([scheduler.tick(), scheduler.refreshNow(provider.id)]);
+    expect(overlapped).toBe(false);
+    expect(manager.stored).toHaveLength(2);
+  });
+
   it('runs an initial tick when started', async () => {
     const registry = new ProviderRegistry();
     registry.register(createProvider(true));

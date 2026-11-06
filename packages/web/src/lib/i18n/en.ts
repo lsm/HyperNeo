@@ -253,6 +253,7 @@ export const en = {
   'composer.recordingTap': 'Recording · Tap the arrow to stop and send',
   'composer.recordingClick': 'Recording · Click the arrow to stop and send',
   'composer.transcribing': 'Transcribing into your draft…',
+  'composer.noNetwork': 'No network. Neo continues when the connection is back.',
   'composer.sendingDraft': 'Sending with your draft…',
   'composer.addedTap': 'Added to your draft so it goes out with {context}. Tap send when ready.',
   'composer.addedClick':

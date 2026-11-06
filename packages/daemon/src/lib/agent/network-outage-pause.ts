@@ -6,7 +6,8 @@ export const NETWORK_OUTAGE_POPUP_AFTER_MS = 30 * 60 * 1000;
 export const NETWORK_PROBE_EVERY_MS = 30_000;
 export const NETWORK_PROBE_MAX_MS = 5 * 60 * 1000;
 const NETWORK_PROBE_TIMEOUT_MS = 5_000;
-const DEFAULT_PROBE_HOST = 'api.anthropic.com';
+
+const DEFAULT_PROVIDER_URL = 'https://api.anthropic.com';
 
 const NETWORK_UNREACHABLE_RE =
   /\b(?:ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EAI_AGAIN)\b|getaddrinfo|\bConnection error\./;
@@ -21,25 +22,10 @@ export function isNetworkUnreachableError(text: string): boolean {
 
 const LOCAL_HOST_RE = /^(?:localhost|127\.|\[?::1\]?$|0\.0\.0\.0$)/;
 
-export function networkProbeHost(
-  text: string,
-  fallback: string | false | null = null
-): string | null {
+export function networkProbeHost(text: string): string | null {
   const match = PROBE_HOST_RE.exec(text);
   const host = match?.[1] ?? match?.[2];
-  if (host && LOCAL_HOST_RE.test(host)) return null;
-  if (host && !host.includes(':')) return host;
-  return fallback === false ? null : (fallback ?? DEFAULT_PROBE_HOST);
-}
-
-export function providerProbeHost(baseUrl: string | undefined): string | false | null {
-  if (!baseUrl) return null;
-  try {
-    const host = new URL(baseUrl).hostname;
-    return LOCAL_HOST_RE.test(host) ? false : host;
-  } catch {
-    return null;
-  }
+  return host && !LOCAL_HOST_RE.test(host) && !host.includes(':') ? host : null;
 }
 
 export function networkProbeDelayMs(failedResumes: number): number {
@@ -58,24 +44,31 @@ export function planNetworkOutageTick(
   };
 }
 
-export async function probeNetworkHost(host: string): Promise<boolean> {
+const isLocalUrl = (url: string): boolean => {
   try {
-    await fetch(`https://${host}/`, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(NETWORK_PROBE_TIMEOUT_MS),
-    });
+    return LOCAL_HOST_RE.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+};
+
+export function providerProbeUrl(sessionUrl?: string, upstreamUrl?: string): string {
+  const url = sessionUrl ?? DEFAULT_PROVIDER_URL;
+  return upstreamUrl && isLocalUrl(url) && !isLocalUrl(upstreamUrl) ? upstreamUrl : url;
+}
+
+export async function probeProviderUrl(url: string): Promise<boolean> {
+  try {
+    await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(NETWORK_PROBE_TIMEOUT_MS) });
     return true;
-  } catch (error) {
-    const text = `${String(error)} ${String((error as { cause?: unknown })?.cause ?? '')}`;
-    const name = (error as { name?: string })?.name;
-    return !(isNetworkUnreachableError(text) || name === 'TimeoutError' || name === 'AbortError');
+  } catch {
+    return false;
   }
 }
 
 export interface NetworkOutageDeps {
   now(): number;
-  probe(host: string): Promise<boolean>;
-  fallbackHost(): string | false | null;
+  probe(host: string | null): Promise<boolean>;
   schedule(run: () => void, delayMs: number): () => void;
   isHeld(): boolean;
   hold(retryAt: number, prompt: HeldPrompt | null): Promise<void>;
@@ -90,7 +83,7 @@ export class NetworkOutagePause {
   private popupShown = false;
   private active = false;
   private prompt: HeldPrompt | null = null;
-  private host: string | null = DEFAULT_PROBE_HOST;
+  private host: string | null = null;
   private errorText = '';
   private cancelProbe: (() => void) | null = null;
   private failedResumes = 0;
@@ -107,12 +100,12 @@ export class NetworkOutagePause {
     this.startedAt ??= this.deps.now();
     this.active = true;
     this.prompt = prompt ?? this.prompt;
-    this.host = networkProbeHost(errorText, this.deps.fallbackHost());
+    this.host = networkProbeHost(errorText);
     this.errorText = errorText;
     this.deps.log(
       this.host
         ? `network outage: holding the turn and probing ${this.host}`
-        : 'network outage: holding the turn; no host to probe, waiting for Retry Now or a new message'
+        : 'network outage: holding the turn and probing the provider'
     );
     await this.holdUntil(this.deps.now() + networkProbeDelayMs(this.failedResumes));
     if (firstFailure && notify) await this.deps.notice(NETWORK_OUTAGE_NOTICE);
@@ -169,9 +162,9 @@ export class NetworkOutagePause {
       this.stop();
       return;
     }
-    if (this.host !== null && (await this.deps.probe(this.host))) {
+    if (await this.deps.probe(this.host)) {
       if (!this.active) return;
-      this.deps.log(`network outage: ${this.host} is reachable again; resuming the turn`);
+      this.deps.log('network outage: the provider is reachable again; resuming the turn');
       await this.deps.resume(this.takePrompt());
       return;
     }
