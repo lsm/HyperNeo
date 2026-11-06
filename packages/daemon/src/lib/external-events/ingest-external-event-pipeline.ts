@@ -2,7 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { type ExternalEventEssenceEntry, renderEventBlock } from './deferred-event-digest.ts';
 import { essenceEntryFromExternalEvent } from './event-essence-entry.ts';
 import { classifyUrgency, type ExternalEventUrgency } from './event-urgency.ts';
-import { validateExternalEvent } from './external-event-store.ts';
+import { validateExternalEvent } from './event-validation.ts';
 import type { ExternalEvent, StoreResult } from './types.ts';
 
 export type IngestExternalEventOutcome =

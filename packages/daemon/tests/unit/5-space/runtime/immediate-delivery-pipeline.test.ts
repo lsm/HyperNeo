@@ -11,8 +11,10 @@ import type { DeliveryFailure } from '../../../../src/lib/external-events/types'
 import type { ExternalEventTaskDecision } from '../../../../src/lib/external-events/admission-gates';
 import {
   buildImmediateEventMessageUuid,
-  deliverImmediateEvent,
   IMMEDIATE_EVENT_MESSAGE_UUID_PREFIX,
+} from '../../../../src/lib/external-events/event-delivery-rules';
+import {
+  deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
   type ImmediateEventDeliveryInput,
   pickMechanics,
