@@ -7,7 +7,7 @@ const base = '995db89299b4f586ecf74714c7eeee5a5baf4c2b';
 const text = fs.readFileSync(file, 'utf8');
 const added = "import { gitHubWatchedConfigWrite } from '../../../storage/repositories/github-watched-config-write.ts';\n";
 const callback = body => body.slice(body.indexOf("    hub.onRequest('space.github.watchRepo'"), body.indexOf("    hub.onRequest('space.github.autoConfigureWebhook'"));
-const outsideCallback = text.replace(added, '').replace(callback(text), '');
+const outsideCallback = text.replace(added, '').replace("import { gitHubWatchPollingWrite } from '../../../storage/repositories/github-watch-polling-write.ts';\n", '').replace(callback(text), '');
 if (hash(outsideCallback) !== '6e595f05c59edbf6ec52ff3517a5b5b24fc03f85d7ca997bc41abd01bf842345')
   throw Error('Extension changed beyond the reviewed watch config callback');
 const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -32,6 +32,6 @@ const productionGraphLines = caller.lines + admission.lines + modules.reduce((n,
 if (productionGraphLines >= 200) throw Error('Validation reader owned graph must stay below 200 lines');
 const report = { base, caller, admission, modules, importsAndRegistrations, productionGraphLines, excludedLines: 0,
   contract: 'Awaited query-only lookups before the interval gate and inside webhook serialization; complete caller, admission gate, command, lookup and mapper modules included. Existing case/null/parse semantics and error propagation retained.',
-  limits: 'Framework transport, unrelated existing webhook/polling effects and startup are not re-audited by this slice. Polling intent and snapshot main SQL remain for subsequent rungs; no whole-runtime closure or final guard claim.' };
+  limits: 'Framework transport, unrelated existing webhook/polling effects and startup are not re-audited by this slice. Polling intent and snapshot reads use their writer command; no whole-runtime closure or final guard claim.' };
 if (process.argv[2]) fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify(report, null, 2));

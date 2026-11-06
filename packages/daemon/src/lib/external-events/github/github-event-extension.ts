@@ -1,3 +1,4 @@
+import { gitHubWatchPollingWrite } from '../../../storage/repositories/github-watch-polling-write.ts';
 import { gitHubWatchedConfigWrite } from '../../../storage/repositories/github-watched-config-write.ts';
 import { gitHubWatchedRepoRead } from '../../../storage/repositories/github-watched-repo-read.ts';
 import { gitHubPollingTimerReads } from '../../../storage/repositories/github-polling-usage-read.ts';
@@ -464,21 +465,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           });
         }
       );
+      const config = await gatewayFor(this.db).run(gitHubWatchPollingWrite, {
+        spaceId: watchedRepo.spaceId,
+        pollingEnabled: watchedRepo.pollingEnabled,
+        wasPolling: existingForValidation?.pollingEnabled ?? false,
+      });
+      await context.config.setSpaceConfig(watchedRepo.spaceId, this.sourceId, config);
       if (watchedRepo.pollingEnabled) {
-        this.repo.setPollingIntent(params.spaceId, true);
-        await this.persistSpaceConfig(context, watchedRepo.spaceId);
         if (this.getPollIntervalMs() > 0) {
           await this.enablePollingCapability(context);
           this.ensurePollingActive();
         }
       } else {
-        if (
-          existingForValidation?.pollingEnabled &&
-          this.repo.listAllPollingConfiguredRepos(params.spaceId).length === 0
-        ) {
-          this.repo.setPollingIntent(params.spaceId, false);
-        }
-        await this.persistSpaceConfig(context, watchedRepo.spaceId);
         await this.disablePollingCapabilityIfUnused(context);
         await this.stopIdlePollingOnReader();
       }

@@ -171,7 +171,7 @@ describe('GitHub polling RPC writer wiring', () => {
       'storage/repositories/github-watched-upsert-persist.ts':
         'c108d5f4cff7893041110ad4c28154c7922b8a6204388a68ab7ab9a0cf5addd9',
       'storage/repositories/github-polling-enabled-write.ts':
-        '63c68646034af002fbd1e155e41e6092b61b840f5f59195c616829eb5a39869c',
+        '35ea83f321ef4b0d1dc211a079fd10422dc6407b557e8f40f369b600cb99a75a',
     };
     for (const [file, sha] of Object.entries(hashes))
       expect(
