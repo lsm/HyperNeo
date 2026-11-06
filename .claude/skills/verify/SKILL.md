@@ -16,6 +16,9 @@ into its isolated child environment and CLI subprocesses.
 
 ## Rules
 
+- Owned HTTP preview servers must await `app.guardRequest(request)` before
+  routing and return any non-null refusal. After guard API changes, run the
+  focused transport regression in `journeys/verify-http-guards.md`.
 - Never start, stop or mutate the human's daemon. Isolated runs never use port
   8399, `~/.hyperneo` or a copy of a real database. Journey 15 only reads logs.
 - No provider key in the environment, real or fake. `launch.sh` starts from

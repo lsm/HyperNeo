@@ -136,7 +136,7 @@ try {
     web.get('*', async c => c.html(await Bun.file(join(dist, 'index.html')).text()));
     const owned = app;
     preview = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: async (request, server) => {
-      const refused = owned.guardRequest(request);
+      const refused = await owned.guardRequest(request);
       if (refused) return refused;
       if (new URL(request.url).pathname === '/ws') {
         const device = await owned.authenticateUpgrade(request, server.requestIP(request)?.address ?? null);

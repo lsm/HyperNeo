@@ -188,7 +188,7 @@ try {
     web = Bun.serve({ hostname: '127.0.0.1', port: 0,
       async fetch(request, server) {
         const url = new URL(request.url);
-        const refused = app.guardRequest(request);
+        const refused = await app.guardRequest(request);
         if (refused) return refused;
         if (url.pathname === '/pair' && request.method === 'POST') return app.handlePair(request);
         if (url.pathname.startsWith('/ws')) {

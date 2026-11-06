@@ -23,5 +23,7 @@ must exit zero. This proves the helper HTTP and RPC doors, not the eight feature
 UIs or their full journeys.
 
 Before the fix, the eight fetch functions return the guard Promise immediately.
-Normal traffic receives an invalid/null fetch response, leaving preview and RPC
-routes unreachable. Retain that failing receipt before adding the missing awaits.
+Normal traffic receives an invalid/null fetch response. The observed baseline
+returned Bun's generic welcome page with status 200 rather than the preview,
+leaving the intended preview and RPC routes unreachable. Retain that failing
+receipt before adding the missing awaits.
