@@ -10,7 +10,7 @@ import { NeoPublicationRepository } from '../../../../storage/repositories/neo-p
 import type { CodingLedgerRow } from './pr-ledger.ts';
 
 export function codingHumanHandoffs(db: Database, rows: readonly CodingLedgerRow[]) {
-  const conversation = new NeoRepository(db).conversationId();
+  const conversation = new NeoRepository(db).readConversationId();
   const publications = new NeoPublicationRepository(db);
   return conversation
     ? rows.filter((row) => {
