@@ -33082,7 +33082,7 @@
                 "type": "string"
               },
               "todoId": {
-                "description": "One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.",
+                "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -33263,7 +33263,7 @@
                 "type": "string"
               },
               "todoId": {
-                "description": "One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.",
+                "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
                 "minLength": 1,
                 "type": "string"
               }
@@ -33426,7 +33426,7 @@
                 "type": "string"
               },
               "todoId": {
-                "description": "One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.",
+                "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
                 "minLength": 1,
                 "type": "string"
               }

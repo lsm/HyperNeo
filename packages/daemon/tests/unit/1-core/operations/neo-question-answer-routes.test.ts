@@ -206,7 +206,7 @@ test('startup does not turn a later manual replacement into a worker report', as
           todoId: 'todo',
           sourceSession: f.source,
           kind: 'reply',
-          text: 'A manual clarification',
+          text: 'A manual clarification?',
           retireWhen: pendingTodoCheck,
           replaces: f.question.id,
         },

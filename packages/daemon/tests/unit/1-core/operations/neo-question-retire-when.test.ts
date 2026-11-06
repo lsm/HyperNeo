@@ -55,7 +55,7 @@ test('20707c94: an unlinked stale facts card retires and releases the todo it bl
         askId: 'ask',
         todoId: worker.id,
         kind: 'reply',
-        text: 'qlark has no review bot and no CI',
+        text: 'qlark has no review bot and no CI?',
         retireWhen: check,
       }),
       { source: 'mcp', sessionId: 'neo', role: 'neo' }
@@ -313,7 +313,20 @@ test('two simultaneous sweeps retire and notify once, while another open card ke
   const f = fixture();
   try {
     const card = await f.ask({ retireWhen: f.check });
-    await f.ask({ retireWhen: f.check, text: 'Other human choice' });
+    f.store.askQuestion(
+      'other-card',
+      card.question.askId,
+      {
+        text: 'Other human choice',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      1
+    );
     f.store.updateTodo(f.todo, { state: 'blocked', blockedBy: 'needs-human' }, 2);
     await Promise.all([f.retire(card.question, null, 4), f.retire(card.question, null, 4)]);
     expect(f.notes).toHaveLength(1);

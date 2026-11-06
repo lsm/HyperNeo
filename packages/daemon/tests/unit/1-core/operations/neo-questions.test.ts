@@ -82,6 +82,22 @@ function setup(
     if (!receipt.ok) throw new Error(receipt.reason);
     return receipt.question;
   };
+  const seeded = (text: string, todoId?: string) =>
+    store.askQuestion(
+      crypto.randomUUID(),
+      'ask',
+      {
+        text,
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        ...(todoId ? { todoId } : {}),
+      },
+      1
+    );
   const daemonStart = (startTodos: string[], text = 'Start these?') =>
     store.askQuestion(
       crypto.randomUUID(),
@@ -97,7 +113,7 @@ function setup(
       },
       1
     );
-  return { db, store, call, asked, daemonStart, told, started, refused, fix, rows };
+  return { db, store, call, asked, daemonStart, seeded, told, started, refused, fix, rows };
 }
 
 describe('neo.question operations', () => {
@@ -115,7 +131,7 @@ describe('neo.question operations', () => {
       const refused = await h.call('neo.question.ask', distinct);
       expect(refused).toMatchObject({
         ok: false,
-        reason: expect.stringMatching(/^todo_question_open:/),
+        reason: expect.stringMatching(/^card_open:/),
       });
       expect(h.store.listQuestions('ask')).toHaveLength(1);
       expect(h.store.getQuestion(first.id)).toMatchObject({
@@ -145,7 +161,7 @@ describe('neo.question operations', () => {
       expect(results.filter((result) => result.ok)).toHaveLength(1);
       expect(results.find((result) => !result.ok)).toMatchObject({
         ok: false,
-        reason: expect.stringMatching(/^todo_question_open:/),
+        reason: expect.stringMatching(/^card_open:/),
       });
       expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
     } finally {
@@ -201,11 +217,11 @@ describe('neo.question operations', () => {
 
   test('refuses an unreadable source without opening or replacing a question', async () => {
     const { asked, call, store } = setup();
-    const original = await asked({ kind: 'reply', text: 'Keep this question' });
+    const original = await asked({ kind: 'reply', text: 'Keep this question?' });
     const refused = await call('neo.question.ask', {
       askId: 'ask',
       kind: 'reply',
-      text: 'New worker output',
+      text: 'New worker output?',
       replaces: original.id,
       sourceSession: { adapter: 'codex-desktop', id: 'missing' },
     });
@@ -306,13 +322,14 @@ describe('neo.question operations', () => {
   test('keeps the explicitly focused session on the ask after card retirement', async () => {
     const { asked, call, store } = setup();
     const sourceSession = { adapter: 'codex-desktop', id: 'discussion' };
-    const ordinary = await asked({ kind: 'reply', text: 'Ordinary report', sourceSession });
+    const ordinary = await asked({ kind: 'reply', text: 'Ordinary report?', sourceSession });
     expect(store.getAsk('ask')).not.toHaveProperty('focusedSession');
     const ready = await asked({
       kind: 'reply',
-      text: 'Prepared discussion',
+      text: 'Prepared discussion?',
       sourceSession,
       focused: true,
+      replaces: ordinary.id,
     });
     const captured = ready.sourceSession;
     expect(store.getAsk('ask')).toMatchObject({ focusedSession: captured });
@@ -320,7 +337,7 @@ describe('neo.question operations', () => {
     await call('neo.question.retire', { questionId: ordinary.id, reason: 'Superseded' });
     await asked({
       kind: 'reply',
-      text: 'Unrelated worker',
+      text: 'Unrelated worker?',
       sourceSession: { ...sourceSession, id: 'other' },
     });
     expect(store.getAsk('ask')).toMatchObject({ focusedSession: captured });
@@ -335,7 +352,7 @@ describe('neo.question operations', () => {
         await call('neo.question.ask', {
           askId: 'ask',
           kind: 'reply',
-          text: 'Ready',
+          text: 'Ready?',
           focused: true,
           sourceSession,
         })
@@ -373,7 +390,7 @@ describe('neo.question operations', () => {
     );
     const ordinary = await asked({
       kind: 'reply',
-      text: 'No single worker produced this question',
+      text: 'No single worker produced this question?',
     });
     expect(ordinary).not.toHaveProperty('sourceSession');
   });
@@ -400,7 +417,7 @@ describe('neo.question operations', () => {
         await call('neo.question.ask', {
           askId: 'ask',
           kind: 'reply',
-          text: 'Review',
+          text: 'Review?',
           artifacts: [changed],
         })
       ).toMatchObject({
@@ -411,7 +428,7 @@ describe('neo.question operations', () => {
     expect(store.listQuestions('ask')).toHaveLength(0);
     const question = await asked({
       kind: 'reply',
-      text: 'Please review the attached report.',
+      text: 'Please review the attached report.?',
       artifacts: [artifact],
     });
     expect(question).toMatchObject({ artifacts: [artifact] });
@@ -425,7 +442,7 @@ describe('neo.question operations', () => {
         {
           askId: 'ask',
           kind: 'reply',
-          text: 'Foreign caller',
+          text: 'Foreign caller?',
           artifacts: [artifact],
         },
         { ...owner, sessionId: 'other' }
@@ -874,6 +891,7 @@ describe('neo.question.retire and replaces', () => {
         .filter((q) => q.state === 'open')
         .map((q) => q.id)
     ).toEqual([next.id]);
+    store.retireQuestion(next, 'next case', null, 4);
     const again = await call('neo.question.ask', {
       askId: 'ask',
       kind: 'reply',
@@ -971,6 +989,7 @@ describe('question reference gates warn or omit instead of refusing', () => {
         kind: 'reply',
         text: 'Only stale?',
         replyTo: [stale],
+        replaces: mixed.ok ? mixed.question.id : undefined,
       });
       expect(onlyStale).toMatchObject({ ok: true, question: { state: 'open', replyTo: [] } });
       expect(store.listQuestions('ask')).toHaveLength(2);
@@ -1028,8 +1047,8 @@ describe('todo-owned question cards', () => {
     const h = setup();
     try {
       const bound = await h.asked({ kind: 'reply', text: 'Which rows?', todoId: h.fix.id });
-      const other = await h.asked({ kind: 'reply', text: 'Which style?', todoId: h.rows.id });
-      const general = await h.asked({ kind: 'reply', text: 'Anything else?' });
+      const other = h.seeded('Which style?', h.rows.id);
+      const general = h.seeded('Anything else?');
       expect(bound).toMatchObject({ todoId: h.fix.id });
       h.store.updateTodo(h.fix, { state: 'failed' }, 3);
       expect(h.store.getQuestion(bound.id)?.state).toBe('open');
@@ -1045,7 +1064,7 @@ describe('todo-owned question cards', () => {
     const h = setup();
     try {
       const gone = await h.asked({ kind: 'reply', text: 'Gone?', todoId: h.fix.id });
-      const done = await h.asked({ kind: 'reply', text: 'Done?', todoId: h.rows.id });
+      const done = h.seeded('Done?', h.rows.id);
       h.db.prepare('DELETE FROM neo_todos WHERE id = ?').run(h.fix.id);
       h.db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(h.rows.id);
       await h.store.recompute(
@@ -1087,6 +1106,7 @@ describe('todo-owned question cards', () => {
           records: [expect.stringContaining('todo_closed:')],
         });
         expect(result.ok ? (result.question.todoId ?? null) : false).toBeNull();
+        if (result.ok) h.store.retireQuestion(result.question, 'next case', null, 4);
       }
     } finally {
       h.db.close();
