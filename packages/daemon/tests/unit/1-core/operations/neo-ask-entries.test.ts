@@ -28,6 +28,7 @@ import {
   neoSnapshotOmitted,
 } from '../../../../src/lib/neo/snapshot-compact.ts';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { NEO_TODO_STALLED_CARD_TAIL } from '../../../../src/lib/neo/todo-state.ts';
 import { todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
 
 const todo = (patch: Partial<NeoTodo>): NeoTodo =>
@@ -713,7 +714,8 @@ describe('neoWorkCounts', () => {
       id: string,
       blockedBy: NeoTodo['blockedBy'],
       cards: number,
-      cardTodo: string | null = null
+      cardTodo: string | null = null,
+      text = 'Which one?'
     ) => {
       store.openAsk({
         id,
@@ -731,7 +733,7 @@ describe('neoWorkCounts', () => {
           `${id}-q${card}`,
           id,
           {
-            text: 'Which one?',
+            text,
             kind: 'reply',
             options: null,
             multiple: false,
@@ -747,6 +749,8 @@ describe('neoWorkCounts', () => {
     ask('carded', 'needs-human', 1, 'carded-t');
     ask('needs-neo', 'needs-human', 0);
     ask('stalled', 'stalled', 0);
+    ask('environment', 'environment', 0);
+    ask('stalled-carded', 'stalled', 1, 'stalled-carded-t', `T${NEO_TODO_STALLED_CARD_TAIL}`);
     ask('held', 'held', 0);
     ask('check', 'check', 0);
     ask('running', null, 0);
@@ -760,13 +764,13 @@ describe('neoWorkCounts', () => {
     store.settleAsk(store.getAsk('settled')!, 'dropped', 'Not needed', 3);
     const { openWork } = store.snapshot(undefined, 1, true);
     expect(neoWorkCounts(openWork.todos, openWork.questions)).toEqual({
-      needsYou: 2,
-      neoUnhandled: 3,
+      needsYou: 3,
+      neoUnhandled: 4,
     });
     const scoped = store.snapshot('another-project', 1, true).openWork;
     expect(neoWorkCounts(scoped.todos, scoped.questions)).toEqual({
-      needsYou: 2,
-      neoUnhandled: 3,
+      needsYou: 3,
+      neoUnhandled: 4,
     });
   });
 });
