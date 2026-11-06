@@ -55,6 +55,9 @@ try {
       await card.click();
       const dialog = page.getByRole('dialog', { name: file.name, exact: true });
       await dialog.waitFor();
+      await dialog.evaluate(node => Promise.all([
+        ...node.getAnimations(), ...node.parentElement.getAnimations(),
+      ].map(animation => animation.finished)));
       assert.equal(await dialog.locator('pre').textContent(), file.text);
       assert.equal(await dialog.locator('b, code').count(), 0);
       assert.equal(await dialog.locator('pre').evaluate(node => getComputedStyle(node).userSelect), 'text');
