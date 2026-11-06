@@ -11,7 +11,7 @@ import { z } from 'zod';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
-import { validateGoalAutomationSelfNagPolicy } from './evolution-policy-validation.ts';
+import { validateGoalAutomationSelfNagPolicy } from '../../../../../space/src/evolution/evolution-policy-validation.ts';
 import {
   defineOperation,
   type OperationCaller,
@@ -28,7 +28,7 @@ import {
   type EvolutionAuditWriter,
   type EvolutionGate,
   requireEvolutionSpace,
-} from './admission.ts';
+} from '../../../../../space/src/evolution/admission.ts';
 import {
   EvolutionEvidenceRefSchema,
   EvolutionMetadataSchema,
@@ -38,8 +38,8 @@ import {
   EvolutionPolicySchema,
   EvolutionScopeKindSchema,
   EvolutionScopeSchema,
-} from './result-schemas.ts';
-import { mergeEvolutionPolicy } from './scope-policy.ts';
+} from '../../../../../space/src/evolution/result-schemas.ts';
+import { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-policy.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 
 export interface EvolutionScopeOperationDependencies extends EvolutionAdmissionDependencies {

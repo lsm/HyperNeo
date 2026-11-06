@@ -18,8 +18,11 @@ import {
   type EvolutionAuditWriter,
   type EvolutionGate,
   type EvolutionSpaceScope,
-} from './admission.ts';
-import { EvolutionEvidenceRefSchema, EvolutionMetadataSchema } from './result-schemas.ts';
+} from '../../../../../space/src/evolution/admission.ts';
+import {
+  EvolutionEvidenceRefSchema,
+  EvolutionMetadataSchema,
+} from '../../../../../space/src/evolution/result-schemas.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 
 export interface EvolutionEvidenceAttachDependencies extends EvolutionAdmissionDependencies {

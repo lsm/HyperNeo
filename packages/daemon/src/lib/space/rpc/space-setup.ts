@@ -136,7 +136,7 @@ import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { OperationRegistry } from '../../operations/registry.ts';
 
-import { validateGoalAutomationSelfNagPolicy } from '../evolution/evolution-policy-validation.ts';
+import { validateGoalAutomationSelfNagPolicy } from '../../../../../space/src/evolution/evolution-policy-validation.ts';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
 
 const log = new Logger('rpc-handlers');
