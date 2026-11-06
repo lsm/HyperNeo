@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -180,12 +180,15 @@ describe('watchRepo validation reader', () => {
     expect(row()).toEqual(before);
   });
 
-  test('complete caller and all data modules fit below 200 lines without exclusions', () => {
+  test('complete reader measurement works without Git history below 200 lines', () => {
     const dir = mkdtempSync(join(tmpdir(), 'watch-validation-scope-'));
     try {
       const output = join(dir, 'scope.json');
-      execFileSync('bun', ['.claude/skills/verify/github-watch-validation-measure.cjs', output], {
+      writeFileSync(join(dir, 'git'), '#!/bin/sh\nexit 125\n', { mode: 0o700 });
+      const bun = execFileSync('bun', ['-p', 'process.execPath'], { encoding: 'utf8' }).trim();
+      execFileSync(bun, ['.claude/skills/verify/github-watch-validation-measure.cjs', output], {
         cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)),
+        env: { ...process.env, PATH: dir },
       });
       const report = JSON.parse(readFileSync(output, 'utf8'));
       expect(report.excludedLines).toBe(0);
