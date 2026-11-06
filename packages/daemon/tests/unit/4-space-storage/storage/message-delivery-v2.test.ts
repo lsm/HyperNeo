@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
-  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   deliveryConsumptionTimeoutOrDefault,
   type DriveTurnOutcome,
   deliverMessage,
