@@ -72,7 +72,8 @@ function answerPaired(
     kind: paired.device.kind,
     ...(paired.device.kind === 'agent' ? { origin: new URL(req.url).origin } : {}),
   };
-  if (!origin) return answer(200, { ...device, credential: paired.credential });
+  if (!origin || paired.device.kind === 'agent')
+    return answer(200, { ...device, credential: paired.credential });
   const response = answer(200, device);
   response.headers.set('set-cookie', deviceCookie(paired.credential, origin));
   return response;
