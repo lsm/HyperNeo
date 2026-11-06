@@ -194,7 +194,12 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     });
     if (plan === 'wait') {
       arm(sessionId, messageUuid, sentAt, sentAt + stallMs - now);
-      if (status === 'processing') await session.setWaiting('model');
+      const stillQuiet = isQuietTurn({
+        ...turn,
+        lastOutputAt: session.lastSdkOutputAt(),
+        lastInterruptAt: session.lastInterruptAt(),
+      });
+      if (stillQuiet) await session.setWaiting('model');
       return;
     }
     if (plan === 'resend') {

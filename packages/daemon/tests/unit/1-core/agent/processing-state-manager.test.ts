@@ -1136,6 +1136,12 @@ describe('ProcessingStateManager', () => {
       expect(waiting()).toBeUndefined();
     });
 
+    test('a model reason set after the turn ended does not reach the next turn', async () => {
+      await manager.setWaiting('model');
+      await manager.setProcessing('next');
+      expect(waiting()).toBeUndefined();
+    });
+
     test('a reason set while queued reaches the next processing state', async () => {
       await manager.setWaiting('reconnecting');
       await manager.setQueued('m');

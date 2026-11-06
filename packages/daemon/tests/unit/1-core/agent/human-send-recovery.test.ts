@@ -194,18 +194,46 @@ describe('human send recovery wiring', () => {
     ]);
   });
 
-  test.each([
-    ['processing', ['waiting model']],
-    ['idle', []],
-  ] as const)('a quiet %s turn inside the stall bound shows %j', async (status, expected) => {
+  test('a quiet turn inside the stall bound shows the model line', async () => {
     process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '5';
     const { calls, recovery } = setup({
-      humanSendFacts: async () => ({ status, held: false, openTools: 0, lastActivityAt: 0 }),
+      humanSendFacts: async () => ({
+        status: 'processing',
+        held: false,
+        openTools: 0,
+        lastActivityAt: 0,
+      }),
     });
     try {
       recovery.watch('s', 'm');
       await new Promise((resolve) => setTimeout(resolve, 30));
-      expect(calls).toEqual([...expected]);
+      expect(calls).toEqual(['waiting model']);
+    } finally {
+      recovery.stop();
+      delete process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS;
+    }
+  });
+
+  test('a reply landing during the probe does not show the model line', async () => {
+    process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '5';
+    let lastOutputAt = 0;
+    const { calls, recovery } = setup({
+      humanSendFacts: async () => ({
+        status: 'processing',
+        held: false,
+        openTools: 0,
+        lastActivityAt: 0,
+      }),
+      lastSdkOutputAt: () => lastOutputAt,
+      providerReachable: async () => {
+        lastOutputAt = Date.now() + 60_000;
+        return true;
+      },
+    });
+    try {
+      recovery.watch('s', 'm');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(calls).toEqual([]);
     } finally {
       recovery.stop();
       delete process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS;

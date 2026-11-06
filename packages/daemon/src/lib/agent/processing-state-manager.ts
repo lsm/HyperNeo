@@ -438,6 +438,7 @@ export class ProcessingStateManager {
   }
 
   async setWaiting(waiting: ProcessingWaiting | undefined): Promise<void> {
+    if (waiting === 'model' && this.processingState.status !== 'processing') return;
     this.waiting = waiting;
     if (this.processingState.status !== 'processing') return;
     this.processingState = { ...this.processingState, waiting };
