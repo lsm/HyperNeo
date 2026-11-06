@@ -323,6 +323,10 @@ export class NeoAskTodoRepository {
     return row ? this.getQuestion(row.id) : null;
   }
 
+  inTransaction<T>(work: () => T): T {
+    return this.db.transaction(work)();
+  }
+
   writeCardReply(
     context: NeoCardReplyContext | null,
     mutationId: string,

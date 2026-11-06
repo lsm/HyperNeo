@@ -18,7 +18,7 @@ import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-rep
 import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
 import { decodeUlidTimestamp } from '../mailbox/ulid.ts';
-import { createNeoWorkerQuestionWriter } from './question-operations.ts';
+import { createNeoWorkerQuestionWriter, stageNeoWorkerQuestion } from './question-operations.ts';
 import {
   sessionSender,
   type SessionReportHandler,
@@ -560,6 +560,21 @@ export class NeoService {
     )(ref, report);
   }
 
+  async relayWorkerQuestion(
+    input: { todoId: string; title: string; options: string[] },
+    sessionId: string | undefined
+  ) {
+    const todo = this.todos.getTodo(input.todoId);
+    const staged = this.todoSessions.readNudge(input.todoId)?.workerQuestion;
+    const ref = this.todoSessions.readRef(input.todoId);
+    if (!todo || !staged || !ref || this.todos.getAsk(todo.askId)?.sessionId !== sessionId)
+      return {
+        ok: false,
+        reason: 'no_worker_question: this todo has no worker question to relay.',
+      };
+    return this.storeWorkerQuestion(ref, { ...staged, ...input });
+  }
+
   readonly handleWorkerQuestion = (superpipe({})('neo.workerQuestionReport') as PipelineAPI)
     .input(['input', 'origin', 'retry'])
     .pipe(
@@ -664,13 +679,16 @@ export class NeoService {
             kind: 'rejected',
             reason: 'report_assignment: choose a todo owned by the receiving Neo.',
           };
-        const result = await this.storeWorkerQuestion(
+        const result = stageNeoWorkerQuestion(
+          this.todos,
+          this.todoSessions,
           sessionWorkerRef(sender, !!this.db.getSession(sender)),
           { ...input.question, kind: input.kind, report: text },
-          (question) =>
+          this.db.getGlobalSettings().language,
+          (staged, question) =>
             wake(
-              question.id,
-              `Worker needs a human decision. Read card ${question.id}: ${question.text}`
+              staged.id,
+              `Worker question on todo ${staged.id}: ${question.title}\nOptions: ${question.options.join(' | ')}\nAnswer the worker and continue if you can. If only the human can decide, call neo.question.relay with your own plain words.`
             )
         );
         return result.ok ? receipt : { kind: 'rejected', reason: result.reason };

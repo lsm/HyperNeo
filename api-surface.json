@@ -34362,6 +34362,392 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "options": {
+            "items": {
+              "maxLength": 80,
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "maxItems": 6,
+            "minItems": 2,
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[^\\r\\n]+$",
+            "type": "string"
+          },
+          "todoId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "todoId",
+          "title",
+          "options"
+        ],
+        "type": "object"
+      },
+      "name": "neo.question.relay",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "question": {
+                "additionalProperties": false,
+                "properties": {
+                  "answer": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "answeredAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "answeredBy": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "button",
+                          "chat"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "artifacts": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "markdown",
+                            "html",
+                            "image",
+                            "json",
+                            "log",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "daemonId",
+                        "artifactId",
+                        "title",
+                        "kind",
+                        "byteLength"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 16,
+                    "readOnly": true,
+                    "type": "array"
+                  },
+                  "askId": {
+                    "type": "string"
+                  },
+                  "confirm": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "path": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "sha256": {
+                            "maxLength": 64,
+                            "minLength": 64,
+                            "pattern": "^[a-f0-9]+$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "sha256"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "createdAt": {
+                    "type": "number"
+                  },
+                  "document": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "yesno",
+                      "choice",
+                      "reply",
+                      "start"
+                    ],
+                    "type": "string"
+                  },
+                  "multiple": {
+                    "type": "boolean"
+                  },
+                  "noLabel": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "options": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "replacedBy": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "replyTo": {
+                    "items": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "retireWhen": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "pack": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "params": {
+                        "additionalProperties": {},
+                        "default": {},
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "pack",
+                      "kind",
+                      "params"
+                    ],
+                    "type": "object"
+                  },
+                  "retiredReason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "sourceSession": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "adapter": {
+                        "type": "string"
+                      },
+                      "daemon": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "link": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "provider": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "adapter",
+                      "name",
+                      "label",
+                      "provider",
+                      "link"
+                    ],
+                    "type": "object"
+                  },
+                  "startTodos": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "enum": [
+                      "open",
+                      "answered",
+                      "retired"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "todoId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "yesLabel": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "askId",
+                  "text",
+                  "kind",
+                  "options",
+                  "multiple",
+                  "noLabel",
+                  "yesLabel",
+                  "startTodos",
+                  "state",
+                  "answer",
+                  "answeredBy",
+                  "answeredAt",
+                  "retiredReason",
+                  "replacedBy",
+                  "createdAt"
+                ],
+                "type": "object"
+              },
+              "records": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "ok",
+              "question"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
           "answer": {
             "anyOf": [
               {

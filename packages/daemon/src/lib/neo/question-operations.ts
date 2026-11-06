@@ -29,6 +29,7 @@ import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contr
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
 
 const ReportLine = z
   .string()
@@ -47,6 +48,71 @@ const WorkerQuestion = z.strictObject({
     .min(1)
     .refine((text) => text.trim().length > 0),
 });
+
+const expectedReportLanguage = (configured: LanguageSetting | undefined) =>
+  configured === 'system' || !configured
+    ? Intl.DateTimeFormat().resolvedOptions().locale.startsWith('zh')
+      ? 'zh-Hans'
+      : 'en'
+    : configured;
+
+export function stageNeoWorkerQuestion(
+  store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  ref: WorkRef,
+  raw: unknown,
+  language: LanguageSetting | undefined,
+  staged: (todo: NeoTodo, question: StagedWorkerQuestion) => void
+): { ok: true } | Rejection {
+  const parsed = WorkerQuestion.safeParse(raw);
+  if (!parsed.success)
+    return { ok: false, reason: 'invalid_report: use a short title and 2–6 short options.' };
+  const { todoId, ...question } = parsed.data;
+  const expected = expectedReportLanguage(language);
+  if (question.language !== expected)
+    return { ok: false, reason: `report_language: provide the card in ${expected}.` };
+  const now = Date.now();
+  return store.inTransaction(() => {
+    const todo = store.getTodo(todoId),
+      assigned = sessions.readRef(todoId),
+      dispatchId = sessions.inputs.list(todoId).at(-1)?.id ?? '';
+    if (
+      !todo ||
+      store.getAsk(todo.askId)?.status !== 'open' ||
+      !['doing', 'blocked'].includes(todo.state) ||
+      assigned?.adapter !== ref.adapter ||
+      assigned.id !== ref.id ||
+      assigned.daemon !== ref.daemon
+    )
+      return {
+        ok: false,
+        reason: 'report_assignment: choose a current todo assigned to this worker.',
+      };
+    const blocked = store.updateTodo(
+      todo,
+      {
+        state: 'blocked',
+        blockedBy: 'needs-human',
+        blockedReason: question.title,
+        nextAction: 'Neo must answer the worker or relay the question to the human.',
+        report: question.report,
+      },
+      now
+    );
+    sessions.recordNudge(todoId, {
+      ...(sessions.readNudge(todoId) ?? { since: now, nudges: 0 }),
+      blockerReport: {
+        id: neoDerivedId(JSON.stringify([dispatchId, question])),
+        dispatchId,
+        at: now,
+        triagedAt: blocked.updatedAt,
+      },
+      workerQuestion: question,
+    });
+    staged(blocked, question);
+    return { ok: true };
+  });
+}
 
 export function createNeoWorkerQuestionWriter(
   store: NeoAskTodoRepository,
@@ -69,13 +135,7 @@ export function createNeoWorkerQuestionWriter(
     )
     .pipe(
       (input: z.infer<typeof WorkerQuestion>) => {
-        const configured = language();
-        const expected =
-          configured === 'system' || !configured
-            ? Intl.DateTimeFormat().resolvedOptions().locale.startsWith('zh')
-              ? 'zh-Hans'
-              : 'en'
-            : configured;
+        const expected = expectedReportLanguage(language());
         return input.language === expected
           ? { value: input }
           : fail(`report_language: provide the card in ${expected}.`);
@@ -238,6 +298,11 @@ const Ask = AskKinds.refine((input) => input.askId || ('input' in input && input
 type Bound = z.infer<typeof Ask> & { askId: string };
 
 const Retire = z.object({ questionId: Text, reason: Text });
+const Relay = z.object({
+  todoId: Text,
+  title: ReportLine,
+  options: z.array(ReportLine).min(2).max(6),
+});
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
 const Resolve = Answer.extend({
@@ -548,7 +613,14 @@ export function createNeoQuestionOperations(
   deliverAnswers: (questionId: string) => Promise<void> = async () => {},
   standingRules: () => readonly string[] = () => [],
   inputs: NeoInputReads = noNeoInputReads,
-  policies: () => readonly NeoTodoPolicy[] = questionPolicies
+  policies: () => readonly NeoTodoPolicy[] = questionPolicies,
+  relay: (
+    input: z.infer<typeof Relay>,
+    caller: OperationCaller
+  ) => Promise<unknown> = async () => ({
+    ok: false,
+    reason: 'no_worker_question: this todo has no worker question to relay.',
+  })
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
@@ -954,6 +1026,15 @@ export function createNeoQuestionOperations(
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => retire(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.question.relay',
+      description:
+        "Put a worker's question in front of the human, written in your own plain words as title and 2-6 options. Use it only when you cannot answer the worker yourself. The human's answer goes back to that worker.",
+      inputSchema: Relay,
+      resultSchema: QuestionResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => (await relay(input, caller)) as QuestionReceipt | Rejection,
     }),
     defineOperation({
       name: 'neo.question.get',
