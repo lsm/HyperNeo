@@ -24,6 +24,7 @@ function fixture() {
   git('config', 'user.email', 'fixture@example.invalid');
   git('config', 'user.name', 'Fixture');
   put('packages/daemon/src/main.ts', "db.prepare('SELECT 1');");
+  mkdirSync(join(root, 'packages/space/src'), { recursive: true });
   const baseline = { prepare: 1, transaction: 0, exec: 0, query: 0, run: 0, open: 0 };
   const save = () => put('scripts/db-main-thread-baseline.json', JSON.stringify(baseline));
   save();
@@ -44,6 +45,14 @@ test('the CI command rejects an added main-thread prepare', () => {
   f.put('packages/daemon/src/new.ts', "db.prepare ('SELECT 2'); db.prepare('SELECT 3');");
   const result = f.run();
   expect(result.output).toContain('prepare: 3 > baseline 1');
+  expect(result.code).toBe(1);
+});
+
+test('the CI command rejects an added main-thread prepare in the Space package', () => {
+  const f = fixture();
+  f.put('packages/space/src/action.ts', "db.prepare('SELECT 2');");
+  const result = f.run();
+  expect(result.output).toContain('prepare: 2 > baseline 1');
   expect(result.code).toBe(1);
 });
 
