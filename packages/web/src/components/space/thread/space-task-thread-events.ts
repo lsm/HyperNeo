@@ -14,7 +14,7 @@ import {
   isThinkingBlock,
   isToolUseBlock,
 } from '@hyperneo/shared/sdk/type-guards';
-import type { SpaceTaskThreadMessageRow } from '../../../hooks/useSpaceTaskMessages';
+import type { SpaceTaskThreadMessageRow } from '../useSpaceTaskMessages';
 import type { MessageReplacementStatus } from '../../../lib/sdk-message-replacement';
 
 import { getInvokedOperationName } from '../../sdk/tools/tool-utils.ts';

@@ -17,7 +17,7 @@ import {
   registerWebExtension,
   type SpaceWebExtension,
 } from '../../lib/web-extensions';
-import { spaceNav } from '../../lib/space-nav';
+import { spaceNav } from '../../components/space/space-nav';
 
 declareExtensionNav(spaceNav);
 

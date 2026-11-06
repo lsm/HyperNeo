@@ -1,9 +1,9 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import { ConversationDisclosure } from '../components/ConversationDisclosure';
-import { ConversationRow } from '../components/ConversationRow';
-import { CollapsibleSection } from '../components/ui/CollapsibleSection';
+import { ConversationDisclosure } from '../ConversationDisclosure';
+import { ConversationRow } from '../ConversationRow';
+import { CollapsibleSection } from '../ui/CollapsibleSection';
 import {
   navigateToSpace,
   navigateToSpaceAgent,
@@ -14,13 +14,13 @@ import {
   navigateToSpaceSession,
   navigateToSpaceTask,
   navigateToSpaceTasks,
-} from '../lib/space-router';
+} from '../../lib/space-router';
 import {
   cloneConversationTitles,
   conversationTitle,
   getSessionSidebarStatus,
   getTaskSidebarStatus,
-} from '../lib/session-sidebar-status';
+} from '../../lib/session-sidebar-status';
 import {
   currentSpaceAgentHandleSignal,
   currentSpaceSessionIdSignal,
@@ -28,8 +28,8 @@ import {
   currentSpaceViewModeSignal,
   spaceOverlayPendingTaskIdSignal,
   spaceOverlaySessionIdSignal,
-} from '../lib/space-signals';
-import { type SpaceSessionRow, spaceStore } from '../lib/space-store';
+} from '../../lib/space-signals';
+import { type SpaceSessionRow, spaceStore } from '../../lib/space-store';
 import {
   getSpaceSessionUnreadCount,
   isSpaceTaskUnread,
@@ -37,9 +37,9 @@ import {
   markSpaceTaskRead,
   seedSpaceTasksSeen,
   syncSpaceSessionSeen,
-} from '../lib/space-unread';
-import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
-import { cn } from '../lib/utils';
+} from '../../lib/space-unread';
+import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
+import { cn } from '../../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
 

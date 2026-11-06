@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 const taskDetailsSignal = signal<ReadonlyMap<string, SpaceTask>>(new Map());
 const connectionStateSignal = signal<'connected' | 'disconnected'>('connected');
 
-vi.mock('../../lib/space-store', () => ({
+vi.mock('../../../lib/space-store', () => ({
   spaceStore: {
     get taskDetails() {
       return taskDetailsSignal;
@@ -19,7 +19,7 @@ vi.mock('../../lib/space-store', () => ({
   },
 }));
 
-vi.mock('../../lib/state', async (importOriginal) => {
+vi.mock('../../../lib/state', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
@@ -30,7 +30,7 @@ vi.mock('../../lib/state', async (importOriginal) => {
 });
 
 import { useResolvedSpaceTask } from '../useResolvedSpaceTask';
-import type { SummarySpaceTask } from '../../lib/space-store';
+import type { SummarySpaceTask } from '../../../lib/space-store';
 
 function makeSummaryTask(overrides: Partial<SummarySpaceTask> = {}): SummarySpaceTask {
   return {

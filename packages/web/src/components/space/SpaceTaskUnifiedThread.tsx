@@ -1,7 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
-import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
+import { useSpaceTaskMessages } from './useSpaceTaskMessages';
 import { getProviderLabel } from '../../hooks/useModelSwitcher';
 import { navigateToSettings } from '../../lib/router';
 import { MinimalThreadFeed } from './thread/minimal/MinimalThreadFeed';

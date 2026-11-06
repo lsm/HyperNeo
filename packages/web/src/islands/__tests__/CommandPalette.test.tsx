@@ -7,7 +7,7 @@ import { connectionManager } from '../../lib/connection-manager.ts';
 import { commandRegistry } from '../../lib/command-registry.ts';
 import { commandPaletteModeSignal, commandPaletteOpenSignal } from '../../lib/signals.ts';
 import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions.ts';
-import { spaceNav } from '../../lib/space-nav';
+import { spaceNav } from '../../components/space/space-nav';
 import type { SpaceWebExtension } from '../../lib/web-extensions';
 
 describe('CommandPalette', () => {

@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { navSectionSignal } from '../signals';
+import { navSectionSignal } from '../../../lib/signals';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceViewModeSignal,
-} from '../space-signals';
+} from '../../../lib/space-signals';
 import { spaceNav } from '../space-nav';
 
 describe('spaceNav.voiceScope', () => {

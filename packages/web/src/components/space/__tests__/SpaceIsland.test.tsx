@@ -7,7 +7,7 @@ const LAZY_LOAD_TIMEOUT = 5000;
 
 import type { Space, SpaceTask, SpaceLongHorizonAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
-import { connectionState } from '../../lib/state';
+import { connectionState } from '../../../lib/state';
 
 let mockLoading = signal(false);
 let mockError = signal<string | null>(null);
@@ -77,8 +77,8 @@ const mockSpaceOverlayTaskContextSignal = signal<unknown>(null);
 configureTabBridge.signal = mockCurrentSpaceSettingsTabSignal;
 idBridge.signal = mockCurrentSpaceIdSignal;
 
-vi.mock('../../lib/space-signals', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/space-signals')>();
+vi.mock('../../../lib/space-signals', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../lib/space-signals')>();
   return {
     ...actual,
     get currentSpaceIdSignal() {
@@ -116,14 +116,14 @@ vi.mock('../../lib/space-signals', async (importOriginal) => {
     },
   };
 });
-vi.mock('../../lib/signals', async (importOriginal) => {
+vi.mock('../../../lib/signals', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
   };
 });
 
-vi.mock('../../components/space/WorkflowList', () => ({
+vi.mock('../WorkflowList', () => ({
   WorkflowList: (props: { onCreateWorkflow: () => void; onEditWorkflow: (id: string) => void }) => (
     <div data-testid="workflow-list">
       <button data-testid="create-workflow-btn" onClick={props.onCreateWorkflow}>
@@ -137,7 +137,7 @@ vi.mock('../../components/space/WorkflowList', () => ({
 }));
 
 let capturedVisualEditorProps: Record<string, unknown> = {};
-vi.mock('../../components/space/visual-editor/VisualWorkflowEditor', () => ({
+vi.mock('../visual-editor/VisualWorkflowEditor', () => ({
   VisualWorkflowEditor: (props: {
     workflow?: SpaceWorkflow;
     onSave: () => void;
@@ -158,7 +158,7 @@ vi.mock('../../components/space/visual-editor/VisualWorkflowEditor', () => ({
   },
 }));
 
-vi.mock('../../components/space/SpaceOverview', () => ({
+vi.mock('../SpaceOverview', () => ({
   SpaceOverview: (props: {
     spaceId: string;
     navigationSpaceId?: string;
@@ -179,7 +179,7 @@ vi.mock('../../components/space/SpaceOverview', () => ({
   ),
 }));
 
-vi.mock('../../components/space/SpaceTaskPane', () => ({
+vi.mock('../SpaceTaskPane', () => ({
   SpaceTaskPane: (props: {
     taskId: string | null;
     spaceId?: string;
@@ -194,7 +194,7 @@ vi.mock('../../components/space/SpaceTaskPane', () => ({
   ),
 }));
 
-vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
+vi.mock('../SpaceCreateTaskDialog', () => ({
   SpaceCreateTaskDialog: (props: {
     isOpen: boolean;
     onCreated?: (task: { id: string; title: string }) => void;
@@ -212,7 +212,7 @@ vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
     ) : null,
 }));
 
-vi.mock('../../components/space/SpaceGoals', () => ({
+vi.mock('../SpaceGoals', () => ({
   SpaceGoals: (props: { spaceId: string; navigationSpaceId?: string }) => (
     <div
       data-testid="space-goals"
@@ -222,7 +222,7 @@ vi.mock('../../components/space/SpaceGoals', () => ({
   ),
 }));
 
-vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
+vi.mock('../SpaceLongHorizonAgents', () => ({
   SpaceLongHorizonAgents: (props: { spaceId: string; selectedHandle?: string | null }) => {
     const spaceAgent = mockAgents.value.find((agent) => agent.handle === props.selectedHandle);
     return (
@@ -236,17 +236,17 @@ vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
   },
 }));
 
-vi.mock('../../components/space/SpaceSettings', () => ({
+vi.mock('../SpaceSettings', () => ({
   SpaceSettings: () => <div data-testid="space-settings" />,
 }));
 
-vi.mock('../ChatContainer', () => ({
+vi.mock('../../../islands/ChatContainer', () => ({
   default: ({ sessionId }: { sessionId: string }) => (
     <div data-testid="chat-container" data-session-id={sessionId} />
   ),
 }));
 
-vi.mock('../../components/space/AgentOverlayChat', () => ({
+vi.mock('../AgentOverlayChat', () => ({
   AgentOverlayChat: ({ sessionId, agentName }: { sessionId?: string; agentName?: string }) => (
     <div
       data-testid="agent-overlay-chat"
@@ -256,11 +256,11 @@ vi.mock('../../components/space/AgentOverlayChat', () => ({
   ),
 }));
 
-vi.mock('../../lib/session-store', () => ({
+vi.mock('../../../lib/session-store', () => ({
   sessionStore: { select: vi.fn() },
 }));
 
-vi.mock('../../lib/space-store', () => ({
+vi.mock('../../../lib/space-store', () => ({
   get spaceStore() {
     return {
       loading: mockLoading,
@@ -300,7 +300,7 @@ vi.mock('../../lib/space-store', () => ({
   },
 }));
 
-vi.mock('../../lib/memory-store', () => ({
+vi.mock('../../../lib/memory-store', () => ({
   get memoryStore() {
     return {
       memories: signal([]),
@@ -317,11 +317,11 @@ vi.mock('../../lib/memory-store', () => ({
   },
 }));
 
-vi.mock('../../lib/space-router', async (importOriginal) => ({
+vi.mock('../../../lib/space-router', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  ...(await import('../../lib/router')),
+  ...(await import('../../../lib/router')),
 }));
-vi.mock('../../lib/router', () => ({
+vi.mock('../../../lib/router', () => ({
   navigateToSpace: vi.fn(),
   navigateToSpaceTask: mockNavigateToSpaceTask,
   navigateToSpaceSession: mockNavigateToSpaceSession,
@@ -331,17 +331,17 @@ vi.mock('../../lib/router', () => ({
   closeOverlayHistory: vi.fn(),
 }));
 
-vi.mock('../../lib/api-helpers', () => ({
+vi.mock('../../../lib/api-helpers', () => ({
   createSession: mockCreateSession,
 }));
 
-vi.mock('../../lib/connection-manager', () => ({
+vi.mock('../../../lib/connection-manager', () => ({
   connectionManager: {
     getHubIfConnected: () => connectMockHub.current,
   },
 }));
 
-vi.mock('../../lib/toast', () => ({
+vi.mock('../../../lib/toast', () => ({
   toast: {
     error: mockToastError,
   },
@@ -351,11 +351,11 @@ import SpaceIsland from '../SpaceIsland';
 
 beforeAll(async () => {
   await Promise.all([
-    import('../../components/space/SpaceConfigurePage'),
-    import('../../components/space/SpaceOverview'),
-    import('../../components/space/SpaceTaskPane'),
-    import('../../components/space/SpaceTasks'),
-    import('../../components/space/SpaceLongHorizonAgents'),
+    import('../SpaceConfigurePage'),
+    import('../SpaceOverview'),
+    import('../SpaceTaskPane'),
+    import('../SpaceTasks'),
+    import('../SpaceLongHorizonAgents'),
   ]);
 });
 

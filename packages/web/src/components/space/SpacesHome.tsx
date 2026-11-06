@@ -1,17 +1,17 @@
-import { CheckGlyph, ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
+import { CheckGlyph, ChevronRightGlyph } from '../icons/common-glyphs.tsx';
 import type { ComponentChildren } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import {
   navigateToSpace,
   navigateToSpaceTask,
   navigateToSpaceSession,
-} from '../lib/space-router.ts';
-import { spaceStore } from '../lib/space-store.ts';
-import { isActionRequired, isActiveTask } from '../lib/task-filters.ts';
-import { getTaskStatusClasses, getTaskStatusConfig } from '../lib/task-status.ts';
-import { StatusBadge } from '../components/ui/StatusBadge.tsx';
-import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
-import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+} from '../../lib/space-router.ts';
+import { spaceStore } from '../../lib/space-store.ts';
+import { isActionRequired, isActiveTask } from '../../lib/task-filters.ts';
+import { getTaskStatusClasses, getTaskStatusConfig } from '../../lib/task-status.ts';
+import { StatusBadge } from '../ui/StatusBadge.tsx';
+import { SpaceCreateDialog } from './SpaceCreateDialog.tsx';
+import { MobileMenuButton } from '../ui/MobileMenuButton.tsx';
 
 function SpacesSection({
   dotClass,

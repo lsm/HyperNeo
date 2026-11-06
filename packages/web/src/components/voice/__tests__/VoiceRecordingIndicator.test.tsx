@@ -84,7 +84,7 @@ vi.mock('../../../lib/router.ts', () => ({
 
 import { VoiceRecordingIndicator } from '../VoiceRecordingIndicator.tsx';
 import { declareExtensionNav } from '../../../lib/web-extensions';
-import { spaceNav } from '../../../lib/space-nav';
+import { spaceNav } from '../../space/space-nav';
 import { VoiceSurfaceContext } from '../../../hooks/useVoiceRecorder';
 import {
   registerVoiceComposer,

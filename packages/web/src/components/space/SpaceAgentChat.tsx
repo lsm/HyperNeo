@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
-import { navigateToSpaceAgent } from '../lib/space-router';
-import { spaceStore } from '../lib/space-store';
-import ChatContainer from './ChatContainer';
+import { navigateToSpaceAgent } from '../../lib/space-router';
+import { spaceStore } from '../../lib/space-store';
+import ChatContainer from '../../islands/ChatContainer';
 
 interface SpaceAgentChatProps {
   spaceId: string;

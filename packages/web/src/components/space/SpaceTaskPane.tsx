@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
 import { useImageDropZone } from '../../hooks';
-import { useResolvedSpaceTask } from '../../hooks/useResolvedSpaceTask';
+import { useResolvedSpaceTask } from './useResolvedSpaceTask';
 import { getTaskStatusConfig } from '../../lib/task-status';
 import { pushOverlayHistory, pushOverlayHistoryForPendingAgent } from '../../lib/space-router';
 import { currentSpaceIdSignal } from '../../lib/space-signals';
@@ -30,7 +30,7 @@ import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskHeaderMeta } from './TaskHeaderMeta';
 import { TaskReadyPanel } from './TaskReadyPanel';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
-import { spaceVoiceScope } from '../../lib/space-nav.tsx';
+import { spaceVoiceScope } from './space-nav.tsx';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { TaskRunComposer } from './TaskRunComposer';

@@ -5,14 +5,14 @@ const { navigateToSpace, navigateToSpaceTask } = vi.hoisted(() => ({
   navigateToSpaceTask: vi.fn(),
 }));
 
-vi.mock('../space-router.ts', async (importOriginal) => ({
+vi.mock('../../../lib/space-router.ts', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  ...(await import('../router.ts')),
+  ...(await import('../../../lib/router.ts')),
 }));
-vi.mock('../router.ts', () => ({ navigateToSpace, navigateToSpaceTask }));
+vi.mock('../../../lib/router.ts', () => ({ navigateToSpace, navigateToSpaceTask }));
 
 import { openSpaceSearchResult, spacePaletteItems, warmSpacePalette } from '../space-palette';
-import { registerWebExtension, type SpaceWebExtension } from '../web-extensions';
+import { registerWebExtension, type SpaceWebExtension } from '../../../lib/web-extensions';
 
 const task = { id: 'task-1', title: 'Ship docs', description: '', taskNumber: 7, updatedAt: 2 };
 const space = {

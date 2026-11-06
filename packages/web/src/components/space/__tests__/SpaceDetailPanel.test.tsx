@@ -2,8 +2,8 @@ import type { Space, SpaceTask } from '@hyperneo/shared';
 import { type Signal, signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SpaceSessionRow } from '../../lib/space-store';
-import { spaceSessionLastSeen, spaceTaskLastSeen } from '../../lib/space-unread';
+import type { SpaceSessionRow } from '../../../lib/space-store';
+import { spaceSessionLastSeen, spaceTaskLastSeen } from '../../../lib/space-unread';
 
 const {
   mockNavigateToSpace,
@@ -66,7 +66,7 @@ function initSignals() {
 
 initSignals();
 
-vi.mock('../../lib/space-store.ts', () => ({
+vi.mock('../../../lib/space-store.ts', () => ({
   get spaceStore() {
     return {
       tasks: mockTasksSignal,
@@ -82,11 +82,11 @@ vi.mock('../../lib/space-store.ts', () => ({
   },
 }));
 
-vi.mock('../../lib/space-router.ts', async (importOriginal) => ({
+vi.mock('../../../lib/space-router.ts', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  ...(await import('../../lib/router.ts')),
+  ...(await import('../../../lib/router.ts')),
 }));
-vi.mock('../../lib/router.ts', () => ({
+vi.mock('../../../lib/router.ts', () => ({
   navigateToSpace: mockNavigateToSpace,
   navigateToSpaceAgent: mockNavigateToSpaceAgent,
   navigateToSpaceTask: mockNavigateToSpaceTask,
@@ -96,8 +96,8 @@ vi.mock('../../lib/router.ts', () => ({
   navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
 }));
 
-vi.mock('../../lib/space-signals.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/space-signals.ts')>();
+vi.mock('../../../lib/space-signals.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../lib/space-signals.ts')>();
   return {
     ...actual,
     get currentSpaceSessionIdSignal() {
@@ -123,19 +123,19 @@ vi.mock('../../lib/space-signals.ts', async (importOriginal) => {
     },
   };
 });
-vi.mock('../../lib/signals.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/signals.ts')>();
+vi.mock('../../../lib/signals.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../lib/signals.ts')>();
   return {
     ...actual,
   };
 });
 
-vi.mock('../../lib/api-helpers.ts', () => ({
+vi.mock('../../../lib/api-helpers.ts', () => ({
   createSession: vi.fn(),
   archiveSession: mockArchiveSession,
 }));
 
-vi.mock('../../lib/toast.ts', () => ({
+vi.mock('../../../lib/toast.ts', () => ({
   toast: { success: mockToastSuccess, error: mockToastError },
 }));
 
