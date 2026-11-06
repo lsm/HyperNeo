@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { isIPv6 } from 'node:net';
 import { DatabaseLock } from '../storage/database-lock.ts';
 import { BUILD_METADATA } from './build-metadata.ts';
 import { getDataDir } from './data-dir.ts';
@@ -17,7 +18,7 @@ const LOOPBACK_HOSTS = new Set(['0.0.0.0', '::', '::0', '']);
 
 export function dialableHost(bindHost: string): string {
   if (LOOPBACK_HOSTS.has(bindHost)) return '127.0.0.1';
-  if (bindHost === '::1') return '[::1]';
+  if (isIPv6(bindHost)) return `[${bindHost}]`;
   return bindHost;
 }
 
