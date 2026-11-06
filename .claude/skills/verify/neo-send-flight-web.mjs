@@ -10,12 +10,22 @@ const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_B
 const base = `http://127.0.0.1:${port}`;
 const evidence = [];
 mkdirSync(out, { recursive: true });
+const timers = new Set();
+const isolate = context => context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
 try {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US', reducedMotion: 'no-preference' });
-  await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+  const pairing = await browser.newContext();
+  await isolate(pairing);
+  const pairPage = await pairing.newPage();
+  await pairPage.goto(`${base}/pair#${process.env.PAIR_CODE}`);
+  await pairPage.getByRole('button', { name: 'Pair this browser' }).click();
+  await pairPage.getByText('This browser is paired.').waitFor();
+  const storageState = await pairing.storageState();
+  await pairing.close();
+  for (const touch of [false, true]) {
+  const context = await browser.newContext({ storageState, hasTouch: touch, viewport: { width: 1280, height: 900 }, locale: 'en-US', reducedMotion: 'no-preference' });
+  await isolate(context);
   const page = await context.newPage();
   let delay = 0;
-  const timers = new Set();
   await page.routeWebSocket(`ws://127.0.0.1:${port}/ws`, socket => {
     const server = socket.connectToServer();
     socket.onMessage(raw => {
@@ -27,23 +37,25 @@ try {
     });
     server.onMessage(raw => socket.send(raw));
   });
-  await page.goto(`${base}/pair#${process.env.PAIR_CODE}`);
-  await page.getByRole('button', { name: 'Pair this browser' }).click();
-  await page.getByText('This browser is paired.').waitFor();
   await page.goto(`${base}/neo`);
   const input = page.locator('textarea').first();
   await input.waitFor();
-  for (let i = 0; i < 7; i++) {
+  const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
+  assert.equal(coarse, touch, 'Pointer mode does not match the scenario');
+  const send = () => touch ? page.getByRole('button', { name: 'Send message', exact: true }).tap() : input.press('Enter');
+  if (!touch) for (let i = 0; i < 7; i++) {
     const count = await page.locator('[data-public-entry].neo-message-user').count();
     await input.fill(`History ${i}\n` + 'Synthetic history line\n'.repeat(15));
-    await input.press('Enter');
+    await send();
     await page.waitForFunction(n => document.querySelectorAll('[data-public-entry].neo-message-user').length > n, count);
     await page.locator('[data-send-flight]').waitFor({ state: 'detached' });
   }
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     for (const acceptDelay of [250, 1000]) {
-      await page.locator('[data-public-entry].neo-message-user').first().getByRole('button', { name: 'Reply to your message', exact: true }).click();
+      const reply = page.locator('[data-public-entry].neo-message-user').first().getByRole('button', { name: 'Reply to your message', exact: true });
+      if (touch) await reply.tap();
+      else await reply.click();
       await page.locator('form [data-quote-bar]').waitFor();
       const words = `Flying words at ${width}, delay ${acceptDelay}`;
       await input.fill(words);
@@ -72,15 +84,15 @@ try {
         }, 0);
         requestAnimationFrame(frame);
       });
-      await input.press('Enter');
+      await send();
       await page.waitForTimeout(150);
-      await page.screenshot({ path: join(out, `flight-mid-${acceptDelay}-${width}.png`) });
+      await page.screenshot({ path: join(out, `flight-mid-${touch ? 'touch' : 'fine'}-${acceptDelay}-${width}.png`) });
       await page.waitForTimeout(1750);
       delay = 0;
       const frames = await page.evaluate(() => window.flightFrames);
-      evidence.push({ width, acceptDelay, frames });
+      evidence.push({ width, touch, coarse, acceptDelay, frames });
       writeFileSync(join(out, 'evidence.json'), JSON.stringify(evidence, null, 2));
-      await page.screenshot({ path: join(out, `flight-landed-${acceptDelay}-${width}.png`) });
+      await page.screenshot({ path: join(out, `flight-landed-${touch ? 'touch' : 'fine'}-${acceptDelay}-${width}.png`) });
       const moving = frames.filter(f => f.ghost && f.ghost.width > 0 && f.ghostVisible === 'visible');
       assert(moving.length >= 10, 'No visible flight across enough browser frames');
       assert(moving.every(f => f.ghostText.includes(words)), 'Words did not travel in the ghost');
@@ -103,8 +115,9 @@ try {
     }
   }
   await context.close();
-  for (const timer of timers) clearTimeout(timer);
-  console.log('PASS: 550ms quoted send, bottom pin, pending replacement and delayed acceptance at 1280/390px');
+  }
+  console.log('PASS: 550ms quoted send, bottom pin, pending replacement and delayed acceptance with fine/coarse pointers at 1280/390px');
 } finally {
+  for (const timer of timers) clearTimeout(timer);
   await browser.close();
 }

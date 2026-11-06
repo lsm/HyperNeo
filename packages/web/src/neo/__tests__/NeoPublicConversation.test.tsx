@@ -943,8 +943,17 @@ it('reveals a durable replacement without replaying arrival, while history still
       pendingAsks={[]}
       publicConversation={conversation(
         [
-          ask({ requestId: 'new-send', content: 'A new thought' }),
-          ask({ requestId: 'history', sequence: 2, content: 'An older message' }),
+          ask({
+            requestId: 'new-send',
+            askOrigin: { sessionId: root, messageId: 'new-send' },
+            content: 'A new thought',
+          }),
+          ask({
+            requestId: 'history',
+            askOrigin: { sessionId: root, messageId: 'history' },
+            sequence: 2,
+            content: 'An older message',
+          }),
         ],
         []
       )}
