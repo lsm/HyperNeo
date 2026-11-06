@@ -20,7 +20,12 @@ import {
   navigateToSpaceTasks,
 } from './router.ts';
 import { voiceReturnTaskTargetSessionSignal } from './voice/voice-composer-registry.ts';
-import { openSpaceSearchResult, spacePaletteItems, warmSpacePalette } from './space-palette.tsx';
+import {
+  openSpaceSearchResult,
+  spacePaletteItems,
+  spacePaletteSource,
+  warmSpacePalette,
+} from './space-palette.tsx';
 import { isActionRequired, isActiveTask } from './task-filters.ts';
 import { type ExtensionNav, webExtension } from './web-extensions.ts';
 
@@ -177,6 +182,7 @@ export const spaceNav: ExtensionNav = {
   voiceScope: () =>
     spaceVoiceScope(currentSpaceCanonicalIdSignal.value ?? currentSpaceIdSignal.value),
   paletteItems: spacePaletteItems,
+  paletteSource: spacePaletteSource,
   warmPalette: warmSpacePalette,
   openSearchResult: openSpaceSearchResult,
   sessionFocus: spaceSessionFocus,

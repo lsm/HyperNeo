@@ -81,7 +81,7 @@ describe('openSpaceSearchResult', () => {
   afterEach(() => vi.clearAllMocks());
 
   it('opens a task result that names its Space', () => {
-    expect(openSpaceSearchResult({ taskId: 'task-1', spaceId: 'alpha' } as never)).toBe(true);
+    expect(openSpaceSearchResult({ taskId: 'task-1', spaceId: 'alpha' })).toBe(true);
     expect(navigateToSpaceTask).toHaveBeenCalledWith('alpha', 'task-1');
   });
 

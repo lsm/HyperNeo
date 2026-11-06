@@ -74,6 +74,29 @@ describe('CommandPalette', () => {
     expect(screen.getAllByText('Navigation')).toHaveLength(1);
   });
 
+  it('ranks extension items only when their inputs change', async () => {
+    const paletteItems = vi.spyOn(spaceNav, 'paletteItems');
+    declareExtensionNav(spaceNav);
+    registerWebExtension('space', {
+      store: { initGlobalList: async () => {}, spacesWithTasks: { value: [] } },
+    } as unknown as SpaceWebExtension);
+    commandRegistry.register({
+      id: 'nav.chats',
+      label: 'Go to chats',
+      category: 'navigation',
+      run: () => {},
+    });
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+    await screen.findByText('Go to chats');
+    const calls = paletteItems.mock.calls.length;
+
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'ArrowDown' });
+
+    expect(paletteItems).toHaveBeenCalledTimes(calls);
+    registerWebExtension('space', null);
+  });
+
   it('runs the command shown at the selected row when a category is merged', async () => {
     const run = vi.fn();
     const command = (id: string, category: 'navigation' | 'settings') => ({

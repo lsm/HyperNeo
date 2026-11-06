@@ -19,18 +19,21 @@ import {
   currentSessionIdSignal,
   type CommandPaletteMode,
 } from '../lib/signals.ts';
-import { type ExtensionPaletteItem, extensionNav } from '../lib/web-extensions.ts';
+import {
+  type ExtensionPaletteItem,
+  type ExtensionSearchResult,
+  extensionNav,
+} from '../lib/web-extensions.ts';
 import { sessions } from '../lib/state.ts';
 import { workspaceLabel } from '../lib/workspace-label.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 
-export interface MessageSearchResult {
+export interface MessageSearchResult extends ExtensionSearchResult {
   kind: 'message' | 'task';
   sourceId: string;
   messageId?: string;
   sessionId?: string;
-  taskId?: string;
   taskNumber?: number;
   messageType?: string;
   title: string;
@@ -247,13 +250,18 @@ export function CommandPalette() {
   }, [open, query, mode]);
 
   const allSessions = sessions.value;
-  const extensionItems = open
-    ? extensionNav().flatMap((nav) =>
-        nav.paletteItems(query).map((item) => ({ type: 'extension' as const, ...item }))
-      )
-    : [];
   const extensions: string[] = extensionNav().map((nav) => nav.extension);
   const extensionsKey = extensions.join();
+  const paletteSources = extensionNav().map((nav) => nav.paletteSource());
+  const extensionItems = useMemo(
+    () =>
+      open
+        ? extensionNav().flatMap((nav) =>
+            nav.paletteItems(query).map((item) => ({ type: 'extension' as const, ...item }))
+          )
+        : [],
+    [open, query, extensionsKey, ...paletteSources]
+  );
 
   const rankedItems = useMemo(() => {
     const forcedCommand = query.trimStart().startsWith('>');

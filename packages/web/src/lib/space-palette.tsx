@@ -4,6 +4,7 @@ import { navigateToSpace, navigateToSpaceTask } from './router.ts';
 import { workspaceLabel } from './workspace-label.ts';
 import {
   type ExtensionPaletteItem,
+  type ExtensionSearchResult,
   type SpaceWithTaskList,
   webExtension,
 } from './web-extensions.ts';
@@ -107,8 +108,11 @@ export function warmSpacePalette(): void {
     .catch(() => {});
 }
 
-export function openSpaceSearchResult(result: { taskId?: string }): boolean {
-  const { spaceId, taskId } = result as { spaceId?: string; taskId?: string };
+export function spacePaletteSource(): unknown {
+  return webExtension('space')?.store.spacesWithTasks.value;
+}
+
+export function openSpaceSearchResult({ spaceId, taskId }: ExtensionSearchResult): boolean {
   if (!spaceId || !taskId) return false;
   navigateToSpaceTask(spaceId, taskId);
   return true;
