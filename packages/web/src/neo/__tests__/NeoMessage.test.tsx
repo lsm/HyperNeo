@@ -49,7 +49,7 @@ describe('Neo message presentation', () => {
       expect(container.querySelector('script')).toBeNull();
     }
   );
-  it('shows photos inside the sent message', () => {
+  it('shows a photo-only user message without a bubble and enlarges its photo', () => {
     render(
       <NeoMessage
         message={
@@ -71,6 +71,13 @@ describe('Neo message presentation', () => {
     expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
       'data:image/png;base64,YWJj'
     );
+    expect(document.querySelector('.neo-message-bubble')).toBeNull();
+    expect(screen.queryByText('Attached files')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy your message' }).hasAttribute('disabled')).toBe(
+      true
+    );
+    fireEvent.click(screen.getByRole('img', { name: 'Attached photo 1' }));
+    expect(screen.getByRole('dialog', { name: 'Attached photo 1' })).toBeTruthy();
   });
   it.each(['user', 'assistant'] as const)(
     'puts %s name and time outside the bubble and copies only content',
