@@ -9,7 +9,9 @@ import type { WorkRef } from '../../../drivers/types.ts';
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
+import { parsePrUrl } from '../../../github/parse-pr-url.ts';
+import { codingPrKey } from './pr-key.ts';
+import { CodingTurnPrRepository, readCodingTurnFacts } from './turn-prs.ts';
 import type { NeoTodoCheckResult, NeoTodoFactJudge, NeoTodoPack } from '../../pack-contract.ts';
 import type { CodingPrState } from './pr-ledger.ts';
 import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
@@ -34,20 +36,15 @@ export const CODING_TODO_WINDOW_QUERY = `SELECT t.started_at AS start, MIN(next.
   LEFT JOIN neo_todos next ON next.id = other.todo_id AND next.started_at > t.started_at
   WHERE t.id = ?`;
 
-export function codingPrKey(url: string): string | null {
-  const parsed = parsePrUrl(url);
-  return parsed
-    ? githubUrlKey(`https://${parsed.host}/${parsed.owner}/${parsed.repo}/pull/${parsed.number}`)
-    : null;
-}
-
 export class CodingTodoPrRepository {
   readonly stageFacts: CodingStageFactsRepository;
   readonly deliveryFacts: CodingDeliveryFactsRepository;
+  readonly turnPrs: CodingTurnPrRepository;
 
   constructor(private readonly db: Database) {
     this.stageFacts = new CodingStageFactsRepository(db);
     this.deliveryFacts = new CodingDeliveryFactsRepository(db);
+    this.turnPrs = new CodingTurnPrRepository(db);
   }
 
   claimClosingIssues(
@@ -663,6 +660,18 @@ export function createCodingTodoPack(
       };
     if (todo.check?.kind === 'issue_closed')
       return readIssueFacts(todo, readRefs ?? (async () => []), readPrs, repo, persist);
+    const placed =
+      todo.check?.kind === 'pr_merged'
+        ? await readCodingTurnFacts(todo, repo.turnPrs, readPrs)
+        : null;
+    if (placed) {
+      if (persist && !placed.incomplete) {
+        const claims = placed.prs.map((pr) => ({ url: pr.url, claim: 'branch' as const }));
+        await repo.write('claim', todo.id, claims, placed.observedAt, 'additive');
+        await repo.write('record', todo.id, [...placed.prs], placed.observedAt);
+      }
+      return placed;
+    }
     const named = claimsOf(todo);
     if (persist) await repo.write('claim', todo.id, named, Date.now());
     const urls = [

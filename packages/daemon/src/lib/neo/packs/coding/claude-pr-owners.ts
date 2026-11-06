@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createClaudeSessionPrReader } from '../../../drivers/claude-session-prs.ts';
 import { readWorkspaceIdentity } from '../../../drivers/code-identity.ts';
 import type { NeoSessionFacts } from '../../pack-contract.ts';
-import { codingPrKey } from './todo-prs.ts';
+import { codingPrKey } from './pr-key.ts';
 
 export function createCodingClaudeOwnerReader(
   sessionsDir = join(homedir(), 'Library/Application Support/Claude/claude-code-sessions'),

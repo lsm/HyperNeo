@@ -13,7 +13,13 @@ export const recordWorkTurns = defineDbOp({
     const write = db.prepare(`INSERT OR REPLACE INTO work_turns
       (ref, id, started_at, ended_at, ended, inputs, urls, complete, cursor)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    for (const turn of turns)
+    const clear = db.prepare('DELETE FROM work_turn_urls WHERE ref = ? AND turn_id = ?');
+    const index = db.prepare(
+      'INSERT OR IGNORE INTO work_turn_urls (url, ref, turn_id) VALUES (?, ?, ?)'
+    );
+    for (const turn of turns) {
+      clear.run(storedRef(ref), turn.id);
+      for (const url of turn.urls) index.run(url.toLowerCase(), storedRef(ref), turn.id);
       write.run(
         storedRef(ref),
         turn.id,
@@ -25,6 +31,7 @@ export const recordWorkTurns = defineDbOp({
         Number(turn.complete),
         turn.cursor
       );
+    }
   },
 });
 
@@ -33,6 +40,21 @@ type TurnRow = Omit<WorkTurnFact, 'inputs' | 'urls' | 'complete'> & {
   urls: string;
   complete: number;
 };
+
+export type WorkTurnMention = WorkTurnFact & {
+  ref: WorkRef;
+  previous: Pick<WorkTurnFact, 'id' | 'ended' | 'inputs'> | null;
+};
+
+const TURN_COLUMNS = `id, started_at AS startedAt, ended_at AS endedAt, ended, inputs, urls,
+  complete, cursor`;
+
+const readTurnRow = (row: TurnRow): WorkTurnFact => ({
+  ...row,
+  inputs: JSON.parse(row.inputs),
+  urls: JSON.parse(row.urls),
+  complete: !!row.complete,
+});
 
 export class WorkTurnRepository {
   constructor(private readonly db: Database) {}
@@ -50,14 +72,33 @@ export class WorkTurnRepository {
 
   list(ref: WorkRef): WorkTurnFact[] {
     const rows = this.db
-      .prepare(`SELECT id, started_at AS startedAt, ended_at AS endedAt, ended, inputs, urls,
-        complete, cursor FROM work_turns WHERE ref = ? ORDER BY ended_at`)
+      .prepare(`SELECT ${TURN_COLUMNS} FROM work_turns WHERE ref = ? ORDER BY ended_at`)
       .all(storedRef(ref)) as TurnRow[];
-    return rows.map((row) => ({
-      ...row,
-      inputs: JSON.parse(row.inputs),
-      urls: JSON.parse(row.urls),
-      complete: !!row.complete,
-    }));
+    return rows.map(readTurnRow);
+  }
+
+  mentioning(prefixes: readonly string[]): WorkTurnMention[] {
+    const find = this.db.prepare(`SELECT DISTINCT ref, turn_id AS id FROM work_turn_urls
+      WHERE url >= ? AND url <= ?`);
+    const turn = this.db.prepare(`SELECT ${TURN_COLUMNS} FROM work_turns WHERE ref = ? AND id = ?`);
+    const before = this.db.prepare(`SELECT ${TURN_COLUMNS} FROM work_turns
+      WHERE ref = ? AND ended_at < ? ORDER BY ended_at DESC LIMIT 1`);
+    const found = prefixes.flatMap(
+      (prefix) => find.all(prefix, `${prefix}\uffff`) as { ref: string; id: string }[]
+    );
+    const unique = new Map(found.map((row) => [`${row.ref}\n${row.id}`, row]));
+    return [...unique.values()].flatMap(({ ref, id }) => {
+      const row = turn.get(ref, id) as TurnRow | null;
+      if (!row) return [];
+      const fact = readTurnRow(row);
+      const previous = before.get(ref, fact.endedAt) as TurnRow | null;
+      return [
+        {
+          ...fact,
+          ref: JSON.parse(ref) as WorkRef,
+          previous: previous ? readTurnRow(previous) : null,
+        },
+      ];
+    });
   }
 }
