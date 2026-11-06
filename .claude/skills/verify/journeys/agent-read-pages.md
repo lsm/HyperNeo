@@ -57,8 +57,11 @@ synthetic databases and a shared data directory. The second startup must preserv
 the first daemon's origin binding. The first CLI read must still print the card,
 and the second daemon must reject the first credential with 401. Inspect
 ownership.json and both cleanup receipts. The focused credential-creation tests
-also pause a temporary-file rewrite to prove a fresh published file stays readable,
-and verify that a dead descriptor owner permits a later origin rebind.
+check complete fresh publication and reject its redundant rewrite. A separate
+rebind test seeds an existing credential and requires the second call to reach
+the staged rewrite pause. While paused, the published record retains its old
+origin. After release, the new origin reads the same credential. The tests also
+verify that a dead descriptor owner permits a later origin rebind.
 
 For simultaneous startup, run `agent-credential-startup-race.ts` with the same
 wrapper. It pauses the first real descriptor publication immediately before its

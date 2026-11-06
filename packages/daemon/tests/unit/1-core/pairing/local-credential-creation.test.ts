@@ -60,7 +60,7 @@ describe('local credential creation', () => {
     expect(readLocalCredential(file, 'http://127.0.0.1:9312')).toBe(credential);
   });
 
-  test('a fresh agent credential remains readable during temporary-file writes', async () => {
+  test('a fresh agent credential publishes a complete bound record', async () => {
     dir = await mkdtemp(join(tmpdir(), 'agent-hardlink-'));
     process.env.HYPERNEO_DATA_DIR = dir;
     const db = { run: vi.fn() } as unknown as DbGateway;
@@ -84,17 +84,21 @@ describe('local credential creation', () => {
     try {
       await Promise.race([started, pending]);
       expect(readLocalCredential(file, origin)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(rewrite).not.toHaveBeenCalled();
     } finally {
       release();
       await pending;
     }
   });
   test('an existing agent record remains readable while its new origin is staged', async () => {
-    dir = await mkdtemp(join(tmpdir(), 'agent-hardlink-'));
+    dir = await mkdtemp(join(tmpdir(), 'agent-rebind-'));
     process.env.HYPERNEO_DATA_DIR = dir;
     const db = { run: vi.fn() } as unknown as DbGateway;
     const origin = 'http://127.0.0.1:9311';
     const file = join(dir, 'agent-read.credential');
+    await ensureLocalCredential(db, 'agent', origin);
+    const credential = readLocalCredential(file, origin);
+    const nextOrigin = 'http://127.0.0.1:9312';
     let writing!: () => void;
     let release!: () => void;
     const started = new Promise<void>((done) => {
@@ -109,15 +113,23 @@ describe('local credential creation', () => {
       writing();
       await resume;
     });
-    const pending = ensureLocalCredential(db, 'agent', origin);
+    const pending = ensureLocalCredential(db, 'agent', nextOrigin);
     try {
-      await Promise.race([started, pending]);
+      await Promise.race([
+        started,
+        pending.then(() => {
+          throw new Error('Rebinding completed before reaching the rewrite pause');
+        }),
+      ]);
       expect(rewrite).toHaveBeenCalledTimes(1);
-      expect(readLocalCredential(file, origin)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(readLocalCredential(file, origin)).toBe(credential);
+      expect(() => readLocalCredential(file, nextOrigin)).toThrow('origin');
     } finally {
       release();
       await pending;
     }
+    expect(readLocalCredential(file, nextOrigin)).toBe(credential);
+    expect(() => readLocalCredential(file, origin)).toThrow('origin');
   });
   test('an agent credential without an issuer origin cannot be enrolled', async () => {
     dir = await mkdtemp(join(tmpdir(), 'agent-origin-'));
