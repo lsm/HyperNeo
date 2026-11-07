@@ -482,6 +482,33 @@ describe('QueryRunner', () => {
       expect(submit).not.toHaveBeenCalled();
     });
 
+    it('refuses Codex when tool guards are attached to the live session', async () => {
+      const submit = mock(async () => ({ runId: 'unexpected' }));
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        toolGuards: [
+          { matcher: 'Bash', pattern: 'git push', decision: 'deny', reason: 'synthetic' },
+        ],
+        messageQueue: queue,
+        oap: {
+          openDirectorySupported: true,
+          hub: { submit, events: async function* () {}, cancel: async () => {} },
+        },
+      });
+      const sent = queue
+        .enqueueWithId('runtime-guards', 'hello', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      await ctx.queryPromise;
+      expect((await sent).message).toMatch(/Codex.*not supported/i);
+      expect(submit).not.toHaveBeenCalled();
+    });
+
     it('does not replay a Codex submit when its hub disconnects', async () => {
       const submit = mock(async () => {
         throw new Error('ECONNRESET synthetic hub');
