@@ -5991,6 +5991,30 @@ describe('AgentSession', () => {
       unsubscribe();
     });
 
+    it('does not replay an uncertain submitted Codex delivery on job recovery', async () => {
+      const uuid = 'codex-uncertain-submission';
+      agentSession.session.config.harness = 'codex';
+      const repo = db.getSDKMessageRepo();
+      repo.saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid,
+          message: { role: 'user', content: 'uncertain prompt' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+      repo.markDeliverySubmittedByUuids(sessionId, [uuid]);
+      const start = spyOn(agentSession.lifecycleManager, 'ensureQueryStarted')
+        .mockRejectedValue(new Error('unexpected query restart'));
+
+      await expect(
+        agentSession.driveDeliveryTurn(uuid, 'uncertain prompt', null, false, () => true)
+      ).rejects.toThrow(/submitted.*not.*resend/i);
+      expect(start).not.toHaveBeenCalled();
+      expect(repo.getDeliveryContent(sessionId, uuid)?.sendStatus).toBe('failed');
+    });
+
     it('idle admission leaves submitted deliveries active in the job queue unsettled', async () => {
       const activeUuid = 'msg-submitted-active';
       const staleUuid = 'msg-submitted-stale';
