@@ -19,6 +19,6 @@ End state, in `$RUN/evidence/`:
 - Cards show the topic with its color square at left, and a state dot and word at right,
   with no pill. The untopiced card shows no topic.
 - Tapping a chip filters, the filter survives reload, and a second tap clears it. Tapping a
-  card's topic filters the same way.
+  card's topic filters the same way, and during a work search it clears the search first.
 - `topics-1280-{light,dark}.png`, `topics-1280-filtered.png` and `topics-390-{light,dark}.png`:
   at 390 px the chip row stays inside the screen and scrolls sideways.
