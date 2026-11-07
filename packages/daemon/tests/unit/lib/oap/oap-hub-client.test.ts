@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { vi } from 'vitest';
 import type { OapHubFrame } from '../../../../src/lib/oap/oap-hub-codec';
 import { testDirectories } from '../../../helpers/temporary-directory';
 
@@ -9,16 +10,22 @@ const directory = testDirectories();
 const clients: { close(): Promise<void> }[] = [];
 const script = `
 const subscriptions = new Set(), counts = {};
+let heldBusy;
 const line = (value) => JSON.stringify(value) + '\\n';
 const reply = (id, result) => process.stdout.write(line({ id, ok: true, result }));
 require('node:readline').createInterface({ input: process.stdin }).on('line', (text) => {
   const r = JSON.parse(text), count = counts[r.op] = (counts[r.op] || 0) + 1;
+  if (r.op === 'hang') return;
+  if (r.op === 'busy-held') { if (count === 1) heldBusy = r; return; }
+  if (r.op === 'release-busy') { process.stdout.write(line({id:heldBusy.id,ok:false,error:{code:'busy',message:'retry'}})); return reply(r.id,null); }
+  if (r.op === 'ignore-term') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); return reply(r.id,process.pid); }
   if (r.op === 'exit') { if (count === 2) process.exit(7); return; }
   if (r.op === 'busy-once' && count === 1 || r.op === 'busy-always')
     return process.stdout.write(line({ id:r.id, ok:false, error:{code:'busy', message:'send this request again'} }));
   if (r.op === 'refused') return process.stdout.write(line({ id:r.id, ok:false, error:{code:'unknown_session', message:'synthetic'} }));
   if (r.op === 'events') {
     subscriptions.add(r.id);
+    if (r.session_id === 'never-ack') return;
     return process.stdout.write(line({id:r.id, ok:true, result:null}) + line({id:r.id,event:'oap-subscribed',joined_after:0}));
   }
   if (r.op === 'unsubscribe') { subscriptions.delete(r.subscription); return reply(r.id, null); }
@@ -40,7 +47,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (t
 });
 `;
 
-async function client(command = process.execPath) {
+async function client(command = process.execPath, timeoutMs?: number) {
   const { OapHubClient } = await import('../../../../src/lib/oap/oap-hub-client');
   const root = directory(join(tmpdir(), 'oap-hub-client-'));
   for (const name of ['home', 'tmp', 'data']) mkdirSync(join(root, name));
@@ -48,6 +55,7 @@ async function client(command = process.execPath) {
     command,
     args: ['-e', script],
     cwd: root,
+    timeoutMs,
     env: {
       NODE_ENV: 'test',
       HOME: join(root, 'home'),
@@ -64,6 +72,71 @@ afterEach(async () => {
 });
 
 describe('OAP hub child lifecycle and correlation', () => {
+  test('a live silent child cannot hold a request beyond its configured deadline', async () => {
+    const hub = await client(process.execPath, 200);
+    await hub.connect();
+    const answer = await Promise.race([
+      hub.request('hang').catch((error: Error) => error),
+      new Promise<undefined>((resolve) => setTimeout(resolve, 1000)),
+    ]);
+    expect(answer).toBeInstanceOf(Error);
+    expect((answer as Error).message).toContain('timed out');
+    expect(await hub.request('fast')).toBe(1);
+  });
+
+  test('a subscription acknowledgment timeout removes the remote subscription', async () => {
+    const hub = await client(process.execPath, 200);
+    await hub.connect();
+    const received: unknown[] = [];
+    const answer = await Promise.race([
+      hub.subscribe('never-ack', (frame) => received.push(frame)).catch((error: Error) => error),
+      new Promise<undefined>((resolve) => setTimeout(resolve, 1000)),
+    ]);
+    expect(answer).toBeInstanceOf(Error);
+    expect((answer as Error).message).toContain('timed out');
+    expect(await hub.request('stats')).toMatchObject({ events: 1, unsubscribe: 1 });
+    await hub.request('emit');
+    expect(received).toHaveLength(0);
+  });
+
+  test('busy replay retains the original request deadline', async () => {
+    const hub = await client(process.execPath, 200);
+    await hub.connect();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let failure: Error | undefined;
+    try {
+      void hub.request('busy-held').catch((error: Error) => {
+        failure = error;
+      });
+      await hub.request('stats');
+      await vi.advanceTimersByTimeAsync(120);
+      await hub.request('release-busy');
+      expect(await hub.request('stats')).toMatchObject({ 'busy-held': 2 });
+      await vi.advanceTimersByTimeAsync(80);
+      expect(failure?.message).toContain('timed out');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('close escalates when its own child ignores SIGTERM', async () => {
+    const hub = await client(process.execPath, 100);
+    await hub.connect();
+    const pid = (await hub.request('ignore-term')) as number;
+    let externalCleanup = false;
+    const watchdog = setTimeout(() => {
+      externalCleanup = true;
+      process.kill(pid, 'SIGKILL');
+    }, 2000);
+    try {
+      await hub.close();
+      expect(externalCleanup).toBe(false);
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      clearTimeout(watchdog);
+    }
+  });
+
   test('child exit rejects all pending hub requests exactly once', async () => {
     const hub = await client();
     await hub.connect();
