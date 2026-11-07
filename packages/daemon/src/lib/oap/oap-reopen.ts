@@ -111,6 +111,44 @@ async function refuseReopen(
   throw new Error(text);
 }
 
+async function openAfterClear(
+  client: OapHubClient,
+  plan: OapOpenPlan,
+  session: Session,
+  status: WorkStatus | undefined,
+  ensureLive: () => void
+): Promise<WorkStatus> {
+  const oldId = session.metadata.oapClearThreadId;
+  let current = status?.held === false ? undefined : status;
+  if (status?.held === false) {
+    const revision = await reopenRevision(client, session);
+    ensureLive();
+    if (revision) {
+      try {
+        await open(client, plan, revision);
+        current = (await client.request('work.status', {
+          session_id: plan.sessionId,
+        })) as WorkStatus;
+      } catch (error) {
+        if (!(error instanceof OapHubRequestError) || decideReopenFailure(error).mode !== 'summary')
+          throw error;
+      }
+      ensureLive();
+    }
+  }
+  if (current && nativeId(current, plan) !== oldId) return current;
+  if (current) {
+    await client.request('close', { session_id: plan.sessionId });
+    ensureLive();
+  }
+  await open(client, plan);
+  ensureLive();
+  current = (await client.request('work.status', { session_id: plan.sessionId })) as WorkStatus;
+  ensureLive();
+  if (nativeId(current, plan) === oldId) throw new Error('Codex opened the previous thread again');
+  return current;
+}
+
 export async function openOapSession(
   client: OapHubClient,
   plan: OapOpenPlan,
@@ -128,8 +166,11 @@ export async function openOapSession(
   }
   ensureLive();
   if (status) validatePlacement(status, plan);
+  const clearing = !!session.metadata?.oapClearThreadId;
   const prior = !!session.sdkSessionId || !!status || hasHistory(db, session.id);
-  if (!status || status.held === false) {
+  if (clearing) {
+    status = await openAfterClear(client, plan, session, status, ensureLive);
+  } else if (!status || status.held === false) {
     if (prior) {
       if (!session.sdkSessionId && !status) await refuseReopen(session, db, hub, ensureLive);
       const revision = await reopenRevision(client, session);
@@ -150,17 +191,22 @@ export async function openOapSession(
   } else if (status.status && status.status !== 'done')
     throw new Error('Codex session has unfinished work');
   const id = nativeId(status, plan);
-  if (session.sdkSessionId && session.sdkSessionId !== id)
+  if (!clearing && session.sdkSessionId && session.sdkSessionId !== id)
     throw new Error('Codex native thread identity changed');
-  if (id !== session.sdkSessionId) {
-    if ((await db.updateSession(session.id, { sdkSessionId: id })) !== 'written')
+  if (clearing || id !== session.sdkSessionId) {
+    const metadata = clearing ? { ...session.metadata, oapClearThreadId: undefined } : undefined;
+    const update = {
+      sdkSessionId: id,
+      ...(metadata ? { metadata, sdkOriginPath: undefined } : {}),
+    };
+    if ((await db.updateSession(session.id, update)) !== 'written')
       throw new Error('Could not save Codex thread identity');
     ensureLive();
-    session.sdkSessionId = id;
+    Object.assign(session, update);
     events?.publishAsync('session.updated', {
       sessionId: session.id,
       source: 'oap-reopen',
-      session: { sdkSessionId: id },
+      session: update,
     });
   }
 }
