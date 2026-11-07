@@ -89,6 +89,15 @@ describe('root Neo system prompt', () => {
     expect(prompt).toContain('stopping after three consumed reminders');
   });
 
+  test.each([false, true])('delivers completion guidance with packs: %s', (enabled) => {
+    const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+    expect(prompt).toContain('Settle an ask done only after its todos finish.');
+    expect(prompt).toContain(
+      'For abandoned work, use dropped or remove individual todos with reasons.'
+    );
+    expect(prompt).toContain('An unfinished-todo refusal keeps the ask open.');
+  });
+
   test('routes continuing discussion into a fresh prepared session using existing flows', () => {
     expect(NEO_FOCUSED_DISCUSSION.split(/\s+/).length).toBeLessThan(250);
     for (const prompt of [neoPrompt([]), neoPrompt(neoSettingsPackBriefs())]) {

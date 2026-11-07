@@ -45,7 +45,7 @@ const scripted=createOperationRegistry(registry.entries.map(entry=>entry.name!==
 }}));app.sessionManager.setOperationRegistryProvider(()=>scripted);
 const mcp=createOperationMcpHandler(scripted,()=>({sessionId:root,role:'neo'}));
 type Receipt={ok:false;reason:string}|{ok:true;ask:NeoAsk;todos:NeoTodo[];records?:string[]};
-const settle=(askId:string,status:'done'|'dropped'='done')=>hub.request<Receipt>('operation.invoke',{name:'neo.ask.settle',input:{askId,status,outcome:'Explicitly ended'}});
+const settle=(askId:string,status:'done'|'dropped'='dropped')=>hub.request<Receipt>('operation.invoke',{name:'neo.ask.settle',input:{askId,status,outcome:'Explicitly ended'}});
 const visible=(askId:string)=>hub.request<{ok:true;entry:{ask:NeoAsk;todos:NeoTodo[];questions:unknown[];doneCount:number}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const stable=async(askId:string)=>{const {entry}=await visible(askId);return {ask:entry.ask,todos:entry.todos.map(({id,state,report,reason,evidence})=>({id,state,report,reason,evidence})),questions:entry.questions};};
 const ask=(id:string,parentId:string|null=null)=>store.openAsk({id,parentId,repo:parentId?'github.com/fixture/child':null,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep full work',createdAt:1});
@@ -60,6 +60,13 @@ const result:Record<string,unknown>={surface:'Real WebSocket settle/Work-card RP
 try{
  await app.spaceRuntimeService.ready();await app.jobProcessor.stop();await transport.connect();
  await app.db.createSession({id:root,title:'Synthetic settlement activation',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
+ ask('unfinished');seed('unfinished-worker','unfinished');card('unfinished-card','unfinished','unfinished-worker');
+ const unfinishedBefore=await stable('unfinished'),stopsBefore=calls.length;
+ const denied=await settle('unfinished','done');assert(!denied.ok && denied.reason.startsWith('todos_unfinished:'));
+ assert.deepEqual(await stable('unfinished'),unfinishedBefore);assert.equal(calls.length,stopsBefore);
+ const deniedMcpReply=await mcp({name:'neo.ask.settle',input:{askId:'unfinished',status:'done',outcome:'Too soon'}});
+ const deniedMcp=JSON.parse(deniedMcpReply.content[0].text);assert(!deniedMcp.ok && deniedMcp.reason.startsWith('todos_unfinished:'));
+ assert.deepEqual(await stable('unfinished'),unfinishedBefore);assert.equal(calls.length,stopsBefore);result.unfinishedDoneRejectedBeforeStops=true;
  ask('atomic');seed('atomic-worker','atomic');card('atomic-card','atomic','atomic-worker');
  const before=await stable('atomic');db.exec("CREATE TRIGGER fail_atomic_card BEFORE UPDATE ON neo_questions WHEN OLD.ask_id='atomic' BEGIN SELECT RAISE(ABORT, 'synthetic late settlement rollback'); END");
  watch=true;await assert.rejects(settle('atomic'),/synthetic late settlement rollback/);watch=false;
@@ -68,19 +75,24 @@ try{
  let replied=false,error:unknown;const pending=settle('atomic');void pending.then(()=>{replied=true;},caught=>{replied=true;error=caught;});
  await Promise.race([atWrite,pending]);if(error)throw error;assert(held,'Settlement must reach the writer');
  await new Promise(resolve=>setTimeout(resolve,80));assert.equal(replied,false);assert.equal(notices,0);assert.equal(tableEvents,0);assert.deepEqual(await stable('atomic'),before);await hub.request('system.health',{});
- db.exec('ROLLBACK');held=false;const receipt=await pending;watch=false;assert(receipt.ok && receipt.ask.status==='done');assert(receipt.records?.[0].includes('todos_unfinished:'));assert.equal(receipt.todos[0].state,'closed_unverified');assert.equal(receipt.todos[0].report,report);assert(receipt.todos[0].reason?.includes('Prior diagnostic'));
+ db.exec('ROLLBACK');held=false;const receipt=await pending;watch=false;assert(receipt.ok && receipt.ask.status==='dropped');assert.equal(receipt.todos[0].state,'removed');assert.equal(receipt.todos[0].report,report);assert(receipt.todos[0].reason?.includes('settled dropped'));
  const after=await visible('atomic');assert.equal(after.entry.todos[0].report,report);assert.equal(after.entry.doneCount,0);assert.equal(store.getQuestion('atomic-card')!.state,'retired');assert.equal(store.getQuestion('atomic-card')!.answer,null);await hub.request('system.health',{});assert.equal(notices,1);assert(tableEvents>0);
  result.commitBeforeReply=true;result.notificationsAfterCommit=true;result.fullReport={bytes:Buffer.byteLength(report),sha256:createHash('sha256').update(report).digest('hex')};
  const prior=notices;assert(!(await settle('atomic')).ok);assert(!(await settle('missing')).ok);await hub.request('system.health',{});assert.equal(notices,prior);result.staleNoopsQuiet=true;
  for(const status of ['done','dropped'] as const){
-  const id=`failed-${status}`;ask(id);seed(`${id}-one`,id);seed(`${id}-two`,id);refused.add(`${id}-two`);const before=await stable(id),n=notices,t=tableEvents;
+  const id=`failed-${status}`;ask(id);seed(`${id}-one`,id);seed(`${id}-two`,id);if(status==='done')for(const todo of store.listTodos(id))store.updateTodo(todo,{state:'done',evidence:'Observed'},4);refused.add(`${id}-two`);const before=await stable(id),n=notices,t=tableEvents;
   watch=true;const failure=await settle(id,status);watch=false;assert(!failure.ok && failure.reason.includes('Synthetic driver refusal') && failure.reason.includes(`stopped: ${id}-one`));assert.deepEqual(await stable(id),before);await hub.request('system.health',{});assert.equal(notices,n);assert.equal(tableEvents,t);
  }result.failedStopsLeaveAskOpen=true;
  ask('adopted');seed('adopted-worker','adopted',true);const count=calls.length;const adopted=await settle('adopted','dropped');assert(adopted.ok && adopted.todos[0].state==='removed');assert.equal(calls.length,count);result.adoptedExempt=true;
+ ask('late-done');seed('finished-first','late-done');store.updateTodo(store.getTodo('finished-first')!,{state:'done',evidence:'Observed'},4);
+ onStop=async id=>{if(id==='finished-first')seed('late-unfinished','late-done');};
+ const lateNotice=notices;const late=await settle('late-done','done');onStop=async()=>{};
+ assert(!late.ok && late.reason.includes('late-unfinished'));assert.equal(store.getAsk('late-done')!.status,'open');assert.equal(store.getTodo('late-unfinished')!.state,'doing');
+ await hub.request('system.health',{});assert.equal(notices,lateNotice);result.concurrentAdditionRefused=true;
  ask('racing');seed('racing-one','racing');seed('racing-two','racing');let injected=false;
  onStop=async id=>{if(id==='racing-two' && !injected){injected=true;seed('racing-late','racing');sessions.recordRef('racing-one',{adapter:'hyperneo',id:'racing-one-replacement'},4);sessions.recordLive('racing-one','running',undefined);}};
  const raceCalls=calls.length;watch=true;const raced=await settle('racing');watch=false;onStop=async()=>{};
- assert(raced.ok && raced.todos.length===3 && raced.todos.every(todo=>todo.state==='closed_unverified' && todo.report===report));assert(raced.records?.[0].includes('racing-late'));assert.deepEqual(calls.slice(raceCalls),['racing-one','racing-two','racing-one-replacement','racing-late']);result.lateStartAndReplacementCleanup=true;
+ assert(raced.ok && raced.todos.length===3 && raced.todos.every(todo=>todo.state==='removed' && todo.report===report));assert.deepEqual(calls.slice(raceCalls),['racing-one','racing-two','racing-one-replacement','racing-late']);result.lateStartAndReplacementCleanup=true;
  ask('competing');seed('competing-worker','competing');beforeWrite=(method,args)=>{if(method==='settle' && (args[0] as {askId:string}).askId==='competing')store.settleAsk(store.getAsk('competing')!,'dropped','Other actor',8);};
  const n=notices;const competing=await settle('competing');beforeWrite=()=>{};assert(!competing.ok && competing.reason.includes('ask_settled:'));assert.equal(store.getAsk('competing')!.outcome,'Other actor');await hub.request('system.health',{});assert.equal(notices,n);result.competingCommitPreserved=true;
  ask('stop-race');seed('stop-race-worker','stop-race');refused.add('stop-race-worker');onStop=async id=>{if(id==='stop-race-worker')store.settleAsk(store.getAsk('stop-race')!,'dropped','Other actor ended it',9);};
@@ -89,7 +101,7 @@ try{
  const recompute=()=>gateway.call(neoTodoRunnerWrites,'recompute','human-worker',null,{},5,{state:'no_opinion'});
  assert.equal((await recompute()).todo!.blockedBy,'needs-human');store.retireQuestion(store.getQuestion('human-card')!,'Retired',null,6);assert.notEqual((await recompute()).todo!.blockedBy,'needs-human');
  card('pending-card','human','human-worker');store.questionAnswers.bind('pending-card','human-worker',{adapter:'hyperneo',id:'human-worker'});store.answerQuestion(store.getQuestion('pending-card')!,'yes','button',7);store.updateTodo(store.getTodo('human-worker')!,{state:'blocked',blockedBy:'needs-human',blockedReason:'Deliver answer'},8);assert.equal((await recompute()).todo!.blockedBy,'needs-human');
- const human=await settle('human');assert(human.ok && human.todos[0].state==='closed_unverified');result.needsHumanPreserved=true;
+ const human=await settle('human');assert(human.ok && human.todos[0].state==='removed');result.needsHumanPreserved=true;
  ask('parent');ask('child','parent');seed('child-worker','child');card('child-card','child','child-worker');const child=await stable('child'),c=calls.length;
  const beforeReopen=notices,commandBefore=commands.length;
  const parent=await reopen('parent');assert(parent.ok && parent.ask.status==='open');assert.deepEqual(await stable('child'),child);assert.equal(calls.length,c);assert.equal(commands.length,commandBefore);

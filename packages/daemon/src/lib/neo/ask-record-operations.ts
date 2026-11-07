@@ -29,6 +29,7 @@ import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
 import {
   neoAskSettlementReads,
+  requireNeoAskSettlement,
   neoAskSettlementWrites,
 } from '../../storage/repositories/neo-ask-settlement.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -359,7 +360,7 @@ export function createNeoAskRecordOperations(
           'snapshot',
           input.askId
         );
-        return 'ok' in snapshot ? { reason: snapshot } : { value: snapshot };
+        return requireNeoAskSettlement(snapshot, input);
       },
       'input',
       'result:outcome'
@@ -432,7 +433,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.outcome',
       description:
-        'Record the settled focused discussion outcome on an open ask owned by this Neo. Use only an explicit report from ask.focusedSession after the human says the discussion is settled, naming this ask and its decision, documents and PRs. outcome is concise Markdown with document/PR references, not inferred approval from a relayed turn. This keeps the ask and its todos open, preserves its session link and does not stop or dispatch work. Track agreed execution using existing todos and pack checks; neo.ask.settle records unfinished todos as closed unverified.',
+        'Record the settled focused discussion outcome on an open ask owned by this Neo. Use only an explicit report from ask.focusedSession after the human says the discussion is settled, naming this ask and its decision, documents and PRs. outcome is concise Markdown with document/PR references, not inferred approval from a relayed turn. This keeps the ask and its todos open, preserves its session link and does not stop or dispatch work. Track agreed execution using existing todos and pack checks; neo.ask.settle refuses done while todos are unfinished.',
       inputSchema: Outcome,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -441,7 +442,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'End an ask: done when its todos are done or explicitly closed unverified, dropped when the human drops it. Unverified todos keep that label and never count as done. Unfinished todos are recorded and closed unverified when settling done; this never certifies their outcomes. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
+        'End an ask: done when its todos are done or explicitly closed unverified, dropped when the human drops it. Unverified todos keep that label and never count as done. Done is refused while todos are unfinished. Finish them, remove them with reasons, or use dropped when abandoning the request. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
