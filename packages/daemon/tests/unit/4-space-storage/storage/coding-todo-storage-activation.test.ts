@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
 import { ChangeRecorder, type DbOp } from '../../../../src/storage/db-gateway/db-op.ts';
@@ -37,22 +38,57 @@ afterEach(async () => {
   db.close();
 });
 
-test('pack initialization prepares storage before the first facts reader', async () => {
+const candidate = (changed = () => {}) => {
+  const invoke = <T>(mode: 'Reads' | 'Writes', method: string, args: unknown[]) =>
+    (DB_OPS.get(`coding.todoStorage${mode}`)! as DbOp<{ method: string; args: unknown[] }, T>).run(
+      db,
+      { method, args },
+      new ChangeRecorder()
+    );
+  const storage = {
+    project: (todo: NeoTodo) => invoke<NeoTodo>('Reads', 'project', [todo]),
+    insert: (
+      commit: NeoAskTodoRepository['addTodo'],
+      args: Parameters<NeoAskTodoRepository['addTodo']>
+    ) => {
+      const [id, askId, draft, now, repo = null] = args;
+      const todo = commit(id, askId, draft, now);
+      invoke('Writes', 'record', [todo.id, repo]);
+      return storage.project(todo);
+    },
+  };
+  return Reflect.construct(NeoAskTodoRepository, [
+    db,
+    changed,
+    undefined,
+    undefined,
+    undefined,
+    storage,
+  ]) as NeoAskTodoRepository;
+};
+
+test('facts fail before explicit preparation and read after it', async () => {
+  await expect(command('Reads', 'facts', ['ask'])).rejects.toThrow('no such table');
+  await command('Writes', 'prepare');
   await expect(command('Reads', 'facts', ['ask'])).resolves.toEqual({
     legacy: 'github.com/synthetic/history',
     repositories: [],
   });
 });
 
-test('pack initialization prepares storage before the first projection reader', async () => {
+test('projection fails before explicit preparation and reads after it', async () => {
   const historical = core.addTodo('historical', 'ask', draft, 2);
+  await expect(command('Reads', 'project', [historical])).rejects.toThrow('no such table');
+  await command('Writes', 'prepare');
   await expect(command('Reads', 'project', [historical])).resolves.toEqual(historical);
 });
 
-test('core receipts and all todo reader variants use the canonical repository', async () => {
+test('explicit storage projects all six readers while default readers stay legacy', async () => {
   const legacy = core.addTodo('stored', 'ask', draft, 2, 'github.com/synthetic/old');
   await command('Writes', 'prepare');
   await command('Writes', 'record', [legacy.id, 'github.com/synthetic/canonical']);
+  const legacyReader = core;
+  core = candidate();
   const reads = [
     core.getTodo(legacy.id),
     ...core.getTodos([legacy.id]),
@@ -62,10 +98,12 @@ test('core receipts and all todo reader variants use the canonical repository', 
     core.getCheckable(legacy.id),
   ];
   expect(reads.map((todo) => todo?.repo)).toEqual(Array(6).fill('github.com/synthetic/canonical'));
+  expect(legacyReader.getTodo(legacy.id)?.repo).toBe('github.com/synthetic/old');
 });
 
-test('core creation writes only the pack repository fact and freezes legacy hints', async () => {
+test('explicit storage inserts only the pack repository fact and freezes legacy hints', async () => {
   await command('Writes', 'prepare');
+  core = candidate();
   const receipt = core.addTodo('new', 'ask', draft, 2, 'github.com/synthetic/new');
   expect(receipt.repo).toBe('github.com/synthetic/new');
   expect(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('new')).toEqual({
@@ -94,4 +132,22 @@ test('an outer failure rolls back successful nested preparation and its backfill
     db.prepare("SELECT name FROM sqlite_master WHERE name='pack_coding_todos'").get()
   ).toBeNull();
   expect(core.getTodo('old')?.repo).toBe('github.com/synthetic/old');
+});
+
+test('a late injected storage failure rolls back insertion without announcing a change', async () => {
+  await command('Writes', 'prepare');
+  let notices = 0;
+  core = candidate(() => {
+    notices++;
+  });
+  const before = core.getAsk('ask');
+  db.exec(
+    "CREATE TRIGGER fail_pack BEFORE INSERT ON pack_coding_todos BEGIN SELECT RAISE(ABORT,'late failure'); END"
+  );
+  expect(() => core.addTodo('failed', 'ask', draft, 20, 'github.com/synthetic/new')).toThrow(
+    'late failure'
+  );
+  expect(core.getTodo('failed')).toBeNull();
+  expect(core.getAsk('ask')).toEqual(before);
+  expect(notices).toBe(0);
 });
