@@ -1,9 +1,177 @@
 import { describe, expect, mock, test } from 'bun:test';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-// @ts-expect-error The implementation follows this failing test.
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { OapQuery } from '../../../../src/lib/oap/oap-query';
 
 describe('OapQuery', () => {
+  test('yields messages returned by the injected translator in event order', async () => {
+    const user = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'hello' },
+    } as SDKUserMessage;
+    const translated = { type: 'result', subtype: 'success' } as SDKMessage;
+    async function* prompt() {
+      yield user;
+    }
+    const query = new OapQuery({
+      sessionId: 's1',
+      prompt: prompt(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel: async () => {},
+        events: async function* () {
+          yield { type: 'run.completed' };
+        },
+      },
+      translator: { translate: () => [translated] },
+    });
+    const messages: SDKMessage[] = [];
+    for await (const item of query) messages.push(item);
+    expect(messages).toEqual([translated]);
+  });
+  test('interrupt waits for an in-flight submit before cancelling its run', async () => {
+    const message = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'hello' },
+    } as SDKUserMessage;
+    async function* prompt() {
+      yield message;
+    }
+    let admit!: (value: { runId: string }) => void;
+    let submitted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      submitted = resolve;
+    });
+    const submit = mock(() => {
+      submitted();
+      return new Promise<{ runId: string }>((resolve) => {
+        admit = resolve;
+      });
+    });
+    const cancel = mock(async () => {});
+    const query = new OapQuery({
+      sessionId: 's1',
+      prompt: prompt(),
+      hub: {
+        submit,
+        cancel,
+        events: async function* () {
+          yield { type: 'run.cancelled' };
+        },
+      },
+      translator: { translate: () => [] },
+    });
+    const running = (async () => {
+      for await (const item of query) void item;
+    })();
+    await started;
+    const interruption = query.interrupt();
+    expect(cancel).not.toHaveBeenCalled();
+    admit({ runId: 'r1' });
+    await interruption;
+    await running;
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith('s1', 'r1');
+  });
+  test('translates each run before submitting the next prompt', async () => {
+    const message = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'hello' },
+    } as SDKUserMessage;
+    async function* prompt() {
+      yield message;
+      yield message;
+    }
+    const submit = mock(async () => ({ runId: `r${submit.mock.calls.length}` }));
+    const events = mock(async function* (_session: string, runId: string) {
+      yield { type: 'run.completed', runId };
+    });
+    const translate = mock(() => []);
+    const query = new OapQuery({
+      sessionId: 's1',
+      prompt: prompt(),
+      hub: { submit, events, cancel: async () => {} },
+      translator: { translate },
+    });
+    for await (const item of query) void item;
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(events.mock.calls.map(([session, run]) => [session, run])).toEqual([
+      ['s1', 'r1'],
+      ['s1', 'r2'],
+    ]);
+    expect(translate).toHaveBeenCalledTimes(2);
+  });
+  test('close cancels the active run and ends a stalled event subscription', async () => {
+    const message = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'hello' },
+    } as SDKUserMessage;
+    async function* prompt() {
+      yield message;
+    }
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const cancel = mock(async () => {});
+    const events = async function* (_session: string, _run: string, signal: AbortSignal) {
+      started();
+      await new Promise<void>((resolve) =>
+        signal.addEventListener('abort', () => resolve(), { once: true })
+      );
+    };
+    const query = new OapQuery({
+      sessionId: 's1',
+      prompt: prompt(),
+      hub: { submit: async () => ({ runId: 'r1' }), events, cancel },
+      translator: { translate: () => [] },
+    });
+    const consume = async () => {
+      for await (const item of query) void item;
+    };
+    const running = consume();
+    await ready;
+    query.close();
+    query.close();
+    await running;
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith('s1', 'r1');
+  });
+
+  test('rejects a stream that ends before a terminal event', async () => {
+    const message = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'hello' },
+    } as SDKUserMessage;
+    async function* prompt() {
+      yield message;
+    }
+    const query = new OapQuery({
+      sessionId: 's1',
+      prompt: prompt(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        events: async function* () {
+          yield { type: 'content.delta' };
+        },
+        cancel: async () => {},
+      },
+      translator: { translate: () => [] },
+    });
+    const consume = async () => {
+      for await (const item of query) void item;
+    };
+    await expect(consume()).rejects.toThrow('OAP event stream ended before run terminal');
+  });
   test('submits each prompt once and cancels the active run once', async () => {
     const message = {
       type: 'user',
