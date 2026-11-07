@@ -5,6 +5,7 @@ import { createGoogleConnectionOperations } from '../connections/operations.ts';
 import { sessionWorkerRef } from '../neo/worker-identity.ts';
 import { neoTodoSessionReads } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactReadOperations } from '../artifacts/read-operations.ts';
+import { createCardHandoffRead } from '../handoffs/card-read.ts';
 import { createArtifactReferenceResolve } from '../artifacts/resolve-operation.ts';
 import { createBuildOperation } from '../system/build-operation.ts';
 import { daemonPairingLimiter } from '../pairing/pairing-limiter.ts';
@@ -93,6 +94,7 @@ export function createDatabaseOperationCatalog(
       ...contributed,
       ...extra,
       ...createArtifactReadOperations(() => db.getDatabase()),
+      createCardHandoffRead(() => db.getDatabase()),
       createLiveFileRead(() => db.getDatabase()),
       createArtifactReferenceResolve(() => db.getDatabase()),
       createBuildOperation(() => db.getDatabase().prepare('SELECT 1').get()),
