@@ -23,6 +23,23 @@ function pairFailureMessage(
   return 'Pairing failed. Check the code and try again.';
 }
 
+const fallbackRequestIds = new Map<string, string>();
+
+function pairRequestId(code: string): string {
+  const key = `hyperneo.pair.request.${code.replace(/[\s-]/g, '').toUpperCase()}`;
+  try {
+    const kept = sessionStorage.getItem(key);
+    if (kept) return kept;
+    const made = generateUUID();
+    sessionStorage.setItem(key, made);
+    return made;
+  } catch {
+    const made = fallbackRequestIds.get(key) ?? generateUUID();
+    fallbackRequestIds.set(key, made);
+    return made;
+  }
+}
+
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const done = () => {
@@ -69,7 +86,7 @@ export function PairPage() {
     const body = JSON.stringify({
       code: code.trim(),
       name: name.trim(),
-      requestId: generateUUID(),
+      requestId: pairRequestId(code),
     });
     history.replaceState(null, '', location.pathname);
     setState({ kind: 'pairing' });

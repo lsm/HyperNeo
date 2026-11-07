@@ -19,6 +19,7 @@ const pressPair = (view: ReturnType<typeof render>) =>
 describe('PairPage', () => {
   afterEach(() => {
     cleanup();
+    sessionStorage.clear();
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
