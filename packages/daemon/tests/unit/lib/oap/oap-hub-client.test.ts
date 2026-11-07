@@ -11,6 +11,7 @@ const clients: { close(): Promise<void> }[] = [];
 const script = `
 const subscriptions = new Set(), counts = {};
 let heldBusy;
+let cleanupRefusal;
 const line = (value) => JSON.stringify(value) + '\\n';
 const reply = (id, result) => process.stdout.write(line({ id, ok: true, result }));
 require('node:readline').createInterface({ input: process.stdin }).on('line', (text) => {
@@ -25,10 +26,15 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (t
   if (r.op === 'refused') return process.stdout.write(line({ id:r.id, ok:false, error:{code:'unknown_session', message:'synthetic'} }));
   if (r.op === 'events') {
     subscriptions.add(r.id);
+    if (r.session_id.startsWith('cleanup-')) { cleanupRefusal=r.session_id.slice(8); return; }
     if (r.session_id === 'never-ack') return;
     return process.stdout.write(line({id:r.id, ok:true, result:null}) + line({id:r.id,event:'oap-subscribed',joined_after:0}));
   }
-  if (r.op === 'unsubscribe') { subscriptions.delete(r.subscription); return reply(r.id, null); }
+  if (r.op === 'unsubscribe') {
+    if (cleanupRefusal === 'timeout') return;
+    if (cleanupRefusal) return process.stdout.write(line({id:r.id,ok:false,error:{code:cleanupRefusal,message:'synthetic cleanup refusal'}}));
+    subscriptions.delete(r.subscription); return reply(r.id, null);
+  }
   if (r.op === 'emit') {
     for (const id of [...subscriptions].reverse()) process.stdout.write(line({id,event:'envelope',sequence:4,envelope:{type:'content.delta',payload:{text:'synthetic'}}}));
     return reply(r.id, null);
@@ -72,6 +78,56 @@ afterEach(async () => {
 });
 
 describe('OAP hub child lifecycle and correlation', () => {
+  test.each(['unknown_session', 'busy'])(
+    'cleanup refusal %s keeps unrelated pending requests and subscribers alive',
+    async (code) => {
+      const hub = await client(process.execPath, 200);
+      await hub.connect();
+      const received: Array<OapHubFrame | Error> = [];
+      await hub.subscribe('synthetic', (frame) => received.push(frame));
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      let unrelatedFailure: Error | undefined;
+      try {
+        const declined = hub.subscribe(`cleanup-${code}`, () => {}).catch((error: Error) => error);
+        await hub.request('stats');
+        await vi.advanceTimersByTimeAsync(100);
+        void hub.request('hang').catch((error: Error) => {
+          unrelatedFailure = error;
+        });
+        await vi.advanceTimersByTimeAsync(100);
+        expect(((await declined) as Error).message).toContain('timed out');
+        await hub.request('stats');
+        await hub.request('emit');
+        expect(await hub.request('stats')).toMatchObject({ unsubscribe: code === 'busy' ? 2 : 1 });
+        expect(unrelatedFailure).toBeUndefined();
+        expect(received.filter((frame) => frame instanceof Error)).toHaveLength(0);
+        expect(received.at(-1)).toMatchObject({ event: 'envelope' });
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  test('a cleanup timeout still fails the transport and notifies established subscribers', async () => {
+    const hub = await client(process.execPath, 200);
+    await hub.connect();
+    const received: Array<OapHubFrame | Error> = [];
+    await hub.subscribe('synthetic', (frame) => received.push(frame));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const declined = hub.subscribe('cleanup-timeout', () => {}).catch((error: Error) => error);
+      await hub.request('stats');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(((await declined) as Error).message).toContain('timed out');
+      await hub.request('stats');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(received.filter((frame) => frame instanceof Error)).toHaveLength(1);
+      await expect(hub.request('later')).rejects.toThrow('timed out');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('a live silent child cannot hold a request beyond its configured deadline', async () => {
     const hub = await client(process.execPath, 200);
     await hub.connect();
