@@ -188,6 +188,34 @@ try {
   }
   evidence.chronologicalToolRows = true;
   evidence.abruptStreamPartialSaved = true;
+  const { sessionId: interruptSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP interrupt', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  const interruptAgent = app.sessionManager.getSession(interruptSession);
+  assert(interruptAgent);
+  let entered!: () => void;
+  let releaseInterrupt!: () => void;
+  const listeningInterrupt = new Promise<void>((resolve) => { entered = resolve; });
+  const cancelledInterrupt = new Promise<void>((resolve) => { releaseInterrupt = resolve; });
+  (interruptAgent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
+    openDirectorySupported: true,
+    hub: {
+      submit: async () => ({ runId: 'interrupt-run' }),
+      events: async function* () {
+        yield { type: 'content.delta', id: 'interrupt-text', payload: { message_id: 'interrupt-message', part: { type: 'text', text: 'partial before interrupt' } } };
+        entered();
+        await cancelledInterrupt;
+        yield { type: 'run.cancelled', id: 'interrupt-end', payload: { reason: 'cancelled' } };
+      },
+      cancel: async () => { releaseInterrupt(); },
+    },
+  };
+  await hub.request('message.send', { sessionId: interruptSession, content: 'Synthetic interrupt' });
+  await Promise.race([listeningInterrupt, new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error('interrupt stream did not start')), 15_000); timer.unref(); })]);
+  await interruptAgent.handleInterrupt();
+  const interruptedRows = app.db.getSDKMessages(interruptSession).messages.filter((row) => row.type === 'assistant' || row.type === 'result');
+  assert.deepEqual(interruptedRows.map((row) => row.type), ['assistant', 'result']);
+  assert(JSON.stringify(interruptedRows[0]).includes('partial before interrupt'));
+  assert.equal(interruptedRows[1]?.is_error, true);
+  evidence.interruptedPartialAndResultSaved = true;
   let releaseLate!: () => void;
   let listening!: () => void;
   const lateGate = new Promise<void>((resolve) => { releaseLate = resolve; });

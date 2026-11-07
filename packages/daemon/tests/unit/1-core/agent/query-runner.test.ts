@@ -610,6 +610,16 @@ describe('QueryRunner', () => {
           release();
         });
         const events = async function* () {
+          yield {
+            type: 'content.delta',
+            id: 'before-interrupt',
+            payload: { message_id: 'm1', part: { type: 'text', text: 'partial before interrupt' } },
+          };
+          yield {
+            type: 'content.delta',
+            id: 'before-interrupt-second',
+            payload: { message_id: 'm2', part: { type: 'text', text: 'another partial' } },
+          };
           listening();
           await cancelled;
           yield { type: 'run.cancelled', id: 'cancel-end', payload: { reason: 'cancelled' } };
@@ -638,8 +648,22 @@ describe('QueryRunner', () => {
         expect(await completesWithin(running)).toBe(true);
         expect(cancel).toHaveBeenCalledTimes(1);
         expect(
+          onSDKMessageSpy.mock.calls.filter(([message]) => message.type === 'assistant')
+        ).toHaveLength(replaceAttempt ? 0 : 2);
+        expect(
           onSDKMessageSpy.mock.calls.filter(([message]) => message.type === 'result')
         ).toHaveLength(replaceAttempt ? 0 : 1);
+        if (!replaceAttempt) {
+          expect(
+            onSDKMessageSpy.mock.calls
+              .map(([message]) => message)
+              .filter((message) => message.type === 'assistant' || message.type === 'result')
+          ).toMatchObject([
+            { type: 'assistant', message: { content: [{ text: 'partial before interrupt' }] } },
+            { type: 'assistant', message: { content: [{ text: 'another partial' }] } },
+            { type: 'result', is_error: true },
+          ]);
+        }
         expect(successor?.isLive() ?? true).toBe(true);
       }
     );
