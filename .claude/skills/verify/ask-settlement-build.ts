@@ -28,7 +28,7 @@ app.db.gateway.onChanges=changes=>{if(record)tables.push(...changes.map(change=>
 const off=hub.onEvent('neo.changed',()=>{neoEvents++;});
 type Receipt={ok:false;reason:string}|{ok:true;ask:NeoAsk;todos:NeoTodo[];records?:string[]};
 const command=<T>(name:string,mode:'read'|'write',method:string,args:unknown[])=>app.db.gateway.run({name,mode,run:()=>{throw new Error('Settlement must run in DB workers');}} as DbOp<object,T>,{method,args});
-const settle=()=>command<Receipt>('neo.askSettlementWrites','write','settle',[{askId:'ask',status:'done',outcome:'Explicitly ended'},10]);
+const settle=()=>command<Receipt>('neo.askSettlementWrites','write','settle',[{askId:'ask',status:'dropped',outcome:'Explicitly ended'},10]);
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{ask:NeoAsk;todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const result:Record<string,unknown>={runtimeCallersMoved:false};
 try{
@@ -55,13 +55,13 @@ try{
  await new Promise(resolve=>setTimeout(resolve,80));if(error)throw error;
  assert.equal(replied,false);assert.equal(tables.length,0);assert.deepEqual(await visible(),before);await hub.request('system.health',{});
  db.exec('ROLLBACK');held=false;const receipt=await pending;record=false;
- assert(receipt.ok);assert.equal(receipt.ask.status,'done');assert(receipt.todos.every(todo=>todo.state==='closed_unverified'));
- assert(receipt.todos.some(todo=>todo.id==='first' && todo.report===report));assert(receipt.records?.[0].startsWith('todos_unfinished:'));
+ assert(receipt.ok);assert.equal(receipt.ask.status,'dropped');assert(receipt.todos.every(todo=>todo.state==='removed'));
+ assert(receipt.todos.some(todo=>todo.id==='first' && todo.report===report));
  assert((await visible()).entry.todos.some(todo=>todo.id==='first' && todo.report===report));assert.equal(store.getQuestion('card')?.state,'retired');result.commitBeforeReply=true;result.explicitSettlementEndsHumanHold=true;
  result.fullReport={bytes:Buffer.byteLength(report),sha256:createHash('sha256').update(report).digest('hex')};
  record=true;
  const stop=await command<{todo:NeoTodo;ask:NeoAsk;ref:{id:string};live:string;adopted:boolean}>('neo.todoSessionReads','read','stopContext',['first']);record=false;
- assert.equal(stop.ref.id,'adopted-worker');assert.equal(stop.live,'done');assert.equal(stop.adopted,true);assert.equal(stop.ask.status,'done');result.currentStopContext=true;
+ assert.equal(stop.ref.id,'adopted-worker');assert.equal(stop.live,'done');assert.equal(stop.adopted,true);assert.equal(stop.ask.status,'dropped');result.currentStopContext=true;
  ask('parent');ask('child','parent');todo('child-work','child');
  store.updateTodo(store.getTodo('child-work')!,{state:'blocked',blockedBy:'needs-human',blockedReason:'Choose'},3);
  store.askQuestion('child-card','child',{kind:'choice',todoId:'child-work',text:'Choose',options:['Go','Stop'],multiple:false,yesLabel:null,noLabel:null},3);

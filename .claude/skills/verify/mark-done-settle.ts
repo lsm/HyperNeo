@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { DevicePairingRepository } from '../../../packages/daemon/src/storage/repositories/device-pairing-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
@@ -27,7 +28,10 @@ const front = Bun.serve({
   hostname: '127.0.0.1',
   port: 0,
   async fetch(request, server) {
+    const refused = await app.guardRequest(request);
+    if (refused) return refused;
     const path = new URL(request.url).pathname;
+    if (path === '/pair' && request.method === 'POST') return app.handlePair(request);
     if (path === '/ws') {
       if (
         server.upgrade(request, {
@@ -48,6 +52,8 @@ const front = Bun.serve({
 const evidence: Record<string, unknown> = { mode, ports: [app.server.port, front.port] };
 try {
   assert.notEqual(app.server.port, 8399);
+  await app.spaceRuntimeService.ready();
+  await app.jobProcessor.stop();
   const root = 'neo:10000000-0000-4000-8000-000000008287';
   await app.db.createSession({
     id: root,
@@ -71,9 +77,9 @@ try {
     kind: 'neo',
     projectId: null,
   });
-  app.db.updateGlobalSettings({ language: 'en' });
+  await app.db.updateGlobalSettings({ language: 'en' });
   const store = new NeoAskTodoRepository(app.db.getDatabase());
-  for (const id of ['finish', 'stop-failure']) {
+  for (const id of ['finish', 'unfinished', 'stop-failure']) {
     store.openAsk({
       id,
       title: `Synthetic ${id}`,
@@ -95,23 +101,27 @@ try {
       },
       Date.now()
     );
+    if (id === 'finish' && mode === 'verify') store.updateTodo(todo, { state: 'done', evidence: 'Synthetic outcome observed' }, Date.now());
     if (id === 'stop-failure') {
       const sessions = new NeoTodoSessionRepository(app.db.getDatabase());
       const ref = { adapter: 'hyperneo', daemon: 'synthetic-offline', id: 'absent' };
       sessions.create(id, { verb: 'send', ref });
       sessions.recordRef(id, ref, Date.now());
-      store.updateTodo(todo, { state: 'doing' }, Date.now());
+      store.updateTodo(todo, { state: 'done', evidence: 'Synthetic outcome observed' }, Date.now());
     }
   }
+  const pairing = new DevicePairingRepository(app.db.getDatabase()).createCode('human', 'Synthetic browser', true, Date.now());
+  writeFileSync(join(run, 'pairing-code'), pairing.code, { mode: 0o600 });
   const child = Bun.spawn(
     ['node', '.claude/skills/verify/mark-done-settle-web.mjs', String(front.port), run, mode],
     { stdout: 'inherit', stderr: 'inherit' }
   );
   assert.equal(await child.exited, 0, 'headless Mark done journey');
-  evidence.asks = ['finish', 'stop-failure'].map((id) => store.getAsk(id));
+  evidence.asks = ['finish', 'unfinished', 'stop-failure'].map((id) => store.getAsk(id));
   if (mode === 'verify') {
     assert.equal(store.getAsk('finish')?.status, 'done');
     assert.equal(store.getAsk('stop-failure')?.status, 'open');
+    assert.equal(store.getAsk('unfinished')?.status, 'open');
   } else assert.equal(store.getAsk('finish')?.status, 'open');
   evidence.verified = true;
 } finally {

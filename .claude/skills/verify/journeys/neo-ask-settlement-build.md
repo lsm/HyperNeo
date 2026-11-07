@@ -15,7 +15,7 @@ It then runs real reader/writer workers and observes full Work cards through
 A late todo write failure must roll back the header, todos and card retirement
 together, emitting no table changes. Hold a WAL lock: no receipt or notification
 may precede commit, while card and health reads still answer. After release,
-unfinished work is visibly closed unverified, never certified done; its entire
+unfinished work is visibly removed by explicit dropped settlement, never certified done; its entire
 Unicode report remains in the receipt and public card. Current stop context
 must retain the actual ask, worker ref, adopted status and live state without
 stopping anything.

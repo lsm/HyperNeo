@@ -100,7 +100,7 @@ describe('activated ask settlement', () => {
       2
     );
   };
-  const settle = (status: 'done' | 'dropped' = 'done') =>
+  const settle = (status: 'done' | 'dropped' = 'dropped') =>
     ops
       .find((op) => op.name === 'neo.ask.settle')!
       .execute(
@@ -193,7 +193,7 @@ describe('activated ask settlement', () => {
       throw new Error('Main settlement sweep');
     });
     const result = await settle();
-    expect(result).toMatchObject({ ok: true, todos: [{ state: 'closed_unverified', report }] });
+    expect(result).toMatchObject({ ok: true, todos: [{ state: 'removed', report }] });
     expect(effects).toEqual(['stop:first', 'changed']);
   });
 
@@ -212,6 +212,9 @@ describe('activated ask settlement', () => {
     '%s stop failure leaves work open with its partial-stop diagnostic',
     async (status) => {
       seed('second');
+      if (status === 'done')
+        for (const todo of store.listTodos('ask'))
+          store.updateTodo(todo, { state: 'done', evidence: 'Observed' }, 3);
       sessions.recordRef('first', { adapter: 'hyperneo', id: 'worker' }, 2);
       onStop = async (todo) => (todo.id === 'second' ? 'stop_failed: offline' : null);
       const before = snapshot(),
@@ -228,25 +231,20 @@ describe('activated ask settlement', () => {
     }
   );
 
-  test('current unfinished work and a late bound worker survive in the committed receipt', async () => {
+  test('a todo added during stops prevents done without publishing a settlement', async () => {
+    store.updateTodo(store.getTodo('first')!, { state: 'done', evidence: 'Observed' }, 3);
     onStop = async () => {
       seed('late');
-      sessions.recordRef('late', { adapter: 'hyperneo', id: 'late-worker' }, 3);
       onStop = async () => null;
       return null;
     };
-    const result = await settle();
-    expect(result).toMatchObject({
-      ok: true,
-      todos: [
-        { id: 'first', state: 'closed_unverified' },
-        { id: 'late', state: 'closed_unverified' },
-      ],
-    });
-    expect(result.ok && result.records?.[0]).toContain('late (late)');
-    expect(effects).toEqual(['stop:first', 'changed', 'stop:late']);
+    const result = await settle('done');
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('late (late)') });
+    expect(store.getAsk('ask')?.status).toBe('open');
+    expect(store.getTodo('first')?.state).toBe('done');
+    expect(store.getTodo('late')?.state).toBe('doing');
+    expect(effects).toEqual(['stop:first']);
   });
-
   test('a replacement binding is cleaned up after commit', async () => {
     sessions.recordRef('first', { adapter: 'hyperneo', id: 'prior-worker' }, 2);
     beforeWrite = () => {
@@ -273,7 +271,7 @@ describe('activated ask settlement', () => {
       expect(await Promise.race([atWrite.then(() => 'write'), pending.then(() => 'early')])).toBe(
         'write'
       );
-      expect(store.getAsk('ask')!.status).toBe('done');
+      expect(store.getAsk('ask')!.status).toBe('dropped');
       expect(effects).toEqual(['stop:first']);
     } finally {
       release();

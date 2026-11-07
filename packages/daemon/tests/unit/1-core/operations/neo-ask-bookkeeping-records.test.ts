@@ -296,18 +296,19 @@ describe('todo and ask bookkeeping records through MCP', () => {
     }
   });
 
-  test('settlement preserves failure diagnostics in the unverified todo receipt', async () => {
+  test('refused settlement preserves failure diagnostics and keeps the ask open', async () => {
     const h = setup();
     try {
       h.store.updateTodo(h.todo, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
-      const result = await h.call('neo.ask.settle', {
-        askId: h.ask.id,
-        status: 'done',
-        outcome: 'Closed without a verified outcome',
+      const before = h.store.getTodo(h.todo.id);
+      expect(
+        await h.call('neo.ask.settle', { askId: h.ask.id, status: 'done', outcome: 'Too soon' })
+      ).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('todos_unfinished:'),
       });
-      expect(result.todos[0].reason).toContain('Ask closed without verifying: Result observed');
-      expect(result.todos[0].reason).toContain('check_failed: build exited 7');
-      expect(result).toMatchObject({ ok: true, todos: [{ state: 'closed_unverified' }] });
+      expect(h.store.getTodo(h.todo.id)).toEqual(before);
+      expect(h.store.getAsk(h.ask.id)?.status).toBe('open');
       expect(h.calls).toEqual([]);
     } finally {
       h.db.close();
@@ -360,29 +361,24 @@ describe('todo and ask bookkeeping records through MCP', () => {
       h.db.close();
     }
   });
-  test('settling unfinished todos records them and preserves their visible unverified status', async () => {
+  test('settling unfinished todos is refused without relabeling work', async () => {
     const h = setup();
     try {
+      const before = h.store.getTodo(h.todo.id);
       expect(
-        await h.call('neo.ask.settle', {
-          askId: h.ask.id,
-          status: 'done',
-          outcome: 'Closed by Neo',
-        })
+        await h.call('neo.ask.settle', { askId: h.ask.id, status: 'done', outcome: 'Too soon' })
       ).toMatchObject({
-        ok: true,
-        records: [expect.stringContaining('todos_unfinished:')],
-        todos: [{ state: 'closed_unverified' }],
+        ok: false,
+        reason: expect.stringContaining('todos_unfinished:'),
       });
-      expect(h.store.getTodo(h.todo.id)).toMatchObject({
-        state: 'closed_unverified',
-        reason: expect.stringContaining('Result observed'),
-      });
+      expect(h.store.getTodo(h.todo.id)).toEqual(before);
+      expect(h.store.getAsk(h.ask.id)?.status).toBe('open');
+      expect(h.calls).toEqual([]);
     } finally {
       h.db.close();
     }
   });
-  test('settlement closes a needs-human todo unverified without answering its worker card', async () => {
+  test('refused done keeps a needs-human todo and its unanswered worker card', async () => {
     const h = setup();
     try {
       const ref = { adapter: 'hyperneo', id: 'worker' };
@@ -423,16 +419,16 @@ describe('todo and ask bookkeeping records through MCP', () => {
         outcome: 'Closed without a verified outcome',
       });
       expect(result).toMatchObject({
-        ok: true,
-        records: [expect.stringContaining('todos_unfinished:')],
-        todos: [{ state: 'closed_unverified', blockedBy: null }],
+        ok: false,
+        reason: expect.stringContaining('todos_unfinished:'),
       });
       expect(h.store.getTodo(h.todo.id)).toMatchObject({
-        state: 'closed_unverified',
-        reason: expect.stringContaining('Result observed'),
+        state: 'blocked',
+        blockedBy: 'needs-human',
       });
+      expect(h.store.getAsk(h.ask.id)?.status).toBe('open');
       expect(h.store.listQuestions(h.ask.id)).toMatchObject([
-        { state: 'retired', answer: null, answeredBy: null },
+        { state: 'open', answer: null, answeredBy: null },
       ]);
       expect(h.calls).toEqual([]);
     } finally {

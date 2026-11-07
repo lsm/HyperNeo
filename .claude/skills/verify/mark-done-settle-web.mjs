@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 const [port, run, mode] = process.argv.slice(2);
@@ -8,14 +8,29 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const evidence = { mode, widths: [] };
 let current;
+const context = await browser.newContext();
 try {
   for (const width of mode === 'before' ? [1280] : [1280, 390]) {
-    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    const page = await context.newPage();
+    await page.setViewportSize({ width, height: 900 });
     current = page;
     page.setDefaultTimeout(15000);
+    if (width === 1280) {
+      const paired = await page.request.post(`http://127.0.0.1:${port}/pair`, { headers: { origin: `http://127.0.0.1:${port}` }, data: { code: readFileSync(`${run}/pairing-code`, 'utf8'), name: 'Synthetic browser' } });
+      assert.equal(paired.status(), 200);
+    }
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
     const card = (id) => page.locator(`[data-ask="${id}"]:visible`);
+    if (mode === 'verify') {
+      await card('unfinished').getByRole('button', { name: 'Ask actions' }).click();
+      await page.getByRole('menuitem', { name: 'Mark done' }).click();
+      const refusal = card('unfinished').getByRole('alert');
+      await refusal.waitFor();
+      assert.match(await refusal.innerText(), /todos_unfinished:/);
+      assert.equal(await card('unfinished').getAttribute('data-ask-state'), 'open');
+      await card('unfinished').screenshot({ path: `${run}/evidence/unfinished-${width}.png` });
+    }
     if (width === 1280) {
       await card('finish').getByRole('button', { name: 'Ask actions' }).click();
       await page.getByRole('menuitem', { name: 'Mark done' }).click();
@@ -39,7 +54,8 @@ try {
     const alert = card('stop-failure').getByRole('alert');
     await alert.waitFor();
     assert.match(await alert.innerText(), /still open/);
-    assert.equal(await page.getByRole('alert').count(), 1);
+    assert.equal(await alert.count(), 1);
+    assert.equal(await card('finish').getByRole('alert').count(), 0);
     await card('stop-failure').screenshot({ path: `${run}/evidence/card-error-${width}.png` });
     await page.getByRole('menu').waitFor({ state: 'hidden' });
     await card('stop-failure').getByRole('button', { name: 'Ask actions' }).click();
