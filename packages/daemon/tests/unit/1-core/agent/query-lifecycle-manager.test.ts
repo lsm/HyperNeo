@@ -1696,6 +1696,28 @@ describe('QueryLifecycleManager', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
+    test.each(['ensure', 'restart', 'reset'])(
+      'does not validate a Codex native thread as a Claude transcript during %s',
+      async (operation) => {
+        mockContext.session.sdkSessionId = 'synthetic-native-thread';
+        mockContext.session.config.harness = 'codex';
+        if (operation === 'reset') {
+          mockContext.queryObject = {
+            interrupt: mock(async () => {}),
+          } as unknown as QueryLifecycleManagerContext['queryObject'];
+          mockContext.queryPromise = Promise.resolve();
+        }
+        manager = new QueryLifecycleManager(mockContext);
+        if (operation === 'ensure') expect(await manager.ensureQueryStarted()).toBe('started');
+        if (operation === 'restart') await manager.restart();
+        if (operation === 'reset')
+          expect((await manager.reset({ restartAfter: true })).success).toBe(true);
+        expect(startStreamingCalled).toBe(true);
+        expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
+        expect(mockContext.session.sdkSessionId).toBe('synthetic-native-thread');
+      }
+    );
+
     describe('restart()', () => {
       test(
         'uses worktreePath when session has worktree — preserves sdkSessionId',

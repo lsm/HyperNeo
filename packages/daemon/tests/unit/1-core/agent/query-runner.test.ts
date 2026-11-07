@@ -37,7 +37,7 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
-import type { OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
+import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
 import * as oapQueryModule from '../../../../src/lib/oap/oap-query';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -460,6 +460,58 @@ describe('QueryRunner', () => {
         await sent.catch(() => {});
       }
     });
+
+    it.each([
+      { code: 'invalid_request', expected: 'failed' },
+      { code: 'timeout', expected: 'submitted' },
+    ])(
+      'records a definite hub refusal without treating a $code as an unknown outcome',
+      async ({ code, expected }) => {
+        let status = 'enqueued';
+        const write = mock(async (operation: string) => {
+          if (operation === 'markDeliverySubmittedByUuids') {
+            status = 'submitted';
+            return ['db-id'];
+          }
+          if (operation === 'markDeliveryFailedByUuid') {
+            status = 'failed';
+            return 'db-id';
+          }
+          throw new Error(`unexpected write ${operation}`);
+        });
+        const submit = mock(async () => {
+          throw new OapHubRequestError(code, 'synthetic refusal');
+        });
+        const ctx = createContext({
+          session: {
+            ...mockSession,
+            config: { model: 'unit', provider: providerId, harness: 'codex' },
+          },
+          db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
+          messageQueue: queue,
+          oap: {
+            openDirectorySupported: true,
+            hub: { submit, events: async function* () {}, cancel: async () => {} },
+          },
+        });
+        const sent = queue
+          .enqueueWithId('codex-refused', 'prompt', false, { durable: true })
+          .catch((error: Error) => error);
+        runner = new QueryRunner(ctx);
+        await runner.start();
+        expect(await completesWithin(ctx.queryPromise!)).toBe(true);
+        expect(await sent).toMatchObject({ message: 'synthetic refusal' });
+        expect(status).toBe(expected);
+        expect(submit).toHaveBeenCalledTimes(1);
+        if (expected === 'failed') {
+          expect(ctx.internalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+            sessionId: ctx.session.id,
+            messageIds: ['db-id'],
+            status: 'failed',
+          });
+        }
+      }
+    );
 
     it('does not submit a prompt whose persisted delivery is already submitted', async () => {
       const submit = mock(async () => ({ runId: 'duplicate' }));

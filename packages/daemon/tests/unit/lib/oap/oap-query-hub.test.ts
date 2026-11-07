@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
+import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
 import * as queryModule from '../../../../src/lib/oap/oap-query';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 
@@ -73,6 +73,28 @@ function releaseHub(hub: OapQueryHub): void {
 }
 
 describe('OAP query hub transport', () => {
+  test.each([
+    [
+      new OapHubRequestError('timeout', 'submit timed out'),
+      new OapHubRequestError('invalid_request', 'unsubscribe refused'),
+    ],
+    [
+      new OapHubRequestError('invalid_request', 'submit refused'),
+      new OapHubRequestError('timeout', 'unsubscribe timed out'),
+    ],
+  ])(
+    'preserves the submit outcome when releasing its subscription also fails',
+    async (submitError, cleanupError) => {
+      const host = fixture();
+      host.request.mockRejectedValueOnce(submitError);
+      host.unsubscribe.mockRejectedValueOnce(cleanupError);
+      await expect(createOapQueryHub(host.client).submit('synthetic-session', prompt)).rejects.toBe(
+        submitError
+      );
+      expect(host.unsubscribe).toHaveBeenCalledTimes(1);
+    }
+  );
+
   test('rejects submit acceptance for another session', async () => {
     const host = fixture();
     host.request.mockImplementationOnce(async () => ({
