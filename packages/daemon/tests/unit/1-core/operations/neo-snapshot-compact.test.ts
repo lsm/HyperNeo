@@ -32,6 +32,14 @@ const snapshot = (open: number, done: number): NeoSnapshot => ({
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
 
 describe('fitNeoSnapshotBudget', () => {
+  test('open asks are never dropped', () => {
+    const full = snapshot(12, 3);
+    const fitted = fitNeoSnapshotBudget(full, 4_000);
+    expect(fitted.todoAsks?.map((item) => item.ask.id)).toEqual(
+      full.todoAsks?.filter((item) => item.ask.status === 'open').map((item) => item.ask.id)
+    );
+  });
+
   test('leaves a snapshot under budget untouched', () => {
     const small = snapshot(1, 1);
     expect(fitNeoSnapshotBudget(small, 1_000_000)).toBe(small);
@@ -44,10 +52,31 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.trimmed).toContain('settled asks are left out');
   });
 
-  test('says how many open asks it left out when even the open ones do not fit', () => {
+  test('keeps all mandatory ask headers even when they exceed a tiny budget', () => {
     const fitted = fitNeoSnapshotBudget(snapshot(40, 0), 4_000);
+    expect(fitted.todoAsks).toHaveLength(40);
+    expect(fitted.todoAsks?.every((entry) => entry.todos.length === 0)).toBe(true);
+    expect(bytes(fitted)).toBeGreaterThan(4_000);
+    expect(fitted.trimmed).toContain('neo.ask.read');
+  });
+
+  test('drops remaining step payloads before dropping any open ask', () => {
+    const full = snapshot(12, 0);
+    for (const item of full.todoAsks ?? []) {
+      Object.assign(item.todos[0], {
+        askId: item.ask.id,
+        state: 'todo',
+        position: 0,
+        approvedAt: 1,
+        startedAt: null,
+        dependsOn: [],
+      });
+      item.todos[0].worker = { adapter: 'hyperneo', id: 'w'.repeat(10_000) };
+    }
+    const fitted = fitNeoSnapshotBudget(full, 4_000);
+    expect(fitted.todoAsks).toHaveLength(12);
+    expect(fitted.todoAsks?.every((item) => item.todos.length === 0)).toBe(true);
     expect(bytes(fitted)).toBeLessThanOrEqual(4_000);
-    expect(fitted.trimmed).toMatch(/older open asks are also left out|only open asks/);
   });
 
   test('keeps the daemon counts when the snapshot falls back to its skeleton', () => {
@@ -59,8 +88,8 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.neoUnhandled).toBe(2);
   });
 
-  test('the trimmed note never pushes the result past the budget', () => {
-    for (const budget of [2_000, 6_000, 20_000]) {
+  test('the trimmed note fits when mandatory headers fit the budget', () => {
+    for (const budget of [6_000, 20_000]) {
       const fitted = fitNeoSnapshotBudget(snapshot(30, 30), budget);
       expect(bytes(fitted)).toBeLessThanOrEqual(budget);
     }
