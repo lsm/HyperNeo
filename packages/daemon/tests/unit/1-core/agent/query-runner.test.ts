@@ -668,6 +668,104 @@ describe('QueryRunner', () => {
       }
     );
 
+    it.each([
+      [false, 'completed'],
+      [false, 'failed'],
+      [false, 'cancelled'],
+      [true, 'completed'],
+    ])(
+      'keeps a pending tool result on interrupt only without a successor (successor=%s, terminal=%s)',
+      async (replaceAttempt, terminal) => {
+        let listening!: () => void;
+        let release!: () => void;
+        const ready = new Promise<void>((resolve) => {
+          listening = resolve;
+        });
+        const cancelled = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const cancel = mock(async () => {
+          release();
+        });
+        const events = async function* () {
+          yield {
+            type: 'action.call.started',
+            id: 'start',
+            payload: { tool_call_id: 'tool-1', name: 'codex.command' },
+          };
+          listening();
+          await cancelled;
+          yield {
+            type: 'action.call.completed',
+            id: 'unknown',
+            payload: { tool_call_id: 'unknown', result: 'ignore' },
+          };
+          yield {
+            type: `action.call.${terminal}`,
+            id: 'finish',
+            payload: { tool_call_id: 'tool-1', result: 'finished', reason: 'finished' },
+          };
+          yield {
+            type: 'action.call.completed',
+            id: 'duplicate',
+            payload: { tool_call_id: 'tool-1', result: 'duplicate' },
+          };
+          yield {
+            type: 'content.delta',
+            id: 'late',
+            payload: { message_id: 'late', part: { type: 'text', text: 'ignore late text' } },
+          };
+          yield { type: 'run.cancelled', id: 'end', payload: { reason: 'cancelled' } };
+        };
+        const ctx = createContext({
+          session: {
+            ...mockSession,
+            config: { model: 'unit', provider: providerId, harness: 'codex' },
+          },
+          messageQueue: queue,
+          oap: {
+            openDirectorySupported: true,
+            hub: { submit: async () => ({ runId: 'r1' }), events, cancel },
+          },
+        });
+        void queue
+          .enqueueWithId('codex-tool-interrupt', 'prompt', false, { durable: true })
+          .catch(() => {});
+        runner = new QueryRunner(ctx);
+        await runner.start();
+        const running = ctx.queryPromise!;
+        await ready;
+        ctx.attemptTokens.invalidateCurrent();
+        const successor = replaceAttempt ? ctx.attemptTokens.allocate() : undefined;
+        await ctx.queryObject!.interrupt();
+        expect(await completesWithin(running)).toBe(true);
+        const delivered = onSDKMessageSpy.mock.calls.map(([message]) => message);
+        expect(delivered).toMatchObject(
+          replaceAttempt
+            ? [{ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool-1' }] } }]
+            : [
+                { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool-1' }] } },
+                {
+                  type: 'user',
+                  message: {
+                    content: [
+                      {
+                        type: 'tool_result',
+                        tool_use_id: 'tool-1',
+                        content: 'finished',
+                        is_error: terminal !== 'completed',
+                      },
+                    ],
+                  },
+                },
+                { type: 'result', is_error: true },
+              ]
+        );
+        expect(delivered).toHaveLength(replaceAttempt ? 1 : 3);
+        expect(successor?.isLive() ?? true).toBe(true);
+      }
+    );
+
     it('finishes a synthetic Codex text turn and acknowledges its durable prompt', async () => {
       const startup = jest.spyOn(getSdkStartupGate(), 'acquire');
       const sdkQuery = query as unknown as ReturnType<typeof mock>;
