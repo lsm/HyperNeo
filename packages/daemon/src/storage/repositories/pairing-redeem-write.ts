@@ -33,6 +33,7 @@ const applyStep: Record<PairRequestStep, (facts: Facts) => Outcome> = {
     repo.voidCode(record.id, now);
     return { ...refused, usedElsewhere: true };
   },
+  voided: () => ({ ...refused, usedElsewhere: true }),
   redeem: ({ repo, request, now }) => ({
     paired: repo.redeem(request.code, request.name, now),
     awaitingApproval: false,

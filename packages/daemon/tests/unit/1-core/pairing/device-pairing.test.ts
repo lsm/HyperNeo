@@ -224,7 +224,7 @@ describe('device pairing', () => {
     db.close();
   });
 
-  test('a later requester cannot change the name shown for Allow; refusing it voids the code', async () => {
+  test('a later requester voids the code, and both requesters then hear it was used elsewhere', async () => {
     const { db, call, pair } = setup();
     const laptop = await pair(
       (await call('device.pair.create', { kind: 'human' }, door)).code,
@@ -239,7 +239,13 @@ describe('device pairing', () => {
       body: { error: 'code_used_elsewhere' },
     });
     expect((await call('device.pair.pending', {}, owner)).pending).toEqual([]);
-    expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(401);
+    expect(await pair(next.code, 'Tablet', 'first-request-id-0001')).toEqual({
+      status: 409,
+      body: { error: 'code_used_elsewhere' },
+    });
+    expect(await call('device.pair.approve', { codeId: next.codeId }, owner)).toMatchObject({
+      ok: false,
+    });
     db.close();
   });
 

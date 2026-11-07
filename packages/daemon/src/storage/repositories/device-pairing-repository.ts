@@ -358,13 +358,13 @@ export class DevicePairingRepository {
     const row = this.db
       .prepare(
         `SELECT id, approved_at IS NOT NULL AS approved, requested_name AS requestedName,
-           requested_by AS requestedBy FROM pairing_codes
-         WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?`
+           requested_by AS requestedBy, voided_at IS NOT NULL AS voided FROM pairing_codes
+         WHERE code_hash = ? AND used_at IS NULL AND (expires_at > ? OR voided_at IS NOT NULL)`
       )
       .get(hash(normalizePairingCode(code)), now) as
-      | (Omit<PairRequestRecord, 'approved'> & { approved: number })
+      | (Omit<PairRequestRecord, 'approved' | 'voided'> & { approved: number; voided: number })
       | null;
-    return row && { ...row, approved: row.approved === 1 };
+    return row && { ...row, approved: row.approved === 1, voided: row.voided === 1 };
   }
 
   recordRequester(id: string, name: string, requestedBy: string | null): void {
@@ -376,7 +376,9 @@ export class DevicePairingRepository {
   }
 
   voidCode(id: string, now: number): void {
-    this.db.prepare('UPDATE pairing_codes SET expires_at = ? WHERE id = ?').run(now, id);
+    this.db
+      .prepare('UPDATE pairing_codes SET expires_at = ?, voided_at = ? WHERE id = ?')
+      .run(now, now, id);
   }
 
   humanRecoveryOpen(): boolean {
