@@ -44,3 +44,7 @@ includes that trace and child stdout/stderr in failures before deleting its run.
 The existing 30-second deadline and proof assertions remain unchanged; the original
 Linux CI timeout is not reproduced by a passing macOS run. A new CI failure must
 identify its actual phase before changing budgets or production behavior.
+
+Seed the source todo repository in `pack_coding_todos` and assert its legacy
+`neo_todos.repo` stays null. A frozen legacy value cannot authorize Git capture
+after canonical storage activation.

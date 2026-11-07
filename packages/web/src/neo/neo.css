@@ -27,6 +27,8 @@
   --neo-markdown-quote: light-dark(#7a5fa6, #cdbdea);
   --neo-markdown-quote-border: light-dark(#6a4a8b, #80649e);
   --neo-action-hover: color-mix(in srgb, var(--fg) 5%, transparent);
+  --neo-teal: light-dark(#2c7a7b, #7fd1c7);
+  --neo-plum: light-dark(#8a4f7d, #d9a5cc);
   --neo-markdown-quote-background: color-mix(in srgb, var(--neo-markdown-quote) 6%, transparent);
 
   --neo-user-accent: light-dark(#486594, #a5b9d9);

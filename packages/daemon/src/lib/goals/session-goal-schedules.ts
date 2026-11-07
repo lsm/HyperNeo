@@ -83,7 +83,9 @@ export class SessionGoalSchedules implements ScheduleSource {
       ...Object.keys(goal.metrics)
         .sort()
         .map((key) => `Metric ${key}: ${JSON.stringify(goal.metrics[key])}`),
-      ...asks.map((ask) => `Ask ${ask.id} "${ask.title}": ${ask.status}`),
+      ...asks.map(
+        (ask) => `Ask ${ask.id} topic=${ask.topic ?? 'none'} "${ask.title}": ${ask.status}`
+      ),
       ...todos.map((todo) => {
         const candidates = todo.check
           ? packs.filter((pack) => pack.id === todo.check!.pack)

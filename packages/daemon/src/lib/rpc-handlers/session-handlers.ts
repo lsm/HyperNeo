@@ -343,21 +343,21 @@ export function setupSessionHandlers(
 
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
 
+    const existingConfig = updates.config
+      ? (agentSessionForUpdate?.getSessionData().config ??
+        sessionManager.getSessionFromDB(targetSessionId)?.config)
+      : undefined;
     const currentSelection =
-      updates.config?.toolSelection === undefined
-        ? undefined
-        : (
-            agentSessionForUpdate?.getSessionData().config ??
-            sessionManager.getSessionFromDB(targetSessionId)?.config
-          )?.toolSelection;
-    const configUpdate = admitUpdateSessionConfig(updates.config, currentSelection);
+      updates.config?.toolSelection === undefined ? undefined : existingConfig?.toolSelection;
+    const configUpdate = admitUpdateSessionConfig(
+      updates.config,
+      currentSelection,
+      existingConfig?.harness
+    );
     if (configUpdate) {
       updates.config = configUpdate;
     }
     if (configUpdate && (configUpdate.model !== undefined || configUpdate.provider !== undefined)) {
-      const existingConfig =
-        agentSessionForUpdate?.getSessionData().config ??
-        sessionManager.getSessionFromDB(targetSessionId)?.config;
       const currentModel = existingConfig?.model;
       const currentProvider =
         existingConfig?.provider ??
@@ -887,6 +887,7 @@ export function setupSessionHandlers(
           context_window: m.contextWindow,
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
+          effortLevels: m.effortLevels,
           available: m.available !== false && !unavailable.has(m.provider ?? ''),
           type: 'model' as const,
         })),

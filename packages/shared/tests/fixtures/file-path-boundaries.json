@@ -1,5 +1,17 @@
 [
   {
+    "text": "Saved to /Users/a/b.md.",
+    "paths": ["/Users/a/b.md"]
+  },
+  {
+    "text": "Saved to ~/home.md.",
+    "paths": ["~/home.md"]
+  },
+  {
+    "text": "Saved to /Users/a/b.md~.",
+    "paths": ["/Users/a/b.md"]
+  },
+  {
     "text": "报告：/Users/a/b.md",
     "paths": ["/Users/a/b.md"]
   },

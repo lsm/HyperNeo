@@ -102,6 +102,101 @@ afterEach(() => {
 });
 
 describe('desktop preview file tabs', () => {
+  it('shows an unavailable handoff instead of dropping it when the card source is missing', () => {
+    const handoff = {
+      type: 'handoff' as const,
+      daemonId: 'd',
+      artifactId: 'a'.repeat(64),
+      sha256: 'a'.repeat(64),
+      sessionId: 'worker',
+      name: 'report.md',
+      byteLength: 1,
+    };
+    render(<ArtifactCards artifacts={[handoff]} />);
+    expect(
+      screen.getByRole('button', { name: 'Open preview: report.md' }).hasAttribute('disabled')
+    ).toBe(true);
+    expect(
+      screen.getByText('This reference points outside what the preview may open.')
+    ).toBeTruthy();
+  });
+
+  it('reports an unavailable owner for a publication handoff', async () => {
+    const handoff = {
+      type: 'handoff' as const,
+      daemonId: 'd',
+      artifactId: 'a'.repeat(64),
+      sha256: 'a'.repeat(64),
+      sessionId: 'worker',
+      name: 'remote.html',
+      byteLength: 1,
+    };
+    request.mockResolvedValue({ accepted: false, reason: 'owner_unavailable' });
+    render(
+      <>
+        <ArtifactCards artifacts={[handoff]} source={{ kind: 'publication', id: 'publication' }} />
+        <ArtifactPreviewPanel fileTabs />
+      </>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open preview: remote.html' }));
+    expect(
+      await screen.findByText('The daemon that owns this file is not reachable.')
+    ).toBeTruthy();
+    expect(request).toHaveBeenCalledWith(
+      'operation.invoke',
+      expect.objectContaining({
+        name: 'file.handoff.read',
+        input: expect.objectContaining({ source: { kind: 'publication', id: 'publication' } }),
+      })
+    );
+  });
+  it('opens a worker handoff from its question with source-bound reads', async () => {
+    const handoff = {
+      type: 'handoff' as const,
+      daemonId: '10000000-0000-4000-8000-000000000001',
+      artifactId: 'a'.repeat(64),
+      sha256: 'a'.repeat(64),
+      sessionId: 'synthetic-worker',
+      name: 'worker-report.md',
+      byteLength: 22,
+    };
+    const text = '# Handoff report\nReady';
+    request.mockImplementation(async (_method, { name }) => {
+      if (name !== 'file.handoff.read') throw new Error(`unexpected operation: ${name}`);
+      return {
+        accepted: true,
+        kind: 'markdown',
+        data: Buffer.from(text).toString('base64'),
+        version: 'b'.repeat(64),
+        byteLength: Buffer.byteLength(text),
+        nextOffset: Buffer.byteLength(text),
+        complete: true,
+      };
+    });
+    render(
+      <>
+        <ArtifactCards artifacts={[handoff]} source={{ kind: 'question', id: 'question' }} />
+        <ArtifactPreviewPanel fileTabs />
+      </>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open preview: worker-report.md' }));
+    await screen.findByRole('heading', { name: 'Handoff report' });
+    expect(request).toHaveBeenCalledWith(
+      'operation.invoke',
+      expect.objectContaining({
+        name: 'file.handoff.read',
+        input: expect.objectContaining({
+          source: { kind: 'question', id: 'question' },
+          reference: handoff,
+        }),
+      })
+    );
+    expect(artifactPreviewStack.value.at(-1)).toMatchObject({
+      kind: 'reference',
+      reference: 'worker-report.md',
+      handoff,
+    });
+  });
   it('opens real cards into reusable tabs with distinct accessible panel IDs', async () => {
     render(
       <>

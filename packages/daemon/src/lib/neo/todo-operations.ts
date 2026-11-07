@@ -24,14 +24,18 @@ import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts'
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import { neoUserFolder } from './folder.ts';
 import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
-import type { NeoPack } from './pack-contract.ts';
+import {
+  neoTodoRepository,
+  type NeoPack,
+  type NeoTodoPolicyScope,
+  type NeoTodoRepositoryDraft,
+} from './pack-contract.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoCloseStarted,
   requireNeoTodoMayFinish,
   sameNeoTodoCheck,
 } from './todo-completion.ts';
-import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
 import {
   NEO_TODO_NOT_APPROVED,
@@ -168,12 +172,16 @@ export async function resolveNeoTodoDraft(
 }
 
 export function neoTodoPlaceRefusal(
-  target: z.infer<typeof NeoTodoTargetSchema> | undefined,
-  repo: string | null | undefined
+  draft: NeoTodoRepositoryDraft & Pick<NeoTodo, 'instruction'>,
+  packs: readonly NeoTodoPolicy[],
+  scope: NeoTodoPolicyScope
 ): string | null {
-  return target?.verb === 'start' && !target.place && repo
-    ? `place_required: coding work for ${repo} starts in its repository; pass target.place from work.find.`
-    : null;
+  return (
+    packs
+      .filter((pack) => pack.todos?.repository)
+      .map((pack) => pack.todos?.refuse?.(draft, [], scope))
+      .find(Boolean) ?? null
+  );
 }
 
 export async function addNeoTodo(
@@ -182,14 +190,13 @@ export async function addNeoTodo(
   controls: Pick<NeoTodoControls, 'start' | 'resolveTarget' | 'userFolder'>,
   ask: NeoAsk,
   input: z.infer<typeof NeoTodoDraftSchema>,
-  packs: readonly NeoPack[],
-  split = false
+  packs: readonly NeoPack[]
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
   const resolved = await resolveNeoTodoDraft(input, controls.resolveTarget);
   if ('reason' in resolved) return resolved.reason;
   const current = todos.getAsk(ask.id);
   if (!current) return { ok: false, reason: 'not_found: no such ask.' };
-  return recordNeoTodo(todos, sessions, controls, current, resolved.value, packs, split);
+  return recordNeoTodo(todos, sessions, controls, current, resolved.value, packs);
 }
 
 export async function recordNeoTodo(
@@ -198,38 +205,37 @@ export async function recordNeoTodo(
   controls: Pick<NeoTodoControls, 'start' | 'userFolder'>,
   ask: NeoAsk,
   input: z.infer<typeof NeoTodoDraftSchema>,
-  packs: readonly NeoPack[],
-  split = false
+  packs: readonly NeoPack[]
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
   const id = crypto.randomUUID();
   const check = withAssignedEvidence(input.check, todoEvidenceFile(id));
   const planned = planNeoTodoDraft({ ...input, check }, packs);
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
-  const repo = neoTodoRepo(draft, packs, ask);
-  const placeless = neoTodoPlaceRefusal(draft.target, repo);
+  const peers = todos.listTodos(ask.id);
+  const repo = neoTodoRepository(draft, packs, { ask, peers });
+  const placeless = neoTodoPlaceRefusal(draft, packs, { ask, peers });
   if (placeless) return { ok: false, reason: placeless };
   const misplaced = neoEvidenceRefusal(check, repo, controls.userFolder ?? neoUserFolder());
   if (misplaced) return { ok: false, reason: misplaced };
-  const home = neoTodoHome(todos, ask, repo, split || todos.listChildAsks(ask.id).length > 0);
-  if (home.status !== 'open')
+  if (ask.status !== 'open')
     return {
       ok: true,
-      records: [`ask_settled: ${home.title} is settled; nothing was added.`],
+      records: [`ask_settled: ${ask.title} is settled; nothing was added.`],
     };
-  const accepted = planNeoTodoDraft(draft, packs, todos.listTodos(home.id));
+  const accepted = planNeoTodoDraft(draft, packs, peers);
   if ('reason' in accepted) return accepted.reason;
   const records = accepted.value.records ? { records: accepted.value.records } : {};
-  const refused = neoTodoAfterRefusal(todos.listFamilyTodos(home.id), null, draft.after);
+  const refused = neoTodoAfterRefusal(todos.listFamilyTodos(ask.id), null, draft.after);
   if (refused) return { ok: false, reason: refused };
   const dependsOn = draft.after
-    ? planNeoTodoDependencies(todos.listFamilyTodos(home.id), id, draft.after.map(String))
+    ? planNeoTodoDependencies(todos.listFamilyTodos(ask.id), id, draft.after.map(String))
     : null;
   if (typeof dependsOn === 'string')
     return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
   const now = Date.now();
   const approvedAt = draft.start ? now : null;
-  const added = todos.addTodo(id, home.id, { ...draft, dependsOn, approvedAt }, now, repo);
+  const added = todos.addTodo(id, ask.id, { ...draft, dependsOn, approvedAt }, now, repo);
 
   if (draft.target) sessions.create(added.id, draft.target);
   if (draft.start) {
@@ -392,6 +398,7 @@ export const NeoTodoSchema = z.object({
   replacedBy: z.string().nullable(),
   addedAfterStart: z.boolean(),
   approvedAt: z.number().nullable(),
+  approvalQuestionId: z.string().nullable(),
   report: z.string().nullable(),
   evidence: z.string().nullable(),
   artifacts: z.array(ArtifactRefSchema).readonly().optional(),

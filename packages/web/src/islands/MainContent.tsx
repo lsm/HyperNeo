@@ -9,17 +9,24 @@ import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndic
 import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
+import {
+  CapabilitiesPage,
+  isCapabilitiesSection,
+} from '../components/settings/CapabilitiesPage.tsx';
+
+import {
+  ConnectionsServicesPage,
+  isConnectionsSection,
+} from '../components/settings/ConnectionsServicesPage.tsx';
+
 const ChatContainer = lazy(() => import('./ChatContainer.tsx'));
 const SessionsPage = lazy(() =>
   import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
 );
 
-const GeneralSettings = lazy(() =>
-  import('../components/settings/GeneralSettings.tsx').then((m) => ({ default: m.GeneralSettings }))
-);
-const AppearanceSettings = lazy(() =>
-  import('../components/settings/AppearanceSettings.tsx').then((m) => ({
-    default: m.AppearanceSettings,
+const PreferencesSettings = lazy(() =>
+  import('../components/settings/PreferencesSettings.tsx').then((m) => ({
+    default: m.PreferencesSettings,
   }))
 );
 const ProvidersSettings = lazy(() =>
@@ -34,6 +41,11 @@ const ConnectionsSettings = lazy(() =>
 );
 const VoiceSettings = lazy(() =>
   import('../components/settings/VoiceSettings.tsx').then((m) => ({ default: m.VoiceSettings }))
+);
+const GitHubPollingSettings = lazy(() =>
+  import('../components/settings/GitHubPollingSettings.tsx').then((m) => ({
+    default: m.GitHubPollingSettings,
+  }))
 );
 const ExaSettings = lazy(() =>
   import('../components/settings/ExaSettings.tsx').then((m) => ({ default: m.ExaSettings }))
@@ -66,9 +78,9 @@ const NeoModelSettings = lazy(() =>
     default: m.NeoModelSettings,
   }))
 );
-const ModelsSettings = lazy(() =>
-  import('../components/settings/ModelsSettings.tsx').then((m) => ({
-    default: m.ModelsSettings,
+const SessionsHarnessSettings = lazy(() =>
+  import('../components/settings/SessionsHarnessSettings.tsx').then((m) => ({
+    default: m.SessionsHarnessSettings,
   }))
 );
 const UsageAnalytics = lazy(() =>
@@ -165,19 +177,31 @@ export default function MainContent() {
           <div class="settings-theme scrollbar-dark min-h-0 flex-1 overflow-y-auto px-4 py-4 pr-3 sm:px-6 sm:py-5 sm:pr-4">
             <div class="mx-auto w-full max-w-5xl">
               <Suspense fallback={lazyFallback}>
-                {settingsSection === 'general' && <GeneralSettings />}
-                {settingsSection === 'appearance' && <AppearanceSettings />}
-                {settingsSection === 'providers' && <ProvidersSettings />}
-                {settingsSection === 'connections' && <ConnectionsSettings />}
+                {settingsSection === 'preferences' && <PreferencesSettings />}
+                {isConnectionsSection(settingsSection) && (
+                  <ConnectionsServicesPage section={settingsSection} fallback={lazyFallback}>
+                    {settingsSection === 'providers' && <ProvidersSettings />}
+                    {settingsSection === 'connections' && <ConnectionsSettings />}
+                    {settingsSection === 'devices' && <DevicesSettings />}
+                    {settingsSection === 'remote-daemons' && <RemoteDaemonsSettings />}
+                    {settingsSection === 'exa' && (
+                      <>
+                        <ExaSettings />
+                        <GitHubPollingSettings />
+                      </>
+                    )}
+                  </ConnectionsServicesPage>
+                )}
                 {settingsSection === 'voice' && <VoiceSettings />}
-                {settingsSection === 'exa' && <ExaSettings />}
-                {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
-                {settingsSection === 'devices' && <DevicesSettings />}
-                {settingsSection === 'remote-daemons' && <RemoteDaemonsSettings />}
-                {settingsSection === 'skills' && <SkillsRegistry />}
-                {settingsSection === 'coding-pack' && <PackSettings />}
+                {isCapabilitiesSection(settingsSection) && (
+                  <CapabilitiesPage section={settingsSection} fallback={lazyFallback}>
+                    {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
+                    {settingsSection === 'skills' && <SkillsRegistry />}
+                    {settingsSection === 'coding-pack' && <PackSettings />}
+                  </CapabilitiesPage>
+                )}
                 {settingsSection === 'neo-model' && <NeoModelSettings />}
-                {settingsSection === 'models' && <ModelsSettings />}
+                {settingsSection === 'harness' && <SessionsHarnessSettings />}
                 {settingsSection === 'usage' && <UsageAnalytics />}
                 {settingsSection === 'shortcuts' && <ShortcutsSettings />}
                 {settingsSection === 'about' && <AboutSection />}

@@ -251,9 +251,9 @@ test('reader projections change only returned pages, never original or full-outp
       undefined,
       undefined,
       undefined,
-      capSdkMessage
+      capSdkMessage('projected-page')
     );
-    expect(projected.messages).toEqual(original.messages.map(capSdkMessage));
+    expect(projected.messages).toEqual(original.messages.map(capSdkMessage('projected-page')));
     expect(projected.messages[0]).toMatchObject({ output_capped: true });
     expect(
       repo.getSDKMessages(
@@ -263,7 +263,7 @@ test('reader projections change only returned pages, never original or full-outp
         undefined,
         undefined,
         undefined,
-        capSdkMessage
+        capSdkMessage('projected-page')
       )
     ).toEqual(projected);
     const status = repo.getUserMessagesByStatus('projected-page', 'consumed', 1, 'asc', (m) => ({

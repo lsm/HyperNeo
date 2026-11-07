@@ -1,6 +1,7 @@
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { z } from 'zod';
 import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
+import { PublicHandoffReference } from '../handoffs/outbox.ts';
 import { WorkerOpenSourceSchema } from '../drivers/worker-identity-schema.ts';
 
 const text = (max: number) =>
@@ -48,7 +49,10 @@ export const NeoPublicationObject = z
       )
       .max(16)
       .default([]),
-    artifacts: z.array(ArtifactRefSchema).max(16).optional(),
+    artifacts: z
+      .array(z.union([ArtifactRefSchema, PublicHandoffReference]))
+      .max(16)
+      .optional(),
     triggerId: text(200).optional(),
     replyTo: z.array(z.uuid()).max(100).optional(),
     askSummary: text(300).optional(),

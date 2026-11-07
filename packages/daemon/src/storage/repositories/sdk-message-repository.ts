@@ -2163,25 +2163,29 @@ export class SDKMessageRepository {
     content: string | MessageContent[];
     sendStatus: SendStatus;
     inputKind?: string;
+    isSynthetic?: true;
     neoBatch?: true;
     neoWorkerBatch?: true;
   } | null {
     const row = this.db
       .prepare(
         hydrateSdkMessageBodies(
-          `SELECT rowid AS body_seq, timestamp, COALESCE(send_status, 'consumed') AS send_status
+          `SELECT rowid AS body_seq, timestamp, origin, COALESCE(send_status, 'consumed') AS send_status
            FROM sdk_messages
           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
           ORDER BY timestamp ASC LIMIT 1`,
           'body_selection.timestamp ASC'
         )
       )
-      .get(sessionId, uuid) as { sdk_message: string; send_status: SendStatus } | undefined;
+      .get(sessionId, uuid) as
+      | { sdk_message: string; send_status: SendStatus; origin: MessageOrigin | null }
+      | undefined;
     if (!row) return null;
     try {
       const message = JSON.parse(row.sdk_message) as {
         message?: { content?: string | MessageContent[] };
         inputKind?: string;
+        isSynthetic?: boolean;
         neoBatchContent?: string | MessageContent[];
         neoWorkerBatch?: boolean;
       };
@@ -2191,6 +2195,10 @@ export class SDKMessageRepository {
         content,
         sendStatus: row.send_status,
         ...(message.inputKind ? { inputKind: message.inputKind } : {}),
+        ...(message.isSynthetic === true ||
+        (message.isSynthetic === undefined && row.origin === 'system')
+          ? { isSynthetic: true as const }
+          : {}),
         ...(message.neoWorkerBatch ? { neoWorkerBatch: true as const } : {}),
         ...(message.neoBatchContent !== undefined || message.neoWorkerBatch
           ? { neoBatch: true as const }

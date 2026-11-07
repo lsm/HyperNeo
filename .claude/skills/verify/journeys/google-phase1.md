@@ -7,6 +7,8 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/google
 Shared setup in SKILL.md supplies fresh test HOME/data, scrubbed credentials and free
 loopback ports. This helper starts two real isolated daemons with separate databases and a
 shared fake keychain, plus one fake Google HTTP endpoint. It never calls Google.
+Management RPC authenticates through createLocalSocket using only the fresh
+run's owner credential. Anonymous WebSocket access is refused by the daemon.
 
 Inspect `google-phase1.json`. Through human management RPC, complete consent and
 the real PKCE/loopback/JWKS/OIDC checks. Through the default registry/MCP adapter,

@@ -1899,7 +1899,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private assertPollingIntervalEnabled(): void {
     if (this.getPollIntervalMs() <= 0) {
       throw new Error(
-        'GitHub polling is disabled globally. Set GitHub polling interval above 0 in General settings to enable polling.'
+        'GitHub polling is disabled globally. Set GitHub polling interval above 0 in Connections & Services > Advanced to enable polling.'
       );
     }
   }

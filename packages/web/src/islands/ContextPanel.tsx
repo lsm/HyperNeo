@@ -8,6 +8,8 @@ import {
 import { navigateToSettings } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
 import { SectionSwitcher } from '../components/SectionSwitcher.tsx';
+import { isConnectionsSection } from '../components/settings/ConnectionsServicesPage.tsx';
+import { isCapabilitiesSection } from '../components/settings/CapabilitiesPage.tsx';
 import { SessionsSidebar } from './SessionsSidebar.tsx';
 import { extensionNav, shellExtensions } from '../lib/web-extensions.ts';
 
@@ -17,44 +19,32 @@ const SETTINGS_SECTIONS: Array<{
   icon: string;
   accent: string;
 }> = [
-  { id: 'general', label: 'General', icon: 'settings', accent: 'text-accent-soft bg-accent/15' },
   {
-    id: 'appearance',
-    label: 'Appearance',
+    id: 'preferences',
+    label: 'Preferences',
     icon: 'palette',
     accent: 'text-cat-purple bg-cat-purple/15',
   },
-  { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-info-soft bg-sky-500/15' },
+  { id: 'neo-model', label: 'Neo', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
   {
-    id: 'connections',
-    label: 'Connections',
+    id: 'harness',
+    label: 'Sessions & Harness',
+    icon: 'swap',
+    accent: 'text-cat-cyan bg-cat-cyan/15',
+  },
+  {
+    id: 'providers',
+    label: 'Connections & Services',
     icon: 'plug',
     accent: 'text-accent-soft bg-accent/15',
   },
+  {
+    id: 'skills',
+    label: 'Capabilities',
+    icon: 'skills',
+    accent: 'text-success-soft bg-success/15',
+  },
   { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
-  { id: 'exa', label: 'Exa Search', icon: 'search', accent: 'text-cat-teal bg-cat-teal/15' },
-  {
-    id: 'app-mcp-servers',
-    label: 'MCP Servers',
-    icon: 'server',
-    accent: 'text-cat-violet bg-cat-violet/15',
-  },
-  { id: 'devices', label: 'Devices', icon: 'devices', accent: 'text-cat-cyan bg-cat-cyan/15' },
-  {
-    id: 'remote-daemons',
-    label: 'Remote Daemons',
-    icon: 'server',
-    accent: 'text-cat-teal bg-cat-teal/15',
-  },
-  { id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-success-soft bg-success/15' },
-  {
-    id: 'coding-pack',
-    label: 'Pack settings',
-    icon: 'plug',
-    accent: 'text-cat-violet bg-cat-violet/15',
-  },
-  { id: 'neo-model', label: 'Neo model', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
-  { id: 'models', label: 'Models', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
   { id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-warning bg-warning/15' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', accent: 'text-cat-pink bg-pink-500/15' },
   { id: 'about', label: 'About', icon: 'info', accent: 'text-fg-soft bg-fill' },
@@ -62,34 +52,6 @@ const SETTINGS_SECTIONS: Array<{
 
 function SectionIcon({ type }: { type: string }) {
   switch (type) {
-    case 'settings':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-          />
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-          />
-        </svg>
-      );
-    case 'devices':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
-          />
-        </svg>
-      );
     case 'server':
       return (
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -98,28 +60,6 @@ function SectionIcon({ type }: { type: string }) {
             stroke-linejoin="round"
             stroke-width={2}
             d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
-          />
-        </svg>
-      );
-    case 'cloud':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
-          />
-        </svg>
-      );
-    case 'search':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"
           />
         </svg>
       );
@@ -280,7 +220,10 @@ export function ContextPanel() {
               </div>
               <nav class="space-y-1" aria-label="Settings sections">
                 {SETTINGS_SECTIONS.map((section) => {
-                  const isActive = activeSettingsSection === section.id;
+                  const isActive =
+                    activeSettingsSection === section.id ||
+                    (section.id === 'providers' && isConnectionsSection(activeSettingsSection)) ||
+                    (section.id === 'skills' && isCapabilitiesSection(activeSettingsSection));
                   return (
                     <button
                       key={section.id}
@@ -302,7 +245,7 @@ export function ContextPanel() {
                         <SectionIcon type={section.icon} />
                       </span>
                       <span class="truncate text-sm font-medium">
-                        {section.id === 'connections' ? t('connections.title') : section.label}
+                        {section.id === 'providers' ? t('connections.page') : section.label}
                       </span>
                     </button>
                   );

@@ -23,7 +23,7 @@ import { existingTodoTarget, createTodoCheckPacks } from '../../helpers/todo-che
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo-a', role: 'neo' };
 const userFolder = '/users/me/Results';
 
-function setup(repository: string | null) {
+function setup(repository: string | null, seedPeer = true) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -40,6 +40,20 @@ function setup(repository: string | null) {
     createdAt: 1,
     repo: repository,
   });
+  if (repository && seedPeer)
+    store.addTodo(
+      'repo-context',
+      'ask',
+      {
+        title: 'Repository context',
+        doneWhen: 'Observed',
+        check: null,
+        instruction: null,
+        named: null,
+      },
+      1,
+      repository
+    );
   const controls = {
     userFolder,
     resolveTarget: existingTodoTarget,
@@ -129,7 +143,13 @@ describe('neo.todo.add evidence paths', () => {
     const result = await add({ path: join(userFolder, 'proof.md') });
     expect(result).toMatchObject({ ok: false });
     expect(!result.ok && result.reason).toContain('Omit');
-    expect(store.listTodos('ask')).toEqual([]);
+    expect(store.listTodos('ask').map((todo) => todo.id)).toEqual(['repo-context']);
+  });
+
+  test('an ask-only legacy hint does not assign a repository to new work', async () => {
+    const { add } = setup('lsm/hyperneo', false);
+    const result = await add({ path: join(userFolder, 'itinerary.md') });
+    expect(result).toMatchObject({ ok: true, todo: { repo: null } });
   });
 
   test('a todo with no repo may still save a result for the human', async () => {
@@ -179,7 +199,7 @@ describe('neo.todo.add evidence paths', () => {
   });
 
   test('an older todo with no repo of its own follows its ask on edit', async () => {
-    const { edit, store } = setup('lsm/hyperneo');
+    const { edit, store } = setup('lsm/hyperneo', false);
     const todo = store.addTodo(
       'older',
       'ask',

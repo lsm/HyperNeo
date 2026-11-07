@@ -43,8 +43,7 @@ export type RightPanelTarget =
 export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
 
 export type SettingsSection =
-  | 'general'
-  | 'appearance'
+  | 'preferences'
   | 'providers'
   | 'connections'
   | 'voice'
@@ -55,8 +54,8 @@ export type SettingsSection =
   | 'skills'
   | 'coding-pack'
   | 'neo-model'
-  | 'models'
+  | 'harness'
   | 'usage'
   | 'shortcuts'
   | 'about';
-export const settingsSectionSignal = signal<SettingsSection>('general');
+export const settingsSectionSignal = signal<SettingsSection>('preferences');

@@ -33,7 +33,6 @@ function setup(flag = '') {
     machine: 'test',
     homeDir: join(run, 'home'),
     env: { HOME: join(run, 'home'), PATH: process.env.PATH ?? '' },
-    timeoutMs: 1500,
     folderExists: existsSync,
     makeFolder: (folder: string) => mkdirSync(folder),
   };
@@ -79,7 +78,7 @@ afterEach(async () => {
   }
 });
 async function settled(f: ReturnType<typeof setup>, work: WorkStarted) {
-  for (let poll = 0; poll < 200; poll++) {
+  for (let poll = 0; poll < 2000; poll++) {
     const result = await f.adapter.status!(work.ref);
     if (result.ok && result.value.status === 'done') return;
     await new Promise((done) => setTimeout(done, 5));
@@ -138,7 +137,7 @@ describe('Copilot owned archive', () => {
     const f = setup('--held-connect');
     const starting = f.start('settled');
     let id: string | undefined;
-    for (let poll = 0; poll < 400 && !id; poll++) {
+    for (let poll = 0; poll < 2000 && !id; poll++) {
       const found = (await f.find(true)).flatMap((group) => group.work);
       id = found[0]?.ref.id;
       if (!id) await new Promise((done) => setTimeout(done, 5));

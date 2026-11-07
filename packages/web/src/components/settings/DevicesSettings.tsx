@@ -21,6 +21,7 @@ interface Device {
   current: boolean;
 }
 interface Pending {
+  requestedName?: string | null;
   id: string;
   kind: Kind;
   name: string | null;
@@ -195,21 +196,21 @@ export function DevicesSettings() {
               <div key={item.id} class="flex items-center gap-3 px-4 py-3">
                 <div class="min-w-0 flex-1">
                   <div class="truncate text-sm font-medium text-fg-soft">
-                    {item.name ?? 'Unnamed device'}
+                    {item.requestedName ?? item.name ?? 'Unnamed device'}
                   </div>
                   <div class="text-xs text-fg-faint">{KIND_LABEL[item.kind]}</div>
                 </div>
                 <Button
                   size="sm"
                   variant="secondary"
-                  aria-label={`Deny ${item.name ?? 'Unnamed device'}`}
+                  aria-label={`Deny ${item.requestedName ?? item.name ?? 'Unnamed device'}`}
                   onClick={() => act(() => call('device.pair.deny', { codeId: item.id }))}
                 >
                   Deny
                 </Button>
                 <Button
                   size="sm"
-                  aria-label={`Allow ${item.name ?? 'Unnamed device'}`}
+                  aria-label={`Allow ${item.requestedName ?? item.name ?? 'Unnamed device'}`}
                   onClick={() => act(() => call('device.pair.approve', { codeId: item.id }))}
                 >
                   Allow

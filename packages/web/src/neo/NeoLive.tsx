@@ -22,6 +22,7 @@ import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
+import { NeoTopicChips } from './NeoTopicChips.tsx';
 import { NeoAskTodos } from './NeoAskTodos.tsx';
 import { NeoWorkSearch } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
@@ -302,6 +303,22 @@ export function NeoLive() {
     };
   });
   const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
+  const sceneEntries = sceneGroups.flatMap((group) => group.entries);
+  const [savedTopic, setSavedTopic] = useState(() => {
+    try {
+      return localStorage.getItem('neo:topic-filter');
+    } catch {
+      return null;
+    }
+  });
+  const topic = sceneEntries.some((entry) => entry.ask.topic === savedTopic) ? savedTopic : null;
+  const chooseTopic = (next: string | null) => {
+    setSavedTopic(next);
+    try {
+      if (next) localStorage.setItem('neo:topic-filter', next);
+      else localStorage.removeItem('neo:topic-filter');
+    } catch {}
+  };
   const columns = !!publicConversation;
   const previewOpen =
     artifactPreviewStack.value.length > 0 || artifactPreviewWorkspace.state.value.open;
@@ -1013,9 +1030,17 @@ export function NeoLive() {
               {t('live.noWork')}
             </p>
           )}
+          {!workQuery.trim() && (
+            <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
+          )}
           {(workQuery.trim()
             ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
-            : sceneGroups
+            : sceneGroups.map((group) => ({
+                ...group,
+                entries: topic
+                  ? group.entries.filter((entry) => entry.ask.topic === topic)
+                  : group.entries,
+              }))
           ).map((group) =>
             group.entries.length === 0 ? null : (
               <section
@@ -1026,7 +1051,7 @@ export function NeoLive() {
               >
                 <h2 class="text-xs font-medium text-fg-muted">
                   {group.label} ·{' '}
-                  {group.key === 'attention' ? attentionCount : group.entries.length}
+                  {group.key === 'attention' && !topic ? attentionCount : group.entries.length}
                 </h2>
                 {group.entries.map((entry) => (
                   <NeoAskTodos
@@ -1058,6 +1083,7 @@ export function NeoLive() {
                         : undefined
                     }
                     onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
+                    onTopic={(next) => chooseTopic(next === topic ? null : next)}
                     onLoadDone={(askId, offset) =>
                       connectionManager.getHub().then((hub) =>
                         invokeOperation<NeoDoneTodosPage>(hub, 'neo.ask.doneTodos', {
@@ -1170,7 +1196,7 @@ export function NeoLive() {
                     neoSplitSentMessage(input.text).words,
                     !!input.images?.length
                   );
-                  if (requestId && from && (words || input.quote))
+                  if (requestId && from && (words || input.quote || from.media?.length))
                     setSendFlight({ id: requestId, from, words, quote: input.quote });
                   if (requestId) acceptedCleanups.set(requestId, cleanup);
                   const receipt = await (recoveryReady ? flight : flight.finally(() => handoff));

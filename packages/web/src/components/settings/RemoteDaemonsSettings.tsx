@@ -60,6 +60,7 @@ export function RemoteDaemonsSettings() {
   const [daemons, setDaemons] = useState<AttachedDaemon[] | null>(null);
   const [daemonId, setDaemonId] = useState('');
   const [url, setUrl] = useState('');
+  const [code, setCode] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
   const [probingUrl, setProbingUrl] = useState<string | null>(null);
@@ -93,17 +94,19 @@ export function RemoteDaemonsSettings() {
       const result = await invokeOperation<AttachResult>(hubOrThrow(), 'daemon.attach', {
         daemonId: trimmedId,
         url: trimmedUrl,
+        ...(code.trim() ? { code: code.trim() } : {}),
       });
       if (result.kind === 'rejected') {
-        toast.error(result.reason);
+        setFormError(result.reason);
         return;
       }
       toast.success(`Attached '${result.daemonId}'`);
       setDaemonId('');
       setUrl('');
+      setCode('');
       await load();
     } catch (error) {
-      toast.error(messageOf(error, 'Failed to attach the daemon'));
+      setFormError(messageOf(error, 'Failed to attach the daemon'));
     } finally {
       setAttaching(false);
     }
@@ -153,9 +156,10 @@ export function RemoteDaemonsSettings() {
   return (
     <SettingsSection title="Remote Daemons">
       <div class="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-fg-soft">
-        Attachments are saved in this daemon's settings and restored when it restarts. The link is
-        not authenticated, so attach only daemons on a private network such as Tailscale. Test a URL
-        before attaching it to verify the remote operation door is reachable.
+        Attachments are saved in this daemon's settings and restored when it restarts. Enter a
+        pairing code when the remote daemon requires authentication. Without a code, the connection
+        is not authenticated and is opened only when first used. Attach only daemons on a private
+        network such as Tailscale.
       </div>
 
       <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
@@ -185,7 +189,23 @@ export function RemoteDaemonsSettings() {
             />
           </div>
         </div>
-        {formError && <div class="text-xs text-danger">{formError}</div>}
+        <div>
+          <label class="mb-1 block text-xs text-fg-muted" for="remote-daemon-code">
+            Pairing code (optional)
+          </label>
+          <input
+            id="remote-daemon-code"
+            class={FORM_CONTROL_CLASS}
+            value={code}
+            autocomplete="off"
+            onInput={(e) => setCode((e.target as HTMLInputElement).value)}
+          />
+        </div>
+        {formError && (
+          <div role="alert" class="text-xs text-danger">
+            {formError}
+          </div>
+        )}
         <div class="flex justify-end gap-2">
           <Button
             size="sm"

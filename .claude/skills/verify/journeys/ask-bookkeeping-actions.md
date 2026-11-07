@@ -1,4 +1,4 @@
-# Unfinished ask closure is recorded without certifying its todos
+# Unfinished ask closure is refused without changing its todos
 
 Use the shared isolated metadata-only setup and cleanup from SKILL.md:
 
@@ -16,25 +16,23 @@ Supply an explicit completion check on that retry, as required for new todos;
 the settled-ask bookkeeping record must still return without adding the todo.
 
 A question naming a closed todo must supply an explicit retireWhen check with an
-absolute evidence path. It opens at ask level with a todo_closed
-record, without a stale todo link. Settling an ask done with unfinished todos
-must return a todos_unfinished record and close those rows as closed_unverified.
-Include a real worker question report: its todo must be blocked by needs-human
-before settlement, then remain closed_unverified afterward, rather than becoming
-removed. Its question is retired without an answer or answerer.
-The production neo.ask.read payload retains that state, doneCount is zero and
-neo.ask.doneTodos returns none. Retired questions retain null answers and no
-answerer. All three accepted audit records and the unverified rows survive DB reopen.
-Include a failed todo with a diagnostic reason before settlement. Its public
-unverified row must retain that reason before and after database reopen.
-On the original baseline the first closed-todo question is refused. On the
-reviewed head 4e48b4aa, settlement instead fails the unverified-state assertion:
-the human-blocked row becomes removed. Retain observed.json
-and proof.log; the shared wrapper removes all synthetic data after saving them.
+absolute evidence path. It explicitly replaces the fixture's existing worker question to follow the one-open-card rule. It opens at ask
+level with a todo_closed record, without a stale todo link. Settling done with
+unfinished todos must return a todos_unfinished refusal and leave the ask,
+todos and questions unchanged. Explicit reasoned todo removals then permit done. Removed failed work keeps
+its recorded diagnostic, and a historical closed_unverified row retains its
+label. The daemon settlement journey separately covers dropped cleanup. Retired questions have no
+invented answer or answerer. Done counts exclude all those rows before and
+after reopening the database. The refusal and accepted bookkeeping records
+remain in the operation audit. Retain observed.json and proof.log.
+
 The same MCP proof pins coding placement before the core/pack split. A start
 without a place is refused without adding a todo. Its own local place keeps a
 null repo instead of inheriting the ask's repo. A historical child card remains
 readable by ask id and todo id, preserving parent, repo and work after DB reopen.
+Opening one request with two repositories must retain one open ask and both
+steps on it. Read that same card after database reopen. Creating repository
+children or automatically settling the parent makes this proof fail.
 On reviewed head 734269ad, the two guidance assertions fail: the catalog omits
 stale todo behavior and the settled-ask record omits the different-title remedy.
 

@@ -12,7 +12,7 @@ class HistorySnapshotReader extends SDKMessageRepository {
       since,
       undefined,
       undefined,
-      capSdkMessage
+      capSdkMessage(sessionId)
     );
     return { sdkMessages: messages, hasMore };
   }

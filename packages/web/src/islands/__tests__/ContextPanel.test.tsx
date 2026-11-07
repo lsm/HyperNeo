@@ -1,7 +1,7 @@
 import type { Space } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { type Signal, signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -35,7 +35,18 @@ let mockCurrentSpaceTasksFilterTabSignal!: Signal<
 >;
 let mockCurrentSpaceViewModeSignal!: Signal<'overview' | 'goals' | 'tasks' | 'configure'>;
 let mockSettingsSectionSignal!: Signal<
-  'general' | 'providers' | 'app-mcp-servers' | 'skills' | 'models' | 'usage' | 'about'
+  | 'preferences'
+  | 'providers'
+  | 'connections'
+  | 'devices'
+  | 'remote-daemons'
+  | 'exa'
+  | 'app-mcp-servers'
+  | 'skills'
+  | 'coding-pack'
+  | 'models'
+  | 'usage'
+  | 'about'
 >;
 let mockConnectionStateSignal!: Signal<'connecting' | 'connected'>;
 let mockSpacesWithTasksSignal!: Signal<Array<Space & { tasks: unknown[]; sessions: unknown[] }>>;
@@ -68,7 +79,7 @@ function initSignals() {
   mockCurrentSpaceSessionIdSignal = signal(null);
   mockCurrentSpaceTasksFilterTabSignal = signal('active');
   mockCurrentSpaceViewModeSignal = signal('overview');
-  mockSettingsSectionSignal = signal('general');
+  mockSettingsSectionSignal = signal('preferences');
   mockConnectionStateSignal = signal('connected');
   mockSpacesWithTasksSignal = signal([
     { ...makeSpace('space-1', { name: 'Alpha' }), tasks: [], sessions: [] },
@@ -312,6 +323,50 @@ describe('ContextPanel', () => {
     expect(mockNavigateToSessions).toHaveBeenCalledTimes(1);
     expect(mockNavigateToSettings).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['providers', 'connections', 'devices', 'remote-daemons', 'exa'] as const)(
+    'lists one Connections & Services entry, active on %s',
+    (section) => {
+      mockNavSectionSignal.value = 'settings';
+      mockSettingsSectionSignal.value = section;
+      render(<ContextPanel />);
+
+      const nav = within(screen.getByRole('navigation', { name: 'Settings sections' }));
+      const entry = nav.getByRole('button', { name: 'Connections & Services' });
+      expect(entry.className).toContain('bg-fill text-fg');
+      for (const name of ['Providers', 'Connections', 'Devices', 'Remote Daemons', 'Exa Search'])
+        expect(nav.queryByRole('button', { name })).toBeNull();
+
+      fireEvent.click(entry);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('providers');
+    }
+  );
+
+  it.each(['skills', 'app-mcp-servers', 'coding-pack'] as const)(
+    'shows the six main entries and highlights Capabilities for %s',
+    (section) => {
+      mockNavSectionSignal.value = 'settings';
+      mockSettingsSectionSignal.value = section;
+      render(<ContextPanel />);
+      const nav = within(screen.getByRole('navigation', { name: 'Settings sections' }));
+      expect(nav.getAllByRole('button').map((button) => button.textContent)).toEqual([
+        'Preferences',
+        'Neo',
+        'Sessions & Harness',
+        'Connections & Services',
+        'Capabilities',
+        'Voice',
+        'Usage',
+        'Shortcuts',
+        'About',
+      ]);
+      expect(nav.getByRole('button', { name: 'Capabilities' }).className).toContain(
+        'bg-fill text-fg'
+      );
+      fireEvent.click(nav.getByRole('button', { name: 'Capabilities' }));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('skills');
+    }
+  );
 
   it('opens the create space dialog directly from the mobile switcher', () => {
     mockCurrentSpaceIdSignal.value = null;

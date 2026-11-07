@@ -23,12 +23,12 @@ const STEPS = [
   { requestId: 'references', shortText: 'Delivery preserves valid project references', fullText: 'The report is ready.',
     links: [{ kind: 'project', id: 'garden', label: 'Garden' }],
     replyTo: ['10000000-0000-4000-8000-000000000088'],
-    artifacts: [{ daemonId: '30000000-0000-4000-8000-000000000001', artifactId: 'missing', title: 'Missing', kind: 'html', byteLength: 100 }],
   },
 ];
 const COMMANDS = [
   { name: 'neo.publication.publish', input: { requestId: 'references', shortText: 'Invalid work', fullText: 'Must not be saved.', links: [{ kind: 'work', id: 'old', label: 'Old' }] } },
   { name: 'neo.publication.publish', input: { requestId: 'references', shortText: 'Invalid project', fullText: 'Must not be saved.', links: [{ kind: 'project', id: 'missing', label: 'Missing' }] } },
+  { name: 'neo.publication.publish', input: { ...STEPS[3], artifacts: [{ daemonId: '30000000-0000-4000-8000-000000000001', artifactId: 'missing', title: 'Missing', kind: 'html', byteLength: 100 }] } },
   ...STEPS.map((input) => ({ name: 'neo.publication.publish', input })),
   { name: 'operations.describe', input: { name: 'neo.publication.publish' } },
 ];
@@ -119,18 +119,19 @@ try {
     if (event.type === 'result') break;
   }
   const published = neo.publications.list(conversation) ?? [];
-  const described = JSON.parse(JSON.parse(receipts[6] ?? '[]')[0]?.text ?? '{}');
+  const described = JSON.parse(JSON.parse(receipts[7] ?? '[]')[0]?.text ?? '{}');
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, published, described }, null, 2));
   assert.equal(described.found, true);
   assert.match(described.description, /only project links.*unknown project.*reject/i);
   assert.match(receipts[0], /invalid_input/);
   assert.match(receipts[1], /unknown_project/);
   assert.match(receipts[1], /missing/);
-  assert.match(JSON.parse(receipts[2] ?? '[]')[0]?.text ?? '', /"accepted"\s*:\s*true/);
+  assert.match(receipts[2], /invalid_artifact_reference/);
+  assert.match(JSON.parse(receipts[3] ?? '[]')[0]?.text ?? '', /"accepted"\s*:\s*true/);
   assert.deepEqual(published.map((p) => p.fullText), [`${DESKTOP}\n\n${QLARK}`, DESKTOP, QLARK, 'The report is ready.']);
   assert.deepEqual(published[3].links, [{ kind: 'project', id: 'garden', label: 'Garden' }]);
   assert.deepEqual(published[3].replyTo, []);
-  assert.deepEqual(published[3].artifacts, []);
+  assert.equal(published[3].artifacts, undefined);
   writeFileSync(join(run, 'evidence/evidence.json'), JSON.stringify({ actualSdkMcp: true, bundledAccepted: true, receipt: receipts[0], published, described }, null, 2));
   console.log(join(run, 'evidence/evidence.json'));
 } finally {

@@ -1,6 +1,7 @@
-import type { NeoFlightRect } from './neo-send-flight.ts';
+import type { NeoFlightOrigin } from './neo-send-flight.ts';
 import './neo-composer.css';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { Button } from '../components/ui/Button.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
@@ -8,7 +9,6 @@ import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import {
   combineVoiceSubmission,
-  queuePendingVoiceSend,
   submitVoiceSendIntent,
   type VoiceSendOutcome,
 } from '../lib/voice/voice-audio-outbox.ts';
@@ -23,6 +23,7 @@ import {
   attachmentDocuments,
   attachmentMessage,
   NEO_FILE_ACCEPT,
+  type NeoAttachment,
   useNeoAttachments,
 } from './neo-attachments.ts';
 import { type createNeoIntakeClient, type NeoQuote, neoQuoteExcerpt } from './neo-intake.ts';
@@ -37,6 +38,37 @@ export function neoEnterSends(
   const modifierSend = keyboard.metaKey || keyboard.ctrlKey;
   return coarsePointer ? modifierSend : !keyboard.shiftKey || modifierSend;
 }
+
+const snapshotVoiceSend = (superpipe({})('neo.voice-send-snapshot') as PipelineAPI)
+  .input(['draft', 'files', 'quote', 'preview'])
+  .pipe(
+    (
+      draft: string,
+      files: NeoAttachment[],
+      quote: NeoQuote | undefined,
+      preview: NeoPreviewReference | undefined
+    ) => {
+      const captured = structuredClone(files);
+      return {
+        sendDraft: draft,
+        sendContext: {
+          suffix: attachmentDocuments(captured).join('\n\n'),
+          images: captured.flatMap((file) => (file.kind === 'image' ? [file.image] : [])),
+          attachmentIds: captured.map((file) => file.id),
+          ...(quote ? { quote: structuredClone(quote) } : {}),
+        },
+        previewContext: preview ? { ...preview } : undefined,
+      };
+    },
+    ['draft', 'files', 'quote', 'preview'],
+    'snapshot'
+  )
+  .end('snapshot') as (
+  draft: string,
+  files: NeoAttachment[],
+  quote: NeoQuote | undefined,
+  preview: NeoPreviewReference | undefined
+) => Pick<VoiceRecordEntry, 'sendDraft' | 'sendContext' | 'previewContext'>;
 
 export function NeoComposer({
   store,
@@ -77,7 +109,7 @@ export function NeoComposer({
   onTranscript: (text: string) => void;
   onSend: (
     input: Parameters<ReturnType<typeof createNeoIntakeClient>['send']>[0],
-    from?: NeoFlightRect
+    from?: NeoFlightOrigin
   ) => ReturnType<ReturnType<typeof createNeoIntakeClient>['send']>;
 }) {
   const idSuffix = forSession ? '-session' : '';
@@ -101,17 +133,8 @@ export function NeoComposer({
   const attention =
     !!store.error.value || agentState.status === 'waiting_for_input' || noNetwork || !!waitingLine;
   const collapsed = !focused && !draft && !needsDraft && !attention;
-  const draftContext = t(
-    boundPreview
-      ? 'composer.previewContext'
-      : quote
-        ? 'composer.quoteContext'
-        : 'composer.attachmentsContext'
-  );
   const voiceStatus = recordingVoice
-    ? needsDraft
-      ? t('composer.recordingDraft', { context: draftContext })
-      : t(coarsePointer ? 'composer.recordingTap' : 'composer.recordingClick')
+    ? t(coarsePointer ? 'composer.recordingTap' : 'composer.recordingClick')
     : voicePhase === 'drafting'
       ? t('composer.transcribing')
       : voicePhase === 'sending' && draft.trim()
@@ -167,18 +190,7 @@ export function NeoComposer({
   );
   const connected = connectionState.value === 'connected';
   async function send() {
-    if (recordingVoice) {
-      if (!needsDraft) {
-        finishVoice.current?.('send');
-        return;
-      }
-      finishVoice.current?.('draft');
-      onError(
-        t(coarsePointer ? 'composer.addedTap' : 'composer.addedClick', { context: draftContext })
-      );
-      return;
-    }
-    if (voicePhase === 'drafting') {
+    if (recordingVoice || voicePhase === 'drafting') {
       if (attachments.reading) {
         onError(t('composer.stillReading'));
         return;
@@ -212,9 +224,26 @@ export function NeoComposer({
       const top = quote
         ? thought.current?.form?.querySelector('[data-quote-bar]')?.getBoundingClientRect().y
         : box?.y;
+      const media = files.flatMap((file, index) => {
+        const chip = thought.current?.form?.querySelector(
+          `[data-attachment="${CSS.escape(file.id)}"]`
+        );
+        const source = file.kind === 'image' ? chip?.querySelector('img') : chip;
+        const bounds = source?.getBoundingClientRect();
+        const order = files.slice(0, index).filter((item) => item.kind === file.kind).length;
+        return bounds?.width && bounds.height
+          ? [{ from: bounds, file, target: `${file.kind === 'image' ? 'photo' : 'file'}-${order}` }]
+          : [];
+      });
       const from =
         !forSession && box?.width && box.height
-          ? { x: box.x, y: top ?? box.y, width: box.width, height: box.bottom - (top ?? box.y) }
+          ? {
+              x: box.x,
+              y: top ?? box.y,
+              width: box.width,
+              height: box.bottom - (top ?? box.y),
+              ...(media.length ? { media } : {}),
+            }
           : undefined;
       attachments.remove(files.map((file) => file.id));
       const input = {
@@ -507,20 +536,7 @@ export function NeoComposer({
             draftText={draft}
             onTranscript={onTranscript}
             onInterim={setInterim}
-            onPrepareSend={(recordId) => {
-              const files = structuredClone(attachments.files);
-              const snapshot = {
-                sendDraft: draft,
-                sendContext: {
-                  suffix: attachmentDocuments(files).join('\n\n'),
-                  images: files.flatMap((file) => (file.kind === 'image' ? [file.image] : [])),
-                  attachmentIds: files.map((file) => file.id),
-                  ...(quote ? { quote: structuredClone(quote) } : {}),
-                },
-                previewContext: boundPreview ? { ...boundPreview } : undefined,
-              };
-              return queuePendingVoiceSend(recordId, snapshot);
-            }}
+            onPrepareSend={() => snapshotVoiceSend(draft, attachments.files, quote, boundPreview)}
             onSendVoice={async (text, recordId) => {
               const record = await getVoiceRecord(recordId);
               if (!record) return { kind: 'unconfirmed' } as const;
@@ -547,20 +563,8 @@ export function NeoComposer({
               size="sm"
               disabled={noNetwork}
               class="h-11 min-w-11 shrink-0"
-              aria-label={t(
-                recordingVoice && needsDraft
-                  ? 'composer.stopDraft'
-                  : recordingVoice
-                    ? 'composer.stopSend'
-                    : 'composer.send'
-              )}
-              title={
-                recordingVoice && needsDraft
-                  ? t('composer.stopDraftTitle', { context: draftContext })
-                  : recordingVoice
-                    ? t('composer.stopSendTitle')
-                    : undefined
-              }
+              aria-label={t(recordingVoice ? 'composer.stopSend' : 'composer.send')}
+              title={recordingVoice ? t('composer.stopSendTitle') : undefined}
             >
               <NeoIcon name="up" />
             </Button>

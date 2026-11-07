@@ -1,3 +1,4 @@
+import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
 import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
 import { runMigration466 } from '../../../../src/storage/schema/m466-neo-question-retire-when.ts';
@@ -34,6 +35,8 @@ import { runMigration434 } from '../../../../src/storage/schema/m434-neo-todo-ar
 import { runMigration463 } from '../../../../src/storage/schema/m463-neo-todo-priority.ts';
 import { runMigration464 } from '../../../../src/storage/schema/m464-neo-todo-dependencies.ts';
 import { runMigration476 } from '../../../../src/storage/schema/m476-neo-todo-approved-at.ts';
+import { runMigration484 } from '../../../../src/storage/schema/m484-todo-approval-question.ts';
+import { runMigration486 } from '../../../../src/storage/schema/m486-neo-ask-topic.ts';
 import { runMigration420 } from '../../../../src/storage/schema/m420-neo-ask-goal.ts';
 import { runMigration427 } from '../../../../src/storage/schema/m427-neo-question-confirm.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
@@ -59,6 +62,8 @@ describe('neo.message.send replyTo', () => {
     runMigration463(mailbox.db);
     runMigration464(mailbox.db);
     runMigration476(mailbox.db);
+    runMigration484(mailbox.db);
+    runMigration486(mailbox.db);
     runMigration420(mailbox.db);
     runMigration427(mailbox.db);
     runMigration433(mailbox.db);
@@ -70,6 +75,7 @@ describe('neo.message.send replyTo', () => {
     runMigration466(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
+    prepareCodingTodoStorage(mailbox.db);
     for (const id of [root, holder])
       mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(id);
     repo = new NeoRepository(mailbox.db);

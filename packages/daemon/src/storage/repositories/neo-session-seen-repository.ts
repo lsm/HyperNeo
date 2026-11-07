@@ -10,9 +10,10 @@ export const replaceNeoSessionSeen = defineDbOp({
   run: (db: Database, entries: readonly (readonly [string, NeoSessionSeen])[]): void => {
     db.prepare('DELETE FROM neo_session_seen').run();
     const insert = db.prepare(
-      'INSERT INTO neo_session_seen(session_key, listed, status) VALUES (?, ?, ?)'
+      'INSERT INTO neo_session_seen(session_key, listed, status, question) VALUES (?, ?, ?, ?)'
     );
-    for (const [key, seen] of entries) insert.run(key, seen.listed, seen.status);
+    for (const [key, seen] of entries)
+      insert.run(key, seen.listed, seen.status, seen.question ?? null);
   },
 });
 
@@ -21,11 +22,22 @@ export class NeoSessionSeenRepository {
 
   list(): [string, NeoSessionSeen][] {
     const rows = this.db
-      .prepare('SELECT session_key AS key, listed, status FROM neo_session_seen')
-      .all() as { key: string; listed: string; status: string }[];
+      .prepare('SELECT session_key AS key, listed, status, question FROM neo_session_seen')
+      .all() as { key: string; listed: string; status: string; question: string | null }[];
     return rows.flatMap((row) => {
       const status = WorkStatusSchema.safeParse(row.status);
-      return status.success ? [[row.key, { listed: row.listed, status: status.data }]] : [];
+      return status.success
+        ? [
+            [
+              row.key,
+              {
+                listed: row.listed,
+                status: status.data,
+                ...(row.question ? { question: row.question } : {}),
+              },
+            ],
+          ]
+        : [];
     });
   }
 

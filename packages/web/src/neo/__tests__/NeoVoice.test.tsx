@@ -78,6 +78,65 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo voice', () => {
+  it('shows PCM16 when the browser cannot use Opus', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    voice.start.mockImplementationOnce(async () => {
+      voice.recording = true;
+    });
+    voice.openStream.mockImplementationOnce((_hub, _text, options) => {
+      options.onFormat('pcm16');
+      return { push: vi.fn(), close: vi.fn(), finish: vi.fn() };
+    });
+    render(
+      <NeoVoice
+        sessionId="neo:root"
+        connected
+        draftText=""
+        onTranscript={vi.fn()}
+        onSendVoice={vi.fn()}
+        onError={vi.fn()}
+        onPhase={vi.fn()}
+        onSendHandle={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    expect(await screen.findByText('PCM16')).toBeTruthy();
+  });
+
+  it('tells the user when live transcription falls back to saved audio', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    voice.start.mockImplementationOnce(async () => {
+      voice.recording = true;
+    });
+    voice.openStream.mockImplementationOnce((_hub, _text, options) => {
+      options.onError(new Error('codec failed'));
+      options.onFormat('batch');
+      return { push: vi.fn(), close: vi.fn(), finish: vi.fn() };
+    });
+    const onError = vi.fn();
+    render(
+      <NeoVoice
+        sessionId="neo:root"
+        connected
+        draftText=""
+        onTranscript={vi.fn()}
+        onSendVoice={vi.fn()}
+        onError={onError}
+        onPhase={vi.fn()}
+        onSendHandle={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(
+        'Live transcription failed: codec failed. The recording will use batch transcription.'
+      )
+    );
+    expect(await screen.findByText('Batch')).toBeTruthy();
+  });
+
   it('captures Preview and draft before microphone startup rather than after selection changes', async () => {
     voice.enabled = true;
     let started!: () => void;
@@ -514,7 +573,10 @@ describe('Neo voice', () => {
     const view = render(<NeoVoice {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
     await waitFor(() =>
-      expect(voice.openStream).toHaveBeenCalledWith(voice.hub, expect.any(Function))
+      expect(voice.openStream).toHaveBeenCalledWith(voice.hub, expect.any(Function), {
+        onFormat: expect.any(Function),
+        onError: expect.any(Function),
+      })
     );
     heard('hello ne');
     expect(onInterim).toHaveBeenLastCalledWith('hello ne');

@@ -24,11 +24,12 @@ import {
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
 import type { NeoPack } from './pack-contract.ts';
-import { neoTodoRepo } from './todo-repo.ts';
+import { neoTodoRepository } from './pack-contract.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
 import {
   neoAskSettlementReads,
+  requireNeoAskSettlement,
   neoAskSettlementWrites,
 } from '../../storage/repositories/neo-ask-settlement.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -38,9 +39,11 @@ type Gate<T> = { value: T } | { reason: Rejection };
 type AskReceipt = { ok: true; ask: NeoAsk; todos: NeoTodo[]; records?: string[] };
 
 const Text = z.string().trim().min(1);
+const Topic = Text.max(12);
 
 const Open = z.object({
   title: Text.max(200),
+  topic: Topic.optional(),
   request: Text.max(4000),
   projectId: Text.nullable().optional(),
   goalId: Text.nullable().optional(),
@@ -48,6 +51,8 @@ const Open = z.object({
 });
 
 const Outcome = z.object({ askId: Text, outcome: Text.max(4000) });
+
+const TopicInput = z.object({ askId: Text, topic: Topic });
 
 const Settle = z.object({
   askId: Text,
@@ -114,6 +119,17 @@ export function requireNeoAskProject(
   };
 }
 
+export function requireNeoAskOwner(
+  ask: NeoAsk,
+  caller: OperationCaller,
+  isNeoSession: (sessionId: string) => boolean
+): Gate<NeoAsk> {
+  return ask.sessionId === caller.sessionId ||
+    (caller.role === 'neo' && !isNeoSession(ask.sessionId))
+    ? { value: ask }
+    : { reason: { ok: false, reason: 'not_owned: this ask belongs to another session.' } };
+}
+
 export function createNeoAskRecordOperations(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -173,26 +189,22 @@ export function createNeoAskRecordOperations(
         const recorded = family(priorAsk);
         const recordedRow = (
           todo: (typeof input.todos)[number],
-          scope: Pick<NeoAsk, 'repo'> = priorAsk ?? { repo: null }
+          scope: Pick<NeoAsk, 'id' | 'repo'> | null = priorAsk
         ) => {
-          const repo = neoTodoRepo(todo, packs(), scope);
+          const peers = recorded.filter((item) => item.askId === scope?.id);
+          const repo = neoTodoRepository(todo, packs(), { ask: scope, peers });
           const filed = (item: NeoTodo) =>
-            neoTodoRepo(
+            neoTodoRepository(
               { check: item.check, named: item.named, target: sessions.get(item.id) },
               packs(),
-              scope
+              { ask: scope, peers }
             );
           return recorded.find(
             (item) => item.title === todo.title && (item.repo === repo || filed(item) === repo)
           );
         };
         const homeless =
-          priorAsk &&
-          priorAsk.status !== 'open' &&
-          input.todos.find((todo) => {
-            const repo = neoTodoRepo(todo, packs(), priorAsk);
-            return !recordedRow(todo) && (!repo || !store.childAsk(priorAsk.id, repo));
-          });
+          priorAsk && priorAsk.status !== 'open' && input.todos.find((todo) => !recordedRow(todo));
         if (priorAsk && homeless)
           return {
             ok: true,
@@ -208,7 +220,10 @@ export function createNeoAskRecordOperations(
             const check = withAssignedEvidence(todo.check, todoEvidenceFile('pending'));
             const reason = neoEvidenceRefusal(
               check,
-              neoTodoRepo(todo, packs(), priorAsk ?? { repo: null }),
+              neoTodoRepository(todo, packs(), {
+                ask: priorAsk,
+                peers: recorded.filter((item) => item.askId === priorAsk?.id),
+              }),
               controls.userFolder ?? neoUserFolder()
             );
             return reason
@@ -236,12 +251,7 @@ export function createNeoAskRecordOperations(
         if (badAfter) return { ok: false as const, reason: badAfter };
         const drafts: typeof input.todos = [];
         for (const todo of input.todos) {
-          const repo = neoTodoRepo(todo, packs(), priorAsk ?? { repo: null });
-          const home =
-            priorAsk && repo && priorAsk.repo !== repo
-              ? (store.childAsk(priorAsk.id, repo) ?? priorAsk)
-              : priorAsk;
-          if (recordedRow(todo) || (home && home.status !== 'open')) {
+          if (recordedRow(todo) || (priorAsk && priorAsk.status !== 'open')) {
             drafts.push(todo);
             continue;
           }
@@ -262,13 +272,11 @@ export function createNeoAskRecordOperations(
             sessionId,
             originMessageId: origin,
             title: input.title,
+            topic: input.topic ?? null,
             request: input.request,
             createdAt: Date.now(),
           });
         recorded.push(...family(ask));
-        const split =
-          store.listChildAsks(ask.id).length > 0 ||
-          new Set(drafts.map((todo) => neoTodoRepo(todo, packs(), ask)).filter(Boolean)).size > 1;
         const records: string[] = [];
         const ids: (string | undefined)[] = [];
         for (const [index, todo] of drafts.entries()) {
@@ -283,8 +291,7 @@ export function createNeoAskRecordOperations(
                 controls,
                 store.getAsk(ask.id)!,
                 { ...todo, ...(after ? { after } : {}) },
-                packs(),
-                split
+                packs()
               )
             : todo.start && isNeoTodoStartable(row)
               ? await startNeoTodoWhenFree(store, controls, store.approveTodo(row, Date.now()))
@@ -297,13 +304,9 @@ export function createNeoAskRecordOperations(
           ids.push(row?.id ?? ('todo' in added ? added.todo?.id : undefined));
           if ('records' in added && added.records) records.push(...added.records);
         }
-        const settled = split
-          ? await settlement.gateway.call(neoAskSettlementWrites, 'splitParent', ask.id, Date.now())
-          : null;
-        if (settled?.ok) settlement.changed();
         return {
           ok: true,
-          ask: settled?.ok ? settled.ask : (store.getAsk(ask.id) ?? ask),
+          ask: store.getAsk(ask.id) ?? ask,
           todos: family(ask),
           ...(records.length ? { records } : {}),
         };
@@ -337,19 +340,21 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
-      (ask: NeoAsk, caller: OperationCaller): Gate<NeoAsk> =>
-        ask.sessionId !== caller.sessionId &&
-        !(caller.role === 'neo' && !isNeoSession(ask.sessionId))
-          ? { reason: { ok: false, reason: 'not_owned: this ask belongs to another session.' } }
-          : ask.focusedSession
-            ? { value: ask }
-            : {
-                reason: {
-                  ok: false,
-                  reason: 'not_focused: this ask has no focused discussion session.',
-                },
-              },
+      (ask: NeoAsk, caller: OperationCaller) => requireNeoAskOwner(ask, caller, isNeoSession),
       ['outcome', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      (ask: NeoAsk): Gate<NeoAsk> =>
+        ask.focusedSession
+          ? { value: ask }
+          : {
+              reason: {
+                ok: false,
+                reason: 'not_focused: this ask has no focused discussion session.',
+              },
+            },
+      'outcome',
       'result:outcome'
     )
     .pipe(
@@ -366,6 +371,37 @@ export function createNeoAskRecordOperations(
     caller: OperationCaller
   ) => AskReceipt | Rejection;
 
+  const setTopic = (superpipe({})('neo.ask.topic') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => requireNeoAskSession(caller, isNeoSession),
+      'caller',
+      'result:outcome'
+    )
+    .pipe(
+      (input: z.infer<typeof TopicInput>) => requireNeoOpenAsk(store.getAsk(input.askId)),
+      'input',
+      'result:outcome'
+    )
+    .pipe(
+      (ask: NeoAsk, caller: OperationCaller) => requireNeoAskOwner(ask, caller, isNeoSession),
+      ['outcome', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      (ask: NeoAsk, input: z.infer<typeof TopicInput>): AskReceipt => ({
+        ok: true,
+        ask: store.setAskTopic(ask.id, input.topic, Date.now()),
+        todos: store.listTodos(ask.id),
+      }),
+      ['outcome', 'input'],
+      'outcome'
+    )
+    .end('outcome') as (
+    input: z.infer<typeof TopicInput>,
+    caller: OperationCaller
+  ) => AskReceipt | Rejection;
+
   const refKey = (ref: WorkRef | null) =>
     ref ? JSON.stringify([ref.adapter, ref.id, ref.daemon ?? null]) : null;
   const settle = (superpipe({})('neo.ask.settle') as PipelineAPI)
@@ -377,7 +413,7 @@ export function createNeoAskRecordOperations(
           'snapshot',
           input.askId
         );
-        return 'ok' in snapshot ? { reason: snapshot } : { value: snapshot };
+        return requireNeoAskSettlement(snapshot, input);
       },
       'input',
       'result:outcome'
@@ -438,7 +474,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add; give every step that needs work an instruction and target). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
+        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add; give every step that needs work an instruction and target). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another. topic is the matter's short name in the human's language, 2-6 characters (家长控制, OAP, 大学申请, 邮件); reuse a topic already on an open ask and never coin a near-synonym; use 其他 when the ask belongs to no matter.",
       inputSchema: Open,
       resultSchema: AskResult,
       policy: {
@@ -450,16 +486,25 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.outcome',
       description:
-        'Record the settled focused discussion outcome on an open ask owned by this Neo. Use only an explicit report from ask.focusedSession after the human says the discussion is settled, naming this ask and its decision, documents and PRs. outcome is concise Markdown with document/PR references, not inferred approval from a relayed turn. This keeps the ask and its todos open, preserves its session link and does not stop or dispatch work. Track agreed execution using existing todos and pack checks; neo.ask.settle records unfinished todos as closed unverified.',
+        'Record the settled focused discussion outcome on an open ask owned by this Neo. Use only an explicit report from ask.focusedSession after the human says the discussion is settled, naming this ask and its decision, documents and PRs. outcome is concise Markdown with document/PR references, not inferred approval from a relayed turn. This keeps the ask and its todos open, preserves its session link and does not stop or dispatch work. Track agreed execution using existing todos and pack checks; neo.ask.settle refuses done while todos are unfinished.',
       inputSchema: Outcome,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(recordOutcome(input, caller)),
     }),
     defineOperation({
+      name: 'neo.ask.topic',
+      description:
+        "Set or change the topic on an open ask: a short label naming the matter it belongs to. topic is the matter's short name in the human's language, 2-6 characters (家长控制, OAP, 大学申请, 邮件); reuse a topic already on an open ask and never coin a near-synonym; use 其他 when the ask belongs to no matter. Settled asks keep their topic.",
+      inputSchema: TopicInput,
+      resultSchema: AskResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => present(setTopic(input, caller)),
+    }),
+    defineOperation({
       name: 'neo.ask.settle',
       description:
-        'End an ask: done when its todos are done or explicitly closed unverified, dropped when the human drops it. Unverified todos keep that label and never count as done. Unfinished todos are recorded and closed unverified when settling done; this never certifies their outcomes. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
+        'End an ask: done when its todos are done or explicitly closed unverified, dropped when the human drops it. Unverified todos keep that label and never count as done. Done is refused while todos are unfinished. Finish them, remove them with reasons, or use dropped when abandoning the request. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

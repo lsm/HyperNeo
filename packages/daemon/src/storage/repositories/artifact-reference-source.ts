@@ -1,4 +1,7 @@
 import type { Database } from '../sqlite-compat.ts';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
+import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { homedir } from 'node:os';
 import type { ArtifactContext } from '../../lib/artifacts/file-policy.ts';
 import type {
@@ -18,7 +21,11 @@ export class ArtifactReferenceSourceRepository {
   constructor(
     private readonly db: Database,
     private readonly daemonId: string,
-    private readonly home = homedir()
+    private readonly home = homedir(),
+    private readonly repository: (todo: NeoTodo | null, ask: NeoAsk | null) => string | null = (
+      todo,
+      ask
+    ) => neoTodoRepository(todo ?? { check: null, named: null }, neoTodoPolicies(db), { ask, todo })
   ) {}
 
   private sessionContexts(sessionId: string): ArtifactContext[] {
@@ -84,7 +91,7 @@ export class ArtifactReferenceSourceRepository {
           }
         : null);
     return binding
-      ? { ...binding, repository: todo?.repo ?? ask?.repo ?? null, revision: { kind: 'worktree' } }
+      ? { ...binding, repository: this.repository(todo, ask), revision: { kind: 'worktree' } }
       : null;
   }
 

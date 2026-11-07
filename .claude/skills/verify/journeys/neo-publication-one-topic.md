@@ -14,9 +14,9 @@ separately. All three receipts must be accepted and all three messages must appe
 in the publication reader, including the complete bundled message.
 
 The SDK send with requestId `references` supplies a valid project link, an unknown reply id and an
-invented artifact. Its text is delivered with the valid project link. Earlier
-work-kind and unknown-project attempts must fail without reserving the requestId;
-that send reuses that requestId successfully. Discovered tool guidance
+invented artifact; the whole send must be rejected without reserving the requestId.
+Earlier work-kind and unknown-project attempts also fail, and a corrected send
+reuses that requestId to deliver the valid project link. Discovered tool guidance
 must say that only project links are accepted and unknown projects reject the send.
 
 For the link admission regression, use the actual daemon/MCP and human RPC reader

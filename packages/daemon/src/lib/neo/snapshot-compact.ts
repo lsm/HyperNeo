@@ -7,13 +7,7 @@ const SKELETON_LIST_LIMIT = 20;
 const NEO_SNAPSHOT_TRIMMED =
   'This snapshot was trimmed to fit: settled asks are left out, and long text is cut.';
 const NEO_SNAPSHOT_SKELETON =
-  'This snapshot was too large even trimmed, so only open asks, their PRs and project identities are left.';
-
-export function neoSnapshotTrimmedNote(droppedOpen: number): string {
-  return droppedOpen > 0
-    ? `${NEO_SNAPSHOT_TRIMMED} ${droppedOpen} older open ${droppedOpen === 1 ? 'ask is' : 'asks are'} also left out; this is not every open ask.`
-    : NEO_SNAPSHOT_TRIMMED;
-}
+  'This snapshot was too large even trimmed, so every open ask is kept with reduced detail.';
 
 export function neoSnapshotOmitted<T extends NeoSnapshot>(fitted: T, built: NeoSnapshot): T {
   const { omitted: _omitted, ...rest } = fitted;
@@ -95,8 +89,6 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
   const open = snapshot.todoAsks?.filter((entry) => entry.ask.status === 'open') ?? [];
   let fitted: NeoSnapshot = { ...snapshot, todoAsks: open };
   if (size(fitted) > room) fitted = withTodoText(withShortText(fitted), TRIMMED_TEXT_LIMIT);
-  for (let count = fitted.todoAsks?.length ?? 0; size(fitted) > room && count > 1; )
-    fitted = { ...fitted, todoAsks: fitted.todoAsks?.slice(0, (count = Math.floor(count / 2))) };
   for (
     let count = Math.max(
       0,
@@ -121,7 +113,7 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
   if (size(fitted) <= room)
     return {
       ...fitted,
-      trimmed: neoSnapshotTrimmedNote(open.length - (fitted.todoAsks?.length ?? 0)),
+      trimmed: NEO_SNAPSHOT_TRIMMED,
     } as T;
   let skeleton: NeoSnapshot = {
     ok: true,
@@ -145,10 +137,26 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
     packRows: todoPackRows(fitted.packRows, fitted.todoAsks),
     trimmed: NEO_SNAPSHOT_SKELETON,
   };
-  for (let count = skeleton.todoAsks?.length ?? 0; size(skeleton) > budget && count > 0; ) {
-    count = Math.floor(count / 2);
-    const todoAsks = skeleton.todoAsks?.slice(0, count);
-    skeleton = { ...skeleton, todoAsks, packRows: todoPackRows(fitted.packRows, todoAsks) };
+  if (size(skeleton) > budget) {
+    const trimmed = `${NEO_SNAPSHOT_SKELETON} Use neo.ask.read with an ask id for omitted steps.`;
+    const headers = {
+      ...skeleton,
+      todoAsks: skeleton.todoAsks?.map((entry) => ({ ...entry, todos: [] })),
+      trimmed,
+    };
+    let remaining = budget - size(headers);
+    const todoAsks = skeleton.todoAsks?.map((entry) => {
+      const todos: typeof entry.todos = [];
+      for (const todo of entry.todos) {
+        const cost = Buffer.byteLength(JSON.stringify(todo), 'utf8') + Number(todos.length > 0);
+        if (cost <= remaining) {
+          todos.push(todo);
+          remaining -= cost;
+        }
+      }
+      return { ...entry, todos };
+    });
+    skeleton = { ...headers, todoAsks };
   }
   if (size(skeleton) > budget) skeleton = { ...skeleton, standingRules: [] };
   if (size(skeleton) > budget) skeleton = { ...skeleton, packRows: [] };

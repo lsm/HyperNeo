@@ -38,6 +38,7 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   replacedBy: null,
   addedAfterStart: false,
   approvedAt: null,
+  approvalQuestionId: null,
   report: null,
   evidence: null,
   createdAt: 1,
@@ -78,6 +79,7 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
     parentId: null,
     sessionId: 'neo',
     originMessageId: null,
+    topic: null,
     title: 'iOS 卡片照网页第二版改',
     request: 'x',
     status: 'open',
@@ -316,6 +318,40 @@ describe('NeoAskTodos', () => {
     fireEvent.click(app.getByRole('menuitem', { name: 'Reply', exact: true }));
     expect(reply).toHaveBeenCalledOnce();
     expect(settle).not.toHaveBeenCalled();
+  });
+
+  it('shows the topic at left and filters by it when tapped', () => {
+    const data = entry({ state: 'waiting' });
+    data.ask.topic = '家长控制';
+    const onTopic = vi.fn();
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} onTopic={onTopic} />);
+    const topic = app.getByRole('button', { name: '家长控制' });
+    expect((topic.querySelector('[data-topic-swatch]') as HTMLElement).style.backgroundColor).toBe(
+      'var(--neo-teal)'
+    );
+    fireEvent.click(topic);
+    expect(onTopic).toHaveBeenCalledWith('家长控制');
+  });
+
+  it('shows no topic when the ask has none', () => {
+    const app = render(<NeoAskTodos entry={entry({})} onAnswer={vi.fn()} onTopic={vi.fn()} />);
+    expect(app.container.querySelector('[data-topic-swatch]')).toBeNull();
+  });
+
+  it.each([
+    ['waiting', '等你', 'text-warning', true],
+    ['doing', '在做', 'text-[var(--neo-teal)]', false],
+    ['todo', '没开始', 'text-fg-faint', false],
+    ['done', '做完', 'text-success', false],
+    ['dropped', '放弃了', 'text-fg-faint', false],
+  ] as const)('shows the %s state as a dot and a word, not a pill', (state, word, tone, bold) => {
+    const app = render(<NeoAskTodos entry={entry({ state })} onAnswer={vi.fn()} />);
+    const label = app.getByText(word);
+    const status = label.closest('[data-ask-status]') as HTMLElement;
+    expect(status.className).toContain(tone);
+    expect(status.className).not.toContain('rounded-full');
+    expect(status.querySelector('[data-status-dot]')).toBeTruthy();
+    expect(label.className.includes('font-semibold')).toBe(bold);
   });
 
   it('disables ask Reply while the card is unavailable', () => {

@@ -117,6 +117,9 @@ jobs:
       - name: Test pre-commit temporary file isolation
         run: bun run test:pre-commit
 
+      - name: Test type-check command failure propagation
+        run: bun run test:typecheck
+
       - name: Test strip-comments argument handling
         run: bun run test:strip-comments
 

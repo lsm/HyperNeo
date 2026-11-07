@@ -8,7 +8,7 @@ const { updateGlobalSettings } = vi.hoisted(() => ({
 
 vi.mock('../../../lib/api-helpers.ts', () => ({ updateGlobalSettings }));
 
-import { GeneralSettings } from '../GeneralSettings.tsx';
+import { HyperNeoSessionSettings } from '../HyperNeoSessionSettings.tsx';
 import { globalStore } from '../../../lib/global-store.ts';
 
 function permissionSelect(container: Element) {
@@ -21,7 +21,7 @@ function shown(select: HTMLSelectElement) {
   return select.options[select.selectedIndex].textContent;
 }
 
-describe('GeneralSettings SDK permission mode', () => {
+describe('HyperNeoSessionSettings', () => {
   afterEach(() => {
     cleanup();
     globalStore.settings.value = null;
@@ -40,7 +40,7 @@ describe('GeneralSettings SDK permission mode', () => {
     'shows a saved %s value by its real name and writes nothing on open',
     (_name, saved, value, label) => {
       globalStore.settings.value = { permissionMode: saved } as unknown as GlobalSettings;
-      const { container } = render(<GeneralSettings />);
+      const { container } = render(<HyperNeoSessionSettings />);
       const select = permissionSelect(container);
       expect(select.value).toBe(value);
       expect(shown(select)).toBe(label);
@@ -50,7 +50,7 @@ describe('GeneralSettings SDK permission mode', () => {
 
   it('offers only names the SDK path passes through, not delegate', () => {
     globalStore.settings.value = {} as GlobalSettings;
-    const { container } = render(<GeneralSettings />);
+    const { container } = render(<HyperNeoSessionSettings />);
     expect([...permissionSelect(container).options].map((option) => option.textContent)).toEqual([
       'bypassPermissions (Default)',
       'acceptEdits',
@@ -59,7 +59,7 @@ describe('GeneralSettings SDK permission mode', () => {
   });
 
   it('says Default runs as bypassPermissions and applies to HyperNeo SDK sessions', () => {
-    const { container } = render(<GeneralSettings />);
+    const { container } = render(<HyperNeoSessionSettings />);
     expect(container.textContent).toContain(
       'Default or unset runs new HyperNeo SDK sessions with bypassPermissions.'
     );
@@ -67,18 +67,15 @@ describe('GeneralSettings SDK permission mode', () => {
 
   it('an unrelated save leaves a legacy permission value untouched', () => {
     globalStore.settings.value = { permissionMode: 'delegate' } as unknown as GlobalSettings;
-    const { container } = render(<GeneralSettings />);
-    const language = [...container.querySelectorAll('select')].find((element) =>
-      [...element.options].some((option) => option.value === 'zh-Hans')
-    )!;
-    fireEvent.change(language, { target: { value: 'zh-Hans' } });
+    const { container } = render(<HyperNeoSessionSettings />);
+    fireEvent.click(container.querySelector('input[type="checkbox"]')!);
     expect(updateGlobalSettings).toHaveBeenCalledTimes(1);
-    expect(updateGlobalSettings).toHaveBeenCalledWith({ language: 'zh-Hans' });
+    expect(updateGlobalSettings).toHaveBeenCalledWith({ settingSources: ['project', 'local'] });
     expect(permissionSelect(container).value).toBe('delegate');
   });
 
   it('saves the real name the person picks', () => {
-    const { container } = render(<GeneralSettings />);
+    const { container } = render(<HyperNeoSessionSettings />);
     fireEvent.change(permissionSelect(container), { target: { value: 'plan' } });
     expect(updateGlobalSettings).toHaveBeenCalledWith({ permissionMode: 'plan' });
   });

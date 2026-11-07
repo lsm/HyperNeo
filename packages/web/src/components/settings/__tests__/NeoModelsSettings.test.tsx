@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals';
 import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { GlobalSettings } from '@hyperneo/shared';
 
@@ -17,7 +17,7 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   updateGlobalSettings: vi.fn(),
 }));
 import { NeoModelSettings } from '../NeoModelSettings.tsx';
-import { globalSettings } from '../../../lib/state.ts';
+import { connectionState, globalSettings } from '../../../lib/state.ts';
 
 const primary = { model: 'opus', provider: 'anthropic', thinkingLevel: 'think24k' };
 const glm = { model: 'glm-5', provider: 'glm', thinkingLevel: 'think8k' };
@@ -36,6 +36,7 @@ const models = [primary, glm, copilot, { model: 'router/test', provider: 'openro
 );
 
 beforeEach(() => {
+  connectionState.value = 'connected';
   (globalSettings as { value: GlobalSettings | null }).value = {
     neo: { preferences: { ...primary, fallbacks: [glm, copilot] } },
   } as GlobalSettings;
@@ -58,7 +59,7 @@ async function editor() {
   const section = await screen.findByRole('region', { name: 'Neo models' });
   await waitFor(() =>
     expect(
-      within(section).getByRole('button', { name: 'Save Neo models' }).hasAttribute('disabled')
+      within(section).getByRole('button', { name: 'Change Neo primary' }).hasAttribute('disabled')
     ).toBe(false)
   );
   return within(section);
@@ -68,8 +69,10 @@ test('edits each effort, reorders provider fallbacks and saves through the human
   const ui = await editor();
   expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('think24k');
   fireEvent.change(ui.getByLabelText('Neo model 2 thinking'), { target: { value: 'off' } });
+  await waitFor(() =>
+    expect(ui.getByLabelText('Neo model 1 thinking').hasAttribute('disabled')).toBe(false)
+  );
   fireEvent.click(ui.getAllByTitle('Move up')[2]);
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -85,8 +88,12 @@ test('adds a different-provider model with supported thinking and can remove all
   fireEvent.click(ui.getByRole('button', { name: 'Add Neo model' }));
   fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
   expect((ui.getByLabelText('Neo model 4 thinking') as HTMLSelectElement).value).toBe('off');
-  for (let n = 0; n < 3; n++) fireEvent.click(ui.getAllByTitle('Remove')[1]);
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  for (let n = 0; n < 3; n++) {
+    await waitFor(() =>
+      expect(ui.getByLabelText('Neo model 1 thinking').hasAttribute('disabled')).toBe(false)
+    );
+    fireEvent.click(ui.getAllByTitle('Remove')[1]);
+  }
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -97,29 +104,15 @@ test('adds a different-provider model with supported thinking and can remove all
 
 test('one list shows the primary first and Make primary moves another model to the top', async () => {
   const ui = await editor();
-  expect(ui.queryByRole('button', { name: 'Change Neo primary' })).toBeNull();
+  expect(ui.getByRole('button', { name: 'Change Neo primary' })).toBeTruthy();
   const rows = ui.getAllByTitle('Remove').map((button) => button.parentElement?.textContent ?? '');
   expect(rows.map((row) => row.includes('Primary'))).toEqual([true, false, false]);
   fireEvent.click(ui.getByRole('button', { name: 'Make Neo model 2 primary' }));
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
       input: { ...glm, fallbacks: [primary, copilot] },
-    })
-  );
-});
-
-test('removing every model and adding one back saves an explicit empty fallback chain', async () => {
-  const ui = await editor();
-  for (let n = 0; n < 3; n++) fireEvent.click(ui.getAllByTitle('Remove')[0]);
-  fireEvent.click(ui.getByRole('button', { name: 'Add Neo model' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
-  await waitFor(() =>
-    expect(request).toHaveBeenCalledWith('operation.invoke', {
-      name: 'neo.preferences.set',
-      input: { model: 'router/test', provider: 'openrouter', thinkingLevel: 'off', fallbacks: [] },
     })
   );
 });
@@ -145,7 +138,7 @@ test('saves a percentage per model and shows each against its own context window
   });
   expect(ui.getByText('88% ≈ 176K of 200K tokens')).toBeTruthy();
   expect(ui.getByText('90% · context window unknown')).toBeTruthy();
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  fireEvent.focusOut(ui.getByLabelText('Neo model 2 auto-compact percentage'));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -154,7 +147,7 @@ test('saves a percentage per model and shows each against its own context window
   );
 });
 
-test('shows a refused save without discarding edits or changing the general session chain', async () => {
+test('rolls back a refused save and reports the error', async () => {
   const ui = await editor();
   request.mockImplementation(async (method) =>
     method === 'models.list'
@@ -162,9 +155,8 @@ test('shows a refused save without discarding edits or changing the general sess
       : { ok: false, reason: 'invalid_model: provider unavailable' }
   );
   fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think8k' } });
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   expect((await ui.findByRole('alert')).textContent).toContain('provider unavailable');
-  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('think8k');
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('think24k');
 });
 
 test('preserves an inherited fallback chain when only primary thinking is edited', async () => {
@@ -174,7 +166,6 @@ test('preserves an inherited fallback chain when only primary thinking is edited
   const ui = await editor();
   expect(ui.getByText(/Uses the general session fallback chain/)).toBeTruthy();
   fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think8k' } });
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -183,7 +174,7 @@ test('preserves an inherited fallback chain when only primary thinking is edited
   );
 });
 
-test('lists only runnable providers and offers every thinking level', async () => {
+test('lists only runnable providers and offers each model its thinking levels', async () => {
   auth.mockResolvedValue({
     providers: models.map((model) => ({
       id: model.provider,
@@ -192,11 +183,20 @@ test('lists only runnable providers and offers every thinking level', async () =
   });
   const ui = await editor();
   expect(ui.getByText(/Providers with usable models:/).textContent).not.toContain('OpenRouter');
-  expect(
-    [...ui.getByLabelText('Neo model 3 thinking').querySelectorAll('option')].map(
+  const values = (index: number) =>
+    [...ui.getByLabelText(`Neo model ${index} thinking`).querySelectorAll('option')].map(
       (option) => option.value
-    )
-  ).toEqual(['off', 'think8k', 'think16k', 'think24k', 'think32k', 'think48k', 'think64k']);
+    );
+  expect(values(1)).toEqual([
+    'off',
+    'think8k',
+    'think16k',
+    'think24k',
+    'think32k',
+    'think48k',
+    'think64k',
+  ]);
+  expect(values(3)).toEqual(['off']);
 });
 
 test('the first model added to an empty list becomes the primary', async () => {
@@ -207,8 +207,10 @@ test('the first model added to an empty list becomes the primary', async () => {
   await waitFor(() => expect(change.hasAttribute('disabled')).toBe(false));
   fireEvent.click(change);
   fireEvent.click(await screen.findByRole('button', { name: 'opus', exact: true }));
+  await waitFor(() =>
+    expect(ui.getByLabelText('Neo model 1 thinking').hasAttribute('disabled')).toBe(false)
+  );
   fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think24k' } });
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -223,28 +225,11 @@ test('saves 70 percent with the model and previews the effective token threshold
     target: { value: '70' },
   });
   expect(ui.getByText('70% ≈ 700K of 1M tokens')).toBeTruthy();
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  fireEvent.focusOut(ui.getByLabelText('Neo model 1 auto-compact percentage'));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
       input: { ...primary, fallbacks: [glm, copilot], autoCompactPercent: 70 },
-    })
-  );
-});
-
-test.each([
-  [1, 10],
-  [101, 100],
-])('clamps percentage %s to %s on save', async (input, expected) => {
-  const ui = await editor();
-  fireEvent.input(ui.getByLabelText('Neo model 1 auto-compact percentage'), {
-    target: { value: String(input) },
-  });
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
-  await waitFor(() =>
-    expect(request).toHaveBeenCalledWith('operation.invoke', {
-      name: 'neo.preferences.set',
-      input: { ...primary, fallbacks: [glm, copilot], autoCompactPercent: expected },
     })
   );
 });
@@ -261,7 +246,7 @@ test('90 resets an explicit override to the unchanged provider default', async (
     target: { value: '90' },
   });
   expect(ui.getByText('90% ≈ 900K of 1M tokens')).toBeTruthy();
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  fireEvent.focusOut(ui.getByLabelText('Neo model 1 auto-compact percentage'));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -270,14 +255,14 @@ test('90 resets an explicit override to the unchanged provider default', async (
   );
 });
 
-test.each(['', '70.5'])(
+test.each(['', '70.5', '1', '101'])(
   'rejects invalid percentage %s without sending a preference',
   async (value) => {
     const ui = await editor();
     fireEvent.input(ui.getByLabelText('Neo model 1 auto-compact percentage'), {
       target: { value },
     });
-    fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+    fireEvent.focusOut(ui.getByLabelText('Neo model 1 auto-compact percentage'));
     expect((await ui.findByRole('alert')).textContent).toContain('whole number');
     expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
   }
@@ -296,7 +281,6 @@ test('an omitted override keeps model metadata and stays omitted when saving thi
   );
   expect(ui.getAllByText('80% ≈ 800K of 1M tokens')).toHaveLength(3);
   fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'off' } });
-  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -357,4 +341,408 @@ test('refresh reloads the model list and never saves a Neo default', async () =>
   expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
   expect(updateGlobalSettings).not.toHaveBeenCalled();
   expect(screen.getByText(/Refresh reloads the model list only/)).toBeTruthy();
+});
+
+test('offers only what each model supports and keeps an unsupported saved level', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    neo: {
+      preferences: {
+        ...primary,
+        thinkingLevel: 'think32k',
+        fallbacks: [{ ...glm, thinkingLevel: 'think24k' }],
+      },
+    },
+  } as GlobalSettings;
+  request.mockImplementation(async (method, data) => {
+    if (method === 'models.list')
+      return {
+        models: [
+          { ...models[0], effortLevels: ['low', 'high'] },
+          { ...models[1], thinkingModes: 'off' },
+        ],
+      };
+    if (method === 'operation.invoke') return { ok: true, preferences: data.input };
+    throw new Error(`Unexpected ${method}`);
+  });
+  const ui = await editor();
+  const values = (index: number) =>
+    [...ui.getByLabelText(`Neo model ${index} thinking`).querySelectorAll('option')].map(
+      (option) => option.value
+    );
+
+  await waitFor(() => expect(values(1)).toEqual(['off', 'think8k', 'think24k', 'think32k']));
+  expect(values(2)).toEqual(['off', 'think24k']);
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('think32k');
+  expect((ui.getByLabelText('Neo model 2 thinking') as HTMLSelectElement).value).toBe('think24k');
+  expect(ui.getAllByText(/not supported by this model/).length).toBe(2);
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+
+  fireEvent.input(ui.getByLabelText('Neo model 1 auto-compact percentage'), {
+    target: { value: '70' },
+  });
+  fireEvent.focusOut(ui.getByLabelText('Neo model 1 auto-compact percentage'));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith(
+      'operation.invoke',
+      expect.objectContaining({
+        input: expect.objectContaining({
+          thinkingLevel: 'think32k',
+          fallbacks: [expect.objectContaining({ thinkingLevel: 'think24k' })],
+        }),
+      })
+    )
+  );
+});
+
+test('says nothing about support while the catalog is loading', async () => {
+  request.mockImplementation(() => new Promise(() => {}));
+  render(<NeoModelSettings />);
+
+  const section = await screen.findByRole('region', { name: 'Neo models' });
+  expect(section.textContent).not.toContain('not supported by this model');
+  expect(section.textContent).not.toContain('support for this model is unknown');
+});
+
+test('shows primary thinking above Advanced and keeps compaction and fallbacks inside it without writing', async () => {
+  const ui = await editor();
+  const advanced = ui.getByText('Advanced').closest('details');
+  expect(advanced).toBeTruthy();
+  expect(advanced?.hasAttribute('open')).toBe(false);
+  expect(advanced?.contains(ui.getByLabelText('Neo model 1 thinking'))).toBe(false);
+  expect(advanced?.contains(ui.getByLabelText('Neo model 1 auto-compact percentage'))).toBe(true);
+  expect(advanced?.contains(ui.getByLabelText('Neo model 2 thinking'))).toBe(true);
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+});
+
+test('automatically saves primary thinking with Advanced closed and preserves inherited fallbacks', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    neo: { preferences: primary },
+  } as GlobalSettings;
+  render(<NeoModelSettings />);
+  const ui = within(await screen.findByRole('region', { name: 'Neo models' }));
+  await waitFor(() =>
+    expect(ui.getByLabelText('Neo model 1 thinking').hasAttribute('disabled')).toBe(false)
+  );
+  expect(ui.queryByRole('button', { name: 'Save Neo models' })).toBeNull();
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think8k' } });
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, thinkingLevel: 'think8k' },
+    })
+  );
+});
+
+test('automatically saves the compact percentage on blur and rejects out-of-range values', async () => {
+  const ui = await editor();
+  const input = ui.getByLabelText('Neo model 1 auto-compact percentage');
+  fireEvent.input(input, { target: { value: '70' } });
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  fireEvent.focusOut(input);
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, autoCompactPercent: 70, fallbacks: [glm, copilot] },
+    })
+  );
+  request.mockClear();
+  fireEvent.input(input, { target: { value: '101' } });
+  fireEvent.focusOut(input);
+  expect((await ui.findByRole('alert')).textContent).toContain('10 to 100');
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+});
+
+test('the only remaining model cannot be removed and explains why without saving', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    neo: { preferences: primary },
+  } as GlobalSettings;
+  const ui = await editor();
+  const remove = ui.getByTitle('Remove') as HTMLButtonElement;
+  expect(remove.disabled).toBe(true);
+  expect(ui.getByText('Add another model before removing this one.')).toBeTruthy();
+  fireEvent.click(remove);
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+});
+
+test('chooses the first model and changes primary and thinking with Advanced closed', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = { settingSources: [] };
+  render(<NeoModelSettings />);
+  const ui = within(await screen.findByRole('region', { name: 'Neo models' }));
+  const advanced = ui.getByText('Advanced').closest('details');
+  const choose = ui.getByRole('button', { name: 'Choose Neo model' });
+  await waitFor(() => expect(choose.hasAttribute('disabled')).toBe(false));
+  expect(advanced?.contains(choose)).toBe(false);
+  fireEvent.click(choose);
+  fireEvent.click(await screen.findByRole('button', { name: 'opus', exact: true }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, thinkingLevel: 'off' },
+    })
+  );
+  await waitFor(() =>
+    expect(ui.getByRole('button', { name: 'Change Neo primary' }).hasAttribute('disabled')).toBe(
+      false
+    )
+  );
+  fireEvent.click(ui.getByRole('button', { name: 'Change Neo primary' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  await waitFor(() =>
+    expect(ui.getByLabelText('Neo model 1 thinking').hasAttribute('disabled')).toBe(false)
+  );
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think8k' } });
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { model: 'router/test', provider: 'openrouter', thinkingLevel: 'think8k' },
+    })
+  );
+  expect(advanced?.open).toBe(false);
+});
+
+test('disables controls during an outstanding save and rolls back a rejected change', async () => {
+  const ui = await editor();
+  let finish!: (result: { ok: false; reason: string }) => void;
+  request.mockImplementation((method) =>
+    method === 'operation.invoke'
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve({ models })
+  );
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think8k' } });
+  expect(ui.getByRole('button', { name: 'Change Neo primary' }).hasAttribute('disabled')).toBe(
+    true
+  );
+  expect(ui.getByLabelText('Neo model 2 thinking').hasAttribute('disabled')).toBe(true);
+  finish({ ok: false, reason: 'unavailable' });
+  expect((await ui.findByRole('alert')).textContent).toContain('unavailable');
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('think24k');
+  expect(ui.getByRole('button', { name: 'Change Neo primary' }).hasAttribute('disabled')).toBe(
+    false
+  );
+});
+
+test('clearing fallbacks saves immediately and leaves primary untouched', async () => {
+  const ui = await editor();
+  fireEvent.click(ui.getByRole('button', { name: 'Clear saved fallbacks' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, fallbacks: [] },
+    })
+  );
+});
+
+test.each(['picker', 'make primary', 'move up', 'remove primary'])(
+  'confirms %s before changing the primary and leaves no change on cancel',
+  async (action) => {
+    const ui = await editor();
+    if (action === 'picker') {
+      fireEvent.click(ui.getByRole('button', { name: 'Change Neo primary' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
+    } else if (action === 'make primary') {
+      fireEvent.click(ui.getByRole('button', { name: 'Make Neo model 2 primary' }));
+    } else if (action === 'move up') {
+      fireEvent.click(ui.getAllByTitle('Move up')[1]);
+    } else {
+      fireEvent.click(ui.getAllByTitle('Remove')[0]);
+    }
+    expect(
+      await screen.findByText(`Switch Neo to ${action === 'picker' ? 'router/test' : 'glm-5'}?`)
+    ).toBeTruthy();
+    expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+    expect(ui.getByText('opus · Anthropic')).toBeTruthy();
+  }
+);
+
+test('saves a primary switch only after confirmation', async () => {
+  const ui = await editor();
+  fireEvent.click(ui.getByRole('button', { name: 'Make Neo model 2 primary' }));
+  expect(await screen.findByText('Switch Neo to glm-5?')).toBeTruthy();
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...glm, fallbacks: [primary, copilot] },
+    })
+  );
+});
+
+test('keeps a pending confirmation when the connection drops and saves after reconnection', async () => {
+  const ui = await editor();
+  fireEvent.click(ui.getByRole('button', { name: 'Make Neo model 2 primary' }));
+  expect(await screen.findByText('Switch Neo to glm-5?')).toBeTruthy();
+  act(() => {
+    connectionState.value = 'disconnected';
+  });
+  const confirm = screen.getByRole('button', { name: 'Processing...' }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+  fireEvent.click(confirm);
+  expect(screen.getByText('Switch Neo to glm-5?')).toBeTruthy();
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  act(() => {
+    connectionState.value = 'connected';
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...glm, fallbacks: [primary, copilot] },
+    })
+  );
+});
+
+test('changing primary via picker does not transfer the previous model compaction override', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    neo: { preferences: { ...primary, autoCompactPercent: 70, fallbacks: [glm, copilot] } },
+  } as GlobalSettings;
+  const ui = await editor();
+  fireEvent.click(ui.getByRole('button', { name: 'Change Neo primary' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: {
+        ...primary,
+        model: 'router/test',
+        provider: 'openrouter',
+        fallbacks: [glm, copilot],
+      },
+    })
+  );
+  expect((ui.getByLabelText('Neo model 1 auto-compact percentage') as HTMLInputElement).value).toBe(
+    '90'
+  );
+});
+
+test.each(['Change Neo primary', 'Add Neo model'])(
+  'keeps %s picker open and prevents selection while disconnected',
+  async (action) => {
+    const ui = await editor();
+    fireEvent.click(ui.getByRole('button', { name: action }));
+    const model = await screen.findByRole('button', { name: 'router/test' });
+    act(() => {
+      connectionState.value = 'disconnected';
+    });
+    expect((model as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(model);
+    expect(screen.getByRole('button', { name: 'router/test' })).toBeTruthy();
+    expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+    act(() => {
+      connectionState.value = 'connected';
+    });
+    expect((model as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(model);
+    if (action === 'Change Neo primary') {
+      expect(await screen.findByText('Switch Neo to router/test?')).toBeTruthy();
+    } else {
+      await waitFor(() =>
+        expect(request).toHaveBeenCalledWith('operation.invoke', {
+          name: 'neo.preferences.set',
+          input: {
+            ...primary,
+            fallbacks: [
+              glm,
+              copilot,
+              { model: 'router/test', provider: 'openrouter', thinkingLevel: 'off' },
+            ],
+          },
+        })
+      );
+    }
+  }
+);
+
+test('a busy confirmation ignores Escape and backdrop until reconnected', async () => {
+  const ui = await editor();
+  fireEvent.click(ui.getByRole('button', { name: 'Make Neo model 2 primary' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Confirm Neo model' });
+  act(() => {
+    connectionState.value = 'disconnected';
+  });
+  fireEvent.keyDown(document, { key: 'Escape' });
+  fireEvent.click(dialog.parentElement!.querySelector('.absolute')!);
+  expect(screen.getByRole('dialog', { name: 'Confirm Neo model' })).toBeTruthy();
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  act(() => {
+    connectionState.value = 'connected';
+  });
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Confirm Neo model' })).toBeNull()
+  );
+});
+
+test('explains that actions must be retried while a percent save is pending', async () => {
+  const ui = await editor();
+  let finish!: (result: { ok: true; preferences: unknown }) => void;
+  request.mockImplementation((method) =>
+    method === 'operation.invoke'
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve({ models })
+  );
+  const input = ui.getByLabelText('Neo model 1 auto-compact percentage');
+  fireEvent.input(input, { target: { value: '70' } });
+  fireEvent.focusOut(input);
+  expect(ui.getByText(/wait.*retry/i)).toBeTruthy();
+  const clear = ui.getByRole('button', { name: 'Clear saved fallbacks' }) as HTMLButtonElement;
+  expect(clear.disabled).toBe(true);
+  fireEvent.click(clear);
+  expect(request.mock.calls.filter(([method]) => method === 'operation.invoke')).toHaveLength(1);
+  finish({
+    ok: true,
+    preferences: { ...primary, autoCompactPercent: 70, fallbacks: [glm, copilot] },
+  });
+  await waitFor(() => expect(ui.queryByText(/wait.*retry/i)).toBeNull());
+  fireEvent.click(clear);
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, autoCompactPercent: 70, fallbacks: [] },
+    })
+  );
+  finish({ ok: true, preferences: { ...primary, autoCompactPercent: 70, fallbacks: [] } });
+});
+
+test('a failed save retains a newer pushed preference instead of restoring stale data', async () => {
+  const ui = await editor();
+  let finish!: (result: { ok: false; reason: string }) => void;
+  request.mockImplementation((method) =>
+    method === 'operation.invoke'
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve({ models })
+  );
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think8k' } });
+  act(() => {
+    (globalSettings as { value: GlobalSettings | null }).value = {
+      neo: {
+        preferences: {
+          ...primary,
+          thinkingLevel: 'off',
+          autoCompactPercent: 80,
+          fallbacks: [glm, copilot],
+        },
+      },
+    } as GlobalSettings;
+  });
+  await waitFor(() =>
+    expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('off')
+  );
+  finish({ ok: false, reason: 'offline' });
+  expect((await ui.findByRole('alert')).textContent).toContain('offline');
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('off');
+  expect((ui.getByLabelText('Neo model 1 auto-compact percentage') as HTMLInputElement).value).toBe(
+    '80'
+  );
 });

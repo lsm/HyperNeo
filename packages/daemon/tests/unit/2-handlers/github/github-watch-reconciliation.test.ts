@@ -8,7 +8,10 @@ import {
   reportGitHubWatchHealth,
 } from '../../../../src/lib/external-events/github/github-watch-inventory.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
-import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import {
+  createCodingPackTables,
+  prepareCodingTodoStorage,
+} from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 describe('GitHub watch reconciliation', () => {
@@ -26,6 +29,7 @@ describe('GitHub watch reconciliation', () => {
     });
     db.exec(`INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('ask','owner','Ask','Request','open',1,1);
       INSERT INTO neo_todos (id,ask_id,position,title,done_when,repo,check_json,state,created_at,updated_at) VALUES ('todo','ask',0,'Todo','Done','fixture/todo','{"pack":"coding","kind":"pr","params":{}}','doing',1,1)`);
+    prepareCodingTodoStorage(db);
     const inventory = new GitHubWatchInventory(db, subscriptions);
     const extension = new GitHubEventExtension(db, undefined, {
       pollIntervalMs: 0,
@@ -87,6 +91,7 @@ describe('GitHub watch reconciliation', () => {
     insert.run('other', 'fixture/other', '{"pack":"lifeAdmin"}', 'todo');
     insert.run('wildcard', 'fixture/*', '{"pack":"coding"}', 'doing');
     insert.run('invalid', 'https://github.com/fixture/repo', '{"pack":"coding"}', 'doing');
+    prepareCodingTodoStorage(db);
     try {
       expect(new GitHubWatchInventory(db, subscriptions).list()).toEqual([
         { owner: 'fixture', repo: 'fallback' },
@@ -143,6 +148,7 @@ describe('GitHub watch reconciliation', () => {
       db.exec(
         `INSERT INTO neo_todos (id,ask_id,position,title,done_when,repo,check_json,state,created_at,updated_at) VALUES ('new','ask',0,'Todo','Done','fixture/later','{"pack":"coding"}','todo',1,1)`
       );
+      prepareCodingTodoStorage(db);
       await waitFor(
         () => extension.repo.getWatchedRepo('sessions', 'fixture', 'later')?.lastPollAt != null
       );

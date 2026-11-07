@@ -18,7 +18,7 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   listProviderAuthStatus: async () => ({ providers: [] }),
   updateGlobalSettings,
 }));
-import { NeoModelSettings } from '../NeoModelSettings.tsx';
+import { NeoWorkerPermissionSettings } from '../NeoWorkerPermissionSettings.tsx';
 import { globalSettings } from '../../../lib/state.ts';
 
 const neo = {
@@ -54,7 +54,7 @@ test.each([
   'a saved %s worker permission shows its effective real name and opening writes nothing',
   (saved, value, label) => {
     settle(saved);
-    render(<NeoModelSettings />);
+    render(<NeoWorkerPermissionSettings />);
     const select = workerSelect();
     expect(select.value).toBe(value);
     expect(select.options[select.selectedIndex].textContent).toBe(label);
@@ -70,14 +70,14 @@ test.each([
 
 test('shows no worker permission until the settings have loaded', () => {
   (globalSettings as { value: GlobalSettings | null }).value = null;
-  render(<NeoModelSettings />);
+  render(<NeoWorkerPermissionSettings />);
   expect(screen.queryByRole('combobox', { name: 'Claude worker permission' })).toBeNull();
   expect(updateGlobalSettings).not.toHaveBeenCalled();
 });
 
 test('says it applies only to Claude workers Neo starts from now on', () => {
   settle();
-  render(<NeoModelSettings />);
+  render(<NeoWorkerPermissionSettings />);
   expect(
     screen.getByText(
       'Claude Code workers Neo starts from now on use this mode; running sessions keep theirs.'
@@ -87,7 +87,7 @@ test('says it applies only to Claude workers Neo starts from now on', () => {
 
 test('picking a mode saves it without dropping the rest of the Neo settings', () => {
   settle('auto');
-  render(<NeoModelSettings />);
+  render(<NeoWorkerPermissionSettings />);
   fireEvent.change(workerSelect(), { target: { value: 'acceptEdits' } });
   expect(updateGlobalSettings).toHaveBeenCalledWith({
     neo: { ...neo, workerPermissionMode: 'acceptEdits' },
@@ -96,14 +96,14 @@ test('picking a mode saves it without dropping the rest of the Neo settings', ()
 
 test('worker settings no longer list allowed Unix sockets', () => {
   settle();
-  render(<NeoModelSettings />);
+  render(<NeoWorkerPermissionSettings />);
   expect(screen.queryByText('Worker Unix sockets')).toBeNull();
   expect(updateGlobalSettings).not.toHaveBeenCalled();
 });
 
 test('the worker sandbox shows off when unset and saves the chosen mode', async () => {
   settle();
-  render(<NeoModelSettings />);
+  render(<NeoWorkerPermissionSettings />);
   const select = screen.getByRole('combobox', { name: 'Worker sandbox' }) as HTMLSelectElement;
   expect(select.value).toBe('off');
   expect([...select.options].map((option) => option.value)).toEqual(['off', 'always', 'on-demand']);

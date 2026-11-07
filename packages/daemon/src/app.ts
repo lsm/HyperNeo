@@ -20,6 +20,7 @@ import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { ensureLocalCredential } from './lib/pairing/local-credential.ts';
+import { createMessageImageHandler } from './lib/rpc-handlers/message-image-route.ts';
 import { createAgentReadGuard } from './lib/pairing/agent-read.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
@@ -202,6 +203,8 @@ import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
+import { OapEngine } from './lib/oap/oap-engine.ts';
+import { createOapRuntime } from './lib/oap/oap-query.ts';
 
 const mailboxLog = new Logger('mailbox');
 
@@ -353,9 +356,11 @@ export interface CreateDaemonAppOptions {
 }
 
 export interface DaemonAppContext {
+  oapEngine: OapEngine;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
+  handleMessageImage: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   authenticateUpgrade: (
     req: Request,
     remoteAddress: string | null
@@ -404,6 +409,7 @@ async function invalidateInFlightModelLoads(): Promise<void> {
 
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
+  const oapEngine = new OapEngine();
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
@@ -794,7 +800,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           credentialManager
             .getCredentialStore()
             .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
-        )
+        ),
+      createOapRuntime(oapEngine, config.oap, internalEventBus, reactiveDb.db, messageHub)
     );
 
     sessionManager.start();
@@ -1203,6 +1210,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       () => sessionManager.getOperationRegistry(),
       createUpgradeAuthenticator({ db: () => db.gateway, now: Date.now, agentRead: true })
     );
+    const handleMessageImage = createMessageImageHandler(authenticateUpgrade, () => db.gateway);
     if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
       await ensureLocalCredential(db.gateway);
     const guardOrigin = createRequestGuard({
@@ -1285,6 +1293,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         const markdown = await handleAskMarkdown(req, client?.remoteAddress ?? null);
         if (markdown) return markdown;
+        const image = await handleMessageImage(req, client?.remoteAddress ?? null);
+        if (image) return image;
 
         if (url.pathname === '/ws') {
           const device = await authenticateUpgrade(req, client?.remoteAddress ?? null);
@@ -1679,6 +1689,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .live.map((pid) => ({ pid, daemonPid: process.pid })),
         ];
         await sessionManager.cleanup();
+        await oapEngine.close();
         try {
           await collectDaemonScratch(false, scratchChildrenAtExit, logScratchError);
         } catch (error) {
@@ -1730,7 +1741,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         throw error;
       } finally {
         try {
-          await closeFileLogCapture();
+          try {
+            await oapEngine.close();
+          } finally {
+            await closeFileLogCapture();
+          }
         } finally {
           stopEventLoopLagLog();
           eventLoopWatchdog?.stop();
@@ -1752,9 +1767,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     return {
+      oapEngine,
       server,
       handlePair,
       handleAskMarkdown,
+      handleMessageImage,
       authenticateUpgrade,
       guardRequest,
       db,
@@ -1792,6 +1809,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   } catch (error) {
     startupTimer.finish();
     await failedStartupCleanup?.();
+    await oapEngine.close();
     stopEventLoopLagLog();
     eventLoopWatchdog?.stop();
     startupLogCaptureCleanup?.();

@@ -34,7 +34,7 @@ import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import {
   markWorkUnusable,
-  readFreeWorkers,
+  readReusableWorkers,
   recordStartedWork,
   type StartedWork,
 } from '../../../storage/work-started-sessions.ts';
@@ -86,6 +86,8 @@ import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
 import { neoFolder } from '../../neo/folder.ts';
 import { neoStartPlace } from '../../neo/start-place.ts';
+import { neoTodoRepository } from '../../neo/pack-contract.ts';
+import { neoTodoPolicies } from '../../neo/packs/todo-policies.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { WorktreeManager } from '../../worktree-manager.ts';
@@ -622,6 +624,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       db: db(),
       machine,
       workspaceRoot: context.deps.config.workspaceRoot,
+      repository: (todo, ask) =>
+        neoTodoRepository(todo ?? { check: null, named: null }, neoTodoPolicies(db()), {
+          ask,
+          todo,
+          start: true,
+        }),
     }),
     isOpenTodo: (todoId: string, sessionId: string) => {
       const store = new NeoAskTodoRepository(db());
@@ -656,7 +664,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         ),
     } satisfies WorkVerbDeps['workInputs'],
     recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
-    freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
+    freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
+      readReusableWorkers(db(), adapter, todoId, sessionId),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;

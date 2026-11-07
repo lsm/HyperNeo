@@ -16,8 +16,9 @@ export class GitHubWatchInventory {
 
   list(): Repo[] {
     const todos = this.db
-      .prepare(`SELECT DISTINCT coalesce(t.repo, a.repo) AS repo
+      .prepare(`SELECT DISTINCT coalesce(p.repo, a.repo) AS repo
       FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
+      LEFT JOIN pack_coding_todos p ON p.todo_id = t.id
       JOIN sessions s ON s.id = a.session_id
       WHERE s.status != 'archived' AND a.status = 'open' AND t.state IN ('todo', 'doing', 'blocked')
         AND json_extract(t.check_json, '$.pack') = 'coding'`)
@@ -25,8 +26,8 @@ export class GitHubWatchInventory {
     const candidates = [
       ...this.subscriptions.listAll().map((sub) => githubRepoOfTopic(sub.topic)),
       ...todos.map((row) =>
-        row.repo && /^[\w.-]+\/[\w.-]+$/.test(row.repo)
-          ? githubRepoOfTopic(`github/${row.repo}/`)
+        row.repo && /^(github\.com\/)?[\w.-]+\/[\w.-]+$/.test(row.repo)
+          ? githubRepoOfTopic(`github/${row.repo.replace(/^github\.com\//, '')}/`)
           : null
       ),
     ];

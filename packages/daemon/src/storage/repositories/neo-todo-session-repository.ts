@@ -15,7 +15,7 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { markWorkUnusable } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
-import type { WorkRef, WorkStatus } from '../../lib/drivers/types.ts';
+import type { WorkRef, WorkStatus, WorkTurnQuestion } from '../../lib/drivers/types.ts';
 import type { DriverSent, NeoDriverTarget } from '../../lib/neo/driver-work.ts';
 import type { NeoDriverProgress } from '../../lib/neo/settle-driver-work.ts';
 import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
@@ -214,6 +214,20 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     if (since !== null || !todo || !followed) return null;
     this.recordNeedsYouSince(todoId, now);
     return todo;
+  }
+
+  stageTurnQuestion(todoId: string, question: WorkTurnQuestion, now: number) {
+    this.recordNudge(todoId, {
+      ...(this.readNudge(todoId) ?? { since: now, nudges: 0 }),
+      turnQuestion: question.id,
+      workerQuestion: {
+        kind: 'question',
+        title: question.text,
+        options: question.actions,
+        language: 'en',
+        report: question.text,
+      },
+    });
   }
 
   nudgeContext(todoId: string) {
@@ -577,6 +591,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'recordIdentity',
     'recordProgress',
     'claimNeedsYou',
+    'stageTurnQuestion',
     'claimNudge',
     'finishNudge',
     'noteWorkerStatus',

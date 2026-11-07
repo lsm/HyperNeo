@@ -18,7 +18,6 @@ import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/n
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
-import { neoTodoHome } from '../../../../src/lib/neo/todo-repo.ts';
 
 const turn = (_messageId: string, _human = true): OperationCaller => ({
   source: 'mcp',
@@ -207,8 +206,8 @@ describe('neo.ask.open and neo.ask.settle', () => {
         { askId: opened.ask.id, status: 'done', outcome: 'Done' },
         turn('m3')
       )
-    ).toMatchObject({ ok: true, records: [expect.stringContaining('todos_unfinished')] });
-    expect(h.store.getAsk(opened.ask.id)).toMatchObject({ status: 'done', outcome: 'Done' });
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('todos_unfinished:') });
+    expect(h.store.getAsk(opened.ask.id)).toMatchObject({ status: 'open', outcome });
   });
 
   test('refuses recording by a worker, another Neo, or on an unfocused or settled ask', async () => {
@@ -268,7 +267,12 @@ describe('neo.ask.open and neo.ask.settle', () => {
     });
     const independent = await call('neo.ask.open', { ...opening, todos: [] }, turn('m1'));
     expect(independent.ok && independent.ask.id).not.toBe(result.ask.id);
-    const child = neoTodoHome(store, result.ask, 'github.com/verify/second', true);
+    const child = store.openAsk({
+      ...result.ask,
+      id: 'historical-child',
+      parentId: result.ask.id,
+      repo: 'github.com/verify/second',
+    });
     expect(child.goalId).toBe(mine.id);
     expect(store.listGoalAsks(mine.id).map((ask) => ask.id)).toEqual(
       expect.arrayContaining([result.ask.id, child.id])
@@ -342,6 +346,9 @@ describe('neo.ask.open and neo.ask.settle', () => {
       const { call, store, stopFails } = setup();
       const opened = await call('neo.ask.open', opening, turn('m5'));
       if (!opened.ok) throw new Error(opened.reason);
+      if (status === 'done')
+        for (const todo of store.listTodos(opened.ask.id))
+          store.updateTodo(todo, { state: 'done', evidence: 'Observed' }, 2);
       stopFails.value = true;
       const settled = await call(
         'neo.ask.settle',
@@ -351,46 +358,38 @@ describe('neo.ask.open and neo.ask.settle', () => {
       expect(settled.ok).toBe(false);
       expect(!settled.ok && settled.reason).toContain('the ask is still open');
       expect(store.getAsk(opened.ask.id)?.status).toBe('open');
-      expect(store.listTodos(opened.ask.id).map((todo) => todo.state)).toEqual(['doing', 'todo']);
+      expect(store.listTodos(opened.ask.id).map((todo) => todo.state)).toEqual(
+        status === 'done' ? ['done', 'done'] : ['doing', 'todo']
+      );
     }
   );
 
-  test('the human can mark an ask done with unfinished coding todos', async () => {
-    const { call, store, stopped } = setup();
-    const opened = await call('neo.ask.open', opening, turn('human-mark-done'));
-    if (!opened.ok) throw new Error(opened.reason);
-    const settled = await call(
-      'neo.ask.settle',
-      { askId: opened.ask.id, status: 'done', outcome: 'Closed by the user.' },
-      { source: 'rpc', principal: 'local' }
-    );
-    expect(settled.ok && settled.ask.status).toBe('done');
-    expect(store.getAsk(opened.ask.id)?.status).toBe('done');
-    expect(stopped).toEqual(opened.todos.map((todo) => todo.id));
-    expect(store.listTodos(opened.ask.id).every((todo) => todo.state === 'closed_unverified')).toBe(
-      true
-    );
-  });
-
-  test('settling unfinished work records it and closes each todo visibly unverified', async () => {
-    const { call, store, stopped } = setup();
-    const opened = await call('neo.ask.open', opening, turn('m7'));
-    if (!opened.ok) throw new Error(opened.reason);
-    const settled = await call(
-      'neo.ask.settle',
-      { askId: opened.ask.id, status: 'done', outcome: 'Closed.' },
-      turn('m7')
-    );
-    expect(settled).toMatchObject({
-      ok: true,
-      records: [expect.stringContaining('todos_unfinished:')],
-    });
-    expect(store.listTodos(opened.ask.id).map((todo) => todo.state)).toEqual([
-      'closed_unverified',
-      'closed_unverified',
-    ]);
-    expect(stopped).toEqual(opened.todos.map((todo) => todo.id));
-  });
+  test.each(['rpc', 'mcp'] as const)(
+    '%s cannot mark an ask done with unfinished coding todos',
+    async (source) => {
+      const { call, store, stopped } = setup();
+      const opened = await call('neo.ask.open', opening, turn('early-done'));
+      if (!opened.ok) throw new Error(opened.reason);
+      const before = store.listTodos(opened.ask.id);
+      expect(
+        await call(
+          'neo.ask.settle',
+          {
+            askId: opened.ask.id,
+            status: 'done',
+            outcome: 'Too soon',
+          },
+          { source, principal: 'local', role: 'neo', sessionId: 'neo' }
+        )
+      ).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('todos_unfinished:'),
+      });
+      expect(store.getAsk(opened.ask.id)?.status).toBe('open');
+      expect(store.listTodos(opened.ask.id)).toEqual(before);
+      expect(stopped).toEqual([]);
+    }
+  );
 
   test('settling stops running sessions, retires open questions and ends the ask', async () => {
     const { call, store, stopped } = setup();
@@ -501,5 +500,58 @@ describe('requireAskSession and requireNeoAskGoal', () => {
       typeof requireNeoAskGoal
     >[2];
     expect(requireNeoAskGoal('goal-1', 'worker-1', goal)).toEqual({ value: 'goal-1' });
+  });
+});
+
+describe('ask topics', () => {
+  test('neo.ask.open records a trimmed topic and leaves it null when omitted', async () => {
+    const h = setup();
+    const labelled = await h.call(
+      'neo.ask.open',
+      { title: 'Screen time', request: 'Limit the tablet', topic: '  家长控制 ' },
+      turn('m1')
+    );
+    const plain = await h.call(
+      'neo.ask.open',
+      { title: 'Inbox', request: 'Sort the inbox' },
+      turn('m2')
+    );
+    if (!labelled.ok || !plain.ok) throw new Error('open refused');
+    expect(labelled.ask.topic).toBe('家长控制');
+    expect(plain.ask.topic).toBeNull();
+    expect(h.store.getAsk(labelled.ask.id)?.topic).toBe('家长控制');
+    for (const topic of ['', '   ', 'Thirteen char'])
+      expect(() => h.ops['neo.ask.open'].inputSchema.parse({ ...opening, topic })).toThrow();
+  });
+
+  test('neo.ask.topic sets and changes an open ask topic and refuses a settled ask', async () => {
+    const h = setup();
+    const opened = await h.call(
+      'neo.ask.open',
+      { title: 'Apply', request: 'Apply to universities' },
+      turn('m1')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    const set = await h.call(
+      'neo.ask.topic',
+      { askId: opened.ask.id, topic: ' 大学申请 ' },
+      turn('m2')
+    );
+    expect(set).toMatchObject({ ok: true, ask: { id: opened.ask.id, topic: '大学申请' } });
+    await h.call('neo.ask.topic', { askId: opened.ask.id, topic: 'OAP' }, turn('m3'));
+    expect(h.store.getAsk(opened.ask.id)?.topic).toBe('OAP');
+    expect(
+      await h.call(
+        'neo.ask.topic',
+        { askId: opened.ask.id, topic: 'Mail' },
+        { source: 'mcp', role: 'neo', sessionId: 'neo-other' }
+      )
+    ).toMatchObject({ ok: false });
+    h.store.settleAsk(h.store.getAsk(opened.ask.id)!, 'done', 'Sent', 4);
+    expect(
+      await h.call('neo.ask.topic', { askId: opened.ask.id, topic: '邮件' }, turn('m4'))
+    ).toEqual({ ok: false, reason: 'ask_settled: this ask is done.' });
+    expect(h.store.getAsk(opened.ask.id)?.topic).toBe('OAP');
+    expect(h.ops['neo.ask.topic'].policy?.roles).toEqual(['neo']);
   });
 });

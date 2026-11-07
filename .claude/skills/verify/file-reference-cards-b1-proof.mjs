@@ -47,6 +47,16 @@ export async function verifyCardSources(page,{run,base,width,bun}) {
     if(kind==='question') assert.equal(calls.length,0);
     assert.equal(await container.getByRole('button',{name:/Open current file:/}).count(),1);
     assert.equal(await page.getByRole('button',{name:/Open current file: metadata-only/}).count(),0);
+    if(kind==='question'){
+      assert.equal(await container.getByRole('link',{name:'PR',exact:true}).getAttribute('data-preview-reference'),null);
+      const inline=container.getByRole('link',{name:`Open preview: ${files[0]}`,exact:true}).first();
+      await writeFile(files[0],'# Inline question source\n');
+      await inline.click();
+      await page.getByRole('heading',{name:'Inline question source',exact:true}).waitFor();
+      await shot('question-inline');
+      await close();
+      await work();
+    }
     await card.scrollIntoViewIfNeeded();
     await shot(`${kind}-card`);
     await writeFile(files[0],'# Card source A\n');
@@ -82,6 +92,8 @@ if(typeof process!=='undefined'&&process.argv[1]===fileURLToPath(import.meta.url
       try{
         await context.route('**/*',route=>route.request().url().startsWith(base)?route.continue():(offOrigin.push(route.request().url()),route.abort()));
         const page=await context.newPage();
+        const pairing=JSON.parse(execFileSync(process.env.VERIFY_BUN??'bun',['.claude/skills/verify/rpc.ts','device.pair.create',JSON.stringify({kind:'human',name:'Synthetic file cards'})],{env:{...process.env,VERIFY_PORT:port,HYPERNEO_DATA_DIR:join(run,'data')},encoding:'utf8'})).reply;
+        assert.equal((await page.request.post(`${base}/pair`,{headers:{origin:base},data:{code:pairing.code,name:'Synthetic file cards'}})).status(),200);
         const options={run,base,width,bun:process.env.VERIFY_BUN??'bun'};
         await verifyLiveFilePage(page,{...options,cards:true});
         await verifyCardSources(page,options);

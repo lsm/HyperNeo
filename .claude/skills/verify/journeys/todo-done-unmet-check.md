@@ -19,7 +19,12 @@ restarting the isolated daemon. After restart Neo fixes the wrong check with
 `neo.todo.edit` to an existing file; the next sweep finishes it as done while
 the PR todo stays blocked.
 
-A separate ask settled done by `neo.ask.settle` still records its unfinished
-todo as `closed_unverified`; settlement is the only path to that state.
+A separate ask's `neo.ask.settle` done request is refused with `todos_unfinished`,
+leaving its blocked todo and open ask unchanged. Explicit dropped settlement
+removes active work without certifying it. A seeded legacy removed row without
+a reason also refuses done; neo.todo.remove cannot amend that terminal row.
+The refusal's explicit dropped option succeeds. Both asks remain dropped across
+restart, their rows stay removed and neither counts as done. No reason is invented
+for the legacy row.
 Evidence is `observed.json` and `proof.log`. The wrapper removes synthetic
 daemon data after preserving evidence.

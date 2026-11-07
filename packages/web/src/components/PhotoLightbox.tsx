@@ -56,11 +56,13 @@ export function PhotoLightbox({
 
 export function PhotoThumbnail({
   src,
+  fullSrc,
   label,
   style,
   initiallyOpen = false,
 }: {
   src: string;
+  fullSrc?: string;
   label: string;
   style?: JSX.CSSProperties;
   initiallyOpen?: boolean;
@@ -85,7 +87,7 @@ export function PhotoThumbnail({
       </button>
       {open && (
         <PhotoLightbox
-          src={src}
+          src={fullSrc ?? src}
           label={label}
           onClose={() => {
             setOpen(false);

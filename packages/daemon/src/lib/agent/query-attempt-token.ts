@@ -20,6 +20,10 @@ export class QueryAttemptRegistry {
     return token;
   }
 
+  isLatest(token: QueryAttemptToken): boolean {
+    return token.attemptId > 0 && token.attemptId === this.nextAttemptId - 1;
+  }
+
   invalidate(token: QueryAttemptToken): boolean {
     if (this.current !== token) return false;
     this.current = null;

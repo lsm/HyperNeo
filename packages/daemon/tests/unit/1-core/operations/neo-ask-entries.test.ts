@@ -676,7 +676,7 @@ describe('fitNeoSnapshotBudget with packRows', () => {
     expect(fitted.packRows?.[0].rows[0].pr).toBe('lsm/hyperneo#0');
   });
 
-  test("keeps an open todo's PR rows while it halves the other rows and the asks", () => {
+  test('keeps every open ask and its linked pack rows when step details are omitted', () => {
     const rows = (count: number, todoId?: string) =>
       Array.from({ length: count }, (_, index) => ({
         pr: `lsm/hyperneo#${todoId ? 1000 + index : index}`,
@@ -707,7 +707,13 @@ describe('fitNeoSnapshotBudget with packRows', () => {
     expect(halved.packRows?.[0].rows.filter((row) => row.todoId).length).toBe(3);
     expect(halved.packRows?.[0].rows.length).toBeLessThan(103);
     const trimmed = fitNeoSnapshotBudget(snapshot, 20_000);
-    expect(trimmed.todoAsks?.length).toBeLessThan(40);
+    expect(trimmed.todoAsks?.map((entry) => entry.ask.id)).toEqual(
+      snapshot.todoAsks?.map((entry) => entry.ask.id)
+    );
+    const retained = trimmed.todoAsks?.reduce((count, entry) => count + entry.todos.length, 0);
+    expect(retained).toBeGreaterThan(0);
+    expect(retained).toBeLessThan(800);
+    expect(Buffer.byteLength(JSON.stringify(trimmed), 'utf8')).toBeLessThanOrEqual(20_000);
     expect(trimmed.packRows?.[0].rows.filter((row) => row.todoId).map((row) => row.pr)).toEqual([
       'lsm/hyperneo#1000',
       'lsm/hyperneo#1001',

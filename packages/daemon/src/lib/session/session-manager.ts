@@ -118,7 +118,8 @@ export class SessionManager {
     private jobProcessor: JobQueueProcessor,
     private skillsManager?: SkillsManager,
     private appMcpServerRepo?: AppMcpServerRepository,
-    private getGithubToken?: () => Promise<string | null>
+    private getGithubToken?: () => Promise<string | null>,
+    private oapRuntime?: (session: Session) => import('../agent/query-runner.ts').OapQueryRuntime
   ) {
     this.logger = new Logger('SessionManager');
     this.worktreeManager = new WorktreeManager();
@@ -176,6 +177,7 @@ export class SessionManager {
       session.config.toolGuards,
       {
         autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
+        oap: this.oapRuntime?.(session),
         ...runtimeOptions,
         getGithubToken: this.getGithubToken,
         operationRegistryProvider: () => this.getOperationRegistry(),

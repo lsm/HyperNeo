@@ -77,6 +77,7 @@ export class InterruptHandler {
       const teardownRequiredAtEntry =
         stateAtEntry.status !== 'idle' && stateAtEntry.status !== 'interrupted';
       if (teardownRequiredAtEntry) {
+        this.ctx.queryObject?.prepareInterrupt?.();
         this.ctx.attemptTokens?.invalidateCurrent();
       }
 

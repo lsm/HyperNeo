@@ -4,11 +4,15 @@ import type MarkdownRendererComponent from '../components/chat/MarkdownRenderer.
 type Renderer = typeof MarkdownRendererComponent;
 
 let rendererPromise: Promise<Renderer> | null = null;
+let resolvedRenderer: Renderer | null = null;
 
 function loadMarkdownRenderer(): Promise<Renderer> {
   if (!rendererPromise) {
     rendererPromise = import('../components/chat/MarkdownRenderer.tsx')
-      .then((module) => module.default)
+      .then((module) => {
+        resolvedRenderer = module.default;
+        return resolvedRenderer;
+      })
       .catch((error) => {
         rendererPromise = null;
         throw error;
@@ -24,7 +28,7 @@ export function NeoQuoteExcerpt({
   excerpt: string;
   demoteLinks: boolean;
 }) {
-  const [Renderer, setRenderer] = useState<Renderer | null>(null);
+  const [Renderer, setRenderer] = useState<Renderer | null>(() => resolvedRenderer);
   useEffect(() => {
     let live = true;
     loadMarkdownRenderer()

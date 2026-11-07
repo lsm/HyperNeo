@@ -28,4 +28,4 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 [[ "$ready" == true ]]
-node .claude/skills/verify/neo-model-settings.mjs "$PORT" "$RUN"
+HYPERNEO_DATA_DIR="$RUN/data" node .claude/skills/verify/neo-model-settings.mjs "$PORT" "$RUN"

@@ -21,6 +21,8 @@ import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-c
 import {
   createNeoTodoRunner,
   neoTodoNote,
+  neoTurnQuestionDue,
+  neoTurnQuestionGone,
   planNeoTodoCheck,
   planNeoTodoSettled,
   requireNeoTodoStartable,
@@ -1485,7 +1487,7 @@ describe('neo todo runner', () => {
     expect(told).toEqual(['Todo "Rows" is done: #1 已合并']);
   });
 
-  test('a todo that starts in another repo moves to that repo’s child card first', async () => {
+  test('a todo starting in another repository stays on its original card', async () => {
     const { store, sessions, runner } = setup();
     const todo = store.addTodo(
       'moving',
@@ -1513,13 +1515,9 @@ describe('neo todo runner', () => {
       },
     });
     const started = await runner.start(todo.id);
-    const child = store.getAsk(started.ok ? started.todo.askId : '')!;
-    expect(child).toMatchObject({
-      title: 'iOS card · ops',
-      parentId: 'ask',
-      repo: 'github.com/lsm/ops',
-    });
-    expect(store.getTodo('moving')).toMatchObject({ state: 'doing', repo: 'github.com/lsm/ops' });
+    expect(started.ok && started.todo.askId).toBe('ask');
+    expect(store.getTodo('moving')).toMatchObject({ state: 'doing', askId: 'ask' });
+    expect(store.listChildAsks('ask')).toEqual([]);
   });
 
   test("a todo checked by a pack sends that pack's worker rules after its instruction", async () => {
@@ -1816,6 +1814,31 @@ describe('neo todo runner follow-ups', () => {
   });
 });
 
+describe('neoTurnQuestionDue', () => {
+  const question = { id: 't', at: 100, text: 'Ship it?', actions: [] };
+  const facts = { noted: undefined, anchor: 50, lastInputAt: null };
+  test.each([
+    ['a fresh question', facts, true],
+    ['one already told', { ...facts, noted: 't' }, false],
+    ['a new one after a told one', { ...facts, noted: 's' }, true],
+    ['one from before the latest send', { ...facts, anchor: 100 }, false],
+    ['while the human is in the session', { ...facts, lastInputAt: 900_000 }, false],
+  ])('%s', (_label, given, due) => {
+    expect(neoTurnQuestionDue(question, given, 960_000)).toBe(due);
+  });
+});
+
+describe('neoTurnQuestionGone', () => {
+  test('only when a told question is no longer the live one', () => {
+    const live = { turnQuestion: { id: 't', at: 1, text: 'x', actions: [] } };
+    expect(neoTurnQuestionGone('t', live)).toBe(false);
+    expect(neoTurnQuestionGone('t', {})).toBe(true);
+    expect(neoTurnQuestionGone('s', live)).toBe(true);
+    expect(neoTurnQuestionGone(undefined, {})).toBe(false);
+    expect(neoTurnQuestionGone('t', null)).toBe(false);
+  });
+});
+
 describe('a todo session waiting on the human', () => {
   const warn = () => {};
 
@@ -1851,6 +1874,34 @@ describe('a todo session waiting on the human', () => {
     setStatus(waiting);
     await runner.refresh(warn);
     expect(told.filter((note) => note.includes('waiting on the human'))).toHaveLength(2);
+  });
+
+  test('a question the worker ended its turn on goes to Neo, and Neo can answer it', async () => {
+    const { runner, told, calls, add, setStatus } = setup();
+    const todo = add();
+    await runner.start(todo.id);
+    setStatus({
+      ok: true,
+      value: {
+        status: 'needs_you',
+        lastActivityAt: 2_000,
+        waitingFor: 'Ship it?',
+        turnQuestion: {
+          id: 'tool-1',
+          at: Date.now() + 60_000,
+          text: 'Ship it?',
+          actions: ['Yes', 'Not now'],
+        },
+        link: 'claude://claude.ai/epitaxy/local_x',
+      },
+    });
+    await runner.refresh(warn);
+    expect(told.filter((note) => note.includes('ended its turn'))).toEqual([
+      `Todo "Rows": its session ended its turn with a question: Ship it? Options: Yes; Not now. If the plan, saved rules or your authority settle it, answer with neo.todo.continue. If not, relay it with neo.question.relay {todoId:"${todo.id}",title,options}.`,
+    ]);
+    const sends = calls.filter((call) => call.name === 'work.send').length;
+    expect(await runner.proceed(todo.id, 'Yes, ship it')).toMatchObject({ ok: true });
+    expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(sends + 1);
   });
 
   test('continue reads the session fresh, so a todo closed while it waited is not stuck', async () => {

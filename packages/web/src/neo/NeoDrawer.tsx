@@ -136,7 +136,13 @@ export function NeoDrawer({
   );
 }
 
-type PendingDevice = { id: string; kind: string; name: string | null; expiresAt: number };
+type PendingDevice = {
+  requestedName?: string | null;
+  id: string;
+  kind: string;
+  name: string | null;
+  expiresAt: number;
+};
 type PendingResult = { ok: true; pending: PendingDevice[] } | { ok: false; reason: string };
 
 function PendingDevices({ connection }: { connection: ConnectionState }) {
@@ -155,7 +161,7 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
     } else
       setError(
         result.reason.startsWith('not_paired')
-          ? 'Pair this browser in Settings → Devices to allow devices.'
+          ? 'Pair this browser in Settings → Connections & Services → Devices to allow devices.'
           : result.reason
       );
   };
@@ -192,7 +198,7 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
       {pending.map((device) => (
         <div key={device.id} class="mb-3 flex items-center justify-between gap-2 text-sm">
           <div>
-            <p>{device.name ?? 'Unnamed device'}</p>
+            <p>{device.requestedName ?? device.name ?? 'Unnamed device'}</p>
             <p class="text-xs text-fg-muted">
               {device.kind} · expires {new Date(device.expiresAt).toLocaleTimeString()}
             </p>
@@ -202,7 +208,7 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
               type="button"
               class="neo-drawer-action"
               disabled={deciding !== null}
-              aria-label={`Deny ${device.name ?? 'Unnamed device'}`}
+              aria-label={`Deny ${device.requestedName ?? device.name ?? 'Unnamed device'}`}
               onClick={() => void decide('device.pair.deny', device.id)}
             >
               Deny
@@ -211,7 +217,7 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
               type="button"
               class="neo-drawer-action"
               disabled={deciding !== null}
-              aria-label={`Allow ${device.name ?? 'Unnamed device'}`}
+              aria-label={`Allow ${device.requestedName ?? device.name ?? 'Unnamed device'}`}
               onClick={() => void decide('device.pair.approve', device.id)}
             >
               Allow

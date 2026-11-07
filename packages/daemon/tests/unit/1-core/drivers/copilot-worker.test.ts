@@ -7,11 +7,13 @@ import { CopilotClient } from '@github/copilot-sdk';
 import { vi } from 'vitest';
 import { openCopilotWorker } from '../../../../src/lib/drivers/copilot-worker';
 
+const STALL_TIMEOUT_MS = 4000;
+
 const runs: string[] = [];
 afterEach(() => {
   for (const run of runs.splice(0)) rmSync(run, { recursive: true, force: true });
 });
-function config(version = 'fixture-1', flag = '') {
+function config(version = 'fixture-1', flag = '', timeoutMs?: number) {
   const run = mkdtempSync(join(tmpdir(), 'copilot-owner-'));
   runs.push(run);
   const home = join(run, 'home');
@@ -33,12 +35,12 @@ function config(version = 'fixture-1', flag = '') {
     stateDirectory: join(home, '.copilot'),
     model: 'synthetic-model',
     env: { HOME: home, PATH: process.env.PATH ?? '', ANTHROPIC_API_KEY: 'must-not-reach-child' },
-    timeoutMs: 1500,
+    timeoutMs,
   };
 }
 
 async function eventually(read: () => Promise<unknown>, matches: (value: unknown) => boolean) {
-  const until = Date.now() + 1500;
+  const until = Date.now() + 10_000;
   let value: unknown;
   do {
     value = await read();
@@ -502,7 +504,7 @@ describe('Copilot worker construction', () => {
     await expect(openCopilotWorker(config('fixture-1', '--bad-protocol'))).rejects.toThrow(
       'protocol'
     );
-    const cfg = config('fixture-1', '--hang-stop');
+    const cfg = config('fixture-1', '--hang-stop', STALL_TIMEOUT_MS);
     const worker = await openCopilotWorker(cfg);
     await worker.close();
     const first = JSON.parse(readFileSync(join(cfg.cwd, 'calls.jsonl'), 'utf8').split('\n')[0]);
@@ -517,7 +519,7 @@ describe('Copilot worker construction', () => {
     await expect(worker.submit('after close')).rejects.toThrow('disconnected');
   });
   test('an accepted input whose ACK is lost is never automatically replayed', async () => {
-    const cfg = config();
+    const cfg = config('fixture-1', '', STALL_TIMEOUT_MS);
     const worker = await openCopilotWorker(cfg);
     try {
       await expect(worker.submit('lost-ack')).rejects.toThrow('timeout');

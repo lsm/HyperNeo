@@ -47,6 +47,28 @@ test('Neo snapshot facts, check lists and done-page facts come from a reader sna
     expect(page.todos).toEqual(expected);
     expect(page.links).toBeInstanceOf(Map);
     expect((await todos.read('doneTodoFacts', 'missing')).ask).toBeNull();
+    const plan = await todos.read('planContext');
+    expect(plan.asks.map((ask) => ask.id)).toEqual(['a']);
+    expect(plan.todos).toEqual(expected);
+    expect(plan.questions).toEqual([]);
+    for (const [id, parent] of [
+      ['b', 'a'],
+      ['c', 'b'],
+    ]) {
+      todos.openAsk({
+        id,
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: `Legacy ${id}`,
+        request: '',
+        createdAt: 1,
+      });
+      db.prepare('UPDATE neo_asks SET parent_id = ? WHERE id = ?').run(parent, id);
+    }
+    const legacy = await todos.read('planContext');
+    expect(legacy.asks.map((ask) => ask.id).sort()).toEqual(['a', 'b', 'c']);
+    expect(legacy.todos.map((todo) => todo.id)).toEqual(expected.map((todo) => todo.id));
   } finally {
     await gateway.close();
     db.close();

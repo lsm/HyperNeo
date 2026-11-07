@@ -23,5 +23,9 @@ The script closes both SDK streams and its mock server. Before repository checks
 preserve evidence outside the worktree, then remove only this synthetic run
 (the SDK writes unformatted configuration into its temporary HOME). Native Read of the published report remains available, but the removed Neo hook
 no longer performs native Read hash/path checks; the verified operation owns them.
+The publication receipt also carries a path-free public reference. The helper
+checks that it contains no run directory and that the internal public-reference
+reader verifies the complete Markdown bytes. This storage primitive does not
+authorize a card source or claim that cards accept the reference.
 This verifies tool behavior,
 not GUI rendering or protection against a malicious same-user OS process.

@@ -16,6 +16,16 @@ describe('root Neo system prompt', () => {
       'Add all ask steps as todos together, in order, before starting the first.'
     );
   });
+  test('tells Neo to answer a worker question itself before asking the human', () => {
+    expect(NEO_ROOT_TURN_END).toContain(
+      'A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.relay, so the card links the session and the answer reaches the worker.'
+    );
+  });
+  test('tells Neo to label asks with a reused short topic', () => {
+    expect(NEO_ROOT_TURN_END).toContain('neo.ask.topic');
+    expect(NEO_ROOT_TURN_END).toContain('never coin a near-synonym');
+    expect(NEO_ROOT_TURN_END).toContain('其他');
+  });
   test('tells Neo to add parallel running work with after: [] before binding', () => {
     expect(NEO_ROOT_TURN_END).toContain('so pass after: [] for parallel running work.');
   });
@@ -82,6 +92,15 @@ describe('root Neo system prompt', () => {
     expect(prompt).toContain('even when its ask has other work or open questions');
     expect(prompt).toContain('later reminders queue as fresh-turn input every two hours');
     expect(prompt).toContain('stopping after three consumed reminders');
+  });
+
+  test.each([false, true])('delivers completion guidance with packs: %s', (enabled) => {
+    const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+    expect(prompt).toContain('Settle an ask done only after its todos finish.');
+    expect(prompt).toContain(
+      'For abandoned work, use dropped or remove individual todos with reasons.'
+    );
+    expect(prompt).toContain('An unfinished-todo refusal keeps the ask open.');
   });
 
   test('routes continuing discussion into a fresh prepared session using existing flows', () => {

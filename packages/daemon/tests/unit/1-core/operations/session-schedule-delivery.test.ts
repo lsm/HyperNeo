@@ -238,6 +238,48 @@ describe('schedule target lifecycle and external delivery', () => {
     );
     return { scheduler, row, job: db.getJobQueueRepo().getJob(row.pendingJobId!)! };
   };
+  test.each([false, true])(
+    'scheduled reminders distinguish a prompt from a turn-ended question, question=%s',
+    async (question) => {
+      const { scheduler, row, job } = create('claude-desktop');
+      const received: string[] = [];
+      const registry = createOperationRegistry([
+        defineOperation({
+          name: 'work.status',
+          description: 'Question or permission prompt',
+          inputSchema: z.unknown(),
+          resultSchema: z.unknown(),
+          execute: async () => ({
+            ok: true,
+            value: {
+              status: 'needs_you',
+              ...(question
+                ? { turnQuestion: { text: 'Continue?', actions: ['Yes', 'Wait'] } }
+                : {}),
+            },
+          }),
+        }),
+        defineOperation({
+          name: 'work.send',
+          description: 'Scheduled native inbox',
+          inputSchema: z.object({ message: z.string() }),
+          resultSchema: z.unknown(),
+          execute: async (input) => {
+            received.push(input.message);
+            return { ok: true, value: { delivered: true } };
+          },
+        }),
+      ]);
+      const result = await createSessionScheduleFire({
+        scheduler,
+        ...createScheduleDelivery(db, () => registry),
+      })(job);
+      expect(result.outcome).toBe(question ? 'fired' : 'skipped_needs_you');
+      expect(scheduler.repo.get(row.id)?.lastOutcome).toBe(result.outcome);
+      expect(received).toHaveLength(question ? 1 : 0);
+      if (question) expect(received[0]).toContain('Check release');
+    }
+  );
   test.each(['not_found', 'not_open', 'stopped'] as const)(
     '%s completes the schedule instead of retrying or reporting fired',
     async (reason) => {

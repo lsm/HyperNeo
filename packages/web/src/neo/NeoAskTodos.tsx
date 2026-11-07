@@ -2,13 +2,15 @@ import { ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
 import { FileReferenceCards } from '../components/artifacts/FileReferenceCards.tsx';
+import { previewLinkedReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
+import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
 import type {
   NeoAskEntry,
   NeoQuestionAnswer,
   NeoQuestionEntry,
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Modal } from '../components/ui/Modal.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
@@ -34,13 +36,14 @@ import {
   neoTodoNextAction,
   neoTodoStatus,
 } from './todo-status.ts';
+import { neoTopicColor } from './topic-color.ts';
 
 const states = {
-  waiting: ['ask.state.waiting', 'text-warning bg-warning/10'],
-  doing: ['ask.state.doing', 'text-accent bg-accent/10'],
-  done: ['ask.state.done', 'text-success bg-success/10'],
-  dropped: ['ask.state.dropped', 'text-fg-muted bg-fill-soft'],
-  todo: ['ask.state.todo', 'text-fg-muted bg-fill-soft'],
+  waiting: ['ask.state.waiting', 'text-warning', 'font-semibold'],
+  doing: ['ask.state.doing', 'text-[var(--neo-teal)]', ''],
+  done: ['ask.state.done', 'text-success', ''],
+  dropped: ['ask.state.dropped', 'text-fg-faint', ''],
+  todo: ['ask.state.todo', 'text-fg-faint', ''],
 } as const;
 
 const marks = {
@@ -246,6 +249,31 @@ function TodoRow({
   );
 }
 
+function QuestionMarkdown({ question, content }: { question: NeoQuestionEntry; content: string }) {
+  const references = useMemo(
+    () =>
+      previewLinkedReferenceCandidates(content)
+        .filter((item) => item.kind === 'local')
+        .map((item) => item.reference),
+    [content]
+  );
+  return (
+    <MarkdownRenderer
+      referenceHome={question.sourceSession?.daemon ? null : undefined}
+      content={content}
+      references={references}
+      onReference={(reference) =>
+        openArtifactPreview({
+          kind: 'reference',
+          source: { kind: 'question', id: question.id },
+          reference,
+        })
+      }
+      class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
+    />
+  );
+}
+
 function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
   const text = neoQuestionText(question);
   const preview = text.match(/^.{0,300}/su)?.[0] ?? '';
@@ -258,11 +286,7 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
   };
   return (
     <>
-      <MarkdownRenderer
-        referenceHome={question.sourceSession?.daemon ? null : undefined}
-        content={clipped ? `${preview.trimEnd()} …` : text}
-        class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
-      />
+      <QuestionMarkdown question={question} content={clipped ? `${preview.trimEnd()} …` : text} />
       {clipped && (
         <button
           ref={trigger}
@@ -276,11 +300,7 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
       )}
       {open && (
         <Modal isOpen onClose={close} title={t('question.readAll')} size="xl">
-          <MarkdownRenderer
-            referenceHome={question.sourceSession?.daemon ? null : undefined}
-            content={text}
-            class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
-          />
+          <QuestionMarkdown question={question} content={text} />
         </Modal>
       )}
       <QuestionDocument question={question} />
@@ -289,7 +309,10 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
         ownerHome={question.sourceSession?.daemon ? null : undefined}
         text={[neoQuestionText(question), question.document ?? ''].join('\n')}
       />
-      <ArtifactCards artifacts={question.artifacts} />
+      <ArtifactCards
+        artifacts={question.artifacts}
+        source={{ kind: 'question', id: question.id }}
+      />
     </>
   );
 }
@@ -370,18 +393,17 @@ function QuestionBox({
           </button>
         </div>
       )}
-      <MarkdownRenderer
-        referenceHome={question.sourceSession?.daemon ? null : undefined}
-        content={neoQuestionText(question)}
-        class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
-      />
+      <QuestionMarkdown question={question} content={neoQuestionText(question)} />
       <QuestionDocument question={question} />
       <FileReferenceCards
         source={{ kind: 'question', id: question.id }}
         ownerHome={question.sourceSession?.daemon ? null : undefined}
         text={[neoQuestionText(question), question.document ?? ''].join('\n')}
       />
-      <ArtifactCards artifacts={question.artifacts} />
+      <ArtifactCards
+        artifacts={question.artifacts}
+        source={{ kind: 'question', id: question.id }}
+      />
       {question.kind === 'start' &&
         listed.map((todo) => (
           <TodoRow
@@ -499,6 +521,7 @@ export function NeoAskTodos({
   onSettle,
   onLoadDone,
   onLoadDetails,
+  onTopic,
 }: {
   entry: NeoAskEntry;
   focusedItem?: { questionId?: string; todoId?: string };
@@ -510,6 +533,7 @@ export function NeoAskTodos({
   onSettle?: (status: 'done' | 'dropped') => void | Promise<void>;
   onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;
   onLoadDetails?: (askId: string) => Promise<NeoAskEntry>;
+  onTopic?: (topic: string) => void;
 }) {
   const [details, setDetails] = useState<NeoAskEntry | null>(null);
   const [readRevision, setReadRevision] = useState<number | null>(null);
@@ -728,7 +752,7 @@ export function NeoAskTodos({
       }
     />
   );
-  const [label, tone] = states[entry.state];
+  const [label, tone, weight] = states[entry.state];
   return (
     <article
       ref={cardRef}
@@ -739,8 +763,27 @@ export function NeoAskTodos({
       class={neoCardClass}
     >
       <div class="flex min-h-7 items-center gap-2">
-        <span class={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>{t(label)}</span>
+        {ask.topic && (
+          <button
+            type="button"
+            disabled={!onTopic}
+            onClick={() => onTopic?.(ask.topic!)}
+            class="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-fg enabled:hover:underline"
+          >
+            <span
+              data-topic-swatch
+              aria-hidden="true"
+              class="h-2.5 w-2.5 shrink-0 rounded-sm"
+              style={{ backgroundColor: neoTopicColor(ask.topic) }}
+            />
+            <span class="truncate">{ask.topic}</span>
+          </button>
+        )}
         <span class="flex-1" />
+        <span data-ask-status class={`flex shrink-0 items-center gap-1.5 text-xs ${tone}`}>
+          <span data-status-dot aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-current" />
+          <span class={weight}>{t(label)}</span>
+        </span>
         <Dropdown
           position="right"
           items={[
