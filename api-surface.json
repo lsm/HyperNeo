@@ -19747,6 +19747,12 @@
                     "addedAfterStart": {
                       "type": "boolean"
                     },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "approvedAt": {
                       "type": [
                         "number",
@@ -20081,6 +20087,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -20699,6 +20706,12 @@
                           "addedAfterStart": {
                             "type": "boolean"
                           },
+                          "approvalQuestionId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "approvedAt": {
                             "type": [
                               "number",
@@ -21033,6 +21046,7 @@
                           "replacedBy",
                           "addedAfterStart",
                           "approvedAt",
+                          "approvalQuestionId",
                           "report",
                           "evidence",
                           "createdAt",
@@ -21582,6 +21596,12 @@
                     "addedAfterStart": {
                       "type": "boolean"
                     },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "approvedAt": {
                       "type": [
                         "number",
@@ -21901,6 +21921,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -22114,6 +22135,12 @@
                     "addedAfterStart": {
                       "type": "boolean"
                     },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "approvedAt": {
                       "type": [
                         "number",
@@ -22433,6 +22460,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -23036,6 +23064,12 @@
                         "addedAfterStart": {
                           "type": "boolean"
                         },
+                        "approvalQuestionId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "approvedAt": {
                           "type": [
                             "number",
@@ -23370,6 +23404,7 @@
                         "replacedBy",
                         "addedAfterStart",
                         "approvedAt",
+                        "approvalQuestionId",
                         "report",
                         "evidence",
                         "createdAt",
@@ -23723,6 +23758,12 @@
                     "addedAfterStart": {
                       "type": "boolean"
                     },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "approvedAt": {
                       "type": [
                         "number",
@@ -24042,6 +24083,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -29347,6 +29389,12 @@
                           "addedAfterStart": {
                             "type": "boolean"
                           },
+                          "approvalQuestionId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "approvedAt": {
                             "type": [
                               "number",
@@ -29681,6 +29729,7 @@
                           "replacedBy",
                           "addedAfterStart",
                           "approvedAt",
+                          "approvalQuestionId",
                           "report",
                           "evidence",
                           "createdAt",
@@ -37651,6 +37700,12 @@
                           "addedAfterStart": {
                             "type": "boolean"
                           },
+                          "approvalQuestionId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "approvedAt": {
                             "type": [
                               "number",
@@ -37985,6 +38040,7 @@
                           "replacedBy",
                           "addedAfterStart",
                           "approvedAt",
+                          "approvalQuestionId",
                           "report",
                           "evidence",
                           "createdAt",
@@ -38747,6 +38803,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "approvedAt": {
                     "type": [
                       "number",
@@ -39041,6 +39103,7 @@
                   "replacedBy",
                   "addedAfterStart",
                   "approvedAt",
+                  "approvalQuestionId",
                   "report",
                   "evidence",
                   "createdAt",
@@ -39056,6 +39119,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "approvedAt": {
                       "type": [
@@ -39351,6 +39420,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -39448,6 +39518,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "approvedAt": {
                     "type": [
                       "number",
@@ -39742,6 +39818,7 @@
                   "replacedBy",
                   "addedAfterStart",
                   "approvedAt",
+                  "approvalQuestionId",
                   "report",
                   "evidence",
                   "createdAt",
@@ -39757,6 +39834,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "approvedAt": {
                       "type": [
@@ -40052,6 +40135,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -40132,6 +40216,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "approvedAt": {
                     "type": [
                       "number",
@@ -40426,6 +40516,7 @@
                   "replacedBy",
                   "addedAfterStart",
                   "approvedAt",
+                  "approvalQuestionId",
                   "report",
                   "evidence",
                   "createdAt",
@@ -40441,6 +40532,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "approvedAt": {
                       "type": [
@@ -40736,6 +40833,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -40816,6 +40914,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "approvedAt": {
                     "type": [
                       "number",
@@ -41110,6 +41214,7 @@
                   "replacedBy",
                   "addedAfterStart",
                   "approvedAt",
+                  "approvalQuestionId",
                   "report",
                   "evidence",
                   "createdAt",
@@ -41125,6 +41230,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "approvedAt": {
                       "type": [
@@ -41420,6 +41531,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -41788,6 +41900,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "approvedAt": {
                     "type": [
                       "number",
@@ -42082,6 +42200,7 @@
                   "replacedBy",
                   "addedAfterStart",
                   "approvedAt",
+                  "approvalQuestionId",
                   "report",
                   "evidence",
                   "createdAt",
@@ -42097,6 +42216,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "approvedAt": {
                       "type": [
@@ -42392,6 +42517,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -42480,6 +42606,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "approvedAt": {
                     "type": [
                       "number",
@@ -42774,6 +42906,7 @@
                   "replacedBy",
                   "addedAfterStart",
                   "approvedAt",
+                  "approvalQuestionId",
                   "report",
                   "evidence",
                   "createdAt",
@@ -42789,6 +42922,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "approvedAt": {
                       "type": [
@@ -43084,6 +43223,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -43159,6 +43299,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "approvedAt": {
                     "type": [
                       "number",
@@ -43453,6 +43599,7 @@
                   "replacedBy",
                   "addedAfterStart",
                   "approvedAt",
+                  "approvalQuestionId",
                   "report",
                   "evidence",
                   "createdAt",
@@ -43468,6 +43615,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "approvedAt": {
                       "type": [
@@ -43763,6 +43916,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -43847,6 +44001,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "approvedAt": {
                     "type": [
                       "number",
@@ -44141,6 +44301,7 @@
                   "replacedBy",
                   "addedAfterStart",
                   "approvedAt",
+                  "approvalQuestionId",
                   "report",
                   "evidence",
                   "createdAt",
@@ -44156,6 +44317,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "approvedAt": {
                       "type": [
@@ -44451,6 +44618,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",
@@ -44526,6 +44694,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "approvedAt": {
                     "type": [
                       "number",
@@ -44820,6 +44994,7 @@
                   "replacedBy",
                   "addedAfterStart",
                   "approvedAt",
+                  "approvalQuestionId",
                   "report",
                   "evidence",
                   "createdAt",
@@ -44835,6 +45010,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvalQuestionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "approvedAt": {
                       "type": [
@@ -45130,6 +45311,7 @@
                     "replacedBy",
                     "addedAfterStart",
                     "approvedAt",
+                    "approvalQuestionId",
                     "report",
                     "evidence",
                     "createdAt",

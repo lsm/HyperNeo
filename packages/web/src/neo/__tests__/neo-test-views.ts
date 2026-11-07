@@ -21,6 +21,7 @@ export function testTodo(id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodo
     replacedBy: null,
     addedAfterStart: false,
     approvedAt: null,
+    approvalQuestionId: null,
     report: null,
     evidence: null,
     createdAt: 1,

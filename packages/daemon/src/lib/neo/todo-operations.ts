@@ -389,6 +389,7 @@ export const NeoTodoSchema = z.object({
   replacedBy: z.string().nullable(),
   addedAfterStart: z.boolean(),
   approvedAt: z.number().nullable(),
+  approvalQuestionId: z.string().nullable(),
   report: z.string().nullable(),
   evidence: z.string().nullable(),
   artifacts: z.array(ArtifactRefSchema).readonly().optional(),

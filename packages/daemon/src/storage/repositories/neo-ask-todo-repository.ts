@@ -62,11 +62,13 @@ export type NeoTodoPatch = Partial<
     | 'dependsOn'
     | 'instruction'
     | 'approvedAt'
+    | 'approvalQuestionId'
   >
 >;
 
 const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   approvedAt: 'approved_at',
+  approvalQuestionId: 'approval_question_id',
   title: 'title',
   check: 'check_json',
   doneWhen: 'done_when',
@@ -109,7 +111,7 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
-  approved_at AS approvedAt FROM neo_todos`;
+  approved_at AS approvedAt, approval_question_id AS approvalQuestionId FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
@@ -1266,10 +1268,10 @@ export class NeoAskTodoRepository {
         if (ticked?.length)
           store.db
             .prepare(
-              `UPDATE neo_todos SET approved_at = ? WHERE ask_id = ? AND approved_at IS NULL
+              `UPDATE neo_todos SET approved_at = ?, approval_question_id = ? WHERE ask_id = ? AND approved_at IS NULL
                  AND instruction IS NULL AND started_at IS NULL`
             )
-            .run(now, question.askId);
+            .run(now, question.id, question.askId);
         store.pruneQuestions(question.askId, now);
       },
       ['store', 'question', 'ticked', 'now'],

@@ -12,8 +12,8 @@ import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repos
 import { neoTodoRunnerWrites } from '../../../packages/daemon/src/storage/repositories/neo-todo-runner-state.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 
-const [mode, directory] = process.argv.slice(2),
-  run = resolve(directory);
+const mode = process.argv[2],
+  run = resolve(process.argv.at(-1)!);
 assert.equal(mode, 'verify');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -251,6 +251,7 @@ try {
       { ...step('chain-2') },
       { ...step('chain-3') },
       { title: 'chain-held', after: [], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'chain-held') } } },
+      ...(process.argv.includes('--approval-source-only') ? [{ ...step('direct-start'), after: [2], start: true }] : []),
     ] });
     const [one, two, three, held] = opened.todos;
     await call('neo.todo.hold', { todoId: held.id, reason: 'Human paused this step.' });
@@ -262,8 +263,19 @@ try {
     await refresh();
     const running = await read(one.askId);
     evidence.afterStartAnswer = running;
+    assert.equal(running.todos.find((t: { id: string }) => t.id === one.id)?.approvalQuestionId, (start[0] as unknown as { id: string }).id);
+    const answered = running.questions.find((q: { id: string }) => q.id === (start[0] as unknown as { id: string }).id);
+    assert.deepEqual(answered.answer, [one.id, two.id, three.id]);
+    assert.equal(answered.answeredBy, 'button');
+    assert.equal(typeof answered.answeredAt, 'number');
+    assert.equal(running.todos.find((t: { id: string }) => t.id === held.id)?.approvalQuestionId, answered.id);
     assert.deepEqual([state(running, one.id), state(running, two.id), state(running, three.id)], ['doing', 'todo', 'todo']);
     assert.equal(starts(), 1);
+    if (process.argv.includes('--approval-source-only')) {
+      assert.equal(running.todos.find((t: { id: string }) => t.id === opened.todos[4].id)?.approvalQuestionId, null);
+      evidence.verified = true;
+      console.log('PASS: card approval identifies its question; start:true has no question');
+    } else {
     await complete('chain-1');
     assert.deepEqual([state(await read(one.askId), two.id), state(await read(one.askId), three.id)], ['doing', 'todo']);
     assert.equal(starts(), 2);
@@ -281,6 +293,8 @@ try {
       { ...step('removed-second', 'restart'), after: [0], start: true },
     ] });
     const [a, b] = removal.todos;
+    const direct = await read(b.askId);
+    assert.equal(direct.todos.find((t: { id: string }) => t.id === b.id)?.approvalQuestionId, null);
     const before = starts();
     await call('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
     await refresh();
@@ -301,6 +315,7 @@ try {
     assert.equal(starts(), before + 1);
     evidence.verified = true;
     console.log('PASS: one Start answer ran the chain in order, the held step stayed held, a removed prerequisite stopped its dependent until Neo proceeded');
+    }
   }
 } finally {
   ws?.close();
