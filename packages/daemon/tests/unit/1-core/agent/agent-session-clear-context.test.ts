@@ -234,7 +234,12 @@ describe('AgentSession.clearConversationContext', () => {
       spyOn(agent, 'resetQuery').mockResolvedValue({ success: true });
       const enqueue = spyOn(agent.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
 
-      await expect(agent[operation]()).rejects.toBeInstanceOf(ClearConversationUnsupportedError);
+      const error = await agent[operation]().then(
+        () => null,
+        (cause: unknown) => cause
+      );
+      expect(error).toBeInstanceOf(ClearConversationUnsupportedError);
+      expect((error as Error).message).toMatch(/cannot be resumed/i);
       expect(agent.db.saveSDKMessage).toHaveBeenCalledTimes(1);
       expect(agent.messageHub.event).toHaveBeenCalledTimes(1);
       expect(agent.db.saveSDKMessage).toHaveBeenCalledWith(

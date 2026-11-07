@@ -286,7 +286,7 @@ try {
     assert.equal(app.db.getUserMessagesByStatus(firstId, 'failed').total, 0);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
     Object.assign(evidence, { port: app.server.port, backendOutcomeUnknown: true, submittedRows: 1, failedRows: 0, automaticResends: 0, pass: true });
-  } else if (mode === 'missing-history' || mode === 'missing-history-web') {
+  } else if (['missing-history', 'missing-history-web', 'clear-missing-history', 'clear-missing-history-web'].includes(mode)) {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic prior turn' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'prior native turn');
     const saved = app.db.getSession(firstId)?.sdkSessionId;
@@ -298,14 +298,17 @@ try {
     assert(child.kill('SIGKILL'));
     await exited;
     unlinkSync(join(config.oap.stateDirectory, 'session-history.jsonl'));
-    await assert.rejects(Promise.resolve(first.oap!.hub), /cannot be resumed/i);
+    if (mode.startsWith('clear-')) {
+      await assert.rejects(first.clearConversationContext(), /cannot be resumed/i);
+    } else await assert.rejects(Promise.resolve(first.oap!.hub), /cannot be resumed/i);
     const notices = app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('The previous Codex thread cannot be resumed'));
     assert.equal(notices.length, 1);
+    assert.equal(app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('Could not clear the Codex thread')).length, 0);
     assert.equal(app.db.getSession(firstId)?.sdkSessionId, saved);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
-    if (mode === 'missing-history-web') await verifyNoticeInBrowser(app, firstId, 'The previous Codex thread cannot be resumed. No new thread was started.');
-    Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, priorThreadIdPreserved: true, newThreads: 0, automaticResends: 0, pass: true });
+    if (mode.endsWith('-web')) await verifyNoticeInBrowser(app, firstId, 'The previous Codex thread cannot be resumed. No new thread was started.');
+    Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, noticeCount: notices.length, priorThreadIdPreserved: true, newThreads: 0, automaticResends: 0, pass: true });
   } else if (mode === 'reopen') {
     const seen: Array<{ type: string; uuid?: string }> = [];
     const handler = first.onSDKMessage.bind(first);
