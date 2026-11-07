@@ -39,12 +39,12 @@ function setup(start = 1_000_000) {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  const pair = async (code: string, name = 'Phone') => {
+  const pair = async (code: string, name = 'Phone', requestId?: string) => {
     const response = await route(
       new Request('http://127.0.0.1/pair', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code, name }),
+        body: JSON.stringify({ code, name, ...(requestId ? { requestId } : {}) }),
       })
     );
     return { status: response.status, body: (await response.json()) as Record<string, any> };
@@ -220,7 +220,45 @@ describe('device pairing', () => {
     ).toEqual({
       ok: true,
     });
-    expect((await pair(next.code, 'Phone')).status).toBe(200);
+    expect((await pair(next.code, 'Agent')).status).toBe(200);
+    db.close();
+  });
+
+  test('a later requester cannot change the name shown for Allow; refusing it voids the code', async () => {
+    const { db, call, pair } = setup();
+    const laptop = await pair((await call('device.pair.create', { kind: 'human' }, door)).code, 'Laptop');
+    const owner = pairedHuman(laptop.body.deviceId);
+    const next = await call('device.pair.create', { kind: 'human' }, door);
+    expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(403);
+    expect((await call('device.pair.pending', {}, owner)).pending[0].requestedName).toBe('Tablet');
+    expect(await pair(next.code, 'Tablet', 'later-request-id-0002')).toMatchObject({
+      status: 401,
+      body: { error: 'invalid_code' },
+    });
+    expect((await call('device.pair.pending', {}, owner)).pending).toEqual([]);
+    expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(401);
+    db.close();
+  });
+
+  test('after Allow only the first requester gets a credential, and only once', async () => {
+    const { db, repo, call, pair } = setup();
+    const laptop = await pair((await call('device.pair.create', { kind: 'human' }, door)).code, 'Laptop');
+    const owner = pairedHuman(laptop.body.deviceId);
+    const next = await call('device.pair.create', { kind: 'human' }, door);
+    expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(403);
+    expect(await call('device.pair.approve', { codeId: next.codeId }, owner)).toEqual({ ok: true });
+    const intruder = await pair(next.code, 'Tablet', 'later-request-id-0002');
+    expect(intruder).toEqual({ status: 401, body: { error: 'invalid_code' } });
+    expect(repo.listDevices().map((device) => device.name)).toEqual(['Laptop']);
+
+    const again = await call('device.pair.create', { kind: 'human' }, door);
+    expect((await pair(again.code, 'Tablet', 'first-request-id-0003')).status).toBe(403);
+    await call('device.pair.approve', { codeId: again.codeId }, owner);
+    const first = await pair(again.code, 'Tablet', 'first-request-id-0003');
+    expect(first.status).toBe(200);
+    expect(first.body.credential).toBeString();
+    expect((await pair(again.code, 'Tablet', 'first-request-id-0003')).status).toBe(401);
+    expect(repo.listDevices().map((device) => device.name)).toEqual(['Laptop', 'Tablet']);
     db.close();
   });
 
