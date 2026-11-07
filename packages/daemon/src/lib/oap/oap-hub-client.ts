@@ -51,6 +51,17 @@ const planFrame = (superpipe({})('oap.hub.dispatch') as PipelineAPI)
   .pipe(decideFrame, ['frame', 'waiting', 'retried'], 'dispatch')
   .end('dispatch') as typeof decideFrame;
 
+function decideCleanupFailure(error: Error): { kind: 'fail' } | { kind: 'warn'; code: string } {
+  return error instanceof OapHubRequestError && error.code !== 'timeout'
+    ? { kind: 'warn', code: error.code }
+    : { kind: 'fail' };
+}
+
+const planCleanupFailure = (superpipe({})('oap.hub.cleanupFailure') as PipelineAPI)
+  .input('error')
+  .pipe(decideCleanupFailure, 'error', 'decision')
+  .end('decision') as typeof decideCleanupFailure;
+
 const log = new Logger('OapHubClient');
 
 function notify(listener: Listener | undefined, frame: HubEvent | Error) {
@@ -162,9 +173,15 @@ export class OapHubClient {
         this.listeners.delete(id);
         reject(new OapHubRequestError('timeout', `OAP hub ${op} timed out`));
         if (listener && !this.failure)
-          void this.request('unsubscribe', { subscription: id }).catch((error: Error) =>
-            this.fail(error)
-          );
+          void this.request('unsubscribe', { subscription: id }).catch((error: Error) => {
+            const decision = planCleanupFailure(error);
+            if (decision.kind === 'fail') this.fail(error);
+            else
+              log.warn('Hub subscription cleanup refused', {
+                subscription: id,
+                code: decision.code,
+              });
+          });
       }, this.timeoutMs);
       this.pending.set(id, { line, retried: false, timer, resolve, reject });
       if (listener) this.listeners.set(id, listener);
