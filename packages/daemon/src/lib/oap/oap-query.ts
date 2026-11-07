@@ -214,6 +214,12 @@ export class OapQuery implements QueryLike {
           }
           if (terminal) break;
         }
+        if (!terminal && this.closed && this.isLive()) {
+          for (const message of this.translator.flush?.() ?? []) {
+            if (!this.isLive()) break;
+            yield message;
+          }
+        }
         if (!terminal && !this.closed)
           throw new Error('OAP event stream ended before run terminal');
       } catch (error) {

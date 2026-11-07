@@ -6,6 +6,77 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('OapQuery', () => {
+  test('preserves accumulated text when a live query is closed', async () => {
+    const prompt = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'request' },
+    } as SDKUserMessage;
+    const query = createOapQuery({
+      sessionId: 's1',
+      prompt: (async function* () {
+        yield prompt;
+      })(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel: async () => {},
+        events: async function* () {
+          yield {
+            type: 'content.delta',
+            id: 'e1',
+            payload: { message_id: 'm1', part: { type: 'text', text: 'partial' } },
+          };
+          await new Promise(() => {});
+        },
+      },
+    });
+    const iterator = query[Symbol.asyncIterator]();
+    expect((await iterator.next()).value?.type).toBe('stream_event');
+    const waiting = iterator.next();
+    query.close();
+    expect((await waiting).value).toMatchObject({
+      type: 'assistant',
+      message: { content: [{ text: 'partial' }] },
+    });
+    expect((await iterator.next()).done).toBe(true);
+  });
+
+  test('does not flush a closed query after its attempt becomes stale', async () => {
+    let live = true;
+    const prompt = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'request' },
+    } as SDKUserMessage;
+    const query = createOapQuery({
+      sessionId: 's1',
+      isLive: () => live,
+      prompt: (async function* () {
+        yield prompt;
+      })(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel: async () => {},
+        events: async function* () {
+          yield {
+            type: 'content.delta',
+            id: 'e1',
+            payload: { message_id: 'm1', part: { type: 'text', text: 'old' } },
+          };
+          await new Promise(() => {});
+        },
+      },
+    });
+    const iterator = query[Symbol.asyncIterator]();
+    expect((await iterator.next()).value?.type).toBe('stream_event');
+    const waiting = iterator.next();
+    live = false;
+    query.close();
+    expect((await waiting).done).toBe(true);
+  });
+
   test.each([
     ['end', 'OAP event stream ended before run terminal'],
     ['error', 'synthetic hub failure'],
