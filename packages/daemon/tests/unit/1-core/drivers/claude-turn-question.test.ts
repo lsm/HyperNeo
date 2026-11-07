@@ -44,6 +44,35 @@ describe('claudeTurnQuestion', () => {
     });
   });
 
+  test.each([
+    { type: 'queue-operation', operation: 'enqueue', content: 'Yes, continue' },
+    { type: 'queue-operation', content: '<cross-session-message>Yes</cross-session-message>' },
+  ])('clears a question once a reply is queued: %j', (reply) => {
+    expect(claudeTurnQuestion([wrapUp(asking), ended(), row(reply)])).toBeNull();
+  });
+
+  test.each([
+    { type: 'queue-operation', operation: 'remove', commandUuid: 'prior-input' },
+    { type: 'queue-operation', operation: 'remove', content: 'Old input' },
+    { type: 'queue-operation', operation: 'enqueue', content: ' ' },
+    { type: 'queue-operation', operation: 'enqueue', content: 'Subagent reply', isSidechain: true },
+  ])('keeps a question through queue bookkeeping: %j', (entry) => {
+    expect(claudeTurnQuestion([wrapUp(asking), ended(), row(entry)])).toMatchObject({
+      text: asking.ask,
+      actions: ['Yes, ship', 'commit', 'Not now'],
+    });
+  });
+
+  test('a previously queued command does not clear a later question', () => {
+    expect(
+      claudeTurnQuestion([
+        row({ type: 'queue-operation', operation: 'enqueue', content: 'Earlier command' }),
+        wrapUp(asking),
+        ended(),
+      ])
+    ).toMatchObject({ text: asking.ask });
+  });
+
   test('uses the recap when the worker is blocked without a question', () => {
     expect(
       claudeTurnQuestion([wrapUp({ recap: 'Waiting on a key.', blocked: true }), ended()])
