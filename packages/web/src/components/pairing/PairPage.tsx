@@ -1,3 +1,4 @@
+import { generateUUID } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '../ui/Button.tsx';
 import { FormField, formControlClass } from '../ui/FormField.tsx';
@@ -68,7 +69,7 @@ export function PairPage() {
     const body = JSON.stringify({
       code: code.trim(),
       name: name.trim(),
-      requestId: crypto.randomUUID(),
+      requestId: generateUUID(),
     });
     history.replaceState(null, '', location.pathname);
     setState({ kind: 'pairing' });
