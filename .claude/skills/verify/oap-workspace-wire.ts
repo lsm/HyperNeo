@@ -67,7 +67,7 @@ for line in sys.stdin:
   if 'Synthetic free text question' in json.dumps(request):
    emit({'id':900,'method':'item/tool/requestUserInput','params':{'threadId':thread,'turnId':turn,'itemId':'synthetic-question','questions':[{'id':'explain','question':'Explain?','options':None}]}})
    continue
-  for index in range(${['recovery-claim', 'recovery-web', 'recovery'].includes(mode) ? 1 : 96}):
+  for index in range(${['recovery-claim', 'recovery-web', 'recovery', 'recovery-empty'].includes(mode) ? 1 : 96}):
    emit({'method':'item/agentMessage/delta','params':{'threadId':thread,'turnId':turn,'itemId':'text-'+turn,'delta':'synthetic reply' if index==0 else '.'}})
   emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
  if method=='turn/interrupt':
@@ -214,6 +214,27 @@ try {
     assert.equal(calls().length, 0);
     assert.equal(existsSync(join(run, 'data/oap/oap-serve.json')), false);
     Object.assign(evidence, { port: app.server.port, mismatchedDigestRefused: true, syntheticPeerStarts: 0, pass: true });
+  } else if (mode === 'recovery-empty') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic hold for crash' });
+    await waitFor(() => calls().some((call) => call.request.method === 'turn/start'), 'first unfinished turn');
+    const engineHub = await app.oapEngine.getHub(config.oap);
+    const child = (engineHub as unknown as { child: { kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
+    const exited = new Promise<void>((resolveExit) => child.once('close', resolveExit));
+    assert(child.kill('SIGKILL'));
+    await exited;
+    await waitFor(() => !first.queryPromise, 'first crashed turn stopped');
+    unlinkSync(join(config.oap.stateDirectory, 'session-history.jsonl'));
+    await first.oap!.hub;
+    assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery, undefined);
+    const notice = 'The previous Codex thread cannot be resumed. A new thread will start without earlier conversation.';
+    assert(app.db.getSDKMessages(firstId, 1000).messages.some((row) => JSON.stringify(row).includes(notice)));
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic explicit request after empty recovery' });
+    await waitFor(() => calls().filter((call) => call.request.method === 'turn/start').length === 2 && !first.queryPromise, 'explicit turn after empty recovery');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert(!JSON.stringify(turns[1]).includes('Previous conversation excerpt'));
+    assert(JSON.stringify(turns[1]).includes('Synthetic explicit request after empty recovery'));
+    Object.assign(evidence, { port: app.server.port, emptyRecoveryNoticeSaved: true, emptyExcerptNotAttached: true, automaticResends: 0, pass: true });
   } else if (mode === 'recovery-web' || mode === 'recovery') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic prior completed turn' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'prior completed turn');

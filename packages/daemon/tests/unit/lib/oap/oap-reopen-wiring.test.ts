@@ -398,7 +398,7 @@ describe('OAP native session reopen wiring', () => {
     expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
     expect(host.messageHub.event).toHaveBeenCalledTimes(1);
     expect(current.sdkSessionId).toBe('native-thread-b');
-    expect(current.metadata.oapRecovery?.pendingOpen).toBe(false);
+    expect(current.metadata.oapRecovery).toBeUndefined();
     expect(
       host.operations.filter(
         ({ op, params }) =>

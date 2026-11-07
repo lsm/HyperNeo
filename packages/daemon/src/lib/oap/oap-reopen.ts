@@ -98,6 +98,12 @@ function hasHistory(db: OapReopenStore, sessionId: string): boolean {
   );
 }
 
+function recoveryNotice(text: string): string {
+  return text
+    ? 'The previous Codex thread cannot be resumed. A new thread will use a saved conversation excerpt with your next message.'
+    : 'The previous Codex thread cannot be resumed. A new thread will start without earlier conversation.';
+}
+
 async function openAfterClear(
   client: OapHubClient,
   plan: OapOpenPlan,
@@ -167,14 +173,8 @@ export async function openOapSession(
       session.metadata.oapClearThreadId!
     );
   } else if (recovery?.pendingOpen) {
-    await announceOapNotice(
-      session.id,
-      'The previous Codex thread cannot be resumed. A new thread will use a saved conversation excerpt with your next message.',
-      db,
-      hub,
-      ensureLive
-    );
     status = await openAfterClear(client, plan, session, status, ensureLive, recovery.previous);
+    await announceOapNotice(session.id, recoveryNotice(recovery.text), db, hub, ensureLive);
   } else if (!status || status.held === false) {
     let fallback = false;
     if (prior) {
@@ -208,14 +208,9 @@ export async function openOapSession(
         throw new Error('Could not save the Codex recovery context');
       ensureLive();
       session.metadata = metadata;
-      await announceOapNotice(
-        session.id,
-        'The previous Codex thread cannot be resumed. A new thread will use a saved conversation excerpt with your next message.',
-        db,
-        hub,
-        ensureLive
-      );
       await open(client, plan);
+      ensureLive();
+      await announceOapNotice(session.id, recoveryNotice(recovery.text), db, hub, ensureLive);
     }
     ensureLive();
     status = (await client.request('work.status', { session_id: plan.sessionId })) as WorkStatus;
@@ -231,7 +226,10 @@ export async function openOapSession(
     const metadata = clearing
       ? { ...session.metadata, oapClearThreadId: undefined }
       : recovery?.pendingOpen
-        ? { ...session.metadata, oapRecovery: { ...recovery, pendingOpen: false } }
+        ? {
+            ...session.metadata,
+            oapRecovery: recovery.text ? { ...recovery, pendingOpen: false } : undefined,
+          }
         : undefined;
     const update = {
       sdkSessionId: id,

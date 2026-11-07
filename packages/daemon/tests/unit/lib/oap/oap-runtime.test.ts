@@ -408,7 +408,7 @@ describe('OAP daemon runtime', () => {
     } as Session;
     const runtime = createOapRuntime(host.engine, options, undefined, true)(resumed);
     await expect(runtime.hub).resolves.toBeDefined();
-    expect(resumed.metadata.oapRecovery?.pendingOpen).toBe(false);
+    expect(resumed.metadata.oapRecovery).toBeUndefined();
     expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(1);
   });
 
