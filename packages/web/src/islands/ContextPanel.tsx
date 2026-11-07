@@ -46,7 +46,7 @@ const SETTINGS_SECTIONS: Array<{
     icon: 'plug',
     accent: 'text-cat-violet bg-cat-violet/15',
   },
-  { id: 'neo-model', label: 'Neo model', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
+  { id: 'neo-model', label: 'Neo', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
   {
     id: 'harness',
     label: 'Sessions & Harness',
