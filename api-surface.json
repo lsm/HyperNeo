@@ -12959,6 +12959,207 @@
             "type": "integer"
           },
           "reference": {
+            "additionalProperties": false,
+            "properties": {
+              "artifactId": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "byteLength": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "daemonId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[\\w][\\w .-]*$",
+                "type": "string"
+              },
+              "sessionId": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "type": {
+                "const": "handoff",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifactId",
+              "daemonId",
+              "sessionId",
+              "name",
+              "byteLength",
+              "sha256",
+              "type"
+            ],
+            "type": "object"
+          },
+          "source": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "question",
+                  "publication"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          "version": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "reference"
+        ],
+        "type": "object"
+      },
+      "name": "file.handoff.read",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "enum": [
+                  "forbidden",
+                  "unsupported_type",
+                  "size_limit",
+                  "file_changed",
+                  "owner_unavailable",
+                  "invalid_offset"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": true,
+                "type": "boolean"
+              },
+              "byteLength": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "data": {
+                "maxLength": 349528,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "markdown",
+                  "html"
+                ],
+                "type": "string"
+              },
+              "links": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "href": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "maxLength": 200,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "href"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 200,
+                "type": "array"
+              },
+              "nextOffset": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "scriptsRemoved": {
+                "type": "boolean"
+              },
+              "version": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "kind",
+              "version",
+              "byteLength",
+              "nextOffset",
+              "complete",
+              "data"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "maxBytes": {
+            "default": 262144,
+            "maximum": 262144,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reference": {
             "maxLength": 4096,
             "minLength": 1,
             "type": "string"
