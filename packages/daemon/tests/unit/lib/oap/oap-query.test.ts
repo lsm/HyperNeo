@@ -3,6 +3,35 @@ import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { createOapQuery, OapQuery } from '../../../../src/lib/oap/oap-query';
 
 describe('OapQuery', () => {
+  test('cancels the active run if an event cannot be translated', async () => {
+    const message = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'hello' },
+    } as SDKUserMessage;
+    const cancel = mock(async () => {});
+    const query = createOapQuery({
+      sessionId: 's1',
+      prompt: (async function* () {
+        yield message;
+      })(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel,
+        events: async function* () {
+          yield { type: 'content.delta', payload: {} };
+        },
+      },
+    });
+    const consume = async () => {
+      for await (const item of query) void item;
+    };
+    await expect(consume()).rejects.toThrow('Invalid OAP event');
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith('s1', 'r1');
+  });
+
   test('the query factory translates text and terminal events afresh for each run', async () => {
     const message = {
       type: 'user',
