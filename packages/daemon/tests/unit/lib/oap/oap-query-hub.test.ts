@@ -75,7 +75,7 @@ function releaseHub(hub: OapQueryHub): void {
 }
 
 describe('OAP query hub transport', () => {
-  test.each(['queued', 'running', 'needs_you', 'invalid'])(
+  test.each(['queued', 'running', 'needs_you', 'invalid', 'probe-timeout'])(
     'a timed-out submit checks hub status %s before allowing another submit',
     async (status) => {
       const host = fixture();
@@ -85,6 +85,7 @@ describe('OAP query hub transport', () => {
       host.request.mockImplementation(async (op, parameters) => {
         if (op === 'work.status') {
           host.operations.push(op);
+          if (status === 'probe-timeout') throw new OapHubRequestError('timeout', 'status timed out');
           return { ref: { session_id: 'synthetic-session' }, status, run_id: 'run-1' };
         }
         if (op === 'submit' && !submitted) {
