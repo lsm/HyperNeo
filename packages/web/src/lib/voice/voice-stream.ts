@@ -43,7 +43,6 @@ export function openVoiceStream(
   let live = true;
   let closed = false;
   let stopped = false;
-  let failure: Error | null = null;
   let pending: Float32Array[] = [];
   let pendingSamples = 0;
   let opusPackets: Uint8Array[] = [];
@@ -53,16 +52,18 @@ export function openVoiceStream(
   const unsubscribe = hub.onEvent<VoiceStreamTextEvent>('voice.stream.text', (event) => {
     if (!closed && streamId && event?.streamId === streamId) onText(event.text ?? '');
   });
-  const fail = (cause: unknown, terminal: boolean) => {
+  const fail = (cause: unknown) => {
     const error = cause instanceof Error ? cause : new Error(String(cause));
-    if (terminal && !failure) failure = error;
-    if (live && !closed) options.onError?.(error);
+    if (live && !closed) {
+      options.onError?.(error);
+      options.onFormat?.('batch');
+    }
     live = false;
   };
   const send = (audio: Uint8Array) => {
     if (!streamId || !live) return;
     if (queuedChunks >= MAX_PENDING_CHUNKS) {
-      fail(new Error('Voice upload queue is full'), !!codec);
+      fail(new Error('Voice upload queue is full'));
       return;
     }
     queuedChunks++;
@@ -72,7 +73,7 @@ export function openVoiceStream(
       .then(() => (live ? hub.request('voice.stream.chunk', { streamId: id, audioBase64 }) : null))
       .then(
         () => undefined,
-        (error: unknown) => fail(error, !!codec)
+        (error: unknown) => fail(error)
       )
       .finally(() => {
         queuedChunks--;
@@ -102,16 +103,14 @@ export function openVoiceStream(
       if (codec) codec.push(pcm);
       else send(encodePcm16(pcm));
     } catch (error) {
-      fail(error, !!codec);
+      fail(error);
     }
   };
 
   const language = getVoiceLanguage();
   const ready = (async () => {
-    let choosing = true;
     try {
-      codec = await createVoiceOpusEncoder(queuePacket, (error) => fail(error, true));
-      choosing = false;
+      codec = await createVoiceOpusEncoder(queuePacket, fail);
       if (closed) {
         codec?.close();
         return;
@@ -153,7 +152,7 @@ export function openVoiceStream(
         flush();
       }
     } catch (error) {
-      fail(error, choosing || !!codec);
+      fail(error);
     }
   })();
 
@@ -162,7 +161,7 @@ export function openVoiceStream(
     push(samples, sampleRate) {
       if (!live || closed) return;
       if (sampleRate < STREAM_SAMPLE_RATE) {
-        fail(new Error('Voice capture sample rate is too low'), !!codec);
+        fail(new Error('Voice capture sample rate is too low'));
         return;
       }
       rate = sampleRate;
@@ -178,13 +177,12 @@ export function openVoiceStream(
             await codec.finish();
             flushPackets();
           } catch (error) {
-            fail(error, true);
+            fail(error);
           }
         }
         await sending;
       });
       await finished;
-      if (failure) throw failure;
       if (!live || !streamId) return null;
       try {
         const result = await hub.request<{ text?: string }>(

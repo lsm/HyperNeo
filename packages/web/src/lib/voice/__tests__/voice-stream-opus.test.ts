@@ -4,6 +4,7 @@ import type { MessageHub } from '@hyperneo/shared';
 const createEncoder = vi.hoisted(() => vi.fn());
 vi.mock('../voice-opus-encoder.ts', () => ({ createVoiceOpusEncoder: createEncoder }));
 import { openVoiceStream } from '../voice-stream.ts';
+import { runVoiceSubmit } from '../voice-submit-pipeline.ts';
 
 function hubFor(respond: (method: string, data: Record<string, unknown>) => unknown) {
   const request = vi.fn(async (method: string, data: Record<string, unknown>) =>
@@ -133,14 +134,14 @@ describe('Opus live voice', () => {
     expect(codec.close).toHaveBeenCalledOnce();
   });
 
-  it('surfaces encoder initialization errors instead of silently using PCM16', async () => {
+  it('reports encoder initialization errors and requests the saved-WAV fallback', async () => {
     createEncoder.mockImplementation(() => {
       throw new Error('Opus startup failed');
     });
     const { hub, request } = hubFor(reply);
     const onError = vi.fn();
     const live = openVoiceStream(hub, vi.fn(), { onError });
-    await expect(live.finish()).rejects.toThrow('Opus startup failed');
+    expect(await live.finish()).toBeNull();
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Opus startup failed' })
     );
@@ -148,7 +149,7 @@ describe('Opus live voice', () => {
     live.close();
   });
 
-  it('surfaces a failed encoded chunk instead of claiming a transcript', async () => {
+  it('reports a failed encoded chunk and requests the saved-WAV fallback', async () => {
     const packet = new Uint8Array([3, 0, 0xf8, 0xff, 0xfe]);
     createEncoder.mockImplementation(async (onPacket) => ({
       push: () => onPacket(packet),
@@ -162,9 +163,70 @@ describe('Opus live voice', () => {
     const onError = vi.fn();
     const live = openVoiceStream(hub, vi.fn(), { onError });
     live.push(new Float32Array(3200), 16_000);
-    await expect(live.finish()).rejects.toThrow('network lost');
+    expect(await live.finish()).toBeNull();
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'network lost' }));
     expect(request.mock.calls.map(([method]) => method)).not.toContain('voice.stream.stop');
+    live.close();
+  });
+
+  it('reports an Opus start failure and requests the saved-WAV fallback without retrying start', async () => {
+    const codec = { push: vi.fn(), finish: vi.fn(async () => {}), close: vi.fn() };
+    createEncoder.mockResolvedValue(codec);
+    const { hub, request } = hubFor((method) => {
+      if (method === 'voice.stream.start') throw new Error('Voice stream rate limit exceeded');
+      return reply(method);
+    });
+    const onError = vi.fn();
+    const onFormat = vi.fn();
+    const live = openVoiceStream(hub, vi.fn(), { onError, onFormat });
+    expect(await live.finish()).toBeNull();
+    expect(await live.finish()).toBeNull();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onFormat).toHaveBeenCalledWith('batch');
+    expect(request.mock.calls.map(([method]) => method)).toEqual(['voice.stream.start']);
+    live.close();
+  });
+
+  it('persists the recording and transcribes its WAV immediately after an Opus start failure', async () => {
+    const codec = { push: vi.fn(), finish: vi.fn(async () => {}), close: vi.fn() };
+    createEncoder.mockResolvedValue(codec);
+    const { hub } = hubFor((method) => {
+      if (method === 'voice.stream.start') throw new Error('Voice stream rate limit exceeded');
+      return reply(method);
+    });
+    const onError = vi.fn();
+    const live = openVoiceStream(hub, vi.fn(), { onError });
+    const recording = { audioBase64: 'AAAA', mimeType: 'audio/wav' as const, peakLevel: 0.5 };
+    const order: string[] = [];
+    const delay = vi.fn(async () => {});
+    const result = await runVoiceSubmit(
+      { sessionId: 'session-1' },
+      {
+        isMounted: () => true,
+        currentSessionId: () => 'session-1',
+        stopRecording: async () => recording,
+        putRecord: async () => {
+          order.push('persist');
+          return true;
+        },
+        transcribe: async (audio) => {
+          const text = await live.finish();
+          if (text !== null) return { text };
+          expect(audio).toEqual(recording);
+          order.push('batch');
+          return { text: 'saved recording' };
+        },
+        delay,
+      }
+    );
+    expect(result).toMatchObject({
+      kind: 'routed',
+      outcome: { transcript: 'saved recording' },
+      persisted: true,
+    });
+    expect(order).toEqual(['persist', 'batch']);
+    expect(delay).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledOnce();
     live.close();
   });
 });

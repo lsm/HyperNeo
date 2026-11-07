@@ -137,7 +137,10 @@ export function NeoVoice({
           if (mounted.current) setStreamFormat(format);
         },
         onError: (error) => {
-          if (mounted.current) onError(`Live transcription: ${error.message}`);
+          if (mounted.current)
+            onError(
+              `Live transcription failed: ${error.message}. The recording will use batch transcription.`
+            );
         },
       });
       liveStream.current = live;
