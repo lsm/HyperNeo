@@ -1083,12 +1083,16 @@ export function NeoLive() {
                         : undefined
                     }
                     onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
-                    onTopic={(next) => {
-                      if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);
-                      if (!sceneEntries.some((entry) => entry.ask.topic === next)) return;
-                      setWorkQuery('');
-                      chooseTopic(next);
-                    }}
+                    onTopic={
+                      workQuery.trim() &&
+                      !sceneEntries.some((loaded) => loaded.ask.topic === entry.ask.topic)
+                        ? undefined
+                        : (next) => {
+                            if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);
+                            setWorkQuery('');
+                            chooseTopic(next);
+                          }
+                    }
                     onLoadDone={(askId, offset) =>
                       connectionManager.getHub().then((hub) =>
                         invokeOperation<NeoDoneTodosPage>(hub, 'neo.ask.doneTodos', {

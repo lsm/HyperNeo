@@ -132,7 +132,7 @@ describe('Work search input and retry', () => {
       [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'))
     ).toEqual(['protocol']);
   });
-  it('keeps the search when the tapped topic has no loaded card to filter', async () => {
+  it('shows the topic of a result with no loaded card as disabled', async () => {
     locale.value = 'en';
     const remote = testAskEntry('remote', 'remote protocol', { state: 'done' });
     remote.ask.topic = 'OAP';
@@ -148,7 +148,9 @@ describe('Work search input and retry', () => {
     fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'remote protocol' } });
     await screen.findByRole('heading', { name: 'remote protocol', exact: true });
     const card = container.querySelector('[data-ask="remote"]') as HTMLElement;
-    fireEvent.click(within(card).getByRole('button', { name: 'OAP' }));
+    const topic = within(card).getByRole('button', { name: 'OAP' }) as HTMLButtonElement;
+    expect(topic.disabled).toBe(true);
+    fireEvent.click(topic);
     expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('remote protocol');
     expect(container.querySelector('[data-ask="remote"]')).toBeTruthy();
     expect(localStorage.getItem('neo:topic-filter')).toBeNull();
