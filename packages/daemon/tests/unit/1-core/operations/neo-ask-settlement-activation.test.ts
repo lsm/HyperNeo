@@ -184,6 +184,22 @@ describe('activated ask settlement', () => {
     }
   );
 
+  test('an unexplained legacy removal can settle dropped without certifying done', async () => {
+    store.updateTodo(store.getTodo('first')!, { state: 'removed', reason: null }, 3);
+    const before = snapshot();
+    expect(await settle('done')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('settle dropped'),
+    });
+    expect(snapshot()).toEqual(before);
+    expect(effects).toEqual([]);
+    expect(await settle('dropped')).toMatchObject({
+      ok: true,
+      ask: { status: 'dropped' },
+      todos: [{ state: 'removed', reason: null }],
+    });
+  });
+
   test('current admission, sweeps and receipts avoid the main repository', async () => {
     const report = store.getTodo('first')!.report;
     vi.spyOn(store, 'getAsk').mockImplementation(() => {
