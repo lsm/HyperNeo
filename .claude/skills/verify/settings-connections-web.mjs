@@ -109,6 +109,7 @@ try {
 
   await page.goto(`${base}/settings?tab=exa`);
   await page.getByRole('heading', { name: 'GitHub', exact: true }).waitFor();
+  assert(!(await page.locator('body').innerText()).includes('Thinking'), 'Advanced shows a thinking control');
   const saved = () => execFileSync('sqlite3', ['-readonly', db, 'SELECT * FROM global_settings'], { encoding: 'utf8' });
   const interval = page.getByRole('spinbutton');
   const pollingSaved = async (value) => {
