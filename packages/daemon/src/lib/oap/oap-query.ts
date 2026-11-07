@@ -2,6 +2,7 @@ import type { SDKMessage, SDKUserMessage, RewindFilesResult } from '@hyperneo/sh
 import type { QueryLike } from '../agent/query-like.ts';
 import { mapUserInputRequest } from './oap-permission-map.ts';
 import { initialOapTranslatorState, translateOapEvent } from './oap-sdk-translator.ts';
+export { createOapQueryHub } from './oap-query-hub.ts';
 
 type OapEvent = { type: string; [key: string]: unknown };
 
@@ -9,6 +10,7 @@ export type OapQueryHub = {
   submit(sessionId: string, message: SDKUserMessage): Promise<{ runId: string }>;
   events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OapEvent>;
   cancel(sessionId: string, runId: string): Promise<void>;
+  release?(): void;
 };
 
 type OapQueryTranslator = {
@@ -151,6 +153,7 @@ export class OapQuery implements QueryLike {
     if (this.closed) return;
     this.closed = true;
     this.closeSignal.abort();
+    this.hub.release?.();
     void this.cancelActive().catch(() => {});
   }
 

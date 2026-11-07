@@ -4,6 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { checkOapBinary, type BinaryCheck, type BinaryIdentity } from './oap-binary.ts';
 import { OapHubClient, type OapHubClientOptions } from './oap-hub-client.ts';
 import { buildOapHubConfig, type OapHubConfigInput } from './oap-hub-config.ts';
+import { createOapQueryHub, type OapQueryHub } from './oap-query.ts';
 
 export interface OapEngineOptions extends OapHubConfigInput {
   binaryPath: string;
@@ -76,6 +77,10 @@ export class OapEngine {
   private slot?: Slot;
   private closed = false;
   private closing?: Promise<void>;
+
+  createQueryHub(client: OapHubClient): OapQueryHub {
+    return createOapQueryHub(client);
+  }
 
   async getHub(options: OapEngineOptions): Promise<OapHubClient> {
     if (this.closed) throw new Error('OAP engine is closed');
