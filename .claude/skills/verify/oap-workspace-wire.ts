@@ -67,7 +67,7 @@ for line in sys.stdin:
   if 'Synthetic free text question' in json.dumps(request):
    emit({'id':900,'method':'item/tool/requestUserInput','params':{'threadId':thread,'turnId':turn,'itemId':'synthetic-question','questions':[{'id':'explain','question':'Explain?','options':None}]}})
    continue
-  for index in range(${mode === 'recovery-claim' ? 1 : 96}):
+  for index in range(${['recovery-claim', 'recovery-web', 'recovery'].includes(mode) ? 1 : 96}):
    emit({'method':'item/agentMessage/delta','params':{'threadId':thread,'turnId':turn,'itemId':'text-'+turn,'delta':'synthetic reply' if index==0 else '.'}})
   emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
  if method=='turn/interrupt':
@@ -214,6 +214,57 @@ try {
     assert.equal(calls().length, 0);
     assert.equal(existsSync(join(run, 'data/oap/oap-serve.json')), false);
     Object.assign(evidence, { port: app.server.port, mismatchedDigestRefused: true, syntheticPeerStarts: 0, pass: true });
+  } else if (mode === 'recovery-web' || mode === 'recovery') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic prior completed turn' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'prior completed turn');
+    const saved = app.db.getSession(firstId)?.sdkSessionId;
+    assert.equal(saved, 'native-workspace-a');
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic hold for crash' });
+    await waitFor(() => calls().filter((call) => call.request.method === 'turn/start').length === 2, 'unfinished turn before hub crash');
+    const originalHub = await app.oapEngine.getHub(config.oap);
+    const child = (originalHub as unknown as { child: { kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
+    const exited = new Promise<void>((resolveExit) => child.once('close', resolveExit));
+    assert(child.kill('SIGKILL'));
+    await exited;
+    await waitFor(() => !first.queryPromise, 'crashed turn stopped');
+    unlinkSync(join(config.oap.stateDirectory, 'session-history.jsonl'));
+    await new Promise((done) => setTimeout(done, 500));
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
+    await first.oap!.hub;
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, 'native-workspace-a-2');
+    const excerpt = app.db.getSession(firstId)?.metadata.oapRecovery?.text;
+    assert(excerpt?.includes('Synthetic prior completed turn'));
+    assert(!excerpt.includes('Synthetic hold for crash'));
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
+    if (mode === 'recovery-web') await verifyNoticeInBrowser(app, firstId, 'The previous Codex thread cannot be resumed. A new thread will use a saved conversation excerpt with your next message.');
+    const newHub = await app.oapEngine.getHub(config.oap);
+    const newChild = (newHub as unknown as { child: { kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
+    const newExit = new Promise<void>((resolveExit) => newChild.once('close', resolveExit));
+    assert(newChild.kill('SIGKILL'));
+    await newExit;
+    await transport.close();
+    transport = undefined;
+    await app.cleanup();
+    app = undefined;
+    app = await createDaemonApp({ config: { ...config, disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
+    assert.notEqual(app.server.port, 8399);
+    assert.notEqual(app.server.port, 8499);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
+    const restored = await app.sessionManager.getSessionAsync(firstId, { startQuery: false, replayPendingMessages: false });
+    assert(restored);
+    assert(restored.session.metadata.oapRecovery?.text.includes('Synthetic prior completed turn'));
+    hub = new MessageHub({ defaultSessionId: 'global' });
+    transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
+    hub.registerTransport(transport);
+    await transport.initialize();
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic explicit recovery request' });
+    await waitFor(() => calls().filter((call) => call.request.method === 'turn/start').length === 3 && !restored.queryPromise, 'explicit recovery turn');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert(JSON.stringify(turns[2]).includes('Synthetic prior completed turn'));
+    assert(JSON.stringify(turns[2]).includes('Synthetic explicit recovery request'));
+    assert(!JSON.stringify(turns[2]).includes('Synthetic hold for crash'));
+    assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery, undefined);
+    Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, priorCrashNotResent: true, unfinishedTurnExcluded: true, summaryPersistedAcrossRestart: true, summaryOnlyOnExplicitTurn: true, automaticResends: 0, pass: true });
   } else if (mode === 'recovery-claim') {
     const queryHub = await first.oap!.hub;
     const { planMailboxAdmission } = await import('../../../packages/daemon/src/lib/mailbox/admission-plan.ts');

@@ -4,11 +4,47 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { durablePromptUuid } from '../agent/retry-prompt-identity.ts';
 import { Logger } from '../logger.ts';
 import { isDefiniteOapRefusal, OapHubRequestError } from './oap-hub-client.ts';
+import { announceOapNotice } from './oap-notice.ts';
 import type { OapQueryHub } from './oap-query.ts';
-import type { OapReopenStore } from './oap-reopen.ts';
+import type { OapReopenEvents, OapReopenStore } from './oap-reopen.ts';
 
 type Recovery = NonNullable<Session['metadata']['oapRecovery']>;
 const logger = new Logger('OapRecovery');
+
+export function recoveryContext(messages: unknown[]): string {
+  const rows = messages as Array<{
+    type: string;
+    subtype?: string;
+    is_error?: boolean;
+    deliveryStatus?: string;
+    message?: { content?: unknown };
+  }>;
+  const terminal = rows.findLastIndex(
+    (item) => item.type === 'result' && item.subtype === 'success' && item.is_error === false
+  );
+  return rows
+    .slice(0, terminal + 1)
+    .flatMap((item) => {
+      if (
+        !['user', 'assistant'].includes(item.type) ||
+        (item.type === 'user' && item.deliveryStatus !== 'delivered')
+      )
+        return [];
+      const content = item.message?.content;
+      const text =
+        typeof content === 'string'
+          ? content
+          : Array.isArray(content)
+            ? content
+                .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+                .map((part) => part.text)
+                .join('')
+            : '';
+      return text ? [`${item.type}: ${text}`] : [];
+    })
+    .join('\n')
+    .slice(-12000);
+}
 
 function recoveryMessage(message: SDKUserMessage, recovery: Recovery): SDKUserMessage {
   const prefix = `Previous conversation excerpt (the earlier thread could not be resumed):\n${recovery.text}\n\nCurrent request:\n`;
@@ -69,11 +105,37 @@ async function writeRecovery(
 export function withOapRecovery(
   hub: OapQueryHub,
   getSession: () => Session,
-  db: OapReopenStore
+  db: OapReopenStore,
+  messageHub: OapReopenEvents
 ): OapQueryHub {
   let pending: { owner?: symbol; cancelled: boolean } | undefined;
+  const noticeUnknown = async (message: SDKUserMessage, owner?: symbol, isLive?: () => boolean) => {
+    const session = getSession();
+    if (
+      !session.metadata?.oapRecovery?.claim ||
+      session.metadata.oapRecovery.claim !== durablePromptUuid(message)
+    )
+      return;
+    const attempt = { owner, cancelled: false };
+    pending = attempt;
+    try {
+      await announceOapNotice(
+        session.id,
+        'Codex recovery was already submitted; outcome may be unknown',
+        db,
+        messageHub,
+        () => {
+          if (attempt.cancelled || (isLive && !isLive()))
+            throw new Error('OAP recovery attempt expired');
+        }
+      );
+    } finally {
+      if (pending === attempt) pending = undefined;
+    }
+  };
   return {
     ...hub,
+    reportAdmissionFailure: noticeUnknown,
     release(owner) {
       if (pending && (!owner || pending.owner === owner)) pending.cancelled = true;
       hub.release?.(owner);
@@ -90,11 +152,11 @@ export function withOapRecovery(
       if (recovery.pendingOpen)
         throw new OapHubRequestError('invalid_submission', 'Codex recovery is still opening');
       if (recovery.claim) {
-        if (recovery.claim === deliveryUuid)
-          throw new OapHubRequestError(
-            'invalid_submission',
-            'Codex recovery was already submitted; outcome may be unknown'
-          );
+        if (recovery.claim === deliveryUuid) {
+          const text = 'Codex recovery was already submitted; outcome may be unknown';
+          await noticeUnknown(message, owner, isLive);
+          throw new OapHubRequestError('outcome_unknown', text);
+        }
         return forward(message);
       }
       const internal = (message as SDKUserMessage & { internal?: boolean }).internal;
