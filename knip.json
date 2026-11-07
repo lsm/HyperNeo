@@ -57,6 +57,7 @@
       "entry": [
         "src/client.tsx",
         "src/neo/client.tsx",
+        "src/lib/voice/voice-opus-encoder.ts",
         "src/queue-preview.tsx",
         "src/index.ts",
         "src/server-prod.ts",
