@@ -33,13 +33,17 @@ export type HomeResult =
 type HomeSyncResult = { value: string | null } | { reason: HomeFailure };
 
 const HOME_RUNTIME_DIRS = ['.coordinators', '.claude', 'worktrees'];
+const NETWORK_TIMEOUT_MS = 30_000;
 
 export class NeoHomeRepository {
   private pending: Promise<unknown> = Promise.resolve();
   constructor(
     readonly root: string,
     private readonly projects: NeoRepository,
-    private readonly networkTimeoutMs = 30_000
+    private readonly armNetworkTimeout: (fire: () => void) => () => void = (fire) => {
+      const timer = setTimeout(fire, NETWORK_TIMEOUT_MS);
+      return () => clearTimeout(timer);
+    }
   ) {}
 
   private async git(args: string[], allowFailure = false, network = false, cwd = this.root) {
@@ -91,8 +95,8 @@ export class NeoHomeRepository {
     }
     const { child, dispose } = command;
     let timedOut = false;
-    const timer = network
-      ? setTimeout(() => {
+    const disarm = network
+      ? this.armNetworkTimeout(() => {
           timedOut = true;
           try {
             if (child.pid) process.kill(-child.pid, 'SIGKILL');
@@ -100,7 +104,7 @@ export class NeoHomeRepository {
           } catch {
             child.kill('SIGKILL');
           }
-        }, this.networkTimeoutMs)
+        })
       : undefined;
     try {
       const [text, error, code] = await Promise.all([
@@ -109,13 +113,13 @@ export class NeoHomeRepository {
         child.exited,
       ]);
       const diagnostic = timedOut
-        ? `network timed out after ${this.networkTimeoutMs}ms`
+        ? `network timed out after ${NETWORK_TIMEOUT_MS}ms`
         : error.trim();
       if (code && !allowFailure) throw new Error(`home ${args.join(' ')}: ${diagnostic}`);
       const bytes = Buffer.from(text);
       return { code, bytes, text: bytes.toString('utf8').trim(), error: diagnostic };
     } finally {
-      clearTimeout(timer);
+      disarm?.();
       await dispose();
     }
   }
