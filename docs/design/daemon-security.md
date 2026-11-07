@@ -72,7 +72,7 @@ No device is trusted just because it connects over loopback, because a browser p
 reach loopback too.
 
 **Rotation and revocation.**
-- Settings → Devices lists each device's name, kind, last seen time and host.
+- Settings → Connections & Services → Devices lists each device's name, kind, last seen time and host.
 - "Revoke" sets `revoked_at` and closes that device's open sockets at once.
 - "Re-pair" issues a new credential and revokes the old one.
 - Credentials don't expire on a timer, but a device unseen for 90 days is flagged for review.

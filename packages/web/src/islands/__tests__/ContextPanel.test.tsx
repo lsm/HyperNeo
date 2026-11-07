@@ -43,6 +43,7 @@ let mockSettingsSectionSignal!: Signal<
   | 'exa'
   | 'app-mcp-servers'
   | 'skills'
+  | 'coding-pack'
   | 'models'
   | 'usage'
   | 'about'
@@ -338,6 +339,32 @@ describe('ContextPanel', () => {
 
       fireEvent.click(entry);
       expect(mockNavigateToSettings).toHaveBeenCalledWith('providers');
+    }
+  );
+
+  it.each(['skills', 'app-mcp-servers', 'coding-pack'] as const)(
+    'shows the six main entries and highlights Capabilities for %s',
+    (section) => {
+      mockNavSectionSignal.value = 'settings';
+      mockSettingsSectionSignal.value = section;
+      render(<ContextPanel />);
+      const nav = within(screen.getByRole('navigation', { name: 'Settings sections' }));
+      expect(nav.getAllByRole('button').map((button) => button.textContent)).toEqual([
+        'Preferences',
+        'Neo',
+        'Sessions & Harness',
+        'Connections & Services',
+        'Capabilities',
+        'Voice',
+        'Usage',
+        'Shortcuts',
+        'About',
+      ]);
+      expect(nav.getByRole('button', { name: 'Capabilities' }).className).toContain(
+        'bg-fill text-fg'
+      );
+      fireEvent.click(nav.getByRole('button', { name: 'Capabilities' }));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('skills');
     }
   );
 

@@ -10,6 +10,11 @@ import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
 import {
+  CapabilitiesPage,
+  isCapabilitiesSection,
+} from '../components/settings/CapabilitiesPage.tsx';
+
+import {
   ConnectionsServicesPage,
   isConnectionsSection,
 } from '../components/settings/ConnectionsServicesPage.tsx';
@@ -188,9 +193,13 @@ export default function MainContent() {
                   </ConnectionsServicesPage>
                 )}
                 {settingsSection === 'voice' && <VoiceSettings />}
-                {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
-                {settingsSection === 'skills' && <SkillsRegistry />}
-                {settingsSection === 'coding-pack' && <PackSettings />}
+                {isCapabilitiesSection(settingsSection) && (
+                  <CapabilitiesPage section={settingsSection}>
+                    {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
+                    {settingsSection === 'skills' && <SkillsRegistry />}
+                    {settingsSection === 'coding-pack' && <PackSettings />}
+                  </CapabilitiesPage>
+                )}
                 {settingsSection === 'neo-model' && <NeoModelSettings />}
                 {settingsSection === 'harness' && <SessionsHarnessSettings />}
                 {settingsSection === 'usage' && <UsageAnalytics />}
