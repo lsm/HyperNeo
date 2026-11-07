@@ -98,7 +98,7 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 2000
     await new Promise((done) => setTimeout(done, 20));
   }
 }
-async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessionId: string, text: string): Promise<void> {
+async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessionId: string, text: string, assistantUuid?: string): Promise<void> {
   assert(process.env.VERIFY_BROWSER);
   const root = resolve('packages/web/dist');
   assert(existsSync(join(root, 'index.html')), 'build the web bundle before the browser proof');
@@ -142,11 +142,17 @@ async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessio
         throw error;
       }
       await notice.scrollIntoViewIfNeeded();
-      await page.screenshot({ path: join(run, 'evidence/oap-reopen-session.png'), animations: 'disabled' });
+      if (assistantUuid) {
+        const bubble = page.locator(`[data-message-uuid="${assistantUuid}"]`);
+        assert.equal(await bubble.count(), 1);
+        assert((await bubble.innerText()).includes(text));
+        assert.equal(await page.getByText(text, { exact: true }).count(), 1);
+      }
+      await page.screenshot({ path: join(run, `evidence/${assistantUuid ? 'oap-coalesced' : 'oap-reopen'}-session.png`), animations: 'disabled' });
       await page.goto(`${base}/neo`);
       await page.locator('.neo-shell').waitFor({ timeout: 20000 });
       await page.screenshot({ path: join(run, 'evidence/oap-reopen-neo.png'), animations: 'disabled' });
-      Object.assign(evidence, { browserPort: web.port, ...(mode === 'recovery-claim' ? { visibleUserMessageRendered: true } : { visibleNoticeRendered: true }) });
+      Object.assign(evidence, { browserPort: web.port, ...(mode === 'recovery-claim' ? { visibleUserMessageRendered: true } : { visibleNoticeRendered: true }), ...(assistantUuid ? { assistantBubbleCount: 1 } : {}) });
       await context.close();
     } finally { await browser.close(); }
   } finally { web.stop(true); }
@@ -173,7 +179,20 @@ try {
   const { sessionId: firstId } = await makeSession('workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
-  if (mode === 'feature-refusal') {
+  if (mode === 'delta-coalesce') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic streamed response' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'streamed reply');
+    const rows = app.db.getSDKMessages(firstId, 1000).messages;
+    const assistants = rows.filter((row) => row.type === 'assistant');
+    const expected = `synthetic reply${'.'.repeat(95)}`;
+    assert.equal(assistants.length, 1);
+    const assistant = assistants[0];
+    assert(assistant && assistant.type === 'assistant' && assistant.uuid);
+    assert.deepEqual(assistant.message.content.map((block) => block.type === 'text' ? block.text : null), [expected]);
+    assert.equal(rows.filter((row) => row.type === 'stream_event').length, 0);
+    await verifyNoticeInBrowser(app, firstId, expected, assistant.uuid);
+    Object.assign(evidence, { port: app.server.port, textDeltas: 96, storedAssistantRows: 1, joinedText: expected, pass: true });
+  } else if (mode === 'feature-refusal') {
     await first.oap!.hub;
     const engineHub = await app.oapEngine.getHub(config.oap);
     const refusal = await engineHub.request('settings', {

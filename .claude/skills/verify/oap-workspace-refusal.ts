@@ -74,7 +74,13 @@ try {
         return { runId: `run-${submissions.length}` };
       },
       events: async function* (_target: string, runId: string) {
-        yield { type: 'content.delta', id: `text-${runId}`, payload: { part: { type: 'text', text: `reply-${runId}` } } };
+        const common = { session_id: syntheticSession, run_id: runId, message_id: `message-${runId}` };
+        for (const [index, text] of ['Think', ' carefully'].entries()) {
+          yield { type: 'content.delta', id: `reason-${runId}-${index}`, payload: { ...common, part: { type: 'reasoning', reasoning: text } } };
+        }
+        for (const [index, text] of ['reply-', runId].entries()) {
+          yield { type: 'content.delta', id: `text-${runId}-${index}`, payload: { ...common, part: { type: 'text', text } } };
+        }
         yield { type: 'run.completed', id: `end-${runId}`, payload: { final_response: { content: `reply-${runId}` } } };
       },
       cancel: async () => { cancellations++; },
@@ -90,6 +96,9 @@ try {
       const results = rows.filter((row) => row.type === 'result');
       if (results.length === turn && !agent.queryPromise && !agent.messageQueue.isRunning()) {
         assert(results.some((row) => 'result' in row && row.result === `reply-run-${turn}`));
+        const assistants = rows.filter((row) => row.type === 'assistant');
+        assert.equal(assistants.length, turn);
+        assert(assistants.some((row) => JSON.stringify(row).includes('Think carefully') && JSON.stringify(row).includes(`reply-run-${turn}`)));
         break;
       }
       assert(Date.now() < turnDeadline, `synthetic turn ${turn} did not finish`);
@@ -137,6 +146,48 @@ try {
   assert.equal(errors.length, errorsBeforeTurns);
   agent.messageQueue.clear();
   await agent.lifecycleManager.stop({ timeoutMs: 100, catchQueryErrors: true });
+  const { sessionId: orderSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP order', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  const orderAgent = app.sessionManager.getSession(orderSession);
+  assert(orderAgent);
+  let orderTurn = 0;
+  (orderAgent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
+    openDirectorySupported: true,
+    hub: {
+      submit: async () => ({ runId: `order-${++orderTurn}` }),
+      events: async function* (_target: string, runId: string) {
+        const content = (id: string, text: string) => ({ type: 'content.delta', id, payload: { message_id: runId, part: { type: 'text', text } } });
+        if (runId === 'order-1') {
+          yield content('before', 'before tool');
+          yield { type: 'action.call.started', id: 'tool-start', payload: { tool_call_id: 't1', name: 'codex.command' } };
+          yield { type: 'action.call.completed', id: 'tool-end', payload: { tool_call_id: 't1', result: 'ok' } };
+          yield content('after', 'after tool');
+          yield { type: 'run.completed', id: 'done', payload: {} };
+        } else {
+          yield content('partial', 'partial before failure');
+          throw new Error('synthetic hub stream failure');
+        }
+      },
+      cancel: async () => {},
+    },
+  };
+  await hub.request('message.send', { sessionId: orderSession, content: 'Synthetic ordering' });
+  const orderDeadline = Date.now() + 15_000;
+  while (!app.db.getSDKMessages(orderSession).messages.some((row) => row.type === 'result') || orderAgent.queryPromise) {
+    assert(Date.now() < orderDeadline, 'ordered turn did not finish');
+    await new Promise((done) => setTimeout(done, 50));
+  }
+  const orderRows = app.db.getSDKMessages(orderSession).messages.filter((row) => row.type === 'assistant' || (row.type === 'user' && JSON.stringify(row).includes('tool_result')));
+  assert.deepEqual(orderRows.map((row) => row.type === 'assistant' ? row.message.content[0]?.type : 'tool_result'), ['text', 'tool_use', 'tool_result', 'text']);
+  assert(JSON.stringify(orderRows[0]).includes('before tool'));
+  assert(JSON.stringify(orderRows[3]).includes('after tool'));
+  await hub.request('message.send', { sessionId: orderSession, content: 'Synthetic failure' });
+  const failureDeadline = Date.now() + 15_000;
+  while (!JSON.stringify(app.db.getSDKMessages(orderSession).messages).includes('partial before failure')) {
+    assert(Date.now() < failureDeadline, 'partial text was not saved after stream failure');
+    await new Promise((done) => setTimeout(done, 50));
+  }
+  evidence.chronologicalToolRows = true;
+  evidence.abruptStreamPartialSaved = true;
   let releaseLate!: () => void;
   let listening!: () => void;
   const lateGate = new Promise<void>((resolve) => { releaseLate = resolve; });
@@ -181,6 +232,8 @@ try {
   evidence.sdkStartupGateCalls = gateCalls;
   evidence.trackedAgentProcesses = 0;
   evidence.syntheticTurnsFinished = submissions.length;
+  evidence.joinedTextAndReasoningPerTurn = true;
+  evidence.assistantRowsPerTurn = 1;
   evidence.syntheticCompletedRunCancellations = cancellations;
   evidence.staleFailurePreservedReplacement = true;
   evidence.staleFailurePreservedSuccessorAttempt = true;
