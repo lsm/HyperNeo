@@ -57,6 +57,25 @@ describe('NeoDrawer', () => {
     expect(screen.queryByRole('combobox', { name: /Move under/ })).toBeNull();
   });
 
+  it('shows the submitted pairing label as text', async () => {
+    invoke.mockResolvedValueOnce({
+      ok: true,
+      pending: [
+        {
+          id: 'pending',
+          kind: 'human',
+          name: 'Code label',
+          requestedName: '<Browser label>',
+          expiresAt: 4e12,
+        },
+      ],
+    });
+    const view = drawer();
+    expect(await screen.findByText('<Browser label>')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Allow <Browser label>' })).toBeTruthy();
+    expect(view.container.querySelector('browser')).toBeNull();
+  });
+
   it('denies a pending device from a button left of Allow', async () => {
     const pending = { id: 'pending', kind: 'relay', name: 'Synthetic relay', expiresAt: 4e12 };
     invoke

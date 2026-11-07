@@ -123,6 +123,7 @@ export function createDevicePairingOperations({
               id: z.string(),
               kind: Kind,
               name: z.string().nullable(),
+              requestedName: z.string().nullable(),
               expiresAt: z.number(),
             })
           ),

@@ -31,5 +31,10 @@ FIRST=$(cli pair --name Laptop)
 LAPTOP=$(python3 -c "import json;print(json.load(open('$RUN/pair.json'))['credential'])")
 PENDING=$(cli pair --name 'Code label')
 CODE=$(echo "$PENDING" | field "['code']")
-[ "$(pair "$CODE" 'Browser label')" = 403 ]
+if [ "${VERIFY_WEB:-0}" = 1 ]; then
+  PAIR_CODE="$CODE" OWNER_CREDENTIAL="$LAPTOP" NODE_PATH="${PLAYWRIGHT_NODE_PATH:-/opt/homebrew/lib/node_modules/@playwright/cli/node_modules}" \
+    node .claude/skills/verify/pair-requested-name-view.mjs "$PORT"
+else
+  [ "$(pair "$CODE" 'Browser label')" = 403 ]
+fi
 rpc device.pair.pending '{}' | python3 -c "import json,sys; p=json.load(sys.stdin)['reply']['pending']; print('pending:', p); assert any(x.get('requestedName') == 'Browser label' and x['name'] == 'Code label' for x in p)"

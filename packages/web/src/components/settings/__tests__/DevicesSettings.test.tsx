@@ -185,6 +185,27 @@ describe('DevicesSettings', () => {
     ]);
   });
 
+  it('shows the submitted label as text and falls back to the code label', async () => {
+    daemon({
+      paired: true,
+      pending: [
+        {
+          id: 'new',
+          kind: 'human',
+          name: 'Code label',
+          requestedName: '<Browser label>',
+          expiresAt: Date.now() + 300_000,
+        },
+        { id: 'old', kind: 'human', name: 'Old label', expiresAt: Date.now() + 300_000 },
+      ],
+    });
+    const view = render(<DevicesSettings />);
+    expect(await screen.findByText('<Browser label>')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Allow <Browser label>' })).toBeTruthy();
+    expect(screen.getByText('Old label')).toBeTruthy();
+    expect(view.container.querySelector('browser')).toBeNull();
+  });
+
   it('denies a pending code from a button left of Allow', async () => {
     daemon({
       paired: true,

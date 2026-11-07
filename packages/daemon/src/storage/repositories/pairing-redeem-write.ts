@@ -8,7 +8,10 @@ class PairingRedeemer {
   redeem(code: string, name: string, now: number) {
     const repo = new DevicePairingRepository(this.db);
     const paired = repo.redeem(code, name, now);
-    return { paired, awaitingApproval: paired === null && repo.isAwaitingApproval(code, now) };
+    return {
+      paired,
+      awaitingApproval: paired === null && repo.recordRequestedName(code, name, now),
+    };
   }
 }
 
