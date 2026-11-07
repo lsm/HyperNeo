@@ -28,7 +28,10 @@ try {
       const refusal = card('unfinished').getByRole('alert');
       await refusal.waitFor();
       assert.match(await refusal.innerText(), /todos_unfinished:/);
-      assert.equal(await card('unfinished').getAttribute('data-ask-state'), 'open');
+      assert.equal(await card('unfinished').getAttribute('data-ask-state'), 'todo');
+      await card('unfinished').getByRole('button', { name: 'Ask actions' }).click();
+      await page.getByRole('menuitem', { name: 'Mark done' }).waitFor();
+      await page.keyboard.press('Escape');
       await card('unfinished').screenshot({ path: `${run}/evidence/unfinished-${width}.png` });
     }
     if (width === 1280) {
@@ -43,8 +46,9 @@ try {
       }
       await page.locator('[data-ask="finish"][data-ask-state="done"]:visible').waitFor();
       await card('finish').getByRole('button', { name: 'Ask actions' }).click();
+      await page.getByRole('menuitem', { name: 'Mark done' }).waitFor({ state: 'hidden' });
       evidence.settledActions = await page.getByRole('menuitem').allTextContents();
-      assert.deepEqual(evidence.settledActions, ['Reply']);
+      assert.deepEqual(evidence.settledActions, ['Copy link', 'Reply']);
       await page.keyboard.press('Escape');
       await page.getByRole('menu').waitFor({ state: 'hidden' });
       await card('finish').screenshot({ path: `${run}/evidence/marked-done.png` });
