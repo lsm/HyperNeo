@@ -11,7 +11,6 @@ const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
 const SETTINGS_ROUTE_PATTERN = /^\/settings$/;
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
   'preferences',
-  'general',
   'providers',
   'connections',
   'voice',

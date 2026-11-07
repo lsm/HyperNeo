@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
+import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@hyperneo/shared';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
-import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@hyperneo/shared';
-import { SettingsSection, SettingsGroup, SettingsRow } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsRow, SettingsSection } from './SettingsSection.tsx';
 
-export function GeneralSettings() {
+export function GitHubPollingSettings() {
   const settings = globalSettings.value;
   const [localGitHubPollingInterval, setLocalGitHubPollingInterval] = useState(
     String(settings?.githubPollingInterval ?? 120)
@@ -13,14 +13,8 @@ export function GeneralSettings() {
   const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
-    if (settings) {
-      setLocalGitHubPollingInterval(String(settings.githubPollingInterval ?? 120));
-    }
+    if (settings) setLocalGitHubPollingInterval(String(settings.githubPollingInterval ?? 120));
   }, [settings]);
-
-  const handleGitHubPollingIntervalChange = (value: string) => {
-    setLocalGitHubPollingInterval(value);
-  };
 
   const handleGitHubPollingIntervalBlur = async () => {
     const trimmed = localGitHubPollingInterval.trim();
@@ -58,7 +52,7 @@ export function GeneralSettings() {
   };
 
   return (
-    <SettingsSection title="General">
+    <SettingsSection title="GitHub">
       <SettingsGroup>
         <SettingsRow
           label="GitHub polling interval (seconds)"
@@ -72,7 +66,7 @@ export function GeneralSettings() {
             placeholder="120"
             value={localGitHubPollingInterval}
             onInput={(event) =>
-              handleGitHubPollingIntervalChange((event.target as HTMLInputElement).value)
+              setLocalGitHubPollingInterval((event.target as HTMLInputElement).value)
             }
             onBlur={handleGitHubPollingIntervalBlur}
             disabled={isUpdating}

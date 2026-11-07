@@ -68,7 +68,7 @@ function resetSignals() {
   currentSpaceSettingsTabSignal.value = 'general';
   currentSpaceTasksFilterTabSignal.value = 'active';
   navSectionSignal.value = 'spaces';
-  settingsSectionSignal.value = 'general';
+  settingsSectionSignal.value = 'preferences';
 }
 
 function finishNavigation() {
@@ -341,6 +341,13 @@ describe('router', () => {
     cleanupRouter();
     settingsSectionSignal.value = 'providers';
     setPath('/settings?tab=appearance');
+    initializeRouter();
+    expect(navSectionSignal.value).toBe('settings');
+    expect(settingsSectionSignal.value).toBe('preferences');
+
+    cleanupRouter();
+    settingsSectionSignal.value = 'providers';
+    setPath('/settings?tab=general');
     initializeRouter();
     expect(navSectionSignal.value).toBe('settings');
     expect(settingsSectionSignal.value).toBe('preferences');

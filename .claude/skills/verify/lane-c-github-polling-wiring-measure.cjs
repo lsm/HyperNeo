@@ -81,7 +81,7 @@ const interfaceLines = interfaces.reduce((n, row) => n + row.lines, 0);
 const approvedInterfaceHashes = {
   "enablePollingCapability": "77becc21a2f52b962d6c22398b7daa6ce9dee68643dc016431ca03c43596df31",
   "disablePollingCapabilityIfUnused": "10a30e900f2cd8b6b62ddbe226c0d733d90f20948e6e4cd910a34b8856bae22e",
-  "assertPollingIntervalEnabled": "a573480e0955085bea56fa5d99b98fd61b0b60ee3cba5f211b89c962aa6147a1",
+  "assertPollingIntervalEnabled": "2ae3a9ab8e9201104ad1f5b257f0bd73b9569abbe1a69cac15bf3d18fa7e0332",
   "ensurePollingActive": "b40fa77bfb50f6856fdbffbecba6650605de19a902eb79c3628c08f57bee6590",
   "getPollIntervalMs": "2836cf7a3bf0c7162a3e55b25bae19640e8cbeecb491f89f0ac304d936fb0232",
   "scheduleNextPoll": "412d5ea222fb60761a0bf8e6aac10a512079c91859e5a866fdcbbd9dca28b70b",

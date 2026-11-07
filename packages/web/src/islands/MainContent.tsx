@@ -19,9 +19,6 @@ const SessionsPage = lazy(() =>
   import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
 );
 
-const GeneralSettings = lazy(() =>
-  import('../components/settings/GeneralSettings.tsx').then((m) => ({ default: m.GeneralSettings }))
-);
 const PreferencesSettings = lazy(() =>
   import('../components/settings/PreferencesSettings.tsx').then((m) => ({
     default: m.PreferencesSettings,
@@ -39,6 +36,11 @@ const ConnectionsSettings = lazy(() =>
 );
 const VoiceSettings = lazy(() =>
   import('../components/settings/VoiceSettings.tsx').then((m) => ({ default: m.VoiceSettings }))
+);
+const GitHubPollingSettings = lazy(() =>
+  import('../components/settings/GitHubPollingSettings.tsx').then((m) => ({
+    default: m.GitHubPollingSettings,
+  }))
 );
 const ExaSettings = lazy(() =>
   import('../components/settings/ExaSettings.tsx').then((m) => ({ default: m.ExaSettings }))
@@ -171,17 +173,21 @@ export default function MainContent() {
             <div class="mx-auto w-full max-w-5xl">
               <Suspense fallback={lazyFallback}>
                 {settingsSection === 'preferences' && <PreferencesSettings />}
-                {settingsSection === 'general' && <GeneralSettings />}
                 {isConnectionsSection(settingsSection) && (
                   <ConnectionsServicesPage section={settingsSection} fallback={lazyFallback}>
                     {settingsSection === 'providers' && <ProvidersSettings />}
                     {settingsSection === 'connections' && <ConnectionsSettings />}
                     {settingsSection === 'devices' && <DevicesSettings />}
                     {settingsSection === 'remote-daemons' && <RemoteDaemonsSettings />}
+                    {settingsSection === 'exa' && (
+                      <>
+                        <ExaSettings />
+                        <GitHubPollingSettings />
+                      </>
+                    )}
                   </ConnectionsServicesPage>
                 )}
                 {settingsSection === 'voice' && <VoiceSettings />}
-                {settingsSection === 'exa' && <ExaSettings />}
                 {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
                 {settingsSection === 'skills' && <SkillsRegistry />}
                 {settingsSection === 'coding-pack' && <PackSettings />}

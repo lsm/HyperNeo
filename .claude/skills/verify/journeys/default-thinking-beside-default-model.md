@@ -16,11 +16,11 @@ own headless browser is not downloaded.
 
 It checks, as a user would see it:
 
-- Settings > General has no thinking control.
+- Settings > Connections & Services > Advanced has no thinking control.
 - Settings > Models shows "Thinking" under Default Model with the saved global
   `thinkingLevel`, the options that model's (or its provider's) thinking
   capability allows, and no "unknown" note for a catalog Anthropic model.
-- Opening General and Models sends no `settings.global.update` frame and leaves
+- Opening Advanced and Models sends no `settings.global.update` frame and leaves
   the global settings snapshot unchanged.
 - Choosing a level changes only `thinkingLevel` in global settings; Neo's own
   `neo.preferences.thinkingLevel` is unchanged.

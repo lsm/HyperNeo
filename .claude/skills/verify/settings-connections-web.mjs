@@ -58,6 +58,7 @@ const TABS = [
   ['connections', 'Accounts', 'Accounts'],
   ['devices', 'Devices', 'Devices'],
   ['remote-daemons', 'Remote Daemons', 'Remote Daemons'],
+  ['exa', 'Advanced', 'Exa Web Search'],
 ];
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
@@ -89,7 +90,7 @@ try {
 
   const sidebar = page.getByRole('navigation', { name: 'Settings sections' });
   result.sidebar = await sidebar.getByRole('button').allInnerTexts();
-  for (const gone of ['Providers', 'Connections', 'Devices', 'Remote Daemons'])
+  for (const gone of ['Providers', 'Connections', 'Devices', 'Remote Daemons', 'Exa Search'])
     assert(!result.sidebar.includes(gone), `${gone} is still in the sidebar`);
   await sidebar.getByRole('button', { name: 'Connections & Services' }).click();
   await open('Providers', 'Providers');
@@ -100,11 +101,40 @@ try {
   }
   await page.waitForTimeout(200);
   await page.goBack();
-  await open('Devices', 'Devices');
-  await page.goForward();
   await open('Remote Daemons', 'Remote Daemons');
+  await page.goForward();
+  await open('Advanced', 'Exa Web Search');
   assert.equal(settingsHash(), before, 'opening and moving between tabs wrote settings');
   result.zeroWrites = true;
+
+  await page.goto(`${base}/settings?tab=exa`);
+  await page.getByRole('heading', { name: 'GitHub', exact: true }).waitFor();
+  assert(!(await page.locator('body').innerText()).includes('Thinking'), 'Advanced shows a thinking control');
+  const saved = () => execFileSync('sqlite3', ['-readonly', db, 'SELECT * FROM global_settings'], { encoding: 'utf8' });
+  const interval = page.getByRole('spinbutton');
+  const pollingSaved = async (value) => {
+    await interval.fill(String(value));
+    await interval.blur();
+    for (let tries = 0; tries < 50 && !saved().includes(`"githubPollingInterval":${value}`); tries += 1)
+      await page.waitForTimeout(100);
+    assert(saved().includes(`"githubPollingInterval":${value}`), `interval ${value} not saved`);
+  };
+  await pollingSaved(0);
+  await pollingSaved(60);
+  await interval.fill('-1');
+  await interval.blur();
+  await page.getByText(/must be a whole number/).waitFor();
+  assert.equal(await interval.inputValue(), '60');
+  assert(saved().includes('"githubPollingInterval":60'));
+  await page.reload();
+  await page.getByRole('heading', { name: 'GitHub', exact: true }).waitFor();
+  assert.equal(await page.getByRole('spinbutton').inputValue(), '60');
+  result.polling = { zero: true, sixty: true, refused: true };
+  await page.getByRole('switch').click();
+  for (let tries = 0; tries < 50 && !/"exa":\{[^}]*"enabled":true/.test(saved()); tries += 1)
+    await page.waitForTimeout(100);
+  assert(/"exa":\{[^}]*"enabled":true/.test(saved()), 'Exa switch not saved');
+  result.exaEnabledSaved = true;
 
   await page.goto(`${base}/settings?tab=connections`);
   await page.getByRole('button', { name: 'Connect Google' }).waitFor();
