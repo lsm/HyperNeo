@@ -244,6 +244,39 @@ try {
     assert(turns.every((call) => !JSON.stringify(call).includes('/clear')));
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 3);
     Object.assign(evidence, { port: app.server.port, bothClearPathsCreatedFreshThreads: true, resetPerTurnWorkerHandedOff: true, distinctIdsPersisted: true, controlMessagesSent: 0, explicitTurns: turns.length, pass: true });
+  } else if (mode === 'fresh-clear-crash') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic prior conversation' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'prior native turn');
+    const nativeId = app.db.getSession(firstId)?.sdkSessionId;
+    assert.equal(nativeId, 'native-workspace-a');
+    const engineHub = await app.oapEngine.getHub(config.oap);
+    const child = (engineHub as unknown as { child: { pid: number; kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
+    assert(child && child.pid > 0);
+    const mutable = engineHub as unknown as { request: (op: string, params: Record<string, unknown>) => Promise<unknown> };
+    const originalRequest = mutable.request.bind(engineHub);
+    mutable.request = async (op, params) => {
+      const result = await originalRequest(op, params);
+      if (op === 'close' && params.session_id === firstId) {
+        const exited = new Promise<void>((resolveExit) => child.once('close', resolveExit));
+        assert(child.kill('SIGKILL'));
+        await exited;
+        throw new Error('synthetic hub crash after close');
+      }
+      return result;
+    };
+    await assert.rejects(first.clearConversationContext(), /could not clear/i);
+    assert.equal(app.db.getSession(firstId)?.metadata?.oapClearThreadId, nativeId);
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, nativeId);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    await first.oap!.hub;
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, 'native-workspace-a-2');
+    assert.equal(app.db.getSession(firstId)?.metadata?.oapClearThreadId, undefined);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic message after interrupted clear' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 2 && !first.queryPromise, 'turn after interrupted clear');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal((turns[1].request.params as { threadId?: string }).threadId, 'native-workspace-a-2');
+    Object.assign(evidence, { port: app.server.port, hubCrashedAfterClose: true, intentSurvived: true, freshIdPersisted: true, automaticResends: 0, pass: true });
   } else if (mode === 'submit-internal') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic crash during admission' });
     await waitFor(() => calls().some((call) => call.request.method === 'turn/start'), 'native submit before crash');
