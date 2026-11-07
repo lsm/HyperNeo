@@ -1,8 +1,185 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { createOapQuery, OapQuery } from '../../../../src/lib/oap/oap-query';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('OapQuery', () => {
+  test('preserves accumulated text when a live query is closed', async () => {
+    const prompt = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'request' },
+    } as SDKUserMessage;
+    const query = createOapQuery({
+      sessionId: 's1',
+      prompt: (async function* () {
+        yield prompt;
+      })(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel: async () => {},
+        events: async function* () {
+          yield {
+            type: 'content.delta',
+            id: 'e1',
+            payload: { message_id: 'm1', part: { type: 'text', text: 'partial' } },
+          };
+          await new Promise(() => {});
+        },
+      },
+    });
+    const iterator = query[Symbol.asyncIterator]();
+    expect((await iterator.next()).value?.type).toBe('stream_event');
+    const waiting = iterator.next();
+    query.close();
+    expect((await waiting).value).toMatchObject({
+      type: 'assistant',
+      message: { content: [{ text: 'partial' }] },
+    });
+    expect((await iterator.next()).done).toBe(true);
+  });
+
+  test('does not flush a closed query after its attempt becomes stale', async () => {
+    let live = true;
+    const prompt = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'request' },
+    } as SDKUserMessage;
+    const query = createOapQuery({
+      sessionId: 's1',
+      isLive: () => live,
+      prompt: (async function* () {
+        yield prompt;
+      })(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel: async () => {},
+        events: async function* () {
+          yield {
+            type: 'content.delta',
+            id: 'e1',
+            payload: { message_id: 'm1', part: { type: 'text', text: 'old' } },
+          };
+          await new Promise(() => {});
+        },
+      },
+    });
+    const iterator = query[Symbol.asyncIterator]();
+    expect((await iterator.next()).value?.type).toBe('stream_event');
+    const waiting = iterator.next();
+    live = false;
+    query.close();
+    expect((await waiting).done).toBe(true);
+  });
+
+  test.each([
+    ['end', 'OAP event stream ended before run terminal'],
+    ['error', 'synthetic hub failure'],
+    ['unsupported', 'permission requests are not supported'],
+  ])('delivers accumulated text before an abnormal stream %s', async (ending, expectedError) => {
+    const prompt = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'request' },
+    } as SDKUserMessage;
+    const query = createOapQuery({
+      sessionId: 's1',
+      prompt: (async function* () {
+        yield prompt;
+      })(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel: async () => {},
+        events: async function* () {
+          yield {
+            type: 'content.delta',
+            id: 'e1',
+            payload: { message_id: 'm1', part: { type: 'text', text: 'partial' } },
+          };
+          if (ending === 'error') throw new Error('synthetic hub failure');
+          if (ending === 'unsupported')
+            yield { type: 'action.permission.requested', id: 'e2', payload: {} };
+        },
+      },
+    });
+    const received: SDKMessage[] = [];
+    const consume = async () => {
+      for await (const message of query) received.push(message);
+    };
+    await expect(consume()).rejects.toThrow(expectedError);
+    expect(received.filter((message) => message.type === 'assistant')).toMatchObject([
+      { message: { id: 'm1:0', content: [{ type: 'text', text: 'partial' }] } },
+    ]);
+  });
+
+  test('persists one assistant message for a streamed OAP message', async () => {
+    const db = new Database(':memory:');
+    try {
+      createSpaceTables(db);
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+         VALUES (?, '', ?, ?, 'active', '{}', '{}')`
+      ).run('s1', now, now);
+      const repository = new SDKMessageRepository(db);
+      const prompt = {
+        type: 'user',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'request' },
+      } as SDKUserMessage;
+      const query = createOapQuery({
+        sessionId: 's1',
+        prompt: (async function* () {
+          yield prompt;
+        })(),
+        hub: {
+          submit: async () => ({ runId: 'run-1' }),
+          cancel: async () => {},
+          events: async function* () {
+            for (const [index, text] of ['Hello', ' from', ' Codex'].entries()) {
+              yield {
+                type: 'content.delta',
+                id: `event-${index}`,
+                payload: {
+                  session_id: 's1',
+                  run_id: 'run-1',
+                  message_id: 'message-1',
+                  part: { type: 'text', text },
+                },
+              };
+            }
+            yield {
+              type: 'run.completed',
+              id: 'terminal',
+              payload: { final_response: { id: 'message-1', content: 'Hello from Codex' } },
+            };
+          },
+        },
+      });
+      for await (const message of query) {
+        if (message.type !== 'stream_event') {
+          expect(repository.saveSDKMessage('s1', message)).toBe(true);
+        }
+      }
+      const assistants = repository
+        .getSDKMessages('s1')
+        .messages.filter((m) => m.type === 'assistant');
+      expect(assistants).toHaveLength(1);
+      expect(assistants[0]).toMatchObject({
+        message: { content: [{ type: 'text', text: 'Hello from Codex' }] },
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('keeps event message identities distinct when a restarted hub repeats event and run ids', async () => {
     const message = {
       type: 'user',
@@ -24,14 +201,16 @@ describe('OapQuery', () => {
             yield {
               type: 'content.delta',
               id: 'reused-text',
-              payload: { part: { type: 'text', text: 'reply' } },
+              payload: { message_id: 'reused-message', part: { type: 'text', text: 'reply' } },
             };
             yield { type: 'run.completed', id: 'reused-terminal', payload: {} };
           },
         },
       });
       const current: string[] = [];
-      for await (const result of query) current.push(result.uuid);
+      for await (const result of query) {
+        if (result.type !== 'stream_event') current.push(result.uuid);
+      }
       identities.push(current);
     }
     expect(identities[0]).toHaveLength(2);
@@ -228,7 +407,9 @@ describe('OapQuery', () => {
     });
     expect(query).toBeInstanceOf(OapQuery);
     const messages: SDKMessage[] = [];
-    for await (const item of query) messages.push(item);
+    for await (const item of query) {
+      if (item.type !== 'stream_event') messages.push(item);
+    }
     expect(messages.map((item) => item.type)).toEqual([
       'assistant',
       'result',

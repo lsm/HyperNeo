@@ -610,6 +610,16 @@ describe('QueryRunner', () => {
           release();
         });
         const events = async function* () {
+          yield {
+            type: 'content.delta',
+            id: 'before-interrupt',
+            payload: { message_id: 'm1', part: { type: 'text', text: 'partial before interrupt' } },
+          };
+          yield {
+            type: 'content.delta',
+            id: 'before-interrupt-second',
+            payload: { message_id: 'm2', part: { type: 'text', text: 'another partial' } },
+          };
           listening();
           await cancelled;
           yield { type: 'run.cancelled', id: 'cancel-end', payload: { reason: 'cancelled' } };
@@ -638,8 +648,22 @@ describe('QueryRunner', () => {
         expect(await completesWithin(running)).toBe(true);
         expect(cancel).toHaveBeenCalledTimes(1);
         expect(
+          onSDKMessageSpy.mock.calls.filter(([message]) => message.type === 'assistant')
+        ).toHaveLength(replaceAttempt ? 0 : 2);
+        expect(
           onSDKMessageSpy.mock.calls.filter(([message]) => message.type === 'result')
         ).toHaveLength(replaceAttempt ? 0 : 1);
+        if (!replaceAttempt) {
+          expect(
+            onSDKMessageSpy.mock.calls
+              .map(([message]) => message)
+              .filter((message) => message.type === 'assistant' || message.type === 'result')
+          ).toMatchObject([
+            { type: 'assistant', message: { content: [{ text: 'partial before interrupt' }] } },
+            { type: 'assistant', message: { content: [{ text: 'another partial' }] } },
+            { type: 'result', is_error: true },
+          ]);
+        }
         expect(successor?.isLive() ?? true).toBe(true);
       }
     );
@@ -654,7 +678,12 @@ describe('QueryRunner', () => {
         yield {
           type: 'content.delta',
           id: 'delta-1',
-          payload: { part: { type: 'text', text: 'synthetic reply' } },
+          payload: { message_id: 'message-1', part: { type: 'text', text: 'synthetic ' } },
+        };
+        yield {
+          type: 'content.delta',
+          id: 'delta-2',
+          payload: { message_id: 'message-1', part: { type: 'text', text: 'reply' } },
         };
         yield {
           type: 'run.completed',
@@ -683,8 +712,12 @@ describe('QueryRunner', () => {
       expect(await completesWithin(ctx.queryPromise!)).toBe(true);
       expect(await sent).toBeUndefined();
       expect(submit).toHaveBeenCalledTimes(1);
-      expect(messages.map((message) => message.type)).toEqual(['assistant', 'result']);
-      expect(messages[0]).toMatchObject({ message: { content: [{ text: 'synthetic reply' }] } });
+      expect(messages).toMatchObject([
+        { type: 'stream_event', event: { delta: { type: 'text_delta', text: 'synthetic ' } } },
+        { type: 'stream_event', event: { delta: { type: 'text_delta', text: 'reply' } } },
+        { type: 'assistant', message: { content: [{ text: 'synthetic reply' }] } },
+        { type: 'result', subtype: 'success' },
+      ]);
       expect(queue.isRunning()).toBe(false);
       expect(ctx.queryObject).toBeNull();
       expect(cancel).not.toHaveBeenCalled();

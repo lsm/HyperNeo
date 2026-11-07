@@ -11,6 +11,19 @@ export interface OapTranslatorState {
   sessionId: string;
   terminal: boolean;
   tools: ReadonlyArray<{ id: string; settled: boolean }>;
+  pending: ReadonlyArray<PendingMessage>;
+  segments: ReadonlyArray<{ key: string | null; next: number }>;
+}
+
+type ContentPart =
+  | { type: 'text'; text: string; citations: null }
+  | { type: 'thinking'; thinking: string; signature: string };
+
+interface PendingMessage {
+  key: string | null;
+  id: string;
+  segment: number;
+  content: ContentPart[];
 }
 
 export interface OapTranslatorEvent {
@@ -25,7 +38,7 @@ export interface OapTranslation {
 }
 
 export function initialOapTranslatorState(sessionId: string): OapTranslatorState {
-  return { sessionId, terminal: false, tools: [] };
+  return { sessionId, terminal: false, tools: [], pending: [], segments: [] };
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -57,25 +70,14 @@ function zeroUsage() {
   };
 }
 
-function assistantMessage(
-  state: OapTranslatorState,
-  event: OapTranslatorEvent
-): SDKAssistantMessage | null {
-  const part = record(event.payload.part);
-  const content =
-    part.type === 'text' && typeof part.text === 'string'
-      ? { type: 'text' as const, text: part.text, citations: null }
-      : part.type === 'reasoning' && typeof part.reasoning === 'string'
-        ? { type: 'thinking' as const, thinking: part.reasoning, signature: '' }
-        : null;
-  if (!content) return null;
+function assistantMessage(state: OapTranslatorState, pending: PendingMessage): SDKAssistantMessage {
   return {
     type: 'assistant',
-    uuid: eventUuid(state.sessionId, event.id),
+    uuid: eventUuid(state.sessionId, pending.id),
     session_id: state.sessionId,
     parent_tool_use_id: null,
     message: {
-      id: event.id,
+      id: pending.key === null ? pending.id : `${pending.key}:${pending.segment}`,
       type: 'message',
       role: 'assistant',
       model: '',
@@ -86,9 +88,58 @@ function assistantMessage(
       stop_reason: null,
       stop_sequence: null,
       usage: zeroUsage(),
-      content: [content],
+      content: pending.content,
     },
   };
+}
+
+function translateContent(state: OapTranslatorState, event: OapTranslatorEvent): OapTranslation {
+  const part = record(event.payload.part);
+  const content: ContentPart | null =
+    part.type === 'text' && typeof part.text === 'string'
+      ? { type: 'text' as const, text: part.text, citations: null }
+      : part.type === 'reasoning' && typeof part.reasoning === 'string'
+        ? { type: 'thinking' as const, thinking: part.reasoning, signature: '' }
+        : null;
+  if (!content) return { state, messages: [] };
+  const key =
+    typeof event.payload.message_id === 'string' && event.payload.message_id
+      ? event.payload.message_id
+      : null;
+  const index = state.pending.findIndex((message) => message.key === key);
+  const prior = state.pending[index];
+  const parts = prior ? [...prior.content] : [];
+  const last = parts.at(-1);
+  if (last?.type === 'text' && content.type === 'text') {
+    parts[parts.length - 1] = { ...last, text: last.text + content.text };
+  } else if (last?.type === 'thinking' && content.type === 'thinking') {
+    parts[parts.length - 1] = { ...last, thinking: last.thinking + content.thinking };
+  } else {
+    parts.push(content);
+  }
+  const segment = prior?.segment ?? state.segments.find((entry) => entry.key === key)?.next ?? 0;
+  const next: PendingMessage = { key, id: prior?.id ?? event.id, segment, content: parts };
+  const pending = [...state.pending];
+  if (prior) pending[index] = next;
+  else pending.push(next);
+  const segments = prior
+    ? state.segments
+    : [...state.segments.filter((entry) => entry.key !== key), { key, next: segment + 1 }];
+  const partial: SDKMessage = {
+    type: 'stream_event',
+    uuid: eventUuid(state.sessionId, `${event.id}:partial`),
+    session_id: state.sessionId,
+    parent_tool_use_id: null,
+    event: {
+      type: 'content_block_delta',
+      index: parts.length - 1,
+      delta:
+        content.type === 'text'
+          ? { type: 'text_delta', text: content.text }
+          : { type: 'thinking_delta', thinking: content.thinking },
+    },
+  };
+  return { state: { ...state, pending, segments }, messages: [partial] };
 }
 
 function count(value: unknown): number {
@@ -221,12 +272,33 @@ function terminalMessage(state: OapTranslatorState, event: OapTranslatorEvent): 
 function translate(state: OapTranslatorState, event: OapTranslatorEvent): OapTranslation {
   if (state.terminal) return { state, messages: [] };
   if (event.type === 'content.delta') {
-    const message = assistantMessage(state, event);
-    return { state, messages: message ? [message] : [] };
+    return translateContent(state, event);
   }
-  if (event.type.startsWith('action.call.')) return translateTool(state, event);
+  if (event.type === 'stream.flush') {
+    return {
+      state: { ...state, pending: [] },
+      messages: state.pending.map((message) => assistantMessage(state, message)),
+    };
+  }
+  if (event.type.startsWith('action.call.')) {
+    const tool = translateTool(state, event);
+    if (!tool.messages.length) return tool;
+    return {
+      state: { ...tool.state, pending: [] },
+      messages: [
+        ...state.pending.map((message) => assistantMessage(state, message)),
+        ...tool.messages,
+      ],
+    };
+  }
   if (['run.completed', 'run.failed', 'run.cancelled'].includes(event.type)) {
-    return { state: { ...state, terminal: true }, messages: [terminalMessage(state, event)] };
+    return {
+      state: { ...state, terminal: true, pending: [] },
+      messages: [
+        ...state.pending.map((message) => assistantMessage(state, message)),
+        terminalMessage(state, event),
+      ],
+    };
   }
   return { state, messages: [] };
 }

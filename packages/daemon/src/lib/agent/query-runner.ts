@@ -887,7 +887,11 @@ export class QueryRunner {
           const sdkMessage = message as SDKMessage;
           if (
             !live() &&
-            !(sdkMessage.type === 'result' && oapQuery.wasInterrupted() && maySettleInterrupted())
+            !(
+              (sdkMessage.type === 'assistant' || sdkMessage.type === 'result') &&
+              oapQuery.wasInterrupted() &&
+              maySettleInterrupted()
+            )
           )
             break;
           this.ctx.firstMessageReceived = true;
@@ -897,7 +901,15 @@ export class QueryRunner {
             humanInputs.endTurn();
           }
           await this.handleSDKMessage(sdkMessage, queryGeneration);
-          if (!live()) break;
+          if (
+            !live() &&
+            !(
+              sdkMessage.type === 'assistant' &&
+              oapQuery.wasInterrupted() &&
+              maySettleInterrupted()
+            )
+          )
+            break;
           if (sdkMessage.type === 'result') {
             const messageId = this._lastConsumedUserMessage?.uuid;
             if (messageId) messageQueue.acknowledgeYielded(messageId, queryGeneration);
