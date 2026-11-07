@@ -41,7 +41,23 @@ export async function verifyCardSources(page,{run,base,width,bun}) {
     const container=page.locator(`[data-ask-${kind}="${id}"]`);
     if(kind==='todo'){
       const toggle=container.locator('button[aria-expanded]');
-      if(await toggle.getAttribute('aria-expanded')==='false') await toggle.click();
+      const title=container.locator('[data-todo-head]').getByRole('link',{name:`Open preview: ${files[0]}`,exact:true});
+      const script=join(run,'workspace/script.sh');
+      assert((await container.locator('[data-todo-head]').innerText()).includes(script));
+      assert.equal(await container.locator('[data-todo-head]').getByRole('link',{name:new RegExp('script\\.sh')}).count(),0);
+      assert.equal(await title.evaluate(node=>!!node.closest('button')),false);
+      await writeFile(files[0],'# Inline todo source\n');
+      await title.click();
+      await page.getByRole('heading',{name:'Inline todo source',exact:true}).waitFor();
+      await shot('todo-inline');
+      await close();
+      await work();
+      if(await toggle.getAttribute('aria-expanded')==='false'){
+        const box=await container.locator('[data-todo-head]').boundingBox();
+        assert(box);
+        await page.mouse.click(box.x+20,box.y+7);
+        assert.equal(await toggle.getAttribute('aria-expanded'),'true');
+      }
     }
     const card=container.getByRole('button',{name:'Open current file: current notes.md',exact:true});
     if(kind==='question') assert.equal(calls.length,0);
@@ -55,6 +71,21 @@ export async function verifyCardSources(page,{run,base,width,bun}) {
       await page.getByRole('heading',{name:'Inline question source',exact:true}).waitFor();
       await shot('question-inline');
       await close();
+      await work();
+      const reportTrigger=container.getByRole('button',{name:'View full report',exact:true});
+      await reportTrigger.click();
+      const dialog=page.getByRole('dialog',{name:'View full report',exact:true});
+      assert((await dialog.innerText()).includes(join(run,'workspace/script.sh')));
+      assert.equal(await dialog.getByRole('link',{name:/script\.sh/}).count(),0);
+      const reportLink=dialog.getByRole('link',{name:`Open preview: ${files[0]}`,exact:true});
+      await reportLink.focus();
+      await page.keyboard.press('Enter');
+      await page.getByRole('heading',{name:'Inline question source',exact:true}).waitFor();
+      assert.equal(await dialog.count(),0);
+      await shot('question-document');
+      await close();
+      await reportTrigger.waitFor({state:'visible'});
+      assert.equal(await reportTrigger.evaluate(node=>document.activeElement===node),true);
       await work();
     }
     await card.scrollIntoViewIfNeeded();

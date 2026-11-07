@@ -19,8 +19,9 @@ if(phase==='publish'){
     const todo=store.getTodo('todo');
     assert(todo);
     const mention='`'+join(run,'workspace/current notes.md')+'`';
-    store.updateTodo(todo,{instruction:`The delivered file is ${mention}.`,report:`Read ${mention} twice: ${mention}.`},Date.now());
-    store.askQuestion('file-question','ask',{text:`Please read ${mention} twice: ${mention}. [PR](https://github.com/acme/demo/pull/7)`,document:`Full report also links ${mention}.`,kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,sourceSession:{adapter:'hyperneo',id:'worker',name:'metadata-only.md',label:'metadata-only.md',provider:'synthetic',link:null}},Date.now());
+    const script=join(run,'workspace/script.sh');
+    store.updateTodo(todo,{title:`Review ${mention} and ${script}`,instruction:`The delivered file is ${mention}.`,report:`Read ${mention} twice: ${mention}.`},Date.now());
+    store.askQuestion('file-question','ask',{text:`Please read ${mention} twice: ${mention}. [PR](https://github.com/acme/demo/pull/7)`,document:`Full report also links ${mention}; script ${script}.`,kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,sourceSession:{adapter:'hyperneo',id:'worker',name:'metadata-only.md',label:'metadata-only.md',provider:'synthetic',link:null}},Date.now());
   }finally{db.close();}
   const data=JSON.parse(readFileSync(join(run,'evidence/live-publication.json'),'utf8'));
   writeFileSync(join(run,'evidence/file-card-sources.json'),JSON.stringify({...data,todoId:'todo',questionId:'file-question'}));

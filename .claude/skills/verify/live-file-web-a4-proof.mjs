@@ -102,9 +102,10 @@ export async function verifyLiveFilePage(page, {run, base, width, bun, cards = f
     await download.saveAs(saved);
     assert((await readFile(saved)).equals(expected));
     await close(plain);
-    await tap(unsupported);
-    await page.getByText('This format has no preview yet.', {exact: true}).waitFor();
-    await close(unsupported);
+    const publication = page.locator('article').filter({hasText:'Live source-bound files:'});
+    assert((await publication.innerText()).includes(unsupported));
+    assert.equal(await publication.getByRole('link', {name: `Open preview: ${unsupported}`, exact: true}).count(), 0);
+    assert.equal(await publication.getByRole('button', {name: `Open current file: ${unsupported.split('/').at(-1)}`, exact: true}).count(), 0);
     assert.deepEqual(counts(), before, 'Live previews must create no registry rows');
     assert(operations.every(call => call.name === 'file.reference.read'));
     assert(operations.every(call => call.input.sourceMessageOrCard.kind === 'publication' && call.input.sourceMessageOrCard.id === publicationId));

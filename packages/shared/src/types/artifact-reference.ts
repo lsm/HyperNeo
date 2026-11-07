@@ -14,6 +14,7 @@ interface Node {
   url?: string;
   identifier?: string;
   children?: Node[];
+  position?: { start?: { offset?: number }; end?: { offset?: number } };
 }
 
 const markdown = unified().use(remarkParse).use(remarkGfm);
@@ -129,4 +130,41 @@ export function previewLinkedReferenceCandidates(text: string): PreviewReference
         (!item.reference.startsWith('file:') || item.reference.startsWith('file:/')) &&
         PREVIEWABLE_FILE_EXTENSIONS.has(item.path.split('.').at(-1)?.toLowerCase() ?? ''))
   );
+}
+
+export function previewLinkedReferenceSpans(
+  text: string
+): { start: number; end: number; reference: string }[] {
+  const references = previewLinkedReferenceCandidates(text)
+    .filter((item) => item.kind === 'local')
+    .map((item) => item.reference)
+    .sort((a, b) => b.length - a.length);
+  if (!references.length) return [];
+  const escaped = references.map((ref) => ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(
+    `(?<![A-Za-z0-9_./~-])(?<![A-Za-z0-9]:)(${escaped.join('|')})(?![A-Za-z0-9_/-]|[.~]+[A-Za-z0-9_/-])`,
+    'g'
+  );
+  const spans: { start: number; end: number; reference: string }[] = [];
+  function walk(node: Node) {
+    if (
+      ['code', 'html', 'image', 'imageReference', 'linkReference', 'definition'].includes(node.type)
+    )
+      return;
+    if (node.type === 'link' && (!node.url || !references.includes(node.url))) return;
+    if (['text', 'inlineCode', 'link'].includes(node.type)) {
+      const start = node.position?.start?.offset;
+      const end = node.position?.end?.offset;
+      if (start !== undefined && end !== undefined) {
+        for (const match of text.slice(start, end).matchAll(pattern)) {
+          const offset = start + match.index;
+          spans.push({ start: offset, end: offset + match[0].length, reference: match[0] });
+        }
+      }
+      return;
+    }
+    for (const child of node.children ?? []) walk(child);
+  }
+  walk(markdown.parse(text));
+  return spans;
 }
