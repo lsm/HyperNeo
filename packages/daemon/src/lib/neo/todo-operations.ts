@@ -24,14 +24,18 @@ import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts'
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import { neoUserFolder } from './folder.ts';
 import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
-import type { NeoPack } from './pack-contract.ts';
+import {
+  neoTodoRepository,
+  type NeoPack,
+  type NeoTodoPolicyScope,
+  type NeoTodoRepositoryDraft,
+} from './pack-contract.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoCloseStarted,
   requireNeoTodoMayFinish,
   sameNeoTodoCheck,
 } from './todo-completion.ts';
-import { neoTodoRepo } from './todo-repo.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
 import {
   NEO_TODO_NOT_APPROVED,
@@ -168,12 +172,16 @@ export async function resolveNeoTodoDraft(
 }
 
 export function neoTodoPlaceRefusal(
-  target: z.infer<typeof NeoTodoTargetSchema> | undefined,
-  repo: string | null | undefined
+  draft: NeoTodoRepositoryDraft & Pick<NeoTodo, 'instruction'>,
+  packs: readonly NeoTodoPolicy[],
+  scope: NeoTodoPolicyScope
 ): string | null {
-  return target?.verb === 'start' && !target.place && repo
-    ? `place_required: coding work for ${repo} starts in its repository; pass target.place from work.find.`
-    : null;
+  return (
+    packs
+      .filter((pack) => pack.todos?.repository)
+      .map((pack) => pack.todos?.refuse?.(draft, [], scope))
+      .find(Boolean) ?? null
+  );
 }
 
 export async function addNeoTodo(
@@ -204,8 +212,8 @@ export async function recordNeoTodo(
   const planned = planNeoTodoDraft({ ...input, check }, packs);
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
-  const repo = neoTodoRepo(draft, packs, ask);
-  const placeless = neoTodoPlaceRefusal(draft.target, repo);
+  const repo = neoTodoRepository(draft, packs, { ask });
+  const placeless = neoTodoPlaceRefusal(draft, packs, { ask });
   if (placeless) return { ok: false, reason: placeless };
   const misplaced = neoEvidenceRefusal(check, repo, controls.userFolder ?? neoUserFolder());
   if (misplaced) return { ok: false, reason: misplaced };

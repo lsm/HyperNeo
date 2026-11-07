@@ -1,5 +1,6 @@
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
+import type { NeoDriverTarget, NeoTodoTarget } from './driver-work.ts';
 import type { WorkExecutionPreparation } from '../drivers/start-preparation.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -31,22 +32,45 @@ export interface NeoTodoFactJudge<Facts = unknown> {
   judge(todo: NeoTodo, facts: Facts): NeoTodoJudgement;
 }
 
+export type NeoTodoRepositoryDraft = Pick<NeoTodo, 'check' | 'named'> & {
+  id?: string;
+  target?: NeoDriverTarget | NeoTodoTarget | null;
+};
+export type NeoTodoPolicyScope = {
+  ask: Pick<NeoAsk, 'repo'> | null;
+  todo?: Pick<NeoTodo, 'repo'> | null;
+  start?: true;
+};
+
 export interface NeoTodoPack {
   schema(db: Database): void;
   check(todo: NeoTodo, context?: { readOnly: true }): Promise<NeoTodoCheckResult | null>;
   statusLine(todo: NeoTodo): NeoStatusLine | null;
-  repository?(draft: Pick<NeoTodo, 'check' | 'named'> & { id?: string }): string | null;
+  repository?(draft: NeoTodoRepositoryDraft, scope?: NeoTodoPolicyScope): string | null;
   waiting?(todo: NeoTodo): boolean | Promise<boolean>;
   doneWhen?(check: NeoTodoCheck): string | null;
   addUrls?(todo: NeoTodo, urls: readonly string[]): NeoTodoCheck | null;
   refuse?(
-    draft: Pick<NeoTodo, 'check' | 'instruction'> & { id?: string },
-    peers?: readonly NeoTodo[]
+    draft: Pick<NeoTodo, 'check' | 'instruction'> & Partial<NeoTodoRepositoryDraft>,
+    peers?: readonly NeoTodo[],
+    scope?: NeoTodoPolicyScope
   ): string | null;
   record?(
     draft: Pick<NeoTodo, 'check' | 'instruction'> & { id?: string },
     peers?: readonly NeoTodo[]
   ): string | null;
+}
+
+export function neoTodoRepository(
+  draft: NeoTodoRepositoryDraft,
+  packs: readonly { todos?: Pick<NeoTodoPack, 'repository'> }[],
+  scope: NeoTodoPolicyScope
+): string | null {
+  return (
+    packs
+      .map((pack) => pack.todos?.repository?.(draft, scope))
+      .find((value) => value !== null && value !== undefined) ?? null
+  );
 }
 
 export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };
