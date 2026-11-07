@@ -468,54 +468,51 @@ describe('QueryRunner', () => {
       { code: 'timeout', expected: 'submitted' },
       { code: 'internal', expected: 'submitted' },
       { code: 'unrecognized_error', expected: 'submitted' },
-    ])(
-      'records a $code submit response as $expected',
-      async ({ code, expected }) => {
-        let status = 'enqueued';
-        const write = mock(async (operation: string) => {
-          if (operation === 'markDeliverySubmittedByUuids') {
-            status = 'submitted';
-            return ['db-id'];
-          }
-          if (operation === 'markDeliveryFailedByUuid') {
-            status = 'failed';
-            return 'db-id';
-          }
-          throw new Error(`unexpected write ${operation}`);
-        });
-        const submit = mock(async () => {
-          throw new OapHubRequestError(code, 'synthetic refusal');
-        });
-        const ctx = createContext({
-          session: {
-            ...mockSession,
-            config: { model: 'unit', provider: providerId, harness: 'codex' },
-          },
-          db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
-          messageQueue: queue,
-          oap: {
-            openDirectorySupported: true,
-            hub: { submit, events: async function* () {}, cancel: async () => {} },
-          },
-        });
-        const sent = queue
-          .enqueueWithId('codex-refused', 'prompt', false, { durable: true })
-          .catch((error: Error) => error);
-        runner = new QueryRunner(ctx);
-        await runner.start();
-        expect(await completesWithin(ctx.queryPromise!)).toBe(true);
-        expect(await sent).toMatchObject({ message: 'synthetic refusal' });
-        expect(status).toBe(expected);
-        expect(submit).toHaveBeenCalledTimes(1);
-        if (expected === 'failed') {
-          expect(ctx.internalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
-            sessionId: ctx.session.id,
-            messageIds: ['db-id'],
-            status: 'failed',
-          });
+    ])('records a $code submit response as $expected', async ({ code, expected }) => {
+      let status = 'enqueued';
+      const write = mock(async (operation: string) => {
+        if (operation === 'markDeliverySubmittedByUuids') {
+          status = 'submitted';
+          return ['db-id'];
         }
+        if (operation === 'markDeliveryFailedByUuid') {
+          status = 'failed';
+          return 'db-id';
+        }
+        throw new Error(`unexpected write ${operation}`);
+      });
+      const submit = mock(async () => {
+        throw new OapHubRequestError(code, 'synthetic refusal');
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
+        messageQueue: queue,
+        oap: {
+          openDirectorySupported: true,
+          hub: { submit, events: async function* () {}, cancel: async () => {} },
+        },
+      });
+      const sent = queue
+        .enqueueWithId('codex-refused', 'prompt', false, { durable: true })
+        .catch((error: Error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      expect(await completesWithin(ctx.queryPromise!)).toBe(true);
+      expect(await sent).toMatchObject({ message: 'synthetic refusal' });
+      expect(status).toBe(expected);
+      expect(submit).toHaveBeenCalledTimes(1);
+      if (expected === 'failed') {
+        expect(ctx.internalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+          sessionId: ctx.session.id,
+          messageIds: ['db-id'],
+          status: 'failed',
+        });
       }
-    );
+    });
 
     it('does not submit a prompt whose persisted delivery is already submitted', async () => {
       const submit = mock(async () => ({ runId: 'duplicate' }));

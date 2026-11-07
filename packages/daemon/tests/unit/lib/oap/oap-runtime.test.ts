@@ -7,15 +7,35 @@ import type { OapQueryRuntime } from '../../../../src/lib/agent/query-runner';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 
-const createOapRuntime = (
+const bindOapRuntime = (
   query as unknown as {
     createOapRuntime(
       engine: OapEngine,
       options?: OapEngineOptions,
-      events?: ReturnType<typeof createDaemonInternalEventBus>
+      events?: ReturnType<typeof createDaemonInternalEventBus>,
+      db?: unknown,
+      messageHub?: unknown
     ): (session: Session) => OapQueryRuntime;
   }
 ).createOapRuntime;
+
+function createOapRuntime(
+  engine: OapEngine,
+  options?: OapEngineOptions,
+  events?: ReturnType<typeof createDaemonInternalEventBus>,
+  history = false
+): (session: Session) => OapQueryRuntime {
+  const db = {
+    updateSession: mock(async () => 'written'),
+    getSDKMessages: mock(() => ({
+      messages: history ? [{ type: 'assistant' }] : [],
+      hasMore: false,
+    })),
+    getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
+    saveSDKMessage: mock(async () => true),
+  };
+  return bindOapRuntime(engine, options, events, db, { event: mock(() => {}) });
+}
 
 const options: OapEngineOptions = {
   binaryPath: '/synthetic/oapx',
@@ -35,19 +55,42 @@ function session(id: string, workspace: string): Session {
 
 function fixture(status?: { directory: string }) {
   const opened = new Map<string, string>();
+  const recorded = new Map<string, string>();
   const operations: Array<{ op: string; parameters: Record<string, unknown> }> = [];
   const request = mock(async (op: string, parameters: Record<string, unknown>) => {
     operations.push({ op, parameters });
     if (op === 'work.status') {
-      if (status) return status;
-      const directory = opened.get(parameters.session_id as string);
-      if (!directory) throw new OapHubRequestError('unknown_session', 'no session');
-      return { directory };
+      const id = parameters.session_id as string;
+      const directory = opened.get(id);
+      if (directory)
+        return {
+          ref: { adapter: 'codex', session_id: id },
+          directory,
+          link: `codex://threads/native-${id}`,
+          status: 'done',
+        };
+      const prior = recorded.get(id) ?? status?.directory;
+      if (prior)
+        return {
+          ref: { adapter: 'codex', session_id: id },
+          directory: prior,
+          held: false,
+          state: 'live',
+        };
+      throw new OapHubRequestError('unknown_session', 'no session');
     }
+    if (op === 'capabilities')
+      return {
+        type: 'capabilities.response',
+        capability_revision: 'v1',
+        payload: { features: { 'session.open.reopen': { level: 'native' } } },
+      };
     if (op === 'close') return {};
     if (op === 'open') {
-      const envelope = parameters.request as { payload: { session_id: string } };
+      const envelope = parameters.request as { payload: { session_id: string; reopen?: boolean } };
       const id = envelope.payload.session_id;
+      if (envelope.payload.reopen && !recorded.has(id) && !status)
+        throw new OapHubRequestError('unknown_session', 'no session');
       opened.set(id, parameters.directory as string);
       return { type: 'session.open.response', payload: { session_id: id } };
     }
@@ -64,7 +107,7 @@ function fixture(status?: { directory: string }) {
   );
   const isCurrentHub = mock((_client: OapHubClient) => true);
   const engine = { getHub, createQueryHub, isCurrentHub } as unknown as OapEngine;
-  return { engine, client, getHub, createQueryHub, isCurrentHub, operations };
+  return { engine, client, getHub, createQueryHub, isCurrentHub, operations, recorded };
 }
 
 describe('OAP daemon runtime', () => {
@@ -126,6 +169,8 @@ describe('OAP daemon runtime', () => {
   test('replaces dead per-session transports only when sessions are explicitly used again', async () => {
     const host = fixture();
     const replacement = fixture();
+    replacement.recorded.set('session-a', '/synthetic/workspace');
+    replacement.recorded.set('session-b', '/synthetic/other');
     const bind = createOapRuntime(host.engine, options);
     const first = bind(session('session-a', '/synthetic/workspace'));
     const second = bind(session('session-b', '/synthetic/other'));
@@ -143,6 +188,7 @@ describe('OAP daemon runtime', () => {
     expect(oldSecond.release).not.toHaveBeenCalled();
     expect(replacement.operations.map(({ op }) => op)).toEqual([
       'work.status',
+      'capabilities',
       'open',
       'work.status',
     ]);
@@ -156,7 +202,7 @@ describe('OAP daemon runtime', () => {
 
   test('refuses to replace known history after the shared hub dies', async () => {
     const host = fixture();
-    const replacement = fixture({ directory: '/synthetic/workspace' });
+    const replacement = fixture();
     const bind = createOapRuntime(host.engine, options);
     const runtime = bind(session('session-a', '/synthetic/workspace'));
     const oldHub = await runtime.hub;
@@ -165,23 +211,35 @@ describe('OAP daemon runtime', () => {
 
     await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
     expect(oldHub.release).toHaveBeenCalledTimes(1);
-    expect(replacement.operations.map(({ op }) => op)).toEqual(['work.status']);
-    expect(replacement.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
+    expect(replacement.operations.map(({ op }) => op)).toEqual([
+      'work.status',
+      'capabilities',
+      'open',
+    ]);
+    expect(replacement.operations.find(({ op }) => op === 'open')?.parameters).toMatchObject({
+      request: { payload: { reopen: true } },
+    });
   });
 
-  test('does not restart the hub for a completed session after its client dies', async () => {
+  test('does not replace a completed session when its hub history is missing', async () => {
     const host = fixture();
+    const replacement = fixture();
     const bind = createOapRuntime(host.engine, options);
     const oldHub = await bind(session('session-a', '/synthetic/workspace')).hub;
     host.isCurrentHub.mockReturnValue(false);
+    host.getHub.mockResolvedValue(replacement.client);
     const completed = {
       ...session('session-a', '/synthetic/workspace'),
+      sdkSessionId: 'native-session-a',
       metadata: { messageCount: 1 },
     } as Session;
 
     await expect(bind(completed).hub).rejects.toThrow(/resum|reopen/i);
     expect(oldHub.release).toHaveBeenCalledTimes(1);
-    expect(host.getHub).toHaveBeenCalledTimes(1);
+    expect(host.getHub).toHaveBeenCalledTimes(2);
+    expect(replacement.operations.find(({ op }) => op === 'open')?.parameters).toMatchObject({
+      request: { payload: { reopen: true } },
+    });
   });
 
   test('does not create a fresh thread after the first submitted turn loses its hub', async () => {
@@ -198,8 +256,10 @@ describe('OAP daemon runtime', () => {
 
     await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
     expect(oldHub.release).toHaveBeenCalledTimes(1);
-    expect(host.getHub).toHaveBeenCalledTimes(1);
-    expect(replacement.operations).toHaveLength(0);
+    expect(host.getHub).toHaveBeenCalledTimes(2);
+    expect(replacement.operations.find(({ op }) => op === 'open')?.parameters).toMatchObject({
+      request: { payload: { reopen: true } },
+    });
   });
 
   test('rechecks history after an ambiguous open failure before considering another open', async () => {
@@ -209,7 +269,12 @@ describe('OAP daemon runtime', () => {
     (host.client.request as ReturnType<typeof mock>).mockImplementation(async (op: string) => {
       if (op === 'work.status') {
         if (!created) throw new OapHubRequestError('unknown_session', 'no session');
-        return { directory: '/synthetic/workspace' };
+        return {
+          ref: { adapter: 'codex', session_id: 'session-a' },
+          directory: '/synthetic/workspace',
+          link: 'codex://threads/native-session-a',
+          status: 'done',
+        };
       }
       if (op === 'open') {
         openCount++;
@@ -223,7 +288,7 @@ describe('OAP daemon runtime', () => {
       options
     )(session('session-a', '/synthetic/workspace'));
     await expect(runtime.hub).rejects.toThrow('ambiguous open');
-    await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
+    await expect(runtime.hub).resolves.toBeDefined();
     expect(openCount).toBe(1);
   });
 
@@ -307,14 +372,19 @@ describe('OAP daemon runtime', () => {
     expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(1);
   });
 
-  test('refuses an existing history binding until reopen is wired', async () => {
+  test('reopens an existing history binding', async () => {
     const host = fixture({ directory: '/synthetic/workspace' });
     const runtime = createOapRuntime(
       host.engine,
       options
     )(session('session-a', '/synthetic/workspace'));
-    await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
-    expect(host.operations.map(({ op }) => op)).toEqual(['work.status']);
+    await expect(runtime.hub).resolves.toBeDefined();
+    expect(host.operations.map(({ op }) => op)).toEqual([
+      'work.status',
+      'capabilities',
+      'open',
+      'work.status',
+    ]);
   });
 
   test('does not replace a saved native session when hub history is missing', async () => {
@@ -322,7 +392,9 @@ describe('OAP daemon runtime', () => {
     const resumed = { ...session('session-a', '/synthetic/workspace'), sdkSessionId: 'native-a' };
     const runtime = createOapRuntime(host.engine, options)(resumed);
     await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
-    expect(host.getHub).not.toHaveBeenCalled();
+    expect(host.operations.find(({ op }) => op === 'open')?.parameters).toMatchObject({
+      request: { payload: { reopen: true } },
+    });
   });
 
   test('does not start a fresh thread for a completed session whose hub history is missing', async () => {
@@ -331,9 +403,9 @@ describe('OAP daemon runtime', () => {
       ...session('session-a', '/synthetic/workspace'),
       metadata: { messageCount: 1 },
     } as Session;
-    const runtime = createOapRuntime(host.engine, options)(resumed);
+    const runtime = createOapRuntime(host.engine, options, undefined, true)(resumed);
     await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
-    expect(host.getHub).not.toHaveBeenCalled();
+    expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
   });
 
   test('refuses a hub that cannot prove the requested directory', async () => {

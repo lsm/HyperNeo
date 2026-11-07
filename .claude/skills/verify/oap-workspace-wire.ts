@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOapBinary } from '../../../packages/daemon/src/lib/oap/oap-binary.ts';
@@ -8,7 +9,9 @@ import { OapHubRequestError } from '../../../packages/daemon/src/lib/oap/oap-hub
 import { decideReopenFailure } from '../../../packages/daemon/src/lib/oap/oap-session-open.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
 
 const [binary, version, sha256, mode, runArgument] = process.argv.slice(2);
 const run = resolve(runArgument);
@@ -44,6 +47,7 @@ for line in sys.stdin:
  if method=='turn/start' and 'Synthetic gated admission' in json.dumps(request):
   open(os.path.join(os.environ['CODEX_HOME'],'admission-waiting'),'w').close()
   while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'admission-release')): time.sleep(0.01)
+ if method=='turn/start' and 'Synthetic crash during admission' in json.dumps(request): sys.exit(23)
  emit({'id':request['id'],'result':result})
  if method=='turn/start':
   if 'Synthetic native crash' in json.dumps(request): sys.exit(23)
@@ -131,6 +135,116 @@ try {
     assert.equal(calls().length, 0);
     assert.equal(existsSync(join(run, 'data/oap/oap-serve.json')), false);
     Object.assign(evidence, { port: app.server.port, mismatchedDigestRefused: true, syntheticPeerStarts: 0, pass: true });
+  } else if (mode === 'submit-internal') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic crash during admission' });
+    await waitFor(() => calls().some((call) => call.request.method === 'turn/start'), 'native submit before crash');
+    await waitFor(() => errors.length > 0 && !first.queryPromise, 'visible uncertain submit outcome');
+    await new Promise((done) => setTimeout(done, 500));
+    assert.equal(app.db.getUserMessagesByStatus(firstId, 'submitted').total, 1);
+    assert.equal(app.db.getUserMessagesByStatus(firstId, 'failed').total, 0);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    Object.assign(evidence, { port: app.server.port, backendOutcomeUnknown: true, submittedRows: 1, failedRows: 0, automaticResends: 0, pass: true });
+  } else if (mode === 'missing-history' || mode === 'missing-history-web') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic prior turn' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'prior native turn');
+    const saved = app.db.getSession(firstId)?.sdkSessionId;
+    assert.equal(saved, 'native-workspace-a');
+    const engineHub = await app.oapEngine.getHub(config.oap);
+    const child = (engineHub as unknown as { child: { pid: number; kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
+    assert(child && child.pid > 0);
+    const exited = new Promise<void>((resolveExit) => child.once('close', resolveExit));
+    assert(child.kill('SIGKILL'));
+    await exited;
+    unlinkSync(join(config.oap.stateDirectory, 'session-history.jsonl'));
+    await assert.rejects(Promise.resolve(first.oap!.hub), /cannot be resumed/i);
+    const notices = app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('The previous Codex thread cannot be resumed'));
+    assert.equal(notices.length, 1);
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, saved);
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    if (mode === 'missing-history-web') {
+      assert(process.env.VERIFY_BROWSER);
+      const root = resolve('packages/web/dist');
+      assert(existsSync(join(root, 'index.html')), 'build the web bundle before the browser proof');
+      const currentApp = app;
+      const web = Bun.serve({ hostname: '127.0.0.1', port: 0,
+        websocket: createWebSocketHandlers(currentApp.transport, currentApp.sessionManager),
+        async fetch(req, server) {
+          const refused = await currentApp.guardRequest(req);
+          if (refused) return refused;
+          const path = new URL(req.url).pathname;
+          if (path === '/ws') {
+            const device = await currentApp.authenticateUpgrade(req, server.requestIP(req)?.address ?? null);
+            if (!device) return new Response('Device pairing required', { status: 401 });
+            if (server.upgrade(req, { data: { connectionSessionId: 'global', device } })) return;
+            return new Response('Upgrade failed', { status: 500 });
+          }
+          const file = resolve(root, `.${path}`);
+          if (file.startsWith(`${root}/`) && await Bun.file(file).exists()) return new Response(Bun.file(file));
+          const neo = resolveNeoEntry(new URL(req.url));
+          if (neo?.kind === 'redirect') return Response.redirect(new URL(neo.location, req.url));
+          return new Response(Bun.file(`${root}${neo?.kind === 'entry' ? neo.path : '/index.html'}`));
+        },
+      });
+      assert.notEqual(web.port, 8399);
+      assert.notEqual(web.port, 8499);
+      try {
+        const { chromium } = createRequire(import.meta.url)('playwright');
+        const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
+        try {
+          const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
+          const base = `http://127.0.0.1:${web.port}`;
+          await context.route('**/*', (route: { request(): { url(): string }; continue(): void; abort(): void }) => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+          await context.addCookies([{ name: 'hyperneo_device', value: readFileSync(join(run, 'data/local-rpc.credential'), 'utf8'), url: base }]);
+          const page = await context.newPage();
+          await page.goto(`${base}/session/${firstId}`);
+          const notice = page.getByText('The previous Codex thread cannot be resumed. No new thread was started.', { exact: true });
+          await notice.waitFor({ timeout: 20000 });
+          await notice.scrollIntoViewIfNeeded();
+          await page.screenshot({ path: join(run, 'evidence/oap-reopen-session.png'), animations: 'disabled' });
+          await page.goto(`${base}/neo`);
+          await page.locator('.neo-shell').waitFor({ timeout: 20000 });
+          await page.screenshot({ path: join(run, 'evidence/oap-reopen-neo.png'), animations: 'disabled' });
+          Object.assign(evidence, { browserPort: web.port, visibleNoticeRendered: true });
+          await context.close();
+        } finally { await browser.close(); }
+      } finally { web.stop(true); }
+    }
+    Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, priorThreadIdPreserved: true, newThreads: 0, automaticResends: 0, pass: true });
+  } else if (mode === 'reopen') {
+    const seen: Array<{ type: string; uuid?: string }> = [];
+    const handler = first.onSDKMessage.bind(first);
+    first.onSDKMessage = async (...args) => { seen.push({ type: args[0].type, uuid: args[0].uuid }); await handler(...args); };
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic first native turn' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 1 && !first.queryPromise, 'first native turn');
+    const saved = app.db.getSession(firstId)?.sdkSessionId;
+    assert.equal(saved, 'native-workspace-a');
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic second native turn' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 2 && !first.queryPromise, 'second native turn');
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
+    const engineHub = await app.oapEngine.getHub(config.oap);
+    const child = (engineHub as unknown as { pid?: number; child: { pid: number; kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
+    assert(child && child.pid > 0);
+    const exited = new Promise<void>((resolveExit) => child.once('close', resolveExit));
+    assert(child.kill('SIGKILL'));
+    await exited;
+    await new Promise((done) => setTimeout(done, 500));
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic explicit turn after hub restart' });
+    await waitFor(() => {
+      const results = app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result');
+      Object.assign(evidence, { observedResults: results.map((row) => row.uuid), seenResults: seen.filter((row) => row.type === 'result'), errors, queryActive: !!first.queryPromise });
+      return results.length === 3 && !first.queryPromise;
+    }, 'explicit turn after native reopen');
+    assert.equal(new Set(seen.filter((row) => row.type === 'result').map((row) => row.uuid)).size, 3);
+    const resumes = calls().filter((call) => call.request.method === 'thread/resume');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal(resumes.length, 1);
+    assert.equal((resumes[0].request.params as { threadId?: string }).threadId, saved);
+    assert.equal(turns.length, 3);
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, saved);
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
+    Object.assign(evidence, { port: app.server.port, nativeThreadIdSaved: true, sameThreadReopened: true, explicitTurns: turns.length, automaticResends: 0, pass: true });
   } else if (mode === 'retry') {
     const failure = await Promise.resolve(first.oap!.hub).then(() => '', (error: Error) => error.message);
     assert(failure, 'the first synthetic app-server start must fail');
@@ -156,7 +270,9 @@ try {
     await new Promise((done) => setTimeout(done, 4000));
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
-    await assert.rejects(Promise.resolve(first.oap!.hub), /reopen/i);
+    await first.oap!.hub;
+    assert.equal(calls().filter((call) => call.request.method === 'thread/resume').length, 1);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
     assert.equal(app.oapEngine.isCurrentHub(engineHub), false);
     const { sessionId: freshId } = await makeSession('workspace-b');
     await hub.request('message.send', { sessionId: freshId, content: 'Synthetic fresh session after first-turn crash' });
@@ -279,8 +395,10 @@ try {
     assert.equal(heldTurns.length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 3);
     assert.equal(app.oapEngine.isCurrentHub(engineHub), false);
-    await assert.rejects(Promise.resolve(idle.oap!.hub), /reopen/i);
-    await assert.rejects(Promise.resolve(first.oap!.hub), /reopen/i);
+    await idle.oap!.hub;
+    await first.oap!.hub;
+    assert.equal(calls().filter((call) => call.request.method === 'thread/resume').length, 2);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash')).length, 1);
     const restartedHub = await app.oapEngine.getHub(config.oap);
     assert.notEqual(restartedHub, engineHub);
     const { sessionId: freshId } = await makeSession('workspace-b');
@@ -288,7 +406,7 @@ try {
     await waitFor(() => app!.db.getSDKMessages(freshId).messages.some((row) => row.type === 'result'), 'fresh session after hub crash');
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 4);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash')).length, 1);
-    Object.assign(evidence, { port: app.server.port, runtimeInjected: false, distinctWorkspaceSessions: 2, queryHubsPerSession: true, sharedDaemonHub: true, deletedSessionReleased: true, remainingSessionKept: true, firstSessionCompletedTurns: firstResults, secondSessionCompletedTurns: secondResults, resultWindowQueued: true, queuedVia: 'messageQueue', textDeltasPerTurn: 96, isolatedCodexHome: true, approvalPolicy: 'on-request', sandbox: 'workspace-write', developerInstructionsSent: false, experimentalApiEnabled: false, crashedRunSubmissions: heldTurns.length, automaticResendsObserved: 0, restartOnLaterUse: true, savedHistoryRefused: true, freshSessionAfterCrash: true, pass: true });
+    Object.assign(evidence, { port: app.server.port, runtimeInjected: false, distinctWorkspaceSessions: 2, queryHubsPerSession: true, sharedDaemonHub: true, deletedSessionReleased: true, remainingSessionKept: true, firstSessionCompletedTurns: firstResults, secondSessionCompletedTurns: secondResults, resultWindowQueued: true, queuedVia: 'messageQueue', textDeltasPerTurn: 96, isolatedCodexHome: true, approvalPolicy: 'on-request', sandbox: 'workspace-write', developerInstructionsSent: false, experimentalApiEnabled: false, crashedRunSubmissions: heldTurns.length, automaticResendsObserved: 0, restartOnLaterUse: true, savedHistoryReopened: true, freshSessionAfterCrash: true, pass: true });
   }
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);

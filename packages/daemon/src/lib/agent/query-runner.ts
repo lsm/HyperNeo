@@ -862,6 +862,21 @@ export class QueryRunner {
             await messageQueue.onMessageYielded?.(message.uuid, Date.now());
             if (live()) messageQueue.acknowledgeYielded(message.uuid, queryGeneration);
           },
+          onRefused: async (message) => {
+            if (!message.uuid || !live()) return;
+            const id = await this.ctx.db.writeSDKMessage(
+              'markDeliveryFailedByUuid',
+              session.id,
+              message.uuid
+            );
+            if (id && live()) {
+              await this.ctx.internalEventBus.publish('messages.statusChanged', {
+                sessionId: session.id,
+                messageIds: [id],
+                status: 'failed',
+              });
+            }
+          },
         });
         this.ctx.queryObject = oapQuery;
         for await (const message of this.createAbortableQuery(

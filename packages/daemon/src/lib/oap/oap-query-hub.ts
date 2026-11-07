@@ -155,7 +155,7 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
           stream.runId = runId(await client.request('submit', parameters), sessionId);
           return { runId: stream.runId };
         } catch (error) {
-          await stream.release();
+          await stream.release().catch(() => {});
           throw error;
         }
       } finally {

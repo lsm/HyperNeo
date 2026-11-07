@@ -286,7 +286,7 @@ export class QueryLifecycleManager {
         await options.beforeStart();
       }
 
-      if (session.sdkSessionId) {
+      if (session.sdkSessionId && session.config.harness !== 'codex') {
         const isValid = await this.validateAndRepairWithMigration();
         if (!isValid) {
           this.logger.warn(
@@ -358,7 +358,7 @@ export class QueryLifecycleManager {
       await this.ctx.clearModelsCache();
 
       if (restartAfter) {
-        if (session.sdkSessionId) {
+        if (session.sdkSessionId && session.config.harness !== 'codex') {
           const isValid = await this.validateAndRepairWithMigration();
           if (!isValid) {
             this.logger.warn(
@@ -489,7 +489,7 @@ export class QueryLifecycleManager {
 
     throwIfDeliveryAborted(signal);
 
-    if (session.sdkSessionId) {
+    if (session.sdkSessionId && session.config.harness !== 'codex') {
       const isValid = await this.validateAndRepairWithMigration();
       if (!isValid) {
         this.logger.warn(
