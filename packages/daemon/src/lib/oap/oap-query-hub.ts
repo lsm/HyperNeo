@@ -2,7 +2,7 @@ import { EventEmitter, on } from 'node:events';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { OapHubClient } from './oap-hub-client.ts';
+import { OapHubRequestError, type OapHubClient } from './oap-hub-client.ts';
 import type { OapQueryHub } from './oap-query.ts';
 
 type Event = { type: string; run_id: string; [key: string]: unknown };
@@ -116,7 +116,23 @@ function cancellationAccepted(response: unknown, sessionId: string, runId: strin
   );
 }
 
+function decideResubmit(status: unknown, sessionId: string): boolean {
+  if (!status || typeof status !== 'object') return false;
+  const work = status as { ref?: { session_id?: unknown }; status?: unknown };
+  return (
+    work.ref?.session_id === sessionId &&
+    typeof work.status === 'string' &&
+    ['done', 'failed', 'stopped'].includes(work.status)
+  );
+}
+
+const planResubmit = (superpipe({})('oap.query.reconcileSubmit') as PipelineAPI)
+  .input(['status', 'sessionId'])
+  .pipe(decideResubmit, ['status', 'sessionId'], 'allowed')
+  .end('allowed') as typeof decideResubmit;
+
 export function createOapQueryHub(client: OapHubClient): OapQueryHub {
+  const uncertainSessions = new Set<string>();
   let active: Stream | undefined;
   let starting: { owner: symbol } | undefined;
   return {
@@ -125,6 +141,22 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
       const submission = { owner };
       starting = submission;
       try {
+        if (uncertainSessions.has(sessionId)) {
+          const status = await client
+            .request('work.status', { session_id: sessionId })
+            .catch((error: unknown) => {
+              throw new OapHubRequestError(
+                'run_active',
+                `OAP previous submission outcome could not be confirmed: ${error instanceof Error ? error.message : String(error)}`
+              );
+            });
+          if (!planResubmit(status, sessionId))
+            throw new OapHubRequestError(
+              'run_active',
+              'OAP previous submission outcome is unresolved or has unfinished work'
+            );
+          uncertainSessions.delete(sessionId);
+        }
         const parameters = prepareSubmit(sessionId, generateUUID(), message);
         const emitter = new EventEmitter();
         const events = on(emitter, 'event') as AsyncIterableIterator<[Event | Error]>;
@@ -155,6 +187,8 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
           stream.runId = runId(await client.request('submit', parameters), sessionId);
           return { runId: stream.runId };
         } catch (error) {
+          if (error instanceof OapHubRequestError && error.code === 'timeout')
+            uncertainSessions.add(sessionId);
           await stream.release().catch(() => {});
           throw error;
         }

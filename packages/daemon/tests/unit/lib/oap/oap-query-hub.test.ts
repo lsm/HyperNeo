@@ -85,7 +85,8 @@ describe('OAP query hub transport', () => {
       host.request.mockImplementation(async (op, parameters) => {
         if (op === 'work.status') {
           host.operations.push(op);
-          if (status === 'probe-timeout') throw new OapHubRequestError('timeout', 'status timed out');
+          if (status === 'probe-timeout')
+            throw new OapHubRequestError('timeout', 'status timed out');
           return { ref: { session_id: 'synthetic-session' }, status, run_id: 'run-1' };
         }
         if (op === 'submit' && !submitted) {
