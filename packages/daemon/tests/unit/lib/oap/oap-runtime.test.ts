@@ -5,12 +5,14 @@ import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/o
 import * as query from '../../../../src/lib/oap/oap-query';
 import type { OapQueryRuntime } from '../../../../src/lib/agent/query-runner';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
+import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 
 const createOapRuntime = (
   query as unknown as {
     createOapRuntime(
       engine: OapEngine,
-      options?: OapEngineOptions
+      options?: OapEngineOptions,
+      events?: ReturnType<typeof createDaemonInternalEventBus>
     ): (session: Session) => OapQueryRuntime;
   }
 ).createOapRuntime;
@@ -42,6 +44,7 @@ function fixture(status?: { directory: string }) {
       if (!directory) throw new OapHubRequestError('unknown_session', 'no session');
       return { directory };
     }
+    if (op === 'close') return {};
     if (op === 'open') {
       const envelope = parameters.request as { payload: { session_id: string } };
       const id = envelope.payload.session_id;
@@ -52,7 +55,9 @@ function fixture(status?: { directory: string }) {
   });
   const client = { request } as unknown as OapHubClient;
   const getHub = mock(async () => client);
-  const createQueryHub = mock((_client: OapHubClient) => ({}) as OapQueryHub);
+  const createQueryHub = mock(
+    (_client: OapHubClient) => ({ release: mock(() => {}) }) as OapQueryHub
+  );
   const engine = { getHub, createQueryHub } as unknown as OapEngine;
   return { engine, client, getHub, createQueryHub, operations };
 }
@@ -95,6 +100,107 @@ describe('OAP daemon runtime', () => {
       '/synthetic/workspace',
       '/synthetic/other',
     ]);
+  });
+
+  test('retries a failed hub start only on a later explicit request', async () => {
+    const host = fixture();
+    host.getHub.mockRejectedValueOnce(new Error('synthetic startup failure'));
+    const runtime = createOapRuntime(
+      host.engine,
+      options
+    )(session('session-a', '/synthetic/workspace'));
+    const first = await Promise.allSettled([runtime.hub, runtime.hub]);
+    expect(first.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+    expect(host.getHub).toHaveBeenCalledTimes(1);
+    expect(host.operations).toHaveLength(0);
+    await expect(runtime.hub).resolves.toBeDefined();
+    expect(host.getHub).toHaveBeenCalledTimes(2);
+    expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(1);
+  });
+
+  test('rechecks history after an ambiguous open failure before considering another open', async () => {
+    const host = fixture();
+    let openCount = 0;
+    let created = false;
+    (host.client.request as ReturnType<typeof mock>).mockImplementation(async (op: string) => {
+      if (op === 'work.status') {
+        if (!created) throw new OapHubRequestError('unknown_session', 'no session');
+        return { directory: '/synthetic/workspace' };
+      }
+      if (op === 'open') {
+        openCount++;
+        created = true;
+        throw new OapHubRequestError('timeout', 'synthetic ambiguous open');
+      }
+      throw new Error(`unexpected operation ${op}`);
+    });
+    const runtime = createOapRuntime(
+      host.engine,
+      options
+    )(session('session-a', '/synthetic/workspace'));
+    await expect(runtime.hub).rejects.toThrow('ambiguous open');
+    await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
+    expect(openCount).toBe(1);
+  });
+
+  test('closes only the deleted session and prevents its stale runtime reopening', async () => {
+    const host = fixture();
+    const events = createDaemonInternalEventBus();
+    const bind = createOapRuntime(host.engine, options, events);
+    const first = bind(session('session-a', '/synthetic/workspace'));
+    const second = bind(session('session-b', '/synthetic/other'));
+    const [firstHub, secondHub] = await Promise.all([first.hub, second.hub]);
+    await events.publish('session.deleted', { sessionId: 'session-a' });
+    expect(firstHub.release).toHaveBeenCalledTimes(1);
+    expect(secondHub.release).not.toHaveBeenCalled();
+    expect(host.operations.filter(({ op }) => op === 'close')).toEqual([
+      { op: 'close', parameters: { session_id: 'session-a' } },
+    ]);
+    expect(await second.hub).toBe(secondHub);
+    await expect(first.hub).rejects.toThrow(/deleted/i);
+    expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(2);
+  });
+
+  test('deletion during session open retires the attempt and closes the opened session', async () => {
+    const host = fixture();
+    const events = createDaemonInternalEventBus();
+    let finishOpen!: () => void;
+    let openStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      openStarted = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      finishOpen = resolve;
+    });
+    const request = host.client.request as ReturnType<typeof mock>;
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (op: string, parameters: Record<string, unknown>) => {
+      if (op === 'open') {
+        openStarted();
+        await gate;
+      }
+      return original(op, parameters);
+    });
+    const runtime = createOapRuntime(
+      host.engine,
+      options,
+      events
+    )(session('session-a', '/synthetic/workspace'));
+    const opening = Promise.resolve(runtime.hub);
+    const result = opening.then(
+      () => 'opened',
+      (error: Error) => error.message
+    );
+    await started;
+    const deleting = events.publish('session.deleted', { sessionId: 'session-a' });
+    finishOpen();
+    expect(await result).toMatch(/deleted/i);
+    await deleting;
+    expect(host.operations.filter(({ op }) => op === 'close')).toEqual([
+      { op: 'close', parameters: { session_id: 'session-a' } },
+    ]);
+    expect(host.createQueryHub).not.toHaveBeenCalled();
+    await expect(runtime.hub).rejects.toThrow(/deleted/i);
   });
 
   test('opens a worktree path instead of its parent workspace', async () => {
