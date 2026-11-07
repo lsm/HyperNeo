@@ -16,6 +16,9 @@ import type {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { Database } from '../../../../src/storage/database.ts';
+import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine.ts';
+import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client.ts';
+import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime.ts';
 
 function makeEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return {
@@ -175,6 +178,79 @@ describe('AgentSession.clearConversationContext', () => {
     expect(enqueue).not.toHaveBeenCalled();
     expect(agent.db.saveSDKMessage).toHaveBeenCalled();
   });
+
+  it.each(['startFreshContext', 'clearConversationContext'] as const)(
+    'shows one notice when %s cannot reopen the original Codex thread',
+    async (operation) => {
+      const client = {
+        request: mock(async (op: string) => {
+          if (op === 'capabilities') {
+            return {
+              type: 'capabilities.response',
+              capability_revision: 'v1',
+              payload: { features: { 'session.open.reopen': { level: 'native' } } },
+            };
+          }
+          throw new OapHubRequestError('unknown_session', 'synthetic missing history');
+        }),
+      } as unknown as OapHubClient;
+      const engine = {
+        getHub: mock(async () => client),
+        isCurrentHub: mock(() => true),
+      } as unknown as OapEngine;
+      const options: OapEngineOptions = {
+        binaryPath: '/synthetic/oapx',
+        identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
+        stateDirectory: '/synthetic/state',
+        codexExecutable: '/synthetic/codex',
+        codexHome: '/synthetic/home',
+      };
+      type Runtime = NonNullable<
+        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+      >;
+      let runtime!: Runtime;
+      const proxy: Runtime = {
+        openDirectorySupported: true,
+        get hub() {
+          return runtime.hub;
+        },
+        clear: () => runtime.clear!(),
+      };
+      const agent = createAgentSession(
+        {
+          sdkSessionId: 'native-thread-1',
+          config: { model: 'synthetic', harness: 'codex' },
+        } as Partial<Session>,
+        makeEventBus(),
+        proxy
+      );
+      runtime = createOapRuntime(
+        engine,
+        options,
+        agent.internalEventBus,
+        agent.db,
+        agent.messageHub
+      )(agent.session);
+      spyOn(agent, 'resetQuery').mockResolvedValue({ success: true });
+      const enqueue = spyOn(agent.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+
+      await expect(agent[operation]()).rejects.toBeInstanceOf(ClearConversationUnsupportedError);
+      expect(agent.db.saveSDKMessage).toHaveBeenCalledTimes(1);
+      expect(agent.messageHub.event).toHaveBeenCalledTimes(1);
+      expect(agent.db.saveSDKMessage).toHaveBeenCalledWith(
+        agent.session.id,
+        expect.objectContaining({
+          message: expect.objectContaining({
+            content: [
+              expect.objectContaining({ text: expect.stringMatching(/cannot be resumed/i) }),
+            ],
+          }),
+        })
+      );
+      expect(agent.session.sdkSessionId).toBe('native-thread-1');
+      expect(enqueue).not.toHaveBeenCalled();
+    }
+  );
 
   it.each(['startFreshContext', 'clearConversationContext'] as const)(
     'visibly refuses %s for a Codex thread without changing its identity or sending /clear',
