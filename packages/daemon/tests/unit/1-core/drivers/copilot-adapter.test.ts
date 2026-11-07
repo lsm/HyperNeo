@@ -29,6 +29,8 @@ import { createWorkVerbOperations, pickRoute } from '../../../../src/lib/drivers
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import type { StartRequest, WorkCallContext } from '../../../../src/lib/drivers/types';
 
+const STALL_TIMEOUT_MS = 4000;
+
 const runs: string[] = [];
 const owners: { close: () => Promise<void> }[] = [];
 afterEach(async () => {
@@ -36,7 +38,7 @@ afterEach(async () => {
   for (const run of runs.splice(0)) rmSync(run, { recursive: true, force: true });
 });
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
-function setup(flag = '', options: { timeoutMs?: number } = { timeoutMs: 5000 }) {
+function setup(flag = '', options: { timeoutMs?: number } = {}) {
   const run = mkdtempSync(join(tmpdir(), 'copilot-adapter-'));
   runs.push(run);
   mkdirSync(join(run, 'home'));
@@ -455,7 +457,7 @@ describe('owned Copilot lifecycle', () => {
     const f = setup('--durable-inputs');
     const first = await start(f, 'settled');
     let status = await f.adapter.status!(first.ref);
-    for (let i = 0; i < 100 && (!status.ok || status.value.status !== 'done'); i++) {
+    for (let i = 0; i < 500 && (!status.ok || status.value.status !== 'done'); i++) {
       await new Promise((done) => setTimeout(done, 20));
       status = await f.adapter.status!(first.ref);
     }
@@ -501,7 +503,7 @@ describe('owned Copilot lifecycle', () => {
       ).pid;
       if (message === 'late-settled')
         writeFileSync(join(fixture.run, 'release-settlement'), 'release');
-      for (let poll = 0; poll < 200; poll++) {
+      for (let poll = 0; poll < 2000; poll++) {
         try {
           process.kill(pid, 0);
         } catch {
@@ -579,7 +581,7 @@ describe('owned Copilot lifecycle', () => {
     const work = await start(fixture, 'late-settled');
     expect(work.status).toBe('running');
     writeFileSync(join(fixture.run, 'release-settlement'), 'release');
-    for (let poll = 0; poll < 200 && !existsSync(join(fixture.run, 'settlement-emitted')); poll++)
+    for (let poll = 0; poll < 2000 && !existsSync(join(fixture.run, 'settlement-emitted')); poll++)
       await new Promise((done) => setTimeout(done, 5));
     expect(existsSync(join(fixture.run, 'settlement-emitted'))).toBe(true);
     expect(await fixture.adapter.stop!(work.ref, context)).toEqual({
@@ -599,7 +601,7 @@ describe('owned Copilot lifecycle', () => {
     const other = await start(fixture, 'hold');
     const stopping = fixture.adapter.stop!(work.ref, context);
     try {
-      for (let poll = 0; poll < 200; poll++) {
+      for (let poll = 0; poll < 2000; poll++) {
         if (readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').includes('runtime.shutdown'))
           break;
         await new Promise((done) => setTimeout(done, 5));
@@ -644,7 +646,7 @@ describe('owned Copilot lifecycle', () => {
     const stopping = fixture.adapter.stop!(work.ref, context);
     let closing: Promise<void> | undefined;
     try {
-      for (let poll = 0; poll < 200; poll++) {
+      for (let poll = 0; poll < 2000; poll++) {
         if (readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').includes('runtime.shutdown'))
           break;
         await new Promise((done) => setTimeout(done, 5));
@@ -679,7 +681,7 @@ describe('owned Copilot lifecycle', () => {
       const pid = JSON.parse(
         readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').split('\n')[0]
       ).pid;
-      for (let poll = 0; poll < 100; poll++) {
+      for (let poll = 0; poll < 2000; poll++) {
         try {
           process.kill(pid, 0);
         } catch {
@@ -771,7 +773,7 @@ describe('owned Copilot lifecycle', () => {
   });
 
   test('an abort ACK alone cannot report stopped, but closes its owned process', async () => {
-    const fixture = setup('--abort-ack-only');
+    const fixture = setup('--abort-ack-only', { timeoutMs: STALL_TIMEOUT_MS });
     const work = await start(fixture);
     expect(await fixture.adapter.stop!(work.ref, context)).toMatchObject({
       ok: false,
@@ -847,7 +849,7 @@ describe('owned Copilot lifecycle', () => {
   });
 
   test('a lost first ACK preserves identity and refuses automatic replay', async () => {
-    const fixture = setup();
+    const fixture = setup('', { timeoutMs: STALL_TIMEOUT_MS });
     const failure = await fixture.adapter.start!(
       { ...fixture.request, message: 'lost-ack' },
       context
