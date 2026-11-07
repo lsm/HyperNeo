@@ -10,6 +10,7 @@ import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime.ts';
 import { planMailboxAdmission } from '../../../../src/lib/mailbox/admission-plan.ts';
 import { DEFAULT_MAILBOX_ENTRY_POLICY } from '../../../../src/lib/mailbox/entry.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { RetryPromptIdentity } from '../../../../src/lib/agent/retry-prompt-identity.ts';
 
 type Recovery = { previous: string | null; text: string; pendingOpen: boolean; claim?: string };
 type TestSession = Session & { metadata: Session['metadata'] & { oapRecovery?: Recovery } };
@@ -133,6 +134,67 @@ function fixture(initial?: Recovery) {
 }
 
 describe('OAP recovery claim transport', () => {
+  test.each(['neo-bound', 'rate-limit retry'])(
+    'uses the durable delivery identity for a rewritten %s prompt',
+    async (mode) => {
+      const host = fixture(recovery());
+      const ids = new RetryPromptIdentity();
+      const message = prompt('original-message');
+      if (mode === 'rate-limit retry') ids.retry('original-message');
+      const wire = ids.outgoing(message, mode === 'neo-bound');
+      expect(wire.uuid).not.toBe(message.uuid);
+      host.getDeliveryContent.mockImplementation((_id, uuid) =>
+        uuid === message.uuid ? { inputKind: 'human' } : null
+      );
+      host.submit.mockImplementation(async (_id, received) => {
+        expect(received.uuid).toBe(wire.uuid);
+        expect(host.getStored().metadata.oapRecovery?.claim).toBe(message.uuid);
+        return { runId: 'synthetic-run' };
+      });
+      const hub = await host.bind(host.current).hub;
+      await hub.submit('session-a', wire);
+      expect(host.getDeliveryContent).toHaveBeenCalledWith('session-a', message.uuid);
+      expect(JSON.stringify(host.submit.mock.calls[0])).toContain('saved excerpt');
+    }
+  );
+
+  test('reports a definite refusal if restoring a cancelled claim fails', async () => {
+    const host = fixture(recovery());
+    const hub = await host.bind(host.current).hub;
+    let finish!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const writing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    host.db.updateSession.mockImplementation(async (id, update) => {
+      if ((update.metadata as TestSession['metadata'] | undefined)?.oapRecovery?.claim) {
+        started();
+        await gate;
+        return host.persist(id, update);
+      }
+      throw new Error('synthetic restore failure');
+    });
+    const owner = Symbol('attempt');
+    const pending = hub
+      .submit('session-a', prompt('message-1'), owner)
+      .catch((error: Error) => error);
+    await Promise.race([
+      writing,
+      pending.then(() => {
+        throw new Error('claim was not persisted');
+      }),
+    ]);
+    hub.release?.(owner);
+    finish();
+    const failure = await pending;
+    expect(failure).toBeInstanceOf(OapHubRequestError);
+    expect((failure as Error).message).toMatch(/closed.*restore|restore.*closed/i);
+    expect(host.submit).not.toHaveBeenCalled();
+    expect(host.getStored().metadata.oapRecovery?.claim).toBe('message-1');
+  });
   test('persists the claim before submit and attaches the excerpt only once', async () => {
     const host = fixture(recovery());
     const hub = await host.bind(host.current).hub;
