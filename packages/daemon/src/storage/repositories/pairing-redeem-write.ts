@@ -11,7 +11,7 @@ import {
 } from '../../lib/pairing/pair-request.ts';
 
 type Redeemed = ReturnType<DevicePairingRepository['redeem']>;
-type Outcome = { paired: Redeemed; awaitingApproval: boolean };
+type Outcome = { paired: Redeemed; awaitingApproval: boolean; usedElsewhere?: true };
 type Facts = {
   repo: DevicePairingRepository;
   request: PairRequest;
@@ -31,7 +31,7 @@ const applyStep: Record<PairRequestStep, (facts: Facts) => Outcome> = {
   },
   void: ({ repo, record, now }) => {
     repo.voidCode(record.id, now);
-    return refused;
+    return { ...refused, usedElsewhere: true };
   },
   redeem: ({ repo, request, now }) => ({
     paired: repo.redeem(request.code, request.name, now),

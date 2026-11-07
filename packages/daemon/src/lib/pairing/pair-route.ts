@@ -96,10 +96,12 @@ export function createPairRoute({ repo, limiter, now }: PairRouteDeps) {
       return answer(400, { error: 'invalid_request' });
     }
     const at = now();
-    const { paired, awaitingApproval } = await repo.redeemAsync(parsed.data, at);
+    const { paired, awaitingApproval, usedElsewhere } = await repo.redeemAsync(parsed.data, at);
     if (paired) return answerPaired(req, paired);
     if (awaitingApproval) return answer(403, { error: 'awaiting_approval' });
     limiter.fail(at);
-    return answer(401, { error: 'invalid_code' });
+    return usedElsewhere
+      ? answer(409, { error: 'code_used_elsewhere' })
+      : answer(401, { error: 'invalid_code' });
   };
 }
