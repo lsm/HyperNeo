@@ -134,10 +134,10 @@ class NeoTodoMutationPlanner {
         (plan: Plan, input: Input) => {
           const placeless =
             input.kind === 'edit' &&
-            neoTodoPlaceRefusal(
-              input.target,
-              plan.todo.repo ?? todos.getAsk(plan.todo.askId)?.repo
-            );
+            neoTodoPlaceRefusal({ ...plan.todo, target: input.target }, this.policies, {
+              ask: todos.getAsk(plan.todo.askId),
+              todo: plan.todo,
+            });
           return placeless
             ? { reason: { ok: false as const, reason: placeless } }
             : { value: plan };

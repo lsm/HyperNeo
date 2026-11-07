@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path';
 import { vi } from 'vitest';
 import { selectLocalStartFolder } from '../../../../src/lib/drivers/start-folder.ts';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
+import { neoTodoRepository } from '../../../../src/lib/neo/pack-contract.ts';
+import { neoTodoPolicies } from '../../../../src/lib/neo/packs/todo-policies.ts';
 import { neoStartPlace } from '../../../../src/lib/neo/start-place.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -129,6 +131,12 @@ async function start(
         db,
         machine: 'local',
         workspaceRoot: workspaceRoot ?? undefined,
+        repository: (todo, ask) =>
+          neoTodoRepository(todo ?? { check: null, named: null }, neoTodoPolicies(db), {
+            ask,
+            todo,
+            start: true,
+          }),
       }),
     })
   );

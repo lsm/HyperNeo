@@ -24,7 +24,7 @@ import {
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
 import type { NeoPack } from './pack-contract.ts';
-import { neoTodoRepo } from './todo-repo.ts';
+import { neoTodoRepository } from './pack-contract.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
 import {
@@ -176,12 +176,12 @@ export function createNeoAskRecordOperations(
           todo: (typeof input.todos)[number],
           scope: Pick<NeoAsk, 'repo'> = priorAsk ?? { repo: null }
         ) => {
-          const repo = neoTodoRepo(todo, packs(), scope);
+          const repo = neoTodoRepository(todo, packs(), { ask: scope });
           const filed = (item: NeoTodo) =>
-            neoTodoRepo(
+            neoTodoRepository(
               { check: item.check, named: item.named, target: sessions.get(item.id) },
               packs(),
-              scope
+              { ask: scope }
             );
           return recorded.find(
             (item) => item.title === todo.title && (item.repo === repo || filed(item) === repo)
@@ -204,7 +204,7 @@ export function createNeoAskRecordOperations(
             const check = withAssignedEvidence(todo.check, todoEvidenceFile('pending'));
             const reason = neoEvidenceRefusal(
               check,
-              neoTodoRepo(todo, packs(), priorAsk ?? { repo: null }),
+              neoTodoRepository(todo, packs(), { ask: priorAsk }),
               controls.userFolder ?? neoUserFolder()
             );
             return reason

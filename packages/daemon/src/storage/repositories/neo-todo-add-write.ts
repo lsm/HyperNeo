@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { type NeoTodoDraftSchema, planNeoTodoDraft } from '../../lib/neo/todo-operations.ts';
-import { neoTodoRepo } from '../../lib/neo/todo-repo.ts';
+import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
 import { planNeoTodoAwaitingStart } from '../../lib/neo/todo-runner.ts';
 import { ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -59,7 +59,7 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       const policies = neoTodoPolicies(db);
       const planned = planNeoTodoDraft(input.draft, policies);
       if ('reason' in planned) return planned;
-      const repo = neoTodoRepo(input.draft, policies, ask);
+      const repo = neoTodoRepository(input.draft, policies, { ask });
       const accepted = planNeoTodoDraft(input.draft, policies, store.listTodos(ask.id));
       return 'reason' in accepted ? accepted : { value: { ask, repo, draft: accepted.value } };
     },

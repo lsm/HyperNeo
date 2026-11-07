@@ -57,6 +57,7 @@ test('placement admission invokes a pack even when core owns the evidence check'
   const packs = [
     {
       todos: {
+        repository: () => 'synthetic/policy',
         refuse: (received: unknown, _peers: unknown, current: unknown) => {
           expect(received).toEqual(draft);
           expect(current).toEqual(scope);
@@ -70,6 +71,26 @@ test('placement admission invokes a pack even when core owns the evidence check'
   );
 });
 
+test('placement dispatch leaves completion-only pack validation to its owner', () => {
+  const draft = {
+    ...store.getTodo('todo')!,
+    instruction: 'Work',
+    target: { verb: 'start', adapter: 'hyperneo' },
+  };
+  const packs = [
+    {
+      todos: {
+        refuse: () => {
+          throw new Error('Only the check owner validates this check');
+        },
+      },
+    },
+  ];
+  expect(
+    Reflect.apply(neoTodoPlaceRefusal, undefined, [draft, packs, { ask: store.getAsk('ask') }])
+  ).toBeNull();
+});
+
 test('start-place uses its supplied repository policy instead of inferring from the check', () => {
   const start = neoStartPlace({
     db,
@@ -78,7 +99,10 @@ test('start-place uses its supplied repository policy instead of inferring from 
     repository: () => null,
   });
   expect(
-    start({ todoId: 'todo', adapter: 'synthetic', title: 'Work', message: 'Work' }, caller)
+    Reflect.apply(start, undefined, [
+      { todoId: 'todo', adapter: 'synthetic', title: 'Work', message: 'Work' },
+      caller,
+    ])
   ).toMatchObject({ value: { place: { folder: '/synthetic/home' } } });
 });
 

@@ -15,7 +15,8 @@ import type { NeoTodoCheckResult, NeoTodoFactJudge, NeoTodoPack } from '../../pa
 import type { CodingPrState } from './pr-ledger.ts';
 import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
 import { createCodingPackTables } from './schema/coding-tables.ts';
-import { neoGitRepo } from '../../todo-repo.ts';
+import { neoRepositoryIdentity } from '../../project-mirror.ts';
+import type { NeoTodoRepositoryDraft, NeoTodoPolicyScope } from '../../pack-contract.ts';
 import type { NeoWorkPrReader } from './work-prs.ts';
 
 export class CodingTodoPrRepository {
@@ -191,10 +192,19 @@ export function codingTodoStatusLine(
     : null;
 }
 
+function neoGitRepo(remote: string | undefined): string | null {
+  return neoRepositoryIdentity(remote)?.slice('repository:'.length) ?? null;
+}
+
 export function codingTodoRepository(
-  todo: Pick<NeoTodo, 'check' | 'named'>,
-  claimed: readonly string[] = []
+  todo: NeoTodoRepositoryDraft,
+  claimed: readonly string[] = [],
+  scope?: NeoTodoPolicyScope
 ): string | null {
+  if (scope && 'todo' in scope)
+    return scope.start
+      ? scope.todo?.repo || scope.ask?.repo || null
+      : (scope.todo?.repo ?? scope.ask?.repo ?? null);
   const issue = todo.check?.kind === 'issue_closed' && codingIssueRef(todo.check);
   if (issue) return neoGitRepo(`github.com/${issue.owner}/${issue.repo}`);
   const urls =
@@ -208,8 +218,14 @@ export function codingTodoRepository(
     .find(Boolean);
   if (pr) return neoGitRepo(`${pr.host}/${pr.owner}/${pr.repo}`);
   const named = todo.named?.repository;
-  if (typeof named !== 'string') return null;
-  return neoGitRepo(/^[\w.-]+\/[\w.-]+$/.test(named.trim()) ? `github.com/${named.trim()}` : named);
+  const place = todo.target?.verb === 'start' ? todo.target.place : null;
+  return (
+    (typeof named === 'string'
+      ? neoGitRepo(/^[\w.-]+\/[\w.-]+$/.test(named.trim()) ? `github.com/${named.trim()}` : named)
+      : null) ??
+    place?.remotes?.map(neoGitRepo).find(Boolean) ??
+    (place ? null : (scope?.ask?.repo ?? null))
+  );
 }
 
 function codingCheckRefs(check: NeoTodoCheck | null): string[] {
@@ -285,8 +301,14 @@ type CodingTodoFacts = {
 export function createCodingTodoPolicy(
   repo: Pick<CodingTodoPrRepository, 'urls'>
 ): Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'>> {
+  const repository: NonNullable<NeoTodoPack['repository']> = (todo, scope) =>
+    codingTodoRepository(
+      todo,
+      scope && 'todo' in scope ? [] : todo.id ? repo.urls(todo.id) : [],
+      scope
+    );
   return {
-    repository: (todo) => codingTodoRepository(todo, todo.id ? repo.urls(todo.id) : []),
+    repository,
     doneWhen: codingTodoDoneWhen,
     addUrls: (todo, urls) =>
       todo.check?.kind === 'pr_merged'
@@ -305,7 +327,13 @@ export function createCodingTodoPolicy(
             },
           }
         : null,
-    refuse: (draft) => {
+    refuse: (draft, _peers, scope) => {
+      if (scope) {
+        const name = repository({ ...draft, named: draft.named ?? null }, scope);
+        return draft.target?.verb === 'start' && !draft.target.place && name
+          ? `place_required: coding work for ${name} starts in its repository; pass target.place from work.find.`
+          : null;
+      }
       const refused = codingTodoCheckRefusal(draft);
       return refused?.startsWith('pr_merged_needs_urls:') ? null : refused;
     },
