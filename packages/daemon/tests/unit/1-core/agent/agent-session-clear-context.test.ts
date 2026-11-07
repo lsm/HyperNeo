@@ -187,6 +187,13 @@ describe('AgentSession.clearConversationContext', () => {
       await expect(session[operation]()).rejects.toBeInstanceOf(ClearConversationUnsupportedError);
       expect(session.session.sdkSessionId).toBe('native-thread-1');
       expect(reset).not.toHaveBeenCalled();
+      expect(session.internalEventBus.publishAsync).toHaveBeenCalledWith(
+        'session.error',
+        expect.objectContaining({
+          sessionId: session.session.id,
+          error: expect.stringMatching(/codex.*clear|clear.*codex/i),
+        })
+      );
     }
   );
 
