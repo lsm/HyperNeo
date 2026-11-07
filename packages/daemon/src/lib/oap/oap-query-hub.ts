@@ -116,14 +116,27 @@ function cancellationAccepted(response: unknown, sessionId: string, runId: strin
   );
 }
 
-function decideResubmit(status: unknown, sessionId: string): boolean {
-  if (!status || typeof status !== 'object') return false;
-  const work = status as { ref?: { session_id?: unknown }; status?: unknown };
-  return (
-    work.ref?.session_id === sessionId &&
-    typeof work.status === 'string' &&
-    ['done', 'failed', 'stopped'].includes(work.status)
-  );
+function decideResubmit(
+  status: unknown,
+  sessionId: string
+): { kind: 'allow' | 'refuse' } | { kind: 'cancel'; runId: string } {
+  if (!status || typeof status !== 'object') return { kind: 'refuse' };
+  const work = status as {
+    ref?: { session_id?: unknown };
+    status?: unknown;
+    held?: unknown;
+    run_id?: unknown;
+  };
+  if (work.ref?.session_id !== sessionId) return { kind: 'refuse' };
+  if (
+    work.held === false ||
+    (work.status === undefined && work.run_id === undefined) ||
+    (typeof work.status === 'string' && ['done', 'failed', 'stopped'].includes(work.status))
+  )
+    return { kind: 'allow' };
+  return work.status === 'needs_you' && typeof work.run_id === 'string' && work.run_id
+    ? { kind: 'cancel', runId: work.run_id }
+    : { kind: 'refuse' };
 }
 
 const planResubmit = (superpipe({})('oap.query.reconcileSubmit') as PipelineAPI)
@@ -142,19 +155,23 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
       starting = submission;
       try {
         if (uncertainSessions.has(sessionId)) {
-          const status = await client
-            .request('work.status', { session_id: sessionId })
-            .catch((error: unknown) => {
-              throw new OapHubRequestError(
-                'run_active',
-                `OAP previous submission outcome could not be confirmed: ${error instanceof Error ? error.message : String(error)}`
-              );
-            });
-          if (!planResubmit(status, sessionId))
+          try {
+            const status = await client.request('work.status', { session_id: sessionId });
+            if (starting !== submission) throw new Error('OAP query hub submission was closed');
+            let decision = planResubmit(status, sessionId);
+            if (decision.kind === 'cancel') {
+              await this.cancel(sessionId, decision.runId);
+              const updated = await client.request('work.status', { session_id: sessionId });
+              if (starting !== submission) throw new Error('OAP query hub submission was closed');
+              decision = planResubmit(updated, sessionId);
+            }
+            if (decision.kind !== 'allow') throw new Error('unfinished or unconfirmed work');
+          } catch (error) {
             throw new OapHubRequestError(
               'run_active',
-              'OAP previous submission outcome is unresolved or has unfinished work'
+              `OAP previous submission outcome could not be confirmed: ${error instanceof Error ? error.message : String(error)}`
             );
+          }
           uncertainSessions.delete(sessionId);
         }
         const parameters = prepareSubmit(sessionId, generateUUID(), message);
