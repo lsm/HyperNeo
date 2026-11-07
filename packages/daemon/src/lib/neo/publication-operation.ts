@@ -140,6 +140,28 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
     .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
     .pipe(
+      (draft: Draft, caller: OperationCaller) =>
+        (draft.artifacts ?? []).map((ref) => runtime.artifact(ref.artifactId, caller)),
+      ['submitted', 'caller'],
+      'registeredArtifacts'
+    )
+    .pipe(
+      (draft: Draft, proof: Proof, registered: ReturnType<ArtifactRefReader>[]) => {
+        const unknown = unregisteredArtifact(draft.artifacts ?? [], registered);
+        return unknown
+          ? {
+              reason: {
+                accepted: false as const,
+                reason: 'invalid_artifact_reference',
+                detail: `Artifact "${unknown.artifactId}" is not one you can attach as given.`,
+              },
+            }
+          : { value: proof };
+      },
+      ['submitted', 'publication', 'registeredArtifacts'],
+      'result:publication'
+    )
+    .pipe(
       (draft: Draft, proof: Proof) => {
         const unknown = draft.links.find((link) => !runtime.hasProject(link.id));
         return unknown
@@ -208,9 +230,6 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           )
             ? draft.cardReply
             : undefined,
-          artifacts: draft.artifacts?.filter(
-            (ref) => !unregisteredArtifact([ref], [runtime.artifact(ref.artifactId, caller)])
-          ),
         };
       },
       ['submitted', 'caller', 'publication'],
@@ -283,7 +302,7 @@ export function createNeoPublicationOperation(
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. session is the worker session this message is about; omit it otherwise. When the latest listening fact is yes, include optional spoken: one or two natural lines consistent with the text, at most 500 characters. Publication is saved first, speech is delivered to the current listener, then clients are notified of the text. No listener silently drops spoken; speech is not stored in publication history. Retries never replay speech. The receipt reports listening and spokenDelivered. If a fresh receipt says listening yes but you supplied no spoken, follow its guidance to call neo.speech.say once; never re-publish the text. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. When a reply is about one session the human may want to open, pass session: its exact session id rather than promising a link in text. Unknown session ids reject the publication without saving; correct the id and retry the same requestId. session_lookup_failed means the lookup is unavailable: retry the same requestId and session id. If session is omitted, the daemon fills it only for an unambiguous recorded sender of the current inputs. Only project links are accepted; an unknown project id rejects the entire publication without saving. Correct the link and retry with the same requestId. Unavailable artifact references are omitted. For a working document or evidence file, put its absolute path on the owning daemon in the text and say in one sentence what it is. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. Existing saved attachments and fixed-head Git references remain supported in artifacts.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. session is the worker session this message is about; omit it otherwise. When the latest listening fact is yes, include optional spoken: one or two natural lines consistent with the text, at most 500 characters. Publication is saved first, speech is delivered to the current listener, then clients are notified of the text. No listener silently drops spoken; speech is not stored in publication history. Retries never replay speech. The receipt reports listening and spokenDelivered. If a fresh receipt says listening yes but you supplied no spoken, follow its guidance to call neo.speech.say once; never re-publish the text. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. When a reply is about one session the human may want to open, pass session: its exact session id rather than promising a link in text. Unknown session ids reject the publication without saving; correct the id and retry the same requestId. session_lookup_failed means the lookup is unavailable: retry the same requestId and session id. If session is omitted, the daemon fills it only for an unambiguous recorded sender of the current inputs. Only project links are accepted; an unknown project id rejects the entire publication without saving. Correct the link and retry with the same requestId. Unavailable artifact references reject the publication; correct them and retry the same requestId. For a working document or evidence file, put its absolute path on the owning daemon in the text and say in one sentence what it is. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. Existing saved attachments and fixed-head Git references remain supported in artifacts.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: Result,

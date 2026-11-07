@@ -192,18 +192,26 @@ describe('Neo publication without runtime input attribution', () => {
     expect(await publish(draft, { ...caller, source: 'rpc' })).toMatchObject({ accepted: false });
   });
 
-  test('delivers text with registered artifacts and omits invented references', async () => {
-    expect(await publish({ ...draft, artifacts: [report] }, caller)).toMatchObject({
-      accepted: true,
-      publication: { artifacts: [report] },
-    });
-    expect(
-      await publish(
-        { ...draft, requestId: 'bad', artifacts: [{ ...report, artifactId: 'missing' }] },
-        caller
-      )
-    ).toMatchObject({ accepted: true, publication: { artifacts: [], fullText: draft.fullText } });
-  });
+  test.each([
+    { ...report, artifactId: 'missing' },
+    { ...report, byteLength: report.byteLength + 1 },
+    { ...report, daemonId: '40000000-0000-4000-8000-000000000001' },
+  ])(
+    'rejects an unavailable or mismatched artifact without publishing and allows a corrected retry',
+    async (invalid) => {
+      expect(await publish({ ...draft, artifacts: [report, invalid] }, caller)).toMatchObject({
+        accepted: false,
+        reason: 'invalid_artifact_reference',
+      });
+      expect(ledger.list(conversationId)).toHaveLength(0);
+      expect(notify).not.toHaveBeenCalled();
+      expect(await publish({ ...draft, artifacts: [report] }, caller)).toMatchObject({
+        accepted: true,
+        created: true,
+        publication: { artifacts: [report] },
+      });
+    }
+  );
 
   test.each(['work', 'consultation'])('rejects %s links at the publish input schema', (kind) => {
     const operation = createNeoPublicationOperation(publish);
