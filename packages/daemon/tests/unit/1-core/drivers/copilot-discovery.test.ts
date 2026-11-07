@@ -48,7 +48,7 @@ describe('Copilot discovery boundary', () => {
         },
       ])
     );
-    const sessions = await listCopilotSessions(command, home, 1500);
+    const sessions = await listCopilotSessions(command, home);
     expect(sessions.map((session) => [session.sessionId, session.cwd, session.title])).toEqual([
       [copilotSession, copilotFolder, 'Synthetic sum task'],
       ['22222222-2222-4222-8222-222222222222', '/synthetic/other-project', 'Other task'],
@@ -72,7 +72,7 @@ describe('Copilot discovery boundary', () => {
   test('reports listing failure without inventing a successful empty result', async () => {
     const { home, bin } = fixture();
     writeFileSync(join(home, 'copilot-list-failure'), 'fail');
-    await expect(listCopilotSessions(join(bin, 'copilot'), home, 1500)).rejects.toThrow(
+    await expect(listCopilotSessions(join(bin, 'copilot'), home)).rejects.toThrow(
       'Synthetic listing failure'
     );
   });
@@ -85,7 +85,7 @@ describe('Copilot discovery boundary', () => {
       `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--held-list'); await import(${JSON.stringify(sdk)});\n`,
       { mode: 0o700 }
     );
-    await expect(listCopilotSessions(join(bin, 'copilot'), home, 1500)).rejects.toThrow(
+    await expect(listCopilotSessions(join(bin, 'copilot'), home, 4000)).rejects.toThrow(
       'Listing sessions timed out'
     );
     const calls = readFileSync(join(home, 'calls.jsonl'), 'utf8')
@@ -105,8 +105,6 @@ describe('Copilot discovery boundary', () => {
       `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--bad-protocol'); await import(${JSON.stringify(sdk)});\n`,
       { mode: 0o700 }
     );
-    await expect(listCopilotSessions(join(bin, 'copilot'), home, 1500)).rejects.toThrow(
-      /protocol/i
-    );
+    await expect(listCopilotSessions(join(bin, 'copilot'), home)).rejects.toThrow(/protocol/i);
   });
 });

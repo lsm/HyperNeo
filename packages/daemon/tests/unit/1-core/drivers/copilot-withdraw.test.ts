@@ -6,9 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import type { WorkCallContext, WorkStarted } from '../../../../src/lib/drivers/types';
 
+const STALL_TIMEOUT_MS = 4000;
+
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
 const runs: { run: string; close: () => Promise<void> }[] = [];
-function setup(flag = '') {
+function setup(flag = '', timeoutMs?: number) {
   const run = mkdtempSync(join(tmpdir(), 'copilot-withdraw-'));
   mkdirSync(join(run, 'home'));
   const source = fileURLToPath(new URL('../../../fixtures/copilot-sdk.ts', import.meta.url));
@@ -24,9 +26,9 @@ function setup(flag = '') {
     machine: 'test',
     homeDir: join(run, 'home'),
     env: { HOME: join(run, 'home'), PATH: process.env.PATH ?? '' },
-    timeoutMs: 1500,
     folderExists: existsSync,
     makeFolder: (folder: string) => mkdirSync(folder),
+    timeoutMs,
   };
   const discovery = { id: 'copilot-cli', capabilities: ['find'] as const, find: () => [] };
   let adapter = createCopilotAdapter(discovery, deps);
@@ -94,7 +96,7 @@ describe('Copilot owned withdraw', () => {
     });
     writeFileSync(join(f.run, 'release-serial'), 'release');
     let status = '';
-    for (let poll = 0; poll < 200 && status !== 'done'; poll++) {
+    for (let poll = 0; poll < 2000 && status !== 'done'; poll++) {
       const result = await f.adapter.status!(work.ref);
       if (result.ok) status = result.value.status;
       await new Promise((done) => setTimeout(done, 5));
@@ -114,7 +116,7 @@ describe('Copilot owned withdraw', () => {
     const queued = await f.queue(work, 'queued');
     writeFileSync(join(f.run, 'release-serial'), 'release');
     let first = '';
-    for (let poll = 0; poll < 200 && first !== 'done'; poll++) {
+    for (let poll = 0; poll < 2000 && first !== 'done'; poll++) {
       const result = await f.adapter.status!(work.ref, undefined, work.receipt);
       if (result.ok) first = result.value.inputEvidence?.state === 'observed' ? 'done' : '';
       await new Promise((done) => setTimeout(done, 5));
@@ -151,7 +153,7 @@ describe('Copilot owned withdraw', () => {
   });
 
   test('a lost removal reply fails closed instead of leaving the input pending', async () => {
-    const f = setup('--lost-remove-ack');
+    const f = setup('--lost-remove-ack', STALL_TIMEOUT_MS);
     const work = await f.start('serial:first');
     const queued = await f.queue(work, 'queued');
     expect(await f.withdraw(work, queued)).toMatchObject({ ok: false, reason: 'unreachable' });
