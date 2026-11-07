@@ -38,6 +38,8 @@ function fixture(
     supportsReopen?: boolean;
     refusal?: OapHubRequestError;
     history?: boolean;
+    submitted?: boolean;
+    failed?: boolean;
     link?: string;
   } = {}
 ) {
@@ -96,8 +98,14 @@ function fixture(
     getSDKMessages: mock(() => ({
       messages: config.history
         ? [{ type: 'assistant', message: { content: [{ type: 'text', text: 'previous answer' }] } }]
-        : [],
+        : config.failed
+          ? [{ type: 'user', deliveryStatus: 'failed', message: { content: 'previous request' } }]
+          : [],
       hasMore: false,
+    })),
+    getUserMessagesByStatus: mock(() => ({
+      messages: config.submitted ? [{ uuid: 'previous-request' }] : [],
+      total: config.submitted ? 1 : 0,
     })),
     saveSDKMessage: mock(async () => true),
   };
@@ -198,6 +206,16 @@ describe('OAP native session reopen wiring', () => {
     expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
     expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
   });
+
+  test.each([{ submitted: true }, { failed: true }])(
+    'does not replace a legacy thread after an earlier submitted or failed delivery',
+    async (config) => {
+      const host = fixture(config);
+      await expect(host.runtime(session()).hub).rejects.toThrow(/resum|reopen/i);
+      expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
+      expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
+    }
+  );
 
   test('does not confuse an enqueued first prompt with previously delivered history', async () => {
     const host = fixture();
