@@ -37,6 +37,11 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
+import { OapQuery } from '../../../../src/lib/oap/oap-query';
+import {
+  initialOapTranslatorState,
+  translateOapEvent,
+} from '../../../../src/lib/oap/oap-sdk-translator';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
@@ -377,6 +382,72 @@ describe('QueryRunner', () => {
         expect.any(Function)
       );
       expect(factory).not.toHaveBeenCalled();
+      expect(startup).not.toHaveBeenCalled();
+      expect(trackAgentProcessSpy).not.toHaveBeenCalled();
+      startup.mockRestore();
+    });
+
+    it('runs a synthetic Codex text turn through OapQuery without the SDK gate', async () => {
+      const startup = jest.spyOn(getSdkStartupGate(), 'acquire');
+      const sdkQuery = query as unknown as ReturnType<typeof mock>;
+      sdkQuery.mockClear();
+      const submit = mock(async () => ({ runId: 'r1' }));
+      const events = async function* () {
+        yield {
+          type: 'content.delta',
+          id: 'delta-1',
+          payload: { part: { type: 'text', text: 'synthetic reply' } },
+        };
+        yield {
+          type: 'run.completed',
+          id: 'end-1',
+          payload: { final_response: { content: 'synthetic reply' } },
+        };
+      };
+      const createQuery = mock((prompt: AsyncIterable<SDKUserMessage>) => {
+        let state = initialOapTranslatorState('test-session-id');
+        return new OapQuery({
+          sessionId: 'test-session-id',
+          prompt,
+          hub: { submit, events, cancel: async () => {} },
+          translator: {
+            translate(event) {
+              const translated = translateOapEvent(
+                state,
+                event as Parameters<typeof translateOapEvent>[1]
+              );
+              state = translated.state;
+              return translated.messages;
+            },
+          },
+        });
+      });
+      const messages: SDKMessage[] = [];
+      onSDKMessageSpy.mockImplementation(async (message: SDKMessage) => {
+        messages.push(message);
+        if (message.type === 'result') queue.stop();
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, createQuery },
+      });
+      const sent = queue
+        .enqueueWithId('codex-text', 'Synthetic prompt', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      await ctx.queryPromise;
+      await sent;
+      expect(createQuery).toHaveBeenCalledTimes(1);
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(messages.map((message) => message.type)).toEqual(['assistant', 'result']);
+      expect(messages[0]).toMatchObject({ message: { content: [{ text: 'synthetic reply' }] } });
+      expect(sdkQuery).not.toHaveBeenCalled();
       expect(startup).not.toHaveBeenCalled();
       expect(trackAgentProcessSpy).not.toHaveBeenCalled();
       startup.mockRestore();
