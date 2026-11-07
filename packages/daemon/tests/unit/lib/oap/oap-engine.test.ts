@@ -85,6 +85,16 @@ describe('OapEngine', () => {
     expect(existsSync(join(options.stateDirectory, 'oap-serve.json'))).toBe(false);
   });
 
+  test('rejects an incomplete expected binary identity', async () => {
+    const { engine, options } = await fixture();
+    await expect(
+      engine.getHub({ ...options, identity: { version: '', sha256: options.identity.sha256 } })
+    ).rejects.toThrow('invalid OAP binary identity');
+    await expect(
+      engine.getHub({ ...options, identity: { version: 'synthetic-1', sha256: 'not-a-sha256' } })
+    ).rejects.toThrow('invalid OAP binary identity');
+  });
+
   test('does not resend the failed request when a crashed hub is restarted on later use', async () => {
     const { engine, options, calls } = await fixture();
     const first = await engine.getHub(options);
