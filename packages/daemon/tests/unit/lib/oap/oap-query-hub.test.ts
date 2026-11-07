@@ -437,7 +437,10 @@ describe('OAP query hub transport', () => {
     const submission = hub.submit('synthetic-session', prompt);
     releaseHub(hub);
     finishSubscription({ id: 3, unsubscribe: host.unsubscribe });
-    await expect(submission).rejects.toThrow(/closed/i);
+    const failure = await submission.catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(OapHubRequestError);
+    expect((failure as Error).message).toMatch(/closed/i);
     expect(host.unsubscribe).toHaveBeenCalledTimes(1);
     expect(host.request).not.toHaveBeenCalled();
   });

@@ -83,7 +83,7 @@ function fixture(initial?: Recovery) {
     isCurrentHub: mock(() => true),
     createQueryHub: mock(() => transport),
   } as unknown as OapEngine;
-  const getDeliveryContent = mock((_id: string, _uuid: string): { inputKind?: string } => ({
+  const getDeliveryContent = mock((_id: string, _uuid: string): { inputKind?: string } | null => ({
     inputKind: 'human',
   }));
   const persist = async (_id: string, update: Partial<Session>) => {
@@ -355,7 +355,7 @@ describe('OAP recovery claim transport', () => {
     const hub = await host.bind(host.current).hub;
     const owner = Symbol('attempt');
     const message = prompt('message-1');
-    await hub.submit('session-a', message, owner);
+    await hub.submit('session-a', message, owner, () => false);
     hub.release?.(owner);
     expect(host.submit).toHaveBeenCalledWith('session-a', message, owner);
     expect(host.release).toHaveBeenCalledWith(owner);
@@ -370,6 +370,20 @@ describe('OAP recovery claim transport', () => {
       const hub = await host.bind(host.current).hub;
       await hub.submit('session-a', prompt('message-1'));
       expect(JSON.stringify(host.submit.mock.calls[0])).not.toContain('saved excerpt');
+      expect(host.getStored().metadata.oapRecovery?.claim).toBeUndefined();
+    }
+  );
+
+  test.each([null, {}])(
+    'refuses to submit if the recovery input cannot be identified',
+    async (input) => {
+      const host = fixture(recovery());
+      host.getDeliveryContent.mockReturnValueOnce(input);
+      const hub = await host.bind(host.current).hub;
+      await expect(hub.submit('session-a', prompt('message-1'))).rejects.toThrow(
+        /identif|recovery/i
+      );
+      expect(host.submit).not.toHaveBeenCalled();
       expect(host.getStored().metadata.oapRecovery?.claim).toBeUndefined();
     }
   );

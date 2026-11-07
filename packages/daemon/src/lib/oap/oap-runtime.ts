@@ -6,6 +6,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { OapEngine, OapEngineOptions } from './oap-engine.ts';
 import { OapHubRequestError, type OapHubClient } from './oap-hub-client.ts';
 import type { OapQueryHub } from './oap-query.ts';
+import { withOapRecovery } from './oap-recovery.ts';
 import { openOapSession, type OapReopenStore, type OapReopenEvents } from './oap-reopen.ts';
 
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
@@ -41,6 +42,7 @@ const prepareOpen = (superpipe({})('oap.runtime.open') as PipelineAPI)
   .end('plan') as (session: Session, id: string) => OpenPlan;
 
 type SessionSlot = {
+  session: Session;
   directory?: string;
   opening?: Promise<OapQueryHub>;
   client?: OapHubClient;
@@ -56,7 +58,7 @@ function planClear(
 ): Session['metadata'] {
   if (!slot || slot.deleted || !db || !session.sdkSessionId)
     throw new Error('Codex thread is unavailable for clearing');
-  return { ...session.metadata, oapClearThreadId: session.sdkSessionId };
+  return { ...session.metadata, oapClearThreadId: session.sdkSessionId, oapRecovery: undefined };
 }
 
 async function recordClear(
@@ -124,9 +126,12 @@ export function createOapRuntime(
   return (session) => {
     const slot =
       session.config.harness === 'codex'
-        ? (sessions.get(session.id) ?? { deleted: false })
+        ? (sessions.get(session.id) ?? { deleted: false, session })
         : undefined;
-    if (slot) sessions.set(session.id, slot);
+    if (slot) {
+      slot.session = session;
+      sessions.set(session.id, slot);
+    }
     const runtime: OapQueryRuntime = {
       openDirectorySupported: true,
       clear() {
@@ -158,7 +163,7 @@ export function createOapRuntime(
                   if (slot.deleted) throw new Error('Codex session was deleted');
                 });
                 if (slot.deleted) throw new Error('Codex session was deleted');
-                slot.hub = engine.createQueryHub(client);
+                slot.hub = withOapRecovery(engine.createQueryHub(client), () => slot.session, db);
                 return slot.hub;
               })
               .catch((error: unknown) => {

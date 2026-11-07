@@ -39,6 +39,26 @@ export class OapHubRequestError extends Error {
   }
 }
 
+export function isDefiniteOapRefusal(error: unknown): error is OapHubRequestError {
+  return (
+    error instanceof OapHubRequestError &&
+    [
+      'busy',
+      'capability_degraded',
+      'invalid_request',
+      'invalid_submission',
+      'model_not_found',
+      'request_too_large',
+      'run_active',
+      'scope_mismatch',
+      'session_closed',
+      'stale_capabilities',
+      'unknown_session',
+      'unsupported_feature',
+    ].includes(error.code)
+  );
+}
+
 function decideFrame(frame: OapHubFrame, waiting: boolean, retried: boolean): Dispatch {
   if (frame.kind === 'event') return { kind: 'event', frame };
   if (!waiting) return { kind: 'ignore' };

@@ -158,7 +158,7 @@ try {
     const error = details as { userMessage?: string } | undefined;
     if (error?.userMessage) errors.push(error.userMessage);
   }, { subscriberName: 'oap-workspace-wire-proof' });
-  const hub = new MessageHub({ defaultSessionId: 'global' });
+  let hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   hub.registerTransport(transport);
   await transport.initialize();
@@ -189,6 +189,61 @@ try {
     assert.equal(calls().length, 0);
     assert.equal(existsSync(join(run, 'data/oap/oap-serve.json')), false);
     Object.assign(evidence, { port: app.server.port, mismatchedDigestRefused: true, syntheticPeerStarts: 0, pass: true });
+  } else if (mode === 'recovery-claim') {
+    await first.oap!.hub;
+    const metadata = { ...first.session.metadata, oapRecovery: { previous: 'synthetic-old-thread', text: 'Synthetic saved conversation excerpt', pendingOpen: false } };
+    assert.equal(await app.db.updateSession(firstId, { metadata }), 'written');
+    first.session.metadata = metadata;
+    const engineHub = await app.oapEngine.getHub(config.oap);
+    const request = engineHub.request.bind(engineHub);
+    let claimObservedBeforeSubmit = false;
+    engineHub.request = async (op, params) => {
+      if (op === 'submit') {
+        assert(app!.db.getSession(firstId)?.metadata.oapRecovery?.claim);
+        claimObservedBeforeSubmit = true;
+      }
+      return request(op, params);
+    };
+    const db = app.db;
+    const updateSession = db.updateSession.bind(db);
+    db.updateSession = async (id, update) => {
+      if (id === firstId && update.metadata && 'oapRecovery' in update.metadata && !update.metadata.oapRecovery)
+        throw new Error('synthetic recovery marker cleanup failure');
+      return updateSession(id, update);
+    };
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic first explicit request' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 1 && !first.queryPromise, 'first recovered turn');
+    const claimed = app.db.getSession(firstId)?.metadata.oapRecovery;
+    assert(claimed?.claim);
+    assert(claimObservedBeforeSubmit);
+    const firstTurns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal(firstTurns.length, 1);
+    assert(JSON.stringify(firstTurns[0]).includes('Synthetic saved conversation excerpt'));
+    assert(JSON.stringify(firstTurns[0]).includes('Synthetic first explicit request'));
+    db.updateSession = updateSession;
+    await transport.close();
+    transport = undefined;
+    await app.cleanup();
+    app = undefined;
+    app = await createDaemonApp({ config: { ...config, disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
+    assert.notEqual(app.server.port, 8399);
+    assert.notEqual(app.server.port, 8499);
+    assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery?.claim, claimed.claim);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    hub = new MessageHub({ defaultSessionId: 'global' });
+    transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
+    hub.registerTransport(transport);
+    await transport.initialize();
+    const resumed = await app.sessionManager.getSessionAsync(firstId, { startQuery: false, replayPendingMessages: false });
+    assert(resumed);
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic second explicit request' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 2 && !resumed.queryPromise, 'explicit turn after restart');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal(turns.length, 2);
+    assert(!JSON.stringify(turns[1]).includes('Synthetic saved conversation excerpt'));
+    assert(JSON.stringify(turns[1]).includes('Synthetic second explicit request'));
+    if (process.env.VERIFY_BROWSER) await verifyNoticeInBrowser(app, firstId, 'Synthetic second explicit request');
+    Object.assign(evidence, { port: app.server.port, presetRecoveryClaimedBeforeSubmit: true, markerCleanupFailed: true, markerSurvivedRestart: true, excerptAttachedOnce: true, explicitTurns: turns.length, automaticResends: 0, pass: true });
   } else if (mode === 'fresh-clear') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic original conversation' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 1 && !first.queryPromise, 'original native turn');
