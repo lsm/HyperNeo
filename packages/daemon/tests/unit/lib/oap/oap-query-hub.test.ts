@@ -130,6 +130,30 @@ describe('OAP query hub transport', () => {
     expect(host.unsubscribe).toHaveBeenCalledTimes(2);
   });
 
+  test('a retired attempt cannot release its successor subscription', async () => {
+    const host = fixture();
+    const hub = createOapQueryHub(host.client) as unknown as {
+      submit(sessionId: string, message: SDKUserMessage, owner: symbol): Promise<{ runId: string }>;
+      release(owner: symbol): void;
+      events: OapQueryHub['events'];
+    };
+    const oldOwner = Symbol('old');
+    const currentOwner = Symbol('current');
+    const first = await hub.submit('synthetic-session', prompt, oldOwner);
+    for await (const event of hub.events('synthetic-session', first.runId, new AbortController().signal)) {
+      if (event.type === 'run.completed') break;
+    }
+    const second = await hub.submit('synthetic-session', prompt, currentOwner);
+    hub.release(oldOwner);
+    const received: string[] = [];
+    for await (const event of hub.events('synthetic-session', second.runId, new AbortController().signal)) {
+      received.push(event.type);
+      if (event.type === 'run.completed') break;
+    }
+    expect(received).toEqual(['content.delta', 'run.completed']);
+    expect(host.unsubscribe).toHaveBeenCalledTimes(2);
+  });
+
   test('delivers a synchronous burst of 512 events and its terminal without dropping any', async () => {
     let receive!: Listener;
     const unsubscribe = mock(async () => {});
