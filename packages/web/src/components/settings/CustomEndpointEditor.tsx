@@ -548,6 +548,10 @@ export function EditorModal({
           </label>
           <label class="block sm:col-span-2">
             <span class={FORM_LABEL_CLASS}>Default model id (optional)</span>
+            <span class="block text-xs text-fg-faint">
+              Used for this endpoint’s default model mapping; it does not change the default model
+              for new sessions.
+            </span>
             <select
               value={state.defaultModelId}
               onChange={(e) => update({ defaultModelId: e.currentTarget.value })}

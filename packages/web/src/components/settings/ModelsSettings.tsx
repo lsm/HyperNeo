@@ -791,9 +791,6 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
   const [modelFallbackMap, setModelFallbackMap] = useState<Record<string, FallbackModelEntry[]>>(
     settings?.modelFallbackMap ?? {}
   );
-  const [openRouterAllowlistText, setOpenRouterAllowlistText] = useState(
-    (settings?.providerModelAllowlists?.openrouter ?? []).join('\n')
-  );
   const [availableModels, setAvailableModels] = useState<SettingsModel[]>([]);
   const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
     new Map()
@@ -820,7 +817,6 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
     if (settings) {
       setFallbackModels(settings.fallbackModels ?? []);
       setModelFallbackMap(settings.modelFallbackMap ?? {});
-      setOpenRouterAllowlistText((settings.providerModelAllowlists?.openrouter ?? []).join('\n'));
     }
   }, [settings]);
 
@@ -875,35 +871,6 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
       } else {
         setLoading(false);
       }
-    }
-  };
-
-  const saveOpenRouterAllowlist = async () => {
-    const openrouter = Array.from(
-      new Set(
-        openRouterAllowlistText
-          .split(/[\n,]/)
-          .map((id) => id.trim())
-          .filter(Boolean)
-      )
-    );
-    const nextAllowlists = { ...settings?.providerModelAllowlists };
-    if (openrouter.length > 0) {
-      nextAllowlists.openrouter = openrouter;
-    } else {
-      delete nextAllowlists.openrouter;
-    }
-
-    setIsUpdating(true);
-    try {
-      await updateGlobalSettings({ providerModelAllowlists: nextAllowlists });
-      setOpenRouterAllowlistText(openrouter.join('\n'));
-      toast.success('OpenRouter model allowlist updated');
-      await fetchModels(true);
-    } catch {
-      toast.error('Failed to update OpenRouter model allowlist');
-    } finally {
-      setIsUpdating(false);
     }
   };
 
@@ -1091,31 +1058,6 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
         </Button>
       }
     >
-      <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
-        <div>
-          <h4 class="text-[13px] font-semibold text-fg">OpenRouter Model Allowlist</h4>
-          <p class="text-xs text-fg-faint mt-0.5">
-            OpenRouter does not expose dashboard-enabled account models through its public API. Add
-            one model ID per line to limit model pickers and runtime validation to models you have
-            enabled on OpenRouter.
-          </p>
-        </div>
-        <textarea
-          value={openRouterAllowlistText}
-          onInput={(e) => setOpenRouterAllowlistText(e.currentTarget.value)}
-          placeholder={`xai/grok-4.3\nqwen/qwen3.6-max-preview\ndeepseek/deepseek-v4-pro`}
-          class="w-full h-28 bg-bg/60 border border-line rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-faint focus:outline-none focus:border-accent font-mono"
-        />
-        <Button
-          variant="primary"
-          size="xs"
-          onClick={saveOpenRouterAllowlist}
-          disabled={isUpdating}
-          loading={isUpdating}
-        >
-          Save OpenRouter allowlist
-        </Button>
-      </div>
       {loadError && (
         <div
           class="flex items-center justify-between gap-3 rounded-lg border border-danger-soft/20 px-4 py-3 text-sm text-danger-soft"

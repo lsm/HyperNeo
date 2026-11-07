@@ -5,6 +5,7 @@ import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
 import type { ProviderAuthStatus, CuratedModel } from '@hyperneo/shared/provider';
 import {
+  updateGlobalSettings,
   listProviders,
   deleteProvider,
   updateProvider,
@@ -20,7 +21,7 @@ import {
 import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from '../../lib/errors.ts';
-import { connectionState, credentialStoreStatus } from '../../lib/state.ts';
+import { connectionState, credentialStoreStatus, globalSettings } from '../../lib/state.ts';
 import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 import { AddProviderModal } from './AddProviderModal.tsx';
@@ -152,7 +153,46 @@ function getDefaultVisibleCheckedIds(
   );
 }
 
+function parseAllowlist(text: string): string[] {
+  return [
+    ...new Set(
+      text
+        .split(/[\n,]/)
+        .map((id) => id.trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function sharedModels(allowlist: string[], curated: CuratedModel[]): string[] {
+  const visible = new Set(curated.map((model) => model.id));
+  return allowlist.filter((id) => visible.has(id));
+}
+
 export function ProvidersSettings() {
+  const [allowlistText, setAllowlistText] = useState(
+    (globalSettings.value?.providerModelAllowlists?.openrouter ?? []).join('\n')
+  );
+  const [savingAllowlist, setSavingAllowlist] = useState(false);
+  useSignalEffect(() => {
+    setAllowlistText((globalSettings.value?.providerModelAllowlists?.openrouter ?? []).join('\n'));
+  });
+  const saveAllowlist = async () => {
+    const openrouter = parseAllowlist(allowlistText);
+    const lists = { ...globalSettings.value?.providerModelAllowlists };
+    if (openrouter.length) lists.openrouter = openrouter;
+    else delete lists.openrouter;
+    setSavingAllowlist(true);
+    try {
+      await updateGlobalSettings({ providerModelAllowlists: lists });
+      setAllowlistText(openrouter.join('\n'));
+      toast.success('OpenRouter model allowlist updated');
+    } catch {
+      toast.error('Failed to update OpenRouter model allowlist');
+    } finally {
+      setSavingAllowlist(false);
+    }
+  };
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -869,6 +909,11 @@ export function ProvidersSettings() {
             </div>
           ) : null}
 
+          <p class="text-xs text-fg-faint">
+            The star sets the default provider. The default model for new sessions is set in
+            Sessions &amp; Harness.
+          </p>
+
           {providers.length > 0 && (
             <SettingsGroup>
               {providers.map((provider) => {
@@ -954,7 +999,14 @@ export function ProvidersSettings() {
                           class={`p-1 rounded transition-colors ${
                             provider.isDefault ? 'text-warning' : 'text-fg-faint hover:text-warning'
                           }`}
-                          title={provider.isDefault ? 'Default provider' : 'Set as default'}
+                          title={
+                            provider.isDefault ? 'Default provider' : 'Set as default provider'
+                          }
+                          aria-label={
+                            provider.isDefault
+                              ? 'Default provider'
+                              : `Set ${provider.displayName} as default provider`
+                          }
                         >
                           <svg
                             class="w-4 h-4"
@@ -1127,6 +1179,37 @@ export function ProvidersSettings() {
                           </div>
                         )}
 
+                        {provider.providerId === 'openrouter' && !isCustom && (
+                          <div class="space-y-2">
+                            <label
+                              class="block text-xs font-semibold text-fg-muted"
+                              for="openrouter-allowlist"
+                            >
+                              OpenRouter Model Allowlist
+                            </label>
+                            <p class="text-xs text-fg-faint">
+                              OpenRouter does not expose dashboard-enabled account models through
+                              its public API. Enter model IDs to limit pickers and runtime
+                              validation.
+                            </p>
+                            <textarea
+                              id="openrouter-allowlist"
+                              aria-label="OpenRouter allowlist"
+                              value={allowlistText}
+                              onInput={(e) => setAllowlistText(e.currentTarget.value)}
+                              class="w-full h-28 bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg font-mono"
+                            />
+                            <Button
+                              size="xs"
+                              variant="primary"
+                              onClick={saveAllowlist}
+                              disabled={savingAllowlist}
+                              loading={savingAllowlist}
+                            >
+                              Save OpenRouter allowlist
+                            </Button>
+                          </div>
+                        )}
                         {!isCustom && (
                           <div data-testid="visible-models-panel">
                             <div class="flex items-center justify-between gap-2">
@@ -1154,6 +1237,20 @@ export function ProvidersSettings() {
                                 Fetch models
                               </Button>
                             </div>
+                            {provider.providerId === 'openrouter' && (
+                              <p class="text-xs text-fg-faint mt-2">
+                                {(() => {
+                                  const saved =
+                                    globalSettings.value?.providerModelAllowlists?.openrouter ?? [];
+                                  if (!saved.length)
+                                    return 'No allowlist restriction; visible models follow curation.';
+                                  if (curatedList === undefined)
+                                    return 'No visible-model curation; the allowlist limits models.';
+                                  const both = sharedModels(saved, curatedList);
+                                  return `Saved models on both lists (${both.length}): ${both.join(', ') || 'none'}`;
+                                })()}
+                              </p>
+                            )}
                             {visiblePanel.error && (
                               <p class="text-xs text-danger mt-2">{visiblePanel.error}</p>
                             )}

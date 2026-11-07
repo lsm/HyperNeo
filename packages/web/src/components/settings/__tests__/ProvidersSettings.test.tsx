@@ -4,6 +4,7 @@ import { act, render, cleanup, screen, waitFor, fireEvent } from '@testing-libra
 import type { ProviderRecord } from '@hyperneo/shared';
 
 const {
+  mockUpdateGlobalSettings,
   mockListProviders,
   mockListProviderAuthStatus,
   mockUpdateProvider,
@@ -27,6 +28,7 @@ const {
   mockListAvailableModels,
   mockRequest,
 } = vi.hoisted(() => ({
+  mockUpdateGlobalSettings: vi.fn(),
   mockListProviders: vi.fn(),
   mockListProviderAuthStatus: vi.fn(),
   mockUpdateProvider: vi.fn(),
@@ -52,6 +54,7 @@ const {
 }));
 
 vi.mock('../../../lib/api-helpers.ts', () => ({
+  updateGlobalSettings: (updates: unknown) => mockUpdateGlobalSettings(updates),
   listProviders: () => mockListProviders(),
   listProviderAuthStatus: () => mockListProviderAuthStatus(),
   updateProvider: (id: string, params: unknown, creds?: unknown) =>
@@ -265,6 +268,8 @@ describe('ProvidersSettings', () => {
     mockListAvailableModels.mockReset();
     mockListAvailableModels.mockResolvedValue({ models: [], cached: true });
     globalStore.systemState.value = null;
+    globalStore.settings.value = null;
+    mockUpdateGlobalSettings.mockResolvedValue(undefined);
     connectionState.value = 'connecting';
   });
 
@@ -638,7 +643,7 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
 
-    const starButton = container.querySelector('button[title="Set as default"]');
+    const starButton = screen.getByRole('button', { name: 'Set Anthropic as default provider' });
     if (starButton) fireEvent.click(starButton);
 
     await waitFor(() => {
@@ -1574,6 +1579,45 @@ describe('ProvidersSettings', () => {
       await waitFor(() => expect(screen.getByText('Fetch models')).toBeTruthy());
       return screen.getByTestId('visible-models-panel')!;
     };
+
+    it('shows the OpenRouter allowlist beside visible models without writing on open', async () => {
+      const provider = createMockProvider('or1', 'openrouter', { displayName: 'OpenRouter' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('OpenRouter'));
+      await expandFirstProvider(container);
+      expect(screen.getByLabelText('OpenRouter allowlist')).toBeTruthy();
+      expect(container.textContent).toContain('No allowlist restriction');
+      expect(mockUpdateProvider).not.toHaveBeenCalled();
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it('shows the saved intersection and saves the allowlist without changing curation', async () => {
+      globalStore.settings.value = {
+        settingSources: ['user', 'project', 'local'],
+        providerModelAllowlists: { openrouter: ['vendor/a', 'vendor/b'], kimi: ['kimi/a'] },
+      };
+      const provider = createMockProvider('or1', 'openrouter', {
+        displayName: 'OpenRouter',
+        configJson: JSON.stringify({ models: [{ id: 'vendor/b' }, { id: 'vendor/c' }] }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('OpenRouter'));
+      await expandFirstProvider(container);
+      expect(container.textContent).toContain('Saved models on both lists (1): vendor/b');
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+      fireEvent.input(screen.getByLabelText('OpenRouter allowlist'), {
+        target: { value: 'vendor/c\nvendor/c' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
+      await waitFor(() =>
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
+          providerModelAllowlists: { openrouter: ['vendor/c'], kimi: ['kimi/a'] },
+        })
+      );
+      expect(mockUpdateProvider).not.toHaveBeenCalled();
+    });
 
     it('fetches remote candidates and renders them merged with stored curation', async () => {
       const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
