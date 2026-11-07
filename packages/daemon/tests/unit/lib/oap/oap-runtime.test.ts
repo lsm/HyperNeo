@@ -87,6 +87,14 @@ describe('OAP daemon runtime', () => {
     expect(host.operations.map(({ op }) => op)).toEqual(['work.status']);
   });
 
+  test('does not replace a saved native session when hub history is missing', async () => {
+    const host = fixture();
+    const resumed = { ...session('session-a', '/synthetic/workspace'), sdkSessionId: 'native-a' };
+    const runtime = createOapRuntime(host.engine, options)(resumed);
+    await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
+    expect(host.getHub).not.toHaveBeenCalled();
+  });
+
   test('refuses a hub that cannot prove the requested directory', async () => {
     const host = fixture();
     let probes = 0;
