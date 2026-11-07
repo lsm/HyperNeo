@@ -145,6 +145,7 @@ export interface AgentSessionInit {
 }
 
 export interface AgentSessionRuntimeOptions {
+  oap?: import('./query-runner.ts').OapQueryRuntime;
   getGithubToken?(): Promise<string | null>;
   operationRegistryProvider?: () => OperationRegistry | undefined;
   callerScopeResolver?: CallerScopeResolver;
@@ -494,6 +495,10 @@ export class AgentSession
 
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository.ts').McpEnablementRepository {
     return this.db.mcpEnablement;
+  }
+
+  get oap(): import('./query-runner.ts').OapQueryRuntime | undefined {
+    return this.runtimeOptions.oap;
   }
 
   constructor(

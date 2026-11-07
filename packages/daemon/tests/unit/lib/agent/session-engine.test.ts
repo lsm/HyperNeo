@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { selectSessionEngine } from '../../../../src/lib/agent/session-engine';
+import type { Session } from '@hyperneo/shared';
+import { codexSessionRefusal, selectSessionEngine } from '../../../../src/lib/agent/session-engine';
 
 describe('selectSessionEngine', () => {
   it('selects the SDK when harness is absent', () => {
@@ -10,5 +11,13 @@ describe('selectSessionEngine', () => {
     expect(selectSessionEngine('sdk')).toBe('sdk');
     expect(selectSessionEngine('codex')).toBe('codex');
     expect(() => selectSessionEngine('unknown')).toThrow();
+  });
+});
+
+describe('codexSessionRefusal', () => {
+  it('refuses Neo root sessions while allowing an ordinary unattended-free session', () => {
+    const session = { config: { harness: 'codex' }, context: {} } as Session;
+    expect(codexSessionRefusal(session, true)).toMatch(/Neo/);
+    expect(codexSessionRefusal(session, false)).toBeUndefined();
   });
 });

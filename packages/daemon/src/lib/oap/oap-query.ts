@@ -1,16 +1,18 @@
 import type { SDKMessage, SDKUserMessage, RewindFilesResult } from '@hyperneo/shared/sdk';
 import type { QueryLike } from '../agent/query-like.ts';
 import { mapUserInputRequest } from './oap-permission-map.ts';
+import { initialOapTranslatorState, translateOapEvent } from './oap-sdk-translator.ts';
 
 type OapEvent = { type: string; [key: string]: unknown };
 
-type OapQueryHub = {
+export type OapQueryHub = {
   submit(sessionId: string, message: SDKUserMessage): Promise<{ runId: string }>;
   events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OapEvent>;
   cancel(sessionId: string, runId: string): Promise<void>;
 };
 
 type OapQueryTranslator = {
+  beginRun?(): void;
   translate(event: OapEvent): SDKMessage[];
 };
 
@@ -92,6 +94,7 @@ export class OapQuery implements QueryLike {
       });
       const runId = await this.pendingRun;
       this.pendingRun = undefined;
+      this.translator.beginRun?.();
       if (this.closed || this.interrupted) {
         await this.cancelActive();
         if (this.closed) return;
@@ -111,7 +114,18 @@ export class OapQuery implements QueryLike {
             }
             throw new Error(`OAP ${unsupported}; run cancelled`);
           }
-          for (const translated of this.translator.translate(event)) yield translated;
+          let translated: SDKMessage[];
+          try {
+            translated = this.translator.translate(event);
+          } catch (error) {
+            try {
+              await this.cancelActive();
+            } catch (cause) {
+              throw new Error(`${String(error)}; cancellation failed`, { cause });
+            }
+            throw error;
+          }
+          for (const message of translated) yield message;
           if (isTerminal(event)) {
             terminal = true;
             break;
@@ -149,4 +163,34 @@ export class OapQuery implements QueryLike {
     this.cancelPromise ??= this.hub.cancel(this.sessionId, this.activeRun);
     return this.cancelPromise;
   }
+}
+
+export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): OapQuery {
+  let state = initialOapTranslatorState(options.sessionId);
+  return new OapQuery({
+    ...options,
+    translator: {
+      beginRun: () => {
+        state = initialOapTranslatorState(options.sessionId);
+      },
+      translate: (event) => {
+        if (
+          typeof event.id !== 'string' ||
+          !event.id ||
+          !event.payload ||
+          typeof event.payload !== 'object' ||
+          Array.isArray(event.payload)
+        ) {
+          throw new Error('Invalid OAP event');
+        }
+        const result = translateOapEvent(state, {
+          type: event.type,
+          id: event.id,
+          payload: event.payload as Record<string, unknown>,
+        });
+        state = result.state;
+        return result.messages;
+      },
+    },
+  });
 }

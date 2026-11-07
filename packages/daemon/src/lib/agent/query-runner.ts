@@ -45,6 +45,8 @@ import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
+import { createOapQuery, type OapQueryHub } from '../oap/oap-query.ts';
+import { codexSessionRefusal, selectSessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
   decideQueryRetry,
@@ -355,6 +357,11 @@ interface RetryTeardownOptions {
   snapshotRequeueLabel?: string;
 }
 
+export interface OapQueryRuntime {
+  openDirectorySupported: boolean;
+  hub: OapQueryHub;
+}
+
 export interface QueryRunnerContext {
   readonly session: Session;
   readonly db: Database;
@@ -367,6 +374,7 @@ export interface QueryRunnerContext {
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   readonly messageHandler: SDKMessageHandler;
+  readonly oap?: OapQueryRuntime;
 
   queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
@@ -788,12 +796,45 @@ export class QueryRunner {
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
     let removeFlagSettingsFile: (() => void) | undefined;
     let episodeId: string | undefined;
+    let engine: 'sdk' | 'codex' = 'sdk';
     const interruptEpoch = messageQueue.getUserInterruptEpoch?.();
     const owns = () =>
       this.ctx.getQueryGeneration() === queryGeneration && !this.ctx.isCleaningUp();
     const live = () => attemptToken.isLive() && owns();
 
     try {
+      engine = selectSessionEngine(session.config.harness);
+      if (engine === 'codex') {
+        if (!this.ctx.oap?.openDirectorySupported) {
+          throw new Error('Codex is unavailable: OAP open-directory support is not available.');
+        }
+        const refusal = codexSessionRefusal(
+          session,
+          !!neoCoordinatorBinding(this.ctx.db, session.id)
+        );
+        if (refusal) throw new Error(refusal);
+        runAbortController = new AbortController();
+        this.ctx.queryAbortController = runAbortController;
+        const prompt = this.createMessageGeneratorWrapper(
+          queryGeneration,
+          recoveryState.startGuard,
+          questionInputs,
+          live,
+          humanInputs
+        );
+        const oapQuery = createOapQuery({ sessionId: session.id, prompt, hub: this.ctx.oap.hub });
+        this.ctx.queryObject = oapQuery;
+        for await (const message of this.createAbortableQuery(
+          oapQuery,
+          runAbortController.signal
+        )) {
+          if (!live()) break;
+          this.ctx.firstMessageReceived = true;
+          this._consumedUserMessages.delete(queryGeneration);
+          await this.handleSDKMessage(message as SDKMessage, queryGeneration);
+        }
+        return;
+      }
       episodeId = await this.failures.admit(live);
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
         '../providers/factory.js'
@@ -1495,6 +1536,22 @@ export class QueryRunner {
       const errorMessage = String(error);
       isAbortError = error instanceof Error && error.name === 'AbortError';
       const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
+      if (engine === 'codex') {
+        const failure = error instanceof Error ? error : new Error(errorMessage);
+        messageQueue.clear(cancelled ? undefined : failure);
+        if (!cancelled && owns()) {
+          await errorManager.handleError(
+            session.id,
+            failure,
+            ErrorCategory.SESSION,
+            failure.message,
+            stateManager.getState(),
+            { harness: 'codex' },
+            owns
+          );
+        }
+        return;
+      }
       const isQueryInterrupted =
         cancelled || this.ctx.queryAbortController?.signal.aborted === true;
       let episode: Session['metadata']['queryFailureEpisode'];

@@ -37,11 +37,6 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
-import { OapQuery } from '../../../../src/lib/oap/oap-query';
-import {
-  initialOapTranslatorState,
-  translateOapEvent,
-} from '../../../../src/lib/oap/oap-sdk-translator';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
@@ -404,24 +399,6 @@ describe('QueryRunner', () => {
           payload: { final_response: { content: 'synthetic reply' } },
         };
       };
-      const createQuery = mock((prompt: AsyncIterable<SDKUserMessage>) => {
-        let state = initialOapTranslatorState('test-session-id');
-        return new OapQuery({
-          sessionId: 'test-session-id',
-          prompt,
-          hub: { submit, events, cancel: async () => {} },
-          translator: {
-            translate(event) {
-              const translated = translateOapEvent(
-                state,
-                event as Parameters<typeof translateOapEvent>[1]
-              );
-              state = translated.state;
-              return translated.messages;
-            },
-          },
-        });
-      });
       const messages: SDKMessage[] = [];
       onSDKMessageSpy.mockImplementation(async (message: SDKMessage) => {
         messages.push(message);
@@ -434,7 +411,7 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'codex' },
         },
         messageQueue: queue,
-        oap: { openDirectorySupported: true, createQuery },
+        oap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
       });
       const sent = queue
         .enqueueWithId('codex-text', 'Synthetic prompt', false, { durable: true })
@@ -443,7 +420,6 @@ describe('QueryRunner', () => {
       await runner.start();
       await ctx.queryPromise;
       await sent;
-      expect(createQuery).toHaveBeenCalledTimes(1);
       expect(submit).toHaveBeenCalledTimes(1);
       expect(messages.map((message) => message.type)).toEqual(['assistant', 'result']);
       expect(messages[0]).toMatchObject({ message: { content: [{ text: 'synthetic reply' }] } });
@@ -453,10 +429,8 @@ describe('QueryRunner', () => {
       startup.mockRestore();
     });
 
-    it('rejects a missing workspace capability even if a Codex factory is present', async () => {
-      const createQuery = mock(() => {
-        throw new Error('unexpected factory');
-      });
+    it('rejects a missing workspace capability even if a hub is present', async () => {
+      const submit = mock(async () => ({ runId: 'unexpected' }));
       const ctx = createContext({
         session: {
           ...mockSession,
@@ -464,7 +438,10 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'codex' },
         },
         messageQueue: queue,
-        oap: { openDirectorySupported: false, createQuery },
+        oap: {
+          openDirectorySupported: false,
+          hub: { submit, events: async function* () {}, cancel: async () => {} },
+        },
       });
       const sent = queue
         .enqueueWithId('missing-capability', 'hello', false, { durable: true })
@@ -473,7 +450,7 @@ describe('QueryRunner', () => {
       await runner.start();
       await ctx.queryPromise;
       expect((await sent).message).toMatch(/open-directory.*not available/i);
-      expect(createQuery).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -481,9 +458,7 @@ describe('QueryRunner', () => {
       { name: 'worker operations', config: { workerOperations: true }, context: undefined },
       { name: 'Space', config: {}, context: { spaceId: 'synthetic-space' } },
     ])('refuses Codex sessions requiring $name', async ({ config, context }) => {
-      const createQuery = mock(() => {
-        throw new Error('unexpected factory');
-      });
+      const submit = mock(async () => ({ runId: 'unexpected' }));
       const ctx = createContext({
         session: {
           ...mockSession,
@@ -492,7 +467,10 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'codex', ...config },
         } as Session,
         messageQueue: queue,
-        oap: { openDirectorySupported: true, createQuery },
+        oap: {
+          openDirectorySupported: true,
+          hub: { submit, events: async function* () {}, cancel: async () => {} },
+        },
       });
       const sent = queue
         .enqueueWithId('unsafe-session', 'hello', false, { durable: true })
@@ -501,22 +479,13 @@ describe('QueryRunner', () => {
       await runner.start();
       await ctx.queryPromise;
       expect((await sent).message).toMatch(/Codex.*not supported/i);
-      expect(createQuery).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
     });
 
     it('does not replay a Codex submit when its hub disconnects', async () => {
       const submit = mock(async () => {
         throw new Error('ECONNRESET synthetic hub');
       });
-      const createQuery = mock(
-        (prompt: AsyncIterable<SDKUserMessage>) =>
-          new OapQuery({
-            sessionId: 'test-session-id',
-            prompt,
-            hub: { submit, cancel: async () => {}, events: async function* () {} },
-            translator: { translate: () => [] },
-          })
-      );
       const ctx = createContext({
         session: {
           ...mockSession,
@@ -524,7 +493,10 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'codex' },
         },
         messageQueue: queue,
-        oap: { openDirectorySupported: true, createQuery },
+        oap: {
+          openDirectorySupported: true,
+          hub: { submit, cancel: async () => {}, events: async function* () {} },
+        },
       });
       const sent = queue
         .enqueueWithId('hub-failure', 'hello', false, { durable: true })
@@ -534,7 +506,6 @@ describe('QueryRunner', () => {
       await ctx.queryPromise;
       expect((await sent).message).toMatch(/ECONNRESET/);
       expect(submit).toHaveBeenCalledTimes(1);
-      expect(createQuery).toHaveBeenCalledTimes(1);
     });
 
     it('delivers injected query messages without calling the SDK query', async () => {
