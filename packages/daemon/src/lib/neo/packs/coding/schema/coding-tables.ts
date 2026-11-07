@@ -1,5 +1,16 @@
 import type { Database } from '../../../../../storage/sqlite-compat.ts';
 
+export function prepareCodingTodoStorage(db: Database): void {
+  db.transaction(() => {
+    db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_todos (
+      todo_id TEXT PRIMARY KEY REFERENCES neo_todos(id) ON DELETE CASCADE,
+      repo TEXT
+    );
+    INSERT OR IGNORE INTO pack_coding_todos (todo_id, repo)
+      SELECT id, repo FROM neo_todos WHERE repo IS NOT NULL;`);
+  })();
+}
+
 export function createCodingPackTables(db: Database, activatedAt = Date.now()): void {
   db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_daemon_merges (
     url TEXT NOT NULL, head TEXT NOT NULL, actor TEXT NOT NULL,
