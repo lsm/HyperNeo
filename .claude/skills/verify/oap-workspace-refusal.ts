@@ -74,7 +74,13 @@ try {
         return { runId: `run-${submissions.length}` };
       },
       events: async function* (_target: string, runId: string) {
-        yield { type: 'content.delta', id: `text-${runId}`, payload: { part: { type: 'text', text: `reply-${runId}` } } };
+        const common = { session_id: syntheticSession, run_id: runId, message_id: `message-${runId}` };
+        for (const [index, text] of ['Think', ' carefully'].entries()) {
+          yield { type: 'content.delta', id: `reason-${runId}-${index}`, payload: { ...common, part: { type: 'reasoning', reasoning: text } } };
+        }
+        for (const [index, text] of ['reply-', runId].entries()) {
+          yield { type: 'content.delta', id: `text-${runId}-${index}`, payload: { ...common, part: { type: 'text', text } } };
+        }
         yield { type: 'run.completed', id: `end-${runId}`, payload: { final_response: { content: `reply-${runId}` } } };
       },
       cancel: async () => { cancellations++; },
@@ -90,6 +96,9 @@ try {
       const results = rows.filter((row) => row.type === 'result');
       if (results.length === turn && !agent.queryPromise && !agent.messageQueue.isRunning()) {
         assert(results.some((row) => 'result' in row && row.result === `reply-run-${turn}`));
+        const assistants = rows.filter((row) => row.type === 'assistant');
+        assert.equal(assistants.length, turn);
+        assert(assistants.some((row) => JSON.stringify(row).includes('Think carefully') && JSON.stringify(row).includes(`reply-run-${turn}`)));
         break;
       }
       assert(Date.now() < turnDeadline, `synthetic turn ${turn} did not finish`);
@@ -181,6 +190,8 @@ try {
   evidence.sdkStartupGateCalls = gateCalls;
   evidence.trackedAgentProcesses = 0;
   evidence.syntheticTurnsFinished = submissions.length;
+  evidence.joinedTextAndReasoningPerTurn = true;
+  evidence.assistantRowsPerTurn = 1;
   evidence.syntheticCompletedRunCancellations = cancellations;
   evidence.staleFailurePreservedReplacement = true;
   evidence.staleFailurePreservedSuccessorAttempt = true;

@@ -364,7 +364,7 @@ describe('OAP query hub transport', () => {
       const messages: string[] = [];
       for await (const message of query) messages.push(message.type);
       query.close();
-      expect(messages).toEqual(['assistant', 'result']);
+      expect(messages).toEqual(['stream_event', 'assistant', 'result']);
     }
     expect(host.operations.filter((op) => op === 'submit')).toHaveLength(2);
     expect(host.unsubscribe).toHaveBeenCalledTimes(2);

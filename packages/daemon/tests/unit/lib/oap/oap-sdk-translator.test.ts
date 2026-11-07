@@ -13,20 +13,18 @@ describe('translateOapEvent', () => {
       payload: { part: { type: 'text', text: 'hello' } },
     });
     expect(text.messages[0]).toMatchObject({
-      type: 'assistant',
-      message: { content: [{ type: 'text', text: 'hello' }] },
+      type: 'stream_event',
+      event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hello' } },
     });
     const completed = translateOapEvent(text.state, {
       type: 'run.completed',
       id: 'event-2',
       payload: { stop_reason: 'end_turn' },
     });
-    expect(completed.messages).toHaveLength(1);
-    expect(completed.messages[0]).toMatchObject({
-      type: 'result',
-      subtype: 'success',
-      is_error: false,
-    });
+    expect(completed.messages).toMatchObject([
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'hello' }] } },
+      { type: 'result', subtype: 'success', is_error: false },
+    ]);
     expect(
       translateOapEvent(completed.state, { type: 'run.completed', id: 'event-3', payload: {} })
         .messages
@@ -52,7 +50,7 @@ describe('translateOapEvent', () => {
       errors: ['failed'],
     });
   });
-  it('preserves separate text deltas and drops unsupported parts', () => {
+  it('coalesces anonymous text deltas and drops unsupported parts', () => {
     const state = initialOapTranslatorState('session-1');
     const first = translateOapEvent(state, {
       type: 'content.delta',
@@ -64,9 +62,18 @@ describe('translateOapEvent', () => {
       id: 'event-2',
       payload: { part: { type: 'text', text: 'B' } },
     });
-    expect(first.messages[0]).toMatchObject({ message: { content: [{ text: 'A' }] } });
-    expect(second.messages[0]).toMatchObject({ message: { content: [{ text: 'B' }] } });
+    expect(first.messages[0]).toMatchObject({ event: { delta: { text: 'A' } } });
+    expect(second.messages[0]).toMatchObject({ event: { delta: { text: 'B' } } });
     expect(first.messages[0]?.uuid).not.toEqual(second.messages[0]?.uuid);
+    const done = translateOapEvent(second.state, {
+      type: 'run.completed',
+      id: 'end',
+      payload: {},
+    });
+    expect(done.messages).toMatchObject([
+      { type: 'assistant', message: { content: [{ text: 'AB' }] } },
+      { type: 'result' },
+    ]);
     expect(
       translateOapEvent(state, {
         type: 'content.delta',
@@ -89,6 +96,69 @@ describe('translateOapEvent', () => {
       translateOapEvent(cancelled.state, { type: 'run.failed', id: 'event-8', payload: {} })
         .messages
     ).toEqual([]);
+  });
+
+  it('coalesces interleaved messages and preserves reasoning and text block order', () => {
+    const initial = initialOapTranslatorState('session-1');
+    const first = translateOapEvent(initial, {
+      type: 'content.delta',
+      id: 'one',
+      payload: { message_id: 'message-a', part: { type: 'reasoning', reasoning: 'Think' } },
+    });
+    const events = [
+      { id: 'two', payload: { message_id: 'message-b', part: { type: 'text', text: 'Other' } } },
+      {
+        id: 'three',
+        payload: { message_id: 'message-a', part: { type: 'reasoning', reasoning: ' again' } },
+      },
+      { id: 'four', payload: { message_id: 'message-a', part: { type: 'text', text: 'The' } } },
+      { id: 'five', payload: { message_id: 'message-a', part: { type: 'text', text: ' answer' } } },
+      { id: 'six', payload: { message_id: 'message-b', part: { type: 'text', text: ' reply' } } },
+    ];
+    let state = first.state;
+    for (const event of events) {
+      const translated = translateOapEvent(state, { type: 'content.delta', ...event });
+      expect(translated.messages[0]?.type).toBe('stream_event');
+      state = translated.state;
+    }
+    expect(initial.pending).toEqual([]);
+    expect(first.state.pending[0]?.content).toMatchObject([{ thinking: 'Think' }]);
+    const done = translateOapEvent(state, { type: 'run.completed', id: 'end', payload: {} });
+    expect(done.messages).toMatchObject([
+      {
+        type: 'assistant',
+        message: {
+          id: 'message-a',
+          content: [
+            { type: 'thinking', thinking: 'Think again' },
+            { type: 'text', text: 'The answer' },
+          ],
+        },
+      },
+      {
+        type: 'assistant',
+        message: { id: 'message-b', content: [{ type: 'text', text: 'Other reply' }] },
+      },
+      { type: 'result' },
+    ]);
+    expect(done.messages[0]?.uuid).not.toBe(done.messages[1]?.uuid);
+    expect(done.state.pending).toEqual([]);
+  });
+
+  it.each(['run.failed', 'run.cancelled'])('preserves accumulated content before %s', (type) => {
+    const partial = translateOapEvent(initialOapTranslatorState('session-1'), {
+      type: 'content.delta',
+      id: 'partial',
+      payload: { message_id: 'message-1', part: { type: 'text', text: 'unfinished' } },
+    });
+    const terminal = translateOapEvent(partial.state, { type, id: 'end', payload: {} });
+    expect(terminal.messages).toMatchObject([
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'unfinished' }] } },
+      { type: 'result', is_error: true },
+    ]);
+    expect(translateOapEvent(terminal.state, { type, id: 'again', payload: {} }).messages).toEqual(
+      []
+    );
   });
 });
 
@@ -253,14 +323,28 @@ describe('translateOapEvent tool and usage fixtures', () => {
         part: { type: 'reasoning', reasoning: 'consider options' },
       },
     };
-    expect(translateOapEvent(initialOapTranslatorState('session-1'), event).messages).toMatchObject(
-      [
-        {
-          type: 'assistant',
-          message: { content: [{ type: 'thinking', thinking: 'consider options' }] },
+    const partial = translateOapEvent(initialOapTranslatorState('session-1'), event);
+    expect(partial.messages).toMatchObject([
+      {
+        type: 'stream_event',
+        event: { delta: { type: 'thinking_delta', thinking: 'consider options' } },
+      },
+    ]);
+    const done = translateOapEvent(partial.state, {
+      type: 'run.completed',
+      id: 'end',
+      payload: {},
+    });
+    expect(done.messages).toMatchObject([
+      {
+        type: 'assistant',
+        message: {
+          id: 'message-03',
+          content: [{ type: 'thinking', thinking: 'consider options' }],
         },
-      ]
-    );
+      },
+      { type: 'result' },
+    ]);
   });
 });
 
