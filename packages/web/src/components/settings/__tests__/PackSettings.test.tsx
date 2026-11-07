@@ -16,6 +16,43 @@ vi.mock('../CodingPackSettings.tsx', () => ({
 }));
 import { PackSettings } from '../PackSettings.tsx';
 
+const field = (
+  label: readonly [string, string],
+  values: Record<string, readonly [string, string]>
+) => ({
+  label: { en: label[0], 'zh-Hans': label[1] },
+  valueLabels: Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, { en: value[0], 'zh-Hans': value[1] }])
+  ),
+});
+const declarations = {
+  signIn: field(['Who signs in?', '谁来登录？'], {
+    self: ['I sign in', '我来登录'],
+    saved: ['Use my saved credentials', '使用我保存的登录信息'],
+  }),
+  verificationCodes: field(['Who handles verification codes?', '谁来处理验证码？'], {
+    self: ['I handle them', '我来处理'],
+    ask: ['Ask me in chat for the code', '在聊天中问我验证码'],
+  }),
+  formFill: field(['May the agent fill forms?', '可以代填表单吗？'], {
+    ask: ['Ask me first', '先问我'],
+    fill: ['Fill forms for me', '帮我填写表单'],
+  }),
+  payment: field(['Who completes payments?', '谁来完成付款？'], {
+    self: ['I handle payments', '付款全部由我处理'],
+    fillStop: ['Fill it, I press the last button', '帮我填写，最后由我点击'],
+    confirmed: ['Press after my explicit yes', '经我明确同意后点击'],
+  }),
+  commitments: field(['May the agent make commitments?', '可以代我作出承诺吗？'], {
+    ask: ['Ask me first', '先问我'],
+    direct: ['Send, book, cancel or accept for me', '直接代我发送、预订、取消或接受条款'],
+  }),
+  humanStep: field(['Where do I handle my step?', '需要我操作时用什么设备？'], {
+    computer: ['I can use a computer', '我可以使用电脑'],
+    phoneOnly: ['Send it to my phone', '只发到我的手机'],
+  }),
+};
+
 const scope = { kind: 'global', key: '' } as const;
 const writes = () => request.mock.calls.filter(([, call]) => call.name === 'pack.preferences.set');
 beforeEach(() => {
@@ -23,7 +60,11 @@ beforeEach(() => {
   rows.length = 0;
   applyLanguage('en');
   request.mockReset().mockImplementation(async (_method, { name, input }) => {
-    if (name === 'pack.preferences.list') return { preferences: rows.map((row) => ({ ...row })) };
+    if (name === 'pack.preferences.list')
+      return {
+        preferences: rows.map((row) => ({ ...row })),
+        declarations: declarations,
+      };
     if (name === 'pack.preferences.get')
       return { preference: rows.find((row) => row.key === input.key) ?? null };
     const index = rows.findIndex((row) => row.key === input.key);
@@ -118,4 +159,42 @@ test('a disconnected page shows a reconnect error without writing settings', asy
   render(<PackSettings />);
   expect((await screen.findByRole('alert')).textContent).toContain('Reconnect');
   expect(writes()).toHaveLength(0);
+});
+
+test('renders field and choice labels supplied by the pack preferences response', async () => {
+  request.mockImplementation(async (_method, { name }) => {
+    if (name === 'pack.preferences.list')
+      return {
+        preferences: [],
+        declarations: {
+          signIn: {
+            label: { en: 'Pack-provided question', 'zh-Hans': '包提供的问题' },
+            valueLabels: { self: { en: 'Pack-provided choice', 'zh-Hans': '包提供的选项' } },
+          },
+        },
+      };
+    throw new Error('Unexpected operation');
+  });
+  const ui = await page();
+  expect(ui.getByRole('combobox', { name: 'Pack-provided question' })).toBeTruthy();
+  expect(ui.getByRole('option', { name: 'Pack-provided choice' })).toBeTruthy();
+});
+
+test('shows an unanswered field when its declaration has no choice labels', async () => {
+  request.mockResolvedValue({
+    preferences: [],
+    declarations: {
+      empty: { label: { en: 'Empty choices', 'zh-Hans': '空选项' }, valueLabels: {} },
+    },
+  });
+  const ui = await page();
+  expect(ui.getByRole('combobox', { name: 'Empty choices' })).toBeTruthy();
+  expect(ui.getByRole('option', { name: 'Unanswered' })).toBeTruthy();
+});
+
+test('keeps settings usable when an older daemon returns no declarations', async () => {
+  request.mockResolvedValue({ preferences: [] });
+  const ui = await page();
+  expect(ui.queryAllByRole('combobox')).toHaveLength(0);
+  expect(screen.getByRole('region', { name: 'Coding pack settings' })).toBeTruthy();
 });

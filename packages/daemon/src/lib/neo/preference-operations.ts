@@ -128,7 +128,10 @@ export function createPackPreferenceOperations(db: Database, packs: () => readon
   const list = (superpipe({})('pack.preferences.list') as PipelineAPI)
     .input(['input'])
     .pipe(
-      (input: { pack?: string }) => ({ preferences: listPackPreferences(db, input.pack) }),
+      (input: { pack?: string }) => ({
+        preferences: listPackPreferences(db, input.pack),
+        declarations: packs().find((pack) => pack.id === input.pack)?.preferences ?? {},
+      }),
       'input',
       'output'
     )
@@ -156,7 +159,16 @@ export function createPackPreferenceOperations(db: Database, packs: () => readon
       description:
         'List saved pack settings with scope and human provenance. Missing defaults are never applied.',
       inputSchema: z.object({ pack: z.string().optional() }),
-      resultSchema: z.object({ preferences: z.array(PackSettingSchema) }),
+      resultSchema: z.object({
+        preferences: z.array(PackSettingSchema),
+        declarations: z.record(
+          z.string(),
+          z.object({
+            label: z.object({ en: z.string(), 'zh-Hans': z.string() }),
+            valueLabels: z.record(z.string(), z.object({ en: z.string(), 'zh-Hans': z.string() })),
+          })
+        ),
+      }),
       policy: { safetyClass: 'read' },
       execute: list,
     }),

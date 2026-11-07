@@ -45547,6 +45547,60 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "declarations": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "en": {
+                      "type": "string"
+                    },
+                    "zh-Hans": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "en",
+                    "zh-Hans"
+                  ],
+                  "type": "object"
+                },
+                "valueLabels": {
+                  "additionalProperties": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "en": {
+                        "type": "string"
+                      },
+                      "zh-Hans": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "en",
+                      "zh-Hans"
+                    ],
+                    "type": "object"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              },
+              "required": [
+                "label",
+                "valueLabels"
+              ],
+              "type": "object"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
           "preferences": {
             "items": {
               "additionalProperties": false,
@@ -45602,7 +45656,8 @@
           }
         },
         "required": [
-          "preferences"
+          "preferences",
+          "declarations"
         ],
         "type": "object"
       }
