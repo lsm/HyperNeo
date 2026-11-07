@@ -179,9 +179,14 @@ describe('AgentSession.clearConversationContext', () => {
     expect(agent.db.saveSDKMessage).toHaveBeenCalled();
   });
 
-  it.each(['startFreshContext', 'clearConversationContext'] as const)(
-    'shows one notice when %s cannot reopen the original Codex thread',
-    async (operation) => {
+  it.each([
+    ['startFreshContext', 'storage'],
+    ['clearConversationContext', 'storage'],
+    ['startFreshContext', 'open'],
+    ['clearConversationContext', 'open'],
+  ] as const)(
+    'shows one clear-failure notice when %s fails during fallback %s',
+    async (operation, failure) => {
       const client = {
         request: mock(async (op: string) => {
           if (op === 'capabilities') {
@@ -231,6 +236,11 @@ describe('AgentSession.clearConversationContext', () => {
         agent.db,
         agent.messageHub
       )(agent.session);
+      if (failure === 'storage')
+        (agent.db.updateSession as ReturnType<typeof mock>).mockRejectedValueOnce(
+          new Error('synthetic storage failure')
+        );
+      else (agent.db.updateSession as ReturnType<typeof mock>).mockResolvedValue('written');
       spyOn(agent, 'resetQuery').mockResolvedValue({ success: true });
       const enqueue = spyOn(agent.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
 
@@ -239,16 +249,14 @@ describe('AgentSession.clearConversationContext', () => {
         (cause: unknown) => cause
       );
       expect(error).toBeInstanceOf(ClearConversationUnsupportedError);
-      expect((error as Error).message).toMatch(/cannot be resumed/i);
+      expect((error as Error).message).toMatch(/could not clear/i);
       expect(agent.db.saveSDKMessage).toHaveBeenCalledTimes(1);
       expect(agent.messageHub.event).toHaveBeenCalledTimes(1);
       expect(agent.db.saveSDKMessage).toHaveBeenCalledWith(
         agent.session.id,
         expect.objectContaining({
           message: expect.objectContaining({
-            content: [
-              expect.objectContaining({ text: expect.stringMatching(/cannot be resumed/i) }),
-            ],
+            content: [expect.objectContaining({ text: expect.stringMatching(/could not clear/i) })],
           }),
         })
       );

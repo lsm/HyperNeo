@@ -19,6 +19,11 @@ export type OapQueryHub = {
   events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OapEvent>;
   cancel(sessionId: string, runId: string): Promise<void>;
   release?(owner?: symbol): void;
+  reportAdmissionFailure?(
+    message: SDKUserMessage,
+    owner: symbol,
+    isLive: () => boolean
+  ): Promise<void>;
 };
 
 type OapQueryTranslator = {
@@ -116,7 +121,16 @@ export class OapQuery implements QueryLike {
     this.started = true;
     for await (const message of untilClosed(this.prompt, this.closeSignal.signal)) {
       if (this.closed || this.interrupted || !this.isLive()) return;
-      await this.onSubmitted?.(message);
+      try {
+        await this.onSubmitted?.(message);
+      } catch (error) {
+        await this.hub.reportAdmissionFailure?.(
+          message,
+          this.owner,
+          () => !this.closed && !this.interrupted && this.isLive()
+        );
+        throw error;
+      }
       if (this.closed || this.interrupted || !this.isLive()) return;
       let settle!: () => void;
       const settled = new Promise<void>((resolve) => {
