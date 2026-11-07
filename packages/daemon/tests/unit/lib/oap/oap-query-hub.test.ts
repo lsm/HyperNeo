@@ -97,7 +97,9 @@ describe('OAP query hub transport', () => {
       const hub = createOapQueryHub(host.client);
       await expect(hub.submit('synthetic-session', prompt)).rejects.toBe(timeout);
       host.operations.length = 0;
-      await expect(hub.submit('synthetic-session', prompt)).rejects.toThrow(/outcome|unfinished/i);
+      await expect(hub.submit('synthetic-session', prompt)).rejects.toMatchObject({
+        code: 'run_active',
+      });
       expect(host.operations).toEqual(['work.status']);
       expect(host.request.mock.calls.filter(([op]) => op === 'submit')).toHaveLength(1);
     }
