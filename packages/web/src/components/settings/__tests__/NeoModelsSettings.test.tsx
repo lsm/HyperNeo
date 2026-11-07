@@ -16,26 +16,6 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   listProviderAuthStatus: () => auth(),
   updateGlobalSettings: vi.fn(),
 }));
-vi.mock('../../ui/ConfirmModal.tsx', () => ({
-  ConfirmModal: ({
-    isOpen,
-    message,
-    onClose,
-    onConfirm,
-  }: {
-    isOpen: boolean;
-    message: string;
-    onClose: () => void;
-    onConfirm: () => void;
-  }) =>
-    isOpen ? (
-      <div role="dialog">
-        <p>{message}</p>
-        <button onClick={onClose}>Cancel</button>
-        <button onClick={onConfirm}>Confirm</button>
-      </div>
-    ) : null,
-}));
 import { NeoModelSettings } from '../NeoModelSettings.tsx';
 import { globalSettings } from '../../../lib/state.ts';
 
@@ -157,7 +137,7 @@ test('saves a percentage per model and shows each against its own context window
   });
   expect(ui.getByText('88% ≈ 176K of 200K tokens')).toBeTruthy();
   expect(ui.getByText('90% · context window unknown')).toBeTruthy();
-  fireEvent.blur(ui.getByLabelText('Neo model 2 auto-compact percentage'));
+  fireEvent.focusOut(ui.getByLabelText('Neo model 2 auto-compact percentage'));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -244,7 +224,7 @@ test('saves 70 percent with the model and previews the effective token threshold
     target: { value: '70' },
   });
   expect(ui.getByText('70% ≈ 700K of 1M tokens')).toBeTruthy();
-  fireEvent.blur(ui.getByLabelText('Neo model 1 auto-compact percentage'));
+  fireEvent.focusOut(ui.getByLabelText('Neo model 1 auto-compact percentage'));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -265,7 +245,7 @@ test('90 resets an explicit override to the unchanged provider default', async (
     target: { value: '90' },
   });
   expect(ui.getByText('90% ≈ 900K of 1M tokens')).toBeTruthy();
-  fireEvent.blur(ui.getByLabelText('Neo model 1 auto-compact percentage'));
+  fireEvent.focusOut(ui.getByLabelText('Neo model 1 auto-compact percentage'));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -281,7 +261,7 @@ test.each(['', '70.5', '1', '101'])(
     fireEvent.input(ui.getByLabelText('Neo model 1 auto-compact percentage'), {
       target: { value },
     });
-    fireEvent.blur(ui.getByLabelText('Neo model 1 auto-compact percentage'));
+    fireEvent.focusOut(ui.getByLabelText('Neo model 1 auto-compact percentage'));
     expect((await ui.findByRole('alert')).textContent).toContain('whole number');
     expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
   }
@@ -399,7 +379,7 @@ test('offers only what each model supports and keeps an unsupported saved level'
   fireEvent.input(ui.getByLabelText('Neo model 1 auto-compact percentage'), {
     target: { value: '70' },
   });
-  fireEvent.blur(ui.getByLabelText('Neo model 1 auto-compact percentage'));
+  fireEvent.focusOut(ui.getByLabelText('Neo model 1 auto-compact percentage'));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith(
       'operation.invoke',
@@ -458,7 +438,7 @@ test('automatically saves the compact percentage on blur and rejects out-of-rang
   const input = ui.getByLabelText('Neo model 1 auto-compact percentage');
   fireEvent.input(input, { target: { value: '70' } });
   expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
-  fireEvent.blur(input);
+  fireEvent.focusOut(input);
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
@@ -467,7 +447,7 @@ test('automatically saves the compact percentage on blur and rejects out-of-rang
   );
   request.mockClear();
   fireEvent.input(input, { target: { value: '101' } });
-  fireEvent.blur(input);
+  fireEvent.focusOut(input);
   expect((await ui.findByRole('alert')).textContent).toContain('10 to 100');
   expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
 });
