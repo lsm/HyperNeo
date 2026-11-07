@@ -120,11 +120,17 @@ describe('OapEngine', () => {
   test('does not resend the failed request when a crashed hub is restarted on later use', async () => {
     const { engine, options, calls } = await fixture();
     const first = await engine.getHub(options);
+    expect(engine.isCurrentHub(first)).toBe(true);
     await expect(first.request('crash')).rejects.toThrow('code=7');
+    expect(engine.isCurrentHub(first)).toBe(false);
     const second = await engine.getHub(options);
     expect(second).not.toBe(first);
+    expect(engine.isCurrentHub(first)).toBe(false);
+    expect(engine.isCurrentHub(second)).toBe(true);
     await second.request('ping');
     expect(await readFile(calls, 'utf8')).toBe('start\ncrash\nstart\nping\n');
+    await engine.close();
+    expect(engine.isCurrentHub(second)).toBe(false);
   });
 
   test('does not allow a second configuration to silently replace a running hub', async () => {

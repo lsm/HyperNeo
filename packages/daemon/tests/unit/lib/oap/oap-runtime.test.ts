@@ -58,8 +58,9 @@ function fixture(status?: { directory: string }) {
   const createQueryHub = mock(
     (_client: OapHubClient) => ({ release: mock(() => {}) }) as OapQueryHub
   );
-  const engine = { getHub, createQueryHub } as unknown as OapEngine;
-  return { engine, client, getHub, createQueryHub, operations };
+  const isCurrentHub = mock((_client: OapHubClient) => true);
+  const engine = { getHub, createQueryHub, isCurrentHub } as unknown as OapEngine;
+  return { engine, client, getHub, createQueryHub, isCurrentHub, operations };
 }
 
 describe('OAP daemon runtime', () => {
@@ -116,6 +117,67 @@ describe('OAP daemon runtime', () => {
     await expect(runtime.hub).resolves.toBeDefined();
     expect(host.getHub).toHaveBeenCalledTimes(2);
     expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(1);
+  });
+
+  test('replaces dead per-session transports only when sessions are explicitly used again', async () => {
+    const host = fixture();
+    const replacement = fixture();
+    const bind = createOapRuntime(host.engine, options);
+    const first = bind(session('session-a', '/synthetic/workspace'));
+    const second = bind(session('session-b', '/synthetic/other'));
+    const [oldFirst, oldSecond] = await Promise.all([first.hub, second.hub]);
+
+    host.isCurrentHub.mockImplementation((client) => client === replacement.client);
+    host.getHub.mockResolvedValue(replacement.client);
+    expect(host.getHub).toHaveBeenCalledTimes(2);
+    expect(replacement.operations).toHaveLength(0);
+
+    const [newFirst, sameFirst] = await Promise.all([first.hub, first.hub]);
+    expect(newFirst).toBe(sameFirst);
+    expect(newFirst).not.toBe(oldFirst);
+    expect(oldFirst.release).toHaveBeenCalledTimes(1);
+    expect(oldSecond.release).not.toHaveBeenCalled();
+    expect(replacement.operations.map(({ op }) => op)).toEqual([
+      'work.status',
+      'open',
+      'work.status',
+    ]);
+
+    const newSecond = await second.hub;
+    expect(newSecond).not.toBe(oldSecond);
+    expect(newSecond).not.toBe(newFirst);
+    expect(oldSecond.release).toHaveBeenCalledTimes(1);
+    expect(replacement.operations.filter(({ op }) => op === 'open')).toHaveLength(2);
+  });
+
+  test('refuses to replace known history after the shared hub dies', async () => {
+    const host = fixture();
+    const replacement = fixture({ directory: '/synthetic/workspace' });
+    const bind = createOapRuntime(host.engine, options);
+    const runtime = bind(session('session-a', '/synthetic/workspace'));
+    const oldHub = await runtime.hub;
+    host.isCurrentHub.mockImplementation((client) => client === replacement.client);
+    host.getHub.mockResolvedValue(replacement.client);
+
+    await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
+    expect(oldHub.release).toHaveBeenCalledTimes(1);
+    expect(replacement.operations.map(({ op }) => op)).toEqual(['work.status']);
+    expect(replacement.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
+  });
+
+  test('does not restart the hub for a completed session after its client dies', async () => {
+    const host = fixture();
+    const bind = createOapRuntime(host.engine, options);
+    const oldHub = await bind(session('session-a', '/synthetic/workspace')).hub;
+    host.isCurrentHub.mockReturnValue(false);
+    const completed = {
+      ...session('session-a', '/synthetic/workspace'),
+      metadata: { messageCount: 1 },
+    } as Session;
+
+    await expect(bind(completed).hub).rejects.toThrow(/resum|reopen/i);
+    expect(oldHub.release).toHaveBeenCalledTimes(1);
+    expect(host.getHub).toHaveBeenCalledTimes(1);
   });
 
   test('rechecks history after an ambiguous open failure before considering another open', async () => {
