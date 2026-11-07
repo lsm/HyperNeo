@@ -527,8 +527,10 @@ function NeoModelSettings({
       setDraft(result.preferences);
       setPercents(percentTexts(result.preferences));
     } catch (cause) {
-      setDraft(previous);
-      setPercents(percentTexts(previous));
+      const currentPreference = globalSettings.value?.neo?.preferences;
+      const rollback = currentPreference === preference ? previous : (currentPreference ?? null);
+      setDraft(rollback);
+      setPercents(percentTexts(rollback));
       setError(cause instanceof Error ? cause.message : 'Could not save Neo models.');
     } finally {
       savingRef.current = false;
@@ -576,7 +578,11 @@ function NeoModelSettings({
           message={`Switch Neo to ${pendingPrimary ? (findSameModel(availableModels, pendingPrimary)?.name ?? pendingPrimary.model) : ''}?`}
           confirmButtonVariant="primary"
           isLoading={busy}
-          onClose={() => setPendingPrimary(null)}
+          onClose={() => {
+            if (!busy && !savingRef.current && connectionState.value === 'connected') {
+              setPendingPrimary(null);
+            }
+          }}
           onConfirm={() => {
             if (busy || savingRef.current || connectionState.value !== 'connected') return;
             if (pendingPrimary) void commitSave(pendingPrimary);
@@ -735,6 +741,11 @@ function NeoModelSettings({
           </div>
         </div>
       </details>
+      {saving && (
+        <p role="status" class="text-xs text-fg-faint">
+          Saving changes. Wait until complete, then retry any other action.
+        </p>
+      )}
       {error && (
         <p role="alert" class="text-xs text-danger">
           {error}

@@ -659,3 +659,90 @@ test.each(['Change Neo primary', 'Add Neo model'])(
     }
   }
 );
+
+test('a busy confirmation ignores Escape and backdrop until reconnected', async () => {
+  const ui = await editor();
+  fireEvent.click(ui.getByRole('button', { name: 'Make Neo model 2 primary' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Confirm Neo model' });
+  act(() => {
+    connectionState.value = 'disconnected';
+  });
+  fireEvent.keyDown(document, { key: 'Escape' });
+  fireEvent.click(dialog.parentElement!.querySelector('.absolute')!);
+  expect(screen.getByRole('dialog', { name: 'Confirm Neo model' })).toBeTruthy();
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  act(() => {
+    connectionState.value = 'connected';
+  });
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Confirm Neo model' })).toBeNull()
+  );
+});
+
+test('explains that actions must be retried while a percent save is pending', async () => {
+  const ui = await editor();
+  let finish!: (result: { ok: true; preferences: unknown }) => void;
+  request.mockImplementation((method) =>
+    method === 'operation.invoke'
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve({ models })
+  );
+  const input = ui.getByLabelText('Neo model 1 auto-compact percentage');
+  fireEvent.input(input, { target: { value: '70' } });
+  fireEvent.focusOut(input);
+  expect(ui.getByText(/wait.*retry/i)).toBeTruthy();
+  const clear = ui.getByRole('button', { name: 'Clear saved fallbacks' }) as HTMLButtonElement;
+  expect(clear.disabled).toBe(true);
+  fireEvent.click(clear);
+  expect(request.mock.calls.filter(([method]) => method === 'operation.invoke')).toHaveLength(1);
+  finish({
+    ok: true,
+    preferences: { ...primary, autoCompactPercent: 70, fallbacks: [glm, copilot] },
+  });
+  await waitFor(() => expect(ui.queryByText(/wait.*retry/i)).toBeNull());
+  fireEvent.click(clear);
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, autoCompactPercent: 70, fallbacks: [] },
+    })
+  );
+  finish({ ok: true, preferences: { ...primary, autoCompactPercent: 70, fallbacks: [] } });
+});
+
+test('a failed save retains a newer pushed preference instead of restoring stale data', async () => {
+  const ui = await editor();
+  let finish!: (result: { ok: false; reason: string }) => void;
+  request.mockImplementation((method) =>
+    method === 'operation.invoke'
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve({ models })
+  );
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think8k' } });
+  act(() => {
+    (globalSettings as { value: GlobalSettings | null }).value = {
+      neo: {
+        preferences: {
+          ...primary,
+          thinkingLevel: 'off',
+          autoCompactPercent: 80,
+          fallbacks: [glm, copilot],
+        },
+      },
+    } as GlobalSettings;
+  });
+  await waitFor(() =>
+    expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('off')
+  );
+  finish({ ok: false, reason: 'offline' });
+  expect((await ui.findByRole('alert')).textContent).toContain('offline');
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('off');
+  expect((ui.getByLabelText('Neo model 1 auto-compact percentage') as HTMLInputElement).value).toBe(
+    '80'
+  );
+});
