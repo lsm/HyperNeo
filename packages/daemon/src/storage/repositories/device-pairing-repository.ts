@@ -293,15 +293,25 @@ export class DevicePairingRepository {
     return { id, code, expiresAt };
   }
 
-  listPending(
-    now: number
-  ): { id: string; kind: DeviceKind; name: string | null; expiresAt: number }[] {
+  listPending(now: number): {
+    id: string;
+    kind: DeviceKind;
+    name: string | null;
+    requestedName: string | null;
+    expiresAt: number;
+  }[] {
     return this.db
       .prepare(
-        `SELECT id, kind, name, expires_at AS expiresAt FROM pairing_codes
+        `SELECT id, kind, name, requested_name AS requestedName, expires_at AS expiresAt FROM pairing_codes
          WHERE approved_at IS NULL AND used_at IS NULL AND expires_at > ? ORDER BY created_at`
       )
-      .all(now) as { id: string; kind: DeviceKind; name: string | null; expiresAt: number }[];
+      .all(now) as {
+      id: string;
+      kind: DeviceKind;
+      name: string | null;
+      requestedName: string | null;
+      expiresAt: number;
+    }[];
   }
 
   approveAsync(codeId: string, deviceId: string, now: number) {
@@ -341,6 +351,17 @@ export class DevicePairingRepository {
            AND used_at IS NULL AND expires_at > ?`
       )
       .get(hash(normalizePairingCode(code)), now);
+  }
+
+  recordRequestedName(code: string, name: string, now: number): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE pairing_codes SET requested_name = ? WHERE code_hash = ? AND approved_at IS NULL
+       AND used_at IS NULL AND expires_at > ?`
+        )
+        .run(name, hash(normalizePairingCode(code)), now).changes > 0
+    );
   }
 
   humanRecoveryOpen(): boolean {

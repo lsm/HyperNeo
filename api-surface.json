@@ -6921,12 +6921,19 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "requestedName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
                     "id",
                     "kind",
                     "name",
+                    "requestedName",
                     "expiresAt"
                   ],
                   "type": "object"
