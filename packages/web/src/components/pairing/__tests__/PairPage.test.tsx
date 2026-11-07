@@ -99,6 +99,32 @@ describe('PairPage', () => {
     );
   });
 
+  it('tells the waiting tab its code was used from another window', async () => {
+    let voided = false;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify(
+            voided ? { error: 'code_used_elsewhere' } : { error: 'awaiting_approval' }
+          ),
+          { status: voided ? 409 : 403 }
+        )
+    );
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await view.findByText(
+      'Waiting for Allow on a paired phone or browser. This page will finish pairing automatically.'
+    );
+    voided = true;
+    await waitFor(
+      () =>
+        view.getByText(
+          'This code was used from another window. Make a new one with hyperneo pair.'
+        ),
+      { timeout: 5000 }
+    );
+  });
+
   it('pairs after Allow elsewhere without another click or re-entering the code', async () => {
     let approved = false;
     const fetchMock = vi.fn(
