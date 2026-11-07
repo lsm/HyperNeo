@@ -10,7 +10,9 @@ The helper starts an isolated daemon on an ephemeral port and uses authenticated
 RPC to create a synthetic Codex session. It verifies the harness persists, an
 attempted harness switch is refused, and a message produces a visible refusal
 about the missing open-directory capability without entering the SDK startup gate
-or tracking an SDK child. The provider key is synthetic and stored only in the
-temporary database. No real Codex or OAP process runs. This proves the refusal,
-not the eventual Codex text turn or workspace routing. Cleanup closes the socket
-and daemon before the wrapper removes synthetic data.
+or tracking an SDK child. A second session injects a synthetic OAP hub into its
+runtime and sends two turns through the daemon; each must persist a text result
+and release the query and queue without cancelling its completed run. The provider
+key is synthetic and stored only in the temporary database. No real Codex or OAP
+process runs, so real workspace routing remains unverified. Cleanup closes the
+socket and daemon before the wrapper removes synthetic data.

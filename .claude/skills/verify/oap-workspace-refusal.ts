@@ -4,8 +4,10 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
+import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import type { SDKUserMessage } from '../../../packages/shared/src/sdk/index.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -57,6 +59,48 @@ try {
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
   assert.equal(app.db.getSession(sessionId)?.config.harness, 'codex');
+  const { sessionId: syntheticSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP query', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  const agent = app.sessionManager.getSession(syntheticSession);
+  assert(agent);
+  const submissions: string[] = [];
+  let cancellations = 0;
+  const syntheticOap: OapQueryRuntime = {
+    openDirectorySupported: true,
+    hub: {
+      submit: async (target: string, message: SDKUserMessage) => {
+        assert.equal(target, syntheticSession);
+        assert(message.uuid);
+        submissions.push(message.uuid);
+        return { runId: `run-${submissions.length}` };
+      },
+      events: async function* (_target: string, runId: string) {
+        yield { type: 'content.delta', id: `text-${runId}`, payload: { part: { type: 'text', text: `reply-${runId}` } } };
+        yield { type: 'run.completed', id: `end-${runId}`, payload: { final_response: { content: `reply-${runId}` } } };
+      },
+      cancel: async () => { cancellations++; },
+    },
+  };
+  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = syntheticOap;
+  const errorsBeforeTurns = errors.length;
+  for (let turn = 1; turn <= 2; turn++) {
+    await hub.request('message.send', { sessionId: syntheticSession, content: `Synthetic prompt ${turn}` });
+    const turnDeadline = Date.now() + 10_000;
+    while (true) {
+      const rows = app.db.getSDKMessages(syntheticSession).messages;
+      const results = rows.filter((row) => row.type === 'result');
+      if (results.length === turn && !agent.queryPromise && !agent.messageQueue.isRunning()) {
+        assert(results.some((row) => 'result' in row && row.result === `reply-run-${turn}`));
+        break;
+      }
+      assert(Date.now() < turnDeadline, `synthetic turn ${turn} did not finish`);
+      await new Promise((done) => setTimeout(done, 50));
+    }
+  }
+  assert.equal(new Set(submissions).size, 2);
+  assert.equal(cancellations, 0);
+  assert.equal(errors.length, errorsBeforeTurns);
+  assert.equal(gateCalls, 0);
+  assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
   evidence.port = app.server.port;
   evidence.persistedHarness = 'codex';
   evidence.updateRefused = true;
@@ -64,6 +108,8 @@ try {
   evidence.visibleRefusal = errors.find((message) => /open-directory.*not available/i.test(message));
   evidence.sdkStartupGateCalls = gateCalls;
   evidence.trackedAgentProcesses = 0;
+  evidence.syntheticTurnsFinished = submissions.length;
+  evidence.syntheticCompletedRunCancellations = cancellations;
   evidence.pass = true;
 } finally {
   await transport?.close();

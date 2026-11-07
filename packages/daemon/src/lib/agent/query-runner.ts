@@ -832,9 +832,20 @@ export class QueryRunner {
           runAbortController.signal
         )) {
           if (!live()) break;
+          const sdkMessage = message as SDKMessage;
           this.ctx.firstMessageReceived = true;
           this._consumedUserMessages.delete(queryGeneration);
-          await this.handleSDKMessage(message as SDKMessage, queryGeneration);
+          if (sdkMessage.type === 'result') {
+            questionInputs.endTurn();
+            humanInputs.endTurn();
+          }
+          await this.handleSDKMessage(sdkMessage, queryGeneration);
+          if (!live()) break;
+          if (sdkMessage.type === 'result') {
+            const messageId = this._lastConsumedUserMessage?.uuid;
+            if (messageId) messageQueue.acknowledgeYielded(messageId, queryGeneration);
+            if (!messageQueue.hasQueuedMessages()) messageQueue.stop();
+          }
         }
         return;
       }
