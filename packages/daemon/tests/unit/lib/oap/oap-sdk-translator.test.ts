@@ -52,4 +52,42 @@ describe('translateOapEvent', () => {
       errors: ['failed'],
     });
   });
+  it('preserves separate text deltas and drops unsupported parts', () => {
+    const state = initialOapTranslatorState('session-1');
+    const first = translateOapEvent(state, {
+      type: 'content.delta',
+      id: 'event-1',
+      payload: { part: { type: 'text', text: 'A' } },
+    });
+    const second = translateOapEvent(first.state, {
+      type: 'content.delta',
+      id: 'event-2',
+      payload: { part: { type: 'text', text: 'B' } },
+    });
+    expect(first.messages[0]).toMatchObject({ message: { content: [{ text: 'A' }] } });
+    expect(second.messages[0]).toMatchObject({ message: { content: [{ text: 'B' }] } });
+    expect(first.messages[0]?.uuid).not.toEqual(second.messages[0]?.uuid);
+    expect(
+      translateOapEvent(state, {
+        type: 'content.delta',
+        id: 'event-3',
+        payload: { part: { type: 'image' } },
+      }).messages
+    ).toEqual([]);
+    expect(state.terminal).toBe(false);
+  });
+  it('settles a cancelled run once with its reason', () => {
+    const cancelled = translateOapEvent(initialOapTranslatorState('session-1'), {
+      type: 'run.cancelled',
+      id: 'event-7',
+      payload: { reason: 'native turn interrupted' },
+    });
+    expect(cancelled.messages).toMatchObject([
+      { type: 'result', is_error: true, errors: ['native turn interrupted'] },
+    ]);
+    expect(
+      translateOapEvent(cancelled.state, { type: 'run.failed', id: 'event-8', payload: {} })
+        .messages
+    ).toEqual([]);
+  });
 });
