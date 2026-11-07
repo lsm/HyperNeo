@@ -399,6 +399,86 @@ describe('QueryRunner', () => {
       }
     }
 
+    it('records submission before sending and acknowledges only after OAP accepts', async () => {
+      let resolveSubmit!: (result: { runId: string }) => void;
+      let submitStarted!: () => void;
+      let releaseTerminal!: () => void;
+      let accepted!: () => void;
+      const submitted = new Promise<void>((resolve) => { submitStarted = resolve; });
+      const acceptedNotice = new Promise<void>((resolve) => { accepted = resolve; });
+      const terminalGate = new Promise<void>((resolve) => { releaseTerminal = resolve; });
+      const write = mock(async () => ['message-db-id']);
+      const yielded = mock(async () => { accepted(); });
+      queue.onMessageYielded = yielded;
+      const submit = mock(() => {
+        submitStarted();
+        return new Promise<{ runId: string }>((resolve) => { resolveSubmit = resolve; });
+      });
+      const events = async function* () {
+        await terminalGate;
+        yield { type: 'run.completed', id: 'end-1', payload: {} };
+      };
+      const ctx = createContext({
+        session: { ...mockSession, config: { model: 'unit', provider: providerId, harness: 'codex' } },
+        db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
+      });
+      const sent = queue.enqueueWithId('codex-admission', 'prompt', false, { durable: true });
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      const running = ctx.queryPromise!;
+      await submitted;
+      try {
+        expect(write).toHaveBeenCalledWith('markDeliverySubmittedByUuids', ctx.session.id, ['codex-admission']);
+        expect(yielded).not.toHaveBeenCalled();
+        expect(queue.hasYielded('codex-admission')).toBe(true);
+        resolveSubmit({ runId: 'r1' });
+        expect(await completesWithin(acceptedNotice)).toBe(true);
+        expect(await completesWithin(sent)).toBe(true);
+        expect(queue.hasYielded('codex-admission')).toBe(false);
+      } finally {
+        resolveSubmit({ runId: 'r1' });
+        releaseTerminal();
+        await running;
+        await sent.catch(() => {});
+      }
+    });
+
+    it('cancels a stale same-generation OAP acceptance without disturbing its successor', async () => {
+      let resolveSubmit!: (result: { runId: string }) => void;
+      let submitStarted!: () => void;
+      const submitted = new Promise<void>((resolve) => { submitStarted = resolve; });
+      const submit = mock(() => {
+        submitStarted();
+        return new Promise<{ runId: string }>((resolve) => { resolveSubmit = resolve; });
+      });
+      const cancel = mock(async () => {});
+      const events = mock(async function* () {
+        yield { type: 'run.completed', id: 'old-end', payload: {} };
+      });
+      const ctx = createContext({
+        session: { ...mockSession, config: { model: 'unit', provider: providerId, harness: 'codex' } },
+        db: { ...mockDb, writeSDKMessage: mock(async () => []) } as unknown as Database,
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
+      });
+      void queue.enqueueWithId('codex-old-accept', 'old prompt', false, { durable: true }).catch(() => {});
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      const running = ctx.queryPromise!;
+      await submitted;
+      const successor = ctx.attemptTokens.allocate();
+      resolveSubmit({ runId: 'old-run' });
+      expect(await completesWithin(running)).toBe(true);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenCalledWith(ctx.session.id, 'old-run');
+      expect(events).not.toHaveBeenCalled();
+      expect(onSDKMessageSpy).not.toHaveBeenCalled();
+      expect(queue.isRunning()).toBe(true);
+      expect(successor.isLive()).toBe(true);
+    });
+
     it('finishes a synthetic Codex text turn and acknowledges its durable prompt', async () => {
       const startup = jest.spyOn(getSdkStartupGate(), 'acquire');
       const sdkQuery = query as unknown as ReturnType<typeof mock>;
