@@ -28,6 +28,17 @@ function configurationKey(options: OapEngineOptions): string {
   ]);
 }
 
+function validateIdentity(options: OapEngineOptions): OapEngineOptions {
+  if (!options.identity.version.trim() || !/^[a-f0-9]{64}$/i.test(options.identity.sha256)) {
+    throw new Error('invalid OAP binary identity');
+  }
+  return options;
+}
+
+function checkBinary(options: OapEngineOptions): Promise<BinaryCheck> {
+  return checkOapBinary(options.binaryPath, options.identity);
+}
+
 function ensureValidBinary(
   check: BinaryCheck,
   config: ReturnType<typeof buildOapHubConfig>
@@ -54,14 +65,11 @@ async function writeConfig(
 
 const prepareHub = (superpipe({})('oap.engine.prepare') as PipelineAPI)
   .input('options')
-  .pipe(buildOapHubConfig, 'options', 'config')
-  .pipe(
-    (options: OapEngineOptions) => checkOapBinary(options.binaryPath, options.identity),
-    'options',
-    'check'
-  )
+  .pipe(validateIdentity, 'options', 'validOptions')
+  .pipe(buildOapHubConfig, 'validOptions', 'config')
+  .pipe(checkBinary, 'validOptions', 'check')
   .pipe(ensureValidBinary, ['check', 'config'], 'validated')
-  .pipe(writeConfig, ['options', 'validated'], 'launch')
+  .pipe(writeConfig, ['validOptions', 'validated'], 'launch')
   .endAsync('launch') as (options: OapEngineOptions) => Promise<OapHubClientOptions>;
 
 export class OapEngine {
