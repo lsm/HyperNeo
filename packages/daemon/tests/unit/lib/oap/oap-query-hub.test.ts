@@ -183,6 +183,35 @@ describe('OAP query hub transport', () => {
     releaseHub(hub);
   });
 
+  test('a retired reconciliation cannot cancel work after its successor starts', async () => {
+    const host = fixture();
+    host.request.mockRejectedValueOnce(new OapHubRequestError('timeout', 'submit timed out'));
+    const hub = createOapQueryHub(host.client);
+    await expect(hub.submit('synthetic-session', prompt)).rejects.toThrow('submit timed out');
+    let finishProbe!: (value: unknown) => void;
+    host.request.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishProbe = resolve;
+        })
+    );
+    const old = hub.submit('synthetic-session', prompt).catch((error: Error) => error);
+    releaseHub(hub);
+    host.request.mockResolvedValueOnce({
+      ref: { session_id: 'synthetic-session' },
+      status: 'done',
+    });
+    await hub.submit('synthetic-session', { ...prompt, uuid: 'successor' });
+    finishProbe({
+      ref: { session_id: 'synthetic-session' },
+      status: 'needs_you',
+      run_id: 'parked-run',
+    });
+    expect(((await old) as Error).message).toContain('closed');
+    expect(host.request.mock.calls.filter(([op]) => op === 'cancel')).toHaveLength(0);
+    releaseHub(hub);
+  });
+
   test.each(['done', 'failed', 'stopped'])(
     'a new prompt can submit after a timeout when hub work is %s',
     async (status) => {
