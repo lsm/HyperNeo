@@ -581,6 +581,9 @@ function NeoModelSettings({
           <p class="text-xs text-fg-faint">
             Add a model to save a Neo preference. The first one is the primary.
           </p>
+          <Button variant="secondary" size="xs" disabled={busy} onClick={() => setPicker('add')}>
+            Choose Neo model
+          </Button>
         </div>
       )}
       <details class="rounded-lg border border-line">
@@ -681,12 +684,12 @@ function NeoModelSettings({
             >
               Clear saved fallbacks
             </Button>
-            <Button size="xs" disabled={busy || !draft} onClick={save}>
-              Save Neo models
-            </Button>
           </div>
         </div>
       </details>
+      <Button size="xs" disabled={busy || !draft} onClick={save}>
+        Save Neo models
+      </Button>
       {error && (
         <p role="alert" class="text-xs text-danger">
           {error}

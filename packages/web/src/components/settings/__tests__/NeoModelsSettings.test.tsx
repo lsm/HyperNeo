@@ -456,3 +456,50 @@ test('changing the primary retains its thinking and does not save until requeste
     })
   );
 });
+
+test('saves a changed primary and thinking with Advanced closed', async () => {
+  const ui = await editor();
+  const advanced = ui.getByText('Advanced').closest('details');
+  expect(advanced?.open).toBe(false);
+  const save = ui.getByRole('button', { name: 'Save Neo models' });
+  expect(advanced?.contains(save)).toBe(false);
+  fireEvent.click(ui.getByRole('button', { name: 'Change Neo primary' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'off' } });
+  fireEvent.click(save);
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: {
+        ...primary,
+        model: 'router/test',
+        provider: 'openrouter',
+        thinkingLevel: 'off',
+        fallbacks: [glm, copilot],
+      },
+    })
+  );
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('off');
+  expect(advanced?.open).toBe(false);
+});
+
+test('chooses and saves the first model with Advanced closed', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = { settingSources: [] };
+  render(<NeoModelSettings />);
+  const ui = within(await screen.findByRole('region', { name: 'Neo models' }));
+  const advanced = ui.getByText('Advanced').closest('details');
+  expect(advanced?.open).toBe(false);
+  const choose = await ui.findByRole('button', { name: 'Choose Neo model' });
+  expect(advanced?.contains(choose)).toBe(false);
+  await waitFor(() => expect(choose.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(choose);
+  fireEvent.click(await screen.findByRole('button', { name: 'opus', exact: true }));
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, thinkingLevel: 'off' },
+    })
+  );
+  expect(advanced?.open).toBe(false);
+});

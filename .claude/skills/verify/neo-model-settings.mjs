@@ -49,11 +49,28 @@ try {
   await section.getByText('Follows default', { exact: false }).waitFor();
   assert.deepEqual(rpc('neo.snapshot').preferences, beforeOpen);
   evidence.openDidNotWrite = true;
-  await section.getByText('Advanced', { exact: true }).click();
-  await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();
+  const advanced = section.locator('details');
+  assert.equal(await advanced.evaluate((element) => element.open), false);
+  await section.getByRole('button', { name: 'Choose Neo model', exact: true }).click();
+  await page.getByRole('button', { name: first.display_name, exact: true }).click();
+  await section.getByRole('button', { name: 'Save Neo models', exact: true }).click();
+  await page.getByText('Neo models saved', { exact: true }).waitFor();
+  assert.equal(rpc('neo.snapshot').preferences.model, first.id);
+  await page.reload();
+  assert.equal(await advanced.evaluate((element) => element.open), false);
+  await section.getByRole('button', { name: 'Change Neo primary', exact: true }).click();
   await page.getByRole('button', { name: primary.display_name, exact: true }).click();
-  if (process.env.VERIFY_ANTHROPIC_1M === '1') await section.getByText(sizeText(90), { exact: true }).waitFor();
   await section.getByLabel('Neo model 1 thinking', { exact: true }).selectOption('think24k');
+  await section.getByRole('button', { name: 'Save Neo models', exact: true }).click();
+  await page.getByText('Neo models saved', { exact: true }).waitFor();
+  assert.equal(rpc('neo.snapshot').preferences.model, primary.id);
+  assert.equal(rpc('neo.snapshot').preferences.thinkingLevel, 'think24k');
+  await page.reload();
+  assert.equal(await advanced.evaluate((element) => element.open), false);
+  assert.equal(await section.getByLabel('Neo model 1 thinking', { exact: true }).inputValue(), 'think24k');
+  evidence.closedAdvancedSavedAndReloaded = true;
+  await section.getByText('Advanced', { exact: true }).click();
+  if (process.env.VERIFY_ANTHROPIC_1M === '1') await section.getByText(sizeText(90), { exact: true }).waitFor();
   for (const model of [first, second]) {
     await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();
     await page.getByRole('button', { name: model.display_name, exact: true }).click();
@@ -74,6 +91,9 @@ try {
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.reload();
+    assert.equal(await advanced.evaluate((element) => element.open), false);
+    await section.getByRole('button', { name: 'Save Neo models', exact: true }).waitFor({ state: 'visible' });
+    await page.screenshot({ path: `${run}/evidence/neo-model-closed-${width}.png`, fullPage: true, animations: 'disabled' });
     await section.getByText('Advanced', { exact: true }).click();
     await section.getByLabel('Neo model 1 thinking', { exact: true }).waitFor();
     assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, 70);

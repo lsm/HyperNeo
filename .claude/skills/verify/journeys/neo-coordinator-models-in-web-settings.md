@@ -16,7 +16,9 @@ headless browser is unavailable. The browser always runs headlessly.
 
 The actual built Settings > Neo page shows primary model and thinking above
 the Advanced section, which contains the ordered list and per-model compaction.
-The helper opens Advanced and adds three models through the shared model
+The helper first chooses and saves a model with Advanced closed, then changes
+the primary and thinking, saves and reloads while it remains closed. It opens
+Advanced and adds fallbacks through the shared model
 picker ("Add Neo model"), sets each thinking level, reorders and saves. "Make
 primary" moves a model to the top of the list. The helper checks persisted preferences through real `neo.snapshot` RPC,
 sets the primary's auto-compact to 70% (shown as "70% ≈ …K of …K tokens" from that
