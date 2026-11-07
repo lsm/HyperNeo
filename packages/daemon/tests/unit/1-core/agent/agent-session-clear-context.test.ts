@@ -27,7 +27,8 @@ function makeEventBus(): InternalEventBus<DaemonInternalEventMap> {
 
 function createAgentSession(
   overrides: Partial<Session> = {},
-  eventBus: InternalEventBus<DaemonInternalEventMap> = makeEventBus()
+  eventBus: InternalEventBus<DaemonInternalEventMap> = makeEventBus(),
+  oap?: import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
 ): AgentSession {
   const mockSession: Session = {
     id: `test-session-${Math.random()}`,
@@ -66,7 +67,12 @@ function createAgentSession(
     mockDb,
     { event: mock(() => {}) } as MessageHub,
     eventBus,
-    mock(async () => 'test-api-key')
+    mock(async () => 'test-api-key'),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { oap }
   );
 }
 
@@ -115,6 +121,61 @@ function makeClearErrorResult(uuid: string, userMessageUuid?: string): SDKMessag
 }
 
 describe('AgentSession.clearConversationContext', () => {
+  it.each(['startFreshContext', 'clearConversationContext'] as const)(
+    'creates a fresh Codex thread for %s without sending /clear',
+    async (operation) => {
+      let agent!: AgentSession;
+      const clear = mock(async () => {
+        agent.session.sdkSessionId = 'native-thread-2';
+      });
+      const runtime = { openDirectorySupported: true, clear } as unknown as NonNullable<
+        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+      >;
+      agent = createAgentSession(
+        {
+          sdkSessionId: 'native-thread-1',
+          config: { model: 'synthetic', harness: 'codex' },
+        } as Partial<Session>,
+        makeEventBus(),
+        runtime
+      );
+      const reset = spyOn(agent, 'resetQuery').mockResolvedValue({ success: true });
+      const enqueue = spyOn(agent.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+
+      await agent[operation]();
+
+      expect(reset).toHaveBeenCalledWith({ restartQuery: false });
+      expect(clear).toHaveBeenCalledTimes(1);
+      expect(agent.session.sdkSessionId).toBe('native-thread-2');
+      expect(enqueue).not.toHaveBeenCalled();
+    }
+  );
+
+  it('visibly stops a Codex clear failure before any task is delivered', async () => {
+    const clear = mock(async () => {
+      throw new Error('synthetic close failure');
+    });
+    const runtime = { openDirectorySupported: true, clear } as unknown as NonNullable<
+      import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+    >;
+    const agent = createAgentSession(
+      {
+        sdkSessionId: 'native-thread-1',
+        config: { model: 'synthetic', harness: 'codex' },
+      } as Partial<Session>,
+      makeEventBus(),
+      runtime
+    );
+    spyOn(agent, 'resetQuery').mockResolvedValue({ success: true });
+    const enqueue = spyOn(agent.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    await expect(agent.clearConversationContext()).rejects.toBeInstanceOf(
+      ClearConversationUnsupportedError
+    );
+    expect(agent.session.sdkSessionId).toBe('native-thread-1');
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(agent.db.saveSDKMessage).toHaveBeenCalled();
+  });
+
   it.each(['startFreshContext', 'clearConversationContext'] as const)(
     'visibly refuses %s for a Codex thread without changing its identity or sending /clear',
     async (operation) => {
