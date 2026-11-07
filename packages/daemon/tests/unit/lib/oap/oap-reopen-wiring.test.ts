@@ -40,6 +40,7 @@ function fixture(
     history?: boolean;
     submitted?: boolean;
     failed?: boolean;
+    priorStatus?: 'consumed' | 'failed';
     link?: string;
   } = {}
 ) {
@@ -103,10 +104,10 @@ function fixture(
           : [],
       hasMore: false,
     })),
-    getUserMessagesByStatus: mock(() => ({
-      messages: config.submitted ? [{ uuid: 'previous-request' }] : [],
-      total: config.submitted ? 1 : 0,
-    })),
+    getUserMessagesByStatus: mock((_session: string, status: string) => {
+      const prior = (config.submitted && status === 'submitted') || status === config.priorStatus;
+      return { messages: prior ? [{ uuid: 'previous-request' }] : [], total: prior ? 1 : 0 };
+    }),
     saveSDKMessage: mock(async () => true),
   };
   const messageHub = { event: mock(() => {}) };
@@ -243,6 +244,16 @@ describe('OAP native session reopen wiring', () => {
     'does not replace a legacy thread after an earlier submitted or failed delivery',
     async (config) => {
       const host = fixture(config);
+      await expect(host.runtime(session()).hub).rejects.toThrow(/resum|reopen/i);
+      expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
+      expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
+    }
+  );
+
+  test.each(['consumed', 'failed'] as const)(
+    'detects an earlier %s delivery even when it is outside the history page',
+    async (priorStatus) => {
+      const host = fixture({ priorStatus });
       await expect(host.runtime(session()).hub).rejects.toThrow(/resum|reopen/i);
       expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
       expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
