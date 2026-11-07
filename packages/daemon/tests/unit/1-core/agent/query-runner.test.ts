@@ -37,6 +37,9 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
+import type { OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
+import * as oapQueryModule from '../../../../src/lib/oap/oap-query';
+import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
@@ -484,6 +487,86 @@ describe('QueryRunner', () => {
       expect(messages.map((message) => message.type)).toEqual(['result', 'result']);
       expect(queue.isRunning()).toBe(false);
       expect(cancel).not.toHaveBeenCalled();
+    });
+
+    it('delivers a prompt queued while an OAP result is being handled', async () => {
+      type Listener = Parameters<OapHubClient['subscribe']>[1];
+      let listener!: Listener;
+      let runCount = 0;
+      let releaseResult!: () => void;
+      let resultArrived!: () => void;
+      const resultWindow = new Promise<void>((resolve) => {
+        resultArrived = resolve;
+      });
+      const holdResult = new Promise<void>((resolve) => {
+        releaseResult = resolve;
+      });
+      const subscribe = mock(async (_sessionId: string, receive: Listener) => {
+        listener = receive;
+        return { id: 1, unsubscribe: async () => {} };
+      });
+      const request = mock(async (op: string) => {
+        if (op !== 'submit') throw new Error(`unexpected operation ${op}`);
+        const runId = `run-${++runCount}`;
+        listener({
+          kind: 'event',
+          id: 1,
+          event: 'envelope',
+          data: {
+            id: 1,
+            event: 'envelope',
+            envelope: {
+              type: 'run.completed',
+              id: `end-${runId}`,
+              run_id: runId,
+              payload: {},
+            },
+          },
+        });
+        return {
+          type: 'session.message.submit.response',
+          payload: { accepted: true, run_id: runId },
+        };
+      });
+      const createOapQueryHub = (
+        oapQueryModule as unknown as {
+          createOapQueryHub(client: OapHubClient): OapQueryHub;
+        }
+      ).createOapQueryHub;
+      const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
+      const messages: SDKMessage[] = [];
+      onSDKMessageSpy.mockImplementation(async (message: SDKMessage) => {
+        messages.push(message);
+        if (message.type === 'result' && runCount === 1) {
+          resultArrived();
+          await holdResult;
+        }
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, hub },
+      });
+      const first = queue
+        .enqueueWithId('window-first', 'first', false, { durable: true })
+        .catch((error: Error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      expect(await completesWithin(resultWindow)).toBe(true);
+      const second = queue
+        .enqueueWithId('window-second', 'second', false, { durable: true })
+        .catch((error: Error) => error);
+      releaseResult();
+      expect(await completesWithin(ctx.queryPromise!)).toBe(true);
+      expect(await first).toBeUndefined();
+      expect(await second).toBeUndefined();
+      expect(runCount).toBe(2);
+      expect(messages.filter((message) => message.type === 'result')).toHaveLength(2);
+      expect(queue.isRunning()).toBe(false);
     });
 
     it('does not stop or acknowledge a superseded Codex query after its result', async () => {
