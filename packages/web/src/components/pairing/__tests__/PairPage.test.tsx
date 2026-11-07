@@ -40,9 +40,16 @@ describe('PairPage', () => {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code: 'ABCDE23456', name: 'Work laptop' }),
       })
     );
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const sent = JSON.parse(init.body as string);
+    expect(sent).toEqual({
+      code: 'ABCDE23456',
+      name: 'Work laptop',
+      requestId: expect.any(String),
+    });
+    expect(sent.requestId.length).toBeGreaterThanOrEqual(16);
     expect(rewrite).toHaveBeenCalledWith(null, '', location.pathname);
     expect(view.getByRole('link', { name: 'Open HyperNeo' }).getAttribute('href')).toBe('/');
   });
@@ -72,6 +79,10 @@ describe('PairPage', () => {
     approved = true;
     await waitFor(() => view.getByText('This browser is paired.'), { timeout: 5000 });
     expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    const ids = fetchMock.mock.calls.map(
+      (call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string).requestId
+    );
+    expect(new Set(ids).size).toBe(1);
     expect(view.queryByRole('button', { name: 'Allow' })).toBeNull();
   });
 

@@ -6,6 +6,7 @@ import type { PairingLimiter } from './pairing-limiter.ts';
 const PairRequest = z.object({
   code: z.string().trim().min(1).max(40),
   name: z.string().trim().min(1).max(80),
+  requestId: z.string().trim().min(16).max(80).optional(),
 });
 
 export interface PairRouteDeps {
@@ -95,11 +96,7 @@ export function createPairRoute({ repo, limiter, now }: PairRouteDeps) {
       return answer(400, { error: 'invalid_request' });
     }
     const at = now();
-    const { paired, awaitingApproval } = await repo.redeemAsync(
-      parsed.data.code,
-      parsed.data.name,
-      at
-    );
+    const { paired, awaitingApproval } = await repo.redeemAsync(parsed.data, at);
     if (paired) return answerPaired(req, paired);
     if (awaitingApproval) return answer(403, { error: 'awaiting_approval' });
     limiter.fail(at);

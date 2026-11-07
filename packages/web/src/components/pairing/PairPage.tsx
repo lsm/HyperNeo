@@ -65,7 +65,11 @@ export function PairPage() {
     current.current = controller;
     const { signal } = controller;
     const until = Date.now() + 10 * 60_000;
-    const body = JSON.stringify({ code: code.trim(), name: name.trim() });
+    const body = JSON.stringify({
+      code: code.trim(),
+      name: name.trim(),
+      requestId: crypto.randomUUID(),
+    });
     history.replaceState(null, '', location.pathname);
     setState({ kind: 'pairing' });
     const timer = setTimeout(() => {

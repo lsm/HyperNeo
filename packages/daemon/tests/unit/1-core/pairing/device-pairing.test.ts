@@ -226,7 +226,10 @@ describe('device pairing', () => {
 
   test('a later requester cannot change the name shown for Allow; refusing it voids the code', async () => {
     const { db, call, pair } = setup();
-    const laptop = await pair((await call('device.pair.create', { kind: 'human' }, door)).code, 'Laptop');
+    const laptop = await pair(
+      (await call('device.pair.create', { kind: 'human' }, door)).code,
+      'Laptop'
+    );
     const owner = pairedHuman(laptop.body.deviceId);
     const next = await call('device.pair.create', { kind: 'human' }, door);
     expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(403);
@@ -242,7 +245,10 @@ describe('device pairing', () => {
 
   test('after Allow only the first requester gets a credential, and only once', async () => {
     const { db, repo, call, pair } = setup();
-    const laptop = await pair((await call('device.pair.create', { kind: 'human' }, door)).code, 'Laptop');
+    const laptop = await pair(
+      (await call('device.pair.create', { kind: 'human' }, door)).code,
+      'Laptop'
+    );
     const owner = pairedHuman(laptop.body.deviceId);
     const next = await call('device.pair.create', { kind: 'human' }, door);
     expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(403);

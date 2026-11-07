@@ -4,6 +4,7 @@ import { defineDbOp } from '../db-gateway/db-op.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { pairingApproveWrite, pairingDenyWrite } from './pairing-approve-write.ts';
 import { pairingRedeemWrite } from './pairing-redeem-write.ts';
+import type { PairRequest, PairRequestRecord } from '../../lib/pairing/pair-request.ts';
 import { pairingCodeCreateWrites, type PairingCodeCaller } from './pairing-code-create-write.ts';
 import { pairingRevokeWrites } from './pairing-revoke-write.ts';
 import { pairingStateReads } from './pairing-state-read.ts';
@@ -353,15 +354,29 @@ export class DevicePairingRepository {
       .get(hash(normalizePairingCode(code)), now);
   }
 
-  recordRequestedName(code: string, name: string, now: number): boolean {
-    return (
-      this.db
-        .prepare(
-          `UPDATE pairing_codes SET requested_name = ? WHERE code_hash = ? AND approved_at IS NULL
-       AND used_at IS NULL AND expires_at > ?`
-        )
-        .run(name, hash(normalizePairingCode(code)), now).changes > 0
-    );
+  pairRequest(code: string, now: number): PairRequestRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, approved_at IS NOT NULL AS approved, requested_name AS requestedName,
+           requested_by AS requestedBy FROM pairing_codes
+         WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?`
+      )
+      .get(hash(normalizePairingCode(code)), now) as
+      | (Omit<PairRequestRecord, 'approved'> & { approved: number })
+      | null;
+    return row && { ...row, approved: row.approved === 1 };
+  }
+
+  recordRequester(id: string, name: string, requestedBy: string | null): void {
+    this.db
+      .prepare(
+        'UPDATE pairing_codes SET requested_name = ?, requested_by = ? WHERE id = ? AND requested_name IS NULL'
+      )
+      .run(name, requestedBy, id);
+  }
+
+  voidCode(id: string, now: number): void {
+    this.db.prepare('UPDATE pairing_codes SET expires_at = ? WHERE id = ?').run(now, id);
   }
 
   humanRecoveryOpen(): boolean {
@@ -372,8 +387,8 @@ export class DevicePairingRepository {
       .get();
   }
 
-  redeemAsync(code: string, name: string, now: number) {
-    return gatewayFor(this.db).call(pairingRedeemWrite, 'redeem', code, name, now);
+  redeemAsync(request: PairRequest, now: number) {
+    return gatewayFor(this.db).call(pairingRedeemWrite, 'redeem', request, now);
   }
 
   redeem(
