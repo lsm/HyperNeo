@@ -4,6 +4,7 @@ import { act, render, cleanup, screen, waitFor, fireEvent } from '@testing-libra
 import type { ProviderRecord } from '@hyperneo/shared';
 
 const {
+  mockNavigateToSettings,
   mockUpdateGlobalSettings,
   mockListProviders,
   mockListProviderAuthStatus,
@@ -28,6 +29,7 @@ const {
   mockListAvailableModels,
   mockRequest,
 } = vi.hoisted(() => ({
+  mockNavigateToSettings: vi.fn(),
   mockUpdateGlobalSettings: vi.fn(),
   mockListProviders: vi.fn(),
   mockListProviderAuthStatus: vi.fn(),
@@ -52,6 +54,8 @@ const {
   mockListAvailableModels: vi.fn(),
   mockRequest: vi.fn(),
 }));
+
+vi.mock('../../../lib/router.ts', () => ({ navigateToSettings: mockNavigateToSettings }));
 
 vi.mock('../../../lib/api-helpers.ts', () => ({
   updateGlobalSettings: (updates: unknown) => mockUpdateGlobalSettings(updates),
@@ -630,6 +634,12 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(mockUpdateProvider).toHaveBeenCalledWith('1', { isEnabled: false }, undefined);
     });
+  });
+
+  it('links the provider default explanation to Sessions & Harness', async () => {
+    render(<ProvidersSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sessions & Harness' }));
+    expect(mockNavigateToSettings).toHaveBeenCalledWith('harness');
   });
 
   it('sets provider as default', async () => {

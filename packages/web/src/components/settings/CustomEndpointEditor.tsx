@@ -1,3 +1,4 @@
+import { navigateToSettings } from '../../lib/router.ts';
 import { CloseGlyph } from '../icons/common-glyphs.tsx';
 import type {
   CustomEndpointConfig,
@@ -546,27 +547,40 @@ export function EditorModal({
               class={cn(formControlClass().replace('text-sm', 'text-xs'), 'h-20 font-mono')}
             />
           </label>
-          <label class="block sm:col-span-2">
-            <span class={FORM_LABEL_CLASS}>Default model id (optional)</span>
-            <span class="block text-xs text-fg-faint">
-              Used for this endpoint’s default model mapping; it does not change the default model
-              for new sessions.
-            </span>
-            <select
-              value={state.defaultModelId}
-              onChange={(e) => update({ defaultModelId: e.currentTarget.value })}
-              class={FORM_CONTROL_CLASS}
-            >
-              <option value="">— none —</option>
-              {state.models
-                .filter((m) => m.id.trim())
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}
-                  </option>
-                ))}
-            </select>
-          </label>
+          <details class="sm:col-span-2 rounded-lg border border-line p-3">
+            <summary class="cursor-pointer text-sm font-medium text-fg">
+              Advanced{state.defaultModelId ? ` · ${state.defaultModelId}` : ''}
+            </summary>
+            <label class="block mt-3">
+              <span class={FORM_LABEL_CLASS}>Endpoint adapter default model mapping</span>
+              <select
+                aria-label="Endpoint adapter default model mapping"
+                value={state.defaultModelId}
+                onChange={(e) => update({ defaultModelId: e.currentTarget.value })}
+                class={FORM_CONTROL_CLASS}
+              >
+                <option value="">— none —</option>
+                {state.models
+                  .filter((m) => m.id.trim())
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.id}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <p class="text-xs text-fg-faint mt-2">
+              Which model this endpoint uses when a request names none. It does not set the default
+              for new sessions.{' '}
+              <button
+                type="button"
+                class="text-accent hover:underline"
+                onClick={() => navigateToSettings('harness')}
+              >
+                Default Model →
+              </button>
+            </p>
+          </details>
         </div>
 
         <div class="space-y-2">

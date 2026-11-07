@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existingToEditor, testCustomEndpoint } from '../CustomEndpointEditor.tsx';
+import { render, screen, fireEvent, cleanup } from '@testing-library/preact';
+import { EditorModal, existingToEditor, testCustomEndpoint } from '../CustomEndpointEditor.tsx';
 
-const { probe } = vi.hoisted(() => ({ probe: vi.fn() }));
+const { probe, navigateToSettings } = vi.hoisted(() => ({
+  probe: vi.fn(),
+  navigateToSettings: vi.fn(),
+}));
+vi.mock('../../../lib/router.ts', () => ({ navigateToSettings }));
 vi.mock('../../../lib/api-helpers.ts', () => ({ testCustomEndpointConnection: probe }));
 
 describe('custom endpoint editor connection test', () => {
@@ -54,5 +59,49 @@ describe('custom endpoint editor connection test', () => {
     state.headersText = 'invalid header';
     expect((await testCustomEndpoint(state)).success).toBe(false);
     expect(probe).not.toHaveBeenCalled();
+  });
+});
+
+describe('endpoint default mapping', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+  it('keeps the mapping in closed Advanced and links to the main default', () => {
+    const state = existingToEditor({
+      id: 'fixture',
+      name: 'Fixture',
+      baseUrl: 'http://example.test',
+      models: [{ id: 'model-a' }],
+      defaultModelId: 'model-a',
+    });
+    const onChange = vi.fn();
+    render(
+      <EditorModal
+        state={state}
+        existingIds={[]}
+        onChange={onChange}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        saving={false}
+        onTest={vi.fn()}
+        testing={false}
+        onFetchModels={vi.fn()}
+        fetchingModels={false}
+        fetchedModels={null}
+        fetchModelsError={null}
+        fetchedAt={null}
+      />
+    );
+    const advanced = screen.getByText(/^Advanced/).closest('details');
+    expect(advanced?.open).toBe(false);
+    expect(advanced?.textContent).toContain('Endpoint adapter default model mapping');
+    expect(
+      (screen.getByLabelText('Endpoint adapter default model mapping') as HTMLSelectElement).value
+    ).toBe('model-a');
+    fireEvent.click(screen.getByText(/^Advanced/));
+    fireEvent.click(screen.getByRole('button', { name: /Default Model/ }));
+    expect(navigateToSettings).toHaveBeenCalledWith('harness');
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

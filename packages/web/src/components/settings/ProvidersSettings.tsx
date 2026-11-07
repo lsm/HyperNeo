@@ -19,6 +19,7 @@ import {
   listProviderRemoteModels,
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
+import { navigateToSettings } from '../../lib/router.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from '../../lib/errors.ts';
 import { connectionState, credentialStoreStatus, globalSettings } from '../../lib/state.ts';
@@ -910,8 +911,15 @@ export function ProvidersSettings() {
           ) : null}
 
           <p class="text-xs text-fg-faint">
-            The star sets the default provider. The default model for new sessions is set in
-            Sessions &amp; Harness.
+            The star sets the default provider. The default model for new sessions is set in{' '}
+            <button
+              type="button"
+              class="text-accent hover:underline"
+              onClick={() => navigateToSettings('harness')}
+            >
+              Sessions &amp; Harness
+            </button>
+            .
           </p>
 
           {providers.length > 0 && (
