@@ -606,7 +606,7 @@ describe('space adapter send', () => {
     'task send returns only persisted input receipts after session rebinding: %s',
     async (state) => {
       db.exec(`CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, message_type TEXT,
-        sdk_message TEXT, timestamp TEXT, send_status TEXT)`);
+        sdk_message TEXT, timestamp TEXT, send_status TEXT, origin TEXT)`);
       runMigration418(db);
       const repository = new SDKMessageRepository(db);
       const injections: unknown[] = [];
