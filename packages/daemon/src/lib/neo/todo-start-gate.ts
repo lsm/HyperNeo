@@ -242,7 +242,7 @@ export function planNeoStartRelease(
       todo && !waiting.includes(id)
         ? planNeoStartAnswer(todo, current, ticked, withdrawn, now)
         : null;
-    const patch = approval ? { ...release, ...approval } : release;
+    const patch = release && approval ? { ...release, ...approval } : release;
     if (!todo || !patch) continue;
     writes.push({ todo, patch });
     current = current.map((item) => (item.id === id ? { ...item, ...patch } : item));
