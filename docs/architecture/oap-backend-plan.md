@@ -1,10 +1,10 @@
 # OAP backend: opt-in Codex plan
 
-The 2026-11-04 re-read retains the architecture but narrows the first delivery to an opt-in native Codex harness. The intended first-step scope remains a proposal awaiting human confirmation. The status below distinguishes shipped slices from the remaining work. The re-read was a static check of source, GitHub and local files at HyperNeo `71e5a6106f` and OAP `147259e9bd`; it ran no oapx, real Codex or tests. Subsequent changes may have moved those baselines.
+The 2026-11-04 re-read retains the architecture and narrows the first delivery to an opt-in native Codex harness. On 2026-11-07 the human chose opt-in Codex only for the first OAP step (card 15606da2). The status below distinguishes shipped slices from the remaining work. The re-read was a static check of source, GitHub and local files at HyperNeo `71e5a6106f` and OAP `147259e9bd`; it ran no oapx, real Codex or tests. Subsequent changes may have moved those baselines.
 
 ## Boundary and first path
 
-The proposal is that a session explicitly selecting `harness: codex` uses native Codex app-server through `oapx serve --stdio`. A session without a harness continues on the Claude Agent SDK. ACP is not a current default path: the re-read found its runner removed. Other providers and automatic oapx download are outside this first path; the existing `anthropic-codex` bridge stays until real migration and no remaining users.
+A session explicitly selecting `harness: codex` uses native Codex app-server through `oapx serve --stdio`. A session without a harness continues on the Claude Agent SDK. ACP is not a current default path: the re-read found its runner removed. Other providers and automatic oapx download are outside this first path; the existing `anthropic-codex` bridge stays until real migration and no remaining users.
 
 The existing `QueryLike` seam in `QueryRunner` is used instead of a second runner. Translate OAP events into SDK-shaped messages, including exactly one terminal `result`, so existing delivery, attempt and generation handling, `sdk_messages`, chat storage, web, iOS and Neo turn facts can continue to work. The existing `OapStdioClient` speaks raw envelopes, not the hub request/reply/subscription protocol, so it cannot directly send hub operations.
 
@@ -47,7 +47,7 @@ The upstream O1 instruction decision and implementation precede O2b client-tool 
 
 ## What this revision drops from the old plan
 
-The earlier plan proposed a provider-by-harness rollout, a 26-PR list, and a “Decisions for the human” table, including planned GLM, Kimi and DeepSeek moves. This revision does not carry those rollout commitments forward. Whether the first OAP step is only opt-in Codex requires a human answer before Jason reviews this proposal.
+The earlier plan proposed a provider-by-harness rollout, a 26-PR list, and a “Decisions for the human” table, including planned GLM, Kimi and DeepSeek moves. The human chose on 2026-11-07 (card 15606da2) to drop the per-provider rollout, the 26-PR list and the GLM, Kimi and DeepSeek moves in favor of an opt-in Codex-only first step.
 
 ## Open decisions and proof
 
