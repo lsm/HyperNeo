@@ -38,6 +38,7 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   replacedBy: null,
   addedAfterStart: false,
   approvedAt: null,
+  approvalQuestionId: null,
   report: null,
   evidence: null,
   createdAt: 1,

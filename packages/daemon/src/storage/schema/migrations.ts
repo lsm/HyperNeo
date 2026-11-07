@@ -1,3 +1,4 @@
+import { runMigration483 } from './m483-todo-approval-question.ts';
 import { runMigration482 } from './m482-todo-bound-at.ts';
 import { runMigration483 } from './m483-neo-session-seen-question.ts';
 import { runMigration481 } from './m481-agent-devices.ts';
