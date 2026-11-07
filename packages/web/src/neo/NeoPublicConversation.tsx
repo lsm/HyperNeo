@@ -703,7 +703,12 @@ function PublicEntry({
                 {referenceSource && (
                   <FileReferenceCards source={referenceSource} text={text} details={full} />
                 )}
-                {publication && <ArtifactCards artifacts={publication.artifacts} />}
+                {publication && (
+                  <ArtifactCards
+                    artifacts={publication.artifacts}
+                    source={{ kind: 'publication', id: publication.publicationId }}
+                  />
+                )}
                 {publication && links.length > 0 && (
                   <ul
                     aria-label={t('chat.scenes')}

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, chmod } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, writeFile, chmod, readFile, access } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 
@@ -15,6 +17,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 await mkdir(join(run, 'evidence'), { recursive: true });
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
+let front: ReturnType<typeof Bun.serve> | undefined;
 const observed: Record<string, unknown> = {};
 try {
   app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true }, standalone: false, verbose: false });
@@ -54,10 +57,35 @@ try {
   }
   assert.equal((await read({ kind: 'question', id: 'question' }, { ...reference, name: 'forged.html' })).reason, 'forbidden');
   assert.equal((await read({ kind: 'question', id: 'missing' })).reason, 'forbidden');
+  const ask = JSON.parse((await neoCall({ name: 'neo.ask.read', input: { askId: 'ask' } })).content[0].text);
+  assert(ask.ok); assert.deepEqual(ask.entry.questions[0].artifacts, [reference]);
+  const browserAt = process.argv.indexOf('--browser');
+  if (browserAt >= 0) {
+    db.prepare('UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?').run(row.payload, conversation, id);
+    const control = resolve(process.argv[browserAt + 1]);
+    const dist = resolve('packages/web/dist');
+    front = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request, server) {
+      const refusal = await app!.guardRequest(request); if (refusal) return refusal;
+      const route = new URL(request.url).pathname;
+      if (route === '/proof-entry') return new Response(null, { status: 302, headers: { location: '/neo', 'set-cookie': `hyperneo_device=${readLocalCredential()}; HttpOnly; SameSite=Strict; Path=/` } });
+      if (route === '/ws') {
+        if (server.upgrade(request, { data: { connectionSessionId: 'global', device: await app!.authenticateUpgrade(request, '127.0.0.1') } })) return;
+        return new Response('Upgrade failed', { status: 500 });
+      }
+      const file = Bun.file(join(dist, route === '/neo' ? 'neo/index.html' : route));
+      return await file.exists() ? new Response(file) : new Response('Not found', { status: 404 });
+    }, websocket: createWebSocketHandlers(app.transport, app.sessionManager) });
+    assert.notEqual(front.port, 8399); assert.notEqual(front.port, 8499);
+    await mkdir(control, { recursive: true });
+    await writeFile(join(control, 'browser.json'), JSON.stringify({ url: `http://127.0.0.1:${front.port}/proof-entry`, evidence: join(run, 'evidence'), doneFile: join(control, 'done') }));
+    const end = Date.now() + 15 * 60_000;
+    while (Date.now() < end) { try { await access(join(control, 'done')); break; } catch { await Bun.sleep(250); } }
+    assert.equal(JSON.parse(await readFile(join(run, 'evidence/browser.json'), 'utf8')).passed, true);
+  }
   await chmod(publication.reference.path, 0o600); await writeFile(publication.reference.path, 'modified');
   assert.equal((await read({ kind: 'question', id: 'question' })).reason, 'file_changed');
   Object.assign(observed, { passed: true, realMcpPublish: true, questionRpc: true, publicationRpc: true, htmlSanitized: true, tamperRefused: true, sourceBound: true, noPathExposed: true });
-} finally { ws?.close(); await app?.cleanup(); }
+} finally { ws?.close(); await front?.stop(true); await app?.cleanup(); }
 observed.resourcesClosed = true;
 await writeFile(join(run, 'evidence/card-handoff.json'), JSON.stringify(observed, null, 2));
 console.log(JSON.stringify(observed));

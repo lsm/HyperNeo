@@ -29,19 +29,30 @@ async function collect(hub: MessageHub, target: Reference, signal: AbortSignal) 
   let offset = 0;
   for (;;) {
     signal.throwIfAborted();
+    if (target.handoff && !['question', 'publication'].includes(target.source.kind))
+      throw new Error('forbidden');
     const chunk = await invokeOperation<Chunk | { accepted: false; reason: string }>(
       hub,
-      'file.reference.read',
-      {
-        sourceMessageOrCard: target.source,
-        reference: target.reference,
-        offset,
-        maxBytes: 262144,
-        version: first?.version,
-      }
+      target.handoff ? 'file.handoff.read' : 'file.reference.read',
+      target.handoff
+        ? {
+            source: { kind: target.source.kind, id: target.source.id },
+            reference: target.handoff,
+            offset,
+            maxBytes: 262144,
+            version: first?.version,
+          }
+        : {
+            sourceMessageOrCard: target.source,
+            reference: target.reference,
+            offset,
+            maxBytes: 262144,
+            version: first?.version,
+          }
     );
     signal.throwIfAborted();
     if (!chunk.accepted) throw new Error(chunk.reason);
+    if (target.handoff && chunk.path !== undefined) throw new Error('file_changed');
     const bytes = Uint8Array.from(atob(chunk.data), (char) => char.charCodeAt(0));
     const limit = chunk.kind === 'image' ? 32 * 1024 * 1024 : 2 * 1024 * 1024;
     if (chunk.byteLength > limit) throw new Error('size_limit');

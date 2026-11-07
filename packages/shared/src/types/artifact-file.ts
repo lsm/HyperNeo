@@ -36,6 +36,16 @@ export interface ArtifactRef {
   readonly byteLength: number;
 }
 
+export interface PublicHandoffReference {
+  readonly type: 'handoff';
+  readonly daemonId: string;
+  readonly artifactId: string;
+  readonly sessionId: string;
+  readonly name: string;
+  readonly byteLength: number;
+  readonly sha256: string;
+}
+
 export interface ArtifactProjection {
   readonly artifacts?: readonly ArtifactRef[];
 }

@@ -20,6 +20,43 @@ const chunk = (text: string, extra = {}) => ({
 const hub = (request: ReturnType<typeof vi.fn>) => ({ request }) as unknown as MessageHub;
 
 describe('live source-bound file client', () => {
+  it('reads a handoff through the stored card, preserves versions, and refuses leaked paths', async () => {
+    const reference = {
+      type: 'handoff' as const,
+      daemonId: 'd',
+      artifactId: 'a'.repeat(64),
+      sessionId: 'worker',
+      name: 'report.md',
+      byteLength: 6,
+      sha256: 'a'.repeat(64),
+    };
+    const handoff = {
+      kind: 'reference' as const,
+      source: { kind: 'question' as const, id: 'question' },
+      reference: reference.name,
+      handoff: reference,
+    };
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(chunk('abc', { byteLength: 6, complete: false }))
+      .mockResolvedValueOnce(chunk('def', { byteLength: 6, nextOffset: 6 }));
+    expect((await readLiveFile(hub(request), handoff, new AbortController().signal)).text).toBe(
+      'abcdef'
+    );
+    expect(request.mock.calls[0][1]).toEqual({
+      name: 'file.handoff.read',
+      input: { source: handoff.source, reference, offset: 0, maxBytes: 262144, version: undefined },
+    });
+    expect(request.mock.calls[1][1].input.version).toBe('a'.repeat(64));
+    const leaking = vi.fn(async () => chunk('abc', { path: '/synthetic/private' }));
+    await expect(readLiveFile(hub(leaking), handoff, new AbortController().signal)).rejects.toThrow(
+      'file_changed'
+    );
+    const wrongSource = { ...handoff, source: { kind: 'todo' as const, id: 'todo' } };
+    await expect(
+      readLiveFile(hub(request), wrongSource, new AbortController().signal)
+    ).rejects.toThrow('forbidden');
+  });
   it('assembles bounded UTF-8 chunks with the exact source and version, without registering anything', async () => {
     const bytes = Buffer.from('中文 and current contents');
     const request = vi.fn(async (_method, { input }) => {
