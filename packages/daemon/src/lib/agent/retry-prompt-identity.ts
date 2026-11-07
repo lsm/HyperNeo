@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 
+const durableId = Symbol('durable-prompt-id');
+
+export function durablePromptUuid(message: SDKUserMessage): string | undefined {
+  return (message as SDKUserMessage & { [durableId]?: string })[durableId] ?? message.uuid;
+}
+
 export class RetryPromptIdentity {
   private readonly pending = new Set<string>();
   private readonly original = new Map<string, string>();
@@ -15,7 +21,7 @@ export class RetryPromptIdentity {
     if (!fresh && !retry) return message;
     const uuid = randomUUID();
     this.original.set(uuid, message.uuid);
-    return { ...message, uuid };
+    return Object.defineProperty({ ...message, uuid }, durableId, { value: message.uuid });
   }
 
   incoming(message: SDKMessage): SDKMessage {

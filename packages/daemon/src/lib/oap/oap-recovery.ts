@@ -1,6 +1,7 @@
 import type { Session } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { durablePromptUuid } from '../agent/retry-prompt-identity.ts';
 import { Logger } from '../logger.ts';
 import { isDefiniteOapRefusal, OapHubRequestError } from './oap-hub-client.ts';
 import type { OapQueryHub } from './oap-query.ts';
@@ -80,6 +81,7 @@ export function withOapRecovery(
     async submit(sessionId, message, owner, isLive) {
       if (pending) throw new Error('OAP query hub is not available for submission');
       const recovery = getSession().metadata?.oapRecovery;
+      const deliveryUuid = durablePromptUuid(message);
       const forward = (prepared: SDKUserMessage) =>
         isLive
           ? hub.submit(sessionId, prepared, owner, isLive)
@@ -88,7 +90,7 @@ export function withOapRecovery(
       if (recovery.pendingOpen)
         throw new OapHubRequestError('invalid_submission', 'Codex recovery is still opening');
       if (recovery.claim) {
-        if (recovery.claim === message.uuid)
+        if (recovery.claim === deliveryUuid)
           throw new OapHubRequestError(
             'invalid_submission',
             'Codex recovery was already submitted; outcome may be unknown'
@@ -98,7 +100,7 @@ export function withOapRecovery(
       const internal = (message as SDKUserMessage & { internal?: boolean }).internal;
       if (internal) return forward(message);
       const input =
-        message.uuid && db.getSDKMessageRepo().getDeliveryContent(sessionId, message.uuid);
+        deliveryUuid && db.getSDKMessageRepo().getDeliveryContent(sessionId, deliveryUuid);
       if (!input)
         throw new OapHubRequestError(
           'invalid_submission',
@@ -109,7 +111,7 @@ export function withOapRecovery(
       const prepared = prepareRecovery(message, recovery);
       const attempt = { owner, cancelled: false };
       pending = attempt;
-      const claimed = { ...recovery, claim: message.uuid! };
+      const claimed = { ...recovery, claim: deliveryUuid! };
       try {
         try {
           if (!(await writeRecovery(sessionId, getSession, db, recovery, claimed)))
@@ -122,7 +124,15 @@ export function withOapRecovery(
           );
         }
         if (attempt.cancelled || (isLive && !isLive())) {
-          await writeRecovery(sessionId, getSession, db, claimed, recovery);
+          try {
+            await writeRecovery(sessionId, getSession, db, claimed, recovery);
+          } catch (cause) {
+            logger.error('Could not restore Codex recovery context', cause);
+            throw new OapHubRequestError(
+              'invalid_submission',
+              'OAP recovery submission was closed; could not restore recovery context'
+            );
+          }
           throw new OapHubRequestError('invalid_submission', 'OAP recovery submission was closed');
         }
         pending = undefined;

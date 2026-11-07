@@ -199,6 +199,7 @@ try {
     const queryHub = await first.oap!.hub;
     const { planMailboxAdmission } = await import('../../../packages/daemon/src/lib/mailbox/admission-plan.ts');
     const { DEFAULT_MAILBOX_ENTRY_POLICY } = await import('../../../packages/daemon/src/lib/mailbox/entry.ts');
+    const { RetryPromptIdentity } = await import('../../../packages/daemon/src/lib/agent/retry-prompt-identity.ts');
     const metadata = { ...first.session.metadata, oapRecovery: { previous: 'synthetic-old-thread', text: 'Synthetic saved conversation excerpt', pendingOpen: false } };
     assert.equal(await app.db.updateSession(firstId, { metadata }), 'written');
     first.session.metadata = metadata;
@@ -213,7 +214,9 @@ try {
     const repository = app.db.getSDKMessageRepo();
     repository.saveUserMessage(firstId, agent.message, 'submitted', agent.origin);
     assert(!app.db.getSDKMessages(firstId).messages.some((row) => row.uuid === agent.message.uuid));
-    const submitted = await queryHub.submit(firstId, agent.message);
+    const rewrittenAgent = new RetryPromptIdentity().outgoing(agent.message, true);
+    assert.notEqual(rewrittenAgent.uuid, agent.message.uuid);
+    const submitted = await queryHub.submit(firstId, rewrittenAgent);
     let terminal = false;
     for await (const event of queryHub.events(firstId, submitted.runId, new AbortController().signal)) {
       if (event.type === 'run.completed') { terminal = true; break; }

@@ -134,6 +134,25 @@ function fixture(initial?: Recovery) {
 }
 
 describe('OAP recovery claim transport', () => {
+  test('does not leak a recovery excerpt to a rewritten synthetic delivery', async () => {
+    const host = fixture(recovery());
+    const wire = new RetryPromptIdentity().outgoing(prompt('agent-message'), true);
+    host.getDeliveryContent.mockReturnValueOnce({ inputKind: 'system' });
+    const hub = await host.bind(host.current).hub;
+    await hub.submit('session-a', wire);
+    expect(host.getDeliveryContent).toHaveBeenCalledWith('session-a', 'agent-message');
+    expect(JSON.stringify(host.submit.mock.calls[0])).not.toContain('saved excerpt');
+    expect(host.getStored().metadata.oapRecovery?.claim).toBeUndefined();
+  });
+
+  test('does not resend a claimed input after its wire identity is rewritten', async () => {
+    const host = fixture({ ...recovery(), claim: 'original-message' });
+    const wire = new RetryPromptIdentity().outgoing(prompt('original-message'), true);
+    const hub = await host.bind(host.current).hub;
+    await expect(hub.submit('session-a', wire)).rejects.toThrow(/already|unknown/i);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
+
   test.each(['neo-bound', 'rate-limit retry'])(
     'uses the durable delivery identity for a rewritten %s prompt',
     async (mode) => {
