@@ -119,3 +119,22 @@ test('a disconnected page shows a reconnect error without writing settings', asy
   expect((await screen.findByRole('alert')).textContent).toContain('Reconnect');
   expect(writes()).toHaveLength(0);
 });
+
+test('renders field and choice labels supplied by the pack preferences response', async () => {
+  request.mockImplementation(async (_method, { name }) => {
+    if (name === 'pack.preferences.list')
+      return {
+        preferences: [],
+        declarations: {
+          signIn: {
+            label: { en: 'Pack-provided question', 'zh-Hans': '包提供的问题' },
+            valueLabels: { self: { en: 'Pack-provided choice', 'zh-Hans': '包提供的选项' } },
+          },
+        },
+      };
+    throw new Error('Unexpected operation');
+  });
+  const ui = await page();
+  expect(ui.getByRole('combobox', { name: 'Pack-provided question' })).toBeTruthy();
+  expect(ui.getByRole('option', { name: 'Pack-provided choice' })).toBeTruthy();
+});
