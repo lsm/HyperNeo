@@ -156,6 +156,30 @@ function fixture(
 }
 
 describe('OAP native session reopen wiring', () => {
+  test('an empty recovery opens a fresh thread without promising or attaching an excerpt', async () => {
+    const host = fixture({
+      known: true,
+      submitted: true,
+      freshId: 'native-thread-b',
+      refusal: new OapHubRequestError('unknown_session', 'missing'),
+    });
+    const current = session('native-thread-a', 1);
+    const hub = await host.runtime(current).hub;
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.metadata.oapRecovery).toBeUndefined();
+    const notice = JSON.stringify(host.db.saveSDKMessage.mock.calls[0]);
+    expect(notice).toMatch(/cannot be resumed/i);
+    expect(notice).not.toMatch(/saved conversation excerpt/i);
+    expect(host.submit).not.toHaveBeenCalled();
+    await hub.submit('session-a', {
+      type: 'user',
+      uuid: 'explicit-message',
+      session_id: 'session-a',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'next explicit request' },
+    } as SDKUserMessage);
+    expect(JSON.stringify(host.submit.mock.calls[0])).not.toMatch(/Previous conversation excerpt/i);
+  });
   test('the fallback excerpt excludes an accepted turn with no successful terminal result', async () => {
     const host = fixture({
       known: true,
