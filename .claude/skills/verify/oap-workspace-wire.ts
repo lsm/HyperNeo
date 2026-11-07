@@ -67,7 +67,7 @@ for line in sys.stdin:
   if 'Synthetic free text question' in json.dumps(request):
    emit({'id':900,'method':'item/tool/requestUserInput','params':{'threadId':thread,'turnId':turn,'itemId':'synthetic-question','questions':[{'id':'explain','question':'Explain?','options':None}]}})
    continue
-  for index in range(96):
+  for index in range(${mode === 'recovery-claim' ? 1 : 96}):
    emit({'method':'item/agentMessage/delta','params':{'threadId':thread,'turnId':turn,'itemId':'text-'+turn,'delta':'synthetic reply' if index==0 else '.'}})
   emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
  if method=='turn/interrupt':
@@ -134,13 +134,19 @@ async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessio
       const page = await context.newPage();
       await page.goto(`${base}/session/${sessionId}`);
       const notice = page.getByText(text, { exact: true }).last();
-      await notice.waitFor({ timeout: 20000 });
+      try {
+        await notice.waitFor({ timeout: 20000 });
+      } catch (error) {
+        writeFileSync(join(run, 'evidence/oap-browser.txt'), await page.locator('body').innerText());
+        await page.screenshot({ path: join(run, 'evidence/oap-browser-failure.png'), animations: 'disabled' });
+        throw error;
+      }
       await notice.scrollIntoViewIfNeeded();
       await page.screenshot({ path: join(run, 'evidence/oap-reopen-session.png'), animations: 'disabled' });
       await page.goto(`${base}/neo`);
       await page.locator('.neo-shell').waitFor({ timeout: 20000 });
       await page.screenshot({ path: join(run, 'evidence/oap-reopen-neo.png'), animations: 'disabled' });
-      Object.assign(evidence, { browserPort: web.port, visibleNoticeRendered: true });
+      Object.assign(evidence, { browserPort: web.port, ...(mode === 'recovery-claim' ? { visibleUserMessageRendered: true } : { visibleNoticeRendered: true }) });
       await context.close();
     } finally { await browser.close(); }
   } finally { web.stop(true); }
@@ -206,9 +212,16 @@ try {
     };
     const db = app.db;
     const updateSession = db.updateSession.bind(db);
+    let cleanupFailed = false;
     db.updateSession = async (id, update) => {
-      if (id === firstId && update.metadata && 'oapRecovery' in update.metadata && !update.metadata.oapRecovery)
-        throw new Error('synthetic recovery marker cleanup failure');
+      if (id === firstId && update.metadata && 'oapRecovery' in update.metadata && !update.metadata.oapRecovery) {
+        if (!cleanupFailed) {
+          cleanupFailed = true;
+          throw new Error('synthetic recovery marker cleanup failure');
+        }
+        const retained = db.getSession(firstId)?.metadata.oapRecovery;
+        return updateSession(id, { ...update, metadata: { ...update.metadata, oapRecovery: retained } });
+      }
       return updateSession(id, update);
     };
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic first explicit request' });
@@ -216,6 +229,7 @@ try {
     const claimed = app.db.getSession(firstId)?.metadata.oapRecovery;
     assert(claimed?.claim);
     assert(claimObservedBeforeSubmit);
+    assert(cleanupFailed);
     const firstTurns = calls().filter((call) => call.request.method === 'turn/start');
     assert.equal(firstTurns.length, 1);
     assert(JSON.stringify(firstTurns[0]).includes('Synthetic saved conversation excerpt'));
