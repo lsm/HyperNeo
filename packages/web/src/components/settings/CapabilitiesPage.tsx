@@ -1,4 +1,5 @@
 import type { ComponentChildren } from 'preact';
+import { Suspense } from 'preact/compat';
 import { navigateToSettings } from '../../lib/router.ts';
 import type { SettingsSection } from '../../lib/signals.ts';
 import { cn } from '../../lib/utils.ts';
@@ -14,9 +15,11 @@ export const isCapabilitiesSection = (section: SettingsSection) =>
 
 export function CapabilitiesPage({
   section,
+  fallback,
   children,
 }: {
   section: SettingsSection;
+  fallback?: ComponentChildren;
   children: ComponentChildren;
 }) {
   return (
@@ -39,7 +42,7 @@ export function CapabilitiesPage({
           </button>
         ))}
       </nav>
-      {children}
+      <Suspense fallback={fallback}>{children}</Suspense>
     </>
   );
 }

@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { lazy } from 'preact/compat';
 import { afterEach, expect, it, vi } from 'vitest';
 
 const { navigateToSettings } = vi.hoisted(() => ({ navigateToSettings: vi.fn() }));
@@ -8,6 +9,17 @@ import { CapabilitiesPage } from '../CapabilitiesPage.tsx';
 afterEach(() => {
   cleanup();
   navigateToSettings.mockReset();
+});
+
+it('keeps the Capabilities tabs visible while a panel loads', async () => {
+  const Loading = lazy(() => new Promise<{ default: () => null }>(() => {}));
+  render(
+    <CapabilitiesPage section="skills" fallback={<p>Loading panel</p>}>
+      <Loading />
+    </CapabilitiesPage>
+  );
+  expect(await screen.findByText('Loading panel')).toBeTruthy();
+  expect(screen.getByRole('navigation', { name: 'Capabilities' })).toBeTruthy();
 });
 
 it.each([

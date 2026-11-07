@@ -194,7 +194,7 @@ export default function MainContent() {
                 )}
                 {settingsSection === 'voice' && <VoiceSettings />}
                 {isCapabilitiesSection(settingsSection) && (
-                  <CapabilitiesPage section={settingsSection}>
+                  <CapabilitiesPage section={settingsSection} fallback={lazyFallback}>
                     {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
                     {settingsSection === 'skills' && <SkillsRegistry />}
                     {settingsSection === 'coding-pack' && <PackSettings />}
