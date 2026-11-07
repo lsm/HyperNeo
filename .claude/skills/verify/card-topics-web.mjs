@@ -61,6 +61,16 @@ try {
   await page.screenshot({ path: join(evidence, 'topics-1280-filtered.png') });
   await page.locator('article[data-ask="protocol"]').getByRole('button', { name: 'OAP' }).click();
   assert((await cards()).length > 1, 'tapping the card topic again clears it');
+  await page.getByRole('button', { name: /search work|搜索/i }).first().click();
+  await page.getByRole('searchbox').fill('Synthetic protocol');
+  await page.locator('article[data-ask="protocol"]').waitFor();
+  assert.equal(await page.locator('[data-topic-chips]').count(), 0, 'chips hide while searching');
+  await page.locator('article[data-ask="protocol"]').getByRole('button', { name: 'OAP' }).click();
+  await page.locator('[data-topic-chips]').waitFor();
+  assert.equal(await page.getByRole('searchbox').inputValue(), '', 'the topic tap clears the search');
+  assert.deepEqual(await cards(), ['protocol'], 'and applies the filter');
+  result.searchTopicTap = true;
+  await page.locator('[data-topic-chips] button', { hasText: 'OAP' }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await open();
   await page.waitForTimeout(800);

@@ -1083,7 +1083,11 @@ export function NeoLive() {
                         : undefined
                     }
                     onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
-                    onTopic={(next) => chooseTopic(next === topic ? null : next)}
+                    onTopic={(next) => {
+                      if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);
+                      setWorkQuery('');
+                      chooseTopic(next);
+                    }}
                     onLoadDone={(askId, offset) =>
                       connectionManager.getHub().then((hub) =>
                         invokeOperation<NeoDoneTodosPage>(hub, 'neo.ask.doneTodos', {
