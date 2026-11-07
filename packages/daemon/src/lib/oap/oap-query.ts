@@ -3,6 +3,7 @@ import type { QueryLike } from '../agent/query-like.ts';
 import { mapUserInputRequest } from './oap-permission-map.ts';
 import { initialOapTranslatorState, translateOapEvent } from './oap-sdk-translator.ts';
 export { createOapQueryHub } from './oap-query-hub.ts';
+export { createOapRuntime } from './oap-runtime.ts';
 
 type OapEvent = { type: string; [key: string]: unknown };
 

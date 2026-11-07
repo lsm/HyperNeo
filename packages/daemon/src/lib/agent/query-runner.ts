@@ -359,7 +359,7 @@ interface RetryTeardownOptions {
 
 export interface OapQueryRuntime {
   openDirectorySupported: boolean;
-  hub: OapQueryHub;
+  hub: OapQueryHub | Promise<OapQueryHub>;
 }
 
 export interface QueryRunnerContext {
@@ -818,6 +818,8 @@ export class QueryRunner {
         if (refusal) throw new Error(refusal);
         runAbortController = new AbortController();
         this.ctx.queryAbortController = runAbortController;
+        const oapHub = await this.ctx.oap.hub;
+        if (!live()) return;
         const prompt = this.createMessageGeneratorWrapper(
           queryGeneration,
           recoveryState.startGuard,
@@ -825,7 +827,7 @@ export class QueryRunner {
           live,
           humanInputs
         );
-        const oapQuery = createOapQuery({ sessionId: session.id, prompt, hub: this.ctx.oap.hub });
+        const oapQuery = createOapQuery({ sessionId: session.id, prompt, hub: oapHub });
         this.ctx.queryObject = oapQuery;
         for await (const message of this.createAbortableQuery(
           oapQuery,
