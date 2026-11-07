@@ -13,7 +13,7 @@ describe('OAP interaction mapping', () => {
     requested_by: 'agent',
     responded_by: 'user',
     tool_call_id: 'tool-1',
-    title: 'Bash',
+    title: 'Allow Codex action',
     arguments_json: { command: 'echo synthetic' },
     choices: [
       { id: 'approve', label: 'Allow once' },
@@ -22,8 +22,10 @@ describe('OAP interaction mapping', () => {
   };
 
   it('maps permission requests and both decisions', () => {
-    expect(mapPermissionRequest(permission)).toEqual({
-      toolName: 'Bash',
+    expect(
+      mapPermissionRequest(permission, { tool_call_id: 'tool-1', name: 'codex.command' })
+    ).toEqual({
+      toolName: 'codex.command',
       input: { command: 'echo synthetic' },
       toolUseID: 'tool-1',
     });
@@ -44,7 +46,54 @@ describe('OAP interaction mapping', () => {
       responded_by: 'user',
       granted: false,
       choice_id: 'deny',
+      reason: 'no',
     });
+  });
+
+  it('uses correlated call identity and fails closed on unknown choices', () => {
+    expect(() =>
+      mapPermissionRequest(permission, { tool_call_id: 'wrong', name: 'Bash' })
+    ).toThrow();
+    expect(() =>
+      mapPermissionResolution(
+        { ...permission, choices: [{ id: 'mystery', label: 'Unknown' }] },
+        { behavior: 'allow' }
+      )
+    ).toThrow();
+    expect(
+      mapPermissionResolution(
+        {
+          ...permission,
+          choices: [
+            { id: 'accept', label: 'Approve once' },
+            { id: 'decline', label: 'Deny' },
+          ],
+        },
+        { behavior: 'deny', message: 'no' }
+      ).choice_id
+    ).toBe('decline');
+  });
+
+  it('preserves updated arguments without granting unsupported persistent permissions', () => {
+    expect(
+      mapPermissionResolution(permission, {
+        behavior: 'allow',
+        updatedInput: { command: 'echo changed' },
+      }).updated_arguments_json
+    ).toEqual({ command: 'echo changed' });
+    expect(() =>
+      mapPermissionResolution(permission, { behavior: 'deny', message: 'no', interrupt: true })
+    ).toThrow();
+  });
+
+  it('returns an explicit unsupported result for text questions', () => {
+    expect(
+      mapUserInputRequest({
+        interaction_id: 'input-text',
+        title: 'Note',
+        questions: [{ id: 'q', prompt: 'Why?', kind: 'text' }],
+      })
+    ).toEqual({ kind: 'unsupported', reason: 'unsupported text question' });
   });
 
   it('maps user input questions to AskUserQuestion', () => {
