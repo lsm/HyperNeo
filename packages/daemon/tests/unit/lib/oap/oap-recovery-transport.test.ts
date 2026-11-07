@@ -7,6 +7,9 @@ import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/o
 import { OapQuery, type OapQueryHub } from '../../../../src/lib/oap/oap-query.ts';
 import type { OapReopenEvents, OapReopenStore } from '../../../../src/lib/oap/oap-reopen.ts';
 import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime.ts';
+import { planMailboxAdmission } from '../../../../src/lib/mailbox/admission-plan.ts';
+import { DEFAULT_MAILBOX_ENTRY_POLICY } from '../../../../src/lib/mailbox/entry.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 type Recovery = { previous: string | null; text: string; pendingOpen: boolean; claim?: string };
 type TestSession = Session & { metadata: Session['metadata'] & { oapRecovery?: Recovery } };
@@ -116,6 +119,7 @@ function fixture(initial?: Recovery) {
     )(structuredClone(stored));
   return {
     current,
+    engine,
     db,
     persist,
     getStored: () => structuredClone(stored),
@@ -374,19 +378,64 @@ describe('OAP recovery claim transport', () => {
     }
   );
 
-  test.each([null, {}])(
-    'refuses to submit if the recovery input cannot be identified',
-    async (input) => {
-      const host = fixture(recovery());
-      host.getDeliveryContent.mockReturnValueOnce(input);
-      const hub = await host.bind(host.current).hub;
-      await expect(hub.submit('session-a', prompt('message-1'))).rejects.toThrow(
-        /identif|recovery/i
-      );
-      expect(host.submit).not.toHaveBeenCalled();
-      expect(host.getStored().metadata.oapRecovery?.claim).toBeUndefined();
+  test('refuses to submit if the recovery input cannot be identified', async () => {
+    const host = fixture(recovery());
+    host.getDeliveryContent.mockReturnValueOnce(null);
+    const hub = await host.bind(host.current).hub;
+    await expect(hub.submit('session-a', prompt('message-1'))).rejects.toThrow(/identif|recovery/i);
+    expect(host.submit).not.toHaveBeenCalled();
+    expect(host.getStored().metadata.oapRecovery?.claim).toBeUndefined();
+  });
+
+  test('forwards a submitted agent admission and reserves the excerpt for a legacy human message', async () => {
+    const host = fixture(recovery());
+    const db = await createTestDb();
+    try {
+      const base = createTestSession('session-a');
+      const session: Session = {
+        ...base,
+        workspacePath: '/synthetic/workspace',
+        sdkSessionId: 'native-thread-a',
+        config: { ...base.config, harness: 'codex' },
+        metadata: { ...base.metadata, oapRecovery: recovery() },
+      };
+      await db.createSession(session);
+      const agent = planMailboxAdmission({
+        id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        to: { kind: 'session', sessionId: session.id },
+        origin: 'space_agent',
+        messageUuid: 'agent-message',
+        message: {
+          type: 'user',
+          message: { role: 'user', content: 'agent note' },
+          parent_tool_use_id: null,
+        },
+        status: 'enqueued',
+        policy: DEFAULT_MAILBOX_ENTRY_POLICY,
+        deliveryMode: 'immediate',
+      });
+      expect(agent.message).toMatchObject({ isSynthetic: true });
+      expect(agent.message).not.toHaveProperty('inputKind');
+      const repo = db.getSDKMessageRepo();
+      repo.saveUserMessage(session.id, agent.message, 'submitted', agent.origin);
+      expect(db.getSDKMessages(session.id).messages).toHaveLength(0);
+      const hub = await createOapRuntime(host.engine, options, undefined, db, {
+        event: mock(() => {}),
+      } as unknown as OapReopenEvents)(session).hub;
+      await hub.submit(session.id, agent.message);
+      expect(JSON.stringify(host.submit.mock.calls[0])).not.toContain('saved excerpt');
+      expect(db.getSession(session.id)?.metadata.oapRecovery).toEqual(recovery());
+
+      const human = prompt('legacy-human');
+      repo.saveUserMessage(session.id, human, 'submitted', 'human');
+      expect(db.getSDKMessages(session.id).messages).toHaveLength(0);
+      await hub.submit(session.id, human);
+      expect(JSON.stringify(host.submit.mock.calls[1])).toContain('saved excerpt');
+      expect(db.getSession(session.id)?.metadata.oapRecovery).toBeUndefined();
+    } finally {
+      db.close();
     }
-  );
+  });
 
   test('does not submit while the recovered thread is still opening', async () => {
     const host = fixture({ ...recovery(), pendingOpen: true });

@@ -2177,6 +2177,35 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getDeliveryContent', () => {
+    it('exposes synthetic identity for submitted messages, including legacy system origins', () => {
+      for (const [uuid, extra, origin] of [
+        ['agent', { isSynthetic: true }, undefined],
+        ['legacy-system', {}, 'system'],
+        ['legacy-human', { isSynthetic: false }, 'human'],
+      ] as const) {
+        repository.saveUserMessage(
+          'session-1',
+          { ...createUserMessage(uuid, uuid), ...extra } as SDKMessage,
+          'submitted',
+          origin
+        );
+      }
+      expect(repository.getSDKMessages('session-1').messages).toHaveLength(0);
+      expect(repository.getDeliveryContent('session-1', 'agent')).toMatchObject({
+        sendStatus: 'submitted',
+        isSynthetic: true,
+      });
+      expect(repository.getDeliveryContent('session-1', 'legacy-system')).toMatchObject({
+        sendStatus: 'submitted',
+        isSynthetic: true,
+      });
+      expect(repository.getDeliveryContent('session-1', 'legacy-human')).not.toHaveProperty(
+        'isSynthetic'
+      );
+    });
+  });
+
   describe('saveUserMessage', () => {
     it('should save user message with consumed status by default', () => {
       const message = createUserMessage('Test message');
