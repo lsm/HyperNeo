@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OapEngine } from '../../../../src/lib/oap/oap-engine';
@@ -11,16 +11,17 @@ import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 const roots: string[] = [];
 const engines: OapEngine[] = [];
 
-async function fixture() {
+async function fixture(replaceAfterCheck = false) {
   const { OapEngine } = await import('../../../../src/lib/oap/oap-engine');
   const root = await mkdtemp(join(tmpdir(), 'oap-engine-'));
   roots.push(root);
   const binaryPath = join(root, 'synthetic-hub');
   const calls = join(root, 'calls');
+  const replacement = `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(join(root, 'unverified-executed'))}, 'bad');\nprocess.exit(13);\n`;
   const script = `#!${process.execPath}
 const fs = require('node:fs');
 const calls = ${JSON.stringify(calls)};
-if (process.argv[2] === '--version') { console.log('synthetic-1'); process.exit(0); }
+if (process.argv[2] === '--version') { if (${replaceAfterCheck}) fs.writeFileSync(${JSON.stringify(binaryPath)}, ${JSON.stringify(replacement)}); console.log('synthetic-1'); process.exit(0); }
 fs.appendFileSync(calls, 'start\\n');
 fs.writeFileSync(${JSON.stringify(join(root, 'launch.json'))}, JSON.stringify({args:process.argv.slice(2),env:process.env}));
 require('node:readline').createInterface({input:process.stdin}).on('line', line => {
@@ -98,6 +99,33 @@ describe('OapEngine', () => {
     await expect(engine.getHub(options)).rejects.toThrow('closed');
   });
 
+  test('starts verified bytes when the installed path is replaced during version checking', async () => {
+    const { engine, options, root } = await fixture(true);
+    const outcome = await engine
+      .getHub(options)
+      .then((hub) => hub.request('ping'))
+      .catch(() => false);
+    expect(typeof outcome).toBe('number');
+    expect(existsSync(join(root, 'unverified-executed'))).toBe(false);
+    expect(await readFile(options.binaryPath, 'utf8')).toContain('unverified-executed');
+    await engine.close();
+    expect(await readdir(options.stateDirectory)).toEqual(['oap-serve.json']);
+  });
+
+  test('removes a stale snapshot from a hard crash before starting a fresh hub', async () => {
+    const { engine, options } = await fixture();
+    const stale = join(options.stateDirectory, 'oap-verified-x');
+    await mkdir(stale, { recursive: true });
+    await writeFile(join(stale, 'old-binary'), 'stale bytes');
+    await writeFile(join(options.stateDirectory, 'unrelated'), 'keep');
+    const hub = await engine.getHub(options);
+    expect(existsSync(stale)).toBe(false);
+    expect(typeof (await hub.request('ping'))).toBe('number');
+    expect(await readFile(join(options.stateDirectory, 'unrelated'), 'utf8')).toBe('keep');
+    await engine.close();
+    expect((await readdir(options.stateDirectory)).sort()).toEqual(['oap-serve.json', 'unrelated']);
+  });
+
   test('rejects a mismatched binary before starting or writing configuration', async () => {
     const { engine, options, calls } = await fixture();
     await expect(
@@ -105,6 +133,13 @@ describe('OapEngine', () => {
     ).rejects.toThrow('sha256_mismatch');
     expect(existsSync(calls)).toBe(false);
     expect(existsSync(join(options.stateDirectory, 'oap-serve.json'))).toBe(false);
+  });
+
+  test('removes its verified copy when configuration cannot be written', async () => {
+    const { engine, options } = await fixture();
+    await mkdir(join(options.stateDirectory, 'oap-serve.json'), { recursive: true });
+    await expect(engine.getHub(options)).rejects.toThrow();
+    expect(await readdir(options.stateDirectory)).toEqual(['oap-serve.json']);
   });
 
   test('rejects an incomplete expected binary identity', async () => {
