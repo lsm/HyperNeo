@@ -113,6 +113,7 @@ describe('OAP hub child lifecycle and correlation', () => {
         await vi.advanceTimersByTimeAsync(100);
         expect(((await declined) as Error).message).toContain('timed out');
         await hub.request('stats');
+        await vi.advanceTimersByTimeAsync(50);
         await hub.request('emit');
         expect(await hub.request('stats')).toMatchObject({ unsubscribe: code === 'busy' ? 2 : 1 });
         expect(unrelatedFailure).toBeUndefined();
@@ -171,6 +172,41 @@ describe('OAP hub child lifecycle and correlation', () => {
     expect(received).toHaveLength(0);
   });
 
+  test('busy refusal waits 50ms before its single replay', async () => {
+    const hub = await client();
+    await hub.connect();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const answer = hub.request('busy-once');
+      expect(await hub.request('stats')).toMatchObject({ 'busy-once': 1 });
+      await vi.advanceTimersByTimeAsync(49);
+      expect(await hub.request('stats')).toMatchObject({ 'busy-once': 1 });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await answer).toBe(2);
+      expect(await hub.request('stats')).toMatchObject({ 'busy-once': 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a deadline during busy backoff prevents a late replay', async () => {
+    const hub = await client(process.execPath, 200);
+    await hub.connect();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const answer = hub.request('busy-held').catch((error: Error) => error);
+      await hub.request('stats');
+      await vi.advanceTimersByTimeAsync(180);
+      await hub.request('release-busy');
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await answer).toMatchObject({ code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await hub.request('stats')).toMatchObject({ 'busy-held': 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('busy replay retains the original request deadline', async () => {
     const hub = await client(process.execPath, 200);
     await hub.connect();
@@ -183,8 +219,9 @@ describe('OAP hub child lifecycle and correlation', () => {
       await hub.request('stats');
       await vi.advanceTimersByTimeAsync(120);
       await hub.request('release-busy');
+      await vi.advanceTimersByTimeAsync(50);
       expect(await hub.request('stats')).toMatchObject({ 'busy-held': 2 });
-      await vi.advanceTimersByTimeAsync(80);
+      await vi.advanceTimersByTimeAsync(30);
       expect(failure?.message).toContain('timed out');
     } finally {
       vi.useRealTimers();
