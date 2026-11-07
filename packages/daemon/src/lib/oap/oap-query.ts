@@ -1,5 +1,6 @@
 import type { SDKMessage, SDKUserMessage, RewindFilesResult } from '@hyperneo/shared/sdk';
 import type { QueryLike } from '../agent/query-like.ts';
+import { mapUserInputRequest } from './oap-permission-map.ts';
 
 type OapEvent = { type: string; [key: string]: unknown };
 
@@ -24,6 +25,17 @@ function isTerminal(event: OapEvent): boolean {
   return (
     event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled'
   );
+}
+
+function unsupportedInteraction(event: OapEvent): string | undefined {
+  if (event.type === 'action.permission.requested') return 'permission requests are not supported';
+  if (event.type !== 'user.input.requested') return undefined;
+  try {
+    const mapped = mapUserInputRequest(event.payload);
+    return 'kind' in mapped ? mapped.reason : 'user questions are not supported';
+  } catch {
+    return 'invalid user input request is not supported';
+  }
 }
 
 async function* untilClosed<T>(source: AsyncIterable<T>, signal: AbortSignal): AsyncGenerator<T> {
@@ -90,6 +102,15 @@ export class OapQuery implements QueryLike {
           this.hub.events(this.sessionId, runId, this.closeSignal.signal),
           this.closeSignal.signal
         )) {
+          const unsupported = unsupportedInteraction(event);
+          if (unsupported) {
+            try {
+              await this.cancelActive();
+            } catch (cause) {
+              throw new Error(`OAP ${unsupported}; cancellation failed`, { cause });
+            }
+            throw new Error(`OAP ${unsupported}; run cancelled`);
+          }
           for (const translated of this.translator.translate(event)) yield translated;
           if (isTerminal(event)) {
             terminal = true;
