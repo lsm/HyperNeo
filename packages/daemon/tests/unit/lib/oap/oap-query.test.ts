@@ -1,8 +1,54 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { OapQuery } from '../../../../src/lib/oap/oap-query';
+import { createOapQuery, OapQuery } from '../../../../src/lib/oap/oap-query';
 
 describe('OapQuery', () => {
+  test('the query factory translates text and terminal events afresh for each run', async () => {
+    const message = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'hello' },
+    } as SDKUserMessage;
+    const prompt = (async function* () {
+      yield message;
+      yield message;
+    })();
+    const submit = mock(async () => ({ runId: `r${submit.mock.calls.length}` }));
+    const query = createOapQuery({
+      sessionId: 's1',
+      prompt,
+      hub: {
+        submit,
+        cancel: async () => {},
+        events: async function* (_session, runId) {
+          yield {
+            type: 'content.delta',
+            id: `${runId}-text`,
+            payload: { part: { type: 'text', text: `reply ${runId}` } },
+          };
+          yield {
+            type: 'run.completed',
+            id: `${runId}-terminal`,
+            payload: { final_response: { content: `reply ${runId}` } },
+          };
+        },
+      },
+    });
+    expect(query).toBeInstanceOf(OapQuery);
+    const messages: SDKMessage[] = [];
+    for await (const item of query) messages.push(item);
+    expect(messages.map((item) => item.type)).toEqual([
+      'assistant',
+      'result',
+      'assistant',
+      'result',
+    ]);
+    expect(messages[0]).toMatchObject({ message: { content: [{ text: 'reply r1' }] } });
+    expect(messages[2]).toMatchObject({ message: { content: [{ text: 'reply r2' }] } });
+    expect(submit).toHaveBeenCalledTimes(2);
+  });
+
   test('cancels unsupported free-text questions with a clear error instead of answering', async () => {
     const message = {
       type: 'user',
