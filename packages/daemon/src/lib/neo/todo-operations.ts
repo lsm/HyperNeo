@@ -212,8 +212,9 @@ export async function recordNeoTodo(
   const planned = planNeoTodoDraft({ ...input, check }, packs);
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
-  const repo = neoTodoRepository(draft, packs, { ask });
-  const placeless = neoTodoPlaceRefusal(draft, packs, { ask });
+  const peers = todos.listTodos(ask.id);
+  const repo = neoTodoRepository(draft, packs, { ask, peers });
+  const placeless = neoTodoPlaceRefusal(draft, packs, { ask, peers });
   if (placeless) return { ok: false, reason: placeless };
   const misplaced = neoEvidenceRefusal(check, repo, controls.userFolder ?? neoUserFolder());
   if (misplaced) return { ok: false, reason: misplaced };
@@ -222,7 +223,7 @@ export async function recordNeoTodo(
       ok: true,
       records: [`ask_settled: ${ask.title} is settled; nothing was added.`],
     };
-  const accepted = planNeoTodoDraft(draft, packs, todos.listTodos(ask.id));
+  const accepted = planNeoTodoDraft(draft, packs, peers);
   if ('reason' in accepted) return accepted.reason;
   const records = accepted.value.records ? { records: accepted.value.records } : {};
   const refused = neoTodoAfterRefusal(todos.listFamilyTodos(ask.id), null, draft.after);

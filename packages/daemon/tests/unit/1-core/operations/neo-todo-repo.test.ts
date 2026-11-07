@@ -70,7 +70,7 @@ describe('codingTodoRepository', () => {
 });
 
 describe('neoTodoRepository', () => {
-  test('prefers the pack, then the start place’s git remote, then the ask’s repo', () => {
+  test('prefers explicit clues and inherits only a single sibling repository', () => {
     const pr = {
       ...draft,
       check: {
@@ -89,9 +89,12 @@ describe('neoTodoRepository', () => {
       'github.com/lsm/hyperneo'
     );
     expect(neoTodoRepository(started, [coding], { ask: null })).toBe('github.com/lsm/ops');
-    expect(neoTodoRepository(draft, [coding], { ask: { repo: 'github.com/lsm/makai' } })).toBe(
-      'github.com/lsm/makai'
-    );
+    expect(
+      neoTodoRepository(draft, [coding], {
+        ask: { repo: 'github.com/lsm/stale' },
+        peers: [{ repo: 'github.com/lsm/makai' }],
+      })
+    ).toBe('github.com/lsm/makai');
     expect(neoTodoRepository(draft, [coding], { ask: null })).toBeNull();
   });
 
@@ -118,7 +121,7 @@ describe('neoTodoRepository', () => {
 });
 
 describe('neo.todo.add repo', () => {
-  test('stores the derived repo on the todo, and on an ask that had none', async () => {
+  test('stores the derived repo on the todo while leaving the ask unassigned', async () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
@@ -159,7 +162,7 @@ describe('neo.todo.add repo', () => {
       named: { repository: 'lsm/HyperNeo' },
     });
     expect(first.todo.repo).toBe('github.com/lsm/hyperneo');
-    expect(store.getAsk('ask')?.repo).toBe('github.com/lsm/hyperneo');
+    expect(store.getAsk('ask')?.repo).toBeNull();
     const second = await call({ askId: 'ask', ...draft, title: 'Deploy' });
     expect(second.todo.repo).toBe('github.com/lsm/hyperneo');
     const placed = await call({
@@ -170,13 +173,13 @@ describe('neo.todo.add repo', () => {
       target: { verb: 'start', adapter: 'hyperneo', place: { ...place, remotes: undefined } },
     });
     expect(placed.todo).toMatchObject({ askId: 'ask', repo: null });
-    expect(store.getAsk('ask')?.repo).toBe('github.com/lsm/hyperneo');
+    expect(store.getAsk('ask')?.repo).toBeNull();
     db.close();
   });
 });
 
 describe('neo.ask.open repo', () => {
-  test('returns the ask with the repo its first todo gave it', async () => {
+  test('keeps the ask unassigned while its first todo records the repository', async () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
@@ -208,7 +211,7 @@ describe('neo.ask.open repo', () => {
       }),
       { source: 'mcp', sessionId: 'neo', role: 'neo' }
     )) as { ok: true; ask: { repo: string | null } };
-    expect(receipt.ask.repo).toBe('github.com/lsm/hyperneo');
+    expect(receipt.ask.repo).toBeNull();
     db.close();
   });
 });

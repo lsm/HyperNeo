@@ -7,7 +7,9 @@ plumbing, 30-second timeout, one-MiB output cap and current-head review/check ru
 No new authentication client, readiness policy or background poll is introduced.
 
 The native actual Bun proof uses synthetic SQLite and the skill's gh-stub.sh,
-never GitHub. It records a stored PR link and repository binding, then invokes
+never GitHub. Its shared seed records the repository binding in
+`pack_coding_todos` and asserts the legacy todo column remains null; writing
+that frozen column must not grant preview authority. It records a stored PR link, then invokes
 artifact.reference.resolve as the paired human. Require full title/body, exact
 40-character head SHA, bounded changed-file metadata and filesTruncated when the
 reported total exceeds the returned list. Older-head approval must remain none;

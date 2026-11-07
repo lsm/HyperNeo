@@ -219,12 +219,13 @@ export function codingTodoRepository(
   if (pr) return neoGitRepo(`${pr.host}/${pr.owner}/${pr.repo}`);
   const named = todo.named?.repository;
   const place = todo.target?.verb === 'start' ? todo.target.place : null;
+  const repositories = [...new Set(scope?.peers?.flatMap((peer) => peer.repo || []) ?? [])];
   return (
     (typeof named === 'string'
       ? neoGitRepo(/^[\w.-]+\/[\w.-]+$/.test(named.trim()) ? `github.com/${named.trim()}` : named)
       : null) ??
     place?.remotes?.map(neoGitRepo).find(Boolean) ??
-    (place ? null : (scope?.ask?.repo ?? null))
+    (place || repositories.length !== 1 ? null : repositories[0])
   );
 }
 

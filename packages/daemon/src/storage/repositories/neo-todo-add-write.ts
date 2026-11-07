@@ -36,7 +36,8 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
           changes.notifyChange('neo_todos');
         },
         undefined,
-        () => changes.notifyChange('neo_questions')
+        () => changes.notifyChange('neo_questions'),
+        changes
       ),
     ['db', 'changes'],
     'store'
@@ -59,8 +60,9 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       const policies = neoTodoPolicies(db);
       const planned = planNeoTodoDraft(input.draft, policies);
       if ('reason' in planned) return planned;
-      const repo = neoTodoRepository(input.draft, policies, { ask });
-      const accepted = planNeoTodoDraft(input.draft, policies, store.listTodos(ask.id));
+      const peers = store.listTodos(ask.id);
+      const repo = neoTodoRepository(input.draft, policies, { ask, peers });
+      const accepted = planNeoTodoDraft(input.draft, policies, peers);
       return 'reason' in accepted ? accepted : { value: { ask, repo, draft: accepted.value } };
     },
     ['db', 'store', 'input'],

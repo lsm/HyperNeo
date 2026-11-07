@@ -121,7 +121,14 @@ export { runMigration170 } from './migrations.ts';
 export { runMigration174 } from './migrations.ts';
 // knip-ignore-next-line
 
-import { createExtensionIndexes, createExtensionTables } from './extensions.ts';
+import {
+  createExtensionIndexes,
+  createExtensionTables,
+  registerSchemaExtension,
+} from './extensions.ts';
+import { prepareCodingTodoStorage } from '../../lib/neo/packs/coding/schema/coding-tables.ts';
+
+registerSchemaExtension({ id: 'coding-todos', tables: prepareCodingTodoStorage });
 
 export function createTables(db: BunDatabase): void {
   createNeoGoalsTable(db);

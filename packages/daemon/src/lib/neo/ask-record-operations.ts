@@ -174,14 +174,15 @@ export function createNeoAskRecordOperations(
         const recorded = family(priorAsk);
         const recordedRow = (
           todo: (typeof input.todos)[number],
-          scope: Pick<NeoAsk, 'repo'> = priorAsk ?? { repo: null }
+          scope: Pick<NeoAsk, 'id' | 'repo'> | null = priorAsk
         ) => {
-          const repo = neoTodoRepository(todo, packs(), { ask: scope });
+          const peers = recorded.filter((item) => item.askId === scope?.id);
+          const repo = neoTodoRepository(todo, packs(), { ask: scope, peers });
           const filed = (item: NeoTodo) =>
             neoTodoRepository(
               { check: item.check, named: item.named, target: sessions.get(item.id) },
               packs(),
-              { ask: scope }
+              { ask: scope, peers }
             );
           return recorded.find(
             (item) => item.title === todo.title && (item.repo === repo || filed(item) === repo)
@@ -204,7 +205,10 @@ export function createNeoAskRecordOperations(
             const check = withAssignedEvidence(todo.check, todoEvidenceFile('pending'));
             const reason = neoEvidenceRefusal(
               check,
-              neoTodoRepository(todo, packs(), { ask: priorAsk }),
+              neoTodoRepository(todo, packs(), {
+                ask: priorAsk,
+                peers: recorded.filter((item) => item.askId === priorAsk?.id),
+              }),
               controls.userFolder ?? neoUserFolder()
             );
             return reason

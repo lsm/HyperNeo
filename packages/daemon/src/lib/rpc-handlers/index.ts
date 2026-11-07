@@ -439,6 +439,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
   );
   deps.extensions.register(neoPacksExtension(neoService));
   deps.reactiveDb.on('change:neo_session_messages', () => neoService.notifyChanged());
+  deps.reactiveDb.on('change:pack_coding_todos', () => neoService.notifyChanged());
   neoService.filePacks = adoptNeoFilePacks(
     loadNeoFilePacks({
       root: join(getDataDir(), 'neo-packs'),

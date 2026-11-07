@@ -26,6 +26,10 @@ receipts explicitly say worktree. Old receipts remain readable without revision
 or historical rewriting. Registration retry projects only the original reference
 response. No Git HEAD is invented for local file bytes.
 
+The seed chain reuses the bound-PR helper's canonical `pack_coding_todos`
+repository binding, leaving the legacy todo column null. Source authorization
+must not depend on updates to that frozen column.
+
 The native journey invokes actual operation parsing, policy, result validation,
 Git fixture subprocesses, migrated synthetic SQLite and native descriptor reads.
 It checks complete 1,560,000-byte reads in at-most-256-KiB chunks, stable SHA-256,

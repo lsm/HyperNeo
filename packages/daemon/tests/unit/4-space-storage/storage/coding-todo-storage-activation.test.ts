@@ -2,7 +2,10 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
 import { ChangeRecorder, type DbOp } from '../../../../src/storage/db-gateway/db-op.ts';
-import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import {
+  NeoAskTodoRepository,
+  type NeoTodoStorageBoundary,
+} from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { codingTodoStorage } from '../../../../src/lib/neo/packs/coding/todo-storage.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -21,7 +24,11 @@ beforeEach(() => {
   createCodingPackTables(db);
   db.exec('PRAGMA foreign_keys=ON');
   gateway = new DbGateway(':memory:', db);
-  core = new NeoAskTodoRepository(db);
+  const legacy: NeoTodoStorageBoundary = {
+    project: (todo) => todo,
+    insert: (commit, args) => commit(...args),
+  };
+  core = new NeoAskTodoRepository(db, undefined, undefined, undefined, undefined, legacy);
   core.openAsk({
     id: 'ask',
     title: 'Work',
@@ -41,7 +48,8 @@ afterEach(async () => {
 const candidate = (changed = () => {}) =>
   new NeoAskTodoRepository(db, changed, undefined, undefined, undefined, codingTodoStorage(db));
 
-test('facts fail before explicit preparation and read after it', async () => {
+test('an unprepared legacy fixture fails facts reads until preparation', async () => {
+  db.exec('DROP TABLE pack_coding_todos');
   await expect(command('Reads', 'facts', ['ask'])).rejects.toThrow('no such table');
   await command('Writes', 'prepare');
   await expect(command('Reads', 'facts', ['ask'])).resolves.toEqual({
@@ -52,12 +60,13 @@ test('facts fail before explicit preparation and read after it', async () => {
 
 test('projection fails before explicit preparation and reads after it', async () => {
   const historical = core.addTodo('historical', 'ask', draft, 2);
+  db.exec('DROP TABLE pack_coding_todos');
   await expect(command('Reads', 'project', [historical])).rejects.toThrow('no such table');
   await command('Writes', 'prepare');
   await expect(command('Reads', 'project', [historical])).resolves.toEqual(historical);
 });
 
-test('explicit storage projects all six readers while default readers stay legacy', async () => {
+test('all six readers project pack data without rewriting retained legacy data', async () => {
   const legacy = core.addTodo('stored', 'ask', draft, 2, 'github.com/synthetic/old');
   await command('Writes', 'prepare');
   await command('Writes', 'record', [legacy.id, 'github.com/synthetic/canonical']);
@@ -96,6 +105,7 @@ test('explicit storage inserts only the pack repository fact and freezes legacy 
 
 test('an outer failure rolls back successful nested preparation and its backfill', () => {
   core.addTodo('old', 'ask', draft, 2, 'github.com/synthetic/old');
+  db.exec('DROP TABLE pack_coding_todos');
   const op = DB_OPS.get('coding.todoStorageWrites')! as DbOp<
     { method: string; args: unknown[] },
     unknown
