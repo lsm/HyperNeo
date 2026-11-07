@@ -801,7 +801,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .getCredentialStore()
             .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
         ),
-      createOapRuntime(oapEngine, config.oap, internalEventBus)
+      createOapRuntime(oapEngine, config.oap, internalEventBus, reactiveDb.db, messageHub)
     );
 
     sessionManager.start();

@@ -1,5 +1,7 @@
+import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage, RewindFilesResult } from '@hyperneo/shared/sdk';
 import type { QueryLike } from '../agent/query-like.ts';
+import { OapHubRequestError } from './oap-hub-client.ts';
 import { mapUserInputRequest } from './oap-permission-map.ts';
 import { initialOapTranslatorState, translateOapEvent } from './oap-sdk-translator.ts';
 export { createOapQueryHub } from './oap-query-hub.ts';
@@ -28,11 +30,32 @@ type OapQueryOptions = {
   maySettleInterrupted?: () => boolean;
   onSubmitted?: (message: SDKUserMessage) => Promise<void>;
   onAccepted?: (message: SDKUserMessage, runId: string) => Promise<void>;
+  onRefused?: (message: SDKUserMessage, error: OapHubRequestError) => Promise<void>;
 };
 
 function isTerminal(event: OapEvent): boolean {
   return (
     event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled'
+  );
+}
+
+function isDefiniteRefusal(error: unknown): error is OapHubRequestError {
+  return (
+    error instanceof OapHubRequestError &&
+    [
+      'busy',
+      'capability_degraded',
+      'invalid_request',
+      'invalid_submission',
+      'model_not_found',
+      'request_too_large',
+      'run_active',
+      'scope_mismatch',
+      'session_closed',
+      'stale_capabilities',
+      'unknown_session',
+      'unsupported_feature',
+    ].includes(error.code)
   );
 }
 
@@ -79,6 +102,7 @@ export class OapQuery implements QueryLike {
   private readonly maySettleInterrupted: () => boolean;
   private readonly onSubmitted?: OapQueryOptions['onSubmitted'];
   private readonly onAccepted?: OapQueryOptions['onAccepted'];
+  private readonly onRefused?: OapQueryOptions['onRefused'];
   private activeRun: string | undefined;
   private pendingRun: Promise<string> | undefined;
   private cancelPromise: Promise<void> | undefined;
@@ -98,6 +122,7 @@ export class OapQuery implements QueryLike {
     this.maySettleInterrupted = options.maySettleInterrupted ?? (() => false);
     this.onSubmitted = options.onSubmitted;
     this.onAccepted = options.onAccepted;
+    this.onRefused = options.onRefused;
   }
 
   async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {
@@ -122,8 +147,11 @@ export class OapQuery implements QueryLike {
           this.activeRun = runId;
           return runId;
         })
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
           finish();
+          if (isDefiniteRefusal(error) && this.isLive()) {
+            await this.onRefused?.(message, error);
+          }
           throw error;
         });
       const runId = await this.pendingRun;
@@ -246,11 +274,13 @@ export class OapQuery implements QueryLike {
 
 export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): OapQuery {
   let state = initialOapTranslatorState(options.sessionId);
+  let runScope = '';
   return new OapQuery({
     ...options,
     translator: {
       beginRun: () => {
         state = initialOapTranslatorState(options.sessionId);
+        runScope = generateUUID();
       },
       translate: (event) => {
         if (
@@ -264,7 +294,7 @@ export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): Oa
         }
         const result = translateOapEvent(state, {
           type: event.type,
-          id: event.id,
+          id: `${runScope}:${event.id}`,
           payload: event.payload as Record<string, unknown>,
         });
         state = result.state;
