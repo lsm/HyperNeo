@@ -482,7 +482,18 @@ describe('goal-owned schedules', () => {
       sessionId: 'neo:root',
       originMessageId: null,
       title: 'Release',
+      topic: 'OAP',
       request: 'Ship',
+      createdAt: 1,
+    });
+    asks.openAsk({
+      id: 'plain',
+      goalId: goal.id,
+      projectId: null,
+      sessionId: 'neo:root',
+      originMessageId: null,
+      title: 'Notes',
+      request: 'Write notes',
       createdAt: 1,
     });
     asks.addTodo(
@@ -506,7 +517,8 @@ describe('goal-owned schedules', () => {
       1
     );
     const before = (await call('goal.facts', { goalId: goal.id })).facts;
-    expect(before.lines).toContain('Ask ask "Release": open');
+    expect(before.lines).toContain('Ask ask topic=OAP "Release": open');
+    expect(before.lines).toContain('Ask plain topic=none "Notes": open');
     expect(before.lines).toContain('Todo linked "Merge": todo');
     expect(before.summary).toContain('verify/demo#8');
     expect(before.summary).not.toContain('verify/demo#9');
