@@ -196,10 +196,35 @@ try {
     assert.equal(existsSync(join(run, 'data/oap/oap-serve.json')), false);
     Object.assign(evidence, { port: app.server.port, mismatchedDigestRefused: true, syntheticPeerStarts: 0, pass: true });
   } else if (mode === 'recovery-claim') {
-    await first.oap!.hub;
+    const queryHub = await first.oap!.hub;
+    const { planMailboxAdmission } = await import('../../../packages/daemon/src/lib/mailbox/admission-plan.ts');
+    const { DEFAULT_MAILBOX_ENTRY_POLICY } = await import('../../../packages/daemon/src/lib/mailbox/entry.ts');
     const metadata = { ...first.session.metadata, oapRecovery: { previous: 'synthetic-old-thread', text: 'Synthetic saved conversation excerpt', pendingOpen: false } };
     assert.equal(await app.db.updateSession(firstId, { metadata }), 'written');
     first.session.metadata = metadata;
+    const agent = planMailboxAdmission({
+      id: '01ARZ3NDEKTSV4RRFFQ69G5FAV', to: { kind: 'session', sessionId: firstId },
+      origin: 'space_agent', messageUuid: 'synthetic-agent-message', status: 'enqueued',
+      message: { type: 'user', message: { role: 'user', content: 'Synthetic agent before explicit request' }, parent_tool_use_id: null },
+      policy: DEFAULT_MAILBOX_ENTRY_POLICY, deliveryMode: 'immediate',
+    });
+    assert.equal(agent.message.inputKind, undefined);
+    assert.equal(agent.origin, 'system');
+    const repository = app.db.getSDKMessageRepo();
+    repository.saveUserMessage(firstId, agent.message, 'submitted', agent.origin);
+    assert(!app.db.getSDKMessages(firstId).messages.some((row) => row.uuid === agent.message.uuid));
+    const submitted = await queryHub.submit(firstId, agent.message);
+    let terminal = false;
+    for await (const event of queryHub.events(firstId, submitted.runId, new AbortController().signal)) {
+      if (event.type === 'run.completed') { terminal = true; break; }
+      if (event.type === 'run.failed' || event.type === 'run.cancelled') throw new Error(`synthetic agent turn ${event.type}`);
+    }
+    assert(terminal);
+    assert(repository.markDeliveryConsumedByUuid(firstId, agent.message.uuid));
+    assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery?.claim, undefined);
+    const agentTurn = calls().find((call) => call.request.method === 'turn/start');
+    assert(agentTurn && JSON.stringify(agentTurn).includes('Synthetic agent before explicit request'));
+    assert(!JSON.stringify(agentTurn).includes('Synthetic saved conversation excerpt'));
     const engineHub = await app.oapEngine.getHub(config.oap);
     const request = engineHub.request.bind(engineHub);
     let claimObservedBeforeSubmit = false;
@@ -231,9 +256,9 @@ try {
     assert(claimObservedBeforeSubmit);
     assert(cleanupFailed);
     const firstTurns = calls().filter((call) => call.request.method === 'turn/start');
-    assert.equal(firstTurns.length, 1);
-    assert(JSON.stringify(firstTurns[0]).includes('Synthetic saved conversation excerpt'));
-    assert(JSON.stringify(firstTurns[0]).includes('Synthetic first explicit request'));
+    assert.equal(firstTurns.length, 2);
+    assert(JSON.stringify(firstTurns[1]).includes('Synthetic saved conversation excerpt'));
+    assert(JSON.stringify(firstTurns[1]).includes('Synthetic first explicit request'));
     db.updateSession = updateSession;
     await transport.close();
     transport = undefined;
@@ -243,7 +268,7 @@ try {
     assert.notEqual(app.server.port, 8399);
     assert.notEqual(app.server.port, 8499);
     assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery?.claim, claimed.claim);
-    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
     hub = new MessageHub({ defaultSessionId: 'global' });
     transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
     hub.registerTransport(transport);
@@ -253,11 +278,11 @@ try {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic second explicit request' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 2 && !resumed.queryPromise, 'explicit turn after restart');
     const turns = calls().filter((call) => call.request.method === 'turn/start');
-    assert.equal(turns.length, 2);
-    assert(!JSON.stringify(turns[1]).includes('Synthetic saved conversation excerpt'));
-    assert(JSON.stringify(turns[1]).includes('Synthetic second explicit request'));
+    assert.equal(turns.length, 3);
+    assert(!JSON.stringify(turns[2]).includes('Synthetic saved conversation excerpt'));
+    assert(JSON.stringify(turns[2]).includes('Synthetic second explicit request'));
     if (process.env.VERIFY_BROWSER) await verifyNoticeInBrowser(app, firstId, 'Synthetic second explicit request');
-    Object.assign(evidence, { port: app.server.port, presetRecoveryClaimedBeforeSubmit: true, markerCleanupFailed: true, markerSurvivedRestart: true, excerptAttachedOnce: true, explicitTurns: turns.length, automaticResends: 0, pass: true });
+    Object.assign(evidence, { port: app.server.port, submittedAgentForwardedWithoutExcerpt: true, presetRecoveryClaimedBeforeSubmit: true, markerCleanupFailed: true, markerSurvivedRestart: true, excerptAttachedOnce: true, explicitTurns: 2, automaticResends: 0, pass: true });
   } else if (mode === 'fresh-clear') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic original conversation' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 1 && !first.queryPromise, 'original native turn');
@@ -577,6 +602,9 @@ try {
   }
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
+} catch (error) {
+  console.error('OAP workspace proof failed:', error);
+  throw error;
 } finally {
   releaseResult?.();
   if (existsSync(join(run, 'codex-home/calls.jsonl'))) copyFileSync(join(run, 'codex-home/calls.jsonl'), join(run, 'evidence/calls.jsonl'));

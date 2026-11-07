@@ -104,19 +104,8 @@ export function withOapRecovery(
           'invalid_submission',
           'Cannot identify the Codex recovery input'
         );
-      if (input.inputKind && input.inputKind !== 'human') return forward(message);
-      if (!input.inputKind) {
-        const stored = db
-          .getSDKMessages(sessionId, 100)
-          .messages.find((row) => row.uuid === message.uuid);
-        if (!stored)
-          throw new OapHubRequestError(
-            'invalid_submission',
-            'Cannot identify the Codex recovery input'
-          );
-        if (stored.origin === 'system' || (stored as { isSynthetic?: boolean }).isSynthetic)
-          return forward(message);
-      }
+      if (input.isSynthetic || (input.inputKind && input.inputKind !== 'human'))
+        return forward(message);
       const prepared = prepareRecovery(message, recovery);
       const attempt = { owner, cancelled: false };
       pending = attempt;
