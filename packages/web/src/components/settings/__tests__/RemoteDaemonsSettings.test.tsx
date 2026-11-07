@@ -124,6 +124,22 @@ describe('RemoteDaemonsSettings', () => {
     expect(mockToastSuccess).toHaveBeenCalledWith("Attached 'staging'");
   });
 
+  it('sends the pairing code entered in the attach form', async () => {
+    respondWith([[]]);
+    render(<RemoteDaemonsSettings />);
+    await waitFor(() => expect(screen.getByText('No remote daemons attached.')).toBeTruthy());
+    typeForm('staging', 'ws://staging.test/ws');
+    fireEvent.input(screen.getByLabelText('Pairing code (optional)'), {
+      target: { value: '  ABC-123  ' },
+    });
+    fireEvent.click(screen.getByText('Attach'));
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalled());
+    expect(invocations()[1]).toEqual({
+      name: 'daemon.attach',
+      input: { daemonId: 'staging', url: 'ws://staging.test/ws', code: 'ABC-123' },
+    });
+  });
+
   it('tests the form URL without attaching it', async () => {
     respondWith([[]]);
 
