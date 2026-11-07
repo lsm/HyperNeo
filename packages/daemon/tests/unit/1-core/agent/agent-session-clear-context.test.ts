@@ -4,6 +4,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   AgentSession,
   ClearConversationCancelledError,
+  ClearConversationUnsupportedError,
 } from '../../../../src/lib/agent/agent-session.ts';
 import {
   clearContextClearBoundariesForTest,
@@ -172,6 +173,40 @@ describe('AgentSession.clearConversationContext', () => {
       sdkSessionId: undefined,
       sdkOriginPath: undefined,
     });
+  });
+
+  it.each(['startFreshContext', 'clearConversationContext'] as const)(
+    'keeps %s refused when persisting its Codex notice throws',
+    async (operation) => {
+      const session = createAgentSession({
+        sdkSessionId: 'native-thread-1',
+        config: { model: 'synthetic', harness: 'codex' },
+      } as Partial<Session>);
+      spyOn(session, 'showNotice').mockRejectedValue(new Error('synthetic storage failure'));
+      const reset = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
+      await expect(session[operation]()).rejects.toBeInstanceOf(ClearConversationUnsupportedError);
+      expect(session.session.sdkSessionId).toBe('native-thread-1');
+      expect(reset).not.toHaveBeenCalled();
+    }
+  );
+
+  it('publishes a session error when the Codex refusal cannot be saved', async () => {
+    const session = createAgentSession({
+      sdkSessionId: 'native-thread-1',
+      config: { model: 'synthetic', harness: 'codex' },
+    } as Partial<Session>);
+    spyOn(session.db, 'saveSDKMessage').mockResolvedValue(false);
+    await expect(session.startFreshContext()).rejects.toBeInstanceOf(
+      ClearConversationUnsupportedError
+    );
+    expect(session.internalEventBus.publishAsync).toHaveBeenCalledWith(
+      'session.error',
+      expect.objectContaining({
+        sessionId: session.session.id,
+        error: expect.stringMatching(/codex.*clear|clear.*codex/i),
+      })
+    );
+    expect(session.session.sdkSessionId).toBe('native-thread-1');
   });
 
   it('issues /clear as an internal control message after ensuring the query is pulling', async () => {
