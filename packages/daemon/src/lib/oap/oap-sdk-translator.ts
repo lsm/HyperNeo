@@ -1,10 +1,16 @@
 import { createHash, type UUID } from 'node:crypto';
-import type { SDKAssistantMessage, SDKMessage, SDKResultMessage } from '@hyperneo/shared/sdk';
+import type {
+  SDKAssistantMessage,
+  SDKMessage,
+  SDKResultMessage,
+  SDKUserMessage,
+} from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
 export interface OapTranslatorState {
   sessionId: string;
   terminal: boolean;
+  tools: ReadonlyArray<{ id: string; settled: boolean }>;
 }
 
 export interface OapTranslatorEvent {
@@ -19,7 +25,7 @@ export interface OapTranslation {
 }
 
 export function initialOapTranslatorState(sessionId: string): OapTranslatorState {
-  return { sessionId, terminal: false };
+  return { sessionId, terminal: false, tools: [] };
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -51,12 +57,18 @@ function zeroUsage() {
   };
 }
 
-function textMessage(
+function assistantMessage(
   state: OapTranslatorState,
   event: OapTranslatorEvent
 ): SDKAssistantMessage | null {
   const part = record(event.payload.part);
-  if (part.type !== 'text' || typeof part.text !== 'string') return null;
+  const content =
+    part.type === 'text' && typeof part.text === 'string'
+      ? { type: 'text' as const, text: part.text, citations: null }
+      : part.type === 'reasoning' && typeof part.reasoning === 'string'
+        ? { type: 'thinking' as const, thinking: part.reasoning, signature: '' }
+        : null;
+  if (!content) return null;
   return {
     type: 'assistant',
     uuid: eventUuid(state.sessionId, event.id),
@@ -74,9 +86,101 @@ function textMessage(
       stop_reason: null,
       stop_sequence: null,
       usage: zeroUsage(),
-      content: [{ type: 'text', text: part.text, citations: null }],
+      content: [content],
     },
   };
+}
+
+function count(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function usageFor(event: OapTranslatorEvent) {
+  const usage = record(event.payload.usage);
+  return {
+    ...zeroUsage(),
+    input_tokens: count(usage.input_tokens),
+    output_tokens: count(usage.output_tokens),
+    cache_read_input_tokens: count(usage.cache_read_input_tokens),
+    cache_creation_input_tokens: count(usage.cache_write_input_tokens),
+    output_tokens_details: { thinking_tokens: count(usage.reasoning_tokens) },
+  };
+}
+
+function toolUse(
+  state: OapTranslatorState,
+  event: OapTranslatorEvent,
+  id: string
+): SDKAssistantMessage {
+  return {
+    type: 'assistant',
+    uuid: eventUuid(state.sessionId, `${event.id}:tool-use`),
+    session_id: state.sessionId,
+    parent_tool_use_id: null,
+    message: {
+      id: event.id,
+      type: 'message',
+      role: 'assistant',
+      model: '',
+      container: null,
+      context_management: null,
+      diagnostics: null,
+      stop_details: null,
+      stop_reason: null,
+      stop_sequence: null,
+      usage: zeroUsage(),
+      content: [
+        {
+          type: 'tool_use',
+          id,
+          name: typeof event.payload.name === 'string' ? event.payload.name : 'unknown',
+          input: Object.hasOwn(event.payload, 'arguments_json') ? event.payload.arguments_json : {},
+        },
+      ],
+    },
+  };
+}
+
+function toolResult(
+  state: OapTranslatorState,
+  event: OapTranslatorEvent,
+  id: string
+): SDKUserMessage {
+  const failed = event.type !== 'action.call.completed';
+  const output = failed
+    ? (event.payload.error ?? event.payload.reason ?? event.type)
+    : event.payload.result;
+  const content = typeof output === 'string' ? output : (JSON.stringify(output) ?? '');
+  return {
+    type: 'user',
+    uuid: eventUuid(state.sessionId, `${event.id}:tool-result`),
+    session_id: state.sessionId,
+    parent_tool_use_id: null,
+    isSynthetic: true,
+    shouldQuery: false,
+    tool_use_result: output,
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: id, content, is_error: failed }],
+    },
+  };
+}
+
+function translateTool(state: OapTranslatorState, event: OapTranslatorEvent): OapTranslation {
+  const id = event.payload.tool_call_id;
+  if (typeof id !== 'string' || !id) return { state, messages: [] };
+  const prior = state.tools.find((tool) => tool.id === id);
+  if (prior?.settled) return { state, messages: [] };
+  const begins = event.type === 'action.call.requested' || event.type === 'action.call.started';
+  const ends = ['action.call.completed', 'action.call.failed', 'action.call.cancelled'].includes(
+    event.type
+  );
+  if (!begins && !ends) return { state, messages: [] };
+  const messages: SDKMessage[] = [];
+  if (!prior) messages.push(toolUse(state, event, id));
+  if (ends) messages.push(toolResult(state, event, id));
+  const tools = [...state.tools.filter((tool) => tool.id !== id), { id, settled: ends }];
+  return { state: { ...state, tools }, messages };
 }
 
 function terminalMessage(state: OapTranslatorState, event: OapTranslatorEvent): SDKResultMessage {
@@ -94,7 +198,7 @@ function terminalMessage(state: OapTranslatorState, event: OapTranslatorEvent): 
     is_error: failed,
     stop_reason: reason,
     total_cost_usd: 0,
-    usage: zeroUsage(),
+    usage: usageFor(event),
     modelUsage: {},
     permission_denials: [],
   };
@@ -117,9 +221,10 @@ function terminalMessage(state: OapTranslatorState, event: OapTranslatorEvent): 
 function translate(state: OapTranslatorState, event: OapTranslatorEvent): OapTranslation {
   if (state.terminal) return { state, messages: [] };
   if (event.type === 'content.delta') {
-    const message = textMessage(state, event);
+    const message = assistantMessage(state, event);
     return { state, messages: message ? [message] : [] };
   }
+  if (event.type.startsWith('action.call.')) return translateTool(state, event);
   if (['run.completed', 'run.failed', 'run.cancelled'].includes(event.type)) {
     return { state: { ...state, terminal: true }, messages: [terminalMessage(state, event)] };
   }

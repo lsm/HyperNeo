@@ -263,3 +263,110 @@ describe('translateOapEvent tool and usage fixtures', () => {
     );
   });
 });
+
+describe('translateOapEvent tool lifecycle', () => {
+  it('keeps interleaved calls distinct and marks failed results', () => {
+    const [request] = commandFixture;
+    const first = translateOapEvent(initialOapTranslatorState('session-1'), request);
+    const other = {
+      ...request,
+      id: 'event-other',
+      payload: { ...request.payload, tool_call_id: 'other' },
+    };
+    const second = translateOapEvent(first.state, other);
+    const failed = translateOapEvent(second.state, {
+      type: 'action.call.failed',
+      id: 'failure',
+      payload: { tool_call_id: 'tool-call-06', error: { code: 'failed', message: 'no' } },
+    });
+    expect(failed.messages).toMatchObject([
+      {
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-call-06',
+              is_error: true,
+              content: '{"code":"failed","message":"no"}',
+            },
+          ],
+        },
+      },
+    ]);
+    const completed = translateOapEvent(failed.state, {
+      type: 'action.call.completed',
+      id: 'done',
+      payload: { tool_call_id: 'other', result: 'ok' },
+    });
+    expect(completed.messages).toMatchObject([
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: 'other', is_error: false, content: 'ok' }],
+        },
+      },
+    ]);
+    expect(translateOapEvent(completed.state, other).messages).toEqual([]);
+    expect(first.state.tools).toEqual([{ id: 'tool-call-06', settled: false }]);
+  });
+  it('maps cache and reasoning usage and rejects invalid counts', () => {
+    const event = {
+      ...usageFixture,
+      payload: {
+        ...usageFixture.payload,
+        usage: {
+          input_tokens: 8,
+          output_tokens: 5,
+          cache_read_input_tokens: 3,
+          cache_write_input_tokens: 2,
+          reasoning_tokens: 4,
+        },
+      },
+    };
+    expect(translateOapEvent(initialOapTranslatorState('session-1'), event).messages).toMatchObject(
+      [
+        {
+          usage: {
+            input_tokens: 8,
+            output_tokens: 5,
+            cache_read_input_tokens: 3,
+            cache_creation_input_tokens: 2,
+            output_tokens_details: { thinking_tokens: 4 },
+          },
+        },
+      ]
+    );
+    const invalid = {
+      ...event,
+      payload: { ...event.payload, usage: { input_tokens: -1, output_tokens: 1.5 } },
+    };
+    expect(
+      translateOapEvent(initialOapTranslatorState('session-1'), invalid).messages
+    ).toMatchObject([{ usage: { input_tokens: 0, output_tokens: 0 } }]);
+  });
+  it('creates a pair for a terminal call when its start was not observed', () => {
+    const event = { ...commandFixture[2], id: 'isolated' };
+    const result = translateOapEvent(initialOapTranslatorState('session-1'), event);
+    expect(result.messages).toMatchObject([
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'tool-call-06', name: 'codex.command' }] },
+      },
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tool-call-06' }] },
+      },
+    ]);
+    expect(result.messages[0]?.uuid).not.toEqual(result.messages[1]?.uuid);
+  });
+  it('retains a null tool argument instead of replacing it', () => {
+    const event = {
+      ...commandFixture[0],
+      payload: { ...commandFixture[0].payload, arguments_json: null },
+    };
+    expect(translateOapEvent(initialOapTranslatorState('session-1'), event).messages).toMatchObject(
+      [{ message: { content: [{ type: 'tool_use', input: null }] } }]
+    );
+  });
+});
