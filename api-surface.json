@@ -28540,11 +28540,21 @@
                                 },
                                 "type": "array"
                               },
+                              "at": {
+                                "default": 0,
+                                "type": "number"
+                              },
+                              "id": {
+                                "default": "",
+                                "type": "string"
+                              },
                               "text": {
                                 "type": "string"
                               }
                             },
                             "required": [
+                              "id",
+                              "at",
                               "text",
                               "actions"
                             ],
@@ -28663,11 +28673,21 @@
                           },
                           "type": "array"
                         },
+                        "at": {
+                          "default": 0,
+                          "type": "number"
+                        },
+                        "id": {
+                          "default": "",
+                          "type": "string"
+                        },
                         "text": {
                           "type": "string"
                         }
                       },
                       "required": [
+                        "id",
+                        "at",
                         "text",
                         "actions"
                       ],
@@ -34491,6 +34511,11 @@
             "minItems": 2,
             "type": "array"
           },
+          "session": {
+            "description": "The notice key of a session with no todo.",
+            "minLength": 1,
+            "type": "string"
+          },
           "title": {
             "maxLength": 80,
             "minLength": 1,
@@ -34503,7 +34528,6 @@
           }
         },
         "required": [
-          "todoId",
           "title",
           "options"
         ],
@@ -36820,11 +36844,21 @@
                                 },
                                 "type": "array"
                               },
+                              "at": {
+                                "default": 0,
+                                "type": "number"
+                              },
+                              "id": {
+                                "default": "",
+                                "type": "string"
+                              },
                               "text": {
                                 "type": "string"
                               }
                             },
                             "required": [
+                              "id",
+                              "at",
                               "text",
                               "actions"
                             ],
@@ -36943,11 +36977,21 @@
                           },
                           "type": "array"
                         },
+                        "at": {
+                          "default": 0,
+                          "type": "number"
+                        },
+                        "id": {
+                          "default": "",
+                          "type": "string"
+                        },
                         "text": {
                           "type": "string"
                         }
                       },
                       "required": [
+                        "id",
+                        "at",
                         "text",
                         "actions"
                       ],
@@ -57813,11 +57857,19 @@
                         },
                         "type": "array"
                       },
+                      "at": {
+                        "type": "number"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
                       "text": {
                         "type": "string"
                       }
                     },
                     "required": [
+                      "id",
+                      "at",
                       "text",
                       "actions"
                     ],

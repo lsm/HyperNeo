@@ -228,6 +228,8 @@ export const WorkTurnEndSchema = z.object({
 });
 
 export const WorkTurnQuestionSchema = z.object({
+  id: z.string(),
+  at: z.number(),
   text: z.string(),
   actions: z.array(z.string()),
 });

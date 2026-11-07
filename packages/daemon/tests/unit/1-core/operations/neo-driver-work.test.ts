@@ -355,7 +355,7 @@ describe('decideCardLiveStatus with a turn-ended question', () => {
     status: 'needs_you' as const,
     lastActivityAt: 5,
     lastReplyAt: 5,
-    turnQuestion: { text: 'Ship it?', actions: [] },
+    turnQuestion: { id: 't', at: 1, text: 'Ship it?', actions: [] },
   };
   test('a question from before the send is stale, one after it needs an answer', () => {
     expect(decideCardLiveStatus(asked, 10, null)).toBe('running');
@@ -387,7 +387,7 @@ describe('readDriverSendBaseline', () => {
           value: {
             status: 'needs_you',
             lastActivityAt: 7,
-            turnQuestion: { text: 'Ship it?', actions: [] },
+            turnQuestion: { id: 't', at: 1, text: 'Ship it?', actions: [] },
           },
         }),
         50,

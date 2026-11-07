@@ -112,7 +112,7 @@ try {
   });
   assert.equal(asked.status, 'needs_you');
   assert.equal(asked.waitingFor, 'Ship it?');
-  assert.deepEqual(asked.turnQuestion, { text: 'Ship it?', actions: ['Yes', 'Not now'] });
+  assert.deepEqual((asked.turnQuestion as { actions: string[] }).actions, ['Yes', 'Not now']);
   const found = await read('work.find', { adapter: 'claude-desktop', localOnly: true, limit: 5 });
   const work = (
     (found.value ?? found) as { places?: { work: { ref: { id: string }; status: string }[] }[] }
