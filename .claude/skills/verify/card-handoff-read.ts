@@ -29,21 +29,32 @@ try {
   const neo = new NeoRepository(db); neo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   const store = new NeoAskTodoRepository(db);
   store.openAsk({ id: 'ask', projectId: null, sessionId: root, originMessageId: 'input', title: 'Synthetic', request: 'Synthetic', createdAt: 1 });
-  store.askQuestion('question', 'ask', { text: 'Read the report?', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null }, 1);
+  store.addTodo('todo', 'ask', { title: 'Review report', doneWhen: 'Reviewed', check: null, instruction: 'Review', named: null }, 1);
   const drafts = join(run, 'data/handoffs/worker/drafts'); await mkdir(drafts, { recursive: true });
   await writeFile(join(drafts, 'report.html'), '<h1>Safe card report</h1><script>window.bad=1</script>');
+  await writeFile(join(drafts, 'report.md'), '# Synthetic Markdown report\n');
   const worker = createOperationMcpHandler(() => app!.sessionManager.getOperationRegistry(), () => ({ sessionId: 'worker' }));
   const publication = JSON.parse((await worker({ name: 'handoff.publish', input: { name: 'report.html' } })).content[0].text);
   assert.equal(publication.kind, 'published');
   const reference = publication.publicReference;
+  const markdown = JSON.parse((await worker({ name: 'handoff.publish', input: { name: 'report.md' } })).content[0].text);
+  assert.equal(markdown.kind, 'published');
+  const references = [reference, markdown.publicReference];
   assert(!JSON.stringify(reference).includes(run));
-  db.prepare('UPDATE neo_questions SET artifacts_json = ? WHERE id = ?').run(JSON.stringify([reference]), 'question');
   const neoCall = createOperationMcpHandler(() => app!.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
-  const created = JSON.parse((await neoCall({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), shortText: 'Synthetic report', fullText: 'Synthetic report is ready.' } })).content[0].text);
+  const foreign = { ...reference, daemonId: '00000000-0000-4000-8000-000000000000' };
+  const badQuestion = JSON.parse((await neoCall({ name: 'neo.question.ask', input: { askId: 'ask', todoId: 'todo', kind: 'reply', text: 'Read the report?', artifacts: [foreign], retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } } })).content[0].text);
+  assert.equal(badQuestion.ok, false); assert.match(badQuestion.reason, /invalid_artifact_reference/); assert.equal(store.listQuestions('ask').length, 0);
+  const badPublication = JSON.parse((await neoCall({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), shortText: 'Synthetic report', fullText: 'Synthetic report is ready.', artifacts: [foreign] } })).content[0].text);
+  assert.equal(badPublication.accepted, false); assert.equal(badPublication.reason, 'invalid_artifact_reference');
+  const question = JSON.parse((await neoCall({ name: 'neo.question.ask', input: { askId: 'ask', todoId: 'todo', kind: 'reply', text: 'Read the report?', artifacts: references, retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } } })).content[0].text);
+  assert(question.ok, JSON.stringify(question));
+  assert.deepEqual(question.question.artifacts, references);
+  const questionId = question.question.id;
+  const created = JSON.parse((await neoCall({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), shortText: 'Synthetic report', fullText: 'Synthetic report is ready.', artifacts: references } })).content[0].text);
   assert(created.accepted);
-  const id = created.publication.publicationId, conversation = created.publication.conversationId;
-  const row = db.prepare('SELECT payload_json AS payload FROM neo_publications WHERE conversation_id = ? AND publication_id = ?').get(conversation, id) as {payload:string};
-  db.prepare('UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?').run(JSON.stringify({ ...JSON.parse(row.payload), artifacts: [reference] }), conversation, id);
+  assert.deepEqual(created.publication.artifacts, references);
+  const id = created.publication.publicationId;
   ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((resolve, reject) => { ws!.onopen = () => resolve(); ws!.onerror = reject; });
   const read = (source: {kind:string;id:string}, ref = reference) => new Promise<Record<string, any>>((resolve, reject) => {
@@ -51,17 +62,17 @@ try {
     ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if ((reply.requestId ?? reply.id) !== id) return; clearTimeout(timeout); reply.error ? reject(new Error(JSON.stringify(reply.error))) : resolve(reply.data); };
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'file.handoff.read', input: { source, reference: ref } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
-  for (const source of [{ kind: 'question', id: 'question' }, { kind: 'publication', id }]) {
+  for (const source of [{ kind: 'question', id: questionId }, { kind: 'publication', id }]) {
     const result = await read(source); assert(result.accepted); assert.equal(result.kind, 'html');
     const html = Buffer.from(result.data, 'base64').toString(); assert(html.includes('Safe card report')); assert(!html.includes('<script>')); assert(!JSON.stringify(result).includes(run));
+    const md = await read(source, markdown.publicReference); assert(md.accepted); assert.equal(md.kind, 'markdown'); assert.equal(Buffer.from(md.data, 'base64').toString(), '# Synthetic Markdown report\n');
   }
-  assert.equal((await read({ kind: 'question', id: 'question' }, { ...reference, name: 'forged.html' })).reason, 'forbidden');
+  assert.equal((await read({ kind: 'question', id: questionId }, { ...reference, name: 'forged.html' })).reason, 'forbidden');
   assert.equal((await read({ kind: 'question', id: 'missing' })).reason, 'forbidden');
   const ask = JSON.parse((await neoCall({ name: 'neo.ask.read', input: { askId: 'ask' } })).content[0].text);
-  assert(ask.ok); assert.deepEqual(ask.entry.questions[0].artifacts, [reference]);
+  assert(ask.ok); assert.deepEqual(ask.entry.questions[0].artifacts, references);
   const browserAt = process.argv.indexOf('--browser');
   if (browserAt >= 0) {
-    db.prepare('UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?').run(row.payload, conversation, id);
     const control = resolve(process.argv[browserAt + 1]);
     const dist = resolve('packages/web/dist');
     front = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request, server) {
@@ -83,8 +94,8 @@ try {
     assert.equal(JSON.parse(await readFile(join(run, 'evidence/browser.json'), 'utf8')).passed, true);
   }
   await chmod(publication.reference.path, 0o600); await writeFile(publication.reference.path, 'modified');
-  assert.equal((await read({ kind: 'question', id: 'question' })).reason, 'file_changed');
-  Object.assign(observed, { passed: true, realMcpPublish: true, questionRpc: true, publicationRpc: true, htmlSanitized: true, tamperRefused: true, sourceBound: true, noPathExposed: true });
+  assert.equal((await read({ kind: 'question', id: questionId })).reason, 'file_changed');
+  Object.assign(observed, { passed: true, realMcpPublish: true, questionWrite: true, publicationWrite: true, rejectedForeignWrites: true, questionRpc: true, publicationRpc: true, htmlSanitized: true, tamperRefused: true, sourceBound: true, noPathExposed: true });
 } finally { ws?.close(); await front?.stop(true); await app?.cleanup(); }
 observed.resourcesClosed = true;
 await writeFile(join(run, 'evidence/card-handoff.json'), JSON.stringify(observed, null, 2));

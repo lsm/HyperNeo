@@ -2,8 +2,8 @@
 
 Run `proof-run.sh` with `card-handoff-read.ts` from a fresh checkout. The helper
 starts an isolated daemon, publishes a synthetic HTML handoff through the worker
-MCP operation, and seeds its path-free reference on a synthetic question and
-publication. It reads both through the paired local-user RPC door, verifies HTML
+MCP operation, and attaches its path-free reference to a question and publication
+through their real MCP operations. It reads both through the paired local-user RPC door, verifies HTML
 sanitization and the absence of internal paths, and checks forged references,
 missing sources, and tampering. It closes the daemon and removes its temporary
 data. Focused `card-handoff-read.test.ts` additionally exercises Markdown, foreign
@@ -17,6 +17,5 @@ the disabled-script notice, and the absence of internal paths. Save screenshots
 after animations settle, write `{ "passed": true }` to `browser.json` in the
 run's evidence directory, and create the control directory's `done` file.
 
-The helper seeds the stored reference directly because publication and question
-writers do not yet accept handoff references. This does not prove card writing
-or the separate iOS client.
+The browser check covers the web client; the separate iOS client still needs its
+own integration and device verification.
