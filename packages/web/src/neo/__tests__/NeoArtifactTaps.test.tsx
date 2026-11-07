@@ -1,5 +1,6 @@
 import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import * as fileReferences from '@hyperneo/shared/types/artifact-reference';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactPreviewPanel } from '../../components/artifacts/ArtifactPreviewPanel.tsx';
@@ -58,6 +59,7 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 afterEach(cleanup);
+afterEach(() => vi.restoreAllMocks());
 
 describe('Neo artifact taps', () => {
   describe('current file cards', () => {
@@ -116,7 +118,7 @@ describe('Neo artifact taps', () => {
       const question: NeoQuestionEntry = {
         id: 'file-question',
         askId: 'ask',
-        text: 'Read `/synthetic/report.md`.',
+        text: `Read \`/synthetic/report.md\`, [the PR](https://github.com/acme/demo/pull/7) and [the blob](https://github.com/acme/demo/blob/${'a'.repeat(40)}/file.md).`,
         document: 'Full report: `/synthetic/report.md`',
         kind: 'reply',
         options: null,
@@ -140,12 +142,28 @@ describe('Neo artifact taps', () => {
           link: null,
         },
       };
-      render(
-        <NeoAskTodos
-          entry={testAskEntry('ask', 'Work', { questions: [question] })}
-          onAnswer={() => {}}
-        />
-      );
+      const parse = vi.spyOn(fileReferences, 'previewLinkedReferenceCandidates');
+      const entry = testAskEntry('ask', 'Work', { questions: [question] });
+      const { rerender } = render(<NeoAskTodos entry={entry} onAnswer={() => {}} />);
+      const inline = await screen.findByRole('link', {
+        name: 'Open preview: /synthetic/report.md',
+      });
+      const github = screen.getByRole('link', { name: 'the PR' });
+      const parseCount = parse.mock.calls.filter(([text]) => text === question.text).length;
+      expect(parseCount).toBeGreaterThan(0);
+      rerender(<NeoAskTodos entry={entry} onAnswer={() => {}} />);
+      expect(parse.mock.calls.filter(([text]) => text === question.text)).toHaveLength(parseCount);
+      expect(github.getAttribute('href')).toBe('https://github.com/acme/demo/pull/7');
+      expect(github.hasAttribute('data-preview-reference')).toBe(false);
+      expect(
+        screen.getByRole('link', { name: 'the blob' }).hasAttribute('data-preview-reference')
+      ).toBe(false);
+      fireEvent.click(inline);
+      expect(artifactPreviewStack.value.at(-1)).toEqual({
+        kind: 'reference',
+        source: { kind: 'question', id: question.id },
+        reference: '/synthetic/report.md',
+      });
       const card = await screen.findByRole('button', { name: 'Open current file: report.md' });
       expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(1);
       fireEvent.click(card);
@@ -154,6 +172,18 @@ describe('Neo artifact taps', () => {
         source: { kind: 'question', id: question.id },
         reference: '/synthetic/report.md',
       });
+      const updated = { ...question, text: 'Read `/synthetic/updated.md`.' };
+      rerender(
+        <NeoAskTodos
+          entry={testAskEntry('ask', 'Work', { questions: [updated] })}
+          onAnswer={() => {}}
+        />
+      );
+      expect(
+        await screen.findByRole('link', { name: 'Open preview: /synthetic/updated.md' })
+      ).toBeTruthy();
+      expect(parse.mock.calls.some(([text]) => text === updated.text)).toBe(true);
+      parse.mockRestore();
     });
 
     it('includes visible todo title/status and adds detail/action paths only when expanded', async () => {

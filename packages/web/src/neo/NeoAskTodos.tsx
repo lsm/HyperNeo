@@ -2,13 +2,15 @@ import { ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
 import { FileReferenceCards } from '../components/artifacts/FileReferenceCards.tsx';
+import { previewLinkedReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
+import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
 import type {
   NeoAskEntry,
   NeoQuestionAnswer,
   NeoQuestionEntry,
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Modal } from '../components/ui/Modal.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
@@ -246,6 +248,31 @@ function TodoRow({
   );
 }
 
+function QuestionMarkdown({ question, content }: { question: NeoQuestionEntry; content: string }) {
+  const references = useMemo(
+    () =>
+      previewLinkedReferenceCandidates(content)
+        .filter((item) => item.kind === 'local')
+        .map((item) => item.reference),
+    [content]
+  );
+  return (
+    <MarkdownRenderer
+      referenceHome={question.sourceSession?.daemon ? null : undefined}
+      content={content}
+      references={references}
+      onReference={(reference) =>
+        openArtifactPreview({
+          kind: 'reference',
+          source: { kind: 'question', id: question.id },
+          reference,
+        })
+      }
+      class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
+    />
+  );
+}
+
 function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
   const text = neoQuestionText(question);
   const preview = text.match(/^.{0,300}/su)?.[0] ?? '';
@@ -258,11 +285,7 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
   };
   return (
     <>
-      <MarkdownRenderer
-        referenceHome={question.sourceSession?.daemon ? null : undefined}
-        content={clipped ? `${preview.trimEnd()} …` : text}
-        class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
-      />
+      <QuestionMarkdown question={question} content={clipped ? `${preview.trimEnd()} …` : text} />
       {clipped && (
         <button
           ref={trigger}
@@ -276,11 +299,7 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
       )}
       {open && (
         <Modal isOpen onClose={close} title={t('question.readAll')} size="xl">
-          <MarkdownRenderer
-            referenceHome={question.sourceSession?.daemon ? null : undefined}
-            content={text}
-            class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
-          />
+          <QuestionMarkdown question={question} content={text} />
         </Modal>
       )}
       <QuestionDocument question={question} />
@@ -370,11 +389,7 @@ function QuestionBox({
           </button>
         </div>
       )}
-      <MarkdownRenderer
-        referenceHome={question.sourceSession?.daemon ? null : undefined}
-        content={neoQuestionText(question)}
-        class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
-      />
+      <QuestionMarkdown question={question} content={neoQuestionText(question)} />
       <QuestionDocument question={question} />
       <FileReferenceCards
         source={{ kind: 'question', id: question.id }}
