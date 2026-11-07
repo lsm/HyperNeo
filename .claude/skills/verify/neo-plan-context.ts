@@ -146,6 +146,23 @@ try {
     mainReads: reads,
   });
   assert.equal(reads, 0, 'Plan read ran target SQL on main');
+  for (const [id, parent] of [
+    ['legacy-child', 'plan-0'],
+    ['legacy-grandchild', 'legacy-child'],
+  ])
+    prepare(
+      'INSERT INTO neo_asks(id,session_id,title,request,parent_id,created_at,updated_at) VALUES(?,?,?,?,?,1,1)'
+    ).run(id, root, id, '', parent);
+  const legacy = await store.read('planContext');
+  const duplicateSteps = legacy.todos.length - new Set(legacy.todos.map((todo) => todo.id)).size;
+  const retainedSteps =
+    snapshot.todoAsks?.reduce((count, entry) => count + entry.todos.length, 0) ?? 0;
+  Object.assign(result, { duplicateSteps, retainedSteps });
+  assert.equal(duplicateSteps, 0, 'Legacy family steps were delivered more than once');
+  assert(
+    retainedSteps > 0,
+    'Compact snapshot discarded every step despite space for serialized details'
+  );
   assert(!existsSync(join(run, 'gh-calls')), 'A domain client was invoked');
   result.verified = true;
   console.log(
