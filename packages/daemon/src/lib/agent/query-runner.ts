@@ -885,10 +885,22 @@ export class QueryRunner {
           runAbortController.signal
         )) {
           const sdkMessage = message as SDKMessage;
+          const toolResult =
+            sdkMessage.type === 'user' &&
+            sdkMessage.isSynthetic === true &&
+            Array.isArray(sdkMessage.message.content) &&
+            sdkMessage.message.content.length > 0 &&
+            sdkMessage.message.content.every(
+              (part: unknown) =>
+                typeof part === 'object' &&
+                part !== null &&
+                'type' in part &&
+                part.type === 'tool_result'
+            );
           if (
             !live() &&
             !(
-              (sdkMessage.type === 'assistant' || sdkMessage.type === 'result') &&
+              (sdkMessage.type === 'assistant' || sdkMessage.type === 'result' || toolResult) &&
               oapQuery.wasInterrupted() &&
               maySettleInterrupted()
             )
@@ -904,7 +916,7 @@ export class QueryRunner {
           if (
             !live() &&
             !(
-              sdkMessage.type === 'assistant' &&
+              (sdkMessage.type === 'assistant' || toolResult) &&
               oapQuery.wasInterrupted() &&
               maySettleInterrupted()
             )

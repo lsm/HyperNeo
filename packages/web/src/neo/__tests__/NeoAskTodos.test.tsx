@@ -320,6 +320,40 @@ describe('NeoAskTodos', () => {
     expect(settle).not.toHaveBeenCalled();
   });
 
+  it('shows the topic at left and filters by it when tapped', () => {
+    const data = entry({ state: 'waiting' });
+    data.ask.topic = '家长控制';
+    const onTopic = vi.fn();
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} onTopic={onTopic} />);
+    const topic = app.getByRole('button', { name: '家长控制' });
+    expect((topic.querySelector('[data-topic-swatch]') as HTMLElement).style.backgroundColor).toBe(
+      'var(--neo-teal)'
+    );
+    fireEvent.click(topic);
+    expect(onTopic).toHaveBeenCalledWith('家长控制');
+  });
+
+  it('shows no topic when the ask has none', () => {
+    const app = render(<NeoAskTodos entry={entry({})} onAnswer={vi.fn()} onTopic={vi.fn()} />);
+    expect(app.container.querySelector('[data-topic-swatch]')).toBeNull();
+  });
+
+  it.each([
+    ['waiting', '等你', 'text-warning', true],
+    ['doing', '在做', 'text-[var(--neo-teal)]', false],
+    ['todo', '没开始', 'text-fg-faint', false],
+    ['done', '做完', 'text-success', false],
+    ['dropped', '放弃了', 'text-fg-faint', false],
+  ] as const)('shows the %s state as a dot and a word, not a pill', (state, word, tone, bold) => {
+    const app = render(<NeoAskTodos entry={entry({ state })} onAnswer={vi.fn()} />);
+    const label = app.getByText(word);
+    const status = label.closest('[data-ask-status]') as HTMLElement;
+    expect(status.className).toContain(tone);
+    expect(status.className).not.toContain('rounded-full');
+    expect(status.querySelector('[data-status-dot]')).toBeTruthy();
+    expect(label.className.includes('font-semibold')).toBe(bold);
+  });
+
   it('disables ask Reply while the card is unavailable', () => {
     locale.value = 'en';
     const reply = vi.fn();
