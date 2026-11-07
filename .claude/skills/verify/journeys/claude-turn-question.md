@@ -14,3 +14,7 @@ The real `work.status` reads an idle Claude Desktop session whose turn ended on 
 button labels. `work.find` stays `done` because it reads no transcript. After a
 human reply is written to the transcript, `work.status` no longer reports the
 question. Evidence is `observed.json` and `proof.log`.
+
+Before replying, schedule status treats the idle question as sendable. A queued
+reply clears the question before the worker consumes it. Queue removals, empty
+entries and sidechain replies must not clear it; unit regressions pin those cases.

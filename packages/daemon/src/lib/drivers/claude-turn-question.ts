@@ -41,13 +41,19 @@ function wrapUpQuestion(input: WrapUp): WorkTurnQuestion | null {
   };
 }
 
+const queuedReply = (entry: ClaudeTranscriptEntry & { operation?: unknown; content?: unknown }) =>
+  entry.type === 'queue-operation' &&
+  (entry.operation === undefined || entry.operation === 'enqueue') &&
+  typeof entry.content === 'string' &&
+  entry.content.trim().length > 0;
+
 export function claudeTurnQuestion(lines: readonly string[]): WorkTurnQuestion | null {
   let endedBy: unknown;
   let ended = false;
   for (let index = lines.length - 1; index >= 0; index--) {
     const entry = parseEntry(lines[index]);
     if (!entry || entry.isSidechain === true) continue;
-    if (claudeInputText(entry) !== null) return null;
+    if (claudeInputText(entry) !== null || queuedReply(entry)) return null;
     if (entry.type !== 'assistant') continue;
     const input = wrapUpInput(entry);
     if (input) return ended ? wrapUpQuestion(input) : null;
