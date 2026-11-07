@@ -75,7 +75,7 @@ function releaseHub(hub: OapQueryHub): void {
 }
 
 describe('OAP query hub transport', () => {
-  test.each(['queued', 'running', 'needs_you', 'invalid', 'probe-timeout'])(
+  test.each(['queued', 'running', 'invalid', 'probe-timeout'])(
     'a timed-out submit checks hub status %s before allowing another submit',
     async (status) => {
       const host = fixture();
@@ -106,6 +106,82 @@ describe('OAP query hub transport', () => {
       expect(host.request.mock.calls.filter(([op]) => op === 'submit')).toHaveLength(1);
     }
   );
+
+  test.each([{}, { held: false, status: 'running', run_id: 'old-run' }])(
+    'a successful idle or unheld status probe permits a new prompt after timeout',
+    async (work) => {
+      const host = fixture();
+      const timeout = new OapHubRequestError('timeout', 'submit timed out');
+      host.request.mockRejectedValueOnce(timeout);
+      const hub = createOapQueryHub(host.client);
+      await expect(hub.submit('synthetic-session', prompt)).rejects.toBe(timeout);
+      host.request.mockResolvedValueOnce({ ref: { session_id: 'synthetic-session' }, ...work });
+      await expect(
+        hub.submit('synthetic-session', { ...prompt, uuid: 'new-prompt' })
+      ).resolves.toEqual({ runId: 'run-1' });
+      expect(host.request.mock.calls.map(([op]) => op)).toEqual([
+        'submit',
+        'work.status',
+        'submit',
+      ]);
+      releaseHub(hub);
+    }
+  );
+
+  test('reconciles a parked unsupported interaction by cancelling its run and checking again', async () => {
+    const host = fixture();
+    const timeout = new OapHubRequestError('timeout', 'submit timed out');
+    host.request.mockRejectedValueOnce(timeout);
+    const hub = createOapQueryHub(host.client);
+    await expect(hub.submit('synthetic-session', prompt)).rejects.toBe(timeout);
+    host.request
+      .mockResolvedValueOnce({
+        ref: { session_id: 'synthetic-session' },
+        status: 'needs_you',
+        run_id: 'parked-run',
+      })
+      .mockResolvedValueOnce({
+        type: 'run.cancel.response',
+        payload: { accepted: true, session_id: 'synthetic-session', run_id: 'parked-run' },
+      })
+      .mockResolvedValueOnce({ ref: { session_id: 'synthetic-session' }, status: 'stopped' });
+    await expect(
+      hub.submit('synthetic-session', { ...prompt, uuid: 'new-prompt' })
+    ).resolves.toEqual({ runId: 'run-1' });
+    expect(host.request.mock.calls.map(([op]) => op)).toEqual([
+      'submit',
+      'work.status',
+      'cancel',
+      'work.status',
+      'submit',
+    ]);
+    expect(host.request.mock.calls[2][1]).toMatchObject({
+      request: { payload: { run_id: 'parked-run' } },
+    });
+    releaseHub(hub);
+  });
+
+  test('a failed status probe can recover on a later successful probe', async () => {
+    const host = fixture();
+    host.request.mockRejectedValueOnce(new OapHubRequestError('timeout', 'submit timed out'));
+    const hub = createOapQueryHub(host.client);
+    await expect(hub.submit('synthetic-session', prompt)).rejects.toThrow('submit timed out');
+    host.request.mockRejectedValueOnce(new Error('status unavailable'));
+    await expect(hub.submit('synthetic-session', prompt)).rejects.toMatchObject({
+      code: 'run_active',
+    });
+    host.request.mockResolvedValueOnce({ ref: { session_id: 'synthetic-session' } });
+    await expect(
+      hub.submit('synthetic-session', { ...prompt, uuid: 'new-prompt' })
+    ).resolves.toEqual({ runId: 'run-1' });
+    expect(host.request.mock.calls.map(([op]) => op)).toEqual([
+      'submit',
+      'work.status',
+      'work.status',
+      'submit',
+    ]);
+    releaseHub(hub);
+  });
 
   test.each(['done', 'failed', 'stopped'])(
     'a new prompt can submit after a timeout when hub work is %s',
