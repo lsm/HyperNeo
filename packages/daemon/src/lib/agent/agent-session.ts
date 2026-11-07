@@ -48,6 +48,7 @@ import { ErrorCategory, ErrorManager, type StructuredError } from '../error-mana
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import { OapReopenRefusedError } from '../oap/oap-reopen.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import {
   type CallerScopeResolver,
@@ -1329,6 +1330,8 @@ export class AgentSession
       await this.retirePastSdkContext();
       await this.oap!.clear!();
     } catch (error) {
+      if (error instanceof OapReopenRefusedError)
+        throw new ClearConversationUnsupportedError(error.message);
       this.logger.warn('Failed to clear the Codex thread:', error);
       await this.refuseContextClear('Could not clear the Codex thread. No message was sent.');
     }

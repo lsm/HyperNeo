@@ -5,6 +5,13 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { OapHubRequestError, type OapHubClient } from './oap-hub-client.ts';
 import { decideReopenFailure, decideSessionOpen } from './oap-session-open.ts';
 
+export class OapReopenRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OapReopenRefusedError';
+  }
+}
+
 export type OapReopenStore = Pick<
   Database,
   'updateSession' | 'getSDKMessages' | 'getUserMessagesByStatus' | 'saveSDKMessage'
@@ -108,7 +115,7 @@ async function refuseReopen(
     { added: [message], timestamp: Date.now() },
     { channel: `session:${session.id}` }
   );
-  throw new Error(text);
+  throw new OapReopenRefusedError(text);
 }
 
 async function openAfterClear(
