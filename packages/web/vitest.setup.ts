@@ -23,7 +23,10 @@ import { act, createEvent, fireEvent } from '@testing-library/preact';
 
 const compatibilityChange = fireEvent.change;
 fireEvent.change = (element, init) => {
-  if (!(element instanceof HTMLInputElement) || element.type !== 'file')
+  if (
+    !(element instanceof HTMLSelectElement) &&
+    (!(element instanceof HTMLInputElement) || element.type !== 'file')
+  )
     return compatibilityChange(element, init);
   let dispatched = false;
   act(() => {

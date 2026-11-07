@@ -94,6 +94,10 @@ try {
   });
   assert.equal(paired.status(), 200);
   await page.goto(`${origin}/settings?tab=neo-model`);
+  await row(1).waitFor();
+  assert.deepEqual(sent, [], 'opening Settings must not write');
+  assert.deepEqual(saved(), before);
+  await page.getByText('Advanced', { exact: true }).click();
   await row(2).waitFor();
   await page.waitForFunction(
     () => document.querySelectorAll('select[aria-label="Neo model 2 thinking"] option').length === 2
@@ -106,17 +110,27 @@ try {
   assert.deepEqual(sent, [], 'opening Settings must not write');
   assert.deepEqual(saved(), before);
 
-  await page.getByRole('button', { name: 'Save Neo models', exact: true }).click();
-  for (let i = 0; i < 40 && !sent.length; i++) await page.waitForTimeout(100);
-  assert.equal(sent.length, 1);
-  await page.waitForTimeout(300);
-  assert.deepEqual(saved(), before, 'saving must keep the unsupported levels');
+  const compact = page.getByLabel('Neo model 1 auto-compact percentage', { exact: true });
+  await compact.fill('70');
+  await compact.blur();
+  for (let i = 0; i < 40 && (!sent.length || saved().autoCompactPercent !== 70); i++) {
+    await page.waitForTimeout(100);
+  }
+  assert.equal(sent.length, 1, 'one automatic save after changing compaction');
+  const after = saved();
+  assert.equal(after.autoCompactPercent, 70);
+  assert.equal(after.thinkingLevel, before.thinkingLevel, 'primary unsupported level is retained');
+  assert.deepEqual(after.fallbacks, before.fallbacks, 'fallback unsupported level is retained');
+  evidence.after = after;
 
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.reload();
+    await page.getByText('Advanced', { exact: true }).click();
     await row(2).waitFor();
+    assert.equal(await row(1).inputValue(), 'think32k');
     assert.equal(await row(2).inputValue(), 'think24k');
+    assert.equal(await page.getByText('Saved level is not supported by this model.').count(), 2);
     const box = await row(2).boundingBox();
     assert(box && box.x >= 0 && box.x + box.width <= width + 1, JSON.stringify(box));
     await row(2).scrollIntoViewIfNeeded();
