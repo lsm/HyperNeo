@@ -6701,6 +6701,10 @@
           "codeId": {
             "minLength": 1,
             "type": "string"
+          },
+          "lastGroup": {
+            "pattern": "^[0-9a-fA-F]{4}$",
+            "type": "string"
           }
         },
         "required": [
@@ -6750,6 +6754,10 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "confirm": {
+            "const": "two-way",
+            "type": "string"
+          },
           "kind": {
             "enum": [
               "human",
@@ -6904,6 +6912,19 @@
                     "expiresAt": {
                       "type": "number"
                     },
+                    "fingerprint": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "id": {
                       "type": "string"
                     },
@@ -6934,7 +6955,8 @@
                     "kind",
                     "name",
                     "requestedName",
-                    "expiresAt"
+                    "expiresAt",
+                    "fingerprint"
                   ],
                   "type": "object"
                 },

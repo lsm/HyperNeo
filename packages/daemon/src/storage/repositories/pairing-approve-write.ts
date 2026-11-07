@@ -1,20 +1,55 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { defineDbOp } from '../db-gateway/db-op.ts';
+import type { Database } from '../sqlite-compat.ts';
 import { DevicePairingRepository } from './device-pairing-repository.ts';
+import {
+  decidePairApproval,
+  type PairApprovalFacts,
+  type PairApprovalStep,
+} from '../../lib/pairing/pair-approval.ts';
 
-type PairingApproval = 'approved' | 'not_pending' | 'not_paired';
+type PairingApproval = Exclude<PairApprovalStep, 'approve'> | 'approved';
 type PairingDenial = 'denied' | 'not_pending' | 'not_paired';
 
-export const pairingApproveWrite = defineDbOp<
-  { codeId: string; deviceId: string; now: number },
-  PairingApproval
->({
+export interface PairApprovalRequest {
+  codeId: string;
+  deviceId: string;
+  lastGroup?: string;
+  now: number;
+}
+
+const approvalFacts = (
+  repo: DevicePairingRepository,
+  request: PairApprovalRequest
+): PairApprovalFacts => ({
+  active: repo.isActiveDevice(request.deviceId),
+  localTools: request.deviceId.startsWith('local-rpc:'),
+  code: repo.pendingCode(request.codeId, request.now),
+  lastGroup: request.lastGroup,
+});
+
+const applyApproval = (
+  step: PairApprovalStep,
+  repo: DevicePairingRepository,
+  { codeId, now }: PairApprovalRequest
+): PairingApproval => {
+  if (step === 'wrong_fingerprint') repo.deny(codeId, now);
+  if (step !== 'approve') return step;
+  return repo.approve(codeId, now) ? 'approved' : 'not_pending';
+};
+
+const approvePairCode = (superpipe({})('pairing.approve-code') as PipelineAPI)
+  .input(['db', 'request'])
+  .pipe((db: Database) => new DevicePairingRepository(db), 'db', 'repo')
+  .pipe(approvalFacts, ['repo', 'request'], 'facts')
+  .pipe(decidePairApproval, ['facts'], 'step')
+  .pipe(applyApproval, ['step', 'repo', 'request'], 'outcome')
+  .end('outcome') as (db: Database, request: PairApprovalRequest) => PairingApproval;
+
+export const pairingApproveWrite = defineDbOp<PairApprovalRequest, PairingApproval>({
   name: 'pairing.approveCode.write',
   mode: 'write',
-  run: (db, { codeId, deviceId, now }) => {
-    const repo = new DevicePairingRepository(db);
-    if (!repo.isActiveDevice(deviceId)) return 'not_paired';
-    return repo.approve(codeId, now) ? 'approved' : 'not_pending';
-  },
+  run: (db, request) => approvePairCode(db, request),
 });
 
 export const pairingDenyWrite = defineDbOp<

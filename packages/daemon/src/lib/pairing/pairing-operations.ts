@@ -36,6 +36,18 @@ export const NEEDS_PAIRED_HUMAN =
 export const NO_HUMAN_DEVICE =
   'no_human_device: no active human device can Allow this code. For lost-phone recovery, run hyperneo devices reset-human on the daemon machine, then hyperneo pair. The reset notifies Neo.';
 
+export const NOT_REQUESTED =
+  'not_requested: the new phone has not confirmed yet. Wait until it shows the fingerprint and asks for confirmation.';
+
+export const WRONG_FINGERPRINT =
+  'wrong_fingerprint: the last group did not match the new phone, so the code is denied. Scan a new code.';
+
+const DECIDED_REASON: Partial<Record<string, string>> = {
+  not_pending: 'not_pending: no pending code with that id.',
+  not_requested: NOT_REQUESTED,
+  wrong_fingerprint: WRONG_FINGERPRINT,
+};
+
 export function planPairingCode(
   caller: OperationCaller,
   paired: { all: number; humans: number },
@@ -66,24 +78,27 @@ export function createDevicePairingOperations({
   const decidePending = async (
     caller: OperationCaller,
     notPaired: string,
-    write: (deviceId: string) => Promise<'approved' | 'denied' | 'not_pending' | 'not_paired'>
+    write: (deviceId: string) => Promise<string>
   ) => {
     if (!isLocalUser(caller)) return refused;
     if (caller.device?.kind !== 'human') return { ok: false as const, reason: notPaired };
     const decided = await write(caller.device.deviceId);
     if (decided === 'not_paired') return { ok: false as const, reason: notPaired };
-    return decided === 'not_pending'
-      ? { ok: false as const, reason: 'not_pending: no pending code with that id.' }
-      : { ok: true as const };
+    const reason = DECIDED_REASON[decided];
+    return reason ? { ok: false as const, reason } : { ok: true as const };
   };
   return [
     defineOperation({
       name: 'device.pair.create',
       description:
-        'Make a single-use pairing code, valid 10 minutes, for a new device of the given kind. The local CLI makes the first device’s code; later codes need Allow from a paired human. Explicit local devices reset-human recovery permits one replacement human pairing without Allow.',
+        'Make a single-use pairing code, valid 10 minutes, for a new device of the given kind. The local CLI makes the first device’s code; later codes need Allow from a paired human. Explicit local devices reset-human recovery permits one replacement human pairing without Allow. confirm two-way (human only) starts pending and needs the last fingerprint group typed on approval.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z
-        .object({ kind: Kind, name: z.string().trim().min(1).max(80).optional() })
+        .object({
+          kind: Kind,
+          name: z.string().trim().min(1).max(80).optional(),
+          confirm: z.literal('two-way').optional(),
+        })
         .strict(),
       resultSchema: z.union([
         z.object({
@@ -96,23 +111,24 @@ export function createDevicePairingOperations({
         Refused,
       ]),
       execute: async (input, caller) =>
-        pairing().createCodeAsync(
-          input.kind,
-          input.name ?? null,
-          {
+        pairing().createCodeAsync({
+          kind: input.kind,
+          name: input.name ?? null,
+          caller: {
             source: caller.source,
             principal: caller.principal,
             device: caller.device
               ? { deviceId: caller.device.deviceId, kind: caller.device.kind }
               : undefined,
           },
-          now()
-        ),
+          now: now(),
+          twoWay: input.confirm === 'two-way',
+        }),
     }),
     defineOperation({
       name: 'device.pair.pending',
       description:
-        'List issued codes waiting for Allow by an active paired human (never the codes themselves).',
+        'List issued codes waiting for Allow by an active paired human (never the codes themselves). A two-way code shows the first 7 fingerprint groups once its phone confirmed.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([
@@ -125,6 +141,7 @@ export function createDevicePairingOperations({
               name: z.string().nullable(),
               requestedName: z.string().nullable(),
               expiresAt: z.number(),
+              fingerprint: z.array(z.string()).nullable(),
             })
           ),
         }),
@@ -137,13 +154,28 @@ export function createDevicePairingOperations({
     }),
     defineOperation({
       name: 'device.pair.approve',
-      description: 'Allow a pending pairing code so its device can pair.',
+      description:
+        'Allow a pending pairing code so its device can pair. A two-way code needs lastGroup, the last fingerprint group shown on the new phone, typed on a paired phone or browser; a wrong one denies the code.',
       policy: { safetyClass: 'human_only' },
-      inputSchema: z.object({ codeId: z.string().min(1) }).strict(),
+      inputSchema: z
+        .object({
+          codeId: z.string().min(1),
+          lastGroup: z
+            .string()
+            .trim()
+            .regex(/^[0-9a-fA-F]{4}$/)
+            .optional(),
+        })
+        .strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
       execute: (input, caller) =>
         decidePending(caller, ALLOW_NEEDS_PAIRED_HUMAN, (deviceId) =>
-          pairing().approveAsync(input.codeId, deviceId, now())
+          pairing().approveAsync({
+            codeId: input.codeId,
+            deviceId,
+            lastGroup: input.lastGroup,
+            now: now(),
+          })
         ),
     }),
     defineOperation({
