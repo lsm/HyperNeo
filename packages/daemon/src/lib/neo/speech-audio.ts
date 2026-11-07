@@ -1,8 +1,52 @@
 import { Buffer } from 'node:buffer';
+import { setTimeout as sleep } from 'node:timers/promises';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../logger.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
 type Target = { id: string; sessionId: string; clientId: string; text: string };
+type SpeechRetry = { retryInMs: number } | { giveUp: string };
+const SPEECH_DEADLINE_MS = 180_000;
+
+const retryAfterMs = (header: string | null, now: number): number | null => {
+  if (header === null) return null;
+  const seconds = Number(header);
+  if (header.trim() && Number.isFinite(seconds)) return seconds * 1000;
+  const date = Date.parse(header);
+  return Number.isNaN(date) ? null : date - now;
+};
+
+export const planSpeechRetry = (superpipe({})('neo.speech.retry') as PipelineAPI)
+  .input(['status', 'retryAfter', 'attempt', 'elapsedMs', 'now'])
+  .pipe(
+    (status: number) =>
+      status === 503 || status === 429
+        ? { value: status }
+        : { reason: { giveUp: `upstream_http_${status}` } },
+    'status',
+    'result:plan'
+  )
+  .pipe(
+    (retryAfter: string | null, attempt: number, now: number) =>
+      Math.max(250, retryAfterMs(retryAfter, now) ?? Math.min(1000 * 2 ** attempt, 10_000)),
+    ['retryAfter', 'attempt', 'now'],
+    'delay'
+  )
+  .pipe(
+    (delay: number, elapsedMs: number): SpeechRetry =>
+      elapsedMs + delay < SPEECH_DEADLINE_MS
+        ? { retryInMs: delay }
+        : { giveUp: 'deadline_exceeded' },
+    ['delay', 'elapsedMs'],
+    'plan'
+  )
+  .end('plan') as (
+  status: number,
+  retryAfter: string | null,
+  attempt: number,
+  elapsedMs: number,
+  now: number
+) => SpeechRetry;
 
 export class NeoSpeechAudio {
   private readonly jobs = new Map<string, AbortController>();
@@ -70,23 +114,42 @@ export class NeoSpeechAudio {
     voiceDiagnostic('voice.tts.queued', { ...timing, atMs: Date.now() });
     const controller = new AbortController();
     this.jobs.set(target.id, controller);
-    const expires = setTimeout(() => controller.abort(), 180_000);
+    const queuedAt = Date.now();
+    const failure = { reason: 'upstream_or_audio_error', status: null as number | null };
+    const expires = setTimeout(() => controller.abort(), SPEECH_DEADLINE_MS);
     const job = this.serial
       .then(async () => {
         controller.signal.throwIfAborted();
         voiceDiagnostic('voice.tts.request_started', { ...timing, atMs: Date.now() });
-        const response = await this.request(this.url('/v1/audio/speech'), {
-          method: 'POST',
-          signal: controller.signal,
-          redirect: 'error',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            input: target.text,
-            voice,
-            language: 'auto',
-            response_format: 'pcm',
-          }),
-        });
+        const synthesize = () =>
+          this.request(this.url('/v1/audio/speech'), {
+            method: 'POST',
+            signal: controller.signal,
+            redirect: 'error',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              input: target.text,
+              voice,
+              language: 'auto',
+              response_format: 'pcm',
+            }),
+          });
+        let response = await synthesize();
+        for (let attempt = 0; !response.ok; attempt++) {
+          failure.status = response.status;
+          await response.body?.cancel().catch(() => {});
+          const plan = planSpeechRetry(
+            response.status,
+            response.headers.get('retry-after'),
+            attempt,
+            Date.now() - queuedAt,
+            Date.now()
+          );
+          if ('giveUp' in plan) throw new Error((failure.reason = plan.giveUp));
+          await sleep(plan.retryInMs, undefined, { signal: controller.signal });
+          response = await synthesize();
+        }
+        failure.status = response.status;
         if (
           !response.ok ||
           !response.headers.get('content-type')?.startsWith('audio/pcm') ||
@@ -137,10 +200,12 @@ export class NeoSpeechAudio {
       })
       .catch(async () => {
         if (!this.jobs.has(target.id)) return;
-        voiceDiagnostic('voice.tts.failed', { ...timing, atMs: Date.now() });
+        const reason = controller.signal.aborted ? 'deadline_exceeded' : failure.reason;
+        voiceDiagnostic('voice.tts.failed', { ...timing, ...failure, reason, atMs: Date.now() });
         new Logger('NeoSpeechAudio').warn('Speech synthesis failed', {
           id: target.id,
-          reason: controller.signal.aborted ? 'deadline_exceeded' : 'upstream_or_audio_error',
+          ...failure,
+          reason,
         });
         this.send(target.clientId, { type: 'failed', id: target.id, sessionId: target.sessionId });
         await this.failed(target);
