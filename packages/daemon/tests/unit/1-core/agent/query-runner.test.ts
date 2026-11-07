@@ -11,7 +11,10 @@ import {
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
 import { inferAvailableSpawnRoute } from '../../../../src/lib/providers/registry';
-import { resetSdkStartupGateForTests } from '../../../../src/lib/agent/sdk-startup-gate';
+import {
+  getSdkStartupGate,
+  resetSdkStartupGateForTests,
+} from '../../../../src/lib/agent/sdk-startup-gate';
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import type { Session, MessageHub } from '@hyperneo/shared';
@@ -342,6 +345,41 @@ describe('QueryRunner', () => {
       (query as unknown as ReturnType<typeof mock>).mockImplementation(async () => ({
         interrupt: () => {},
       }));
+    });
+
+    it('refuses Codex clearly until OAP can open the session workspace', async () => {
+      const factory = mock(() => {
+        throw new Error('SDK factory was invoked');
+      });
+      const startup = jest.spyOn(getSdkStartupGate(), 'acquire');
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        messageQueue: queue,
+      });
+      const send = queue
+        .enqueueWithId('codex-refusal', 'Synthetic prompt', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx, factory);
+      await runner.start();
+      await ctx.queryPromise;
+      expect((await send).message).toMatch(/open-directory.*not available/i);
+      expect(handleErrorSpy).toHaveBeenCalledWith(
+        ctx.session.id,
+        expect.any(Error),
+        expect.anything(),
+        expect.stringMatching(/open-directory.*not available/i),
+        expect.anything(),
+        expect.anything(),
+        expect.any(Function)
+      );
+      expect(factory).not.toHaveBeenCalled();
+      expect(startup).not.toHaveBeenCalled();
+      expect(trackAgentProcessSpy).not.toHaveBeenCalled();
+      startup.mockRestore();
     });
 
     it('delivers injected query messages without calling the SDK query', async () => {
