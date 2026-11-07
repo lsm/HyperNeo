@@ -21,7 +21,7 @@ copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 chmodSync(join(run, 'bin/gh'), 0o700);
 const peer = join(run, 'synthetic-codex');
 writeFileSync(peer, `#!/usr/bin/python3
-import json,os,sys
+import json,os,sys,time
 log=os.path.join(os.environ['CODEX_HOME'],'calls.jsonl')
 marker=os.path.join(os.environ['CODEX_HOME'],'fail-first')
 if os.path.exists(marker):
@@ -39,8 +39,15 @@ for line in sys.stdin:
   result={'thread':{'id':thread},'model':'synthetic-model','cwd':os.getcwd(),'approvalPolicy':'on-request','sandbox':{'type':'workspaceWrite','writableRoots':[],'networkAccess':False}}
  elif method=='turn/start': result={'turn':{'id':'turn-'+str(request['id']),'status':'inProgress'}}
  else: result={}
+ if method=='turn/start' and 'Synthetic gated admission' in json.dumps(request):
+  open(os.path.join(os.environ['CODEX_HOME'],'admission-waiting'),'w').close()
+  while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'admission-release')): time.sleep(0.01)
  emit({'id':request['id'],'result':result})
  if method=='turn/start':
+  if 'Synthetic native crash' in json.dumps(request): sys.exit(23)
+  if 'Synthetic gated admission' in json.dumps(request):
+   open(os.path.join(os.environ['CODEX_HOME'],'terminal-waiting'),'w').close()
+   while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'terminal-release')): time.sleep(0.01)
   if 'Synthetic hold for crash' in json.dumps(request): continue
   thread=request['params']['threadId']; turn=result['turn']['id']
   emit({'method':'turn/started','params':{'threadId':thread,'turn':{'id':turn,'status':'inProgress'}}})
@@ -139,6 +146,39 @@ try {
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 2);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash')).length, 1);
     Object.assign(evidence, { port: app.server.port, priorCompletedTurns: 0, crashedRunSubmissions: 1, automaticResendsObserved: 0, freshSessionAfterCrash: true, pass: true });
+  } else if (mode === 'lifecycle') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic gated admission' });
+    await waitFor(() => existsSync(join(run, 'codex-home/admission-waiting')), 'native submit before acceptance');
+    assert.equal(app.db.getUserMessagesByStatus(firstId, 'submitted').messages.length, 1);
+    assert.equal(app.db.getUserMessagesByStatus(firstId, 'consumed').messages.length, 0);
+    assert.equal(app.db.getSDKMessages(firstId).messages.filter((row) => row.type === 'result').length, 0);
+    writeFileSync(join(run, 'codex-home/admission-release'), 'synthetic');
+    await waitFor(() => existsSync(join(run, 'codex-home/terminal-waiting')), 'native acceptance before terminal');
+    await waitFor(() => app!.db.getUserMessagesByStatus(firstId, 'consumed').messages.length === 1, 'accepted prompt consumed');
+    assert.equal(app.db.getSDKMessages(firstId).messages.filter((row) => row.type === 'result').length, 0);
+    writeFileSync(join(run, 'codex-home/terminal-release'), 'synthetic');
+    await waitFor(() => app!.db.getSDKMessages(firstId).messages.filter((row) => row.type === 'result').length === 1 && !first.queryPromise, 'single terminal result');
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    Object.assign(evidence, { port: app.server.port, submittedBeforeAcceptance: true, consumedAfterAcceptance: true, terminalResults: 1, submittedTurns: 1, pass: true });
+  } else if (mode === 'native-crash') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic native crash' });
+    await waitFor(() => app!.db.getSDKMessages(firstId).messages.some((row) => row.type === 'result') && !first.queryPromise, 'native crash terminal');
+    const results = app.db.getSDKMessages(firstId).messages.filter((row) => row.type === 'result');
+    assert.equal(results.length, 1);
+    assert.equal(results[0].is_error, true);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    Object.assign(evidence, { port: app.server.port, nativeCrashErrorTerminals: results.length, submittedTurns: 1, pass: true });
+  } else if (mode === 'cancel') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic hold for crash' });
+    await waitFor(() => calls().some((call) => call.request.method === 'turn/start'), 'turn before interrupt');
+    await waitFor(() => app!.db.getUserMessagesByStatus(firstId, 'consumed').messages.length === 1, 'accepted prompt before interrupt');
+    await first.handleInterrupt();
+    await waitFor(() => app!.db.getSDKMessages(firstId).messages.filter((row) => row.type === 'result').length === 1, 'cancellation terminal');
+    const results = app.db.getSDKMessages(firstId).messages.filter((row) => row.type === 'result');
+    assert.equal(results.length, 1);
+    assert.equal(results[0].is_error, true);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/interrupt').length, 1);
+    Object.assign(evidence, { port: app.server.port, cancellationTerminals: results.length, nativeInterrupts: 1, pass: true });
   } else if (mode === 'question') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic free text question' });
     await waitFor(() => errors.some((error) => /unsupported text question/i.test(error)), 'visible unsupported text question');

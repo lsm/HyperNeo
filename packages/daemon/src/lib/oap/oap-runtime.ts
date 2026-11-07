@@ -134,9 +134,9 @@ export function createOapRuntime(
                 const hub = engine.createQueryHub(client);
                 slot.hub = {
                   ...hub,
-                  submit: (sessionId, message) => {
+                  submit: (...args) => {
                     slot.submitted = true;
-                    return hub.submit(sessionId, message);
+                    return hub.submit(...args);
                   },
                 };
                 return slot.hub;

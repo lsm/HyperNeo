@@ -8,10 +8,10 @@ export { createOapRuntime } from './oap-runtime.ts';
 type OapEvent = { type: string; [key: string]: unknown };
 
 export type OapQueryHub = {
-  submit(sessionId: string, message: SDKUserMessage): Promise<{ runId: string }>;
+  submit(sessionId: string, message: SDKUserMessage, owner?: symbol): Promise<{ runId: string }>;
   events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OapEvent>;
   cancel(sessionId: string, runId: string): Promise<void>;
-  release?(): void;
+  release?(owner?: symbol): void;
 };
 
 type OapQueryTranslator = {
@@ -24,6 +24,10 @@ type OapQueryOptions = {
   prompt: AsyncIterable<SDKUserMessage>;
   hub: OapQueryHub;
   translator: OapQueryTranslator;
+  isLive?: () => boolean;
+  maySettleInterrupted?: () => boolean;
+  onSubmitted?: (message: SDKUserMessage) => Promise<void>;
+  onAccepted?: (message: SDKUserMessage, runId: string) => Promise<void>;
 };
 
 function isTerminal(event: OapEvent): boolean {
@@ -71,36 +75,84 @@ export class OapQuery implements QueryLike {
   private readonly prompt: AsyncIterable<SDKUserMessage>;
   private readonly hub: OapQueryHub;
   private readonly translator: OapQueryTranslator;
+  private readonly isLive: () => boolean;
+  private readonly maySettleInterrupted: () => boolean;
+  private readonly onSubmitted?: OapQueryOptions['onSubmitted'];
+  private readonly onAccepted?: OapQueryOptions['onAccepted'];
   private activeRun: string | undefined;
   private pendingRun: Promise<string> | undefined;
   private cancelPromise: Promise<void> | undefined;
+  private runSettled: Promise<void> | undefined;
   private interrupted = false;
   private closed = false;
   private started = false;
   private readonly closeSignal = new AbortController();
+  private readonly owner = Symbol();
 
   constructor(options: OapQueryOptions) {
     this.sessionId = options.sessionId;
     this.prompt = options.prompt;
     this.hub = options.hub;
     this.translator = options.translator;
+    this.isLive = options.isLive ?? (() => true);
+    this.maySettleInterrupted = options.maySettleInterrupted ?? (() => false);
+    this.onSubmitted = options.onSubmitted;
+    this.onAccepted = options.onAccepted;
   }
 
   async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {
     if (this.started) throw new Error('OAP query can only be iterated once');
     this.started = true;
     for await (const message of untilClosed(this.prompt, this.closeSignal.signal)) {
-      if (this.closed || this.interrupted) return;
-      this.pendingRun = this.hub.submit(this.sessionId, message).then(({ runId }) => {
-        this.activeRun = runId;
-        return runId;
+      if (this.closed || this.interrupted || !this.isLive()) return;
+      await this.onSubmitted?.(message);
+      if (this.closed || this.interrupted || !this.isLive()) return;
+      let settle!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        settle = resolve;
       });
+      this.runSettled = settled;
+      const finish = () => {
+        settle();
+        if (this.runSettled === settled) this.runSettled = undefined;
+      };
+      this.pendingRun = this.hub
+        .submit(this.sessionId, message, this.owner)
+        .then(({ runId }) => {
+          this.activeRun = runId;
+          return runId;
+        })
+        .catch((error: unknown) => {
+          finish();
+          throw error;
+        });
       const runId = await this.pendingRun;
       this.pendingRun = undefined;
-      this.translator.beginRun?.();
-      if (this.closed || this.interrupted) {
-        await this.cancelActive();
-        if (this.closed) return;
+      try {
+        this.translator.beginRun?.();
+        if (this.closed || this.interrupted || !this.isLive()) {
+          await this.cancelActive();
+          if (this.closed || (!this.isLive() && !this.canSettleInterrupted())) {
+            finish();
+            return;
+          }
+        }
+        if (this.isLive()) await this.onAccepted?.(message, runId);
+      } catch (error) {
+        try {
+          await this.cancelActive();
+        } finally {
+          finish();
+        }
+        throw error;
+      }
+      if (this.closed || (!this.isLive() && !this.canSettleInterrupted())) {
+        try {
+          await this.cancelActive();
+        } finally {
+          finish();
+        }
+        return;
       }
       let terminal = false;
       try {
@@ -108,6 +160,11 @@ export class OapQuery implements QueryLike {
           this.hub.events(this.sessionId, runId, this.closeSignal.signal),
           this.closeSignal.signal
         )) {
+          if (!this.isLive() && !this.canSettleInterrupted()) {
+            await this.cancelActive();
+            return;
+          }
+          if (this.interrupted && !isTerminal(event)) continue;
           const unsupported = unsupportedInteraction(event);
           if (unsupported) {
             try {
@@ -128,25 +185,39 @@ export class OapQuery implements QueryLike {
             }
             throw error;
           }
-          for (const message of translated) yield message;
           if (isTerminal(event)) {
             terminal = true;
-            break;
+            this.activeRun = undefined;
           }
+          for (const message of translated) {
+            if (!this.isLive() && !this.canSettleInterrupted()) return;
+            yield message;
+          }
+          if (terminal) break;
         }
       } finally {
         this.activeRun = undefined;
+        finish();
       }
       if (!terminal && !this.closed) throw new Error('OAP event stream ended before run terminal');
       if (this.closed || this.interrupted) return;
     }
   }
 
+  prepareInterrupt(): void {
+    this.interrupted = true;
+  }
+
+  wasInterrupted(): boolean {
+    return this.interrupted;
+  }
+
   async interrupt(): Promise<undefined> {
     if (this.closed) return undefined;
-    this.interrupted = true;
+    this.prepareInterrupt();
     if (this.pendingRun) await this.pendingRun;
     await this.cancelActive();
+    if (this.runSettled) await this.runSettled;
     return undefined;
   }
 
@@ -154,7 +225,7 @@ export class OapQuery implements QueryLike {
     if (this.closed) return;
     this.closed = true;
     this.closeSignal.abort();
-    this.hub.release?.();
+    this.hub.release?.(this.owner);
     void this.cancelActive().catch(() => {});
   }
 
@@ -166,6 +237,10 @@ export class OapQuery implements QueryLike {
     if (!this.activeRun) return Promise.resolve();
     this.cancelPromise ??= this.hub.cancel(this.sessionId, this.activeRun);
     return this.cancelPromise;
+  }
+
+  private canSettleInterrupted(): boolean {
+    return this.interrupted && this.maySettleInterrupted();
   }
 }
 

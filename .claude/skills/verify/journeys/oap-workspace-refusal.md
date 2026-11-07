@@ -15,6 +15,8 @@ runtime and sends two turns through the daemon; each must persist a text result
 and release the query and queue without cancelling its completed run. It then
 delays an old run's failure until after a new generation has queued a synthetic
 prompt, and verifies that the replacement prompt and attempt remain live. The
-provider key is synthetic and stored only in the temporary database. No real
+helper also sends an old run's event after a successor starts and verifies the
+event is dropped while the successor stays live. The provider key is synthetic
+and stored only in the temporary database. No real
 Codex or OAP process runs, so real workspace routing remains unverified. Cleanup
 closes the socket and daemon before the wrapper removes synthetic data.

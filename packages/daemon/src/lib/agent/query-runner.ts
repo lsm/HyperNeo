@@ -798,10 +798,12 @@ export class QueryRunner {
     let removeFlagSettingsFile: (() => void) | undefined;
     let episodeId: string | undefined;
     let engine: 'sdk' | 'codex' = 'sdk';
+    let oapQuery: ReturnType<typeof createOapQuery> | undefined;
     const interruptEpoch = messageQueue.getUserInterruptEpoch?.();
     const owns = () =>
       this.ctx.getQueryGeneration() === queryGeneration && !this.ctx.isCleaningUp();
     const live = () => attemptToken.isLive() && owns();
+    const maySettleInterrupted = () => owns() && this.ctx.attemptTokens.isLatest(attemptToken);
 
     try {
       engine = selectSessionEngine(session.config.harness);
@@ -825,16 +827,53 @@ export class QueryRunner {
           recoveryState.startGuard,
           questionInputs,
           live,
-          humanInputs
+          humanInputs,
+          false
         );
-        const oapQuery = createOapQuery({ sessionId: session.id, prompt, hub: oapHub });
+        oapQuery = createOapQuery({
+          sessionId: session.id,
+          prompt,
+          hub: oapHub,
+          isLive: live,
+          maySettleInterrupted,
+          onSubmitted: async (message) => {
+            if (!message.uuid || !live()) return;
+            const ids = await this.ctx.db.writeSDKMessage(
+              'markDeliverySubmittedByUuids',
+              session.id,
+              [message.uuid]
+            );
+            if (
+              !ids.length &&
+              this.ctx.db.getSDKMessageRepo?.().getDeliveryContent(session.id, message.uuid)
+            ) {
+              throw new Error('Codex prompt was already submitted or cannot be submitted safely');
+            }
+            if (live() && ids.length) {
+              await this.ctx.internalEventBus.publish('messages.statusChanged', {
+                sessionId: session.id,
+                messageIds: ids,
+                status: 'submitted',
+              });
+            }
+          },
+          onAccepted: async (message) => {
+            if (!message.uuid || !live()) return;
+            await messageQueue.onMessageYielded?.(message.uuid, Date.now());
+            if (live()) messageQueue.acknowledgeYielded(message.uuid, queryGeneration);
+          },
+        });
         this.ctx.queryObject = oapQuery;
         for await (const message of this.createAbortableQuery(
           oapQuery,
           runAbortController.signal
         )) {
-          if (!live()) break;
           const sdkMessage = message as SDKMessage;
+          if (
+            !live() &&
+            !(sdkMessage.type === 'result' && oapQuery.wasInterrupted() && maySettleInterrupted())
+          )
+            break;
           this.ctx.firstMessageReceived = true;
           this._consumedUserMessages.delete(queryGeneration);
           if (sdkMessage.type === 'result') {
@@ -1545,18 +1584,16 @@ export class QueryRunner {
         resolveDrain = () => {};
       }
     } catch (error) {
-      this.ctx.attemptTokens.invalidate(attemptToken);
-
       releaseStartupPermit('query_error');
 
       const errorMessage = String(error);
       isAbortError = error instanceof Error && error.name === 'AbortError';
       const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
       if (engine === 'codex') {
-        if (!owns()) return;
+        if (!live()) return;
         const failure = error instanceof Error ? error : new Error(errorMessage);
         messageQueue.clear(cancelled ? undefined : failure);
-        if (!cancelled && owns()) {
+        if (!cancelled && live()) {
           await errorManager.handleError(
             session.id,
             failure,
@@ -1564,11 +1601,12 @@ export class QueryRunner {
             failure.message,
             stateManager.getState(),
             { harness: 'codex' },
-            owns
+            live
           );
         }
         return;
       }
+      this.ctx.attemptTokens.invalidate(attemptToken);
       const isQueryInterrupted =
         cancelled || this.ctx.queryAbortController?.signal.aborted === true;
       let episode: Session['metadata']['queryFailureEpisode'];
@@ -2010,6 +2048,7 @@ export class QueryRunner {
         messageQueue.clear();
       }
     } finally {
+      const attemptOwned = attemptToken.isLive();
       this.ctx.attemptTokens.invalidate(attemptToken);
       this.toolInventory.end(attemptToken);
       this.notifyToolInventory();
@@ -2017,11 +2056,14 @@ export class QueryRunner {
 
       releaseStartupPermit('attempt_finished');
 
-      const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
+      const generationChanged = this.ctx.getQueryGeneration() !== queryGeneration;
+      const isStaleQuery = generationChanged || (engine === 'codex' && !attemptOwned);
 
-      if (isStaleQuery) {
+      if (generationChanged) {
         stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
       }
+
+      if (isStaleQuery && engine === 'codex') oapQuery?.close();
 
       if (!isStaleQuery) {
         const timer = this.ctx.startupTimeoutTimer;
@@ -2385,7 +2427,8 @@ export class QueryRunner {
     startGuard?: () => void,
     questionInputs?: QuestionInputScope,
     liveAttempt?: () => boolean,
-    humanInputs?: QuestionInputScope
+    humanInputs?: QuestionInputScope,
+    notifyOnYield = true
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
@@ -2403,7 +2446,7 @@ export class QueryRunner {
       }
       const live = () => !this.ctx.isCleaningUp() && (liveAttempt?.() ?? true);
       await this.failures.admit(live);
-      await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
+      if (notifyOnYield) await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
       const promptContent = (queuedMessage.message as { content?: unknown } | undefined)?.content;

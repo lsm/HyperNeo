@@ -2816,6 +2816,41 @@ export class AgentSession
           if (this.db.getSession(this.session.id)?.status === 'archived') {
             throw new MessageDeliveryTerminalTurnError('Session is archived');
           }
+          if (this.session.config.harness === 'codex') {
+            const delivery = this.db
+              .getSDKMessageRepo()
+              .getDeliveryContent(this.session.id, messageUuid);
+            if (
+              delivery?.sendStatus === 'submitted' &&
+              !this.messageQueue.hasYielded(messageUuid)
+            ) {
+              const reason =
+                'Codex message was submitted before recovery; its outcome is unknown and it will not be resent automatically.';
+              const failure = new MessageDeliveryTerminalTurnError(
+                reason,
+                'uncertain_oap_submission'
+              );
+              const failedId = await this.db.writeSDKMessage(
+                'markDeliveryFailedByUuid',
+                this.session.id,
+                messageUuid
+              );
+              if (failedId) {
+                await this.internalEventBus.publish('messages.statusChanged', {
+                  sessionId: this.session.id,
+                  messageIds: [failedId],
+                  status: 'failed',
+                });
+              }
+              await this.errorManager.handleError(
+                this.session.id,
+                failure,
+                ErrorCategory.SESSION,
+                reason
+              );
+              throw failure;
+            }
+          }
           const pinned = (this.session.config.provider as string | undefined)?.trim() || undefined;
           if (pinned === 'acp') {
             const message =
