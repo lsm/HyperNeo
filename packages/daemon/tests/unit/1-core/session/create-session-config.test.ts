@@ -122,9 +122,13 @@ describe('admitCreateSessionConfig', () => {
     expect(() => admitUpdateSessionConfig({ toolProfile: 'manual' })).toThrow(/toolProfile/);
   });
 
-  it('rejects client-supplied harness selection until wiring is available', () => {
-    expect(() => admitCreateSessionConfig({ harness: 'codex' })).toThrow(/harness/);
+  it('admits a known harness only at creation and rejects unknown values', () => {
+    expect(admitCreateSessionConfig({})).not.toHaveProperty('harness');
+    expect(admitCreateSessionConfig({ harness: 'sdk' })).toEqual({ harness: 'sdk' });
+    expect(admitCreateSessionConfig({ harness: 'codex' })).toEqual({ harness: 'codex' });
+    expect(() => admitCreateSessionConfig({ harness: 'other' as 'codex' })).toThrow(/harness/i);
     expect(() => admitUpdateSessionConfig({ harness: 'sdk' })).toThrow(/harness/);
+    expect(() => admitUpdateSessionConfig({ harness: 'codex' })).toThrow(/harness/);
   });
 
   it('ignores rejected keys that are present but undefined', () => {
@@ -280,10 +284,22 @@ describe('stripRejectedSessionConfig', () => {
 
     const stripped = stripRejectedSessionConfig(stored as SessionConfig) as Record<string, unknown>;
 
-    expect(Object.keys(stripped).sort()).toEqual([...UPDATABLE_SESSION_CONFIG_FIELDS].sort());
+    expect(Object.keys(stripped).sort()).toEqual(
+      [...UPDATABLE_SESSION_CONFIG_FIELDS, 'harness'].sort()
+    );
     for (const field of UPDATABLE_SESSION_CONFIG_FIELDS) {
       expect(stripped[field]).toBe(`sentinel:${field}`);
     }
+  });
+
+  it('preserves the chosen harness for a cloned session while stripping host controls', () => {
+    expect(
+      stripRejectedSessionConfig({
+        model: 'synthetic',
+        harness: 'codex',
+        env: { SECRET: 'synthetic' },
+      } as SessionConfig)
+    ).toEqual({ model: 'synthetic', harness: 'codex' });
   });
 
   it('leaves unknown keys alone', () => {
@@ -394,6 +410,13 @@ describe('SessionLifecycle.create', () => {
 
     expect(createdSessions).toHaveLength(1);
     expect(createdSessions[0]!.config.disallowedTools).toEqual(['Bash', 'Write', 'Edit']);
+  });
+
+  it('persists the explicitly chosen harness and leaves the SDK default implicit', async () => {
+    await lifecycle.create({ config: { harness: 'codex' } });
+    await lifecycle.create({});
+    expect(createdSessions[0]?.config.harness).toBe('codex');
+    expect(createdSessions[1]?.config.harness).toBeUndefined();
   });
 
   it('persists the rest of the tool-restriction config supplied by the caller', async () => {
