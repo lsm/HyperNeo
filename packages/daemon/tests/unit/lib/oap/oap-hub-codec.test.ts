@@ -96,6 +96,36 @@ describe('OAP hub wire codec', () => {
     });
   });
 
+  test('accepts unknown success fields while retaining the required response', async () => {
+    const { decodeOapHubLine } = await codec();
+    expect(
+      decodeOapHubLine(
+        JSON.stringify({
+          id: 4,
+          ok: true,
+          result: { value: 'reply' },
+          revision: 9,
+          metadata: { future: true },
+        })
+      )
+    ).toEqual({ kind: 'response', id: 4, result: { value: 'reply' } });
+  });
+
+  test('accepts unknown refusal fields while retaining error and retry semantics', async () => {
+    const { decodeOapHubLine } = await codec();
+    expect(
+      decodeOapHubLine(
+        JSON.stringify({
+          id: 4,
+          ok: false,
+          error: { code: 'busy', message: 'retry' },
+          retry_after_ms: 50,
+          metadata: { future: true },
+        })
+      )
+    ).toEqual({ kind: 'refusal', id: 4, code: 'busy', message: 'retry', retryable: true });
+  });
+
   test('responses preserve arbitrary results including subscription acknowledgments', async () => {
     const { decodeOapHubLine } = await codec();
     for (const result of [null, false, [], { session_id: 'synthetic' }])
@@ -117,6 +147,7 @@ describe('OAP hub wire codec', () => {
     '{"id":9007199254740992,"ok":true,"result":null}',
     '{"id":1,"ok":false,"error":{"message":"missing code"}}',
     '{"id":1,"event":"envelope","ok":true,"result":null}',
+    '{"id":1,"event":"envelope","ok":false,"error":{"code":"busy","message":"retry"}}',
     '{"type":"run.completed","payload":{}}',
   ])('rejects a malformed hub line %s', async (line) => {
     expect((await codec()).decodeOapHubLine.bind(null, line)).toThrow();
