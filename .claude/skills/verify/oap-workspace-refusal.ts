@@ -101,6 +101,42 @@ try {
   assert.equal(errors.length, errorsBeforeTurns);
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
+  let rejectOld: ((error: Error) => void) | undefined;
+  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
+    openDirectorySupported: true,
+    hub: {
+      submit: () => new Promise<{ runId: string }>((_resolve, reject) => { rejectOld = reject; }),
+      events: async function* () {},
+      cancel: async () => {},
+    },
+  };
+  void agent.messageQueue.enqueueWithId('synthetic-old', 'old prompt', false, { durable: true }).catch(() => {});
+  await agent.startStreamingQuery();
+  const staleQuery = agent.queryPromise;
+  assert(staleQuery);
+  const submitDeadline = Date.now() + 10_000;
+  while (!rejectOld) {
+    assert(Date.now() < submitDeadline, 'synthetic old run did not submit');
+    await new Promise((done) => setTimeout(done, 50));
+  }
+  agent.messageQueue.stop();
+  agent.incrementQueryGeneration();
+  agent.messageQueue.start();
+  const successor = agent.attemptTokens.allocate();
+  void agent.messageQueue.enqueueWithId('synthetic-replacement', 'replacement prompt', false, { durable: true }).catch(() => {});
+  rejectOld(new Error('synthetic stale hub failure'));
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([staleQuery, new Promise<never>((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('stale query did not settle')), 10_000); })]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+  assert(agent.messageQueue.isRunning());
+  assert(agent.messageQueue.hasPendingOrInFlight('synthetic-replacement'));
+  assert(successor.isLive());
+  assert.equal(errors.length, errorsBeforeTurns);
+  agent.messageQueue.clear();
+  await agent.lifecycleManager.stop({ timeoutMs: 100, catchQueryErrors: true });
   evidence.port = app.server.port;
   evidence.persistedHarness = 'codex';
   evidence.updateRefused = true;
@@ -110,6 +146,8 @@ try {
   evidence.trackedAgentProcesses = 0;
   evidence.syntheticTurnsFinished = submissions.length;
   evidence.syntheticCompletedRunCancellations = cancellations;
+  evidence.staleFailurePreservedReplacement = true;
+  evidence.staleFailurePreservedSuccessorAttempt = true;
   evidence.pass = true;
 } finally {
   await transport?.close();

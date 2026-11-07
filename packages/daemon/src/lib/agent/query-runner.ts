@@ -1551,6 +1551,7 @@ export class QueryRunner {
       isAbortError = error instanceof Error && error.name === 'AbortError';
       const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
       if (engine === 'codex') {
+        if (!owns()) return;
         const failure = error instanceof Error ? error : new Error(errorMessage);
         messageQueue.clear(cancelled ? undefined : failure);
         if (!cancelled && owns()) {
