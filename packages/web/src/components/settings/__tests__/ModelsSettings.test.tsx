@@ -58,6 +58,21 @@ describe('ModelsSettings — load failure surfacing', () => {
     cleanup();
   });
 
+  it('keeps fallback controls in a closed Advanced section until opened without saving', async () => {
+    vi.mocked(updateGlobalSettings).mockClear();
+    render(<ModelsSettings />);
+    await screen.findByRole('alert');
+
+    const advanced = screen.getByText('Advanced').closest('details');
+    expect(advanced).toBeTruthy();
+    expect(advanced?.open).toBe(false);
+    expect(advanced?.textContent).toContain('Default Fallback Chain');
+    expect(advanced?.textContent).toContain('Model-Specific Overrides');
+    fireEvent.click(screen.getByText('Advanced'));
+    expect(advanced?.open).toBe(true);
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     'waits for delayed discovery through the real hub, forced=%s',
     async (forced) => {

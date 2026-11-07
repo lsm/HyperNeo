@@ -1162,137 +1162,143 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
           <DefaultThinkingSelect model={defaultModel} />
         </div>
 
-        <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
-          <div>
-            <h4 class="text-[13px] font-semibold text-fg">Default Fallback Chain</h4>
-            <p class="text-xs text-fg-faint mt-0.5">
-              Applies to all models that don&apos;t have a specific override below.
-            </p>
+        <details class="space-y-3">
+          <summary class="cursor-pointer text-sm font-semibold">Advanced</summary>
+          <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
+            <div>
+              <h4 class="text-[13px] font-semibold text-fg">Default Fallback Chain</h4>
+              <p class="text-xs text-fg-faint mt-0.5">
+                Applies to all models that don&apos;t have a specific override below.
+              </p>
+            </div>
+
+            {loading ? (
+              <div class="flex items-center gap-2 text-xs text-fg-faint">
+                <Spinner size="xs" />
+                <span>Loading models...</span>
+              </div>
+            ) : fallbackModels.length === 0 ? (
+              <div class="text-xs text-fg-faint italic">No fallback models configured</div>
+            ) : (
+              <FallbackChainEditor
+                models={fallbackModels}
+                availableModels={availableModels}
+                isUpdating={isUpdating}
+                onMove={handleMove}
+                onRemove={handleRemove}
+                controls={(entry, index) => (
+                  <FallbackThinkingSelect
+                    saved={entry.thinkingLevel}
+                    label={`Fallback ${index + 1} thinking`}
+                    capability={findSameModel(availableModels, entry) ?? entry}
+                    disabled={isUpdating}
+                    onChange={(level) => handleThinking(index, level)}
+                  />
+                )}
+              />
+            )}
+
+            <button
+              class="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:border-line-strong hover:text-fg-soft disabled:opacity-50"
+              onClick={() => setShowAddModal(true)}
+              disabled={loading}
+            >
+              <PlusIcon />
+              Add Fallback Model
+            </button>
           </div>
 
-          {loading ? (
-            <div class="flex items-center gap-2 text-xs text-fg-faint">
-              <Spinner size="xs" />
-              <span>Loading models...</span>
+          <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
+            <div>
+              <h4 class="text-[13px] font-semibold text-fg">Model-Specific Overrides</h4>
+              <p class="text-xs text-fg-faint mt-0.5">
+                Override the default chain for a specific model. Takes priority when that model hits
+                a limit.
+              </p>
             </div>
-          ) : fallbackModels.length === 0 ? (
-            <div class="text-xs text-fg-faint italic">No fallback models configured</div>
-          ) : (
-            <FallbackChainEditor
-              models={fallbackModels}
-              availableModels={availableModels}
-              isUpdating={isUpdating}
-              onMove={handleMove}
-              onRemove={handleRemove}
-              controls={(entry, index) => (
-                <FallbackThinkingSelect
-                  saved={entry.thinkingLevel}
-                  label={`Fallback ${index + 1} thinking`}
-                  capability={findSameModel(availableModels, entry) ?? entry}
-                  disabled={isUpdating}
-                  onChange={(level) => handleThinking(index, level)}
-                />
-              )}
-            />
-          )}
 
-          <button
-            class="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:border-line-strong hover:text-fg-soft disabled:opacity-50"
-            onClick={() => setShowAddModal(true)}
-            disabled={loading}
-          >
-            <PlusIcon />
-            Add Fallback Model
-          </button>
-        </div>
-
-        <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
-          <div>
-            <h4 class="text-[13px] font-semibold text-fg">Model-Specific Overrides</h4>
-            <p class="text-xs text-fg-faint mt-0.5">
-              Override the default chain for a specific model. Takes priority when that model hits a
-              limit.
-            </p>
-          </div>
-
-          {loading ? (
-            <div class="flex items-center gap-2 text-xs text-fg-faint">
-              <Spinner size="xs" />
-              <span>Loading models...</span>
-            </div>
-          ) : overrideEntries.length === 0 ? (
-            <div class="text-xs text-fg-faint italic">
-              No model-specific overrides. Add one to override the default chain for a specific
-              model.
-            </div>
-          ) : (
-            <div class="space-y-2">
-              {overrideEntries.map(([key, chain]) => {
-                const sourceInfo = getKeyDisplayInfo(key);
-                return (
-                  <div key={key} class="bg-surface-raised border border-line rounded-lg px-3 py-2">
-                    <div class="flex items-center gap-2">
-                      <ProviderLogo provider={sourceInfo.provider} class="h-4 w-4" />
-                      <div class="flex-1 min-w-0">
-                        <div class="text-sm text-fg-soft truncate">{sourceInfo.name}</div>
-                        <div class="text-xs text-fg-faint">
-                          {PROVIDER_LABELS[sourceInfo.provider] ||
-                            getProviderLabel(sourceInfo.provider)}
+            {loading ? (
+              <div class="flex items-center gap-2 text-xs text-fg-faint">
+                <Spinner size="xs" />
+                <span>Loading models...</span>
+              </div>
+            ) : overrideEntries.length === 0 ? (
+              <div class="text-xs text-fg-faint italic">
+                No model-specific overrides. Add one to override the default chain for a specific
+                model.
+              </div>
+            ) : (
+              <div class="space-y-2">
+                {overrideEntries.map(([key, chain]) => {
+                  const sourceInfo = getKeyDisplayInfo(key);
+                  return (
+                    <div
+                      key={key}
+                      class="bg-surface-raised border border-line rounded-lg px-3 py-2"
+                    >
+                      <div class="flex items-center gap-2">
+                        <ProviderLogo provider={sourceInfo.provider} class="h-4 w-4" />
+                        <div class="flex-1 min-w-0">
+                          <div class="text-sm text-fg-soft truncate">{sourceInfo.name}</div>
+                          <div class="text-xs text-fg-faint">
+                            {PROVIDER_LABELS[sourceInfo.provider] ||
+                              getProviderLabel(sourceInfo.provider)}
+                          </div>
                         </div>
+                        <button
+                          class="p-1 rounded hover:bg-fill-strong disabled:opacity-30"
+                          onClick={() => setOverrideModal({ open: true, editingKey: key })}
+                          disabled={isUpdating}
+                          title="Edit"
+                        >
+                          <PencilIcon />
+                        </button>
+                        <button
+                          class="p-1 rounded hover:bg-danger/30 disabled:opacity-30"
+                          onClick={() => handleDeleteOverride(key)}
+                          disabled={isUpdating}
+                          title="Delete"
+                        >
+                          <XIcon class="w-4 h-4 text-danger" />
+                        </button>
                       </div>
-                      <button
-                        class="p-1 rounded hover:bg-fill-strong disabled:opacity-30"
-                        onClick={() => setOverrideModal({ open: true, editingKey: key })}
-                        disabled={isUpdating}
-                        title="Edit"
-                      >
-                        <PencilIcon />
-                      </button>
-                      <button
-                        class="p-1 rounded hover:bg-danger/30 disabled:opacity-30"
-                        onClick={() => handleDeleteOverride(key)}
-                        disabled={isUpdating}
-                        title="Delete"
-                      >
-                        <XIcon class="w-4 h-4 text-danger" />
-                      </button>
+
+                      {chain.length > 0 && (
+                        <div class="mt-2 flex flex-wrap gap-1.5">
+                          {chain.map((entry, i) => {
+                            const info = getModelDisplayInfo(entry);
+                            return (
+                              <span
+                                key={`${entry.provider}:${entry.model}`}
+                                class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-fill-strong text-fg-soft rounded-full"
+                              >
+                                <span class="text-fg-faint">{i + 1}.</span>
+                                <ProviderLogo provider={entry.provider} class="h-3 w-3" />
+                                <span class="truncate max-w-[120px]">{info.name}</span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {chain.length === 0 && (
+                        <p class="mt-1.5 text-xs text-fg-faint italic">Empty chain</p>
+                      )}
                     </div>
+                  );
+                })}
+              </div>
+            )}
 
-                    {chain.length > 0 && (
-                      <div class="mt-2 flex flex-wrap gap-1.5">
-                        {chain.map((entry, i) => {
-                          const info = getModelDisplayInfo(entry);
-                          return (
-                            <span
-                              key={`${entry.provider}:${entry.model}`}
-                              class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-fill-strong text-fg-soft rounded-full"
-                            >
-                              <span class="text-fg-faint">{i + 1}.</span>
-                              <ProviderLogo provider={entry.provider} class="h-3 w-3" />
-                              <span class="truncate max-w-[120px]">{info.name}</span>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {chain.length === 0 && (
-                      <p class="mt-1.5 text-xs text-fg-faint italic">Empty chain</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <button
-            class="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:border-line-strong hover:text-fg-soft disabled:opacity-50"
-            onClick={() => setOverrideModal({ open: true, editingKey: null })}
-            disabled={loading}
-          >
-            <PlusIcon />
-            Add Override
-          </button>
-        </div>
+            <button
+              class="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:border-line-strong hover:text-fg-soft disabled:opacity-50"
+              onClick={() => setOverrideModal({ open: true, editingKey: null })}
+              disabled={loading}
+            >
+              <PlusIcon />
+              Add Override
+            </button>
+          </div>
+        </details>
       </div>
 
       {showDefaultModal && (
