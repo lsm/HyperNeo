@@ -48,6 +48,7 @@ export function testAskEntry(
       parentId: null,
       sessionId: 'neo',
       originMessageId: null,
+      topic: null,
       title,
       request: title,
       status: 'open',

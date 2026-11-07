@@ -6,6 +6,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.ask.read',
   'neo.ask.search',
   'neo.ask.settle',
+  'neo.ask.topic',
   'neo.coding.assign',
   'neo.coding.merge.human',
   'neo.coding.merge.prepare',

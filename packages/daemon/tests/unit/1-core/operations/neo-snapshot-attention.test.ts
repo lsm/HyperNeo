@@ -118,3 +118,13 @@ test('history pages preserve same-time ordering, project scope, summaries and re
   expect(last.entries.map((entry) => entry.ask.id)).toEqual(['done-01', 'done-00']);
   expect(last.nextCursor).toBeNull();
 });
+
+test('snapshot asks carry their topic, null when unset', async () => {
+  ask('labelled');
+  ask('plain');
+  db.getDatabase().prepare("UPDATE neo_asks SET topic = 'OAP' WHERE id = 'labelled'").run();
+  const view = await snapshot();
+  const topic = (id: string) => view.todoAsks?.find((entry) => entry.ask.id === id)?.ask.topic;
+  expect(topic('labelled')).toBe('OAP');
+  expect(topic('plain')).toBeNull();
+});

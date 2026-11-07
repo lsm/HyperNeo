@@ -282,6 +282,7 @@ export const NeoAskEntrySchema = z.object({
     sessionId: z.string(),
     originMessageId: Nullable,
     title: z.string(),
+    topic: Nullable,
     request: z.string(),
     status: z.enum(['open', 'done', 'dropped']),
     outcome: Nullable,

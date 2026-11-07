@@ -59,6 +59,15 @@ describe('neoPlanLines', () => {
       )?.text
     ).toContain('ready=false');
   });
+  test('shows each open ask topic, none when unset', () => {
+    const labelled = [
+      { ...asks[0], topic: '邮件' },
+      { ...asks[1], topic: null },
+    ];
+    const lines = neoPlanLines(labelled, [], []);
+    expect(lines[0].text).toContain('topic=邮件');
+    expect(lines[1].text).toContain('topic=none');
+  });
   test('describes an absent reason as display text', () => {
     const line = neoPlanLines(asks, [todo('first')], []).find((item) => item.id === 'first');
     expect(line?.text).toContain('reason=not recorded');
