@@ -9,6 +9,7 @@ import { navigateToSettings } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
 import { SectionSwitcher } from '../components/SectionSwitcher.tsx';
 import { isConnectionsSection } from '../components/settings/ConnectionsServicesPage.tsx';
+import { isCapabilitiesSection } from '../components/settings/CapabilitiesPage.tsx';
 import { SessionsSidebar } from './SessionsSidebar.tsx';
 import { extensionNav, shellExtensions } from '../lib/web-extensions.ts';
 
@@ -24,26 +25,6 @@ const SETTINGS_SECTIONS: Array<{
     icon: 'palette',
     accent: 'text-cat-purple bg-cat-purple/15',
   },
-  {
-    id: 'providers',
-    label: 'Connections & Services',
-    icon: 'plug',
-    accent: 'text-accent-soft bg-accent/15',
-  },
-  { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
-  {
-    id: 'app-mcp-servers',
-    label: 'MCP Servers',
-    icon: 'server',
-    accent: 'text-cat-violet bg-cat-violet/15',
-  },
-  { id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-success-soft bg-success/15' },
-  {
-    id: 'coding-pack',
-    label: 'Pack settings',
-    icon: 'plug',
-    accent: 'text-cat-violet bg-cat-violet/15',
-  },
   { id: 'neo-model', label: 'Neo', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
   {
     id: 'harness',
@@ -51,6 +32,19 @@ const SETTINGS_SECTIONS: Array<{
     icon: 'swap',
     accent: 'text-cat-cyan bg-cat-cyan/15',
   },
+  {
+    id: 'providers',
+    label: 'Connections & Services',
+    icon: 'plug',
+    accent: 'text-accent-soft bg-accent/15',
+  },
+  {
+    id: 'skills',
+    label: 'Capabilities',
+    icon: 'skills',
+    accent: 'text-success-soft bg-success/15',
+  },
+  { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
   { id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-warning bg-warning/15' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', accent: 'text-cat-pink bg-pink-500/15' },
   { id: 'about', label: 'About', icon: 'info', accent: 'text-fg-soft bg-fill' },
@@ -228,7 +222,8 @@ export function ContextPanel() {
                 {SETTINGS_SECTIONS.map((section) => {
                   const isActive =
                     activeSettingsSection === section.id ||
-                    (section.id === 'providers' && isConnectionsSection(activeSettingsSection));
+                    (section.id === 'providers' && isConnectionsSection(activeSettingsSection)) ||
+                    (section.id === 'skills' && isCapabilitiesSection(activeSettingsSection));
                   return (
                     <button
                       key={section.id}
