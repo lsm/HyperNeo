@@ -386,7 +386,7 @@ export function createNeoOperations(service: NeoService) {
       'snapshot',
       scope,
       10,
-      detailed
+      true
     );
     const { todoAsks, pinned } = neoSnapshotAskEntries(
       projectNeoAskEntries(asks, facts, service.installedPacks()),

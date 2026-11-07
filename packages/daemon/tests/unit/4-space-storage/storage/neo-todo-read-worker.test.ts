@@ -47,6 +47,10 @@ test('Neo snapshot facts, check lists and done-page facts come from a reader sna
     expect(page.todos).toEqual(expected);
     expect(page.links).toBeInstanceOf(Map);
     expect((await todos.read('doneTodoFacts', 'missing')).ask).toBeNull();
+    const plan = await todos.read('planContext');
+    expect(plan.asks.map((ask) => ask.id)).toEqual(['a']);
+    expect(plan.todos).toEqual(expected);
+    expect(plan.questions).toEqual([]);
   } finally {
     await gateway.close();
     db.close();

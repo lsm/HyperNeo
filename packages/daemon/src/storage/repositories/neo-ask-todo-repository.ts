@@ -282,6 +282,16 @@ export class NeoAskTodoRepository {
     };
   }
 
+  planContext() {
+    const asks = this.listOpenAsks();
+    const families = [...new Set(asks.map((ask) => ask.parentId ?? ask.id))];
+    return {
+      asks,
+      todos: families.flatMap((id) => this.listFamilyTodos(id)),
+      questions: this.listQuestionsForAsks(asks.map((ask) => ask.id)),
+    };
+  }
+
   openWorkFacts() {
     const todos = this.db
       .prepare(
@@ -1305,6 +1315,7 @@ export const neoTodoReads = defineRepositoryOp(
     'getAsk',
     'openQuestionChecks',
     'snapshot',
+    'planContext',
     'doneTodoFacts',
     'askFacts',
     'listCheckable',
