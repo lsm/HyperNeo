@@ -2,6 +2,18 @@ import { describe, expect, test } from 'bun:test';
 import { buildOapHubConfig } from '../../../../src/lib/oap/oap-hub-config';
 
 describe('buildOapHubConfig', () => {
+  test('sets the attended Codex approval and workspace sandbox posture', () => {
+    const result = buildOapHubConfig({
+      stateDirectory: '/synthetic/hub',
+      codexExecutable: '/synthetic/bin/codex',
+      codexHome: '/synthetic/codex-home',
+    });
+    expect(result.config.adapters.codex).toMatchObject({
+      approval_policy: 'on-request',
+      sandbox: 'workspace-write',
+    });
+  });
+
   test('generates only supported adapter fields, environment names, and isolated launch paths', () => {
     const result = buildOapHubConfig({
       stateDirectory: '/synthetic/hub',
@@ -14,6 +26,8 @@ describe('buildOapHubConfig', () => {
           type: 'codex',
           executable: '/synthetic/bin/codex',
           environment: ['CODEX_HOME'],
+          approval_policy: 'on-request',
+          sandbox: 'workspace-write',
         },
       },
     });
