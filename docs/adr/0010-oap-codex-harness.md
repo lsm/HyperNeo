@@ -1,6 +1,6 @@
 # ADR 0010: Opt-in native Codex through OAP
 
-Status: proposed (2026-11-04 re-read)
+Status: proposed (2026-11-04 re-read; scope awaits human confirmation)
 
 ## Context
 
@@ -12,4 +12,4 @@ Plan an opt-in Codex native app-server path through `oapx serve --stdio`, leavin
 
 ## Consequences
 
-Daemon engine code owns the integration; Neo core remains unaware of OAP and its driver passes harness provenance. Initial Codex sessions exclude work needing daemon tools, session instructions or tool guards. Real restart, permission and tool journeys remain necessary before those capabilities can be claimed. Release pin, client tools, instruction mapping and permission posture remain human decisions.
+The engine and dormant transport slices have shipped; workspace wiring and real Codex acceptance remain outstanding. Named stdio opens can elect an absolute existing directory on an OAP `any_directory` adapter ([OAP #1684](https://github.com/lsm/open-agent-protocol/pull/1684)). Daemon engine code owns the integration; Neo core remains unaware of OAP and its driver passes harness provenance. Initial Codex sessions exclude work needing daemon tools, session instructions or tool guards. Real restart, permission and tool journeys remain necessary before those capabilities can be claimed. Release pin, client tools, instruction mapping and permission posture remain human decisions.
