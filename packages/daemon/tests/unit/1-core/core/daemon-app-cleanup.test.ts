@@ -137,6 +137,14 @@ describe('Daemon App Cleanup', () => {
     }
   });
 
+  test('closes the daemon-owned OAP engine during cleanup', async () => {
+    const daemonContext = await createDaemonApp({ config, verbose: false, standalone: false });
+    const close = spyOn(daemonContext.oapEngine, 'close');
+    await daemonContext.cleanup();
+    expect(close).toHaveBeenCalledTimes(1);
+    await expect(daemonContext.oapEngine.getHub({} as never)).rejects.toThrow('closed');
+  });
+
   describe('pending RPC calls timeout', () => {
     test('should complete cleanup immediately when no pending calls', {
       timeout: 10_000,
