@@ -112,6 +112,20 @@ describe('OapEngine', () => {
     expect(await readdir(options.stateDirectory)).toEqual(['oap-serve.json']);
   });
 
+  test('removes a stale snapshot from a hard crash before starting a fresh hub', async () => {
+    const { engine, options } = await fixture();
+    const stale = join(options.stateDirectory, 'oap-verified-x');
+    await mkdir(stale, { recursive: true });
+    await writeFile(join(stale, 'old-binary'), 'stale bytes');
+    await writeFile(join(options.stateDirectory, 'unrelated'), 'keep');
+    const hub = await engine.getHub(options);
+    expect(existsSync(stale)).toBe(false);
+    expect(typeof (await hub.request('ping'))).toBe('number');
+    expect(await readFile(join(options.stateDirectory, 'unrelated'), 'utf8')).toBe('keep');
+    await engine.close();
+    expect((await readdir(options.stateDirectory)).sort()).toEqual(['oap-serve.json', 'unrelated']);
+  });
+
   test('rejects a mismatched binary before starting or writing configuration', async () => {
     const { engine, options, calls } = await fixture();
     await expect(
