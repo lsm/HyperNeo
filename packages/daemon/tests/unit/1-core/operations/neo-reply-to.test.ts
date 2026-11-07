@@ -34,6 +34,7 @@ import { runMigration434 } from '../../../../src/storage/schema/m434-neo-todo-ar
 import { runMigration463 } from '../../../../src/storage/schema/m463-neo-todo-priority.ts';
 import { runMigration464 } from '../../../../src/storage/schema/m464-neo-todo-dependencies.ts';
 import { runMigration476 } from '../../../../src/storage/schema/m476-neo-todo-approved-at.ts';
+import { runMigration484 } from '../../../../src/storage/schema/m484-todo-approval-question.ts';
 import { runMigration420 } from '../../../../src/storage/schema/m420-neo-ask-goal.ts';
 import { runMigration427 } from '../../../../src/storage/schema/m427-neo-question-confirm.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
@@ -59,6 +60,7 @@ describe('neo.message.send replyTo', () => {
     runMigration463(mailbox.db);
     runMigration464(mailbox.db);
     runMigration476(mailbox.db);
+    runMigration484(mailbox.db);
     runMigration420(mailbox.db);
     runMigration427(mailbox.db);
     runMigration433(mailbox.db);

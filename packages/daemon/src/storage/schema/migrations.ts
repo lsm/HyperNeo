@@ -1001,6 +1001,7 @@ export function runMigrations(
   });
   run(migrationMarkerKey(481), () => runMigration481(db));
   run(migrationMarkerKey(482), () => runMigration482(db));
+  run(migrationMarkerKey(483), () => runMigration483(db));
   run(migrationMarkerKey(484), () => runMigration484(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
