@@ -131,6 +131,25 @@ describe('admitCreateSessionConfig', () => {
     expect(() => admitUpdateSessionConfig({ harness: 'codex' })).toThrow(/harness/);
   });
 
+  it('refuses a Codex session that requires tool guards or worker operations', () => {
+    const guard = {
+      matcher: 'Bash',
+      pattern: 'git push',
+      decision: 'deny' as const,
+      reason: 'synthetic',
+    };
+    expect(() => admitCreateSessionConfig({ harness: 'codex', toolGuards: [guard] })).toThrow(
+      /Codex.*not supported/i
+    );
+    expect(() => admitCreateSessionConfig({ harness: 'codex', workerOperations: true })).toThrow(
+      /Codex.*not supported/i
+    );
+    expect(admitCreateSessionConfig({ harness: 'sdk', toolGuards: [guard] })).toEqual({
+      harness: 'sdk',
+      toolGuards: [guard],
+    });
+  });
+
   it('ignores rejected keys that are present but undefined', () => {
     expect(() => admitCreateSessionConfig({ env: undefined, cwd: undefined })).not.toThrow();
   });
