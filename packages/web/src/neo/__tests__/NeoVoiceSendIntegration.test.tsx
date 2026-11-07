@@ -370,11 +370,11 @@ describe('NeoComposer and NeoVoice send integration', () => {
       expect(screen.getByText(/To Neo.*Current B/)).toBeTruthy();
     }
   );
-  it('sends the typed draft and transcript with the selected quote only through normal send', async () => {
+  it('Stop keeps quoted speech as a draft until the ordinary Send', async () => {
     const quote: NeoQuote = { author: 'Neo', text: 'Earlier answer', anchor: 'source' };
     const { current, onTranscript, onSend, rerender } = renderComposer('typed first', quote);
     const stop = await screen.findByRole('button', {
-      name: 'Stop recording and add it to your draft',
+      name: 'Stop recording and keep the text as a draft',
     });
     fireEvent.click(stop);
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken second'));
@@ -405,7 +405,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
       text: 'Earlier answer',
       anchor: 'source',
     });
-    await screen.findByRole('button', { name: 'Stop recording and add it to your draft' });
+    await awaitRecordingComposer();
     fireEvent.click(buttonNamed('Remove reply'));
     expect(onCancelQuote).toHaveBeenCalledTimes(1);
     rerender();
@@ -552,29 +552,14 @@ describe('NeoComposer and NeoVoice send integration', () => {
     }
   );
 
-  it('with attachments staged, the arrow adds the transcript to the draft instead of sending', async () => {
+  it('Stop keeps staged attachments and the transcript in the draft without sending', async () => {
     attachmentFiles.current = [{ id: 'f1', kind: 'text', name: 'notes.txt', text: 'hi' }];
     const { onTranscript, onError } = renderComposer();
-    await waitFor(() =>
-      expect(buttonNamed('Stop recording and add it to your draft')).toBeTruthy()
-    );
-    const arrow = buttonNamed('Stop recording and add it to your draft');
-    expect(arrow.disabled).toBe(false);
-    expect(arrow.title).toContain('attachments');
-    expect(screen.getByRole('status').textContent).toBe(
-      'Recording · Stop adds it to your draft; send it with your attachments'
-    );
-
-    fireEvent.click(arrow);
-
+    await waitFor(() => expect(stopControl().disabled).toBe(false));
+    fireEvent.click(stopControl());
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken second'));
     expect(asks()).toHaveLength(0);
-    expect(reportedErrors(onError)).toContain(
-      'Added to your draft so it goes out with your attachments. Click send when ready.'
-    );
-    expect(reportedErrors(onError)).not.toContain(
-      'Could not send that recording. It is saved below so you can retry.'
-    );
+    expect(reportedErrors(onError)).toEqual([]);
   });
 
   it('persists the typed draft at record creation, before transcription finishes', async () => {
@@ -719,6 +704,61 @@ describe('NeoComposer and NeoVoice send integration', () => {
     expect(onSend).not.toHaveBeenCalled();
     expect(store.records.size).toBe(0);
   });
+});
+
+describe('Send during recording captures the whole composition', () => {
+  it.each(['plain', 'quote', 'image', 'file', 'quote-image', 'quote-file', 'quote-image-file'])(
+    '%s submits once after the held transcript without leaving a draft',
+    async (composition) => {
+      let release: (value: Record<string, unknown>) => void = () => {};
+      hubRequest.mockImplementation(async (method, payload) =>
+        method === 'voice.transcribe'
+          ? new Promise((resolve) => {
+              release = resolve;
+            })
+          : defaultHub(method, payload)
+      );
+      if (composition.includes('image'))
+        attachmentFiles.current.push({
+          id: 'photo1',
+          kind: 'image',
+          name: 'photo.png',
+          image: { data: 'aGk=', media_type: 'image/png' },
+        });
+      if (composition.includes('file'))
+        attachmentFiles.current.push({
+          id: 'file1',
+          kind: 'text',
+          name: 'notes.txt',
+          text: 'file words',
+        });
+      const quote = composition.includes('quote')
+        ? {
+            author: 'Neo' as const,
+            anchor: 'source',
+            text: 'quoted words',
+            replyTo: { kind: 'message' as const, id: 'source', excerpt: 'quoted words' },
+          }
+        : undefined;
+      const view = renderComposer('typed first', quote);
+      await waitFor(() => expect(stopControl().disabled).toBe(false));
+      fireEvent.submit(document.querySelector('form')!);
+      await waitFor(() =>
+        expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+      );
+      expect(asks()).toHaveLength(0);
+      release({ text: 'spoken second' });
+      await waitFor(() => expect(asks()).toHaveLength(1));
+      const input = asks()[0][1].input;
+      expect(JSON.stringify(input.content)).toContain('typed first\\nspoken second');
+      if (composition.includes('quote')) expect(input).toHaveProperty('replyTo', quote?.replyTo);
+      if (composition.includes('file'))
+        expect(JSON.stringify(input.content)).toContain('file words');
+      if (composition.includes('image')) expect(JSON.stringify(input.content)).toContain('aGk=');
+      expect(view.onTranscript).not.toHaveBeenCalled();
+      expect(view.current.value).toBe('');
+    }
+  );
 });
 
 describe('Send accepted while final transcription is pending', () => {

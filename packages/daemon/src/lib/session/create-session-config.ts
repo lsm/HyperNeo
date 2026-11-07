@@ -1,7 +1,8 @@
 import type { SessionConfig } from '@hyperneo/shared';
 import { isDeepStrictEqual } from 'node:util';
+import { codexSessionRefusal, selectSessionEngine } from '../agent/session-engine.ts';
 
-export type CreateSessionConfigFieldPolicy = 'derived' | 'carried' | 'rejected';
+export type CreateSessionConfigFieldPolicy = 'derived' | 'carried' | 'creation-only' | 'rejected';
 
 export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   keyof SessionConfig,
@@ -45,6 +46,7 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   chatDisplayMode: 'carried',
   workerOperations: 'carried',
 
+  harness: 'creation-only',
   cwd: 'rejected',
   env: 'rejected',
   executable: 'rejected',
@@ -69,12 +71,13 @@ function fieldsWithPolicy(policy: CreateSessionConfigFieldPolicy): (keyof Sessio
   );
 }
 
-const CARRIED_FIELDS = fieldsWithPolicy('carried');
+const CARRIED_FIELDS = [...fieldsWithPolicy('carried'), ...fieldsWithPolicy('creation-only')];
 const REJECTED_FIELDS = fieldsWithPolicy('rejected');
+const UPDATE_REJECTED_FIELDS = [...REJECTED_FIELDS, ...fieldsWithPolicy('creation-only')];
 
 export const UPDATABLE_SESSION_CONFIG_FIELDS: (keyof SessionConfig)[] = (
   Object.keys(CREATE_SESSION_CONFIG_FIELD_POLICY) as (keyof SessionConfig)[]
-).filter((field) => CREATE_SESSION_CONFIG_FIELD_POLICY[field] !== 'rejected');
+).filter((field) => !UPDATE_REJECTED_FIELDS.includes(field));
 
 export type SessionConfigDoor = 'Session creation' | 'Session update';
 
@@ -108,6 +111,10 @@ export function admitCreateSessionConfig(
   requested: Partial<SessionConfig> | undefined
 ): Partial<SessionConfig> {
   if (!requested) return {};
+  if (requested.harness !== undefined && selectSessionEngine(requested.harness) === 'codex') {
+    const refusal = codexSessionRefusal(requested, false, false);
+    if (refusal) throw new Error(refusal);
+  }
 
   const rejected = REJECTED_FIELDS.filter((field) => requested[field] !== undefined);
   if (rejected.length > 0) {
@@ -125,11 +132,16 @@ export function admitCreateSessionConfig(
 
 export function admitUpdateSessionConfig(
   requested: Partial<SessionConfig> | undefined,
-  currentSelection?: SessionConfig['toolSelection']
+  currentSelection?: SessionConfig['toolSelection'],
+  currentHarness?: SessionConfig['harness']
 ): Partial<SessionConfig> | undefined {
   if (!requested) return requested;
+  if (currentHarness === 'codex') {
+    const refusal = codexSessionRefusal(requested, false, false);
+    if (refusal) throw new Error(refusal);
+  }
 
-  const rejected = REJECTED_FIELDS.filter(
+  const rejected = UPDATE_REJECTED_FIELDS.filter(
     (field) =>
       requested[field] !== undefined &&
       !(

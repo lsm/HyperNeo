@@ -350,6 +350,19 @@ describe('readDriverOutcome', () => {
   });
 });
 
+describe('decideCardLiveStatus with a turn-ended question', () => {
+  const asked = {
+    status: 'needs_you' as const,
+    lastActivityAt: 5,
+    lastReplyAt: 5,
+    turnQuestion: { id: 't', at: 1, text: 'Ship it?', actions: [] },
+  };
+  test('a question from before the send is stale, one after it needs an answer', () => {
+    expect(decideCardLiveStatus(asked, 10, null)).toBe('running');
+    expect(decideCardLiveStatus(asked, 1, null)).toBe('needs_you');
+  });
+});
+
 describe('readDriverSendBaseline', () => {
   test('takes the send baseline from an idle target, and none from a busy or unreadable remote one', () => {
     const at = (value: unknown) => ({ kind: 'completed' as const, value });
@@ -363,6 +376,27 @@ describe('readDriverSendBaseline', () => {
     expect(
       readDriverSendBaseline(
         at({ ok: true, value: { status: 'running', lastActivityAt: 7 } }),
+        50,
+        false
+      )
+    ).toBeNull();
+    expect(
+      readDriverSendBaseline(
+        at({
+          ok: true,
+          value: {
+            status: 'needs_you',
+            lastActivityAt: 7,
+            turnQuestion: { id: 't', at: 1, text: 'Ship it?', actions: [] },
+          },
+        }),
+        50,
+        false
+      )
+    ).toBe(7);
+    expect(
+      readDriverSendBaseline(
+        at({ ok: true, value: { status: 'needs_you', lastActivityAt: 7 } }),
         50,
         false
       )

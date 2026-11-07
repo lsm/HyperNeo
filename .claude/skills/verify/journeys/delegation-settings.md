@@ -12,7 +12,9 @@ NODE_PATH=<directory-containing-playwright> VERIFY_BROWSER=<headless-Chromium> \
 The expanded settings helper pairs its synthetic browser through the isolated
 CLI session door and HTTP /pair. Settings > Pack settings must show the existing
 Coding controls and six delegation selects. Opening writes no delegation
-preference. Select payment fillStop and observe exact global human provenance
+preference. The labels and choices arrive from the delegation pack declaration
+through pack.preferences.list; the component regression exercises changed response
+labels. Select payment fillStop and observe exact global human provenance
 through public RPC, then reload to confirm the saved selection. At desktop 1280
 and phone 390 widths the controls fit. Switching to Chinese exposes translated
 field names and phone-only choice. Three delegation screenshots and the settings

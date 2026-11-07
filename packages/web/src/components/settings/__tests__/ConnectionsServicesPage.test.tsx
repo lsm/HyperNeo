@@ -22,6 +22,7 @@ describe('ConnectionsServicesPage', () => {
     ['connections', 'Accounts'],
     ['devices', 'Devices'],
     ['remote-daemons', 'Remote Daemons'],
+    ['exa', 'Advanced'],
   ] as const)('marks %s as the open tab and shows its panel', (section, label) => {
     render(
       <ConnectionsServicesPage section={section}>
@@ -34,6 +35,7 @@ describe('ConnectionsServicesPage', () => {
       'Accounts',
       'Devices',
       'Remote Daemons',
+      'Advanced',
     ]);
     expect(tabs.getByRole('button', { name: label }).getAttribute('aria-current')).toBe('page');
     expect(
@@ -81,8 +83,8 @@ describe('isConnectionsSection', () => {
     ['connections', true],
     ['devices', true],
     ['remote-daemons', true],
-    ['exa', false],
-    ['models', false],
+    ['exa', true],
+    ['harness', false],
   ])('%s is %s', (section, expected) => {
     expect(isConnectionsSection(section)).toBe(expected);
   });

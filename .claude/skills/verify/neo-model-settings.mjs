@@ -34,32 +34,90 @@ const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_B
 const evidence = { catalog, primary, first, second, thresholdText, observations: [] };
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: 'en-US' });
+  const origin = `http://127.0.0.1:${port}`;
+  const pairing = rpc('device.pair.create', { kind: 'human', name: 'Settings journey browser' });
+  assert.equal(
+    (await page.request.post(`${origin}/pair`, {
+      headers: { origin },
+      data: { code: pairing.code, name: 'Settings journey browser' },
+    })).status(),
+    200
+  );
+  const beforeOpen = rpc('neo.snapshot').preferences;
   await page.goto(`http://127.0.0.1:${port}/settings?tab=neo-model`);
   const section = page.getByRole('region', { name: 'Neo models', exact: true });
-  await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();
+  await section.getByText('Follows default', { exact: false }).waitFor();
+  assert.deepEqual(rpc('neo.snapshot').preferences, beforeOpen);
+  evidence.openDidNotWrite = true;
+  const ready = async () => {
+    await section.getByLabel('Neo model 1 thinking', { exact: true }).waitFor();
+    await page.waitForFunction(() => !!document.querySelector('[aria-label=\"Neo model 1 thinking\"]:not(:disabled)'));
+  };
+  const advanced = section.locator('details');
+  assert.equal(await advanced.evaluate((element) => element.open), false);
+  await section.getByRole('button', { name: 'Choose Neo model', exact: true }).click();
+  await page.getByRole('button', { name: first.display_name, exact: true }).click();
+  await ready();
+  assert.equal(rpc('neo.snapshot').preferences.model, first.id);
+  await section.getByText('Advanced', { exact: true }).click();
+  await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).fill('70');
+  await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).blur();
+  await ready();
+  assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, 70);
+  await page.reload();
+  assert.equal(await advanced.evaluate((element) => element.open), false);
+  await section.getByRole('button', { name: 'Change Neo primary', exact: true }).click();
   await page.getByRole('button', { name: primary.display_name, exact: true }).click();
-  if (process.env.VERIFY_ANTHROPIC_1M === '1') await section.getByText(sizeText(90), { exact: true }).waitFor();
+  await page.getByText(`Switch Neo to ${primary.display_name}?`, { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  assert.equal(rpc('neo.snapshot').preferences.model, first.id);
+  assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, 70);
+  await section.getByRole('button', { name: 'Change Neo primary', exact: true }).click();
+  await page.getByRole('button', { name: primary.display_name, exact: true }).click();
+  await page.getByText(`Switch Neo to ${primary.display_name}?`, { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await ready();
+  assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, undefined);
+  evidence.primaryCompactionNotTransferred = true;
   await section.getByLabel('Neo model 1 thinking', { exact: true }).selectOption('think24k');
+  await ready();
+  assert.equal(rpc('neo.snapshot').preferences.model, primary.id);
+  assert.equal(rpc('neo.snapshot').preferences.thinkingLevel, 'think24k');
+  await page.reload();
+  assert.equal(await advanced.evaluate((element) => element.open), false);
+  assert.equal(await section.getByLabel('Neo model 1 thinking', { exact: true }).inputValue(), 'think24k');
+  evidence.closedAdvancedSavedAndReloaded = true;
+  await section.getByText('Advanced', { exact: true }).click();
+  if (process.env.VERIFY_ANTHROPIC_1M === '1') await section.getByText(sizeText(90), { exact: true }).waitFor();
   for (const model of [first, second]) {
     await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();
     await page.getByRole('button', { name: model.display_name, exact: true }).click();
+    await ready();
   }
   await section.getByLabel('Neo model 2 thinking', { exact: true }).selectOption('think8k');
+  await ready();
   await section.getByLabel('Neo model 3 thinking', { exact: true }).selectOption('off');
+  await ready();
   await section.getByTitle('Move up', { exact: true }).nth(2).click();
+  await ready();
   await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).fill('70');
   await section.getByText(thresholdText, { exact: false }).waitFor();
-  await section.getByRole('button', { name: 'Save Neo models', exact: true }).click();
+  await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).blur();
+  await ready();
   const expected = { model: primary.id, provider: primary.provider, thinkingLevel: 'think24k', autoCompactPercent: 70, fallbacks: [
     { model: second.id, provider: second.provider, thinkingLevel: 'off' },
     { model: first.id, provider: first.provider, thinkingLevel: 'think8k' },
   ] };
-  await page.getByText('Neo models saved', { exact: true }).waitFor();
   evidence.saved = rpc('neo.snapshot').preferences;
   for (const key of ['model', 'provider', 'thinkingLevel', 'fallbacks', 'autoCompactPercent']) assert.deepEqual(evidence.saved[key], expected[key]);
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.reload();
+    assert.equal(await advanced.evaluate((element) => element.open), false);
+    await section.getByLabel('Neo model 1 thinking', { exact: true }).waitFor({ state: 'visible' });
+    assert.equal(await section.getByRole('button', { name: 'Save Neo models', exact: true }).count(), 0);
+    await page.screenshot({ path: `${run}/evidence/neo-model-closed-${width}.png`, fullPage: true, animations: 'disabled' });
+    await section.getByText('Advanced', { exact: true }).click();
     await section.getByLabel('Neo model 1 thinking', { exact: true }).waitFor();
     assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, 70);
     assert.equal(await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).inputValue(), '70');
@@ -76,27 +134,35 @@ try {
     evidence.observations.push({ width, providers, persistedAfterReload: true, controlsFit: true });
   }
   await section.getByRole('button', { name: 'Clear saved fallbacks', exact: true }).click();
-  await section.getByRole('button', { name: 'Save Neo models', exact: true }).click();
-  await page.getByText('Neo models saved', { exact: true }).waitFor();
+  await ready();
   assert.deepEqual(rpc('neo.snapshot').preferences.fallbacks, []);
   await page.reload();
+  await section.getByText('Advanced', { exact: true }).click();
   await section.getByText('No saved fallbacks.', { exact: true }).waitFor();
   evidence.disabledAfterReload = true;
   await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).fill('90');
-  await section.getByRole('button', { name: 'Save Neo models', exact: true }).click();
-  await page.getByText('Neo models saved', { exact: true }).waitFor();
+  await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).blur();
+  await ready();
   assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, undefined);
   await page.reload();
+  await section.getByText('Advanced', { exact: true }).click();
   assert.equal(await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).inputValue(), '90');
   await section.getByText(sizeText(90), { exact: true }).first().waitFor();
   evidence.resetToDefault = true;
   await page.goto(`http://127.0.0.1:${port}/neo`);
-  await page.getByRole('button', { name: 'Model and thinking', exact: true }).click();
+  await page.locator('#neo-thought').focus();
+  try {
+    await page.getByRole('button', { name: 'Model and thinking', exact: true }).click();
+  } catch (error) {
+    await page.screenshot({ path: `${run}/evidence/neo-model-neo-timeout.png`, fullPage: true });
+    evidence.neoTimeoutText = await page.locator('body').innerText();
+    throw error;
+  }
   await page.getByRole('searchbox', { name: 'Search models' }).waitFor();
   assert.equal(await page.getByRole('link', { name: 'Neo model settings', exact: true }).count(), 0);
   evidence.popoverListsModels = true;
   await page.goto(`http://127.0.0.1:${port}/settings?tab=models`);
-  await page.getByRole('heading', { name: 'Models', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'HyperNeo sessions', exact: true }).waitFor();
   assert.equal(await page.getByRole('region', { name: 'Neo models', exact: true }).count(), 0);
   evidence.ordinaryModelSettingsSeparate = true;
   console.log('PASS: actual Settings edit, thinking, provider list, order, persisted 70% reload, 90% reset, popover model list and separate ordinary controls.');

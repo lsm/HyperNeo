@@ -14,9 +14,13 @@ The only synthetic provider credential is created through RPC in that test DB.
 Set `VERIFY_BROWSER` to an installed Chromium executable when Playwright's own
 headless browser is unavailable. The browser always runs headlessly.
 
-The actual built Settings > Neo model page shows one ordered list; the first
-model is the primary. The helper adds three models through the shared model
-picker ("Add Neo model"), sets each thinking level, reorders and saves. "Make
+The actual built Settings > Neo page shows primary model and thinking above
+the Advanced section, which contains the ordered list and per-model compaction.
+The helper first chooses a model with Advanced closed, then changes
+the primary and thinking and reloads while it remains closed. It cancels a
+primary switch and checks it is unchanged, then confirms the switch. Changes save
+automatically after any required confirmation. It opens Advanced and adds fallbacks through the shared model
+picker ("Add Neo model"), sets each thinking level, and reorders them. "Make
 primary" moves a model to the top of the list. The helper checks persisted preferences through real `neo.snapshot` RPC,
 sets the primary's auto-compact to 70% (shown as "70% ≈ …K of …K tokens" from that
 model's catalog window; each model has its own field; compaction copy says it applies when idle),
@@ -26,7 +30,7 @@ after reload, shown as "No saved fallbacks.". Evidence: `evidence/neo-model-sett
 Browser and helper-owned daemon/mock close on success or failure.
 
 Focused Settings contracts also cover cross-provider catalog entries, server
-thinking options, unavailable providers, human-operation refusal retaining edits
+thinking options, unavailable providers, human-operation refusal rolling edits back
 and primary-only edits preserving inherited fallback behavior. This web journey
 uses synthetic Anthropic models; the former Neo-only execution journey was retired in #8114; see
 [model runtime removal](neo-coordinator-model-fallback-backend.md). Stored Neo

@@ -19,6 +19,7 @@ import {
   isVoiceAudioBusy,
   pendingVoiceAudioRecords,
   recordingFromEntry,
+  queuePendingVoiceSend,
   refreshPendingVoiceAudio,
   type VoiceSendOutcome,
 } from '../lib/voice/voice-audio-outbox.ts';
@@ -29,6 +30,7 @@ import { NeoIcon } from './NeoIcon.tsx';
 import { useNeoVoiceSettings } from './useNeoVoiceSettings.ts';
 
 export type VoicePhase = 'idle' | 'recording' | 'working' | 'sending' | 'drafting';
+type VoiceSendSnapshot = Pick<VoiceRecordEntry, 'sendDraft' | 'sendContext' | 'previewContext'>;
 
 export function NeoVoice({
   sessionId,
@@ -37,7 +39,7 @@ export function NeoVoice({
   onTranscript,
   onInterim,
   onSendVoice,
-  onPrepareSend = async () => false,
+  onPrepareSend,
   onSendHandle,
   onError,
   onPhase,
@@ -53,7 +55,7 @@ export function NeoVoice({
   draftText: string;
   onTranscript: (text: string) => void;
   onInterim?: (text: string) => void;
-  onPrepareSend?: (recordId: string) => Promise<boolean>;
+  onPrepareSend?: () => VoiceSendSnapshot;
   onSendVoice: (text: string, recordId: string) => Promise<VoiceSendOutcome>;
   onSendHandle: (finish: ((intent: 'draft' | 'send') => void) | null) => void;
   onError: (message: string) => void;
@@ -62,6 +64,7 @@ export function NeoVoice({
   const enabled = useNeoVoiceSettings();
   const [transcribing, setTranscribing] = useState<string | null>(null);
   const [transcribeIntent, setTranscribeIntent] = useState<'draft' | 'send'>('draft');
+  const [streamFormat, setStreamFormat] = useState<'opus' | 'pcm16' | 'batch' | null>(null);
   const running = useRef(false);
   const delivery = useRef({ onSendVoice, onPrepareSend });
   delivery.current = { onSendVoice, onPrepareSend };
@@ -77,10 +80,8 @@ export function NeoVoice({
   latest.current = recorder;
   const liveStream = useRef<VoiceLiveStream | null>(null);
   const interim = useRef(onInterim);
-  const recordingDraft = useRef<{ sendDraft: string; previewContext?: NeoPreviewReference } | null>(
-    null
-  );
-  const captureDraft = () => ({
+  const recordingDraft = useRef<VoiceSendSnapshot | null>(null);
+  const captureDraft = (): VoiceSendSnapshot => ({
     sendDraft: draftText,
     ...(previewContext && door !== 'session' ? { previewContext: { ...previewContext } } : {}),
   });
@@ -123,6 +124,7 @@ export function NeoVoice({
   }, []);
 
   async function start() {
+    setStreamFormat(null);
     recordingDraft.current = captureDraft();
     onPreviewCapture?.();
     try {
@@ -130,7 +132,17 @@ export function NeoVoice({
       const hub = connectionManager.getHubIfConnected();
       if (!hub || !latest.current.isRecording) return;
       dropLiveStream();
-      const live = openVoiceStream(hub, (text) => interim.current?.(text));
+      const live = openVoiceStream(hub, (text) => interim.current?.(text), {
+        onFormat: (format) => {
+          if (mounted.current) setStreamFormat(format);
+        },
+        onError: (error) => {
+          if (mounted.current)
+            onError(
+              `Live transcription failed: ${error.message}. The recording will use batch transcription.`
+            );
+        },
+      });
       liveStream.current = live;
       voiceRecorderStore.setPcmTap(live.push);
     } catch (error) {
@@ -169,7 +181,11 @@ export function NeoVoice({
     markVoiceAudioBusy(id);
     beginInteractiveVoiceSubmit();
     const live = entry ? null : takeLiveStream();
-    const captured = entry ?? recordingDraft.current ?? captureDraft();
+    const captured: VoiceSendSnapshot =
+      entry ??
+      (intent === 'send'
+        ? (delivery.current.onPrepareSend?.() ?? recordingDraft.current ?? captureDraft())
+        : (recordingDraft.current ?? captureDraft()));
     try {
       if (intent === 'send' && entry?.sendText) {
         await deliverSendIntent(entry.id, entry.sendText);
@@ -182,7 +198,7 @@ export function NeoVoice({
           retrySilent: !!entry,
           intent,
           sendDraft: captured.sendDraft ?? '',
-          ...(entry?.sendContext ? { sendContext: entry.sendContext } : {}),
+          ...(captured.sendContext ? { sendContext: captured.sendContext } : {}),
           door,
           ...(captured.previewContext ? { previewContext: captured.previewContext } : {}),
         },
@@ -253,8 +269,10 @@ export function NeoVoice({
       if (task.intent === 'send') return;
       task.intent = 'send';
       setTranscribeIntent('send');
-      const prepare = delivery.current.onPrepareSend;
-      task.upgrade = task.persisted.then(() => prepare(task.id)).catch(() => false);
+      const snapshot = delivery.current.onPrepareSend?.() ?? captureDraft();
+      task.upgrade = task.persisted
+        .then(() => queuePendingVoiceSend(task.id, snapshot))
+        .catch(() => false);
       return;
     }
     void transcribe(intent);
@@ -296,6 +314,19 @@ export function NeoVoice({
               }}
             />
           </div>
+          {recorder.isRecording && streamFormat && streamFormat !== 'opus' && (
+            <span
+              role="status"
+              class="shrink-0 text-xs text-fg-muted"
+              title={
+                streamFormat === 'pcm16'
+                  ? 'Opus unavailable; using PCM16'
+                  : 'Using batch transcription'
+              }
+            >
+              {streamFormat === 'pcm16' ? 'PCM16' : 'Batch'}
+            </span>
+          )}
           <Button
             size="sm"
             class="h-11 min-w-11 shrink-0"

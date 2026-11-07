@@ -200,7 +200,7 @@ export function planNeoStartAnswer(
 ): NeoTodoPatch | null {
   const cancelled = neoTodoCancellationPending(todo, family);
   if (!cancelled && (todo.state !== 'blocked' || todo.blockedBy !== 'question'))
-    return ticked?.includes(todo.id) ? { approvedAt: now } : null;
+    return ticked?.includes(todo.id) ? { approvedAt: todo.approvedAt ?? now } : null;
   if (cancelled) {
     if (withdrawn) return null;
     return ticked?.includes(todo.id)
@@ -236,10 +236,13 @@ export function planNeoStartRelease(
   let current = family;
   for (const id of question.startTodos ?? []) {
     const todo = current.find((item) => item.id === id);
-    const patch =
+    const approval =
+      !withdrawn && ticked?.includes(id) ? { approvalQuestionId: question.id } : null;
+    const release =
       todo && !waiting.includes(id)
         ? planNeoStartAnswer(todo, current, ticked, withdrawn, now)
         : null;
+    const patch = release && approval ? { ...release, ...approval } : release;
     if (!todo || !patch) continue;
     writes.push({ todo, patch });
     current = current.map((item) => (item.id === id ? { ...item, ...patch } : item));

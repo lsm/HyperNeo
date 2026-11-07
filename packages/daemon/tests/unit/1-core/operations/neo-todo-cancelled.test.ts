@@ -339,7 +339,13 @@ describe('cancelled prerequisites', () => {
       seedLegacy(store.getTodo(d.id)!);
       await runner.refresh(() => {});
       expect(told.filter((item) => item.todo === d.id)).toHaveLength(0);
-      store.answerQuestion(card(store, d)!, [d.id], 'button', Date.now());
+      const approval = store.getTodo(d.id)!.approvedAt;
+      const question = card(store, d)!;
+      store.answerQuestion(question, [d.id], 'button', Date.now());
+      expect(store.getTodo(d.id)).toMatchObject({
+        approvalQuestionId: question.id,
+        approvedAt: approval,
+      });
       await runner.refresh(() => {});
       expect(store.getTodo(d.id)?.state).toBe('doing');
     } finally {

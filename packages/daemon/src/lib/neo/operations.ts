@@ -386,7 +386,7 @@ export function createNeoOperations(service: NeoService) {
       'snapshot',
       scope,
       10,
-      detailed
+      true
     );
     const { todoAsks, pinned } = neoSnapshotAskEntries(
       projectNeoAskEntries(asks, facts, service.installedPacks()),
@@ -808,7 +808,10 @@ export function createNeoOperations(service: NeoService) {
       () => neoStandingRules(service.db.getGlobalSettings().neo),
       inputReads,
       () => service.installedPacks(),
-      (input, caller) => service.relayWorkerQuestion(input, caller.sessionId),
+      (input, caller) =>
+        input.todoId
+          ? service.relayWorkerQuestion({ ...input, todoId: input.todoId }, caller.sessionId)
+          : service.relaySessionQuestion(input, caller.sessionId, Date.now()),
       () => service.db.getGlobalSettings().language
     ),
     defineOperation({

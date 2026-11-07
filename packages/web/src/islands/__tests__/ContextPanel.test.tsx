@@ -35,13 +35,15 @@ let mockCurrentSpaceTasksFilterTabSignal!: Signal<
 >;
 let mockCurrentSpaceViewModeSignal!: Signal<'overview' | 'goals' | 'tasks' | 'configure'>;
 let mockSettingsSectionSignal!: Signal<
-  | 'general'
+  | 'preferences'
   | 'providers'
   | 'connections'
   | 'devices'
   | 'remote-daemons'
+  | 'exa'
   | 'app-mcp-servers'
   | 'skills'
+  | 'coding-pack'
   | 'models'
   | 'usage'
   | 'about'
@@ -77,7 +79,7 @@ function initSignals() {
   mockCurrentSpaceSessionIdSignal = signal(null);
   mockCurrentSpaceTasksFilterTabSignal = signal('active');
   mockCurrentSpaceViewModeSignal = signal('overview');
-  mockSettingsSectionSignal = signal('general');
+  mockSettingsSectionSignal = signal('preferences');
   mockConnectionStateSignal = signal('connected');
   mockSpacesWithTasksSignal = signal([
     { ...makeSpace('space-1', { name: 'Alpha' }), tasks: [], sessions: [] },
@@ -322,7 +324,7 @@ describe('ContextPanel', () => {
     expect(mockNavigateToSettings).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['providers', 'connections', 'devices', 'remote-daemons'] as const)(
+  it.each(['providers', 'connections', 'devices', 'remote-daemons', 'exa'] as const)(
     'lists one Connections & Services entry, active on %s',
     (section) => {
       mockNavSectionSignal.value = 'settings';
@@ -332,11 +334,37 @@ describe('ContextPanel', () => {
       const nav = within(screen.getByRole('navigation', { name: 'Settings sections' }));
       const entry = nav.getByRole('button', { name: 'Connections & Services' });
       expect(entry.className).toContain('bg-fill text-fg');
-      for (const name of ['Providers', 'Connections', 'Devices', 'Remote Daemons'])
+      for (const name of ['Providers', 'Connections', 'Devices', 'Remote Daemons', 'Exa Search'])
         expect(nav.queryByRole('button', { name })).toBeNull();
 
       fireEvent.click(entry);
       expect(mockNavigateToSettings).toHaveBeenCalledWith('providers');
+    }
+  );
+
+  it.each(['skills', 'app-mcp-servers', 'coding-pack'] as const)(
+    'shows the six main entries and highlights Capabilities for %s',
+    (section) => {
+      mockNavSectionSignal.value = 'settings';
+      mockSettingsSectionSignal.value = section;
+      render(<ContextPanel />);
+      const nav = within(screen.getByRole('navigation', { name: 'Settings sections' }));
+      expect(nav.getAllByRole('button').map((button) => button.textContent)).toEqual([
+        'Preferences',
+        'Neo',
+        'Sessions & Harness',
+        'Connections & Services',
+        'Capabilities',
+        'Voice',
+        'Usage',
+        'Shortcuts',
+        'About',
+      ]);
+      expect(nav.getByRole('button', { name: 'Capabilities' }).className).toContain(
+        'bg-fill text-fg'
+      );
+      fireEvent.click(nav.getByRole('button', { name: 'Capabilities' }));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('skills');
     }
   );
 

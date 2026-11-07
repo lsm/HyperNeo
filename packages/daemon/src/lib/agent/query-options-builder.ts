@@ -1,4 +1,6 @@
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
+import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { neoPlanContextHooks } from './neo-plan-hook.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -1178,6 +1180,11 @@ export class QueryOptionsBuilder {
     const postFailureHooks: NonNullable<Options['hooks']>['PostToolUseFailure'] = [];
     postFailureHooks.push({ hooks: [loopDetectorHooks.postToolUseFailure] });
     if (rootNeo) {
+      const todos = new NeoAskTodoRepository(this.ctx.db!.getDatabase());
+      Object.assign(
+        hooks,
+        neoPlanContextHooks(() => todos.read('planContext'))
+      );
       const timeoutHook = createNeoBashTimeoutHook();
       postHooks.push({ matcher: 'Bash', hooks: [timeoutHook] });
       postFailureHooks.push({ matcher: 'Bash', hooks: [timeoutHook] });

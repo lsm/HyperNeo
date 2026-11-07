@@ -148,6 +148,7 @@ export function createNeoWorkerQuestionWriter(
       'outcome',
       'result:outcome'
     )
+    .pipe((input: z.infer<typeof WorkerQuestion>) => input, 'outcome', 'input')
     .pipe(
       async (ref: WorkRef) => {
         const source = await readSource(ref);
@@ -159,7 +160,7 @@ export function createNeoWorkerQuestionWriter(
           : fail('source_session_unavailable: no readable reporting worker.');
       },
       'ref',
-      'result:source'
+      'result:outcome'
     )
     .pipe(
       (input: z.infer<typeof WorkerQuestion>, ref: WorkRef, source: NeoQuestionSource) => {
@@ -239,7 +240,7 @@ export function createNeoWorkerQuestionWriter(
           ? { ok: true as const, question }
           : { ok: false as const, reason: rejection };
       },
-      ['outcome', 'ref', 'source'],
+      ['input', 'ref', 'outcome'],
       'outcome'
     )
     .endAsync('outcome') as (ref: WorkRef, raw: unknown) => Promise<QuestionReceipt | Rejection>;
@@ -317,11 +318,16 @@ const Ask = AskKinds.refine((input) => input.askId || ('input' in input && input
 type Bound = z.infer<typeof Ask> & { askId: string };
 
 const Retire = z.object({ questionId: Text, reason: Text });
-const Relay = z.object({
-  todoId: Text,
-  title: ReportLine,
-  options: z.array(ReportLine).min(2).max(6),
-});
+const Relay = z
+  .object({
+    todoId: Text.optional(),
+    session: Text.optional().describe('The notice key of a session with no todo.'),
+    title: ReportLine,
+    options: z.array(ReportLine).min(2).max(6),
+  })
+  .refine((input) => !input.todoId !== !input.session, {
+    message: 'Pass todoId, or session for a session with no todo.',
+  });
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
 const Resolve = Answer.extend({
@@ -1059,7 +1065,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.relay',
       description:
-        "Put a worker's question in front of the human, written in your own plain words as title and 2-6 options. Use it only when you cannot answer the worker yourself. The human's answer goes back to that worker. Refused while another card is open on the ask, so relay once it is answered, and by the same card rules as neo.question.ask.",
+        "Put a worker's question in front of the human, written in your own plain words as title and 2-6 options. Use it only when you cannot answer the worker yourself. The human's answer goes back to that worker. For a session with no todo, pass session (its notice key); the daemon opens an ask following that session. Refused while another card is open on the ask, so relay once it is answered, and by the same card rules as neo.question.ask.",
       inputSchema: Relay,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

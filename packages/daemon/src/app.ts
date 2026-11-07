@@ -203,6 +203,7 @@ import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
+import { OapEngine } from './lib/oap/oap-engine.ts';
 
 const mailboxLog = new Logger('mailbox');
 
@@ -354,6 +355,7 @@ export interface CreateDaemonAppOptions {
 }
 
 export interface DaemonAppContext {
+  oapEngine: OapEngine;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
@@ -406,6 +408,7 @@ async function invalidateInFlightModelLoads(): Promise<void> {
 
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
+  const oapEngine = new OapEngine();
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
@@ -1684,6 +1687,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .live.map((pid) => ({ pid, daemonPid: process.pid })),
         ];
         await sessionManager.cleanup();
+        await oapEngine.close();
         try {
           await collectDaemonScratch(false, scratchChildrenAtExit, logScratchError);
         } catch (error) {
@@ -1735,7 +1739,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         throw error;
       } finally {
         try {
-          await closeFileLogCapture();
+          try {
+            await oapEngine.close();
+          } finally {
+            await closeFileLogCapture();
+          }
         } finally {
           stopEventLoopLagLog();
           eventLoopWatchdog?.stop();
@@ -1757,6 +1765,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     return {
+      oapEngine,
       server,
       handlePair,
       handleAskMarkdown,
@@ -1798,6 +1807,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   } catch (error) {
     startupTimer.finish();
     await failedStartupCleanup?.();
+    await oapEngine.close();
     stopEventLoopLagLog();
     eventLoopWatchdog?.stop();
     startupLogCaptureCleanup?.();

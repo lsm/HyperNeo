@@ -15,9 +15,11 @@ import {
   NEO_SESSION_GROUP_NOTICES_MAX,
   neoSessionKey,
   neoSessionNoticeLine,
+  neoSessionQuestionNote,
   planNeoSessionNotice,
   planNeoSessionNoticeGroup,
   planNeoSessionMutes,
+  planNeoSessionRevisit,
   planNeoSessionWatch,
   NEO_SESSION_MUTES_MAX,
   savedNeoSessionNoticeGroups,
@@ -26,7 +28,12 @@ import {
   type NeoSessionNoticeGroup,
   type NeoSessionSeen,
 } from '../../../../src/lib/neo/session-watch.ts';
-import type { PlaceGroup, WorkStatus } from '../../../../src/lib/drivers/types.ts';
+import type {
+  PlaceGroup,
+  WorkStatus,
+  WorkTurnQuestion,
+} from '../../../../src/lib/drivers/types.ts';
+import { NEO_SESSION_RECHECK_MS } from '../../../../src/lib/neo/session-ask-links.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -135,6 +142,54 @@ describe('planNeoSessionWatch', () => {
   });
 });
 
+describe('neoSessionQuestionNote', () => {
+  test('gives Neo the question, its options, the session and how to answer', () => {
+    const note = neoSessionQuestionNote({
+      key: 'claude-desktop::abc',
+      ref: { adapter: 'claude-desktop', id: 'abc' },
+      title: 'Rows',
+      kind: 'needs_you',
+      at: 1,
+      link: 'claude://x',
+      question: { id: 't', at: 1, text: 'Ship it?', actions: ['Yes', 'Not now'] },
+    });
+    expect(note).toBe(
+      'Session "Rows" (claude-desktop:abc) ended its turn with a question: Ship it? Options: Yes; Not now. It has no todo. If the plan, saved rules or your authority settle it, answer with work.send and notice:true. If not, relay it with neo.question.relay {session:"claude-desktop::abc",title,options}.'
+    );
+  });
+});
+
+describe('planNeoSessionRevisit', () => {
+  const prior: NeoSessionSeen = { listed: 'x', status: 'done' };
+  const detail = (id: string, lastInputAt: number | null = null) => ({
+    status: 'needs_you' as const,
+    lastInputAt,
+    question: { id, at: 1, text: 'Ship it?', actions: [] },
+  });
+
+  test('a new question notifies like a planned read', () => {
+    expect(planNeoSessionRevisit(session, prior, detail('t'), now)).toMatchObject({
+      seen: { question: 't', status: 'needs_you' },
+      notice: { kind: 'needs_you', question: { id: 't' } },
+    });
+  });
+
+  test('holds a new question while the human is in the session', () => {
+    expect(planNeoSessionRevisit(session, prior, detail('t', now - 30_000), now)).toEqual({
+      seen: prior,
+      notice: null,
+    });
+  });
+
+  test.each([
+    ['a question it already saw', { ...prior, question: 't' }, detail('t')],
+    ['a status with no question', prior, { status: 'needs_you' as const, lastInputAt: null }],
+    ['a failed read', prior, null],
+  ])('stays silent for %s', (_label, seen, read) => {
+    expect(planNeoSessionRevisit(session, seen, read, now)).toBeNull();
+  });
+});
+
 describe('planNeoSessionNotice', () => {
   const running: NeoSessionSeen = { listed: 'x', status: 'running' };
   const read = (status: WorkStatus, lastInputAt: number | null = null) => ({ status, lastInputAt });
@@ -152,6 +207,32 @@ describe('planNeoSessionNotice', () => {
     ['a session that could not be read', running, null, null],
   ])('%s', (_label, prior, detail, kind) => {
     expect(planNeoSessionNotice(session, prior, detail, now).notice?.kind ?? null).toBe(kind);
+  });
+
+  test('carries a turn-ended question on the notice', () => {
+    const question = { id: 't', at: 1, text: 'Ship it?', actions: ['Yes'] };
+    expect(
+      planNeoSessionNotice(session, running, { ...read('needs_you'), question }, now).notice
+    ).toMatchObject({ kind: 'needs_you', question });
+  });
+
+  test('a new question tells again though the status never changed, the same one does not', () => {
+    const asked = { ...running, status: 'needs_you' as const, question: 't' };
+    const detail = (id: string) => ({
+      ...read('needs_you'),
+      question: { id, at: 1, text: 'Ship it?', actions: [] },
+    });
+    expect(planNeoSessionNotice(session, asked, detail('t'), now).notice).toBeNull();
+    const next = planNeoSessionNotice(session, asked, detail('u'), now);
+    expect(next.notice?.kind).toBe('needs_you');
+    expect(next.seen.question).toBe('u');
+  });
+
+  test('holds a turn-ended question while the human is in the session', () => {
+    const question = { id: 't', at: 1, text: 'Ship it?', actions: [] };
+    expect(
+      planNeoSessionNotice(session, running, { ...read('needs_you', now - 30_000), question }, now)
+    ).toEqual({ seen: running, notice: null });
   });
 
   test('keeps what it saw when the status read failed, so the next pass reads again', () => {
@@ -338,6 +419,27 @@ describe('keepNeoSessionNoticeGroups', () => {
 });
 
 describe('savedNeoSessionNoticeGroups', () => {
+  test('keeps a saved question that has no id or time', () => {
+    const notice = {
+      key: 'claude-desktop::abc',
+      ref: { adapter: 'claude-desktop', id: 'abc' },
+      title: 'Rows',
+      kind: 'needs_you',
+      at: 1,
+      question: { text: 'Ship it?', actions: ['Yes'] },
+    };
+    const [group] = savedNeoSessionNoticeGroups([
+      { group: { id: 'group', at: 1, line: 'Rows', notices: [notice] } },
+    ]);
+
+    expect(group?.notices[0]?.question).toEqual({
+      id: '',
+      at: 0,
+      text: 'Ship it?',
+      actions: ['Yes'],
+    });
+  });
+
   test('reads the group off each saved row and skips rows without one', () => {
     const group = { id: 'g1', at: now, line: 'Codex · x finished', notices: [notice(now)] };
     const badNotice = { ...group, id: 'g3', notices: [{ key: 'k', kind: 'finished' }] };
@@ -427,7 +529,12 @@ describe('refreshDriverWork', () => {
   let listed: PlaceGroup['work'];
   let unreachable: { source: string; reason: string }[];
   let more: boolean;
-  let status: { status: WorkStatus; lastActivityAt: number; recentInputs?: unknown[] };
+  let status: {
+    status: WorkStatus;
+    lastActivityAt: number;
+    recentInputs?: unknown[];
+    turnQuestion?: WorkTurnQuestion;
+  };
   let hold: Promise<void> = Promise.resolve();
   const events: Array<[string, unknown]> = [];
 
@@ -498,6 +605,96 @@ describe('refreshDriverWork', () => {
       await service.refreshDriverWork();
       expect(events.filter(([name]) => name === 'neo.session.notice')).toHaveLength(1);
     } finally {
+      time.mockRestore();
+    }
+  });
+
+  test('tells Neo when a session with no todo ends its turn with a question', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    const tell = spyOn(service, 'deliverForward').mockResolvedValue();
+    try {
+      listed = [work({ lastActivityAt: clock - 1_000 })];
+      await service.refreshDriverWork();
+      clock += RUN_MS;
+      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
+      status = {
+        status: 'needs_you',
+        lastActivityAt: clock - 1_000,
+        turnQuestion: { id: 't', at: 1, text: 'Ship it?', actions: ['Yes'] },
+      };
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      const told = tell.mock.calls.filter(([, id]) => id.startsWith('neo-session-question:'));
+      expect(told).toHaveLength(1);
+      expect(told[0][0]).toBe('neo:root');
+      expect(told[0][2]).toContain('ended its turn with a question: Ship it?');
+      expect(told[0][4]).toBe('event');
+    } finally {
+      tell.mockRestore();
+      time.mockRestore();
+    }
+  });
+
+  test('a re-read tells Neo of a question the listing never showed', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    const tell = spyOn(service, 'deliverForward').mockResolvedValue();
+    const heard = () =>
+      tell.mock.calls.filter(([, id]) => id.startsWith('neo-session-question:')).length;
+    try {
+      const lastActivityAt = clock - 1_000;
+      listed = [work({ lastActivityAt })];
+      status = { status: 'done', lastActivityAt };
+      await service.refreshDriverWork();
+      status = {
+        status: 'needs_you',
+        lastActivityAt,
+        recentInputs: [{ at: clock, text: 'Human typed this' }],
+        turnQuestion: { id: 'tool-1', at: clock, text: 'Ship it?', actions: [] },
+      };
+      clock += NEO_SESSION_RECHECK_MS;
+      await service.refreshDriverWork();
+      expect(heard()).toBe(1);
+      expect(service.sessionNotices.at(-1)?.question?.id).toBe('tool-1');
+      clock += NEO_SESSION_RECHECK_MS;
+      await service.refreshDriverWork();
+      expect(heard()).toBe(1);
+      status = { ...status, turnQuestion: { id: 'tool-2', at: clock, text: 'Next?', actions: [] } };
+      clock += NEO_SESSION_RECHECK_MS;
+      await service.refreshDriverWork();
+      expect(heard()).toBe(2);
+    } finally {
+      tell.mockRestore();
+      time.mockRestore();
+    }
+  });
+
+  test('a re-read held by the human tries again without waiting for the next recheck', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    const tell = spyOn(service, 'deliverForward').mockResolvedValue();
+    const heard = () =>
+      tell.mock.calls.filter(([, id]) => id.startsWith('neo-session-question:')).length;
+    try {
+      const lastActivityAt = clock - 1_000;
+      listed = [work({ lastActivityAt })];
+      status = { status: 'done', lastActivityAt };
+      await service.refreshDriverWork();
+      clock += NEO_SESSION_RECHECK_MS;
+      status = {
+        status: 'needs_you',
+        lastActivityAt,
+        recentInputs: [{ at: clock - 30_000, text: 'Human typed this' }],
+        turnQuestion: { id: 'tool-1', at: clock, text: 'Ship it?', actions: [] },
+      };
+      await service.refreshDriverWork();
+      expect(heard()).toBe(0);
+      clock += RUN_MS;
+      await service.refreshDriverWork();
+      expect(heard()).toBe(1);
+    } finally {
+      tell.mockRestore();
       time.mockRestore();
     }
   });

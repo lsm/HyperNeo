@@ -158,6 +158,8 @@ describe('QueryOptionsBuilder', () => {
           ...mockContext,
           db: { ...mockContext.db!, getDatabase: () => sqlite },
         }).build();
+        expect(options.hooks?.SessionStart?.length ?? 0).toBe(capped ? 1 : 0);
+        expect(options.hooks?.UserPromptSubmit?.length ?? 0).toBe(capped ? 1 : 0);
         expect(options.env?.BASH_DEFAULT_TIMEOUT_MS).toBe(capped ? '120000' : '600000');
         expect(options.env?.BASH_MAX_TIMEOUT_MS).toBe(capped ? '120000' : '600000');
         expect(options.env?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe(capped ? '1' : undefined);

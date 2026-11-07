@@ -122,6 +122,34 @@ describe('admitCreateSessionConfig', () => {
     expect(() => admitUpdateSessionConfig({ toolProfile: 'manual' })).toThrow(/toolProfile/);
   });
 
+  it('admits a known harness only at creation and rejects unknown values', () => {
+    expect(admitCreateSessionConfig({})).not.toHaveProperty('harness');
+    expect(admitCreateSessionConfig({ harness: 'sdk' })).toEqual({ harness: 'sdk' });
+    expect(admitCreateSessionConfig({ harness: 'codex' })).toEqual({ harness: 'codex' });
+    expect(() => admitCreateSessionConfig({ harness: 'other' as 'codex' })).toThrow(/harness/i);
+    expect(() => admitUpdateSessionConfig({ harness: 'sdk' })).toThrow(/harness/);
+    expect(() => admitUpdateSessionConfig({ harness: 'codex' })).toThrow(/harness/);
+  });
+
+  it('refuses a Codex session that requires tool guards or worker operations', () => {
+    const guard = {
+      matcher: 'Bash',
+      pattern: 'git push',
+      decision: 'deny' as const,
+      reason: 'synthetic',
+    };
+    expect(() => admitCreateSessionConfig({ harness: 'codex', toolGuards: [guard] })).toThrow(
+      /Codex.*not supported/i
+    );
+    expect(() => admitCreateSessionConfig({ harness: 'codex', workerOperations: true })).toThrow(
+      /Codex.*not supported/i
+    );
+    expect(admitCreateSessionConfig({ harness: 'sdk', toolGuards: [guard] })).toEqual({
+      harness: 'sdk',
+      toolGuards: [guard],
+    });
+  });
+
   it('ignores rejected keys that are present but undefined', () => {
     expect(() => admitCreateSessionConfig({ env: undefined, cwd: undefined })).not.toThrow();
   });
@@ -152,6 +180,27 @@ describe('admitCreateSessionConfig', () => {
 });
 
 describe('admitUpdateSessionConfig', () => {
+  it('refuses adding tool guards or worker operations to a Codex session', () => {
+    const guard = {
+      matcher: 'Bash',
+      pattern: 'git push',
+      decision: 'deny' as const,
+      reason: 'synthetic',
+    };
+    expect(() => admitUpdateSessionConfig({ toolGuards: [guard] }, undefined, 'codex')).toThrow(
+      /Codex.*not supported/i
+    );
+    expect(() => admitUpdateSessionConfig({ workerOperations: true }, undefined, 'codex')).toThrow(
+      /Codex.*not supported/i
+    );
+    expect(
+      admitUpdateSessionConfig({ toolGuards: [], workerOperations: false }, undefined, 'codex')
+    ).toEqual({ toolGuards: [], workerOperations: false });
+    expect(
+      admitUpdateSessionConfig({ toolGuards: [guard], workerOperations: true }, undefined, 'sdk')
+    ).toEqual({ toolGuards: [guard], workerOperations: true });
+  });
+
   it('allows an unchanged owned selection echoed with an ordinary update without writing it', () => {
     const current = {
       version: 1 as const,
@@ -275,10 +324,22 @@ describe('stripRejectedSessionConfig', () => {
 
     const stripped = stripRejectedSessionConfig(stored as SessionConfig) as Record<string, unknown>;
 
-    expect(Object.keys(stripped).sort()).toEqual([...UPDATABLE_SESSION_CONFIG_FIELDS].sort());
+    expect(Object.keys(stripped).sort()).toEqual(
+      [...UPDATABLE_SESSION_CONFIG_FIELDS, 'harness'].sort()
+    );
     for (const field of UPDATABLE_SESSION_CONFIG_FIELDS) {
       expect(stripped[field]).toBe(`sentinel:${field}`);
     }
+  });
+
+  it('preserves the chosen harness for a cloned session while stripping host controls', () => {
+    expect(
+      stripRejectedSessionConfig({
+        model: 'synthetic',
+        harness: 'codex',
+        env: { SECRET: 'synthetic' },
+      } as SessionConfig)
+    ).toEqual({ model: 'synthetic', harness: 'codex' });
   });
 
   it('leaves unknown keys alone', () => {
@@ -389,6 +450,13 @@ describe('SessionLifecycle.create', () => {
 
     expect(createdSessions).toHaveLength(1);
     expect(createdSessions[0]!.config.disallowedTools).toEqual(['Bash', 'Write', 'Edit']);
+  });
+
+  it('persists the explicitly chosen harness and leaves the SDK default implicit', async () => {
+    await lifecycle.create({ config: { harness: 'codex' } });
+    await lifecycle.create({});
+    expect(createdSessions[0]?.config.harness).toBe('codex');
+    expect(createdSessions[1]?.config.harness).toBeUndefined();
   });
 
   it('persists the rest of the tool-restriction config supplied by the caller', async () => {

@@ -154,6 +154,7 @@ export interface NeoSessionNotice {
   at: number;
   link?: string;
   remoteLink?: string;
+  question?: { id: string; at: number; text: string; actions: string[] };
 }
 
 export interface NeoSessionNoticeGroup {

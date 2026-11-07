@@ -24,6 +24,7 @@ import type { Database } from '../../../../src/storage/database.ts';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
+import { runMigration483 } from '../../../../src/storage/schema/m483-neo-session-seen-question.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs.ts';
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts';
@@ -58,6 +59,7 @@ describe('accepted public ask notification', () => {
     runMigration313(writer);
     runMigration314(writer);
     runMigration340(writer);
+    runMigration483(writer);
     runMigration387(writer);
     sessions = new SessionRepository(writer);
     sdk = new SDKMessageRepository(writer as never);

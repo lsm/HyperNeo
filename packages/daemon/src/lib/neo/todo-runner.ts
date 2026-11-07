@@ -23,7 +23,7 @@ import {
   neoWorkerKey,
   type NeoTodoSessionRepository,
 } from '../../storage/repositories/neo-todo-session-repository.ts';
-import type { Place, WorkRef } from '../drivers/types.ts';
+import type { Place, WorkRef, WorkTurnQuestion } from '../drivers/types.ts';
 import { isBusyWork } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -37,6 +37,8 @@ import {
   readDriverIdentity,
   readDriverInputs,
   readDriverFollowUp,
+  isWaitingOnPrompt,
+  readDriverLastInputAt,
   readDriverLive,
   readDriverOutcome,
   readDriverSendBaseline,
@@ -44,6 +46,7 @@ import {
   readDriverTurnEnds,
   withWorkGoal,
 } from './driver-work.ts';
+import { neoHumanInSession, neoTurnQuestionLine } from './session-watch.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
@@ -154,9 +157,36 @@ export function requireNeoTodoContinuable(read: {
   return { value: { todo, ask, ref } };
 }
 
+export const neoTodoTurnQuestionNote = (
+  todo: Pick<NeoTodo, 'id' | 'title'>,
+  question: WorkTurnQuestion
+) =>
+  `Todo "${todo.title}": its session ended its turn with a question: ${neoTurnQuestionLine(question)} If the plan, saved rules or your authority settle it, answer with neo.todo.continue. If not, relay it with neo.question.relay {todoId:${JSON.stringify(todo.id)},title,options}.`;
+
+export function neoTurnQuestionDue(
+  question: WorkTurnQuestion,
+  facts: { noted: string | undefined; anchor: number; lastInputAt: number | null },
+  now: number
+): boolean {
+  return (
+    question.id !== facts.noted &&
+    question.at > facts.anchor &&
+    !neoHumanInSession(facts.lastInputAt, now)
+  );
+}
+
+export const neoTurnQuestionGone = (
+  noted: string | undefined,
+  live: { turnQuestion?: WorkTurnQuestion } | null
+) => !!noted && !!live && live.turnQuestion?.id !== noted;
+
 export function neoTodoNeedsYouNote(
   todo: Pick<NeoTodo, 'title'>,
-  live: { waitingFor?: string; link?: string; remoteLink?: string }
+  live: {
+    waitingFor?: string;
+    link?: string;
+    remoteLink?: string;
+  }
 ): string {
   const link = live.remoteLink ?? live.link;
   return `Todo "${todo.title}": its session is waiting on the human (${live.waitingFor ?? 'a prompt or question'}). Ask the human once to answer it there${link ? `: ${link}` : ''}. Do not send to it until it runs again.`;
@@ -698,12 +728,36 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('notified') as (todoId: string) => Promise<void | null>;
 
-  const noteNeedsYou = async (
+  const noteTurnQuestion = async (
     todoId: string,
     ask: NeoAsk,
-    live: ReturnType<typeof readDriverLive>
+    question: WorkTurnQuestion,
+    lastInputAt: number | null
   ) => {
+    const todo = store.getTodo(todoId);
+    const followed =
+      todo?.state === 'doing' || (todo?.state === 'blocked' && todo.blockedBy === 'worker');
+    const facts = {
+      noted: sessions.readNudge(todoId)?.turnQuestion,
+      anchor: sessions.readStartedAt(todoId) ?? sessions.readSent(todoId)?.inputBefore ?? 0,
+      lastInputAt,
+    };
+    if (!followed || !neoTurnQuestionDue(question, facts, Date.now())) return;
+    await deps.tell(
+      ask,
+      todo,
+      neoTodoTurnQuestionNote(todo, question),
+      `neo-turn-question:${todoId}:${question.id}`,
+      'event'
+    );
+    await sessions.write('stageTurnQuestion', todoId, question, Date.now());
+  };
+
+  const noteNeedsYou = async (todoId: string, ask: NeoAsk, outcome: OperationOutcome) => {
+    const live = readDriverLive(outcome);
     if (!live || live.status !== 'needs_you') return;
+    if (live.turnQuestion)
+      return noteTurnQuestion(todoId, ask, live.turnQuestion, readDriverLastInputAt(outcome));
     const todo = await sessions.write('claimNeedsYou', todoId, Date.now());
     if (!todo) return;
     await deps.tell(ask, todo, neoTodoNeedsYouNote(todo, live));
@@ -729,7 +783,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     },
     recordProgress: (id, progress, now) => sessions.write('recordProgress', id, progress, now),
     notifyChanged: () => deps.changed(),
-    noteUnsettled: (card, _ref, outcome) => noteNeedsYou(card.id, ask, readDriverLive(outcome)),
+    noteUnsettled: (card, _ref, outcome) => noteNeedsYou(card.id, ask, outcome),
     forgetActivity: () => {},
     transition: (card, settled) => {
       const todo = store.getTodo(card.id);
@@ -962,15 +1016,28 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ...(sent?.receipt ? { receipt: sent.receipt } : {}),
         });
         await observe(todo.id, outcome, target.ref);
-        if (['environment', 'needs-human'].includes(todo.blockedBy ?? '')) return;
         const live = readDriverLive(outcome);
+        if (
+          todo.blockedBy === 'needs-human' &&
+          neoTurnQuestionGone(sessions.readNudge(todo.id)?.turnQuestion, live) &&
+          !store.questionAnswers.pending().some((route) => route.todoId === todo.id)
+        ) {
+          for (const card of store.listQuestions(todo.askId))
+            if (card.state === 'open' && card.todoId === todo.id)
+              store.retireQuestion(card, 'The worker moved on from this question.', null, now);
+          restartLadder(todo.id, now);
+          store.updateTodo(todo, { state: 'doing' }, now);
+          deps.changed();
+          return;
+        }
+        if (['environment', 'needs-human'].includes(todo.blockedBy ?? '')) return;
         await sessions.write(
           'recordProgress',
           todo.id,
           { landed: null, live, cardStatus: live?.status ?? null },
           now
         );
-        await noteNeedsYou(todo.id, target.ask, live);
+        await noteNeedsYou(todo.id, target.ask, outcome);
         if (
           todo.state === 'blocked' &&
           (live?.status === 'running' ||
@@ -1397,7 +1464,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       doneWhen: todo.doneWhen,
       checkKind: todo.check?.kind ?? null,
     });
-    if (readDriverLive(status)?.status === 'needs_you')
+    const live = readDriverLive(status);
+    if (live && isWaitingOnPrompt(live))
       return fail(
         'needs_you: its session is waiting on the human; ask them to answer it there, then continue.'
       ).reason;

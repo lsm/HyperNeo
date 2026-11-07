@@ -57,9 +57,9 @@ The upgrade attaches `{deviceId, kind}` to the connection. `CallContext` carries
 **Pairing a new device.**
 1. A **pairing code** is created only from an already trusted place:
    - the local CLI, `hyperneo pair [--kind human|relay|daemon] [--name …]`, over the `0600` session door;
-   - or Settings → Devices → "Add device" on an already paired human device.
+   - or Settings → Connections & Services → Devices → "Add device" on an already paired human device.
 
-   **Allow.** A code made from the CLI is ready to use only while no device is paired yet, which is how the first device pairs. Once any device is paired, a CLI code is created *pending*. It redeems only after the human taps **Allow** on an already paired human device (`device.pair.pending` lists pending codes, never the codes themselves; `device.pair.approve` allows one). A code made in Settings on a paired human device is that device's own Allow. Until it is allowed, `POST /pair` answers `403 awaiting_approval` without counting a failure. Once a device is paired, AI sessions, which only reach the CLI path, can request a code but can't make it usable. The one exception is the bootstrap window before the first device pairs: then a CLI code needs no Allow, so on a fresh daemon an agent could pair first. The human closes that window by pairing a device before anything else. That pairing, and any agent device made in the window, shows in Settings → Devices (S6) and can be revoked. Enforcement (S8) refuses to turn on while unrecognised devices are listed.
+   **Allow.** A code made from the CLI is ready to use only while no device is paired yet, which is how the first device pairs. Once any device is paired, a CLI code is created *pending*. It redeems only after the human taps **Allow** on an already paired human device (`device.pair.pending` lists pending codes, never the codes themselves; `device.pair.approve` allows one). A code made in Settings on a paired human device is that device's own Allow. Until it is allowed, `POST /pair` answers `403 awaiting_approval` without counting a failure. Once a device is paired, AI sessions, which only reach the CLI path, can request a code but can't make it usable. The one exception is the bootstrap window before the first device pairs: then a CLI code needs no Allow, so on a fresh daemon an agent could pair first. The human closes that window by pairing a device before anything else. That pairing, and any agent device made in the window, shows in Settings → Connections & Services → Devices (S6) and can be revoked. Enforcement (S8) refuses to turn on while unrecognised devices are listed.
 2. The code is 10 base32 characters, single use and valid for 10 minutes. It is shown as text, plus a QR code holding `https://<host>/pair#<code>`. The `#` keeps the code out of server logs and the `Referer` header.
 3. The new device posts `{code, name}` to an unauthenticated `POST /pair`. The device's kind (and so its principal) is fixed when the code is created and stored with it; `POST /pair` accepts no `kind`, so whoever redeems a relay or daemon code can never become `human`. Codes allow 5 failed attempts per daemon per minute. After 20 failures in an hour, `POST /pair` refuses everything for 15 minutes and then reopens. `hyperneo pair --reset-lockout` (over the 0600 session door) clears the lock at once, so someone on the network who floods bad codes can delay pairing but can't block it, and the first device can always pair from the machine itself.
 4. On success the daemon returns the credential once:
@@ -72,7 +72,7 @@ No device is trusted just because it connects over loopback, because a browser p
 reach loopback too.
 
 **Rotation and revocation.**
-- Settings → Devices lists each device's name, kind, last seen time and host.
+- Settings → Connections & Services → Devices lists each device's name, kind, last seen time and host.
 - "Revoke" sets `revoked_at` and closes that device's open sockets at once.
 - "Re-pair" issues a new credential and revokes the old one.
 - Credentials don't expire on a timer, but a device unseen for 90 days is flagged for review.
@@ -134,7 +134,7 @@ Every HTTP request and `/ws` upgrade must pass a Host and an Origin check.
 ## 4. Migration: nothing disconnects
 
 The changes run in order, and each step ends only on an observation the human can check
-in Settings → Devices.
+in Settings → Connections & Services → Devices.
 
 1. **Report mode** (ships first, refuses nothing): pairing, the device table and the upgrade check all ship in a report-only mode. Unpaired connections are still accepted, but counted per host and Origin under "Unpaired connections seen". The Origin and Host checks also only log at this step.
 2. **Pair everything.**
@@ -183,7 +183,7 @@ Built on `tests/helpers/daemon-server.ts` (spawned daemon on port 0) and `standa
 | S3 | Caller principal from the device kind (`local`/`relay`/`peer`); gate updates, including `device.pair.approve` requiring a paired human device | ~150 |
 | S4 | Web pairing screen and cookie | ~200 |
 | S5 | `hyperneo pair` / `devices revoke`; `daemon.attach` with a pairing code and the secret table | ~150 |
-| S6 | Settings → Devices (list, revoke, re-pair, unpaired-connections report) and the **Allow** prompt for pending codes, on the web and in Neo iOS | ~200 |
+| S6 | Settings → Connections & Services → Devices (list, revoke, re-pair, unpaired-connections report) and the **Allow** prompt for pending codes, on the web and in Neo iOS | ~200 |
 | S7 | Origin/Host allowlist and Allowed hosts setting; drop CORS `*` (logging only until S8) | ~100 |
 | iOS | **lsm/neo-ios, not this repo:** the Pair screen, Keychain storage and the Bearer header on every `/ws` upgrade, plus the relay's Bearer header. It must be merged **and installed on the human's phone** before S8 or S9 lands | — |
 | S8 | "Require pairing" enforce toggle with the step 2 check, plus the rollback switch below | ~60 |
@@ -209,7 +209,7 @@ Mac. The door runs only its allowlist and stamps callers `principal: 'session-do
 door callers, the same `fromDoor` exception `device.pair.reset_lockout` has. The exception only
 turns enforcement off; turning it on stays human-only in Settings. Agent sessions are handed the
 door too, so an agent on that Mac could turn enforcement off. That widens nothing: they already
-run as the human's user with a shell. Each switch-off is logged and shown in Settings → Devices. From another
+run as the human's user with a shell. Each switch-off is logged and shown in Settings → Connections & Services → Devices. From another
 machine the human reaches it over SSH on the tailnet:
 `ssh <user>@<mac>.<tailnet>.ts.net hyperneo security enforce off`. After S9 the same command also
 puts the listen address back to what it was before the Listen-on change. That restored address

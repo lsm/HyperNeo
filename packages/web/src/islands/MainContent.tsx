@@ -10,6 +10,11 @@ import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
 import {
+  CapabilitiesPage,
+  isCapabilitiesSection,
+} from '../components/settings/CapabilitiesPage.tsx';
+
+import {
   ConnectionsServicesPage,
   isConnectionsSection,
 } from '../components/settings/ConnectionsServicesPage.tsx';
@@ -19,9 +24,6 @@ const SessionsPage = lazy(() =>
   import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
 );
 
-const GeneralSettings = lazy(() =>
-  import('../components/settings/GeneralSettings.tsx').then((m) => ({ default: m.GeneralSettings }))
-);
 const PreferencesSettings = lazy(() =>
   import('../components/settings/PreferencesSettings.tsx').then((m) => ({
     default: m.PreferencesSettings,
@@ -39,6 +41,11 @@ const ConnectionsSettings = lazy(() =>
 );
 const VoiceSettings = lazy(() =>
   import('../components/settings/VoiceSettings.tsx').then((m) => ({ default: m.VoiceSettings }))
+);
+const GitHubPollingSettings = lazy(() =>
+  import('../components/settings/GitHubPollingSettings.tsx').then((m) => ({
+    default: m.GitHubPollingSettings,
+  }))
 );
 const ExaSettings = lazy(() =>
   import('../components/settings/ExaSettings.tsx').then((m) => ({ default: m.ExaSettings }))
@@ -71,9 +78,9 @@ const NeoModelSettings = lazy(() =>
     default: m.NeoModelSettings,
   }))
 );
-const ModelsSettings = lazy(() =>
-  import('../components/settings/ModelsSettings.tsx').then((m) => ({
-    default: m.ModelsSettings,
+const SessionsHarnessSettings = lazy(() =>
+  import('../components/settings/SessionsHarnessSettings.tsx').then((m) => ({
+    default: m.SessionsHarnessSettings,
   }))
 );
 const UsageAnalytics = lazy(() =>
@@ -171,22 +178,30 @@ export default function MainContent() {
             <div class="mx-auto w-full max-w-5xl">
               <Suspense fallback={lazyFallback}>
                 {settingsSection === 'preferences' && <PreferencesSettings />}
-                {settingsSection === 'general' && <GeneralSettings />}
                 {isConnectionsSection(settingsSection) && (
                   <ConnectionsServicesPage section={settingsSection} fallback={lazyFallback}>
                     {settingsSection === 'providers' && <ProvidersSettings />}
                     {settingsSection === 'connections' && <ConnectionsSettings />}
                     {settingsSection === 'devices' && <DevicesSettings />}
                     {settingsSection === 'remote-daemons' && <RemoteDaemonsSettings />}
+                    {settingsSection === 'exa' && (
+                      <>
+                        <ExaSettings />
+                        <GitHubPollingSettings />
+                      </>
+                    )}
                   </ConnectionsServicesPage>
                 )}
                 {settingsSection === 'voice' && <VoiceSettings />}
-                {settingsSection === 'exa' && <ExaSettings />}
-                {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
-                {settingsSection === 'skills' && <SkillsRegistry />}
-                {settingsSection === 'coding-pack' && <PackSettings />}
+                {isCapabilitiesSection(settingsSection) && (
+                  <CapabilitiesPage section={settingsSection} fallback={lazyFallback}>
+                    {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
+                    {settingsSection === 'skills' && <SkillsRegistry />}
+                    {settingsSection === 'coding-pack' && <PackSettings />}
+                  </CapabilitiesPage>
+                )}
                 {settingsSection === 'neo-model' && <NeoModelSettings />}
-                {settingsSection === 'models' && <ModelsSettings />}
+                {settingsSection === 'harness' && <SessionsHarnessSettings />}
                 {settingsSection === 'usage' && <UsageAnalytics />}
                 {settingsSection === 'shortcuts' && <ShortcutsSettings />}
                 {settingsSection === 'about' && <AboutSection />}

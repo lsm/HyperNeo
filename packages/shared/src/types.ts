@@ -218,7 +218,7 @@ export const THINKING_EFFORTS: readonly ThinkingEffort[] = [
   'max',
 ];
 
-const THINKING_LEVEL_EFFORT: Record<ThinkingLevel, ThinkingEffort | undefined> = {
+export const THINKING_LEVEL_EFFORT: Record<ThinkingLevel, ThinkingEffort | undefined> = {
   off: undefined,
   think8k: 'low',
   think16k: 'medium',
@@ -243,6 +243,8 @@ export const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = 
 );
 
 export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
+  harness?: 'sdk' | 'codex';
+
   toolSelection?: SessionToolSelection;
   toolProfile?: SessionToolProfile;
 

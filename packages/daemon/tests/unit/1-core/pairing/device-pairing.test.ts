@@ -190,7 +190,13 @@ describe('device pairing', () => {
     });
     const pending = await call('device.pair.pending', {}, pairedHuman(laptop.body.deviceId));
     expect(pending.pending).toEqual([
-      { id: next.codeId, kind: 'human', name: null, expiresAt: next.expiresAt },
+      {
+        id: next.codeId,
+        kind: 'human',
+        name: null,
+        requestedName: 'Agent',
+        expiresAt: next.expiresAt,
+      },
     ]);
     expect(JSON.stringify(pending)).not.toContain(next.code);
     expect(await call('device.pair.approve', { codeId: next.codeId }, agent)).toMatchObject({
@@ -238,7 +244,13 @@ describe('device pairing', () => {
         ok: true,
       });
       expect((await call('device.pair.pending', {}, owner)).pending).toEqual([
-        { id: allowed.codeId, kind: 'human', name: null, expiresAt: allowed.expiresAt },
+        {
+          id: allowed.codeId,
+          kind: 'human',
+          name: null,
+          requestedName: null,
+          expiresAt: allowed.expiresAt,
+        },
       ]);
       expect(await pair(denied.code)).toMatchObject({
         status: 401,

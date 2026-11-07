@@ -16,6 +16,7 @@ export type FollowThroughIncident = {
     sessionId?: string;
   };
   checkOnlyReminder?: FollowThroughIncident['stallReminder'];
+  turnQuestion?: string;
   workerQuestion?: StagedWorkerQuestion;
   blockerReport?: {
     id: string;

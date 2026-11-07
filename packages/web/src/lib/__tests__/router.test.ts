@@ -68,7 +68,7 @@ function resetSignals() {
   currentSpaceSettingsTabSignal.value = 'general';
   currentSpaceTasksFilterTabSignal.value = 'active';
   navSectionSignal.value = 'spaces';
-  settingsSectionSignal.value = 'general';
+  settingsSectionSignal.value = 'preferences';
 }
 
 function finishNavigation() {
@@ -306,7 +306,7 @@ describe('router', () => {
     );
   });
 
-  it.each(['providers', 'neo-model', 'coding-pack', 'connections'])(
+  it.each(['providers', 'neo-model', 'coding-pack', 'connections', 'harness'])(
     'initializes settings route %s from tab query parameters',
     (section) => {
       setPath(`/settings?tab=${section}`);
@@ -326,6 +326,13 @@ describe('router', () => {
     }
   );
 
+  it('opens Sessions & Harness for the old Models link', () => {
+    setPath('/settings?tab=models');
+    initializeRouter();
+    expect(navSectionSignal.value).toBe('settings');
+    expect(settingsSectionSignal.value).toBe('harness');
+  });
+
   it('opens Preferences for the bare settings route and the old Appearance link', () => {
     setPath('/settings');
     initializeRouter();
@@ -334,6 +341,13 @@ describe('router', () => {
     cleanupRouter();
     settingsSectionSignal.value = 'providers';
     setPath('/settings?tab=appearance');
+    initializeRouter();
+    expect(navSectionSignal.value).toBe('settings');
+    expect(settingsSectionSignal.value).toBe('preferences');
+
+    cleanupRouter();
+    settingsSectionSignal.value = 'providers';
+    setPath('/settings?tab=general');
     initializeRouter();
     expect(navSectionSignal.value).toBe('settings');
     expect(settingsSectionSignal.value).toBe('preferences');
