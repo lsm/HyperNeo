@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +20,7 @@ const fs = require('node:fs');
 const calls = ${JSON.stringify(calls)};
 if (process.argv[2] === '--version') { console.log('synthetic-1'); process.exit(0); }
 fs.appendFileSync(calls, 'start\\n');
+fs.writeFileSync(${JSON.stringify(join(root, 'launch.json'))}, JSON.stringify({args:process.argv.slice(2),env:process.env}));
 require('node:readline').createInterface({input:process.stdin}).on('line', line => {
   const request = JSON.parse(line);
   fs.appendFileSync(calls, request.op + '\\n');
@@ -48,11 +50,22 @@ afterEach(async () => {
 describe('OapEngine', () => {
   test('starts one validated hub lazily for concurrent callers and stops it on close', async () => {
     const { engine, options, calls, root } = await fixture();
-    expect(await Bun.file(calls).exists()).toBe(false);
+    expect(existsSync(calls)).toBe(false);
     const [first, second] = await Promise.all([engine.getHub(options), engine.getHub(options)]);
     expect(first).toBe(second);
     const pid = (await first.request('ping')) as number;
     expect(await readFile(calls, 'utf8')).toBe('start\nping\n');
+    const launch = JSON.parse(await readFile(join(root, 'launch.json'), 'utf8'));
+    expect(launch.args).toEqual([
+      'serve',
+      '--stdio',
+      '--config',
+      join(root, 'state', 'oap-serve.json'),
+      '--session-history',
+      join(root, 'state', 'session-history.jsonl'),
+    ]);
+    delete launch.env.__CF_USER_TEXT_ENCODING;
+    expect(launch.env).toEqual({ HOME: options.stateDirectory, CODEX_HOME: options.codexHome });
     expect(JSON.parse(await readFile(join(root, 'state', 'oap-serve.json'), 'utf8'))).toEqual({
       adapters: {
         codex: { type: 'codex', executable: options.codexExecutable, environment: ['CODEX_HOME'] },
@@ -68,8 +81,8 @@ describe('OapEngine', () => {
     await expect(
       engine.getHub({ ...options, identity: { ...options.identity, sha256: '0'.repeat(64) } })
     ).rejects.toThrow('sha256_mismatch');
-    expect(await Bun.file(calls).exists()).toBe(false);
-    expect(await Bun.file(join(options.stateDirectory, 'oap-serve.json')).exists()).toBe(false);
+    expect(existsSync(calls)).toBe(false);
+    expect(existsSync(join(options.stateDirectory, 'oap-serve.json'))).toBe(false);
   });
 
   test('does not resend the failed request when a crashed hub is restarted on later use', async () => {
@@ -88,5 +101,14 @@ describe('OapEngine', () => {
     await expect(
       engine.getHub({ ...options, codexHome: join(options.codexHome, 'other') })
     ).rejects.toThrow('configuration');
+  });
+
+  test('closing during startup prevents a late hub from being orphaned', async () => {
+    const { engine, options, calls } = await fixture();
+    const starting = engine.getHub(options);
+    const closed = engine.close();
+    await expect(starting).rejects.toThrow('closed');
+    await closed;
+    expect(existsSync(calls)).toBe(false);
   });
 });
