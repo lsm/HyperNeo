@@ -6,7 +6,7 @@ import { neoPlanContextHooks } from '../../../../src/lib/agent/neo-plan-hook.ts'
 test('SDK start hooks rehydrate all plans and prompt hooks send only changes', async () => {
   let title = 'Original';
   const hooks = neoPlanContextHooks(async () => ({
-    asks: [{ id: 'a', status: 'open', title }] as NeoAsk[],
+    asks: [{ id: 'a', status: 'open', topic: 'OAP', title }] as NeoAsk[],
     todos: [],
     questions: [],
   }));
@@ -20,7 +20,7 @@ test('SDK start hooks rehydrate all plans and prompt hooks send only changes', a
   expect(await invoke('SessionStart')).toMatchObject({
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
-      additionalContext: 'Open plans\nAsk a [open] Original questions=0',
+      additionalContext: 'Open plans\nAsk a [open] topic=OAP Original questions=0',
     },
   });
   expect(await invoke('UserPromptSubmit')).toEqual({});
@@ -28,10 +28,12 @@ test('SDK start hooks rehydrate all plans and prompt hooks send only changes', a
   expect(await invoke('UserPromptSubmit')).toMatchObject({
     hookSpecificOutput: {
       hookEventName: 'UserPromptSubmit',
-      additionalContext: 'Ask a [open] Changed questions=0',
+      additionalContext: 'Ask a [open] topic=OAP Changed questions=0',
     },
   });
   expect(await invoke('SessionStart', 'resume')).toMatchObject({
-    hookSpecificOutput: { additionalContext: 'Open plans\nAsk a [open] Changed questions=0' },
+    hookSpecificOutput: {
+      additionalContext: 'Open plans\nAsk a [open] topic=OAP Changed questions=0',
+    },
   });
 });

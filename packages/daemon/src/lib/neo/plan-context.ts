@@ -25,7 +25,7 @@ export function neoPlanLines(
           kind: 'ask' as const,
           id: ask.id,
           askId: ask.id,
-          text: `Ask ${ask.id} [${ask.status}] ${ask.title} questions=${open.length}`.replace(
+          text: `Ask ${ask.id} [${ask.status}] topic=${ask.topic ?? 'none'} ${ask.title} questions=${open.length}`.replace(
             /\s+/g,
             ' '
           ),

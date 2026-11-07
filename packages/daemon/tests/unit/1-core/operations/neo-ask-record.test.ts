@@ -502,3 +502,56 @@ describe('requireAskSession and requireNeoAskGoal', () => {
     expect(requireNeoAskGoal('goal-1', 'worker-1', goal)).toEqual({ value: 'goal-1' });
   });
 });
+
+describe('ask topics', () => {
+  test('neo.ask.open records a trimmed topic and leaves it null when omitted', async () => {
+    const h = setup();
+    const labelled = await h.call(
+      'neo.ask.open',
+      { title: 'Screen time', request: 'Limit the tablet', topic: '  家长控制 ' },
+      turn('m1')
+    );
+    const plain = await h.call(
+      'neo.ask.open',
+      { title: 'Inbox', request: 'Sort the inbox' },
+      turn('m2')
+    );
+    if (!labelled.ok || !plain.ok) throw new Error('open refused');
+    expect(labelled.ask.topic).toBe('家长控制');
+    expect(plain.ask.topic).toBeNull();
+    expect(h.store.getAsk(labelled.ask.id)?.topic).toBe('家长控制');
+    for (const topic of ['', '   ', 'Thirteen char'])
+      expect(() => h.ops['neo.ask.open'].inputSchema.parse({ ...opening, topic })).toThrow();
+  });
+
+  test('neo.ask.topic sets and changes an open ask topic and refuses a settled ask', async () => {
+    const h = setup();
+    const opened = await h.call(
+      'neo.ask.open',
+      { title: 'Apply', request: 'Apply to universities' },
+      turn('m1')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    const set = await h.call(
+      'neo.ask.topic',
+      { askId: opened.ask.id, topic: ' 大学申请 ' },
+      turn('m2')
+    );
+    expect(set).toMatchObject({ ok: true, ask: { id: opened.ask.id, topic: '大学申请' } });
+    await h.call('neo.ask.topic', { askId: opened.ask.id, topic: 'OAP' }, turn('m3'));
+    expect(h.store.getAsk(opened.ask.id)?.topic).toBe('OAP');
+    expect(
+      await h.call(
+        'neo.ask.topic',
+        { askId: opened.ask.id, topic: 'Mail' },
+        { source: 'mcp', role: 'neo', sessionId: 'neo-other' }
+      )
+    ).toMatchObject({ ok: false });
+    h.store.settleAsk(h.store.getAsk(opened.ask.id)!, 'done', 'Sent', 4);
+    expect(
+      await h.call('neo.ask.topic', { askId: opened.ask.id, topic: '邮件' }, turn('m4'))
+    ).toEqual({ ok: false, reason: 'ask_settled: this ask is done.' });
+    expect(h.store.getAsk(opened.ask.id)?.topic).toBe('OAP');
+    expect(h.ops['neo.ask.topic'].policy?.roles).toEqual(['neo']);
+  });
+});
