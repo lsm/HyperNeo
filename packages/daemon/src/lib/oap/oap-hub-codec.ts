@@ -20,15 +20,19 @@ export type OapHubFrame =
 
 const HubId = z.number().refine(Number.isSafeInteger, 'Hub id must be a safe integer');
 const WireFrame = z.union([
+  z.looseObject({ id: HubId, event: z.string().min(1), ok: z.never().optional() }),
   z
-    .looseObject({ id: HubId, event: z.string().min(1) })
-    .refine((frame) => !Object.hasOwn(frame, 'ok'), 'Event cannot also be a response'),
-  z
-    .strictObject({ id: HubId, ok: z.literal(true), result: z.unknown() })
+    .looseObject({
+      id: HubId,
+      ok: z.literal(true),
+      result: z.unknown(),
+      event: z.never().optional(),
+    })
     .refine((frame) => Object.hasOwn(frame, 'result'), 'Response needs a result'),
-  z.strictObject({
+  z.looseObject({
     id: HubId,
     ok: z.literal(false),
+    event: z.never().optional(),
     result: z.null().optional(),
     error: z.looseObject({ code: z.string().min(1), message: z.string() }),
   }),
@@ -49,7 +53,8 @@ function readFrame(line: string): z.infer<typeof WireFrame> {
 }
 
 function classifyFrame(frame: z.infer<typeof WireFrame>): OapHubFrame {
-  if ('event' in frame) return { kind: 'event', id: frame.id, event: frame.event, data: frame };
+  if (frame.ok === undefined)
+    return { kind: 'event', id: frame.id, event: frame.event, data: frame };
   if (!frame.ok) {
     const details = frame.error.details;
     const feature =
