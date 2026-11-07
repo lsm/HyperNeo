@@ -75,9 +75,9 @@ test.each([
   ],
   [
     'neo.todoSessionReads',
-    'queueFacts',
-    [],
-    (r: unknown) => (r as { waiting: { next: NeoTodo }[] }).waiting[0].next,
+    'stopContext',
+    ['stored'],
+    (r: unknown) => (r as { todo: NeoTodo }).todo,
   ],
 ] as const)(
   'gateway %s creates canonical readers independently',
@@ -123,9 +123,9 @@ test('canonical null survives repeated preparation and a stale non-null legacy c
   expect(((await command('neo.todoReads', 'getTodo', ['stored'])) as NeoTodo).repo).toBeNull();
 });
 
-test.each([[], ['one'], ['one', 'two']])(
+test.each([{ repos: [] }, { repos: ['one'] }, { repos: ['one', 'two'] }])(
   'new draft inheritance uses recorded sibling repositories %j',
-  (repos) => {
+  ({ repos }) => {
     const scope = {
       ask: { repo: 'github.com/synthetic/history' },
       peers: repos.map((repo) => ({ repo: `github.com/synthetic/${repo}` })),
