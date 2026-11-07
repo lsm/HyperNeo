@@ -97,7 +97,7 @@ test('adds a different-provider model with supported thinking and can remove all
 
 test('one list shows the primary first and Make primary moves another model to the top', async () => {
   const ui = await editor();
-  expect(ui.queryByRole('button', { name: 'Change Neo primary' })).toBeNull();
+  expect(ui.getByRole('button', { name: 'Change Neo primary' })).toBeTruthy();
   const rows = ui.getAllByTitle('Remove').map((button) => button.parentElement?.textContent ?? '');
   expect(rows.map((row) => row.includes('Primary'))).toEqual([true, false, false]);
   fireEvent.click(ui.getByRole('button', { name: 'Make Neo model 2 primary' }));
@@ -424,4 +424,35 @@ test('says nothing about support while the catalog is loading', async () => {
   const section = await screen.findByRole('region', { name: 'Neo models' });
   expect(section.textContent).not.toContain('not supported by this model');
   expect(section.textContent).not.toContain('support for this model is unknown');
+});
+
+test('shows primary thinking above Advanced and keeps compaction and fallbacks inside it without writing', async () => {
+  const ui = await editor();
+  const advanced = ui.getByText('Advanced').closest('details');
+  expect(advanced).toBeTruthy();
+  expect(advanced?.hasAttribute('open')).toBe(false);
+  expect(advanced?.contains(ui.getByLabelText('Neo model 1 thinking'))).toBe(false);
+  expect(advanced?.contains(ui.getByLabelText('Neo model 1 auto-compact percentage'))).toBe(true);
+  expect(advanced?.contains(ui.getByLabelText('Neo model 2 thinking'))).toBe(true);
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+});
+
+test('changing the primary retains its thinking and does not save until requested', async () => {
+  const ui = await editor();
+  fireEvent.click(ui.getByRole('button', { name: 'Change Neo primary' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('think24k');
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: {
+        ...primary,
+        model: 'router/test',
+        provider: 'openrouter',
+        fallbacks: [glm, copilot],
+      },
+    })
+  );
 });

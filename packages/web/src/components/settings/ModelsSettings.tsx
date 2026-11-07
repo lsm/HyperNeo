@@ -455,7 +455,7 @@ function NeoModelSettings({
   const preference = globalSettings.value?.neo?.preferences;
   const [draft, setDraft] = useState<NeoModelPreference | null>(preference ?? null);
   const [percents, setPercents] = useState(() => percentTexts(preference));
-  const [picker, setPicker] = useState(false);
+  const [picker, setPicker] = useState<'add' | 'primary' | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -541,113 +541,152 @@ function NeoModelSettings({
   }
   return (
     <section aria-label="Neo models" class="space-y-3 rounded-xl border border-line bg-surface p-4">
-      <div>
-        <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
-        <p class="text-xs text-fg-faint mt-0.5">
-          Saved Neo model preference: the primary first, then the fallbacks. Recovery uses the
-          ordinary session policy and does not follow this list.
-        </p>
-      </div>
-      <p class="text-xs text-fg-faint">
-        Auto-compact is set per model and shown against that model’s context window. 90% keeps the
-        provider default; at 100%, compaction follows the provider’s limits. Percentage changes
-        apply when Neo is idle.
-      </p>
-      <p class="text-xs text-fg-faint">
-        Providers with usable models: {providers.join(', ') || 'None available'}
-      </p>
-      {!draft ? (
-        <>
+      <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
+      {draft ? (
+        <div class="space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p class="text-xs text-fg-faint">Neo model</p>
+              <p class="text-sm text-fg-soft">
+                {findSameModel(availableModels, draft)?.name ?? draft.model} ·{' '}
+                {PROVIDER_LABELS[draft.provider] || getProviderLabel(draft.provider)}
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              size="xs"
+              disabled={busy}
+              onClick={() => setPicker('primary')}
+            >
+              Change Neo primary
+            </Button>
+          </div>
+          <div>
+            <p class="text-xs text-fg-faint mb-1">Thinking</p>
+            <FallbackThinkingSelect
+              saved={draft.thinkingLevel ?? 'off'}
+              label="Neo model 1 thinking"
+              capability={loading ? null : (findSameModel(availableModels, draft) ?? draft)}
+              disabled={busy}
+              inherits={false}
+              onChange={(level = 'off') => setDraft({ ...draft, thinkingLevel: level })}
+            />
+          </div>
+        </div>
+      ) : (
+        <div class="space-y-2">
           <p class="text-xs text-fg-faint">
             Follows default (current: {globalSettings.value?.model ?? 'none'})
           </p>
           <p class="text-xs text-fg-faint">
             Add a model to save a Neo preference. The first one is the primary.
           </p>
-        </>
-      ) : draft.fallbacks === undefined ? (
-        <p class="text-xs text-fg-faint">
-          Uses the general session fallback chain until you save a Neo chain.
-        </p>
-      ) : draft.fallbacks.length === 0 ? (
-        <p class="text-xs text-fg-faint">No saved fallbacks.</p>
-      ) : null}
-      <FallbackChainEditor
-        models={list}
-        availableModels={availableModels}
-        isUpdating={busy}
-        onRemove={(index) => setList(list.filter((_, i) => i !== index))}
-        onMove={(index, direction) => {
-          const next = [...list];
-          const other = index + (direction === 'up' ? -1 : 1);
-          [next[index], next[other]] = [next[other], next[index]];
-          setList(next);
-        }}
-        controls={(entry, index) => (
-          <div class="flex flex-wrap items-center justify-end gap-2">
-            {index === 0 ? (
-              <span class="text-xs font-medium text-accent">Primary</span>
-            ) : (
-              <Button
-                variant="secondary"
-                size="xs"
-                disabled={busy}
-                aria-label={`Make Neo model ${index + 1} primary`}
-                onClick={() => setList([list[index], ...list.filter((_, i) => i !== index)])}
-              >
-                <span class="whitespace-nowrap">Make primary</span>
-              </Button>
+        </div>
+      )}
+      <details class="rounded-lg border border-line">
+        <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-fg">Advanced</summary>
+        <div class="space-y-3 p-3">
+          <p class="text-xs text-fg-faint">
+            Saved Neo model preference: the primary first, then the fallbacks. Recovery uses the
+            ordinary session policy and does not follow this list.
+          </p>
+          <p class="text-xs text-fg-faint">
+            Auto-compact is set per model and shown against that model’s context window. 90% keeps
+            the provider default; at 100%, compaction follows the provider’s limits. Percentage
+            changes apply when Neo is idle.
+          </p>
+          <p class="text-xs text-fg-faint">
+            Providers with usable models: {providers.join(', ') || 'None available'}
+          </p>
+          {draft?.fallbacks === undefined && draft ? (
+            <p class="text-xs text-fg-faint">
+              Uses the general session fallback chain until you save a Neo chain.
+            </p>
+          ) : draft?.fallbacks?.length === 0 ? (
+            <p class="text-xs text-fg-faint">No saved fallbacks.</p>
+          ) : null}
+          <FallbackChainEditor
+            models={list}
+            availableModels={availableModels}
+            isUpdating={busy}
+            onRemove={(index) => setList(list.filter((_, i) => i !== index))}
+            onMove={(index, direction) => {
+              const next = [...list];
+              const other = index + (direction === 'up' ? -1 : 1);
+              [next[index], next[other]] = [next[other], next[index]];
+              setList(next);
+            }}
+            controls={(entry, index) => (
+              <div class="flex flex-wrap items-center justify-end gap-2">
+                {index === 0 ? (
+                  <span class="text-xs font-medium text-accent">Primary</span>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    disabled={busy}
+                    aria-label={`Make Neo model ${index + 1} primary`}
+                    onClick={() => setList([list[index], ...list.filter((_, i) => i !== index)])}
+                  >
+                    <span class="whitespace-nowrap">Make primary</span>
+                  </Button>
+                )}
+                {index > 0 && (
+                  <FallbackThinkingSelect
+                    saved={entry.thinkingLevel ?? 'off'}
+                    label={`Neo model ${index + 1} thinking`}
+                    capability={loading ? null : (findSameModel(availableModels, entry) ?? entry)}
+                    disabled={busy}
+                    inherits={false}
+                    onChange={(level = 'off') =>
+                      setList(
+                        list.map((item, i) =>
+                          i === index ? { ...item, thinkingLevel: level } : item
+                        )
+                      )
+                    }
+                  />
+                )}
+                <input
+                  type="number"
+                  aria-label={`Neo model ${index + 1} auto-compact percentage`}
+                  min={AUTO_COMPACT_PERCENT_MIN}
+                  max={AUTO_COMPACT_PERCENT_MAX}
+                  step={1}
+                  value={percentText(entry)}
+                  disabled={busy}
+                  onInput={(event) =>
+                    setPercents({ ...percents, [entryKey(entry)]: event.currentTarget.value })
+                  }
+                  class="w-14 rounded border border-line bg-surface px-1.5 py-1 text-xs text-fg"
+                />
+                <span class="text-xs text-fg-faint whitespace-nowrap">{compactSize(entry)}</span>
+              </div>
             )}
-            <FallbackThinkingSelect
-              saved={entry.thinkingLevel ?? 'off'}
-              label={`Neo model ${index + 1} thinking`}
-              capability={loading ? null : (findSameModel(availableModels, entry) ?? entry)}
-              disabled={busy}
-              inherits={false}
-              onChange={(level = 'off') =>
-                setList(
-                  list.map((item, i) => (i === index ? { ...item, thinkingLevel: level } : item))
-                )
-              }
-            />
-            <input
-              type="number"
-              aria-label={`Neo model ${index + 1} auto-compact percentage`}
-              min={AUTO_COMPACT_PERCENT_MIN}
-              max={AUTO_COMPACT_PERCENT_MAX}
-              step={1}
-              value={percentText(entry)}
-              disabled={busy}
-              onInput={(event) =>
-                setPercents({ ...percents, [entryKey(entry)]: event.currentTarget.value })
-              }
-              class="w-14 rounded border border-line bg-surface px-1.5 py-1 text-xs text-fg"
-            />
-            <span class="text-xs text-fg-faint whitespace-nowrap">{compactSize(entry)}</span>
+          />
+          <div class="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="xs"
+              disabled={busy || list.length > 10}
+              onClick={() => setPicker('add')}
+            >
+              Add Neo model
+            </Button>
+            <Button
+              variant="secondary"
+              size="xs"
+              disabled={busy || !draft}
+              onClick={() => draft && setDraft({ ...draft, fallbacks: [] })}
+            >
+              Clear saved fallbacks
+            </Button>
+            <Button size="xs" disabled={busy || !draft} onClick={save}>
+              Save Neo models
+            </Button>
           </div>
-        )}
-      />
-      <div class="flex flex-wrap gap-2">
-        <Button
-          variant="secondary"
-          size="xs"
-          disabled={busy || list.length > 10}
-          onClick={() => setPicker(true)}
-        >
-          Add Neo model
-        </Button>
-        <Button
-          variant="secondary"
-          size="xs"
-          disabled={busy || !draft}
-          onClick={() => draft && setDraft({ ...draft, fallbacks: [] })}
-        >
-          Clear saved fallbacks
-        </Button>
-        <Button size="xs" disabled={busy || !draft} onClick={save}>
-          Save Neo models
-        </Button>
-      </div>
+        </div>
+      </details>
       {error && (
         <p role="alert" class="text-xs text-danger">
           {error}
@@ -655,14 +694,21 @@ function NeoModelSettings({
       )}
       {picker && (
         <ModelPickerModal
-          title="Add Neo model"
+          title={picker === 'primary' ? 'Change Neo primary' : 'Add Neo model'}
           groupedModels={groupedModels}
           providerAuthStatuses={providerAuthStatuses}
           excludeModels={list}
-          onClose={() => setPicker(false)}
+          onClose={() => setPicker(null)}
           onSelect={(model) => {
-            setList([...list, { model: model.id, provider: model.provider, thinkingLevel: 'off' }]);
-            setPicker(false);
+            if (picker === 'primary' && draft) {
+              setDraft({ ...draft, model: model.id, provider: model.provider });
+            } else {
+              setList([
+                ...list,
+                { model: model.id, provider: model.provider, thinkingLevel: 'off' },
+              ]);
+            }
+            setPicker(null);
           }}
         />
       )}

@@ -43,8 +43,13 @@ try {
     })).status(),
     200
   );
+  const beforeOpen = rpc('neo.snapshot').preferences;
   await page.goto(`http://127.0.0.1:${port}/settings?tab=neo-model`);
   const section = page.getByRole('region', { name: 'Neo models', exact: true });
+  await section.getByText('Follows default', { exact: false }).waitFor();
+  assert.deepEqual(rpc('neo.snapshot').preferences, beforeOpen);
+  evidence.openDidNotWrite = true;
+  await section.getByText('Advanced', { exact: true }).click();
   await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();
   await page.getByRole('button', { name: primary.display_name, exact: true }).click();
   if (process.env.VERIFY_ANTHROPIC_1M === '1') await section.getByText(sizeText(90), { exact: true }).waitFor();
@@ -69,6 +74,7 @@ try {
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.reload();
+    await section.getByText('Advanced', { exact: true }).click();
     await section.getByLabel('Neo model 1 thinking', { exact: true }).waitFor();
     assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, 70);
     assert.equal(await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).inputValue(), '70');
@@ -89,6 +95,7 @@ try {
   await page.getByText('Neo models saved', { exact: true }).waitFor();
   assert.deepEqual(rpc('neo.snapshot').preferences.fallbacks, []);
   await page.reload();
+  await section.getByText('Advanced', { exact: true }).click();
   await section.getByText('No saved fallbacks.', { exact: true }).waitFor();
   evidence.disabledAfterReload = true;
   await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).fill('90');
@@ -96,11 +103,19 @@ try {
   await page.getByText('Neo models saved', { exact: true }).waitFor();
   assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, undefined);
   await page.reload();
+  await section.getByText('Advanced', { exact: true }).click();
   assert.equal(await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).inputValue(), '90');
   await section.getByText(sizeText(90), { exact: true }).first().waitFor();
   evidence.resetToDefault = true;
   await page.goto(`http://127.0.0.1:${port}/neo`);
-  await page.getByRole('button', { name: 'Model and thinking', exact: true }).click();
+  await page.locator('#neo-thought').focus();
+  try {
+    await page.getByRole('button', { name: 'Model and thinking', exact: true }).click();
+  } catch (error) {
+    await page.screenshot({ path: `${run}/evidence/neo-model-neo-timeout.png`, fullPage: true });
+    evidence.neoTimeoutText = await page.locator('body').innerText();
+    throw error;
+  }
   await page.getByRole('searchbox', { name: 'Search models' }).waitFor();
   assert.equal(await page.getByRole('link', { name: 'Neo model settings', exact: true }).count(), 0);
   evidence.popoverListsModels = true;
