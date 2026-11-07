@@ -22,6 +22,12 @@ import {
 } from '../../../../src/lib/operations/catalog.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
+import {
+  HandoffReference,
+  PublicHandoffReference,
+  publicHandoffReference,
+  readPublicHandoff,
+} from '../../../../src/lib/handoffs/outbox.ts';
 
 describe('worker handoff artifact operation contract', () => {
   let root: string;
@@ -64,6 +70,9 @@ describe('worker handoff artifact operation contract', () => {
     const published = await publish();
     expect(published.kind).toBe('published');
     const reference = published.reference as Record<string, unknown>;
+    expect(published.publicReference).toEqual(
+      publicHandoffReference(HandoffReference.parse(reference))
+    );
     expect(reference).toMatchObject({
       sessionId,
       name: 'report.md',
@@ -104,8 +113,48 @@ describe('worker handoff artifact operation contract', () => {
     const read = await invoke('handoff.read', { reference: second });
     expect(Buffer.from(read.data as string, 'base64').toString()).toBe(replacement);
     expect(read.complete).toBe(true);
-    expect(await publish()).toEqual({ kind: 'published', reference: second });
+    expect(await publish()).toEqual({
+      kind: 'published',
+      reference: second,
+      publicReference: publicHandoffReference(HandoffReference.parse(second)),
+    });
     expect(readdirSync(join(root, 'handoffs', sessionId, 'published'))).toHaveLength(2);
+  });
+
+  test('projects a path-free reference and verifies the owner and all bytes on public reads', async () => {
+    const reference = HandoffReference.parse((await publish()).reference);
+    const publicRef = publicHandoffReference(reference);
+    expect(PublicHandoffReference.parse(publicRef)).toEqual(publicRef);
+    expect(JSON.stringify(publicRef)).not.toContain(root);
+    expect(PublicHandoffReference.safeParse({ ...publicRef, path: reference.path }).success).toBe(
+      false
+    );
+    const read = await readPublicHandoff(root, publicRef, 0, 32);
+    expect(read.kind).toBe('read');
+    if (read.kind === 'read')
+      expect(Buffer.from(read.data, 'base64')).toEqual(Buffer.from(text).subarray(0, 32));
+    expect(
+      await readPublicHandoff(root, {
+        ...publicRef,
+        daemonId: '00000000-0000-4000-8000-000000000000',
+      })
+    ).toEqual({ kind: 'unavailable' });
+    expect(
+      await readPublicHandoff(root, { ...publicRef, byteLength: publicRef.byteLength + 1 })
+    ).toEqual({ kind: 'tampered' });
+    expect(await readPublicHandoff(root, { ...publicRef, artifactId: '0'.repeat(64) })).toEqual({
+      kind: 'rejected',
+      reason: 'invalid_reference',
+    });
+    writeFileSync(join(drafts(), 'page.html'), '<h1>Synthetic HTML</h1>');
+    const htmlRef = PublicHandoffReference.parse((await publish('page.html')).publicReference);
+    const html = await readPublicHandoff(root, htmlRef);
+    expect(html.kind).toBe('read');
+    if (html.kind === 'read')
+      expect(Buffer.from(html.data, 'base64').toString()).toBe('<h1>Synthetic HTML</h1>');
+    chmodSync(reference.path, 0o600);
+    writeFileSync(reference.path, 'tampered');
+    expect(await readPublicHandoff(root, publicRef)).toEqual({ kind: 'tampered' });
   });
 
   test.each(['idle', 'waiting_for_input', 'error'])(

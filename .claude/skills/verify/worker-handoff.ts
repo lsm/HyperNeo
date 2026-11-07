@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileS
 import { dirname, join, resolve } from 'node:path';
 import { resolveSDKCliPath } from '../../../packages/daemon/src/lib/agent/sdk-cli-resolver.ts';
 import { query, type Options } from '../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs';
-import { handoffDraftDirectory } from '../../../packages/daemon/src/lib/handoffs/outbox.ts';
+import { handoffDraftDirectory, PublicHandoffReference, readPublicHandoff } from '../../../packages/daemon/src/lib/handoffs/outbox.ts';
 import { createHandoffOperations } from '../../../packages/daemon/src/lib/handoffs/operations.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
@@ -44,7 +44,15 @@ const server = Bun.serve({
     if (mode === 'worker') {
       if (step === 0) tool = { name: 'Write', input: { file_path: join(drafts, 'report.md'), content: text } };
       if (step === 1) tool = { name: 'mcp__hyperneo-operations__invoke', input: { name: 'handoff.publish', input: { name: 'report.md' } } };
-      if (step === 2) reference = object(results['worker-1']).reference;
+      if (step === 2) {
+        const receipt = object(results['worker-1']);
+        reference = receipt.reference;
+        const publicRef = PublicHandoffReference.parse(receipt.publicReference);
+        assert(!JSON.stringify(publicRef).includes(run));
+        const read = await readPublicHandoff(join(run, 'data'), publicRef);
+        assert.equal(read.kind, 'read');
+        if (read.kind === 'read') assert.equal(Buffer.from(read.data, 'base64').toString(), text);
+      }
     } else {
       if (step === 0) tool = { name: 'mcp__hyperneo-operations__invoke', input: { name: 'handoff.read', input: { reference } } };
       if (step === 1) tool = { name: 'Read', input: { file_path: reference.path } };
