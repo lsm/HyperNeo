@@ -490,6 +490,13 @@ describe('Neo home save remote sync', () => {
         { mode: 0o755 }
       );
       await git(root, 'config', `remote.origin.${transport}`, executable);
+      if (transport === 'receivepack') {
+        const slowFetch = join(fixture, 'slow-uploadpack');
+        await writeFile(slowFetch, '#!/bin/sh\nsleep 3.5\nexec /usr/bin/git-upload-pack "$@"\n', {
+          mode: 0o755,
+        });
+        await git(root, 'config', 'remote.origin.uploadpack', slowFetch);
+      }
       home = new NeoHomeRepository(root, repo, NETWORK_TIMEOUT_MS);
       const pending = call('neo.home.save', input);
       for (let i = 0; i < 1000; i++) {
