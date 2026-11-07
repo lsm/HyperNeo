@@ -118,3 +118,21 @@ test('candidate repository rows follow core foreign-key deletion', async () => {
   db.prepare('DELETE FROM neo_todos WHERE id=?').run('delete-me');
   expect(rows()).toEqual([]);
 });
+
+test('a backfill failure rolls back the entire preparation command', async () => {
+  await invoke('Writes', 'prepare');
+  core.addTodo('one', 'ask', draft, 2, 'github.com/synthetic/one');
+  core.addTodo('two', 'ask', draft, 2, 'github.com/synthetic/two');
+  db.exec(`CREATE TRIGGER reject_backfill BEFORE INSERT ON pack_coding_todos
+    WHEN NEW.todo_id='two' BEGIN SELECT RAISE(ABORT,'backfill failed'); END`);
+  await expect(invoke('Writes', 'prepare')).rejects.toThrow('backfill failed');
+  expect(rows()).toEqual([]);
+  expect(core.listTodos('ask')).toHaveLength(2);
+});
+
+test('a missing candidate row preserves the legacy projection', async () => {
+  await invoke('Writes', 'prepare');
+  const legacy = core.addTodo('late', 'ask', draft, 2, 'github.com/synthetic/late');
+  expect(await invoke('Reads', 'project', [legacy])).toEqual(legacy);
+  expect(rows()).toEqual([]);
+});
