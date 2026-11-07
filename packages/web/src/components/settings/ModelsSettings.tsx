@@ -60,6 +60,7 @@ interface ModelPickerModalProps {
   groupedModels: Map<string, ModelInfo[]>;
   providerAuthStatuses: Map<string, ProviderAuthStatus>;
   excludeModels: FallbackModelEntry[];
+  selectionDisabled?: boolean;
   onSelect: (model: ModelInfo) => void;
   onClose: () => void;
 }
@@ -69,6 +70,7 @@ function ModelPickerModal({
   groupedModels,
   providerAuthStatuses,
   excludeModels,
+  selectionDisabled = false,
   onSelect,
   onClose,
 }: ModelPickerModalProps) {
@@ -105,6 +107,11 @@ function ModelPickerModal({
         </div>
 
         <div class="flex-1 overflow-y-auto py-2">
+          {selectionDisabled && (
+            <p class="px-4 py-2 text-xs text-fg-faint">
+              Wait or reconnect before selecting a model.
+            </p>
+          )}
           {Array.from(visibleGroupedModels.entries()).map(([provider, models]) => {
             const authStatus = providerAuthStatuses.get(provider);
             const isAuthenticated = authStatus?.isAuthenticated ?? false;
@@ -121,9 +128,11 @@ function ModelPickerModal({
                     <button
                       key={`${model.provider}:${model.id}`}
                       class={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 transition-colors ${
-                        unavailable ? 'cursor-not-allowed opacity-50' : 'hover:bg-fill-strong'
+                        unavailable || selectionDisabled
+                          ? 'cursor-not-allowed opacity-50'
+                          : 'hover:bg-fill-strong'
                       }`}
-                      disabled={unavailable}
+                      disabled={unavailable || selectionDisabled}
                       onClick={() => onSelect(model)}
                     >
                       <ProviderLogo provider={model.provider} class="h-4 w-4" />
@@ -737,8 +746,10 @@ function NeoModelSettings({
           groupedModels={groupedModels}
           providerAuthStatuses={providerAuthStatuses}
           excludeModels={list}
+          selectionDisabled={busy}
           onClose={() => setPicker(null)}
           onSelect={(model) => {
+            if (busy || savingRef.current || connectionState.value !== 'connected') return;
             if (picker === 'primary' && draft) {
               const { autoCompactPercent: _previous, ...preference } = draft;
               void save({ ...preference, model: model.id, provider: model.provider });

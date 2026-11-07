@@ -621,3 +621,41 @@ test('changing primary via picker does not transfer the previous model compactio
     '90'
   );
 });
+
+test.each(['Change Neo primary', 'Add Neo model'])(
+  'keeps %s picker open and prevents selection while disconnected',
+  async (action) => {
+    const ui = await editor();
+    fireEvent.click(ui.getByRole('button', { name: action }));
+    const model = await screen.findByRole('button', { name: 'router/test' });
+    act(() => {
+      connectionState.value = 'disconnected';
+    });
+    expect((model as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(model);
+    expect(screen.getByRole('button', { name: 'router/test' })).toBeTruthy();
+    expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+    act(() => {
+      connectionState.value = 'connected';
+    });
+    expect((model as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(model);
+    if (action === 'Change Neo primary') {
+      expect(await screen.findByText('Switch Neo to router/test?')).toBeTruthy();
+    } else {
+      await waitFor(() =>
+        expect(request).toHaveBeenCalledWith('operation.invoke', {
+          name: 'neo.preferences.set',
+          input: {
+            ...primary,
+            fallbacks: [
+              glm,
+              copilot,
+              { model: 'router/test', provider: 'openrouter', thinkingLevel: 'off' },
+            ],
+          },
+        })
+      );
+    }
+  }
+);
