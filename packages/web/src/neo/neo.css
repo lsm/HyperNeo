@@ -25,6 +25,8 @@
   --neo-markdown-inline-code: light-dark(#416e52, #acd39d);
   --neo-markdown-link: light-dark(#276879, #89c6d5);
   --neo-markdown-quote: light-dark(#7a5fa6, #cdbdea);
+  --neo-markdown-quote-border: light-dark(#6a4a8b, #80649e);
+  --neo-action-hover: color-mix(in srgb, var(--fg) 5%, transparent);
   --neo-markdown-quote-background: color-mix(in srgb, var(--neo-markdown-quote) 6%, transparent);
 
   --neo-user-accent: light-dark(#486594, #a5b9d9);
@@ -345,12 +347,12 @@
 }
 
 .neo-markdown blockquote {
-  border-color: var(--prose-quote-fg);
+  border-color: var(--neo-markdown-quote-border);
   background: var(--neo-quote-background);
   border-radius: 0 8px 8px 0;
   padding: 8px 12px;
   position: relative;
-  padding-right: 72px;
+  padding-right: 84px;
 }
 
 .neo-quote-copy {
@@ -364,20 +366,16 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 60px;
-  min-height: 44px;
+  width: 64px;
+  min-height: 48px;
+  gap: 2px;
   font-style: normal;
 }
 
 .neo-quote-copy-button [aria-live] {
-  min-height: 12px;
+  min-height: 0;
   font-size: 10px;
   line-height: 12px;
-}
-
-.neo-quote-copy-button:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: -2px;
 }
 
 .neo-markdown th {
@@ -877,4 +875,50 @@
     var(--neo-user-border) calc(var(--neo-flight-chrome) * 100%),
     transparent
   );
+}
+
+.neo-quote-copy-button [aria-live]:empty {
+  display: none;
+}
+.neo-message > .flex > :is(.copy-button, .neo-message-action) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+.neo-quote-copy-button,
+.neo-message > .flex > :is(.copy-button, .neo-message-action) {
+  border-radius: 8px;
+  background: transparent;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+.neo-quote-copy-button:not(.text-success),
+.neo-message > .flex > :is(.copy-button, .neo-message-action):not(.text-success) {
+  color: var(--fg-muted);
+}
+.neo-quote-copy-button > svg,
+.neo-message > .flex > :is(.copy-button, .neo-message-action) > svg {
+  width: 20px !important;
+  height: 20px !important;
+}
+@media (hover: hover) {
+  .neo-quote-copy-button:hover:not(:disabled),
+  .neo-message > .flex > :is(.copy-button, .neo-message-action):hover:not(:disabled) {
+    background: var(--neo-action-hover);
+  }
+  .neo-quote-copy-button:hover:not(:disabled):not(.text-success),
+  .neo-message
+    > .flex
+    > :is(.copy-button, .neo-message-action):hover:not(:disabled):not(.text-success) {
+    color: var(--fg);
+  }
+}
+.neo-quote-copy-button:focus-visible,
+.neo-message > .flex > :is(.copy-button, .neo-message-action):focus-visible {
+  outline: 2px solid var(--neo-markdown-quote-border);
+  outline-offset: 2px;
 }

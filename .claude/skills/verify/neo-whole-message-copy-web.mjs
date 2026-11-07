@@ -1,6 +1,21 @@
 import { strict as assert } from 'node:assert';
 
+export async function pairMessageCopyBrowser(browser, fixture) {
+  const pairing = await browser.newContext();
+  try {
+    const response = await pairing.request.post(`${fixture.pairBase}/pair`, {
+      headers: { origin: fixture.pairBase },
+      data: { code: fixture.pairCode, name: 'Synthetic message browser' },
+    });
+    assert.equal(response.status(), 200);
+    return await pairing.storageState();
+  } finally {
+    await pairing.close();
+  }
+}
+
 export async function verifyWholeMessageCopy(page, fixture, { phase, touch = false, evidence }) {
+  await page.goto(fixture.url);
   const entry = page.locator('[data-public-entry]').filter({ hasText: 'Copy fixture' });
   const settled = () => entry.evaluate(async element => {
     await Promise.all(element.getAnimations({ subtree: true })
