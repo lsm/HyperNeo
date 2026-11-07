@@ -8,7 +8,7 @@ import type {
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
+import type { DeclarativeToolGuard, MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { SessionToolApplication } from '@hyperneo/shared/types/session-tool-choice';
@@ -374,6 +374,7 @@ export interface QueryRunnerContext {
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   readonly messageHandler: SDKMessageHandler;
+  readonly toolGuards?: DeclarativeToolGuard[];
   readonly oap?: OapQueryRuntime;
 
   queryObject: QueryLike | null;
@@ -809,8 +810,10 @@ export class QueryRunner {
           throw new Error('Codex is unavailable: OAP open-directory support is not available.');
         }
         const refusal = codexSessionRefusal(
-          session,
-          !!neoCoordinatorBinding(this.ctx.db, session.id)
+          session.config,
+          !!session.context?.spaceId,
+          !!neoCoordinatorBinding(this.ctx.db, session.id),
+          !!this.ctx.toolGuards?.length
         );
         if (refusal) throw new Error(refusal);
         runAbortController = new AbortController();

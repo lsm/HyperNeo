@@ -1,6 +1,6 @@
 import type { SessionConfig } from '@hyperneo/shared';
 import { isDeepStrictEqual } from 'node:util';
-import { selectSessionEngine } from '../agent/session-engine.ts';
+import { codexSessionRefusal, selectSessionEngine } from '../agent/session-engine.ts';
 
 export type CreateSessionConfigFieldPolicy = 'derived' | 'carried' | 'creation-only' | 'rejected';
 
@@ -111,7 +111,10 @@ export function admitCreateSessionConfig(
   requested: Partial<SessionConfig> | undefined
 ): Partial<SessionConfig> {
   if (!requested) return {};
-  if (requested.harness !== undefined) selectSessionEngine(requested.harness);
+  if (requested.harness !== undefined && selectSessionEngine(requested.harness) === 'codex') {
+    const refusal = codexSessionRefusal(requested, false, false);
+    if (refusal) throw new Error(refusal);
+  }
 
   const rejected = REJECTED_FIELDS.filter((field) => requested[field] !== undefined);
   if (rejected.length > 0) {
@@ -129,9 +132,14 @@ export function admitCreateSessionConfig(
 
 export function admitUpdateSessionConfig(
   requested: Partial<SessionConfig> | undefined,
-  currentSelection?: SessionConfig['toolSelection']
+  currentSelection?: SessionConfig['toolSelection'],
+  currentHarness?: SessionConfig['harness']
 ): Partial<SessionConfig> | undefined {
   if (!requested) return requested;
+  if (currentHarness === 'codex') {
+    const refusal = codexSessionRefusal(requested, false, false);
+    if (refusal) throw new Error(refusal);
+  }
 
   const rejected = UPDATE_REJECTED_FIELDS.filter(
     (field) =>

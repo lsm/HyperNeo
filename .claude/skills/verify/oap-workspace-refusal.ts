@@ -46,6 +46,8 @@ try {
   assert.equal(stored?.config.harness, 'codex');
   const update = await hub.request('session.update', { sessionId, config: { harness: 'sdk' } }).then(() => 'accepted', (error: Error) => error.message);
   assert.match(update, /harness/i);
+  const guardUpdate = await hub.request('session.update', { sessionId, config: { workerOperations: true } }).then(() => 'accepted', (error: Error) => error.message);
+  assert.match(guardUpdate, /Codex.*not supported/i);
   await hub.request('message.send', { sessionId, content: 'Synthetic request' }).catch(() => {});
   const deadline = Date.now() + 10_000;
   while (!errors.some((message) => /open-directory.*not available/i.test(message))) {
@@ -58,6 +60,7 @@ try {
   evidence.port = app.server.port;
   evidence.persistedHarness = 'codex';
   evidence.updateRefused = true;
+  evidence.workerOperationsRefused = true;
   evidence.visibleRefusal = errors.find((message) => /open-directory.*not available/i.test(message));
   evidence.sdkStartupGateCalls = gateCalls;
   evidence.trackedAgentProcesses = 0;

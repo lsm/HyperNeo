@@ -1,4 +1,4 @@
-import type { Session, SessionConfig } from '@hyperneo/shared';
+import type { SessionConfig } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
 type SessionEngine = NonNullable<SessionConfig['harness']>;
@@ -9,11 +9,18 @@ export function selectSessionEngine(harness: unknown): SessionEngine {
   throw new Error(`Unknown session harness: ${String(harness)}`);
 }
 
-function decideCodexAdmission(session: Session, neoRoot: boolean): string | undefined {
+function decideCodexAdmission(
+  config: Partial<SessionConfig>,
+  space: boolean,
+  neoRoot: boolean,
+  runtimeGuards = false
+): string | undefined {
   if (
-    session.config.toolGuards?.length ||
-    session.config.workerOperations ||
-    session.context?.spaceId ||
+    (config.toolGuards !== undefined &&
+      (!Array.isArray(config.toolGuards) || config.toolGuards.length > 0)) ||
+    runtimeGuards ||
+    (config.workerOperations !== undefined && config.workerOperations !== false) ||
+    space ||
     neoRoot
   ) {
     return 'Codex is not supported for sessions requiring tool guards, worker operations, Space, or Neo.';
@@ -22,6 +29,6 @@ function decideCodexAdmission(session: Session, neoRoot: boolean): string | unde
 }
 
 export const codexSessionRefusal = (superpipe({})('oap.session.admission') as PipelineAPI)
-  .input(['session', 'neoRoot'])
-  .pipe(decideCodexAdmission, ['session', 'neoRoot'], 'reason')
+  .input(['config', 'space', 'neoRoot', 'runtimeGuards'])
+  .pipe(decideCodexAdmission, ['config', 'space', 'neoRoot', 'runtimeGuards'], 'reason')
   .end('reason') as typeof decideCodexAdmission;

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { Session } from '@hyperneo/shared';
 import { codexSessionRefusal, selectSessionEngine } from '../../../../src/lib/agent/session-engine';
 
 describe('selectSessionEngine', () => {
@@ -16,8 +15,8 @@ describe('selectSessionEngine', () => {
 
 describe('codexSessionRefusal', () => {
   it('refuses Neo root sessions while allowing an ordinary unattended-free session', () => {
-    const session = { config: { harness: 'codex' }, context: {} } as Session;
-    expect(codexSessionRefusal(session, true)).toMatch(/Neo/);
-    expect(codexSessionRefusal(session, false)).toBeUndefined();
+    const config = { harness: 'codex' } as const;
+    expect(codexSessionRefusal(config, false, true)).toMatch(/Neo/);
+    expect(codexSessionRefusal(config, false, false)).toBeUndefined();
   });
 });
