@@ -36,11 +36,16 @@ writeFileSync(binaryPath, script, { mode: 0o700 });
 const engine = new OapEngine();
 let client: OapHubClient | undefined;
 const stateDirectory = join(run, 'data/oap');
+const stale = join(stateDirectory, 'oap-verified-x');
+mkdirSync(stale, { recursive: true });
+writeFileSync(join(stale, 'old-binary'), 'stale bytes');
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 const evidence: Record<string, unknown> = { syntheticHub: true };
 try {
   client = await engine.getHub({ binaryPath, identity: { version: 'synthetic-1', sha256: createHash('sha256').update(script).digest('hex') }, stateDirectory, codexExecutable: process.execPath, codexHome: join(run, 'home') });
+  assert(!existsSync(stale));
+  evidence.staleSnapshotRemoved = true;
   assert.notEqual(readFileSync(binaryPath, 'utf8'), script);
   assert(!existsSync(marker));
   app = await createDaemonApp({

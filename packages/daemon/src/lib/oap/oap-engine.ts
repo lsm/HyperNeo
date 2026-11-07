@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { prepareOapBinary, type PreparedOapBinary, type BinaryIdentity } from './oap-binary.ts';
@@ -34,6 +34,25 @@ function validateIdentity(options: OapEngineOptions): OapEngineOptions {
   if (!options.identity.version.trim() || !/^[a-f0-9]{64}$/i.test(options.identity.sha256)) {
     throw new Error('invalid OAP binary identity');
   }
+  return options;
+}
+
+async function readSnapshotNames(options: OapEngineOptions): Promise<string[]> {
+  await mkdir(options.stateDirectory, { recursive: true, mode: 0o700 });
+  return readdir(options.stateDirectory);
+}
+
+function staleSnapshotPaths(options: OapEngineOptions, names: string[]): string[] {
+  return names
+    .filter((name) => name.startsWith('oap-verified-'))
+    .map((name) => join(options.stateDirectory, name));
+}
+
+async function removeStaleSnapshots(
+  options: OapEngineOptions,
+  paths: string[]
+): Promise<OapEngineOptions> {
+  await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
   return options;
 }
 
@@ -80,7 +99,10 @@ const prepareHub = (superpipe({})('oap.engine.prepare') as PipelineAPI)
   .input('options')
   .pipe(validateIdentity, 'options', 'validOptions')
   .pipe(buildOapHubConfig, 'validOptions', 'config')
-  .pipe(checkBinary, 'validOptions', 'check')
+  .pipe(readSnapshotNames, 'validOptions', 'snapshotNames')
+  .pipe(staleSnapshotPaths, ['validOptions', 'snapshotNames'], 'stalePaths')
+  .pipe(removeStaleSnapshots, ['validOptions', 'stalePaths'], 'cleanOptions')
+  .pipe(checkBinary, 'cleanOptions', 'check')
   .pipe(ensureValidBinary, ['check', 'config'], 'validated')
   .pipe(writeConfig, ['validOptions', 'validated'], 'launch')
   .endAsync('launch') as (options: OapEngineOptions) => ReturnType<typeof writeConfig>;
