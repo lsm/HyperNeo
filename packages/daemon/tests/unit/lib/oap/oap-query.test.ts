@@ -13,7 +13,9 @@ describe('OapQuery', () => {
     const cancel = mock(async () => {});
     const query = createOapQuery({
       sessionId: 's1',
-      prompt: (async function* () { yield message; })(),
+      prompt: (async function* () {
+        yield message;
+      })(),
       hub: {
         submit: async () => ({ runId: 'r1' }),
         cancel,
@@ -38,7 +40,9 @@ describe('OapQuery', () => {
     } as SDKUserMessage;
     let resolveSubmit!: (value: { runId: string }) => void;
     let started!: () => void;
-    const submitted = new Promise<void>((resolve) => { started = resolve; });
+    const submitted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     let live = true;
     const cancel = mock(async () => {});
     const events = mock(async function* () {
@@ -46,11 +50,15 @@ describe('OapQuery', () => {
     });
     const options = {
       sessionId: 's1',
-      prompt: (async function* () { yield message; })(),
+      prompt: (async function* () {
+        yield message;
+      })(),
       hub: {
         submit: () => {
           started();
-          return new Promise<{ runId: string }>((resolve) => { resolveSubmit = resolve; });
+          return new Promise<{ runId: string }>((resolve) => {
+            resolveSubmit = resolve;
+          });
         },
         events,
         cancel,
@@ -78,26 +86,40 @@ describe('OapQuery', () => {
     } as SDKUserMessage;
     let release!: () => void;
     let listening!: () => void;
-    const waiting = new Promise<void>((resolve) => { release = resolve; });
-    const listeningStarted = new Promise<void>((resolve) => { listening = resolve; });
-    const cancel = mock(async () => { release(); });
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const listeningStarted = new Promise<void>((resolve) => {
+      listening = resolve;
+    });
+    const cancel = mock(async () => {
+      release();
+    });
     const query = createOapQuery({
       sessionId: 's1',
-      prompt: (async function* () { yield message; })(),
+      prompt: (async function* () {
+        yield message;
+      })(),
       hub: {
         submit: async () => ({ runId: 'r1' }),
         cancel,
         events: async function* () {
           listening();
           await waiting;
-          yield { type: 'content.delta', id: 'late', payload: { part: { type: 'text', text: 'late' } } };
+          yield {
+            type: 'content.delta',
+            id: 'late',
+            payload: { part: { type: 'text', text: 'late' } },
+          };
           yield { type: 'run.cancelled', id: 'cancelled', payload: { reason: 'cancelled' } };
           yield { type: 'run.failed', id: 'duplicate', payload: {} };
         },
       },
     });
     const messages: SDKMessage[] = [];
-    const running = (async () => { for await (const item of query) messages.push(item); })();
+    const running = (async () => {
+      for await (const item of query) messages.push(item);
+    })();
     await listeningStarted;
     await query.interrupt();
     await running;
@@ -454,7 +476,7 @@ describe('OapQuery', () => {
     await Promise.all([query.interrupt(), query.interrupt()]);
     await collected;
     expect(submit).toHaveBeenCalledTimes(1);
-    expect(submit).toHaveBeenCalledWith('s1', message);
+    expect(submit).toHaveBeenCalledWith('s1', message, expect.anything());
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(cancel).toHaveBeenCalledWith('s1', 'r1');
     expect(translate).toHaveBeenCalledTimes(1);

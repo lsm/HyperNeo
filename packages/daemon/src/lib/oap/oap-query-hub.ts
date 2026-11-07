@@ -8,6 +8,7 @@ import type { OapQueryHub } from './oap-query.ts';
 type Event = { type: string; run_id: string; [key: string]: unknown };
 type ListenerInput = Parameters<Parameters<OapHubClient['subscribe']>[1]>[0];
 type Stream = {
+  owner: symbol;
   sessionId: string;
   runId?: string;
   events: AsyncIterableIterator<[Event | Error]>;
@@ -83,12 +84,16 @@ function readEvent(frame: ListenerInput): Event | Error | undefined {
   return event as Event;
 }
 
-function runId(response: unknown): string {
+function runId(response: unknown, sessionId: string): string {
   if (!response || typeof response !== 'object') throw new Error('Invalid OAP submit response');
-  const value = response as { type?: unknown; payload?: { accepted?: unknown; run_id?: unknown } };
+  const value = response as {
+    type?: unknown;
+    payload?: { accepted?: unknown; session_id?: unknown; run_id?: unknown };
+  };
   if (
     value.type !== 'session.message.submit.response' ||
     value.payload?.accepted !== true ||
+    value.payload?.session_id !== sessionId ||
     typeof value.payload.run_id !== 'string' ||
     !value.payload.run_id
   ) {
@@ -113,11 +118,11 @@ function cancellationAccepted(response: unknown, sessionId: string, runId: strin
 
 export function createOapQueryHub(client: OapHubClient): OapQueryHub {
   let active: Stream | undefined;
-  let starting: symbol | undefined;
+  let starting: { owner: symbol } | undefined;
   return {
-    async submit(sessionId, message) {
+    async submit(sessionId, message, owner = Symbol()) {
       if (active || starting) throw new Error('OAP query hub is not available for submission');
-      const submission = Symbol();
+      const submission = { owner };
       starting = submission;
       try {
         const parameters = prepareSubmit(sessionId, generateUUID(), message);
@@ -129,6 +134,7 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
         });
         let releasing: Promise<void> | undefined;
         const stream: Stream = {
+          owner,
           sessionId,
           events,
           release: () => {
@@ -146,7 +152,7 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
         }
         active = stream;
         try {
-          stream.runId = runId(await client.request('submit', parameters));
+          stream.runId = runId(await client.request('submit', parameters), sessionId);
           return { runId: stream.runId };
         } catch (error) {
           await stream.release();
@@ -167,6 +173,7 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
       try {
         for await (const [value] of stream.events) {
           if (value instanceof Error) throw value;
+          if (typeof value.session_id === 'string' && value.session_id !== sessionId) continue;
           if (value.run_id === expectedRunId) yield value;
         }
       } finally {
@@ -192,9 +199,9 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
         throw new Error('OAP did not accept the requested cancellation');
       }
     },
-    release() {
-      starting = undefined;
-      if (active) void active.release().catch(() => {});
+    release(owner) {
+      if (!owner || starting?.owner === owner) starting = undefined;
+      if (active && (!owner || active.owner === owner)) void active.release().catch(() => {});
     },
   };
 }

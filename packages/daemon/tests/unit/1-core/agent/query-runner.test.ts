@@ -480,16 +480,22 @@ describe('QueryRunner', () => {
           openDirectorySupported: true,
           hub: {
             submit,
-            events: async function* () { yield { type: 'run.completed', id: 'end', payload: {} }; },
+            events: async function* () {
+              yield { type: 'run.completed', id: 'end', payload: {} };
+            },
             cancel: async () => {},
           },
         },
       });
-      const sent = queue.enqueueWithId('already-submitted', 'prompt', false, { durable: true }).catch((error: Error) => error);
+      const sent = queue
+        .enqueueWithId('already-submitted', 'prompt', false, { durable: true })
+        .catch((error: Error) => error);
       runner = new QueryRunner(ctx);
       await runner.start();
       expect(await completesWithin(ctx.queryPromise!)).toBe(true);
-      expect(await sent).toEqual(expect.objectContaining({ message: expect.stringMatching(/already submitted/i) }));
+      expect(await sent).toEqual(
+        expect.objectContaining({ message: expect.stringMatching(/already submitted/i) })
+      );
       expect(submit).not.toHaveBeenCalled();
     });
 

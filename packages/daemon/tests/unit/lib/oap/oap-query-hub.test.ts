@@ -56,7 +56,7 @@ function fixture(mode: 'text' | 'failed-stream' | 'refused-submit' = 'text') {
       }
       return {
         type: 'session.message.submit.response',
-        payload: { accepted: true, run_id: 'run-1' },
+        payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
       };
     }
     return {
@@ -91,15 +91,40 @@ describe('OAP query hub transport', () => {
       return { id: 1, unsubscribe: async () => {} };
     });
     const request = mock(async () => {
-      for (const [sessionId, id] of [['other-session', 'foreign'], ['synthetic-session', 'own']]) {
-        listener({ kind: 'event', id: 1, event: 'envelope', data: { id: 1, event: 'envelope', envelope: { type: 'run.completed', session_id: sessionId, run_id: 'run-1', id, payload: {} } } });
+      for (const [sessionId, id] of [
+        ['other-session', 'foreign'],
+        ['synthetic-session', 'own'],
+      ]) {
+        listener({
+          kind: 'event',
+          id: 1,
+          event: 'envelope',
+          data: {
+            id: 1,
+            event: 'envelope',
+            envelope: {
+              type: 'run.completed',
+              session_id: sessionId,
+              run_id: 'run-1',
+              id,
+              payload: {},
+            },
+          },
+        });
       }
-      return { type: 'session.message.submit.response', payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' } };
+      return {
+        type: 'session.message.submit.response',
+        payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
+      };
     });
     const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
     const { runId } = await hub.submit('synthetic-session', prompt);
     const received: unknown[] = [];
-    for await (const event of hub.events('synthetic-session', runId, new AbortController().signal)) {
+    for await (const event of hub.events(
+      'synthetic-session',
+      runId,
+      new AbortController().signal
+    )) {
       received.push(event.id);
       break;
     }
@@ -173,13 +198,21 @@ describe('OAP query hub transport', () => {
     const oldOwner = Symbol('old');
     const currentOwner = Symbol('current');
     const first = await hub.submit('synthetic-session', prompt, oldOwner);
-    for await (const event of hub.events('synthetic-session', first.runId, new AbortController().signal)) {
+    for await (const event of hub.events(
+      'synthetic-session',
+      first.runId,
+      new AbortController().signal
+    )) {
       if (event.type === 'run.completed') break;
     }
     const second = await hub.submit('synthetic-session', prompt, currentOwner);
     hub.release(oldOwner);
     const received: string[] = [];
-    for await (const event of hub.events('synthetic-session', second.runId, new AbortController().signal)) {
+    for await (const event of hub.events(
+      'synthetic-session',
+      second.runId,
+      new AbortController().signal
+    )) {
       received.push(event.type);
       if (event.type === 'run.completed') break;
     }
@@ -218,7 +251,7 @@ describe('OAP query hub transport', () => {
       });
       return {
         type: 'session.message.submit.response',
-        payload: { accepted: true, run_id: 'run-1' },
+        payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
       };
     });
     const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
@@ -253,7 +286,7 @@ describe('OAP query hub transport', () => {
       .mockImplementationOnce(async () => ({ id: 4, unsubscribe: newUnsubscribe }));
     const request = mock(async () => ({
       type: 'session.message.submit.response',
-      payload: { accepted: true, run_id: 'run-2' },
+      payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-2' },
     }));
     const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
     const old = hub.submit('synthetic-session', prompt).catch((error: Error) => error);

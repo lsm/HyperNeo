@@ -6005,12 +6005,13 @@ describe('AgentSession', () => {
         'enqueued'
       );
       repo.markDeliverySubmittedByUuids(sessionId, [uuid]);
-      const start = spyOn(agentSession.lifecycleManager, 'ensureQueryStarted')
-        .mockRejectedValue(new Error('unexpected query restart'));
+      const start = spyOn(agentSession.lifecycleManager, 'ensureQueryStarted').mockRejectedValue(
+        new Error('unexpected query restart')
+      );
 
       await expect(
         agentSession.driveDeliveryTurn(uuid, 'uncertain prompt', null, false, () => true)
-      ).rejects.toThrow(/submitted.*not.*resend/i);
+      ).rejects.toThrow(/submitted.*not.*resent/i);
       expect(start).not.toHaveBeenCalled();
       expect(repo.getDeliveryContent(sessionId, uuid)?.sendStatus).toBe('failed');
     });
