@@ -82,6 +82,11 @@ export class OapEngine {
     return createOapQueryHub(client);
   }
 
+  isCurrentHub(client: OapHubClient): boolean {
+    const slot = this.slot;
+    return !this.closed && !!slot && !slot.failed && slot.client === client;
+  }
+
   async getHub(options: OapEngineOptions): Promise<OapHubClient> {
     if (this.closed) throw new Error('OAP engine is closed');
     const input = { ...options, identity: { ...options.identity } };

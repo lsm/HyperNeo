@@ -117,6 +117,28 @@ try {
     assert.equal(turns.length, 1);
     assert(JSON.stringify(turns[0]).includes('Synthetic after open retry'));
     Object.assign(evidence, { port: app.server.port, firstOpenFailed: true, laterOpenSucceeded: true, submittedTurns: turns.length, pass: true });
+  } else if (mode === 'first-crash') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic hold for crash' });
+    await waitFor(() => calls().some((call) => call.request.method === 'turn/start'), 'first turn before hub crash');
+    assert.equal(app.db.getSession(firstId)?.metadata?.messageCount ?? 0, 0);
+    const engineHub = await app.oapEngine.getHub(config.oap);
+    const child = (engineHub as unknown as { child: { pid: number; kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
+    assert(child && child.pid > 0);
+    const exited = new Promise<void>((resolveExit) => child.once('close', resolveExit));
+    assert(child.kill('SIGKILL'));
+    await exited;
+    await waitFor(() => errors.some((error) => /OAP hub exited/.test(error)), 'visible first-turn failure');
+    await new Promise((done) => setTimeout(done, 4000));
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
+    await assert.rejects(Promise.resolve(first.oap!.hub), /reopen/i);
+    assert.equal(app.oapEngine.isCurrentHub(engineHub), false);
+    const { sessionId: freshId } = await makeSession('workspace-b');
+    await hub.request('message.send', { sessionId: freshId, content: 'Synthetic fresh session after first-turn crash' });
+    await waitFor(() => app!.db.getSDKMessages(freshId).messages.some((row) => row.type === 'result'), 'fresh session after first-turn crash');
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 2);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash')).length, 1);
+    Object.assign(evidence, { port: app.server.port, priorCompletedTurns: 0, crashedRunSubmissions: 1, automaticResendsObserved: 0, freshSessionAfterCrash: true, pass: true });
   } else if (mode === 'question') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic free text question' });
     await waitFor(() => errors.some((error) => /unsupported text question/i.test(error)), 'visible unsupported text question');
@@ -182,6 +204,10 @@ try {
     const live = await engineHub.request('sessions') as { sessions: Array<{ session_id: string }> };
     assert(live.sessions.some((entry) => entry.session_id === firstId));
     assert(!live.sessions.some((entry) => entry.session_id === secondId));
+    const { sessionId: idleId } = await makeSession('workspace-b');
+    const idle = app.sessionManager.getSession(idleId);
+    assert(idle);
+    await idle.oap!.hub;
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic hold for crash' });
     await waitFor(() => calls().some((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash')), 'in-flight run before hub crash');
     const child = (engineHub as unknown as { child: { pid: number; kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
@@ -193,8 +219,18 @@ try {
     await new Promise((done) => setTimeout(done, 2500));
     const heldTurns = calls().filter((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash'));
     assert.equal(heldTurns.length, 1);
-    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 2);
-    Object.assign(evidence, { port: app.server.port, runtimeInjected: false, distinctWorkspaceSessions: 2, queryHubsPerSession: true, sharedDaemonHub: true, deletedSessionReleased: true, remainingSessionKept: true, firstSessionCompletedTurns: firstResults, secondSessionCompletedTurns: secondResults, resultWindowQueued: true, queuedVia: 'messageQueue', textDeltasPerTurn: 96, isolatedCodexHome: true, approvalPolicy: 'on-request', sandbox: 'workspace-write', developerInstructionsSent: false, experimentalApiEnabled: false, crashedRunSubmissions: heldTurns.length, automaticResendsObserved: 0, pass: true });
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 3);
+    assert.equal(app.oapEngine.isCurrentHub(engineHub), false);
+    await assert.rejects(Promise.resolve(idle.oap!.hub), /reopen/i);
+    await assert.rejects(Promise.resolve(first.oap!.hub), /reopen/i);
+    const restartedHub = await app.oapEngine.getHub(config.oap);
+    assert.notEqual(restartedHub, engineHub);
+    const { sessionId: freshId } = await makeSession('workspace-b');
+    await hub.request('message.send', { sessionId: freshId, content: 'Synthetic fresh session after crash' });
+    await waitFor(() => app!.db.getSDKMessages(freshId).messages.some((row) => row.type === 'result'), 'fresh session after hub crash');
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 4);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash')).length, 1);
+    Object.assign(evidence, { port: app.server.port, runtimeInjected: false, distinctWorkspaceSessions: 2, queryHubsPerSession: true, sharedDaemonHub: true, deletedSessionReleased: true, remainingSessionKept: true, firstSessionCompletedTurns: firstResults, secondSessionCompletedTurns: secondResults, resultWindowQueued: true, queuedVia: 'messageQueue', textDeltasPerTurn: 96, isolatedCodexHome: true, approvalPolicy: 'on-request', sandbox: 'workspace-write', developerInstructionsSent: false, experimentalApiEnabled: false, crashedRunSubmissions: heldTurns.length, automaticResendsObserved: 0, restartOnLaterUse: true, savedHistoryRefused: true, freshSessionAfterCrash: true, pass: true });
   }
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);

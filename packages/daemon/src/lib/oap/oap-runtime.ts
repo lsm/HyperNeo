@@ -67,6 +67,8 @@ type SessionSlot = {
   directory?: string;
   opening?: Promise<OapQueryHub>;
   client?: OapHubClient;
+  hub?: OapQueryHub;
+  submitted?: boolean;
   deleted: boolean;
 };
 
@@ -111,7 +113,13 @@ export function createOapRuntime(
           if (slot.directory && slot.directory !== plan.directory) {
             throw new Error('Codex session workspace changed; reopen is required');
           }
-          if (!slot.opening && (session.metadata?.messageCount ?? 0) > 0) {
+          if (slot.hub && slot.client && !engine.isCurrentHub(slot.client)) {
+            slot.hub.release?.();
+            slot.hub = undefined;
+            slot.opening = undefined;
+            slot.client = undefined;
+          }
+          if (!slot.opening && (slot.submitted || (session.metadata?.messageCount ?? 0) > 0)) {
             throw new Error('Codex session reopen is not available yet');
           }
           if (!slot.opening) {
@@ -123,7 +131,15 @@ export function createOapRuntime(
                 slot.client = client;
                 await openSession(client, plan);
                 if (slot.deleted) throw new Error('Codex session was deleted');
-                return engine.createQueryHub(client);
+                const hub = engine.createQueryHub(client);
+                slot.hub = {
+                  ...hub,
+                  submit: (sessionId, message) => {
+                    slot.submitted = true;
+                    return hub.submit(sessionId, message);
+                  },
+                };
+                return slot.hub;
               })
               .catch((error: unknown) => {
                 slot.opening = undefined;
