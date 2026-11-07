@@ -9,7 +9,10 @@ import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestOutcome,
 } from '../messaging/render-pending-digest-pipeline.ts';
-import { ClearConversationCancelledError } from './agent-session.ts';
+import {
+  ClearConversationCancelledError,
+  ClearConversationUnsupportedError,
+} from './agent-session.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
@@ -196,7 +199,11 @@ export class QueryModeHandler {
     try {
       await this.ctx.clearConversationContext(boundaryOwner);
     } catch (error) {
-      if (error instanceof ClearConversationCancelledError) throw error;
+      if (
+        error instanceof ClearConversationCancelledError ||
+        error instanceof ClearConversationUnsupportedError
+      )
+        throw error;
       this.ctx.logger.warn(
         `turn-end flush clear failed for session ${this.ctx.session.id}: ` +
           `${error instanceof Error ? error.message : String(error)} — flushing without clear`
