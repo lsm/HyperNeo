@@ -12,6 +12,10 @@ when one recorded sibling repository supplies the new draft context,
 including core evidence checks. Invalid new checks retain check_refused; a
 target edit retains placement refusal before checking a replacement check.
 Refused writes leave the todo and worker target unchanged.
+An ask-only historical hint does not assign a repository to a new draft with no
+repository-bearing sibling. An existing ask-only todo still uses its recorded
+ask fallback: changing its evidence check into the human folder must be refused,
+leaving the stored todo unchanged.
 
 The actual artifact.reference.resolve RPC uses the production stored source
 reader, with only the PR-summary network boundary scripted. The stored canonical pack fact, even with a stale legacy column,

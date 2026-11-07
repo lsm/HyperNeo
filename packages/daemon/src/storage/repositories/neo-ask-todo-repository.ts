@@ -679,10 +679,6 @@ export class NeoAskTodoRepository {
         now,
         now
       );
-    if (repo)
-      this.db
-        .prepare('UPDATE neo_asks SET repo = ? WHERE id = ? AND repo IS NULL')
-        .run(repo, askId);
     this.touchAsk(askId, now, notify);
     return this.getTodo(id)!;
   }

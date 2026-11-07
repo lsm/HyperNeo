@@ -80,6 +80,14 @@ try {
     assert.equal(sessions.get(id), null);
   }
   observed.admissionPreserved = true;
+  store.openAsk({ id: 'ask-only', title: 'Historical association', request: 'Keep stored fallback', sessionId: root, projectId: null, originMessageId: null, repo: 'github.com/synthetic/history', createdAt: 1 });
+  const fresh = await call('neo.todo.add', { askId: 'ask-only', title: 'Fresh non-repository work', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'workspace', 'fresh.md') } } });
+  assert.equal(fresh.todo.repo, null);
+  const old = store.addTodo('ask-only-stored', 'ask-only', { title: 'Stored ask-only work', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1);
+  const denied = await call('neo.todo.edit', { todoId: old.id, check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'workspace', 'misplaced.md') } } }, false);
+  assert(denied.reason.startsWith('evidence_in_user_folder:'));
+  assert.deepEqual(store.getTodo(old.id), old);
+  observed.newDraftAndStoredEvidenceScopesPreserved = true;
   await transport.connect();
   const urls = ['stored', 'ask', 'check'].map((name) => `https://github.com/synthetic/${name}/pull/1`);
   db.prepare('UPDATE neo_todos SET report = ?, check_json = ?, named = ? WHERE id = ?').run(urls.join('\n'), JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [urls[2]] } }), JSON.stringify({ repository: 'synthetic/named' }), id);
