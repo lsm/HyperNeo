@@ -91,6 +91,14 @@ describe('PairPage', () => {
     expect(new Set(ids).size).toBe(1);
   });
 
+  it('says the code was used from another window when another tab took it', async () => {
+    const view = openPairPage('#ABCDE23456', answer(409, { error: 'code_used_elsewhere' }));
+    pressPair(view);
+    await view.findByText(
+      'This code was used from another window. Make a new one with hyperneo pair.'
+    );
+  });
+
   it('pairs after Allow elsewhere without another click or re-entering the code', async () => {
     let approved = false;
     const fetchMock = vi.fn(
