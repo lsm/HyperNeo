@@ -163,6 +163,7 @@ describe('QueryRunner', () => {
     mockDb = {
       getSession: () => mockSession,
       saveSDKMessage: saveSDKMessageSpy,
+      writeSDKMessage: mock(async () => []),
       updateSession: updateSessionSpy,
       getSDKMessages: getSDKMessagesSpy,
       updateMessageStatus: updateMessageStatusSpy,
@@ -479,6 +480,39 @@ describe('QueryRunner', () => {
       expect(successor.isLive()).toBe(true);
     });
 
+    it.each([false, true])(
+      'settles an interrupted OAP run only while its attempt has no successor (successor=%s)',
+      async (replaceAttempt) => {
+        let listening!: () => void;
+        let release!: () => void;
+        const ready = new Promise<void>((resolve) => { listening = resolve; });
+        const cancelled = new Promise<void>((resolve) => { release = resolve; });
+        const cancel = mock(async () => { release(); });
+        const events = async function* () {
+          listening();
+          await cancelled;
+          yield { type: 'run.cancelled', id: 'cancel-end', payload: { reason: 'cancelled' } };
+        };
+        const ctx = createContext({
+          session: { ...mockSession, config: { model: 'unit', provider: providerId, harness: 'codex' } },
+          messageQueue: queue,
+          oap: { openDirectorySupported: true, hub: { submit: async () => ({ runId: 'r1' }), events, cancel } },
+        });
+        void queue.enqueueWithId('codex-interrupt', 'prompt', false, { durable: true }).catch(() => {});
+        runner = new QueryRunner(ctx);
+        await runner.start();
+        const running = ctx.queryPromise!;
+        await ready;
+        ctx.attemptTokens.invalidateCurrent();
+        const successor = replaceAttempt ? ctx.attemptTokens.allocate() : undefined;
+        await ctx.queryObject!.interrupt();
+        expect(await completesWithin(running)).toBe(true);
+        expect(cancel).toHaveBeenCalledTimes(1);
+        expect(onSDKMessageSpy.mock.calls.filter(([message]) => message.type === 'result')).toHaveLength(replaceAttempt ? 0 : 1);
+        expect(successor?.isLive() ?? true).toBe(true);
+      }
+    );
+
     it('finishes a synthetic Codex text turn and acknowledges its durable prompt', async () => {
       const startup = jest.spyOn(getSdkStartupGate(), 'acquire');
       const sdkQuery = query as unknown as ReturnType<typeof mock>;
@@ -605,7 +639,7 @@ describe('QueryRunner', () => {
         });
         return {
           type: 'session.message.submit.response',
-          payload: { accepted: true, run_id: runId },
+          payload: { accepted: true, session_id: ctx.session.id, run_id: runId },
         };
       });
       const createOapQueryHub = (
@@ -675,8 +709,9 @@ describe('QueryRunner', () => {
       expect(queue.isRunning()).toBe(true);
     });
 
-    it('does not stop or acknowledge a superseded Codex query after its result', async () => {
+    it('does not stop or re-acknowledge a superseded Codex query after its result', async () => {
       const submit = mock(async () => ({ runId: 'r1' }));
+      const acknowledge = jest.spyOn(queue, 'acknowledgeYielded');
       const events = async function* () {
         yield { type: 'run.completed', id: 'stale-end', payload: {} };
       };
@@ -697,7 +732,9 @@ describe('QueryRunner', () => {
       await runner.start();
       expect(await completesWithin(ctx.queryPromise!)).toBe(true);
       expect(queue.isRunning()).toBe(true);
-      expect(queue.hasYielded('codex-stale')).toBe(true);
+      expect(queue.hasYielded('codex-stale')).toBe(false);
+      expect(acknowledge).toHaveBeenCalledTimes(1);
+      expect(acknowledge).toHaveBeenCalledWith('codex-stale', 1);
     });
 
     it('rejects a missing workspace capability even if a hub is present', async () => {
