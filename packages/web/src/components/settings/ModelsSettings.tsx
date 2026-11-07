@@ -42,6 +42,7 @@ import {
 import { SettingsSection } from './SettingsSection.tsx';
 import { Spinner } from '../ui/Spinner';
 import { Button } from '../ui/Button';
+import { ConfirmModal } from '../ui/ConfirmModal.tsx';
 import { listProviderAuthStatus } from '../../lib/api-helpers.ts';
 import { ProviderLogo } from '../ProviderLogo.tsx';
 
@@ -159,6 +160,7 @@ interface FallbackChainEditorProps {
   onMove: (index: number, direction: 'up' | 'down') => void;
   onRemove: (index: number) => void;
   controls?: (entry: FallbackModelEntry, index: number) => ComponentChildren;
+  canRemove?: (index: number) => boolean;
 }
 
 function FallbackChainEditor({
@@ -168,6 +170,7 @@ function FallbackChainEditor({
   onMove,
   onRemove,
   controls,
+  canRemove,
 }: FallbackChainEditorProps) {
   const getDisplayInfo = (entry: FallbackModelEntry) => {
     const model = findSameModel(availableModels, entry);
@@ -214,7 +217,7 @@ function FallbackChainEditor({
               <button
                 class="p-1 rounded hover:bg-danger/30 disabled:opacity-30 disabled:cursor-not-allowed"
                 onClick={() => onRemove(index)}
-                disabled={isUpdating}
+                disabled={isUpdating || canRemove?.(index) === false}
                 title="Remove"
               >
                 <XIcon class="w-4 h-4 text-danger" />
@@ -456,7 +459,9 @@ function NeoModelSettings({
   const [draft, setDraft] = useState<NeoModelPreference | null>(preference ?? null);
   const [percents, setPercents] = useState(() => percentTexts(preference));
   const [picker, setPicker] = useState<'add' | 'primary' | null>(null);
+  const [pendingPrimary, setPendingPrimary] = useState<NeoModelPreference | null>(null);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [error, setError] = useState('');
   useEffect(() => {
     setDraft(preference ?? null);
@@ -488,41 +493,21 @@ function NeoModelSettings({
         ...(draft.fallbacks ?? []),
       ]
     : [];
-  function setList(next: NeoModelEntry[]) {
-    const [first, ...rest] = next;
-    if (!first) return setDraft(null);
-    setDraft({
-      ...first,
-      ...(preference?.fallbacks === undefined && draft?.fallbacks === undefined && !rest.length
-        ? {}
-        : { fallbacks: rest }),
-    });
-  }
-  const providers = [...groupedModels.entries()]
-    .filter(([, models]) => models.some((model) => model.available !== false))
-    .map(([id]) => PROVIDER_LABELS[id] || getProviderLabel(id));
-  async function save() {
-    if (!draft || busy) return;
-    if (
-      list.some(
-        (entry) => !percentText(entry).trim() || !Number.isInteger(Number(percentText(entry)))
-      )
-    ) {
-      setError('Enter a whole number from 10 to 100.');
+  function save(next: NeoModelPreference) {
+    if (busy || savingRef.current) return;
+    if (draft && (draft.model !== next.model || draft.provider !== next.provider)) {
+      setPendingPrimary(next);
       return;
     }
-    const [first, ...rest] = list.map(({ autoCompactPercent: _previous, ...entry }) => {
-      const typed = Number(percentText(entry));
-      return typed === AUTO_COMPACT_PERCENT_DEFAULT
-        ? entry
-        : { ...entry, autoCompactPercent: resolveAutoCompactPercent(typed) };
-    });
-    const next = {
-      ...first,
-      ...(draft.fallbacks === undefined && rest.length === 0 ? {} : { fallbacks: rest }),
-    };
+    void commitSave(next);
+  }
+  async function commitSave(next: NeoModelPreference) {
+    if (busy || savingRef.current) return;
+    const previous = draft;
+    savingRef.current = true;
     setSaving(true);
     setError('');
+    setDraft(next);
     try {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Reconnect before changing Neo models.');
@@ -532,15 +517,62 @@ function NeoModelSettings({
       if (!result.ok) throw new Error(result.reason);
       setDraft(result.preferences);
       setPercents(percentTexts(result.preferences));
-      toast.success('Neo models saved');
     } catch (cause) {
+      setDraft(previous);
+      setPercents(percentTexts(previous));
       setError(cause instanceof Error ? cause.message : 'Could not save Neo models.');
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
+  function setList(next: NeoModelEntry[]) {
+    const [first, ...rest] = next;
+    if (!first) return;
+    void save({
+      ...first,
+      ...(draft?.fallbacks === undefined && !rest.length ? {} : { fallbacks: rest }),
+    });
+  }
+  function savePercent(index: number, text: string) {
+    const entry = list[index];
+    const value = Number(text);
+    if (
+      !text.trim() ||
+      !Number.isInteger(value) ||
+      value < AUTO_COMPACT_PERCENT_MIN ||
+      value > AUTO_COMPACT_PERCENT_MAX
+    ) {
+      setError('Enter a whole number from 10 to 100.');
+      return;
+    }
+    if (value === (entry.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT)) {
+      setError('');
+      return;
+    }
+    const { autoCompactPercent: _previous, ...other } = entry;
+    const updated =
+      value === AUTO_COMPACT_PERCENT_DEFAULT ? other : { ...other, autoCompactPercent: value };
+    setList(list.map((item, i) => (i === index ? updated : item)));
+  }
+  const providers = [...groupedModels.entries()]
+    .filter(([, models]) => models.some((model) => model.available !== false))
+    .map(([id]) => PROVIDER_LABELS[id] || getProviderLabel(id));
   return (
     <section aria-label="Neo models" class="space-y-3 rounded-xl border border-line bg-surface p-4">
+      {pendingPrimary && (
+        <ConfirmModal
+          isOpen
+          title="Confirm Neo model"
+          message={`Switch Neo to ${pendingPrimary ? (findSameModel(availableModels, pendingPrimary)?.name ?? pendingPrimary.model) : ''}?`}
+          confirmButtonVariant="primary"
+          onClose={() => setPendingPrimary(null)}
+          onConfirm={() => {
+            if (pendingPrimary) void commitSave(pendingPrimary);
+            setPendingPrimary(null);
+          }}
+        />
+      )}
       <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
       {draft ? (
         <div class="space-y-3">
@@ -569,7 +601,7 @@ function NeoModelSettings({
               capability={loading ? null : (findSameModel(availableModels, draft) ?? draft)}
               disabled={busy}
               inherits={false}
-              onChange={(level = 'off') => setDraft({ ...draft, thinkingLevel: level })}
+              onChange={(level = 'off') => void save({ ...draft, thinkingLevel: level })}
             />
           </div>
         </div>
@@ -608,10 +640,14 @@ function NeoModelSettings({
           ) : draft?.fallbacks?.length === 0 ? (
             <p class="text-xs text-fg-faint">No saved fallbacks.</p>
           ) : null}
+          {list.length === 1 && (
+            <p class="text-xs text-fg-faint">Add another model before removing this one.</p>
+          )}
           <FallbackChainEditor
             models={list}
             availableModels={availableModels}
             isUpdating={busy}
+            canRemove={() => list.length > 1}
             onRemove={(index) => setList(list.filter((_, i) => i !== index))}
             onMove={(index, direction) => {
               const next = [...list];
@@ -661,6 +697,7 @@ function NeoModelSettings({
                   onInput={(event) =>
                     setPercents({ ...percents, [entryKey(entry)]: event.currentTarget.value })
                   }
+                  onBlur={(event) => savePercent(index, event.currentTarget.value)}
                   class="w-14 rounded border border-line bg-surface px-1.5 py-1 text-xs text-fg"
                 />
                 <span class="text-xs text-fg-faint whitespace-nowrap">{compactSize(entry)}</span>
@@ -680,16 +717,13 @@ function NeoModelSettings({
               variant="secondary"
               size="xs"
               disabled={busy || !draft}
-              onClick={() => draft && setDraft({ ...draft, fallbacks: [] })}
+              onClick={() => draft && void save({ ...draft, fallbacks: [] })}
             >
               Clear saved fallbacks
             </Button>
           </div>
         </div>
       </details>
-      <Button size="xs" disabled={busy || !draft} onClick={save}>
-        Save Neo models
-      </Button>
       {error && (
         <p role="alert" class="text-xs text-danger">
           {error}
@@ -704,7 +738,7 @@ function NeoModelSettings({
           onClose={() => setPicker(null)}
           onSelect={(model) => {
             if (picker === 'primary' && draft) {
-              setDraft({ ...draft, model: model.id, provider: model.provider });
+              void save({ ...draft, model: model.id, provider: model.provider });
             } else {
               setList([
                 ...list,
