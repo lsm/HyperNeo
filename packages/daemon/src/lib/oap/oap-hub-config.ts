@@ -14,6 +14,7 @@ export interface OapHubConfig {
         type: 'codex';
         executable: string;
         environment: ['CODEX_HOME'];
+        any_directory: true;
         approval_policy: 'on-request';
         sandbox: 'workspace-write';
       };
@@ -42,6 +43,7 @@ function makeHubConfig(input: OapHubConfigInput): OapHubConfig {
           type: 'codex',
           executable: input.codexExecutable,
           environment: ['CODEX_HOME'],
+          any_directory: true,
           approval_policy: 'on-request',
           sandbox: 'workspace-write',
         },

@@ -569,6 +569,32 @@ describe('QueryRunner', () => {
       expect(queue.isRunning()).toBe(false);
     });
 
+    it('does not submit after the Codex workspace open is superseded', async () => {
+      let release!: (hub: OapQueryHub) => void;
+      const opening = new Promise<OapQueryHub>((resolve) => {
+        release = resolve;
+      });
+      const submit = mock(async () => ({ runId: 'unexpected' }));
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, hub: opening as unknown as OapQueryHub },
+      });
+      void queue.enqueueWithId('opening-stale', 'prompt', false, { durable: true }).catch(() => {});
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      const queryPromise = ctx.queryPromise!;
+      expect(await completesWithin(queryPromise)).toBe(false);
+      queryGeneration++;
+      release({ submit, events: async function* () {}, cancel: async () => {} });
+      expect(await completesWithin(queryPromise)).toBe(true);
+      expect(submit).not.toHaveBeenCalled();
+      expect(queue.isRunning()).toBe(true);
+    });
+
     it('does not stop or acknowledge a superseded Codex query after its result', async () => {
       const submit = mock(async () => ({ runId: 'r1' }));
       const events = async function* () {

@@ -52,7 +52,7 @@ try {
   assert.match(guardUpdate, /Codex.*not supported/i);
   await hub.request('message.send', { sessionId, content: 'Synthetic request' }).catch(() => {});
   const deadline = Date.now() + 10_000;
-  while (!errors.some((message) => /open-directory.*not available/i.test(message))) {
+  while (!errors.some((message) => /OAP configuration is incomplete/i.test(message))) {
     assert(Date.now() < deadline, `missing visible workspace refusal: ${JSON.stringify(errors)}`);
     await new Promise((done) => setTimeout(done, 50));
   }
@@ -141,7 +141,7 @@ try {
   evidence.persistedHarness = 'codex';
   evidence.updateRefused = true;
   evidence.workerOperationsRefused = true;
-  evidence.visibleRefusal = errors.find((message) => /open-directory.*not available/i.test(message));
+  evidence.visibleRefusal = errors.find((message) => /OAP configuration is incomplete/i.test(message));
   evidence.sdkStartupGateCalls = gateCalls;
   evidence.trackedAgentProcesses = 0;
   evidence.syntheticTurnsFinished = submissions.length;

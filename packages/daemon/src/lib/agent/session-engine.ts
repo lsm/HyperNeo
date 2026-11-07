@@ -16,6 +16,13 @@ function decideCodexAdmission(
   runtimeGuards = false
 ): string | undefined {
   if (
+    config.systemPrompt !== undefined ||
+    config.agent !== undefined ||
+    config.agents !== undefined
+  ) {
+    return 'Codex session instructions are not supported yet.';
+  }
+  if (
     (config.toolGuards !== undefined &&
       (!Array.isArray(config.toolGuards) || config.toolGuards.length > 0)) ||
     runtimeGuards ||
