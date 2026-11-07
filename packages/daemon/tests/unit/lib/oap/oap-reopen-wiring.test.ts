@@ -116,6 +116,7 @@ function fixture(
     submit,
     db,
     messageHub,
+    events,
     runtime: bind(engine, options, events, db, messageHub),
   };
 }
@@ -199,6 +200,37 @@ describe('OAP native session reopen wiring', () => {
       expect(host.submit).not.toHaveBeenCalled();
     }
   );
+
+  test('drops a reopen notice if its session is deleted while the notice is being saved', async () => {
+    const host = fixture({
+      known: true,
+      refusal: new OapHubRequestError('unknown_session', 'missing'),
+    });
+    let noticeStarted!: () => void;
+    let finishNotice!: () => void;
+    const started = new Promise<void>((resolve) => {
+      noticeStarted = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      finishNotice = resolve;
+    });
+    host.db.saveSDKMessage.mockImplementation(async () => {
+      noticeStarted();
+      await gate;
+      return true;
+    });
+    const opening = Promise.resolve(host.runtime(session('native-thread-a')).hub).then(
+      () => null,
+      (error: Error) => error
+    );
+    await started;
+    const deleting = host.events.publish('session.deleted', { sessionId: 'session-a' });
+    finishNotice();
+    expect((await opening)?.message).toMatch(/deleted/i);
+    await deleting;
+    expect(host.messageHub.event).not.toHaveBeenCalled();
+    expect(host.submit).not.toHaveBeenCalled();
+  });
 
   test('does not replace a legacy session whose binding is missing and history already exists', async () => {
     const host = fixture({ history: true });
