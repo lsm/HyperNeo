@@ -38,13 +38,14 @@ export function markPreviewReferences(
     const text = code.textContent ?? '';
     if (!code.closest('pre') && wanted.has(text)) apply(code, text);
   });
-  const pattern = new RegExp(
-    `(?<=(?:^|\\s)[('"“]*)(${[...wanted]
-      .sort((a, b) => b.length - a.length)
-      .map(escape)
-      .join('|')})(?=[),.!?;:'"”]*(?:\\s|$))`,
-    'g'
-  );
+  const patterns = [...wanted]
+    .sort((a, b) => b.length - a.length)
+    .map((reference) =>
+      reference.startsWith('/') || reference.startsWith('~/')
+        ? `(?<![A-Za-z0-9_./~-])(?<![A-Za-z0-9]:)${escape(reference)}(?![A-Za-z0-9_/-]|[.~]+[A-Za-z0-9_/-])`
+        : `(?<=(?:^|\\s)[('"“]*)${escape(reference)}(?=[),.!?;:'"”]*(?:\\s|$))`
+    );
+  const pattern = new RegExp(`(${patterns.join('|')})`, 'g');
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) =>
       node.parentElement?.closest('a, code, pre, [data-preview-reference]')
