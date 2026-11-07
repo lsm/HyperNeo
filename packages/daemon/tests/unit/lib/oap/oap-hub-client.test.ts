@@ -3,6 +3,12 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
+import {
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger';
 import type { OapHubFrame } from '../../../../src/lib/oap/oap-hub-codec';
 import { testDirectories } from '../../../helpers/temporary-directory';
 
@@ -48,6 +54,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (t
     process.stdout.write(buffer.subarray(0, split));
     return setTimeout(() => process.stdout.write(buffer.subarray(split)), 5);
   }
+  if (r.op === 'stderr-exit') return process.stderr.write('discarded-prefix' + 'x'.repeat(100000) + 'synthetic panic tail', () => process.exit(7));
   if (r.op === 'stderr') return process.stderr.write('x'.repeat(1000000), () => reply(r.id,'drained'));
   if (r.op === 'slow') return setTimeout(() => reply(r.id, r.value), 20);
   reply(r.id, r.value ?? count);
@@ -330,6 +337,32 @@ describe('OAP hub child lifecycle and correlation', () => {
     const hub = await client();
     await hub.connect();
     expect(await hub.request('unicode')).toBe('雪');
+  });
+
+  test('a failed child attaches and logs only the bounded stderr tail', async () => {
+    const config = getLoggerConfig();
+    configureLogger({ level: LogLevel.ERROR });
+    const logs: string[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.module === 'hyperneo:daemon:oaphubclient') logs.push(event.message);
+    });
+    try {
+      const hub = await client();
+      await hub.connect();
+      const error = await hub.request('stderr-exit').catch((error: Error) => error);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('synthetic panic tail');
+      expect((error as Error).message).not.toContain('discarded-prefix');
+      expect((error as Error).message.length).toBeLessThan(17000);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain('synthetic panic tail');
+      expect(logs[0]).not.toContain('discarded-prefix');
+      await hub.close();
+      expect(logs).toHaveLength(1);
+    } finally {
+      unsubscribe();
+      configureLogger(config);
+    }
   });
 
   test('stderr cannot block hub stdout replies', async () => {
