@@ -216,7 +216,9 @@ describe('RemoteDaemonsSettings', () => {
     typeForm('staging', 'ws://staging.test/ws');
     fireEvent.click(screen.getByText('Attach'));
 
-    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('restricted to the RPC door'));
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe('restricted to the RPC door')
+    );
     expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 });
