@@ -3,6 +3,41 @@ import { describe, expect, test } from 'bun:test';
 const codec = () => import('../../../../src/lib/oap/oap-hub-codec');
 
 describe('OAP hub wire codec', () => {
+  test('retains the refused feature identity without inventing one', async () => {
+    const { decodeOapHubLine } = await codec();
+    for (const feature of ['session.open.reopen', 'run.cancel']) {
+      expect(
+        decodeOapHubLine(
+          JSON.stringify({
+            id: 3,
+            ok: false,
+            error: {
+              code: 'unsupported_feature',
+              message: 'unsupported',
+              details: { feature, reason: 'unadvertised' },
+            },
+          })
+        )
+      ).toMatchObject({ kind: 'refusal', code: 'unsupported_feature', feature });
+    }
+    for (const details of [
+      undefined,
+      null,
+      [],
+      { feature: null },
+      { feature: 12 },
+      { reason: 'unknown' },
+    ]) {
+      const frame = decodeOapHubLine(
+        JSON.stringify({
+          id: 3,
+          ok: false,
+          error: { code: 'unsupported_feature', message: 'unsupported', details },
+        })
+      );
+      expect(frame).not.toHaveProperty('feature');
+    }
+  });
   test('decodes a real hub refusal that also carries a null result', async () => {
     const { decodeOapHubLine } = await codec();
     expect(

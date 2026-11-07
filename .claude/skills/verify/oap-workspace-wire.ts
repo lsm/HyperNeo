@@ -4,6 +4,8 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOapBinary } from '../../../packages/daemon/src/lib/oap/oap-binary.ts';
+import { OapHubRequestError } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
+import { decideReopenFailure } from '../../../packages/daemon/src/lib/oap/oap-session-open.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
@@ -107,7 +109,23 @@ try {
   const { sessionId: firstId } = await makeSession('workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
-  if (mode === 'bad-pin') {
+  if (mode === 'feature-refusal') {
+    await first.oap!.hub;
+    const engineHub = await app.oapEngine.getHub(config.oap);
+    const refusal = await engineHub.request('settings', {
+      session_id: firstId,
+      request: {
+        protocol: 'open-agent-protocol', version: '0.1', profile: 'open-agent-protocol.agent-control-core',
+        type: 'session.settings.update.request', id: 'synthetic-settings', session_id: firstId,
+        payload: { session_id: firstId, compaction_policy: { kind: 'off' } },
+      },
+    }).then(() => null, (error: Error) => error);
+    assert(refusal instanceof OapHubRequestError);
+    assert.equal(refusal.code, 'unsupported_feature');
+    assert.equal(refusal.feature, 'session.compaction.policy');
+    assert.equal(decideReopenFailure(refusal).mode, 'error');
+    Object.assign(evidence, { port: app.server.port, refusedFeature: refusal.feature, unrelatedRefusalPreserved: true, pass: true });
+  } else if (mode === 'bad-pin') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic bad digest' });
     await waitFor(() => errors.some((error) => /sha256_mismatch/.test(error)), 'visible digest refusal');
     assert.equal(calls().length, 0);
