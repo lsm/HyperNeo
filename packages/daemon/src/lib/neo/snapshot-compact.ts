@@ -1,4 +1,3 @@
-import { fitNeoPlanLines, neoPlanLines } from './plan-context.ts';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 
 export const NEO_MCP_SNAPSHOT_BUDGET = 40_000;
@@ -139,38 +138,26 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
     trimmed: NEO_SNAPSHOT_SKELETON,
   };
   if (size(skeleton) > budget) {
+    const trimmed = `${NEO_SNAPSHOT_SKELETON} Use neo.ask.read with an ask id for omitted steps.`;
     const headers = {
       ...skeleton,
       todoAsks: skeleton.todoAsks?.map((entry) => ({ ...entry, todos: [] })),
+      trimmed,
     };
-    const details = new Set(
-      fitNeoPlanLines(
-        neoPlanLines(
-          open.map((entry) => entry.ask),
-          open.flatMap((entry) => entry.todos),
-          open.flatMap((entry) => entry.questions)
-        ),
-        Math.max(0, budget - size(headers))
-      )
-        .filter((line) => line.kind === 'todo')
-        .map((line) => line.id)
-    );
-    const todoAsks = skeleton.todoAsks?.map((entry) => ({
-      ...entry,
-      todos: entry.todos.filter((todo) => details.has(todo.id)),
-    }));
-    skeleton = {
-      ...skeleton,
-      todoAsks,
-      packRows: todoPackRows(fitted.packRows, fitted.todoAsks),
-      trimmed: `${NEO_SNAPSHOT_SKELETON} Use neo.ask.read with an ask id for omitted steps.`,
-    };
+    let remaining = budget - size(headers);
+    const todoAsks = skeleton.todoAsks?.map((entry) => {
+      const todos: typeof entry.todos = [];
+      for (const todo of entry.todos) {
+        const cost = Buffer.byteLength(JSON.stringify(todo), 'utf8') + Number(todos.length > 0);
+        if (cost <= remaining) {
+          todos.push(todo);
+          remaining -= cost;
+        }
+      }
+      return { ...entry, todos };
+    });
+    skeleton = { ...headers, todoAsks };
   }
-  if (size(skeleton) > budget)
-    skeleton = {
-      ...skeleton,
-      todoAsks: skeleton.todoAsks?.map((entry) => ({ ...entry, todos: [] })),
-    };
   if (size(skeleton) > budget) skeleton = { ...skeleton, standingRules: [] };
   if (size(skeleton) > budget) skeleton = { ...skeleton, packRows: [] };
   return skeleton as T;

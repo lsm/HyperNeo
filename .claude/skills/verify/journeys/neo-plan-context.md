@@ -33,6 +33,10 @@ isolated native daemon proves actual worker execution. Inspect run-status.json r
 Mandatory owner headers take priority over the requested budget when even the
 headers alone exceed it. Unit tests pin this floor as well as UTF-8 byte sizing,
 question counts, prerequisite/hold readiness, change-only context and closures.
+The same proof also seeds a legacy two-generation family. The gateway must
+return each step once. The real compact response must retain some step details
+within its byte budget. Detail admission measures the serialized objects and
+array separators, including the omission guidance, rather than digest text.
 Run snapshot-compact, ask-entry/pack-row retention, the refusal-catalog audit
 and the storage reader-worker regression, then
 check:neo-pack-imports and check:db-main-thread. New core files contain no domain

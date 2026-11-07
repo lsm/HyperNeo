@@ -51,7 +51,10 @@ test('Neo snapshot facts, check lists and done-page facts come from a reader sna
     expect(plan.asks.map((ask) => ask.id)).toEqual(['a']);
     expect(plan.todos).toEqual(expected);
     expect(plan.questions).toEqual([]);
-    for (const [id, parent] of [['b', 'a'], ['c', 'b']]) {
+    for (const [id, parent] of [
+      ['b', 'a'],
+      ['c', 'b'],
+    ]) {
       todos.openAsk({
         id,
         projectId: null,

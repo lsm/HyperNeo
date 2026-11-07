@@ -710,7 +710,9 @@ describe('fitNeoSnapshotBudget with packRows', () => {
     expect(trimmed.todoAsks?.map((entry) => entry.ask.id)).toEqual(
       snapshot.todoAsks?.map((entry) => entry.ask.id)
     );
-    expect(trimmed.todoAsks?.every((entry) => entry.todos.length === 0)).toBe(true);
+    const retained = trimmed.todoAsks?.reduce((count, entry) => count + entry.todos.length, 0);
+    expect(retained).toBeGreaterThan(0);
+    expect(retained).toBeLessThan(800);
     expect(Buffer.byteLength(JSON.stringify(trimmed), 'utf8')).toBeLessThanOrEqual(20_000);
     expect(trimmed.packRows?.[0].rows.filter((row) => row.todoId).map((row) => row.pr)).toEqual([
       'lsm/hyperneo#1000',

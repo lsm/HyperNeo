@@ -285,9 +285,10 @@ export class NeoAskTodoRepository {
   planContext() {
     const asks = this.listOpenAsks();
     const families = [...new Set(asks.map((ask) => ask.parentId ?? ask.id))];
+    const todos = families.flatMap((id) => this.listFamilyTodos(id));
     return {
       asks,
-      todos: families.flatMap((id) => this.listFamilyTodos(id)),
+      todos: [...new Map(todos.map((todo) => [todo.id, todo])).values()],
       questions: this.listQuestionsForAsks(asks.map((ask) => ask.id)),
     };
   }
