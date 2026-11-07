@@ -24,6 +24,7 @@ export type OapQueryHub = {
 type OapQueryTranslator = {
   beginRun?(): void;
   translate(event: OapEvent): SDKMessage[];
+  flush?(): SDKMessage[];
 };
 
 type OapQueryOptions = {
@@ -213,11 +214,20 @@ export class OapQuery implements QueryLike {
           }
           if (terminal) break;
         }
+        if (!terminal && !this.closed)
+          throw new Error('OAP event stream ended before run terminal');
+      } catch (error) {
+        if (!this.closed && (this.isLive() || this.canSettleInterrupted())) {
+          for (const message of this.translator.flush?.() ?? []) {
+            if (!this.isLive() && !this.canSettleInterrupted()) break;
+            yield message;
+          }
+        }
+        throw error;
       } finally {
         this.activeRun = undefined;
         finish();
       }
-      if (!terminal && !this.closed) throw new Error('OAP event stream ended before run terminal');
       if (this.closed || this.interrupted) return;
     }
   }
@@ -271,6 +281,15 @@ export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): Oa
       beginRun: () => {
         state = initialOapTranslatorState(options.sessionId);
         runScope = generateUUID();
+      },
+      flush: () => {
+        const result = translateOapEvent(state, {
+          type: 'stream.flush',
+          id: runScope,
+          payload: {},
+        });
+        state = result.state;
+        return result.messages;
       },
       translate: (event) => {
         if (

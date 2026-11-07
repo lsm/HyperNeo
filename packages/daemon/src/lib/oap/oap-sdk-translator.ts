@@ -12,6 +12,7 @@ export interface OapTranslatorState {
   terminal: boolean;
   tools: ReadonlyArray<{ id: string; settled: boolean }>;
   pending: ReadonlyArray<PendingMessage>;
+  segments: ReadonlyArray<{ key: string | null; next: number }>;
 }
 
 type ContentPart =
@@ -21,6 +22,7 @@ type ContentPart =
 interface PendingMessage {
   key: string | null;
   id: string;
+  segment: number;
   content: ContentPart[];
 }
 
@@ -36,7 +38,7 @@ export interface OapTranslation {
 }
 
 export function initialOapTranslatorState(sessionId: string): OapTranslatorState {
-  return { sessionId, terminal: false, tools: [], pending: [] };
+  return { sessionId, terminal: false, tools: [], pending: [], segments: [] };
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -75,7 +77,7 @@ function assistantMessage(state: OapTranslatorState, pending: PendingMessage): S
     session_id: state.sessionId,
     parent_tool_use_id: null,
     message: {
-      id: pending.key ?? pending.id,
+      id: pending.key === null ? pending.id : `${pending.key}:${pending.segment}`,
       type: 'message',
       role: 'assistant',
       model: '',
@@ -115,10 +117,14 @@ function translateContent(state: OapTranslatorState, event: OapTranslatorEvent):
   } else {
     parts.push(content);
   }
-  const next: PendingMessage = { key, id: prior?.id ?? event.id, content: parts };
+  const segment = prior?.segment ?? state.segments.find((entry) => entry.key === key)?.next ?? 0;
+  const next: PendingMessage = { key, id: prior?.id ?? event.id, segment, content: parts };
   const pending = [...state.pending];
   if (prior) pending[index] = next;
   else pending.push(next);
+  const segments = prior
+    ? state.segments
+    : [...state.segments.filter((entry) => entry.key !== key), { key, next: segment + 1 }];
   const partial: SDKMessage = {
     type: 'stream_event',
     uuid: eventUuid(state.sessionId, `${event.id}:partial`),
@@ -133,7 +139,7 @@ function translateContent(state: OapTranslatorState, event: OapTranslatorEvent):
           : { type: 'thinking_delta', thinking: content.thinking },
     },
   };
-  return { state: { ...state, pending }, messages: [partial] };
+  return { state: { ...state, pending, segments }, messages: [partial] };
 }
 
 function count(value: unknown): number {
@@ -268,7 +274,23 @@ function translate(state: OapTranslatorState, event: OapTranslatorEvent): OapTra
   if (event.type === 'content.delta') {
     return translateContent(state, event);
   }
-  if (event.type.startsWith('action.call.')) return translateTool(state, event);
+  if (event.type === 'stream.flush') {
+    return {
+      state: { ...state, pending: [] },
+      messages: state.pending.map((message) => assistantMessage(state, message)),
+    };
+  }
+  if (event.type.startsWith('action.call.')) {
+    const tool = translateTool(state, event);
+    if (!tool.messages.length) return tool;
+    return {
+      state: { ...tool.state, pending: [] },
+      messages: [
+        ...state.pending.map((message) => assistantMessage(state, message)),
+        ...tool.messages,
+      ],
+    };
+  }
   if (['run.completed', 'run.failed', 'run.cancelled'].includes(event.type)) {
     return {
       state: { ...state, terminal: true, pending: [] },

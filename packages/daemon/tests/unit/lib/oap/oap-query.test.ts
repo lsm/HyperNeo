@@ -6,6 +6,47 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('OapQuery', () => {
+  test.each([
+    ['end', 'OAP event stream ended before run terminal'],
+    ['error', 'synthetic hub failure'],
+    ['unsupported', 'permission requests are not supported'],
+  ])('delivers accumulated text before an abnormal stream %s', async (ending, expectedError) => {
+    const prompt = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'request' },
+    } as SDKUserMessage;
+    const query = createOapQuery({
+      sessionId: 's1',
+      prompt: (async function* () {
+        yield prompt;
+      })(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel: async () => {},
+        events: async function* () {
+          yield {
+            type: 'content.delta',
+            id: 'e1',
+            payload: { message_id: 'm1', part: { type: 'text', text: 'partial' } },
+          };
+          if (ending === 'error') throw new Error('synthetic hub failure');
+          if (ending === 'unsupported')
+            yield { type: 'action.permission.requested', id: 'e2', payload: {} };
+        },
+      },
+    });
+    const received: SDKMessage[] = [];
+    const consume = async () => {
+      for await (const message of query) received.push(message);
+    };
+    await expect(consume()).rejects.toThrow(expectedError);
+    expect(received.filter((message) => message.type === 'assistant')).toMatchObject([
+      { message: { id: 'm1:0', content: [{ type: 'text', text: 'partial' }] } },
+    ]);
+  });
+
   test('persists one assistant message for a streamed OAP message', async () => {
     const db = new Database(':memory:');
     try {

@@ -128,7 +128,7 @@ describe('translateOapEvent', () => {
       {
         type: 'assistant',
         message: {
-          id: 'message-a',
+          id: 'message-a:0',
           content: [
             { type: 'thinking', thinking: 'Think again' },
             { type: 'text', text: 'The answer' },
@@ -137,7 +137,7 @@ describe('translateOapEvent', () => {
       },
       {
         type: 'assistant',
-        message: { id: 'message-b', content: [{ type: 'text', text: 'Other reply' }] },
+        message: { id: 'message-b:0', content: [{ type: 'text', text: 'Other reply' }] },
       },
       { type: 'result' },
     ]);
@@ -161,7 +161,7 @@ describe('translateOapEvent', () => {
     );
   });
 
-  it('keeps one text message when one OAP message spans a tool call', () => {
+  it('keeps text and tool calls in stream order when a message spans a tool call', () => {
     let state = initialOapTranslatorState('session-1');
     const messages = [];
     const events = [
@@ -193,14 +193,88 @@ describe('translateOapEvent', () => {
       messages.push(...translated.messages.filter((message) => message.type !== 'stream_event'));
     }
     expect(messages).toMatchObject([
+      {
+        type: 'assistant',
+        message: { id: 'message-1:0', content: [{ type: 'text', text: 'Before. ' }] },
+      },
       { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool-1' }] } },
       { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1' }] } },
       {
         type: 'assistant',
-        message: { id: 'message-1', content: [{ type: 'text', text: 'Before. After.' }] },
+        message: { id: 'message-1:1', content: [{ type: 'text', text: 'After.' }] },
       },
       { type: 'result' },
     ]);
+  });
+
+  it('flushes pending content once without inventing a terminal result', () => {
+    const partial = translateOapEvent(initialOapTranslatorState('session-1'), {
+      type: 'content.delta',
+      id: 'first',
+      payload: { message_id: 'message-1', part: { type: 'text', text: 'partial' } },
+    });
+    const flushed = translateOapEvent(partial.state, {
+      type: 'stream.flush',
+      id: 'flush',
+      payload: {},
+    });
+    expect(flushed.messages).toMatchObject([
+      {
+        type: 'assistant',
+        message: { id: 'message-1:0', content: [{ type: 'text', text: 'partial' }] },
+      },
+    ]);
+    expect(
+      translateOapEvent(flushed.state, { type: 'stream.flush', id: 'again', payload: {} }).messages
+    ).toEqual([]);
+  });
+
+  it('keeps segment identifiers distinct across multiple tool boundaries', () => {
+    let state = initialOapTranslatorState('session-1');
+    const messages = [];
+    const events = [
+      {
+        type: 'content.delta',
+        id: 'a',
+        payload: { message_id: 'm1', part: { type: 'text', text: 'one' } },
+      },
+      { type: 'action.call.started', id: 'b', payload: { tool_call_id: 't1', name: 'first' } },
+      {
+        type: 'content.delta',
+        id: 'c',
+        payload: { message_id: 'm1', part: { type: 'text', text: 'two' } },
+      },
+      { type: 'action.call.started', id: 'd', payload: { tool_call_id: 't1', name: 'first' } },
+      {
+        type: 'content.delta',
+        id: 'e',
+        payload: { message_id: 'm1', part: { type: 'text', text: ' plus' } },
+      },
+      { type: 'action.call.completed', id: 'f', payload: { tool_call_id: 't1', result: 'ok' } },
+      {
+        type: 'content.delta',
+        id: 'g',
+        payload: { message_id: 'm1', part: { type: 'text', text: 'three' } },
+      },
+      { type: 'run.completed', id: 'h', payload: {} },
+    ];
+    for (const event of events) {
+      const translated = translateOapEvent(state, event);
+      state = translated.state;
+      messages.push(
+        ...translated.messages.filter(
+          (message) =>
+            message.type === 'assistant' &&
+            message.message.content.some((part) => part.type === 'text')
+        )
+      );
+    }
+    expect(messages).toMatchObject([
+      { message: { id: 'm1:0', content: [{ text: 'one' }] } },
+      { message: { id: 'm1:1', content: [{ text: 'two plus' }] } },
+      { message: { id: 'm1:2', content: [{ text: 'three' }] } },
+    ]);
+    expect(new Set(messages.map((message) => message.uuid)).size).toBe(3);
   });
 });
 
@@ -381,7 +455,7 @@ describe('translateOapEvent tool and usage fixtures', () => {
       {
         type: 'assistant',
         message: {
-          id: 'message-03',
+          id: 'message-03:0',
           content: [{ type: 'thinking', thinking: 'consider options' }],
         },
       },
