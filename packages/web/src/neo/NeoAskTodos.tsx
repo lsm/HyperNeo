@@ -2,7 +2,10 @@ import { ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
 import { FileReferenceCards } from '../components/artifacts/FileReferenceCards.tsx';
-import { previewLinkedReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
+import {
+  previewLinkedReferenceCandidates,
+  previewLinkedReferenceSpans,
+} from '@hyperneo/shared/types/artifact-reference';
 import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
 import type {
   NeoAskEntry,
@@ -112,6 +115,58 @@ function useExpandedTodos(sessionId: string, askId: string) {
   return { expanded, setExpanded };
 }
 
+function CardFileText({
+  text,
+  kind,
+  id,
+  onOpen,
+}: {
+  text: string;
+  kind: 'todo' | 'question';
+  id: string;
+  onOpen?: () => void;
+}) {
+  const spans = useMemo(() => previewLinkedReferenceSpans(text), [text]);
+  let cursor = 0;
+  const pieces = spans.flatMap(({ start, end, reference }) => {
+    const before = text.slice(cursor, start);
+    cursor = end;
+    const open = () => {
+      onOpen?.();
+      openArtifactPreview({ kind: 'reference', source: { kind, id }, reference });
+    };
+    return [
+      before,
+      <span
+        key={start}
+        role="link"
+        tabIndex={0}
+        class="pointer-events-auto cursor-pointer text-accent underline decoration-dotted underline-offset-2 focus-visible:outline-accent"
+        aria-label={t('artifact.openNamed', { name: reference })}
+        onClick={(event) => {
+          event.stopPropagation();
+          open();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            event.stopPropagation();
+            open();
+          }
+        }}
+      >
+        {text.slice(start, end)}
+      </span>,
+    ];
+  });
+  return (
+    <>
+      {pieces}
+      {text.slice(cursor)}
+    </>
+  );
+}
+
 function TodoRow({
   todo,
   number,
@@ -140,7 +195,7 @@ function TodoRow({
       <span
         class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'text-fg'}`}
       >
-        {todo.title}
+        <CardFileText text={todo.title} kind="todo" id={todo.id} />
       </span>
       {todo.addedAfterStart && todo.state !== 'removed' && (
         <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
@@ -156,9 +211,17 @@ function TodoRow({
         data-todo-status
         class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
       >
-        {number === undefined
-          ? neoTodoStatus(todo)
-          : todo.doneWhen && t('todo.doneWhen', { doneWhen: todo.doneWhen })}
+        <CardFileText
+          kind="todo"
+          id={todo.id}
+          text={
+            number === undefined
+              ? neoTodoStatus(todo)
+              : todo.doneWhen
+                ? t('todo.doneWhen', { doneWhen: todo.doneWhen })
+                : ''
+          }
+        />
       </span>
     </>
   );
@@ -184,26 +247,30 @@ function TodoRow({
       )}
       <div class="min-w-0 flex-1">
         {onToggle ? (
-          <button
-            type="button"
-            aria-expanded={expanded}
-            aria-controls={detailId}
-            aria-label={t(expanded ? 'todo.hideDetails' : 'todo.showDetails', {
-              title: todo.title,
-            })}
-            onClick={onToggle}
-            class="block w-full min-w-0 rounded text-left focus-visible:outline-accent"
-          >
-            <ChevronRightGlyph
-              aria-hidden="true"
-              data-todo-hint
-              class={`-ml-0.5 mr-1 inline-block h-3.5 w-3.5 align-[-2px] text-fg-muted transition-transform ${expanded ? 'rotate-90' : ''}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            />
-            {head}
-          </button>
+          <div class="relative min-w-0">
+            <button
+              type="button"
+              aria-expanded={expanded}
+              aria-controls={detailId}
+              aria-label={t(expanded ? 'todo.hideDetails' : 'todo.showDetails', {
+                title: todo.title,
+              })}
+              onClick={onToggle}
+              class="absolute inset-0 block w-full rounded text-left focus-visible:outline-accent"
+            >
+              <ChevronRightGlyph
+                aria-hidden="true"
+                data-todo-hint
+                class={`absolute left-0 top-1 h-3.5 w-3.5 text-fg-muted transition-transform ${expanded ? 'rotate-90' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              />
+            </button>
+            <div data-todo-head class="pointer-events-none relative min-w-0 pl-4">
+              {head}
+            </div>
+          </div>
         ) : (
           <div class="block w-full min-w-0 text-left">{head}</div>
         )}
@@ -213,13 +280,17 @@ function TodoRow({
               {onToggle &&
                 detail.map((text) => (
                   <p key={text} class="mt-1 whitespace-pre-wrap break-words text-xs text-fg-muted">
-                    {text}
+                    <CardFileText text={text} kind="todo" id={todo.id} />
                   </p>
                 ))}
               <ArtifactCards artifacts={todo.artifacts} />
               {number === undefined && nextAction && (
                 <span data-todo-next-action class="block break-words text-xs text-fg-muted">
-                  {t('todo.nextAction', { action: nextAction })}
+                  <CardFileText
+                    text={t('todo.nextAction', { action: nextAction })}
+                    kind="todo"
+                    id={todo.id}
+                  />
                 </span>
               )}
             </div>
@@ -319,15 +390,22 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
 
 function QuestionDocument({ question }: { question: NeoQuestionEntry }) {
   const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
   if (!question.document) return null;
   const label = t(question.confirm ? 'question.document' : 'question.report');
   return (
     <>
-      <button type="button" class={neoPlainClass} onClick={() => setOpen(true)}>
+      <button ref={trigger} type="button" class={neoPlainClass} onClick={() => setOpen(true)}>
         {label}
       </button>
-      <Modal isOpen={open} onClose={() => setOpen(false)} title={label} size="xl">
-        <pre class="whitespace-pre-wrap break-words text-sm text-fg">{question.document}</pre>
+      <Modal isOpen={open} onClose={close} title={label} size="xl">
+        <pre class="whitespace-pre-wrap break-words text-sm text-fg">
+          <CardFileText text={question.document} kind="question" id={question.id} onOpen={close} />
+        </pre>
       </Modal>
     </>
   );

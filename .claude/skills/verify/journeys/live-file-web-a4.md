@@ -37,7 +37,7 @@ must retain the publication source/reference; no registration or snapshot resolv
 is allowed. File and identity row counts stay unchanged during these reads.
 Download rereads the current file: all 450,016 bytes must match the synthetic
 edited text. HTML download is explicitly safe/sanitized HTML, not original active
-source. Unsupported PDF gives a clear refusal. Legacy artifact cards and the
+source. Unsupported PDF paths stay plain text. Legacy artifact cards and the
 fixed-head Git file/Back flow still work; off-origin requests and page errors fail.
 
 For interactive QA, import `verifyLiveFilePage` from the proof module through the

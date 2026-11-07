@@ -70,6 +70,39 @@ describe('Neo artifact taps', () => {
     });
     afterEach(closeArtifactPreview);
 
+    it('opens paths in todo title and status without toggling or nesting interactive controls', async () => {
+      const todo = testTodo('inline-todo', {
+        title: 'Read /synthetic/title.md and /synthetic/script.sh',
+        status: 'Blocked by /synthetic/status.md',
+        blockedReason: 'Blocked by /synthetic/status.md',
+        state: 'blocked',
+        instruction: 'Read /synthetic/detail.md',
+      });
+      render(
+        <NeoAskTodos entry={testAskEntry('ask', 'Work', { todos: [todo] })} onAnswer={() => {}} />
+      );
+      const toggle = screen.getByRole('button', { name: `Show details: ${todo.title}` });
+      const title = await screen.findByRole('link', { name: 'Open preview: /synthetic/title.md' });
+      expect(screen.getByText(/and \/synthetic\/script\.sh/)).toBeTruthy();
+      expect(screen.queryByRole('link', { name: /script\.sh/ })).toBeNull();
+      expect(title.closest('button')).toBeNull();
+      fireEvent.click(title);
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(artifactPreviewStack.value.at(-1)).toMatchObject({
+        kind: 'reference',
+        source: { kind: 'todo', id: todo.id },
+        reference: '/synthetic/title.md',
+      });
+      const status = screen.getByRole('link', { name: 'Open preview: /synthetic/status.md' });
+      expect(status.closest('button')).toBeNull();
+      fireEvent.keyDown(status, { key: 'Enter' });
+      expect(artifactPreviewStack.value.at(-1)).toMatchObject({
+        reference: '/synthetic/status.md',
+      });
+      fireEvent.click(toggle);
+      expect(screen.getByRole('link', { name: 'Open preview: /synthetic/detail.md' })).toBeTruthy();
+    });
+
     it('derives one card per literal file reference without rewriting a publication', async () => {
       const body =
         'Read `/synthetic/report.md` twice: `/synthetic/report.md`.\n\n```sh\nignored.md\n```\n\nhttps://github.com/acme/demo/pull/7';
@@ -103,7 +136,7 @@ describe('Neo artifact taps', () => {
       render(
         <NeoAskTodos entry={testAskEntry('ask', 'Work', { todos: [todo] })} onAnswer={() => {}} />
       );
-      fireEvent.click(screen.getByText('File result'));
+      fireEvent.click(screen.getByRole('button', { name: 'Show details: File result' }));
       const card = await screen.findByRole('button', { name: 'Open current file: report.md' });
       expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(1);
       fireEvent.click(card);
@@ -119,7 +152,7 @@ describe('Neo artifact taps', () => {
         id: 'file-question',
         askId: 'ask',
         text: `Read \`/synthetic/report.md\`, [the PR](https://github.com/acme/demo/pull/7) and [the blob](https://github.com/acme/demo/blob/${'a'.repeat(40)}/file.md).`,
-        document: 'Full report: `/synthetic/report.md`',
+        document: 'Full report: /synthetic/script.sh and `/synthetic/report.md`',
         kind: 'reply',
         options: null,
         multiple: false,
@@ -164,6 +197,27 @@ describe('Neo artifact taps', () => {
         source: { kind: 'question', id: question.id },
         reference: '/synthetic/report.md',
       });
+      closeArtifactPreview();
+      request.mockResolvedValue({ accepted: false, reason: 'missing' });
+      render(<ArtifactPreviewPanel />);
+      const reportTrigger = screen.getByRole('button', { name: 'View full report' });
+      fireEvent.click(reportTrigger);
+      const dialog = screen.getByRole('dialog', { name: 'View full report' });
+      expect(within(dialog).getByText(/\/synthetic\/script\.sh/)).toBeTruthy();
+      expect(within(dialog).queryByRole('link', { name: /script\.sh/ })).toBeNull();
+      const reportLink = within(dialog).getByRole('link', {
+        name: 'Open preview: /synthetic/report.md',
+      });
+      reportLink.focus();
+      fireEvent.keyDown(reportLink, { key: 'Enter' });
+      expect(artifactPreviewStack.value.at(-1)).toMatchObject({
+        source: { kind: 'question', id: question.id },
+        reference: '/synthetic/report.md',
+      });
+      expect(screen.queryByRole('dialog', { name: 'View full report' })).toBeNull();
+      await screen.findByText('This file is no longer there.');
+      closeArtifactPreview();
+      await waitFor(() => expect(document.activeElement).toBe(reportTrigger));
       const card = await screen.findByRole('button', { name: 'Open current file: report.md' });
       expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(1);
       fireEvent.click(card);
@@ -201,7 +255,7 @@ describe('Neo artifact taps', () => {
       expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(2);
       expect(screen.queryByRole('button', { name: 'Open current file: detail.md' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Open current file: next.md' })).toBeNull();
-      fireEvent.click(screen.getByText(todo.title));
+      fireEvent.click(screen.getByRole('button', { name: `Show details: ${todo.title}` }));
       expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(4);
       expect(screen.getAllByRole('button', { name: 'Open current file: title.md' })).toHaveLength(
         1

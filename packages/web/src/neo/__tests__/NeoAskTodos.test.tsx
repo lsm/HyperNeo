@@ -639,18 +639,18 @@ describe('NeoAskTodos', () => {
       ),
     });
 
-  it('expands a todo by tapping its text and turns its left hint', () => {
+  it('expands a todo using its toggle and turns its left hint', () => {
     locale.value = 'en';
     const data = detailed();
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
     const header = app.getByRole('button', { name: 'Show details: Todo a' });
     const hint = header.querySelector('[data-todo-hint]')!;
     expect(hint.getAttribute('class')).not.toContain('rotate-90');
-    fireEvent.click(app.getByText('Todo a'));
+    fireEvent.click(header);
     expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
     expect(header.getAttribute('aria-expanded')).toBe('true');
     expect(hint.getAttribute('class')).toContain('rotate-90');
-    fireEvent.click(app.getByText('Todo a'));
+    fireEvent.click(header);
     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
   });
 

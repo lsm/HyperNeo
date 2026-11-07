@@ -11,11 +11,16 @@ browser and daemon. Do not drive a human browser or touch a live database.
 The new fixture keeps the saved-attachment/Git controls and adds a question and
 todo whose public body/document/detail repeat the same owner-absolute file. Their
 metadata contains another filename which must not become a card. The proof clicks
-publication, question and expanded todo cards at desktop and phone widths. One
+publication, question and expanded todo cards at desktop and phone widths. It
+also clicks the inline todo title path, verifies its source-bound preview, clicks
+the non-link title text to expand the row, and opens a path from a question's
+full report with Enter, then confirms focus returns to its report button after
+the preview closes. A `.sh` path in each remains plain text while the `.md` path is
+clickable. One
 exact path produces one card; labels distinguish Current file and Saved attachment.
 Bare/relative PR filenames remain prose and do not generate cards or automatic
 links. Current Markdown/HTML/image edits show on reopening, deletion reports missing,
-unsupported PDF reports no preview, Download rereads complete current bytes,
+unsupported PDF stays plain text, Download rereads complete current bytes,
 and no artifact/identity rows are created. Every live call retains its actual
 source and literal reference; saved IDs and fixed-head Git captures still work.
 
