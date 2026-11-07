@@ -3,6 +3,43 @@ import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { createOapQuery, OapQuery } from '../../../../src/lib/oap/oap-query';
 
 describe('OapQuery', () => {
+  test('keeps event message identities distinct when a restarted hub repeats event and run ids', async () => {
+    const message = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'explicit request' },
+    } as SDKUserMessage;
+    const identities: string[][] = [];
+    for (let turn = 0; turn < 2; turn++) {
+      const query = createOapQuery({
+        sessionId: 's1',
+        prompt: (async function* () {
+          yield message;
+        })(),
+        hub: {
+          submit: async () => ({ runId: 'reused-run' }),
+          cancel: async () => {},
+          events: async function* () {
+            yield {
+              type: 'content.delta',
+              id: 'reused-text',
+              payload: { part: { type: 'text', text: 'reply' } },
+            };
+            yield { type: 'run.completed', id: 'reused-terminal', payload: {} };
+          },
+        },
+      });
+      const current: string[] = [];
+      for await (const result of query) current.push(result.uuid);
+      identities.push(current);
+    }
+    expect(identities[0]).toHaveLength(2);
+    expect(identities[1]).toHaveLength(2);
+    expect(identities[0][0]).not.toBe(identities[1][0]);
+    expect(identities[0][1]).not.toBe(identities[1][1]);
+  });
+
   test('does not cancel a completed run while its terminal result is being handled', async () => {
     const message = {
       type: 'user',
