@@ -262,6 +262,7 @@ try {
     await refresh();
     const running = await read(one.askId);
     evidence.afterStartAnswer = running;
+    assert.equal(running.todos.find((t: { id: string }) => t.id === one.id)?.approvalQuestionId, (start[0] as unknown as { id: string }).id);
     assert.deepEqual([state(running, one.id), state(running, two.id), state(running, three.id)], ['doing', 'todo', 'todo']);
     assert.equal(starts(), 1);
     await complete('chain-1');
@@ -281,6 +282,8 @@ try {
       { ...step('removed-second', 'restart'), after: [0], start: true },
     ] });
     const [a, b] = removal.todos;
+    const direct = await read(b.askId);
+    assert.equal(direct.todos.find((t: { id: string }) => t.id === b.id)?.approvalQuestionId, null);
     const before = starts();
     await call('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
     await refresh();
