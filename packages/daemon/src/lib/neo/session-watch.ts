@@ -3,7 +3,14 @@ import { workerEngine } from '@hyperneo/shared/types/worker-identity';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { NeoStatusCodesSchema, neoStatusLine } from './status-codes.ts';
-import { type PlaceGroup, type WorkRef, WorkRefSchema, type WorkStatus } from '../drivers/types.ts';
+import {
+  type PlaceGroup,
+  type WorkRef,
+  WorkRefSchema,
+  type WorkStatus,
+  type WorkTurnQuestion,
+  WorkTurnQuestionSchema,
+} from '../drivers/types.ts';
 
 export type { NeoSessionNotice, NeoSessionNoticeGroup };
 
@@ -20,6 +27,7 @@ export const NeoSessionNoticeSchema = z.object({
   at: z.number(),
   link: z.string().optional(),
   remoteLink: z.string().optional(),
+  question: WorkTurnQuestionSchema.optional(),
 });
 export const NeoSessionNoticeGroupSchema = z.object({
   id: z.string(),
@@ -119,7 +127,7 @@ export function planNeoSessionWatch(
 export function planNeoSessionNotice(
   session: NeoListedSession,
   prior: NeoSessionSeen,
-  detail: { status: WorkStatus; lastInputAt: number | null } | null,
+  detail: { status: WorkStatus; lastInputAt: number | null; question?: WorkTurnQuestion } | null,
   now: number
 ): { seen: NeoSessionSeen; notice: NeoSessionNotice | null } {
   if (!detail) return { seen: prior, notice: null };
@@ -144,9 +152,23 @@ export function planNeoSessionNotice(
           at: now,
           ...(session.link ? { link: session.link } : {}),
           ...(session.remoteLink ? { remoteLink: session.remoteLink } : {}),
+          ...(kind === 'needs_you' && detail.question ? { question: detail.question } : {}),
         }
       : null,
   };
+}
+
+export const neoTurnQuestionLine = (question: WorkTurnQuestion) =>
+  question.actions.length
+    ? `${question.text} Options: ${question.actions.join('; ')}.`
+    : question.text;
+
+export const neoHumanCardLine = (link: string | undefined) =>
+  `If not, open a human card with sourceSession${link ? ` and this link: ${link}` : ''}.`;
+
+export function neoSessionQuestionNote(notice: NeoSessionNotice): string {
+  const question = notice.question ? neoTurnQuestionLine(notice.question) : '';
+  return `Session "${notice.title}" (${notice.ref.adapter}:${notice.ref.id}) ended its turn with a question: ${question} It has no todo. If the plan, saved rules or your authority settle it, answer with work.send and notice:true. ${neoHumanCardLine(notice.remoteLink ?? notice.link)}`;
 }
 
 export function keepNeoSessionNotices(

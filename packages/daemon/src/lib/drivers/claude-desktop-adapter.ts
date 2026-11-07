@@ -51,6 +51,7 @@ import type {
   WorkStarted,
   WorkExchangeEntry,
   WorkInput,
+  WorkTurnQuestion,
   WorkRef,
   WorkStatus,
   WorkSummary,
@@ -80,6 +81,7 @@ import {
 } from './claude-runtime-identity.ts';
 import { readClaudeTurnFacts } from './claude-turn-facts.ts';
 import { readTailLines } from './transcript-tail.ts';
+import { claudeTurnQuestion } from './claude-turn-question.ts';
 import { claudeInboxText, type ClaudeInboxSubmission } from './claude-inbox.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
 import {
@@ -458,6 +460,7 @@ export interface ClaudeTranscriptState extends ClaudeRuntimeIdentity {
   inputs: WorkInput[];
   lastAt: number;
   exchange?: WorkExchange;
+  question?: WorkTurnQuestion;
 }
 
 export interface ClaudeTranscriptEntry {
@@ -583,9 +586,11 @@ export function claudeTranscriptState(
     if (next) exchange.push(next);
   }
   const reply = turnReply(turn);
+  const question = claudeTurnQuestion(lines);
   return {
     ...identity,
     ...(turnEnds.length ? { turnEnds } : {}),
+    ...(question ? { question } : {}),
     reply,
     ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
     inputs: recentWorkInputs(inputs, since),
@@ -642,10 +647,18 @@ export function describeClaudeSession(
     ...(waitingFor ? { waitingFor } : {}),
   };
   if (!transcript) return { ok: true, value: { ...work, ...claudeSessionLinks(record) } };
+  const question = work.status === 'done' && transcript.question;
   return {
     ok: true,
     value: {
       ...work,
+      ...(question
+        ? {
+            status: 'needs_you' as const,
+            waitingFor: question.text.slice(0, 200),
+            turnQuestion: question,
+          }
+        : {}),
       ...withClaudeIdentity(transcript),
       lastActivityAt: Math.max(work.lastActivityAt, transcript.lastAt),
       ...(transcript.turnEnds?.length ? { turnEnds: transcript.turnEnds } : {}),

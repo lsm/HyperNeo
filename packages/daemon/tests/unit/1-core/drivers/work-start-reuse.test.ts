@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { workStartConfiguration } from '../../../../src/lib/drivers/start-configuration';
-import type { WorkAdapter, WorkRef, WorkStatus } from '../../../../src/lib/drivers/types';
+import type {
+  WorkAdapter,
+  WorkRef,
+  WorkStatus,
+  WorkTurnQuestion,
+} from '../../../../src/lib/drivers/types';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -16,6 +21,7 @@ function harness(
     id: string;
     status: WorkStatus;
     liveStatus?: WorkStatus;
+    turnQuestion?: WorkTurnQuestion;
     folder?: string;
     refusal?: 'not_open' | 'uncertain' | 'throws';
   }[],
@@ -99,6 +105,7 @@ function harness(
                 workers.find((worker) => worker.id === ref.id)?.liveStatus ??
                 workers.find((worker) => worker.id === ref.id)?.status ??
                 'done',
+              turnQuestion: workers.find((worker) => worker.id === ref.id)?.turnQuestion,
               lastActivityAt: 1,
               model: config?.model ?? 'claude-opus-5-5',
               effort: config?.effort ?? 'medium',
@@ -185,6 +192,29 @@ describe('work.start reuses an idle worker', () => {
     );
     expect((await run.start()).value?.ref.id).toBe('fresh');
     expect(run.sent).toEqual([]);
+  });
+
+  test('starts fresh instead of overwriting an unanswered turn question', async () => {
+    const question = {
+      id: 'tool-question',
+      at: 1,
+      text: 'Continue this plan?',
+      actions: ['Yes', 'Wait'],
+    };
+    const run = harness(
+      [
+        {
+          id: 'asking',
+          status: 'done',
+          liveStatus: 'needs_you',
+          turnQuestion: question,
+        },
+      ],
+      ['asking']
+    );
+    expect((await run.start()).value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
+    expect(run.started).toEqual(['loader']);
   });
 
   test('starts a new worker when the only same-place worker is busy', async () => {

@@ -2,7 +2,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { isBusyWork } from '../drivers/work-operations.ts';
-import type { PlaceGroup, WorkRef, WorkStatus } from '../drivers/types.ts';
+import type { PlaceGroup, WorkRef, WorkStatus, WorkTurnQuestion } from '../drivers/types.ts';
 import type { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import type { Logger } from '../logger.ts';
 import { invokeOperation } from '../operations/invoke.ts';
@@ -31,6 +31,7 @@ export type NeoSessionWatcherDeps = {
   defaultSessionId: () => string | undefined;
   announceSessionNoticeGroup: (group: NeoSessionNoticeGroup) => void;
   announceSessionNotice: (notice: NeoSessionNotice) => void;
+  tellSessionQuestion: (root: string, notice: NeoSessionNotice) => Promise<void>;
   log: Logger;
   seen: Pick<NeoSessionSeenRepository, 'list' | 'replace'>;
   registry: () => OperationRegistry;
@@ -130,7 +131,11 @@ export class NeoSessionWatcher {
                 .recordTurns(session.ref)
                 .catch((error) => this.deps.log.warn('Worker turns pending', error));
             return live
-              ? { status: live.status, lastInputAt: readDriverLastInputAt(outcome) }
+              ? {
+                  status: live.status,
+                  lastInputAt: readDriverLastInputAt(outcome),
+                  question: live.turnQuestion,
+                }
               : null;
           })
         );
@@ -151,7 +156,13 @@ export class NeoSessionWatcher {
     .pipe(
       (
         plan: ReturnType<typeof planNeoSessionWatch>,
-        read: { details: ({ status: WorkStatus; lastInputAt: number | null } | null)[] },
+        read: {
+          details: ({
+            status: WorkStatus;
+            lastInputAt: number | null;
+            question?: WorkTurnQuestion;
+          } | null)[];
+        },
         now: number
       ) => ({
         planned: plan.reads.map((session, index) =>
@@ -178,6 +189,13 @@ export class NeoSessionWatcher {
         planNeoSessionNoticeGroup(this.openSessionNotices, added.notices, now),
       ['added', 'now'],
       'grouped'
+    )
+    .pipe(
+      async (root: string, added: { notices: NeoSessionNotice[] }) => {
+        for (const notice of added.notices)
+          if (notice.question) await this.deps.tellSessionQuestion(root, notice);
+      },
+      ['root', 'added']
     )
     .pipe(
       async (

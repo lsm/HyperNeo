@@ -4,7 +4,7 @@ import {
   SessionScheduleRepository,
   type SessionSchedule,
 } from '../../storage/repositories/session-schedule-repository.ts';
-import type { WorkStatus } from '../drivers/types.ts';
+import type { WorkStatus, WorkTurnQuestion } from '../drivers/types.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { enqueueMailboxAdmission } from '../../storage/repositories/mailbox-admission-write.ts';
@@ -19,7 +19,10 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
     const outcome = await invokeOperation(registry(), name, input, caller);
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     const value = outcome.value as
-      | { ok: true; value: { status?: WorkStatus; unconfirmed?: boolean } }
+      | {
+          ok: true;
+          value: { status?: WorkStatus; unconfirmed?: boolean; turnQuestion?: WorkTurnQuestion };
+        }
       | { ok: false; reason: string; detail: string };
     if (!value.ok && value.reason !== 'not_found' && value.reason !== 'not_open')
       throw new Error(value.detail ?? `${name} refused`);
@@ -43,7 +46,9 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
         if (!session) return 'not_found';
         if (sessionUnavailable(session.status)) return 'not_open';
       }
-      return result.value.status;
+      return result.value.status === 'needs_you' && result.value.turnQuestion
+        ? 'done'
+        : result.value.status;
     },
     deliver: async (
       schedule: SessionSchedule,

@@ -25,6 +25,8 @@ import {
   type WorkStatus,
   WorkStatusSchema,
   WorkTurnEndSchema,
+  type WorkTurnQuestion,
+  WorkTurnQuestionSchema,
 } from '../drivers/types.ts';
 import { WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
@@ -248,6 +250,7 @@ export function readDriverLive(outcome: OperationOutcome): {
   link?: string;
   remoteLink?: string;
   waitingFor?: string;
+  turnQuestion?: WorkTurnQuestion;
 } | null {
   const value = parseDriverStatus(outcome);
   if (!value) return null;
@@ -266,18 +269,35 @@ export function readDriverLive(outcome: OperationOutcome): {
     ...(typeof link === 'string' ? { link } : {}),
     ...(typeof remoteLink === 'string' ? { remoteLink } : {}),
     ...(typeof waitingFor === 'string' ? { waitingFor } : {}),
+    ...readTurnQuestion(value),
   };
 }
 
+function readTurnQuestion(value: unknown): { turnQuestion?: WorkTurnQuestion } {
+  const parsed = WorkTurnQuestionSchema.safeParse(
+    (value as { turnQuestion?: unknown }).turnQuestion
+  );
+  return parsed.success ? { turnQuestion: parsed.data } : {};
+}
+
+export const isWaitingOnPrompt = (live: { status: WorkStatus; turnQuestion?: WorkTurnQuestion }) =>
+  live.status === 'needs_you' && !live.turnQuestion;
+
 export function decideCardLiveStatus(
-  session: { status: WorkStatus; lastActivityAt: number; lastReplyAt?: number },
+  session: {
+    status: WorkStatus;
+    lastActivityAt: number;
+    lastReplyAt?: number;
+    turnQuestion?: WorkTurnQuestion;
+  },
   anchoredAt: number | null,
   prior: WorkStatus | null
 ): WorkStatus {
   if (session.status === 'failed' || session.status === 'stopped') return session.status;
   if (anchoredAt === null) return 'queued';
   const replied = session.lastReplyAt !== undefined && session.lastReplyAt > anchoredAt;
-  if (!replied) return session.status === 'done' ? 'running' : session.status;
+  if (!replied)
+    return session.status === 'done' || session.turnQuestion ? 'running' : session.status;
   if (session.status === 'running') return prior === 'done' ? 'done' : 'running';
   return session.status === 'needs_you' ? 'needs_you' : 'done';
 }
@@ -301,7 +321,9 @@ export function readDriverSendBaseline(
   const value = parseDriverStatus(outcome);
   if (!value) return fallback;
   const { status, lastActivityAt } = value;
-  return status === 'running' || status === 'needs_you' ? null : lastActivityAt;
+  return status === 'running' || isWaitingOnPrompt({ status, ...readTurnQuestion(value) })
+    ? null
+    : lastActivityAt;
 }
 
 export interface DriverSent {
