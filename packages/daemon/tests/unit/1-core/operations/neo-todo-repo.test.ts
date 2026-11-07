@@ -10,7 +10,7 @@ import {
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
-import { neoTodoRepo } from '../../../../src/lib/neo/todo-repo.ts';
+import { neoTodoRepository } from '../../../../src/lib/neo/pack-contract.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -26,7 +26,13 @@ const draft = {
 };
 const coding = {
   id: 'coding',
-  todos: { repository: codingTodoRepository, doneWhen: codingTodoDoneWhen },
+  todos: {
+    repository: (
+      todo: Parameters<typeof codingTodoRepository>[0],
+      scope?: Parameters<typeof codingTodoRepository>[2]
+    ) => codingTodoRepository(todo, [], scope),
+    doneWhen: codingTodoDoneWhen,
+  },
 } as unknown as NeoPack;
 const place = {
   machine: 'laptop',
@@ -63,7 +69,7 @@ describe('codingTodoRepository', () => {
   });
 });
 
-describe('neoTodoRepo', () => {
+describe('neoTodoRepository', () => {
   test('prefers the pack, then the start place’s git remote, then the ask’s repo', () => {
     const pr = {
       ...draft,
@@ -79,14 +85,14 @@ describe('neoTodoRepo', () => {
       instruction: 'Go',
       target: { verb: 'start' as const, adapter: 'hyperneo', place },
     };
-    expect(neoTodoRepo(pr, [coding], { repo: 'github.com/lsm/ops' })).toBe(
+    expect(neoTodoRepository(pr, [coding], { ask: { repo: 'github.com/lsm/ops' } })).toBe(
       'github.com/lsm/hyperneo'
     );
-    expect(neoTodoRepo(started, [coding], { repo: null })).toBe('github.com/lsm/ops');
-    expect(neoTodoRepo(draft, [coding], { repo: 'github.com/lsm/makai' })).toBe(
+    expect(neoTodoRepository(started, [coding], { ask: null })).toBe('github.com/lsm/ops');
+    expect(neoTodoRepository(draft, [coding], { ask: { repo: 'github.com/lsm/makai' } })).toBe(
       'github.com/lsm/makai'
     );
-    expect(neoTodoRepo(draft, [coding], { repo: null })).toBeNull();
+    expect(neoTodoRepository(draft, [coding], { ask: null })).toBeNull();
   });
 
   test.each([{ remotes: undefined }, { remotes: [] }, { remotes: ['not a git remote'] }])(
@@ -99,10 +105,12 @@ describe('neoTodoRepo', () => {
         instruction: 'Go',
         target: { verb: 'start' as const, adapter: 'hyperneo', place: folder },
       };
-      expect(neoTodoRepo(started, [coding], { repo: 'github.com/lsm/ops' })).toBeNull();
       expect(
-        neoTodoRepo({ ...started, named: { repository: 'synthetic/explicit' } }, [coding], {
-          repo: 'github.com/lsm/ops',
+        neoTodoRepository(started, [coding], { ask: { repo: 'github.com/lsm/ops' } })
+      ).toBeNull();
+      expect(
+        neoTodoRepository({ ...started, named: { repository: 'synthetic/explicit' } }, [coding], {
+          ask: { repo: 'github.com/lsm/ops' },
         })
       ).toBe('github.com/synthetic/explicit');
     }

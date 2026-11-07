@@ -8,6 +8,7 @@ import {
   DEFAULT_SQL_QUERY_SUMMARY_LIMIT,
 } from './storage/sqlite-query-observability.ts';
 import { getDataDir } from './lib/data-dir.ts';
+import type { OapEngineOptions } from './lib/oap/oap-engine.ts';
 
 import { discoverCredentials, usesHumanLogin } from './lib/credential-discovery.ts';
 
@@ -36,6 +37,7 @@ export interface Config {
   structuredLogRetainedFiles: number;
   structuredLogMaxPendingBytes: number;
   sqlQueryObservability?: SQLiteQueryObservabilityOptions;
+  oap?: OapEngineOptions;
 }
 
 export interface ConfigOverrides {
@@ -71,6 +73,7 @@ function isExplicitlyDisabled(raw: string | undefined): boolean {
 export function getConfig(overrides?: ConfigOverrides): Config {
   const environment = process.env;
   const nodeEnv = environment.NODE_ENV || 'development';
+  const oapBinaryPath = hyperneoEnv('OAP_BINARY_PATH');
 
   const defaultDbPath = join(getDataDir(), 'data', 'daemon.db');
   const configuredLogPath = hyperneoEnv('LOG_FILE');
@@ -121,6 +124,20 @@ export function getConfig(overrides?: ConfigOverrides): Config {
       overrides?.workspaceRoot ?? hyperneoEnv('WORKSPACE_PATH') ?? hyperneoEnv('WORKSPACE_ROOT'),
     disableWorktrees: hyperneoEnv('DISABLE_WORKTREES') === '1',
     disableGoalProcessing: hyperneoEnv('DISABLE_GOAL_PROCESSING') === '1',
+    ...(oapBinaryPath
+      ? {
+          oap: {
+            binaryPath: oapBinaryPath,
+            identity: {
+              version: hyperneoEnv('OAP_VERSION') ?? '',
+              sha256: hyperneoEnv('OAP_SHA256') ?? '',
+            },
+            stateDirectory: join(getDataDir(), 'oap'),
+            codexExecutable: hyperneoEnv('OAP_CODEX_EXECUTABLE') ?? '',
+            codexHome: hyperneoEnv('OAP_CODEX_HOME') ?? '',
+          },
+        }
+      : {}),
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
     githubDefaultFilter: process.env.GITHUB_DEFAULT_FILTER,
     structuredLogFilePath,

@@ -48,6 +48,7 @@ import { ErrorCategory, ErrorManager, type StructuredError } from '../error-mana
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import { OapReopenRefusedError } from '../oap/oap-reopen.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import {
   type CallerScopeResolver,
@@ -82,6 +83,15 @@ export class ClearConversationCancelledError extends Error {
   constructor() {
     super('clearConversationContext cancelled by query teardown');
     this.name = 'ClearConversationCancelledError';
+  }
+}
+
+export class ClearConversationUnsupportedError extends Error {
+  constructor(
+    message = 'Clearing a Codex conversation is not supported yet. The existing thread was not cleared.'
+  ) {
+    super(message);
+    this.name = 'ClearConversationUnsupportedError';
   }
 }
 
@@ -1275,19 +1285,32 @@ export class AgentSession
   }
 
   async clearConversationContext(boundaryOwner?: ContextClearBoundaryOwner): Promise<void> {
+    const clear = () =>
+      this.session.config.harness === 'codex'
+        ? this.clearCodexContext()
+        : this.runClearConversationFlow();
     if (boundaryOwner) {
-      await this.runClearConversationFlow();
+      await clear();
       return;
     }
     const owner = await acquireContextClearBoundary(this.session.id);
     try {
-      await this.runClearConversationFlow();
+      await clear();
     } finally {
       owner.release();
     }
   }
 
   async startFreshContext(): Promise<void> {
+    if (this.session.config.harness === 'codex') {
+      const owner = await acquireContextClearBoundary(this.session.id);
+      try {
+        await this.clearCodexContext();
+      } finally {
+        owner.release();
+      }
+      return;
+    }
     const reset = await this.resetQuery({ restartQuery: false });
     if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
     await this.retirePastSdkContext();
@@ -1297,6 +1320,40 @@ export class AgentSession
       sdkSessionId: undefined,
       sdkOriginPath: undefined,
     });
+  }
+
+  private async clearCodexContext(): Promise<void> {
+    if (!this.oap?.clear) await this.refuseContextClear();
+    try {
+      const reset = await this.resetQuery({ restartQuery: false });
+      if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
+      await this.retirePastSdkContext();
+      await this.oap!.clear!();
+    } catch (error) {
+      if (error instanceof OapReopenRefusedError)
+        throw new ClearConversationUnsupportedError(error.message);
+      this.logger.warn('Failed to clear the Codex thread:', error);
+      await this.refuseContextClear('Could not clear the Codex thread. No message was sent.');
+    }
+  }
+
+  private async refuseContextClear(message?: string): Promise<never> {
+    const error = new ClearConversationUnsupportedError(message);
+    try {
+      await this.showNotice(error.message);
+    } catch (cause) {
+      this.logger.warn('Failed to save the Codex context-clear refusal:', cause);
+      this.internalEventBus.publishAsync('session.error', {
+        sessionId: this.session.id,
+        error: error.message,
+        details: {
+          category: ErrorCategory.SYSTEM,
+          message: error.message,
+          userMessage: error.message,
+        },
+      });
+    }
+    throw error;
   }
 
   private async retirePastSdkContext(): Promise<void> {
@@ -2815,6 +2872,41 @@ export class AgentSession
           throwIfDeliveryAborted(signal);
           if (this.db.getSession(this.session.id)?.status === 'archived') {
             throw new MessageDeliveryTerminalTurnError('Session is archived');
+          }
+          if (this.session.config.harness === 'codex') {
+            const delivery = this.db
+              .getSDKMessageRepo()
+              .getDeliveryContent(this.session.id, messageUuid);
+            if (
+              delivery?.sendStatus === 'submitted' &&
+              !this.messageQueue.hasYielded(messageUuid)
+            ) {
+              const reason =
+                'Codex message was submitted before recovery; its outcome is unknown and it will not be resent automatically.';
+              const failure = new MessageDeliveryTerminalTurnError(
+                reason,
+                'uncertain_oap_submission'
+              );
+              const failedId = await this.db.writeSDKMessage(
+                'markDeliveryFailedByUuid',
+                this.session.id,
+                messageUuid
+              );
+              if (failedId) {
+                await this.internalEventBus.publish('messages.statusChanged', {
+                  sessionId: this.session.id,
+                  messageIds: [failedId],
+                  status: 'failed',
+                });
+              }
+              await this.errorManager.handleError(
+                this.session.id,
+                failure,
+                ErrorCategory.SESSION,
+                reason
+              );
+              throw failure;
+            }
           }
           const pinned = (this.session.config.provider as string | undefined)?.trim() || undefined;
           if (pinned === 'acp') {

@@ -21,7 +21,7 @@ const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('External HTTP is disabled'); }) as typeof fetch;
 const missing = join(run, 'wrong-worktree/result.txt');
 const present = join(run, 'result.txt');
-const ids = { pr: '', evidence: '', settled: '' };
+const ids = { pr: '', evidence: '', settled: '', legacy: '' };
 try {
   for (const phase of ['initial', 'restart']) {
     const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
@@ -30,12 +30,12 @@ try {
       const db = app.db.getDatabase(), store = new NeoAskTodoRepository(db);
       const registry = app.sessionManager.getOperationRegistry();
       const handler = createOperationMcpHandler(() => registry, () => ({ sessionId: sender, role: 'neo' }));
-      const invoke = async (name: string, input: unknown) => {
+      const invoke = async (name: string, input: unknown, expected = true) => {
         const reply = await handler({ name, input });
         const result = JSON.parse(reply.content[0].text);
         evidence.push({ phase, name, input, result });
         assert.equal(reply.isError ?? false, false, JSON.stringify(result));
-        if (name !== 'neo.snapshot') assert.equal(result.ok, true, JSON.stringify(result));
+        if (name !== 'neo.snapshot') assert.equal(result.ok, expected, JSON.stringify(result));
         return result;
       };
       const start = (id: string) => store.updateTodo(store.getTodo(id)!, { startedAt: Date.now() }, Date.now());
@@ -67,10 +67,29 @@ try {
         ids.settled = terminal.todos[0].id;
         start(ids.settled);
         blocked((await invoke('neo.todo.close', { todoId: ids.settled, reason: 'Verification outstanding' })).todo, 'check_unmet:');
-        await invoke('neo.ask.settle', { askId: terminal.ask.id, status: 'done', outcome: 'Closed with verification outstanding' });
-        assert.equal(store.getTodo(ids.settled)?.state, 'closed_unverified');
-        assert(JSON.stringify(await invoke('neo.ask.read', { askId: terminal.ask.id })).includes('Closed unverified'));
+        const before = store.getTodo(ids.settled);
+        const refused = await invoke('neo.ask.settle', { askId: terminal.ask.id, status: 'done', outcome: 'Too soon' }, false);
+        assert(refused.reason.startsWith('todos_unfinished:'));
+        assert.deepEqual(store.getTodo(ids.settled), before);
+        assert.equal(store.getAsk(terminal.ask.id)?.status, 'open');
+        await invoke('neo.ask.settle', { askId: terminal.ask.id, status: 'dropped', outcome: 'Human abandoned the work' });
+        const legacy = await invoke('neo.ask.open', { title: 'Legacy unexplained removal', request: 'Abandon unexplained legacy work', todos: [{ title: 'Previously removed step', check: { pack: 'core', kind: 'evidence', params: { path: missing } } }] });
+        ids.legacy = legacy.todos[0].id;
+        store.updateTodo(store.getTodo(ids.legacy)!, { state: 'removed', reason: null }, Date.now());
+        const removed = await invoke('neo.todo.remove', { todoId: ids.legacy, reason: 'Cannot amend an already removed row' }, false);
+        assert(removed.reason.startsWith('todo_removed:'));
+        const unexplained = await invoke('neo.ask.settle', { askId: legacy.ask.id, status: 'done', outcome: 'Not verified' }, false);
+        assert(unexplained.reason.startsWith('todos_unfinished:') && unexplained.reason.includes('settle dropped'));
+        assert.equal(store.getAsk(legacy.ask.id)?.status, 'open');
+        await invoke('neo.ask.settle', { askId: legacy.ask.id, status: 'dropped', outcome: 'Human abandoned unexplained legacy work' });
       }
+      for (const id of [ids.settled, ids.legacy]) {
+        assert.equal(store.getTodo(id)?.state, 'removed');
+        const ended = await invoke('neo.ask.read', { askId: store.getTodo(id)!.askId });
+        assert.equal(ended.entry.ask.status, 'dropped');
+        assert.equal(ended.entry.doneCount, 0);
+      }
+      assert.equal(store.getTodo(ids.legacy)?.reason, null);
       const service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
       const sweep = (id: string) => service.todoRunner.checkNow([id], (message, error) => { throw new Error(message, { cause: error }); });
       await sweep(ids.pr);
@@ -94,5 +113,5 @@ try {
       }
     } finally { await app.cleanup(); }
   }
-  console.log('PASS: real daemon MCP keeps done-on-unmet-check todos blocked across restart; a fixed check closes itself; settle still closes unverified.');
+  console.log('PASS: real daemon MCP keeps unmet checks blocked across restart; done refuses unfinished and unexplained removed rows; explicit dropped succeeds without certifying them.');
 } finally { globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }

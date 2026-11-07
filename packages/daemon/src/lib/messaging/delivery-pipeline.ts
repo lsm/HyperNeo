@@ -2,7 +2,11 @@ import type { MessageInputKind } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { type AgentSession, ClearConversationCancelledError } from '../agent/agent-session.ts';
+import {
+  type AgentSession,
+  ClearConversationCancelledError,
+  ClearConversationUnsupportedError,
+} from '../agent/agent-session.ts';
 import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
 import {
   acquireContextClearBoundary,
@@ -246,7 +250,11 @@ export async function applyDeliveryContextReset(
   } catch (err) {
     clearOwner?.release();
     clearOwner = null;
-    if (err instanceof ClearConversationCancelledError) throw err;
+    if (
+      err instanceof ClearConversationCancelledError ||
+      err instanceof ClearConversationUnsupportedError
+    )
+      throw err;
     log.warn(
       `agent-message-delivery: resetContextPerTurn clear failed for session ${sessionId}: ` +
         `${err instanceof Error ? err.message : String(err)} — delivering without clear`

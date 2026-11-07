@@ -8,6 +8,7 @@ export type OapHubFrame =
       id: number;
       code: string;
       message: string;
+      feature?: string;
       retryable: boolean;
     }
   | {
@@ -49,14 +50,21 @@ function readFrame(line: string): z.infer<typeof WireFrame> {
 
 function classifyFrame(frame: z.infer<typeof WireFrame>): OapHubFrame {
   if ('event' in frame) return { kind: 'event', id: frame.id, event: frame.event, data: frame };
-  if (!frame.ok)
+  if (!frame.ok) {
+    const details = frame.error.details;
+    const feature =
+      details && typeof details === 'object' && !Array.isArray(details)
+        ? (details as Record<string, unknown>).feature
+        : undefined;
     return {
       kind: 'refusal',
       id: frame.id,
       code: frame.error.code,
       message: frame.error.message,
+      ...(typeof feature === 'string' && feature ? { feature } : {}),
       retryable: frame.error.code === 'busy',
     };
+  }
   return { kind: 'response', id: frame.id, result: frame.result };
 }
 

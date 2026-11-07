@@ -9,6 +9,7 @@ describe('buildOapHubConfig', () => {
       codexHome: '/synthetic/codex-home',
     });
     expect(result.config.adapters.codex).toMatchObject({
+      any_directory: true,
       approval_policy: 'on-request',
       sandbox: 'workspace-write',
     });
@@ -26,6 +27,7 @@ describe('buildOapHubConfig', () => {
           type: 'codex',
           executable: '/synthetic/bin/codex',
           environment: ['CODEX_HOME'],
+          any_directory: true,
           approval_policy: 'on-request',
           sandbox: 'workspace-write',
         },

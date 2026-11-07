@@ -204,6 +204,7 @@ import { AgentChildProcessRepository } from './storage/repositories/agent-child-
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
 import { OapEngine } from './lib/oap/oap-engine.ts';
+import { createOapRuntime } from './lib/oap/oap-query.ts';
 
 const mailboxLog = new Logger('mailbox');
 
@@ -799,7 +800,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           credentialManager
             .getCredentialStore()
             .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
-        )
+        ),
+      createOapRuntime(oapEngine, config.oap, internalEventBus, reactiveDb.db, messageHub)
     );
 
     sessionManager.start();

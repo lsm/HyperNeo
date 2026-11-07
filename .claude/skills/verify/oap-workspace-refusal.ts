@@ -52,7 +52,7 @@ try {
   assert.match(guardUpdate, /Codex.*not supported/i);
   await hub.request('message.send', { sessionId, content: 'Synthetic request' }).catch(() => {});
   const deadline = Date.now() + 10_000;
-  while (!errors.some((message) => /open-directory.*not available/i.test(message))) {
+  while (!errors.some((message) => /OAP configuration is incomplete/i.test(message))) {
     assert(Date.now() < deadline, `missing visible workspace refusal: ${JSON.stringify(errors)}`);
     await new Promise((done) => setTimeout(done, 50));
   }
@@ -137,17 +137,55 @@ try {
   assert.equal(errors.length, errorsBeforeTurns);
   agent.messageQueue.clear();
   await agent.lifecycleManager.stop({ timeoutMs: 100, catchQueryErrors: true });
+  let releaseLate!: () => void;
+  let listening!: () => void;
+  const lateGate = new Promise<void>((resolve) => { releaseLate = resolve; });
+  const listeningStarted = new Promise<void>((resolve) => { listening = resolve; });
+  let staleCancellations = 0;
+  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
+    openDirectorySupported: true,
+    hub: {
+      submit: async () => ({ runId: 'synthetic-late-run' }),
+      events: async function* () {
+        listening();
+        await lateGate;
+        yield { type: 'content.delta', id: 'late-text', payload: { part: { type: 'text', text: 'stale output must not persist' } } };
+        yield { type: 'run.completed', id: 'late-terminal', payload: {} };
+      },
+      cancel: async () => { staleCancellations++; },
+    },
+  };
+  void agent.messageQueue.enqueueWithId('synthetic-late', 'old prompt', false, { durable: true }).catch(() => {});
+  await agent.startStreamingQuery();
+  const lateQuery = agent.queryPromise;
+  assert(lateQuery);
+  await listeningStarted;
+  agent.messageQueue.stop();
+  agent.incrementQueryGeneration();
+  agent.messageQueue.start();
+  const lateSuccessor = agent.attemptTokens.allocate();
+  void agent.messageQueue.enqueueWithId('synthetic-late-successor', 'replacement prompt', false, { durable: true }).catch(() => {});
+  releaseLate();
+  await lateQuery;
+  assert.equal(staleCancellations, 1);
+  assert(lateSuccessor.isLive());
+  assert(agent.messageQueue.hasPendingOrInFlight('synthetic-late-successor'));
+  assert(!JSON.stringify(app.db.getSDKMessages(syntheticSession).messages).includes('stale output must not persist'));
+  agent.messageQueue.clear();
+  await agent.lifecycleManager.stop({ timeoutMs: 100, catchQueryErrors: true });
   evidence.port = app.server.port;
   evidence.persistedHarness = 'codex';
   evidence.updateRefused = true;
   evidence.workerOperationsRefused = true;
-  evidence.visibleRefusal = errors.find((message) => /open-directory.*not available/i.test(message));
+  evidence.visibleRefusal = errors.find((message) => /OAP configuration is incomplete/i.test(message));
   evidence.sdkStartupGateCalls = gateCalls;
   evidence.trackedAgentProcesses = 0;
   evidence.syntheticTurnsFinished = submissions.length;
   evidence.syntheticCompletedRunCancellations = cancellations;
   evidence.staleFailurePreservedReplacement = true;
   evidence.staleFailurePreservedSuccessorAttempt = true;
+  evidence.lateEventDropped = true;
+  evidence.lateEventPreservedSuccessor = true;
   evidence.pass = true;
 } finally {
   await transport?.close();

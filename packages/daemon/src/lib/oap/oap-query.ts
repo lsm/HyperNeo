@@ -1,16 +1,19 @@
+import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage, RewindFilesResult } from '@hyperneo/shared/sdk';
 import type { QueryLike } from '../agent/query-like.ts';
+import { OapHubRequestError } from './oap-hub-client.ts';
 import { mapUserInputRequest } from './oap-permission-map.ts';
 import { initialOapTranslatorState, translateOapEvent } from './oap-sdk-translator.ts';
 export { createOapQueryHub } from './oap-query-hub.ts';
+export { createOapRuntime } from './oap-runtime.ts';
 
 type OapEvent = { type: string; [key: string]: unknown };
 
 export type OapQueryHub = {
-  submit(sessionId: string, message: SDKUserMessage): Promise<{ runId: string }>;
+  submit(sessionId: string, message: SDKUserMessage, owner?: symbol): Promise<{ runId: string }>;
   events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OapEvent>;
   cancel(sessionId: string, runId: string): Promise<void>;
-  release?(): void;
+  release?(owner?: symbol): void;
 };
 
 type OapQueryTranslator = {
@@ -23,11 +26,36 @@ type OapQueryOptions = {
   prompt: AsyncIterable<SDKUserMessage>;
   hub: OapQueryHub;
   translator: OapQueryTranslator;
+  isLive?: () => boolean;
+  maySettleInterrupted?: () => boolean;
+  onSubmitted?: (message: SDKUserMessage) => Promise<void>;
+  onAccepted?: (message: SDKUserMessage, runId: string) => Promise<void>;
+  onRefused?: (message: SDKUserMessage, error: OapHubRequestError) => Promise<void>;
 };
 
 function isTerminal(event: OapEvent): boolean {
   return (
     event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled'
+  );
+}
+
+function isDefiniteRefusal(error: unknown): error is OapHubRequestError {
+  return (
+    error instanceof OapHubRequestError &&
+    [
+      'busy',
+      'capability_degraded',
+      'invalid_request',
+      'invalid_submission',
+      'model_not_found',
+      'request_too_large',
+      'run_active',
+      'scope_mismatch',
+      'session_closed',
+      'stale_capabilities',
+      'unknown_session',
+      'unsupported_feature',
+    ].includes(error.code)
   );
 }
 
@@ -70,36 +98,89 @@ export class OapQuery implements QueryLike {
   private readonly prompt: AsyncIterable<SDKUserMessage>;
   private readonly hub: OapQueryHub;
   private readonly translator: OapQueryTranslator;
+  private readonly isLive: () => boolean;
+  private readonly maySettleInterrupted: () => boolean;
+  private readonly onSubmitted?: OapQueryOptions['onSubmitted'];
+  private readonly onAccepted?: OapQueryOptions['onAccepted'];
+  private readonly onRefused?: OapQueryOptions['onRefused'];
   private activeRun: string | undefined;
   private pendingRun: Promise<string> | undefined;
   private cancelPromise: Promise<void> | undefined;
+  private runSettled: Promise<void> | undefined;
   private interrupted = false;
   private closed = false;
   private started = false;
   private readonly closeSignal = new AbortController();
+  private readonly owner = Symbol();
 
   constructor(options: OapQueryOptions) {
     this.sessionId = options.sessionId;
     this.prompt = options.prompt;
     this.hub = options.hub;
     this.translator = options.translator;
+    this.isLive = options.isLive ?? (() => true);
+    this.maySettleInterrupted = options.maySettleInterrupted ?? (() => false);
+    this.onSubmitted = options.onSubmitted;
+    this.onAccepted = options.onAccepted;
+    this.onRefused = options.onRefused;
   }
 
   async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {
     if (this.started) throw new Error('OAP query can only be iterated once');
     this.started = true;
     for await (const message of untilClosed(this.prompt, this.closeSignal.signal)) {
-      if (this.closed || this.interrupted) return;
-      this.pendingRun = this.hub.submit(this.sessionId, message).then(({ runId }) => {
-        this.activeRun = runId;
-        return runId;
+      if (this.closed || this.interrupted || !this.isLive()) return;
+      await this.onSubmitted?.(message);
+      if (this.closed || this.interrupted || !this.isLive()) return;
+      let settle!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        settle = resolve;
       });
+      this.runSettled = settled;
+      const finish = () => {
+        settle();
+        if (this.runSettled === settled) this.runSettled = undefined;
+      };
+      this.pendingRun = this.hub
+        .submit(this.sessionId, message, this.owner)
+        .then(({ runId }) => {
+          this.activeRun = runId;
+          return runId;
+        })
+        .catch(async (error: unknown) => {
+          finish();
+          if (isDefiniteRefusal(error) && this.isLive()) {
+            await this.onRefused?.(message, error);
+          }
+          throw error;
+        });
       const runId = await this.pendingRun;
       this.pendingRun = undefined;
-      this.translator.beginRun?.();
-      if (this.closed || this.interrupted) {
-        await this.cancelActive();
-        if (this.closed) return;
+      try {
+        this.translator.beginRun?.();
+        if (this.closed || this.interrupted || !this.isLive()) {
+          await this.cancelActive();
+          if (this.closed || (!this.isLive() && !this.canSettleInterrupted())) {
+            finish();
+            return;
+          }
+        }
+        if (this.isLive()) await this.onAccepted?.(message, runId);
+      } catch (error) {
+        try {
+          await this.cancelActive();
+        } finally {
+          finish();
+        }
+        throw error;
+      }
+      if (this.closed || (!this.isLive() && !this.canSettleInterrupted())) {
+        try {
+          await this.cancelActive();
+        } finally {
+          finish();
+        }
+        return;
       }
       let terminal = false;
       try {
@@ -107,6 +188,11 @@ export class OapQuery implements QueryLike {
           this.hub.events(this.sessionId, runId, this.closeSignal.signal),
           this.closeSignal.signal
         )) {
+          if (!this.isLive() && !this.canSettleInterrupted()) {
+            await this.cancelActive();
+            return;
+          }
+          if (this.interrupted && !isTerminal(event)) continue;
           const unsupported = unsupportedInteraction(event);
           if (unsupported) {
             try {
@@ -127,25 +213,39 @@ export class OapQuery implements QueryLike {
             }
             throw error;
           }
-          for (const message of translated) yield message;
           if (isTerminal(event)) {
             terminal = true;
-            break;
+            this.activeRun = undefined;
           }
+          for (const message of translated) {
+            if (!this.isLive() && !this.canSettleInterrupted()) return;
+            yield message;
+          }
+          if (terminal) break;
         }
       } finally {
         this.activeRun = undefined;
+        finish();
       }
       if (!terminal && !this.closed) throw new Error('OAP event stream ended before run terminal');
       if (this.closed || this.interrupted) return;
     }
   }
 
+  prepareInterrupt(): void {
+    this.interrupted = true;
+  }
+
+  wasInterrupted(): boolean {
+    return this.interrupted;
+  }
+
   async interrupt(): Promise<undefined> {
     if (this.closed) return undefined;
-    this.interrupted = true;
+    this.prepareInterrupt();
     if (this.pendingRun) await this.pendingRun;
     await this.cancelActive();
+    if (this.runSettled) await this.runSettled;
     return undefined;
   }
 
@@ -153,7 +253,7 @@ export class OapQuery implements QueryLike {
     if (this.closed) return;
     this.closed = true;
     this.closeSignal.abort();
-    this.hub.release?.();
+    this.hub.release?.(this.owner);
     void this.cancelActive().catch(() => {});
   }
 
@@ -166,15 +266,21 @@ export class OapQuery implements QueryLike {
     this.cancelPromise ??= this.hub.cancel(this.sessionId, this.activeRun);
     return this.cancelPromise;
   }
+
+  private canSettleInterrupted(): boolean {
+    return this.interrupted && this.maySettleInterrupted();
+  }
 }
 
 export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): OapQuery {
   let state = initialOapTranslatorState(options.sessionId);
+  let runScope = '';
   return new OapQuery({
     ...options,
     translator: {
       beginRun: () => {
         state = initialOapTranslatorState(options.sessionId);
+        runScope = generateUUID();
       },
       translate: (event) => {
         if (
@@ -188,7 +294,7 @@ export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): Oa
         }
         const result = translateOapEvent(state, {
           type: event.type,
-          id: event.id,
+          id: `${runScope}:${event.id}`,
           payload: event.payload as Record<string, unknown>,
         });
         state = result.state;

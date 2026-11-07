@@ -6,11 +6,12 @@
    2-minute check window): the todo is `done` with evidence `#8 merged`,
    `evidence/gh.log` shows the `gh pr view`, and root's transcript holds the note
    `Todo "Fix the loader" is done: #8 merged`.
-   Local human `neo.ask.settle` explicitly confirms done even with unfinished
-   todos (#8292). Do not call it before observing this automatic-merge proof:
-   settling done closes unfinished todos as `closed_unverified`, for human and
-   agent callers, and returns a `todos_unfinished` record. Those rows never count
-   as done. See ask-bookkeeping-actions.md for that separate settlement proof.
+   Do not manually settle before observing this automatic-merge proof.
+   `neo.ask.settle` refuses done with `todos_unfinished` while any todo remains
+   unfinished, for both human and agent callers. Complete the work, explicitly
+   remove abandoned steps with reasons, or settle dropped when abandoning the ask.
+   Historical `closed_unverified` rows retain their label and never count as done.
+   See ask-bookkeeping-actions.md for that separate settlement proof.
    To verify PR ownership and URL edits, run
    `bun .claude/skills/verify/todo-pr-claims.ts <port> "$RUN"` on a fresh isolated
    daemon. It seeds only this run's ask and a todo naming the PR, then uses the real `neo.todo.add/edit/remove` RPC door. End state: adding

@@ -37,7 +37,7 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
-import type { OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
+import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
 import * as oapQueryModule from '../../../../src/lib/oap/oap-query';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -163,6 +163,7 @@ describe('QueryRunner', () => {
     mockDb = {
       getSession: () => mockSession,
       saveSDKMessage: saveSDKMessageSpy,
+      writeSDKMessage: mock(async () => []),
       updateSession: updateSessionSpy,
       getSDKMessages: getSDKMessagesSpy,
       updateMessageStatus: updateMessageStatusSpy,
@@ -399,6 +400,250 @@ describe('QueryRunner', () => {
       }
     }
 
+    it('records submission before sending and acknowledges only after OAP accepts', async () => {
+      let resolveSubmit!: (result: { runId: string }) => void;
+      let submitStarted!: () => void;
+      let releaseTerminal!: () => void;
+      let accepted!: () => void;
+      const submitted = new Promise<void>((resolve) => {
+        submitStarted = resolve;
+      });
+      const acceptedNotice = new Promise<void>((resolve) => {
+        accepted = resolve;
+      });
+      const terminalGate = new Promise<void>((resolve) => {
+        releaseTerminal = resolve;
+      });
+      const write = mock(async () => ['message-db-id']);
+      const yielded = mock(async () => {
+        accepted();
+      });
+      queue.onMessageYielded = yielded;
+      const submit = mock(() => {
+        submitStarted();
+        return new Promise<{ runId: string }>((resolve) => {
+          resolveSubmit = resolve;
+        });
+      });
+      const events = async function* () {
+        await terminalGate;
+        yield { type: 'run.completed', id: 'end-1', payload: {} };
+      };
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
+      });
+      const sent = queue.enqueueWithId('codex-admission', 'prompt', false, { durable: true });
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      const running = ctx.queryPromise!;
+      await submitted;
+      try {
+        expect(write).toHaveBeenCalledWith('markDeliverySubmittedByUuids', ctx.session.id, [
+          'codex-admission',
+        ]);
+        expect(yielded).not.toHaveBeenCalled();
+        expect(queue.hasYielded('codex-admission')).toBe(true);
+        resolveSubmit({ runId: 'r1' });
+        expect(await completesWithin(acceptedNotice)).toBe(true);
+        expect(await completesWithin(sent)).toBe(true);
+        expect(queue.hasYielded('codex-admission')).toBe(false);
+      } finally {
+        resolveSubmit({ runId: 'r1' });
+        releaseTerminal();
+        await running;
+        await sent.catch(() => {});
+      }
+    });
+
+    it.each([
+      { code: 'invalid_request', expected: 'failed' },
+      { code: 'invalid_submission', expected: 'failed' },
+      { code: 'busy', expected: 'failed' },
+      { code: 'timeout', expected: 'submitted' },
+      { code: 'internal', expected: 'submitted' },
+      { code: 'unrecognized_error', expected: 'submitted' },
+    ])('records a $code submit response as $expected', async ({ code, expected }) => {
+      let status = 'enqueued';
+      const write = mock(async (operation: string) => {
+        if (operation === 'markDeliverySubmittedByUuids') {
+          status = 'submitted';
+          return ['db-id'];
+        }
+        if (operation === 'markDeliveryFailedByUuid') {
+          status = 'failed';
+          return 'db-id';
+        }
+        throw new Error(`unexpected write ${operation}`);
+      });
+      const submit = mock(async () => {
+        throw new OapHubRequestError(code, 'synthetic refusal');
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
+        messageQueue: queue,
+        oap: {
+          openDirectorySupported: true,
+          hub: { submit, events: async function* () {}, cancel: async () => {} },
+        },
+      });
+      const sent = queue
+        .enqueueWithId('codex-refused', 'prompt', false, { durable: true })
+        .catch((error: Error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      expect(await completesWithin(ctx.queryPromise!)).toBe(true);
+      expect(await sent).toMatchObject({ message: 'synthetic refusal' });
+      expect(status).toBe(expected);
+      expect(submit).toHaveBeenCalledTimes(1);
+      if (expected === 'failed') {
+        expect(ctx.internalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+          sessionId: ctx.session.id,
+          messageIds: ['db-id'],
+          status: 'failed',
+        });
+      }
+    });
+
+    it('does not submit a prompt whose persisted delivery is already submitted', async () => {
+      const submit = mock(async () => ({ runId: 'duplicate' }));
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        db: {
+          ...mockDb,
+          writeSDKMessage: mock(async () => []),
+          getSDKMessageRepo: () => ({
+            getDeliveryContent: () => ({ sendStatus: 'submitted', content: 'prompt' }),
+          }),
+        } as unknown as Database,
+        messageQueue: queue,
+        oap: {
+          openDirectorySupported: true,
+          hub: {
+            submit,
+            events: async function* () {
+              yield { type: 'run.completed', id: 'end', payload: {} };
+            },
+            cancel: async () => {},
+          },
+        },
+      });
+      const sent = queue
+        .enqueueWithId('already-submitted', 'prompt', false, { durable: true })
+        .catch((error: Error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      expect(await completesWithin(ctx.queryPromise!)).toBe(true);
+      expect(await sent).toEqual(
+        expect.objectContaining({ message: expect.stringMatching(/already submitted/i) })
+      );
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it('cancels a stale same-generation OAP acceptance without disturbing its successor', async () => {
+      let resolveSubmit!: (result: { runId: string }) => void;
+      let submitStarted!: () => void;
+      const submitted = new Promise<void>((resolve) => {
+        submitStarted = resolve;
+      });
+      const submit = mock(() => {
+        submitStarted();
+        return new Promise<{ runId: string }>((resolve) => {
+          resolveSubmit = resolve;
+        });
+      });
+      const cancel = mock(async () => {});
+      const events = mock(async function* () {
+        yield { type: 'run.completed', id: 'old-end', payload: {} };
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        db: { ...mockDb, writeSDKMessage: mock(async () => []) } as unknown as Database,
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
+      });
+      void queue
+        .enqueueWithId('codex-old-accept', 'old prompt', false, { durable: true })
+        .catch(() => {});
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      const running = ctx.queryPromise!;
+      await submitted;
+      const successor = ctx.attemptTokens.allocate();
+      resolveSubmit({ runId: 'old-run' });
+      expect(await completesWithin(running)).toBe(true);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenCalledWith(ctx.session.id, 'old-run');
+      expect(events).not.toHaveBeenCalled();
+      expect(onSDKMessageSpy).not.toHaveBeenCalled();
+      expect(queue.isRunning()).toBe(true);
+      expect(successor.isLive()).toBe(true);
+    });
+
+    it.each([false, true])(
+      'settles an interrupted OAP run only while its attempt has no successor (successor=%s)',
+      async (replaceAttempt) => {
+        let listening!: () => void;
+        let release!: () => void;
+        const ready = new Promise<void>((resolve) => {
+          listening = resolve;
+        });
+        const cancelled = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const cancel = mock(async () => {
+          release();
+        });
+        const events = async function* () {
+          listening();
+          await cancelled;
+          yield { type: 'run.cancelled', id: 'cancel-end', payload: { reason: 'cancelled' } };
+        };
+        const ctx = createContext({
+          session: {
+            ...mockSession,
+            config: { model: 'unit', provider: providerId, harness: 'codex' },
+          },
+          messageQueue: queue,
+          oap: {
+            openDirectorySupported: true,
+            hub: { submit: async () => ({ runId: 'r1' }), events, cancel },
+          },
+        });
+        void queue
+          .enqueueWithId('codex-interrupt', 'prompt', false, { durable: true })
+          .catch(() => {});
+        runner = new QueryRunner(ctx);
+        await runner.start();
+        const running = ctx.queryPromise!;
+        await ready;
+        ctx.attemptTokens.invalidateCurrent();
+        const successor = replaceAttempt ? ctx.attemptTokens.allocate() : undefined;
+        await ctx.queryObject!.interrupt();
+        expect(await completesWithin(running)).toBe(true);
+        expect(cancel).toHaveBeenCalledTimes(1);
+        expect(
+          onSDKMessageSpy.mock.calls.filter(([message]) => message.type === 'result')
+        ).toHaveLength(replaceAttempt ? 0 : 1);
+        expect(successor?.isLive() ?? true).toBe(true);
+      }
+    );
+
     it('finishes a synthetic Codex text turn and acknowledges its durable prompt', async () => {
       const startup = jest.spyOn(getSdkStartupGate(), 'acquire');
       const sdkQuery = query as unknown as ReturnType<typeof mock>;
@@ -525,7 +770,7 @@ describe('QueryRunner', () => {
         });
         return {
           type: 'session.message.submit.response',
-          payload: { accepted: true, run_id: runId },
+          payload: { accepted: true, session_id: ctx.session.id, run_id: runId },
         };
       });
       const createOapQueryHub = (
@@ -569,8 +814,35 @@ describe('QueryRunner', () => {
       expect(queue.isRunning()).toBe(false);
     });
 
-    it('does not stop or acknowledge a superseded Codex query after its result', async () => {
+    it('does not submit after the Codex workspace open is superseded', async () => {
+      let release!: (hub: OapQueryHub) => void;
+      const opening = new Promise<OapQueryHub>((resolve) => {
+        release = resolve;
+      });
+      const submit = mock(async () => ({ runId: 'unexpected' }));
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, hub: opening as unknown as OapQueryHub },
+      });
+      void queue.enqueueWithId('opening-stale', 'prompt', false, { durable: true }).catch(() => {});
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      const queryPromise = ctx.queryPromise!;
+      expect(await completesWithin(queryPromise)).toBe(false);
+      queryGeneration++;
+      release({ submit, events: async function* () {}, cancel: async () => {} });
+      expect(await completesWithin(queryPromise)).toBe(true);
+      expect(submit).not.toHaveBeenCalled();
+      expect(queue.isRunning()).toBe(true);
+    });
+
+    it('does not stop or re-acknowledge a superseded Codex query after its result', async () => {
       const submit = mock(async () => ({ runId: 'r1' }));
+      const acknowledge = jest.spyOn(queue, 'acknowledgeYielded');
       const events = async function* () {
         yield { type: 'run.completed', id: 'stale-end', payload: {} };
       };
@@ -591,7 +863,9 @@ describe('QueryRunner', () => {
       await runner.start();
       expect(await completesWithin(ctx.queryPromise!)).toBe(true);
       expect(queue.isRunning()).toBe(true);
-      expect(queue.hasYielded('codex-stale')).toBe(true);
+      expect(queue.hasYielded('codex-stale')).toBe(false);
+      expect(acknowledge).toHaveBeenCalledTimes(1);
+      expect(acknowledge).toHaveBeenCalledWith('codex-stale', 1);
     });
 
     it('rejects a missing workspace capability even if a hub is present', async () => {

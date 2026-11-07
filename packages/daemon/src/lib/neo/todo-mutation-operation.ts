@@ -16,7 +16,7 @@ import { todoEvidenceFile } from '../work-locations.ts';
 import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
 import { readNeoTodoCompletion, requireNeoTodoCloseStarted } from './todo-completion.ts';
 import type { NeoTodoControls } from './todo-operations.ts';
-import { neoTodoRepo } from './todo-repo.ts';
+import { neoTodoRepository } from './pack-contract.ts';
 
 type Input = Parameters<InstanceType<typeof neoTodoMutationReads.Repository>['plan']>[0];
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -123,10 +123,10 @@ export function wireNeoTodoMutations(
         const ask = await deps.gateway.call(neoTodoReads, 'getAsk', plan.todo.askId);
         const repo =
           plan.todo.repo ??
-          neoTodoRepo(
+          neoTodoRepository(
             { check: input.check, named: plan.todo.named, target: input.target },
             deps.packs(),
-            ask ?? { repo: null }
+            { ask }
           );
         const reason = neoEvidenceRefusal(input.check, repo, deps.userFolder, current?.check);
         return reason ? { reason: { ok: false as const, reason } } : { value: plan };

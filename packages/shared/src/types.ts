@@ -386,6 +386,7 @@ export interface SessionMetadata {
   refusalRewindTargetUuid?: string | null;
   sdkCapabilities?: string[];
   pastSdkSessionIds?: string[];
+  oapClearThreadId?: string;
   pendingModelSwitch?: PendingModelSwitch | null;
   worktreeChoice?: {
     status: 'pending' | 'completed';

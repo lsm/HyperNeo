@@ -131,6 +131,18 @@ describe('admitCreateSessionConfig', () => {
     expect(() => admitUpdateSessionConfig({ harness: 'codex' })).toThrow(/harness/);
   });
 
+  it('refuses explicit Codex session instructions while instruction wiring is unavailable', () => {
+    expect(() =>
+      admitCreateSessionConfig({ harness: 'codex', systemPrompt: 'synthetic instruction' })
+    ).toThrow(/instruction/i);
+    expect(() =>
+      admitUpdateSessionConfig({ systemPrompt: 'synthetic instruction' }, undefined, 'codex')
+    ).toThrow(/instruction/i);
+    expect(
+      admitCreateSessionConfig({ harness: 'sdk', systemPrompt: 'synthetic instruction' })
+    ).toEqual({ harness: 'sdk', systemPrompt: 'synthetic instruction' });
+  });
+
   it('refuses a Codex session that requires tool guards or worker operations', () => {
     const guard = {
       matcher: 'Bash',
