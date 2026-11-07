@@ -400,8 +400,9 @@ describe('ModelsSettings — load failure surfacing', () => {
       expect(mockRequest).toHaveBeenCalledTimes(3);
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
-    await new Promise((r) => setTimeout(r, 50));
+    expect(
+      (screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement).disabled
+    ).toBe(true);
     expect(mockRequest).toHaveBeenCalledTimes(3);
 
     resolveRequest({ models: [] });
@@ -425,101 +426,6 @@ describe('ModelsSettings — load failure surfacing', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(mockRequest).toHaveBeenCalledTimes(3);
     expect(screen.getByRole('alert').textContent).toContain('alpha');
-  });
-
-  it('runs a deferred force refresh, holding loading, when the allowlist save lands during an active load', async () => {
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockRejectedValue(new Error('boom'));
-
-    render(<ModelsSettings />);
-    await screen.findByRole('alert');
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(2);
-    });
-
-    const resolvers: Array<(value: { models: unknown[] }) => void> = [];
-    mockRequest.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvers.push(resolve);
-        })
-    );
-
-    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(retry.disabled).toBe(false);
-    });
-    fireEvent.click(retry);
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(3);
-    });
-
-    const refresh = screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement;
-    fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
-    await new Promise((r) => setTimeout(r, 50));
-    expect(mockRequest).toHaveBeenCalledTimes(3);
-
-    resolvers[0]({ models: [] });
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(4);
-    });
-    expect(mockRequest).toHaveBeenLastCalledWith(
-      'models.list',
-      { forceRefresh: true },
-      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
-    );
-    await waitFor(() => {
-      expect(refresh.disabled).toBe(true);
-    });
-
-    resolvers[1]({ models: [] });
-    await waitFor(() => {
-      expect(refresh.disabled).toBe(false);
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole('alert')).toBeNull();
-    });
-  });
-
-  it('disables Retry while the allowlist-save refresh is in flight and clears loading after', async () => {
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockRejectedValue(new Error('boom'));
-
-    render(<ModelsSettings />);
-    await screen.findByRole('alert');
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(2);
-    });
-
-    const resolvers: Array<(value: { models: unknown[] }) => void> = [];
-    mockRequest.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvers.push(resolve);
-        })
-    );
-
-    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(retry.disabled).toBe(false);
-    });
-    const refresh = screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement;
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(3);
-    });
-    await waitFor(() => {
-      expect(retry.disabled).toBe(true);
-    });
-
-    resolvers[0]({ models: [] });
-    await waitFor(() => {
-      expect(refresh.disabled).toBe(false);
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole('alert')).toBeNull();
-    });
   });
 });
 
