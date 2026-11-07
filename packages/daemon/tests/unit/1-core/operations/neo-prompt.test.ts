@@ -21,6 +21,11 @@ describe('root Neo system prompt', () => {
       'A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.relay, so the card links the session and the answer reaches the worker.'
     );
   });
+  test('tells Neo to label asks with a reused short topic', () => {
+    expect(NEO_ROOT_TURN_END).toContain('neo.ask.topic');
+    expect(NEO_ROOT_TURN_END).toContain('never coin a near-synonym');
+    expect(NEO_ROOT_TURN_END).toContain('其他');
+  });
   test('tells Neo to add parallel running work with after: [] before binding', () => {
     expect(NEO_ROOT_TURN_END).toContain('so pass after: [] for parallel running work.');
   });

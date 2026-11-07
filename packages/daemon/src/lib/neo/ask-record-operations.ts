@@ -39,9 +39,11 @@ type Gate<T> = { value: T } | { reason: Rejection };
 type AskReceipt = { ok: true; ask: NeoAsk; todos: NeoTodo[]; records?: string[] };
 
 const Text = z.string().trim().min(1);
+const Topic = Text.max(12);
 
 const Open = z.object({
   title: Text.max(200),
+  topic: Topic.optional(),
   request: Text.max(4000),
   projectId: Text.nullable().optional(),
   goalId: Text.nullable().optional(),
@@ -49,6 +51,8 @@ const Open = z.object({
 });
 
 const Outcome = z.object({ askId: Text, outcome: Text.max(4000) });
+
+const TopicInput = z.object({ askId: Text, topic: Topic });
 
 const Settle = z.object({
   askId: Text,
@@ -113,6 +117,17 @@ export function requireNeoAskProject(
   return {
     reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.${list}` },
   };
+}
+
+export function requireNeoAskOwner(
+  ask: NeoAsk,
+  caller: OperationCaller,
+  isNeoSession: (sessionId: string) => boolean
+): Gate<NeoAsk> {
+  return ask.sessionId === caller.sessionId ||
+    (caller.role === 'neo' && !isNeoSession(ask.sessionId))
+    ? { value: ask }
+    : { reason: { ok: false, reason: 'not_owned: this ask belongs to another session.' } };
 }
 
 export function createNeoAskRecordOperations(
@@ -257,6 +272,7 @@ export function createNeoAskRecordOperations(
             sessionId,
             originMessageId: origin,
             title: input.title,
+            topic: input.topic ?? null,
             request: input.request,
             createdAt: Date.now(),
           });
@@ -324,19 +340,21 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
-      (ask: NeoAsk, caller: OperationCaller): Gate<NeoAsk> =>
-        ask.sessionId !== caller.sessionId &&
-        !(caller.role === 'neo' && !isNeoSession(ask.sessionId))
-          ? { reason: { ok: false, reason: 'not_owned: this ask belongs to another session.' } }
-          : ask.focusedSession
-            ? { value: ask }
-            : {
-                reason: {
-                  ok: false,
-                  reason: 'not_focused: this ask has no focused discussion session.',
-                },
-              },
+      (ask: NeoAsk, caller: OperationCaller) => requireNeoAskOwner(ask, caller, isNeoSession),
       ['outcome', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      (ask: NeoAsk): Gate<NeoAsk> =>
+        ask.focusedSession
+          ? { value: ask }
+          : {
+              reason: {
+                ok: false,
+                reason: 'not_focused: this ask has no focused discussion session.',
+              },
+            },
+      'outcome',
       'result:outcome'
     )
     .pipe(
@@ -350,6 +368,37 @@ export function createNeoAskRecordOperations(
     )
     .end('outcome') as (
     input: z.infer<typeof Outcome>,
+    caller: OperationCaller
+  ) => AskReceipt | Rejection;
+
+  const setTopic = (superpipe({})('neo.ask.topic') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => requireNeoAskSession(caller, isNeoSession),
+      'caller',
+      'result:outcome'
+    )
+    .pipe(
+      (input: z.infer<typeof TopicInput>) => requireNeoOpenAsk(store.getAsk(input.askId)),
+      'input',
+      'result:outcome'
+    )
+    .pipe(
+      (ask: NeoAsk, caller: OperationCaller) => requireNeoAskOwner(ask, caller, isNeoSession),
+      ['outcome', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      (ask: NeoAsk, input: z.infer<typeof TopicInput>): AskReceipt => ({
+        ok: true,
+        ask: store.setAskTopic(ask.id, input.topic, Date.now()),
+        todos: store.listTodos(ask.id),
+      }),
+      ['outcome', 'input'],
+      'outcome'
+    )
+    .end('outcome') as (
+    input: z.infer<typeof TopicInput>,
     caller: OperationCaller
   ) => AskReceipt | Rejection;
 
@@ -425,7 +474,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add; give every step that needs work an instruction and target). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
+        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add; give every step that needs work an instruction and target). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another. topic is the matter's short name in the human's language, 2-6 characters (家长控制, OAP, 大学申请, 邮件); reuse a topic already on an open ask and never coin a near-synonym; use 其他 when the ask belongs to no matter.",
       inputSchema: Open,
       resultSchema: AskResult,
       policy: {
@@ -442,6 +491,15 @@ export function createNeoAskRecordOperations(
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(recordOutcome(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.ask.topic',
+      description:
+        "Set or change the topic on an open ask: a short label naming the matter it belongs to. topic is the matter's short name in the human's language, 2-6 characters (家长控制, OAP, 大学申请, 邮件); reuse a topic already on an open ask and never coin a near-synonym; use 其他 when the ask belongs to no matter. Settled asks keep their topic.",
+      inputSchema: TopicInput,
+      resultSchema: AskResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => present(setTopic(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.settle',

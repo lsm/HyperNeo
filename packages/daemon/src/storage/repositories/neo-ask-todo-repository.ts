@@ -103,7 +103,7 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
 };
 
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, repo, parent_id AS parentId, session_id AS sessionId,
-  origin_message_id AS originMessageId, title, request, status, outcome, focused_session_json AS focusedSessionJson,
+  origin_message_id AS originMessageId, title, topic, request, status, outcome, focused_session_json AS focusedSessionJson,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
 
 const ASK_ATTENTION = `(status = 'open'
@@ -421,13 +421,16 @@ export class NeoAskTodoRepository {
   }
 
   openAsk(
-    ask: Omit<NeoAsk, 'repo' | 'parentId' | 'status' | 'outcome' | 'updatedAt' | 'settledAt'> &
-      Partial<Pick<NeoAsk, 'repo' | 'parentId'>>
+    ask: Omit<
+      NeoAsk,
+      'repo' | 'parentId' | 'topic' | 'status' | 'outcome' | 'updatedAt' | 'settledAt'
+    > &
+      Partial<Pick<NeoAsk, 'repo' | 'parentId' | 'topic'>>
   ): NeoAsk {
     this.db
       .prepare(
-        `INSERT INTO neo_asks (id, goal_id, project_id, repo, parent_id, session_id, origin_message_id, title, request, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO neo_asks (id, goal_id, project_id, repo, parent_id, session_id, origin_message_id, title, topic, request, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         ask.id,
@@ -438,6 +441,7 @@ export class NeoAskTodoRepository {
         ask.sessionId,
         ask.originMessageId,
         ask.title,
+        ask.topic ?? null,
         ask.request,
         ask.createdAt,
         ask.createdAt
@@ -486,6 +490,14 @@ export class NeoAskTodoRepository {
         .prepare(`${ASK_SELECT} WHERE goal_id = ? ORDER BY created_at, id`)
         .all(goalId) as AskRow[]
     ).map(toAsk);
+  }
+
+  setAskTopic(id: string, topic: string, now: number): NeoAsk {
+    this.db
+      .prepare("UPDATE neo_asks SET topic = ?, updated_at = ? WHERE id = ? AND status = 'open'")
+      .run(topic, now, id);
+    this.changed();
+    return this.getAsk(id)!;
   }
 
   recordAskOutcome(id: string, outcome: string, now: number): NeoAsk {

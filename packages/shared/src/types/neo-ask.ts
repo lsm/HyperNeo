@@ -13,6 +13,7 @@ export interface NeoAsk {
   sessionId: string;
   originMessageId: string | null;
   title: string;
+  topic: string | null;
   request: string;
   status: NeoAskStatus;
   outcome: string | null;
