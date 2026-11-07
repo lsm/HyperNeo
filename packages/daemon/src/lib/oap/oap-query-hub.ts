@@ -6,15 +6,12 @@ import type { OapHubClient } from './oap-hub-client.ts';
 import type { OapQueryHub } from './oap-query.ts';
 
 type Event = { type: string; run_id: string; [key: string]: unknown };
-type Subscription = Awaited<ReturnType<OapHubClient['subscribe']>>;
 type ListenerInput = Parameters<Parameters<OapHubClient['subscribe']>[1]>[0];
 type Stream = {
   sessionId: string;
   runId?: string;
-  subscription: Subscription;
   events: AsyncIterableIterator<[Event | Error]>;
   release(): Promise<void>;
-  consumed(): void;
 };
 
 function textContent(message: SDKUserMessage): string {
@@ -116,37 +113,24 @@ function cancellationAccepted(response: unknown, sessionId: string, runId: strin
 
 export function createOapQueryHub(client: OapHubClient): OapQueryHub {
   let active: Stream | undefined;
-  let starting = false;
-  let closed = false;
+  let starting: symbol | undefined;
   return {
     async submit(sessionId, message) {
-      if (closed || active || starting)
-        throw new Error('OAP query hub is not available for submission');
-      starting = true;
+      if (active || starting) throw new Error('OAP query hub is not available for submission');
+      const submission = Symbol();
+      starting = submission;
       try {
         const parameters = prepareSubmit(sessionId, generateUUID(), message);
         const emitter = new EventEmitter();
         const events = on(emitter, 'event') as AsyncIterableIterator<[Event | Error]>;
-        let queued = 0;
-        let overflow = false;
         const subscription = await client.subscribe(sessionId, (frame) => {
-          if (overflow) return;
           const value = readEvent(frame);
-          if (!value) return;
-          if (queued >= 64) {
-            overflow = true;
-            emitter.emit('event', new Error('OAP event buffer overflow'));
-          } else {
-            queued++;
-            emitter.emit('event', value);
-          }
+          if (value) emitter.emit('event', value);
         });
         let releasing: Promise<void> | undefined;
         const stream: Stream = {
           sessionId,
-          subscription,
           events,
-          consumed: () => queued--,
           release: () => {
             releasing ??= (async () => {
               if (active === stream) active = undefined;
@@ -156,9 +140,9 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
             return releasing;
           },
         };
-        if (closed) {
+        if (starting !== submission) {
           await stream.release();
-          throw new Error('OAP query hub is closed');
+          throw new Error('OAP query hub submission was closed');
         }
         active = stream;
         try {
@@ -169,7 +153,7 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
           throw error;
         }
       } finally {
-        starting = false;
+        if (starting === submission) starting = undefined;
       }
     },
     async *events(sessionId, expectedRunId, signal) {
@@ -182,7 +166,6 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
       if (signal.aborted) abort();
       try {
         for await (const [value] of stream.events) {
-          stream.consumed();
           if (value instanceof Error) throw value;
           if (value.run_id === expectedRunId) yield value;
         }
@@ -209,8 +192,8 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
         throw new Error('OAP did not accept the requested cancellation');
       }
     },
-    close() {
-      closed = true;
+    release() {
+      starting = undefined;
       if (active) void active.release().catch(() => {});
     },
   };

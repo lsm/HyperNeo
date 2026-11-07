@@ -10,7 +10,7 @@ export type OapQueryHub = {
   submit(sessionId: string, message: SDKUserMessage): Promise<{ runId: string }>;
   events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OapEvent>;
   cancel(sessionId: string, runId: string): Promise<void>;
-  close?(): void;
+  release?(): void;
 };
 
 type OapQueryTranslator = {
@@ -153,7 +153,7 @@ export class OapQuery implements QueryLike {
     if (this.closed) return;
     this.closed = true;
     this.closeSignal.abort();
-    this.hub.close?.();
+    this.hub.release?.();
     void this.cancelActive().catch(() => {});
   }
 

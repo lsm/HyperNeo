@@ -43,7 +43,8 @@ for line in sys.stdin:
  if method=='turn/start':
   thread=request['params']['threadId']; turn=result['turn']['id']
   emit({'method':'turn/started','params':{'threadId':thread,'turn':{'id':turn,'status':'inProgress'}}})
-  emit({'method':'item/agentMessage/delta','params':{'threadId':thread,'turnId':turn,'itemId':'text-'+turn,'delta':'synthetic reply'}})
+  for index in range(96):
+   emit({'method':'item/agentMessage/delta','params':{'threadId':thread,'turnId':turn,'itemId':'text-'+turn,'delta':'synthetic reply' if index==0 else '.'}})
   emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
 `
 );
@@ -116,14 +117,21 @@ try {
     assert(Date.now() < deadline, `OAP turns did not settle: ${JSON.stringify(errors)}`);
     await new Promise((done) => setTimeout(done, 20));
   }
-  const rows = app.db.getSDKMessages(sessionId).messages;
-  assert.equal(rows.filter((row) => row.type === 'result').length, 2);
+  await hub.request('message.send', { sessionId, content: 'Synthetic prompt three' });
+  const thirdDeadline = Date.now() + 30000;
+  while (agent.queryPromise || agent.messageQueue.isRunning() || resultCount !== 3) {
+    assert(Date.now() < thirdDeadline, `separate query did not settle: ${JSON.stringify(errors)}`);
+    await new Promise((done) => setTimeout(done, 20));
+  }
+  const rows = app.db.getSDKMessages(sessionId, 10000).messages;
+  assert.equal(rows.filter((row) => row.type === 'result').length, 3);
   assert(rows.some((row) => row.type === 'assistant' && JSON.stringify(row).includes('synthetic reply')));
   const calls = readFileSync(join(run, 'codex-home/calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { cwd: string; request: { method?: string; params?: { cwd?: string } } });
   const turns = calls.filter((call) => call.request.method === 'turn/start');
-  assert.equal(turns.length, 2);
+  assert.equal(turns.length, 3);
   assert(JSON.stringify(turns[0]).includes('Synthetic prompt one'));
   assert(JSON.stringify(turns[1]).includes('Synthetic prompt two'));
+  assert(JSON.stringify(turns[2]).includes('Synthetic prompt three'));
   const initialization = calls.find((call) => call.request.method === 'initialize');
   assert.notEqual((initialization?.request.params as { capabilities?: { experimentalApi?: boolean } } | undefined)?.capabilities?.experimentalApi, true);
   assert(calls.every((call) => call.cwd === join(run, 'workspace')));
@@ -131,7 +139,7 @@ try {
   assert.equal(errors.length, 0, JSON.stringify(errors));
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
-  Object.assign(evidence, { port: app.server.port, turns: 2, resultWindowQueued: true, queuedVia: 'messageQueue', runtimeInjected: true, workspaceConfirmed: true, experimentalApiEnabled: false, sdkStartupGateCalls: gateCalls, trackedAgentProcesses: 0, pass: true });
+  Object.assign(evidence, { port: app.server.port, turns: 3, separateQueryAfterClose: true, textDeltasPerTurn: 96, resultWindowQueued: true, queuedVia: 'messageQueue', runtimeInjected: true, workspaceConfirmed: true, experimentalApiEnabled: false, sdkStartupGateCalls: gateCalls, trackedAgentProcesses: 0, pass: true });
 } finally {
   releaseResult?.();
   if (existsSync(join(run, 'codex-home/calls.jsonl'))) copyFileSync(join(run, 'codex-home/calls.jsonl'), join(run, 'evidence/calls.jsonl'));
