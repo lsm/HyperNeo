@@ -1085,6 +1085,7 @@ export function NeoLive() {
                     onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
                     onTopic={(next) => {
                       if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);
+                      if (!sceneEntries.some((entry) => entry.ask.topic === next)) return;
                       setWorkQuery('');
                       chooseTopic(next);
                     }}

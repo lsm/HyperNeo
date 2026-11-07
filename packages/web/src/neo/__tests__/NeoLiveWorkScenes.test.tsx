@@ -68,6 +68,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  localStorage.removeItem('neo:topic-filter');
 });
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
@@ -101,7 +102,6 @@ describe('Work search input and retry', () => {
   );
   it('clears the search and filters when a card topic is tapped in the results', async () => {
     locale.value = 'en';
-    localStorage.removeItem('neo:topic-filter');
     const request = vi.fn(async (_method: string, params: { name: string }) => {
       if (params.name === 'neo.ask.search')
         throw Object.assign(new Error('query_too_short'), { code: 'INVALID_PARAMS' });
@@ -131,7 +131,27 @@ describe('Work search input and retry', () => {
     expect(
       [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'))
     ).toEqual(['protocol']);
-    localStorage.removeItem('neo:topic-filter');
+  });
+  it('keeps the search when the tapped topic has no loaded card to filter', async () => {
+    locale.value = 'en';
+    const remote = testAskEntry('remote', 'remote protocol', { state: 'done' });
+    remote.ask.topic = 'OAP';
+    const request = vi.fn(async (_method: string, params: { name: string }) => {
+      if (params.name === 'neo.ask.search')
+        return { ok: true, results: [{ askId: remote.ask.id }], nextCursor: null };
+      if (params.name === 'neo.ask.read') return { ok: true, entry: remote };
+      return { schedules: [] };
+    });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    const { container } = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'remote protocol' } });
+    await screen.findByRole('heading', { name: 'remote protocol', exact: true });
+    const card = container.querySelector('[data-ask="remote"]') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: 'OAP' }));
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('remote protocol');
+    expect(container.querySelector('[data-ask="remote"]')).toBeTruthy();
+    expect(localStorage.getItem('neo:topic-filter')).toBeNull();
   });
   it('finds an unloaded Chinese card beyond the first server page', async () => {
     locale.value = 'en';
