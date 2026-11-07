@@ -3,7 +3,11 @@
 When Neo calls `work.start`, the daemon first looks for a recorded worker of the same
 adapter, idle (`done`) in the same folder, that holds no open todo and was never marked
 unusable. If one exists, it receives the message and the receipt says `reused: true` with
-its ref. Otherwise a new session starts. A human start always creates a new session.
+its ref. A todo first prefers its ask's most recently used eligible worker;
+different-ask reuse prefers the worker whose latest ask settled longest ago.
+Unknown settlement history remains a fallback. Otherwise a new session starts.
+A human start always creates a new session. Use ask-worker-affinity.md for the
+recorded-history and pack-exclusion proof.
 
 Use the shared isolation setup in `../SKILL.md`, then:
 
