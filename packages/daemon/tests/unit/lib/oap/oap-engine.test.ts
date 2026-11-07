@@ -5,6 +5,8 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OapEngine } from '../../../../src/lib/oap/oap-engine';
+import type { OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
+import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 
 const roots: string[] = [];
 const engines: OapEngine[] = [];
@@ -48,6 +50,19 @@ afterEach(async () => {
 });
 
 describe('OapEngine', () => {
+  test('creates independent query transports without launching the hub', async () => {
+    const { engine, calls } = await fixture();
+    const createQueryHub = (
+      engine as unknown as { createQueryHub(client: OapHubClient): OapQueryHub }
+    ).createQueryHub;
+    const client = {} as OapHubClient;
+    const first = createQueryHub.call(engine, client);
+    const second = createQueryHub.call(engine, client);
+    expect(first).not.toBe(second);
+    expect(first.submit).toBeInstanceOf(Function);
+    expect(existsSync(calls)).toBe(false);
+  });
+
   test('starts one validated hub lazily for concurrent callers and stops it on close', async () => {
     const { engine, options, calls, root } = await fixture();
     expect(existsSync(calls)).toBe(false);
