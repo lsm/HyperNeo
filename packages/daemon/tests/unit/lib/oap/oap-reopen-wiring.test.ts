@@ -146,6 +146,7 @@ describe('OAP native session reopen wiring', () => {
   test('clearing a session closes the old binding and persists a new native thread', async () => {
     const host = fixture({ known: true, freshId: 'native-thread-b' });
     const current = session('native-thread-a', 2);
+    current.sdkOriginPath = '/synthetic/previous';
     const runtime = host.runtime(current);
     await runtime.hub;
 
@@ -154,9 +155,10 @@ describe('OAP native session reopen wiring', () => {
     expect(host.operations.filter(({ op }) => op === 'close')).toHaveLength(1);
     expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(2);
     expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.sdkOriginPath).toBeUndefined();
     expect(host.db.updateSession).toHaveBeenCalledWith(
       'session-a',
-      expect.objectContaining({ sdkSessionId: 'native-thread-b' })
+      expect.objectContaining({ sdkSessionId: 'native-thread-b', sdkOriginPath: undefined })
     );
     expect(host.submit).not.toHaveBeenCalled();
   });
