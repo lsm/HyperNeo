@@ -64,6 +64,7 @@ export function NeoVoice({
   const enabled = useNeoVoiceSettings();
   const [transcribing, setTranscribing] = useState<string | null>(null);
   const [transcribeIntent, setTranscribeIntent] = useState<'draft' | 'send'>('draft');
+  const [streamFormat, setStreamFormat] = useState<'opus' | 'pcm16' | 'batch' | null>(null);
   const running = useRef(false);
   const delivery = useRef({ onSendVoice, onPrepareSend });
   delivery.current = { onSendVoice, onPrepareSend };
@@ -123,6 +124,7 @@ export function NeoVoice({
   }, []);
 
   async function start() {
+    setStreamFormat(null);
     recordingDraft.current = captureDraft();
     onPreviewCapture?.();
     try {
@@ -130,7 +132,17 @@ export function NeoVoice({
       const hub = connectionManager.getHubIfConnected();
       if (!hub || !latest.current.isRecording) return;
       dropLiveStream();
-      const live = openVoiceStream(hub, (text) => interim.current?.(text));
+      const live = openVoiceStream(hub, (text) => interim.current?.(text), {
+        onFormat: (format) => {
+          if (mounted.current) setStreamFormat(format);
+        },
+        onError: (error) => {
+          if (mounted.current)
+            onError(
+              `Live transcription failed: ${error.message}. The recording will use batch transcription.`
+            );
+        },
+      });
       liveStream.current = live;
       voiceRecorderStore.setPcmTap(live.push);
     } catch (error) {
@@ -302,6 +314,19 @@ export function NeoVoice({
               }}
             />
           </div>
+          {recorder.isRecording && streamFormat && streamFormat !== 'opus' && (
+            <span
+              role="status"
+              class="shrink-0 text-xs text-fg-muted"
+              title={
+                streamFormat === 'pcm16'
+                  ? 'Opus unavailable; using PCM16'
+                  : 'Using batch transcription'
+              }
+            >
+              {streamFormat === 'pcm16' ? 'PCM16' : 'Batch'}
+            </span>
+          )}
           <Button
             size="sm"
             class="h-11 min-w-11 shrink-0"

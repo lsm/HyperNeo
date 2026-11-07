@@ -51,12 +51,12 @@ describe('VoiceSettings language selector', () => {
         (screen.getByLabelText('Live transcription language') as HTMLSelectElement).value
       ).toBe(value);
       const live = openVoiceStream(hub, vi.fn());
+      await live.finish();
       expect(request).toHaveBeenCalledWith('voice.stream.start', {
         encoding: 'pcm16',
         sampleRate: 16_000,
         ...(value === 'auto' ? {} : { language: value }),
       });
-      await live.finish();
       live.close();
     }
   });
