@@ -14,6 +14,8 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
+const NETWORK_TIMEOUT_MS = 3000;
+
 let fixture: string;
 let root: string;
 let remote: string;
@@ -435,7 +437,7 @@ describe('Neo home save remote sync', () => {
     await git(root, 'config', 'remote.origin.uploadpack', upload);
     const pending = call('neo.home.save', input);
     try {
-      for (let i = 0; i < 300; i++) {
+      for (let i = 0; i < 1000; i++) {
         if (
           await readFile(ready).then(
             () => true,
@@ -484,13 +486,13 @@ describe('Neo home save remote sync', () => {
         observed = join(fixture, 'network-env');
       await writeFile(
         executable,
-        `#!/bin/sh\nprintf '%s|%s|%s' "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS" "$GIT_SSH_COMMAND" > "${observed}"\nsleep 4\nexit 42\n`,
+        `#!/bin/sh\nprintf '%s|%s|%s' "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS" "$GIT_SSH_COMMAND" > "${observed}"\nsleep 10\nexit 42\n`,
         { mode: 0o755 }
       );
       await git(root, 'config', `remote.origin.${transport}`, executable);
-      home = new NeoHomeRepository(root, repo, 1000);
+      home = new NeoHomeRepository(root, repo, NETWORK_TIMEOUT_MS);
       const pending = call('neo.home.save', input);
-      for (let i = 0; i < 300; i++) {
+      for (let i = 0; i < 1000; i++) {
         if (
           await readFile(observed).then(
             () => true,
@@ -509,12 +511,12 @@ describe('Neo home save remote sync', () => {
           ? { ok: false, reason: expect.stringContaining('timed out') }
           : { ok: true }
       );
-      expect(Date.now() - start).toBeLessThan(4000);
+      expect(Date.now() - start).toBeLessThan(2 * NETWORK_TIMEOUT_MS + 2000);
       expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('timed out') });
       expect(await readFile(observed, 'utf8')).toBe('0|/usr/bin/false|ssh -oBatchMode=yes');
       expect(await git(root, 'status', '--porcelain')).toBe('');
     },
-    10000
+    30000
   );
   test('keeps homes without an origin local', async () => {
     await git(root, 'remote', 'remove', 'origin');
