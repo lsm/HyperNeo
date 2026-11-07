@@ -111,7 +111,7 @@ export function openVoiceStream(
   const ready = (async () => {
     try {
       codec = await createVoiceOpusEncoder(queuePacket, fail);
-      if (closed) {
+      if (closed || !live) {
         codec?.close();
         return;
       }
@@ -124,24 +124,24 @@ export function openVoiceStream(
       try {
         started = await start(codec ? 'opus' : 'pcm16');
       } catch (error) {
-        if (closed) return;
+        if (closed || !live) return;
         if (!codec || !isPcmOnlyDaemon(error)) throw error;
         codec.close();
         codec = null;
         started = await start('pcm16');
       }
       streamId = started.streamId;
-      if (closed) return;
+      if (closed || !live) return;
       if (codec && !started.formats?.includes('opus')) {
         await hub.request('voice.stream.cancel', { streamId: started.streamId });
         streamId = null;
         codec.close();
         codec = null;
-        if (closed) return;
+        if (closed || !live) return;
         started = await start('pcm16');
         streamId = started.streamId;
       }
-      if (closed) return;
+      if (closed || !live) return;
       if (started.via !== 'streaming') {
         options.onFormat?.('batch');
         live = false;

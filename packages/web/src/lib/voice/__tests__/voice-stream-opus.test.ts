@@ -134,6 +134,65 @@ describe('Opus live voice', () => {
     expect(codec.close).toHaveBeenCalledOnce();
   });
 
+  it('keeps the Batch indicator when the encoder fails before start completes', async () => {
+    let codecError: (error: Error) => void = () => {};
+    const codec = { push: vi.fn(), finish: vi.fn(async () => {}), close: vi.fn() };
+    createEncoder.mockImplementation(async (_onPacket, onError) => {
+      codecError = onError;
+      return codec;
+    });
+    let release: (value: unknown) => void = () => {};
+    const { hub, request } = hubFor((method) => {
+      if (method === 'voice.stream.start')
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      return { ok: true };
+    });
+    const onError = vi.fn();
+    const onFormat = vi.fn();
+    const live = openVoiceStream(hub, vi.fn(), { onError, onFormat });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+    codecError(new Error('encoder stopped'));
+    release({ streamId: 's', via: 'streaming', formats: ['pcm16', 'opus'] });
+    expect(await live.finish()).toBeNull();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onFormat.mock.calls).toEqual([['batch']]);
+    live.close();
+  });
+
+  it('does not start PCM when the encoder fails during legacy-stream cancellation', async () => {
+    let codecError: (error: Error) => void = () => {};
+    const codec = { push: vi.fn(), finish: vi.fn(async () => {}), close: vi.fn() };
+    createEncoder.mockImplementation(async (_onPacket, onError) => {
+      codecError = onError;
+      return codec;
+    });
+    let release: (value: unknown) => void = () => {};
+    const { hub, request } = hubFor((method) => {
+      if (method === 'voice.stream.start')
+        return { streamId: 's', via: 'streaming', formats: ['pcm16'] };
+      if (method === 'voice.stream.cancel')
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      return { ok: true };
+    });
+    const onFormat = vi.fn();
+    const live = openVoiceStream(hub, vi.fn(), { onFormat });
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledWith('voice.stream.cancel', { streamId: 's' })
+    );
+    codecError(new Error('encoder stopped'));
+    release({ ok: true });
+    expect(await live.finish()).toBeNull();
+    expect(onFormat.mock.calls).toEqual([['batch']]);
+    expect(request.mock.calls.filter(([method]) => method === 'voice.stream.start')).toHaveLength(
+      1
+    );
+    live.close();
+  });
+
   it('reports encoder initialization errors and requests the saved-WAV fallback', async () => {
     createEncoder.mockImplementation(() => {
       throw new Error('Opus startup failed');
