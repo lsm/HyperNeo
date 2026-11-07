@@ -14,8 +14,8 @@ function mark(element: Element, reference: string, label = reference) {
 export function demoteLocalFileLinks(container: HTMLElement) {
   container.querySelectorAll('a[href]').forEach((anchor) => {
     const href = anchor.getAttribute('href') ?? '';
-    const extension = /^(?:\/(?!\/)|~\/|file:).*\.([\w-]+)$/.exec(href)?.[1];
-    if (!extension || PREVIEWABLE_FILE_EXTENSIONS.has(extension.toLowerCase())) return;
+    const local = /^(?:\/(?!\/)|~\/|file:)([^?#]*\.([\w-]+))([?#].*)?$/.exec(href);
+    if (!local || (!local[3] && PREVIEWABLE_FILE_EXTENSIONS.has(local[2].toLowerCase()))) return;
     const span = document.createElement('span');
     span.append(...anchor.childNodes);
     anchor.replaceWith(span);

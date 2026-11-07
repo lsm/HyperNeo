@@ -82,6 +82,19 @@ describe('MarkdownRenderer preview references', () => {
     ]);
   });
 
+  it('shows local file links with a query or fragment as plain text', async () => {
+    const { container } = render(
+      <MarkdownRenderer
+        content="[install](/owner/run.sh#install) [notes](/owner/notes.md?v=2) [route](/session/abc#top)"
+        references={[]}
+      />
+    );
+    await waitFor(() => expect(screen.getByText('install')).toBeTruthy());
+    expect(Array.from(container.querySelectorAll('a')).map((a) => a.textContent)).toEqual([
+      'route',
+    ]);
+  });
+
   it('keeps local links when no references are given', async () => {
     const { container } = render(<MarkdownRenderer content="[the script](/owner/run-demo.sh)" />);
     await waitFor(() => expect(screen.getByText('the script')).toBeTruthy());
