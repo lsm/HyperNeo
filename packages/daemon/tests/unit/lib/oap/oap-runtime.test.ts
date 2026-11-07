@@ -56,7 +56,11 @@ function fixture(status?: { directory: string }) {
   const client = { request } as unknown as OapHubClient;
   const getHub = mock(async () => client);
   const createQueryHub = mock(
-    (_client: OapHubClient) => ({ release: mock(() => {}) }) as OapQueryHub
+    (_client: OapHubClient) =>
+      ({
+        release: mock(() => {}),
+        submit: mock(async () => ({ runId: 'synthetic-run' })),
+      }) as unknown as OapQueryHub
   );
   const isCurrentHub = mock((_client: OapHubClient) => true);
   const engine = { getHub, createQueryHub, isCurrentHub } as unknown as OapEngine;
@@ -178,6 +182,24 @@ describe('OAP daemon runtime', () => {
     await expect(bind(completed).hub).rejects.toThrow(/resum|reopen/i);
     expect(oldHub.release).toHaveBeenCalledTimes(1);
     expect(host.getHub).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not create a fresh thread after the first submitted turn loses its hub', async () => {
+    const host = fixture();
+    const replacement = fixture();
+    const runtime = createOapRuntime(
+      host.engine,
+      options
+    )(session('session-a', '/synthetic/workspace'));
+    const oldHub = await runtime.hub;
+    await oldHub.submit('session-a', {} as Parameters<OapQueryHub['submit']>[1]);
+    host.isCurrentHub.mockImplementation((client) => client === replacement.client);
+    host.getHub.mockResolvedValue(replacement.client);
+
+    await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
+    expect(oldHub.release).toHaveBeenCalledTimes(1);
+    expect(host.getHub).toHaveBeenCalledTimes(1);
+    expect(replacement.operations).toHaveLength(0);
   });
 
   test('rechecks history after an ambiguous open failure before considering another open', async () => {
