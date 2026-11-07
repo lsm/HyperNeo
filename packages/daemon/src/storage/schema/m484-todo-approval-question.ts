@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration483(db: Database): void {
+export function runMigration484(db: Database): void {
   const columns = db.prepare('PRAGMA table_info(neo_todos)').all() as { name: string }[];
   if (!columns.length || columns.some((column) => column.name === 'approval_question_id')) return;
   db.transaction(() => {

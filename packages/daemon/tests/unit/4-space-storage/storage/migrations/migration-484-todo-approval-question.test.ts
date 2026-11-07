@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { runMigration483 } from '../../../../../src/storage/schema/m483-todo-approval-question.ts';
+import { runMigration484 } from '../../../../../src/storage/schema/m484-todo-approval-question.ts';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 
-describe('migration 483 todo approval question', () => {
+describe('migration 484 todo approval question', () => {
   test('backfills only listed and ticked answers, choosing the latest', () => {
     const db = new Database(':memory:');
     db.exec(`
@@ -16,8 +16,8 @@ describe('migration 483 todo approval question', () => {
         ('open', 'start', 'open', NULL, 3, '["direct"]', '["direct"]'),
         ('retired', 'start', 'retired', NULL, 4, '["direct"]', '["direct"]');
     `);
-    runMigration483(db);
-    runMigration483(db);
+    runMigration484(db);
+    runMigration484(db);
     expect(
       db.prepare('SELECT id, approval_question_id AS question FROM neo_todos ORDER BY id').all()
     ).toEqual([
@@ -32,7 +32,7 @@ describe('migration 483 todo approval question', () => {
   test('rolls back the column when the backfill fails', () => {
     const db = new Database(':memory:');
     db.exec('CREATE TABLE neo_todos (id TEXT PRIMARY KEY)');
-    expect(() => runMigration483(db)).toThrow();
+    expect(() => runMigration484(db)).toThrow();
     expect(db.prepare('PRAGMA table_info(neo_todos)').all()).toHaveLength(1);
     db.close();
   });
