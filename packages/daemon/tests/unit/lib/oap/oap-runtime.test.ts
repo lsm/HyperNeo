@@ -135,6 +135,17 @@ describe('OAP daemon runtime', () => {
     expect(host.getHub).not.toHaveBeenCalled();
   });
 
+  test('does not start a fresh thread for a completed session whose hub history is missing', async () => {
+    const host = fixture();
+    const resumed = {
+      ...session('session-a', '/synthetic/workspace'),
+      metadata: { messageCount: 1 },
+    } as Session;
+    const runtime = createOapRuntime(host.engine, options)(resumed);
+    await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
+    expect(host.getHub).not.toHaveBeenCalled();
+  });
+
   test('refuses a hub that cannot prove the requested directory', async () => {
     const host = fixture();
     let probes = 0;
