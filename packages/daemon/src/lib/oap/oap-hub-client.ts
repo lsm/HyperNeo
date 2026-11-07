@@ -9,12 +9,13 @@ type Pending = {
   line: string;
   retried: boolean;
   timer: ReturnType<typeof setTimeout>;
+  retryTimer?: ReturnType<typeof setTimeout>;
   resolve(value: unknown): void;
   reject(error: Error): void;
 };
 type Dispatch =
   | { kind: 'ignore' }
-  | { kind: 'retry' }
+  | { kind: 'retry'; delayMs: number }
   | { kind: 'event'; frame: HubEvent }
   | { kind: 'resolve'; value: unknown }
   | { kind: 'reject'; code: string; message: string; feature?: string };
@@ -44,7 +45,7 @@ function decideFrame(frame: OapHubFrame, waiting: boolean, retried: boolean): Di
   if (!waiting) return { kind: 'ignore' };
   if (frame.kind === 'response') return { kind: 'resolve', value: frame.result };
   return frame.retryable && !retried
-    ? { kind: 'retry' }
+    ? { kind: 'retry', delayMs: 50 }
     : { kind: 'reject', code: frame.code, message: frame.message, feature: frame.feature };
 }
 
@@ -171,7 +172,10 @@ export class OapHubClient {
     const line = encodeOapHubRequest(id, op, parameters);
     const answer = new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (!this.pending.delete(id)) return;
+        const waiting = this.pending.get(id);
+        if (!waiting) return;
+        this.pending.delete(id);
+        clearTimeout(waiting.retryTimer);
         this.listeners.delete(id);
         reject(new OapHubRequestError('timeout', `OAP hub ${op} timed out`));
         if (listener && !this.failure)
@@ -228,11 +232,14 @@ export class OapHubClient {
     if (!waiting || decision.kind === 'ignore') return;
     if (decision.kind === 'retry') {
       waiting.retried = true;
-      this.write(waiting.line);
+      waiting.retryTimer = setTimeout(() => {
+        if (this.pending.get(frame.id) === waiting) this.write(waiting.line);
+      }, decision.delayMs);
       return;
     }
     this.pending.delete(frame.id);
     clearTimeout(waiting.timer);
+    clearTimeout(waiting.retryTimer);
     if (decision.kind === 'resolve') waiting.resolve(decision.value);
     else waiting.reject(new OapHubRequestError(decision.code, decision.message, decision.feature));
   }
@@ -258,6 +265,7 @@ export class OapHubClient {
     }
     for (const waiting of this.pending.values()) {
       clearTimeout(waiting.timer);
+      clearTimeout(waiting.retryTimer);
       waiting.reject(error);
     }
     for (const [id, listener] of this.listeners) if (!this.pending.has(id)) notify(listener, error);
