@@ -91,3 +91,175 @@ describe('translateOapEvent', () => {
     ).toEqual([]);
   });
 });
+
+const commandFixture = [
+  {
+    protocol: 'open-agent-protocol',
+    version: '0.1',
+    profile: 'open-agent-protocol.agent-control-core',
+    type: 'action.call.requested',
+    id: 'event-07',
+    payload: {
+      session_id: 'session-1',
+      run_id: 'run-02',
+      tool_call_id: 'tool-call-06',
+      requested_by: 'codex.app-server',
+      execution_owner: 'codex.app-server',
+      name: 'codex.command',
+      arguments_json: {
+        command: 'true',
+        cwd: '',
+      },
+    },
+    sequence: 2,
+    timestamp_ms: 6,
+    session_id: 'session-1',
+    run_id: 'run-02',
+    tool_call_id: 'tool-call-06',
+    capability_revision: 'codex-appserver-0.163.0-oap-v2',
+  },
+  {
+    protocol: 'open-agent-protocol',
+    version: '0.1',
+    profile: 'open-agent-protocol.agent-control-core',
+    type: 'action.call.started',
+    id: 'event-08',
+    payload: {
+      session_id: 'session-1',
+      run_id: 'run-02',
+      tool_call_id: 'tool-call-06',
+      requested_by: 'codex.app-server',
+      execution_owner: 'codex.app-server',
+      name: 'codex.command',
+      arguments_json: {
+        command: 'true',
+        cwd: '',
+      },
+    },
+    sequence: 3,
+    timestamp_ms: 7,
+    session_id: 'session-1',
+    run_id: 'run-02',
+    tool_call_id: 'tool-call-06',
+    capability_revision: 'codex-appserver-0.163.0-oap-v2',
+  },
+  {
+    protocol: 'open-agent-protocol',
+    version: '0.1',
+    profile: 'open-agent-protocol.agent-control-core',
+    type: 'action.call.completed',
+    id: 'event-09',
+    payload: {
+      session_id: 'session-1',
+      run_id: 'run-02',
+      tool_call_id: 'tool-call-06',
+      requested_by: 'codex.app-server',
+      execution_owner: 'codex.app-server',
+      name: 'codex.command',
+      result: {
+        command: 'true',
+        cwd: '',
+        exitCode: null,
+        output: 'ok',
+      },
+    },
+    sequence: 4,
+    timestamp_ms: 8,
+    session_id: 'session-1',
+    run_id: 'run-02',
+    tool_call_id: 'tool-call-06',
+    capability_revision: 'codex-appserver-0.163.0-oap-v2',
+  },
+];
+const usageFixture = {
+  protocol: 'open-agent-protocol',
+  version: '0.1',
+  profile: 'open-agent-protocol.agent-control-core',
+  type: 'run.completed',
+  id: 'event-07',
+  payload: {
+    session_id: 'session-1',
+    run_id: 'run-02',
+    final_response: {
+      id: 'message-03',
+      role: 'assistant',
+      content: 'fixture-ok',
+    },
+    stop_reason: 'end_turn',
+    usage: {
+      input_tokens: 2500,
+      output_tokens: 100,
+      total_tokens: 2600,
+    },
+  },
+  sequence: 3,
+  timestamp_ms: 7,
+  session_id: 'session-1',
+  run_id: 'run-02',
+  capability_revision: 'codex-appserver-0.163.0-oap-v2',
+};
+
+describe('translateOapEvent tool and usage fixtures', () => {
+  it('pairs requested and completed calls without duplicating started events', () => {
+    const [requested, started, completed] = commandFixture;
+    const first = translateOapEvent(initialOapTranslatorState('session-1'), requested);
+    expect(first.messages).toMatchObject([
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool-call-06',
+              name: 'codex.command',
+              input: { command: 'true', cwd: '' },
+            },
+          ],
+        },
+      },
+    ]);
+    const next = translateOapEvent(first.state, started);
+    expect(next.messages).toEqual([]);
+    const last = translateOapEvent(next.state, completed);
+    expect(last.messages).toMatchObject([
+      {
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-call-06',
+              content: '{"command":"true","cwd":"","exitCode":null,"output":"ok"}',
+            },
+          ],
+        },
+      },
+    ]);
+    expect(translateOapEvent(last.state, completed).messages).toEqual([]);
+  });
+  it('preserves fixture usage on the terminal result', () => {
+    expect(
+      translateOapEvent(initialOapTranslatorState('session-1'), usageFixture).messages
+    ).toMatchObject([{ type: 'result', usage: { input_tokens: 2500, output_tokens: 100 } }]);
+  });
+  it('translates an OAP reasoning content part as SDK thinking', () => {
+    const event = {
+      type: 'content.delta',
+      id: 'reason-1',
+      payload: {
+        session_id: 'session-1',
+        run_id: 'run-02',
+        message_id: 'message-03',
+        part: { type: 'reasoning', reasoning: 'consider options' },
+      },
+    };
+    expect(translateOapEvent(initialOapTranslatorState('session-1'), event).messages).toMatchObject(
+      [
+        {
+          type: 'assistant',
+          message: { content: [{ type: 'thinking', thinking: 'consider options' }] },
+        },
+      ]
+    );
+  });
+});
