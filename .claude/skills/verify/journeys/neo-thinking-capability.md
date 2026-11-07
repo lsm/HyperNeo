@@ -20,7 +20,7 @@ It checks, in Settings > Neo model against a real isolated daemon:
 - The model with effort levels offers only those levels, the model without
   thinking offers only Off, and each keeps its saved level with a warning.
 - Opening the page sends no `neo.preferences.set` frame.
-- Saving keeps both unsupported levels as they were.
+- Changing a compaction value saves automatically on blur and keeps both unsupported levels as they were.
 - After reload at 1280px and 390px the value persists and the control fits.
 
 Evidence: `evidence/neo-thinking-capability.json` and
