@@ -4,11 +4,13 @@ import type { ReactiveDatabase } from '../../../../storage/reactive-database.ts'
 import {
   NeoAskTodoRepository,
   type NeoTodoDraft,
+  type NeoTodoInsert,
+  type NeoTodoStorageBoundary,
 } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { prepareCodingTodoStorage } from './schema/coding-tables.ts';
 
-class CodingTodoStorage {
+class CodingTodoStorage implements NeoTodoStorageBoundary {
   constructor(
     private readonly db: Database,
     private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
@@ -46,6 +48,15 @@ class CodingTodoStorage {
     this.changes?.notifyChange('pack_coding_todos');
   }
 
+  insert(
+    commit: NeoTodoInsert,
+    [id, askId, draft, now, repo = null]: Parameters<NeoTodoInsert>
+  ): NeoTodo {
+    const todo = commit(id, askId, draft, now);
+    this.record(todo.id, repo);
+    return this.project(todo);
+  }
+
   create(input: {
     id: string;
     askId: string;
@@ -53,17 +64,25 @@ class CodingTodoStorage {
     now: number;
     repo: string | null;
   }): NeoTodo {
-    const todo = new NeoAskTodoRepository(this.db).addTodo(
-      input.id,
-      input.askId,
-      input.draft,
-      input.now
-    );
-    this.record(todo.id, input.repo);
+    const todo = new NeoAskTodoRepository(
+      this.db,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      codingTodoStorage(this.db, this.changes)
+    ).addTodo(input.id, input.askId, input.draft, input.now, input.repo);
     this.changes?.notifyChange('neo_todos');
     this.changes?.notifyChange('neo_asks');
-    return this.project(todo);
+    return todo;
   }
+}
+
+export function codingTodoStorage(
+  db: Database,
+  changes?: Pick<ReactiveDatabase, 'notifyChange'>
+): NeoTodoStorageBoundary {
+  return new CodingTodoStorage(db, changes);
 }
 
 export const codingTodoStorageReads = defineRepositoryOp(

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
 import { ChangeRecorder, type DbOp } from '../../../../src/storage/db-gateway/db-op.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { codingTodoStorage } from '../../../../src/lib/neo/packs/coding/todo-storage.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -38,34 +38,8 @@ afterEach(async () => {
   db.close();
 });
 
-const candidate = (changed = () => {}) => {
-  const invoke = <T>(mode: 'Reads' | 'Writes', method: string, args: unknown[]) =>
-    (DB_OPS.get(`coding.todoStorage${mode}`)! as DbOp<{ method: string; args: unknown[] }, T>).run(
-      db,
-      { method, args },
-      new ChangeRecorder()
-    );
-  const storage = {
-    project: (todo: NeoTodo) => invoke<NeoTodo>('Reads', 'project', [todo]),
-    insert: (
-      commit: NeoAskTodoRepository['addTodo'],
-      args: Parameters<NeoAskTodoRepository['addTodo']>
-    ) => {
-      const [id, askId, draft, now, repo = null] = args;
-      const todo = commit(id, askId, draft, now);
-      invoke('Writes', 'record', [todo.id, repo]);
-      return storage.project(todo);
-    },
-  };
-  return Reflect.construct(NeoAskTodoRepository, [
-    db,
-    changed,
-    undefined,
-    undefined,
-    undefined,
-    storage,
-  ]) as NeoAskTodoRepository;
-};
+const candidate = (changed = () => {}) =>
+  new NeoAskTodoRepository(db, changed, undefined, undefined, undefined, codingTodoStorage(db));
 
 test('facts fail before explicit preparation and read after it', async () => {
   await expect(command('Reads', 'facts', ['ask'])).rejects.toThrow('no such table');
@@ -103,7 +77,13 @@ test('explicit storage projects all six readers while default readers stay legac
 
 test('explicit storage inserts only the pack repository fact and freezes legacy hints', async () => {
   await command('Writes', 'prepare');
-  core = candidate();
+  let notices = 0;
+  core = candidate(() => {
+    notices++;
+    expect(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('new')).toEqual({
+      repo: 'github.com/synthetic/new',
+    });
+  });
   const receipt = core.addTodo('new', 'ask', draft, 2, 'github.com/synthetic/new');
   expect(receipt.repo).toBe('github.com/synthetic/new');
   expect(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('new')).toEqual({
@@ -111,6 +91,7 @@ test('explicit storage inserts only the pack repository fact and freezes legacy 
   });
   expect(db.prepare('SELECT repo FROM neo_todos WHERE id=?').get('new')).toEqual({ repo: null });
   expect(core.getAsk('ask')?.repo).toBe('github.com/synthetic/history');
+  expect(notices).toBe(1);
 });
 
 test('an outer failure rolls back successful nested preparation and its backfill', () => {
