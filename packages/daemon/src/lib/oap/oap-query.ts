@@ -30,6 +30,7 @@ type OapQueryTranslator = {
   beginRun?(): void;
   translate(event: OapEvent): SDKMessage[];
   flush?(): SDKMessage[];
+  settlesTool?(event: OapEvent): boolean;
 };
 
 type OapQueryOptions = {
@@ -197,7 +198,8 @@ export class OapQuery implements QueryLike {
             await this.cancelActive();
             return;
           }
-          if (this.interrupted && !isTerminal(event)) continue;
+          if (this.interrupted && !isTerminal(event) && !this.translator.settlesTool?.(event))
+            continue;
           const unsupported = unsupportedInteraction(event);
           if (unsupported) {
             try {
@@ -301,6 +303,20 @@ export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): Oa
       beginRun: () => {
         state = initialOapTranslatorState(options.sessionId);
         runScope = generateUUID();
+      },
+      settlesTool: (event) => {
+        if (
+          !['action.call.completed', 'action.call.failed', 'action.call.cancelled'].includes(
+            event.type
+          )
+        )
+          return false;
+        const payload = event.payload;
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+        const id = (payload as Record<string, unknown>).tool_call_id;
+        return (
+          typeof id === 'string' && state.tools.some((tool) => tool.id === id && !tool.settled)
+        );
       },
       flush: () => {
         const result = translateOapEvent(state, {

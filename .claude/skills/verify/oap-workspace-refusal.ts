@@ -200,9 +200,11 @@ try {
     hub: {
       submit: async () => ({ runId: 'interrupt-run' }),
       events: async function* () {
+        yield { type: 'action.call.started', id: 'interrupt-tool-start', payload: { tool_call_id: 'interrupt-tool', name: 'codex.command' } };
         yield { type: 'content.delta', id: 'interrupt-text', payload: { message_id: 'interrupt-message', part: { type: 'text', text: 'partial before interrupt' } } };
         entered();
         await cancelledInterrupt;
+        yield { type: 'action.call.completed', id: 'interrupt-tool-end', payload: { tool_call_id: 'interrupt-tool', result: 'finished before cancellation' } };
         yield { type: 'run.cancelled', id: 'interrupt-end', payload: { reason: 'cancelled' } };
       },
       cancel: async () => { releaseInterrupt(); },
@@ -211,11 +213,14 @@ try {
   await hub.request('message.send', { sessionId: interruptSession, content: 'Synthetic interrupt' });
   await Promise.race([listeningInterrupt, new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error('interrupt stream did not start')), 15_000); timer.unref(); })]);
   await interruptAgent.handleInterrupt();
-  const interruptedRows = app.db.getSDKMessages(interruptSession).messages.filter((row) => row.type === 'assistant' || row.type === 'result');
-  assert.deepEqual(interruptedRows.map((row) => row.type), ['assistant', 'result']);
-  assert(JSON.stringify(interruptedRows[0]).includes('partial before interrupt'));
-  assert.equal(interruptedRows[1]?.is_error, true);
+  const interruptedRows = app.db.getSDKMessages(interruptSession).messages.filter((row) => row.type === 'assistant' || row.type === 'result' || (row.type === 'user' && JSON.stringify(row).includes('tool_result')));
+  assert.deepEqual(interruptedRows.map((row) => row.type), ['assistant', 'assistant', 'user', 'result']);
+  assert(JSON.stringify(interruptedRows[0]).includes('tool_use'));
+  assert(JSON.stringify(interruptedRows[1]).includes('partial before interrupt'));
+  assert(JSON.stringify(interruptedRows[2]).includes('finished before cancellation'));
+  assert.equal(interruptedRows[3]?.is_error, true);
   evidence.interruptedPartialAndResultSaved = true;
+  evidence.interruptedToolResultSaved = true;
   let releaseLate!: () => void;
   let listening!: () => void;
   const lateGate = new Promise<void>((resolve) => { releaseLate = resolve; });
