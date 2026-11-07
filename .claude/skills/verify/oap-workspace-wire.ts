@@ -67,7 +67,7 @@ for line in sys.stdin:
   if 'Synthetic free text question' in json.dumps(request):
    emit({'id':900,'method':'item/tool/requestUserInput','params':{'threadId':thread,'turnId':turn,'itemId':'synthetic-question','questions':[{'id':'explain','question':'Explain?','options':None}]}})
    continue
-  for index in range(96):
+  for index in range(${mode === 'recovery-claim' ? 1 : 96}):
    emit({'method':'item/agentMessage/delta','params':{'threadId':thread,'turnId':turn,'itemId':'text-'+turn,'delta':'synthetic reply' if index==0 else '.'}})
   emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
  if method=='turn/interrupt':
@@ -134,13 +134,19 @@ async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessio
       const page = await context.newPage();
       await page.goto(`${base}/session/${sessionId}`);
       const notice = page.getByText(text, { exact: true }).last();
-      await notice.waitFor({ timeout: 20000 });
+      try {
+        await notice.waitFor({ timeout: 20000 });
+      } catch (error) {
+        writeFileSync(join(run, 'evidence/oap-browser.txt'), await page.locator('body').innerText());
+        await page.screenshot({ path: join(run, 'evidence/oap-browser-failure.png'), animations: 'disabled' });
+        throw error;
+      }
       await notice.scrollIntoViewIfNeeded();
       await page.screenshot({ path: join(run, 'evidence/oap-reopen-session.png'), animations: 'disabled' });
       await page.goto(`${base}/neo`);
       await page.locator('.neo-shell').waitFor({ timeout: 20000 });
       await page.screenshot({ path: join(run, 'evidence/oap-reopen-neo.png'), animations: 'disabled' });
-      Object.assign(evidence, { browserPort: web.port, visibleNoticeRendered: true });
+      Object.assign(evidence, { browserPort: web.port, ...(mode === 'recovery-claim' ? { visibleUserMessageRendered: true } : { visibleNoticeRendered: true }) });
       await context.close();
     } finally { await browser.close(); }
   } finally { web.stop(true); }
@@ -158,7 +164,7 @@ try {
     const error = details as { userMessage?: string } | undefined;
     if (error?.userMessage) errors.push(error.userMessage);
   }, { subscriberName: 'oap-workspace-wire-proof' });
-  const hub = new MessageHub({ defaultSessionId: 'global' });
+  let hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   hub.registerTransport(transport);
   await transport.initialize();
@@ -189,6 +195,97 @@ try {
     assert.equal(calls().length, 0);
     assert.equal(existsSync(join(run, 'data/oap/oap-serve.json')), false);
     Object.assign(evidence, { port: app.server.port, mismatchedDigestRefused: true, syntheticPeerStarts: 0, pass: true });
+  } else if (mode === 'recovery-claim') {
+    const queryHub = await first.oap!.hub;
+    const { planMailboxAdmission } = await import('../../../packages/daemon/src/lib/mailbox/admission-plan.ts');
+    const { DEFAULT_MAILBOX_ENTRY_POLICY } = await import('../../../packages/daemon/src/lib/mailbox/entry.ts');
+    const { RetryPromptIdentity } = await import('../../../packages/daemon/src/lib/agent/retry-prompt-identity.ts');
+    const metadata = { ...first.session.metadata, oapRecovery: { previous: 'synthetic-old-thread', text: 'Synthetic saved conversation excerpt', pendingOpen: false } };
+    assert.equal(await app.db.updateSession(firstId, { metadata }), 'written');
+    first.session.metadata = metadata;
+    const agent = planMailboxAdmission({
+      id: '01ARZ3NDEKTSV4RRFFQ69G5FAV', to: { kind: 'session', sessionId: firstId },
+      origin: 'space_agent', messageUuid: 'synthetic-agent-message', status: 'enqueued',
+      message: { type: 'user', message: { role: 'user', content: 'Synthetic agent before explicit request' }, parent_tool_use_id: null },
+      policy: DEFAULT_MAILBOX_ENTRY_POLICY, deliveryMode: 'immediate',
+    });
+    assert.equal(agent.message.inputKind, undefined);
+    assert.equal(agent.origin, 'system');
+    const repository = app.db.getSDKMessageRepo();
+    repository.saveUserMessage(firstId, agent.message, 'submitted', agent.origin);
+    assert(!app.db.getSDKMessages(firstId).messages.some((row) => row.uuid === agent.message.uuid));
+    const rewrittenAgent = new RetryPromptIdentity().outgoing(agent.message, true);
+    assert.notEqual(rewrittenAgent.uuid, agent.message.uuid);
+    const submitted = await queryHub.submit(firstId, rewrittenAgent);
+    let terminal = false;
+    for await (const event of queryHub.events(firstId, submitted.runId, new AbortController().signal)) {
+      if (event.type === 'run.completed') { terminal = true; break; }
+      if (event.type === 'run.failed' || event.type === 'run.cancelled') throw new Error(`synthetic agent turn ${event.type}`);
+    }
+    assert(terminal);
+    assert(repository.markDeliveryConsumedByUuid(firstId, agent.message.uuid));
+    assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery?.claim, undefined);
+    const agentTurn = calls().find((call) => call.request.method === 'turn/start');
+    assert(agentTurn && JSON.stringify(agentTurn).includes('Synthetic agent before explicit request'));
+    assert(!JSON.stringify(agentTurn).includes('Synthetic saved conversation excerpt'));
+    const engineHub = await app.oapEngine.getHub(config.oap);
+    const request = engineHub.request.bind(engineHub);
+    let claimObservedBeforeSubmit = false;
+    engineHub.request = async (op, params) => {
+      if (op === 'submit') {
+        assert(app!.db.getSession(firstId)?.metadata.oapRecovery?.claim);
+        claimObservedBeforeSubmit = true;
+      }
+      return request(op, params);
+    };
+    const db = app.db;
+    const updateSession = db.updateSession.bind(db);
+    let cleanupFailed = false;
+    db.updateSession = async (id, update) => {
+      if (id === firstId && update.metadata && 'oapRecovery' in update.metadata && !update.metadata.oapRecovery) {
+        if (!cleanupFailed) {
+          cleanupFailed = true;
+          throw new Error('synthetic recovery marker cleanup failure');
+        }
+        const retained = db.getSession(firstId)?.metadata.oapRecovery;
+        return updateSession(id, { ...update, metadata: { ...update.metadata, oapRecovery: retained } });
+      }
+      return updateSession(id, update);
+    };
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic first explicit request' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 1 && !first.queryPromise, 'first recovered turn');
+    const claimed = app.db.getSession(firstId)?.metadata.oapRecovery;
+    assert(claimed?.claim);
+    assert(claimObservedBeforeSubmit);
+    assert(cleanupFailed);
+    const firstTurns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal(firstTurns.length, 2);
+    assert(JSON.stringify(firstTurns[1]).includes('Synthetic saved conversation excerpt'));
+    assert(JSON.stringify(firstTurns[1]).includes('Synthetic first explicit request'));
+    db.updateSession = updateSession;
+    await transport.close();
+    transport = undefined;
+    await app.cleanup();
+    app = undefined;
+    app = await createDaemonApp({ config: { ...config, disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
+    assert.notEqual(app.server.port, 8399);
+    assert.notEqual(app.server.port, 8499);
+    assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery?.claim, claimed.claim);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
+    hub = new MessageHub({ defaultSessionId: 'global' });
+    transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
+    hub.registerTransport(transport);
+    await transport.initialize();
+    const resumed = await app.sessionManager.getSessionAsync(firstId, { startQuery: false, replayPendingMessages: false });
+    assert(resumed);
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic second explicit request' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 2 && !resumed.queryPromise, 'explicit turn after restart');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal(turns.length, 3);
+    assert(!JSON.stringify(turns[2]).includes('Synthetic saved conversation excerpt'));
+    assert(JSON.stringify(turns[2]).includes('Synthetic second explicit request'));
+    if (process.env.VERIFY_BROWSER) await verifyNoticeInBrowser(app, firstId, 'Synthetic second explicit request');
+    Object.assign(evidence, { port: app.server.port, submittedAgentForwardedWithoutExcerpt: true, presetRecoveryClaimedBeforeSubmit: true, markerCleanupFailed: true, markerSurvivedRestart: true, excerptAttachedOnce: true, explicitTurns: 2, automaticResends: 0, pass: true });
   } else if (mode === 'fresh-clear') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic original conversation' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 1 && !first.queryPromise, 'original native turn');
@@ -508,6 +605,9 @@ try {
   }
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
+} catch (error) {
+  console.error('OAP workspace proof failed:', error);
+  throw error;
 } finally {
   releaseResult?.();
   if (existsSync(join(run, 'codex-home/calls.jsonl'))) copyFileSync(join(run, 'codex-home/calls.jsonl'), join(run, 'evidence/calls.jsonl'));

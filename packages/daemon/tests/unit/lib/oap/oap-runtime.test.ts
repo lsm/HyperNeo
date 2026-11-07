@@ -184,8 +184,8 @@ describe('OAP daemon runtime', () => {
     const [newFirst, sameFirst] = await Promise.all([first.hub, first.hub]);
     expect(newFirst).toBe(sameFirst);
     expect(newFirst).not.toBe(oldFirst);
-    expect(oldFirst.release).toHaveBeenCalledTimes(1);
-    expect(oldSecond.release).not.toHaveBeenCalled();
+    expect(host.createQueryHub.mock.results[0]?.value.release).toHaveBeenCalledTimes(1);
+    expect(host.createQueryHub.mock.results[1]?.value.release).not.toHaveBeenCalled();
     expect(replacement.operations.map(({ op }) => op)).toEqual([
       'work.status',
       'capabilities',
@@ -196,7 +196,7 @@ describe('OAP daemon runtime', () => {
     const newSecond = await second.hub;
     expect(newSecond).not.toBe(oldSecond);
     expect(newSecond).not.toBe(newFirst);
-    expect(oldSecond.release).toHaveBeenCalledTimes(1);
+    expect(host.createQueryHub.mock.results[1]?.value.release).toHaveBeenCalledTimes(1);
     expect(replacement.operations.filter(({ op }) => op === 'open')).toHaveLength(2);
   });
 
@@ -205,12 +205,12 @@ describe('OAP daemon runtime', () => {
     const replacement = fixture();
     const bind = createOapRuntime(host.engine, options);
     const runtime = bind(session('session-a', '/synthetic/workspace'));
-    const oldHub = await runtime.hub;
+    await runtime.hub;
     host.isCurrentHub.mockImplementation((client) => client === replacement.client);
     host.getHub.mockResolvedValue(replacement.client);
 
     await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
-    expect(oldHub.release).toHaveBeenCalledTimes(1);
+    expect(host.createQueryHub.mock.results[0]?.value.release).toHaveBeenCalledTimes(1);
     expect(replacement.operations.map(({ op }) => op)).toEqual([
       'work.status',
       'capabilities',
@@ -225,7 +225,7 @@ describe('OAP daemon runtime', () => {
     const host = fixture();
     const replacement = fixture();
     const bind = createOapRuntime(host.engine, options);
-    const oldHub = await bind(session('session-a', '/synthetic/workspace')).hub;
+    await bind(session('session-a', '/synthetic/workspace')).hub;
     host.isCurrentHub.mockReturnValue(false);
     host.getHub.mockResolvedValue(replacement.client);
     const completed = {
@@ -235,7 +235,7 @@ describe('OAP daemon runtime', () => {
     } as Session;
 
     await expect(bind(completed).hub).rejects.toThrow(/resum|reopen/i);
-    expect(oldHub.release).toHaveBeenCalledTimes(1);
+    expect(host.createQueryHub.mock.results[0]?.value.release).toHaveBeenCalledTimes(1);
     expect(host.getHub).toHaveBeenCalledTimes(2);
     expect(replacement.operations.find(({ op }) => op === 'open')?.parameters).toMatchObject({
       request: { payload: { reopen: true } },
@@ -255,7 +255,7 @@ describe('OAP daemon runtime', () => {
     host.getHub.mockResolvedValue(replacement.client);
 
     await expect(runtime.hub).rejects.toThrow(/resum|reopen/i);
-    expect(oldHub.release).toHaveBeenCalledTimes(1);
+    expect(host.createQueryHub.mock.results[0]?.value.release).toHaveBeenCalledTimes(1);
     expect(host.getHub).toHaveBeenCalledTimes(2);
     expect(replacement.operations.find(({ op }) => op === 'open')?.parameters).toMatchObject({
       request: { payload: { reopen: true } },
@@ -298,10 +298,10 @@ describe('OAP daemon runtime', () => {
     const bind = createOapRuntime(host.engine, options, events);
     const first = bind(session('session-a', '/synthetic/workspace'));
     const second = bind(session('session-b', '/synthetic/other'));
-    const [firstHub, secondHub] = await Promise.all([first.hub, second.hub]);
+    const [, secondHub] = await Promise.all([first.hub, second.hub]);
     await events.publish('session.deleted', { sessionId: 'session-a' });
-    expect(firstHub.release).toHaveBeenCalledTimes(1);
-    expect(secondHub.release).not.toHaveBeenCalled();
+    expect(host.createQueryHub.mock.results[0]?.value.release).toHaveBeenCalledTimes(1);
+    expect(host.createQueryHub.mock.results[1]?.value.release).not.toHaveBeenCalled();
     expect(host.operations.filter(({ op }) => op === 'close')).toEqual([
       { op: 'close', parameters: { session_id: 'session-a' } },
     ]);

@@ -1,7 +1,7 @@
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage, RewindFilesResult } from '@hyperneo/shared/sdk';
 import type { QueryLike } from '../agent/query-like.ts';
-import { OapHubRequestError } from './oap-hub-client.ts';
+import { isDefiniteOapRefusal, type OapHubRequestError } from './oap-hub-client.ts';
 import { mapUserInputRequest } from './oap-permission-map.ts';
 import { initialOapTranslatorState, translateOapEvent } from './oap-sdk-translator.ts';
 export { createOapQueryHub } from './oap-query-hub.ts';
@@ -10,7 +10,12 @@ export { createOapRuntime } from './oap-runtime.ts';
 type OapEvent = { type: string; [key: string]: unknown };
 
 export type OapQueryHub = {
-  submit(sessionId: string, message: SDKUserMessage, owner?: symbol): Promise<{ runId: string }>;
+  submit(
+    sessionId: string,
+    message: SDKUserMessage,
+    owner?: symbol,
+    isLive?: () => boolean
+  ): Promise<{ runId: string }>;
   events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OapEvent>;
   cancel(sessionId: string, runId: string): Promise<void>;
   release?(owner?: symbol): void;
@@ -36,26 +41,6 @@ type OapQueryOptions = {
 function isTerminal(event: OapEvent): boolean {
   return (
     event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled'
-  );
-}
-
-function isDefiniteRefusal(error: unknown): error is OapHubRequestError {
-  return (
-    error instanceof OapHubRequestError &&
-    [
-      'busy',
-      'capability_degraded',
-      'invalid_request',
-      'invalid_submission',
-      'model_not_found',
-      'request_too_large',
-      'run_active',
-      'scope_mismatch',
-      'session_closed',
-      'stale_capabilities',
-      'unknown_session',
-      'unsupported_feature',
-    ].includes(error.code)
   );
 }
 
@@ -142,14 +127,19 @@ export class OapQuery implements QueryLike {
         if (this.runSettled === settled) this.runSettled = undefined;
       };
       this.pendingRun = this.hub
-        .submit(this.sessionId, message, this.owner)
+        .submit(
+          this.sessionId,
+          message,
+          this.owner,
+          () => !this.closed && !this.interrupted && this.isLive()
+        )
         .then(({ runId }) => {
           this.activeRun = runId;
           return runId;
         })
         .catch(async (error: unknown) => {
           finish();
-          if (isDefiniteRefusal(error) && this.isLive()) {
+          if (isDefiniteOapRefusal(error) && this.isLive()) {
             await this.onRefused?.(message, error);
           }
           throw error;

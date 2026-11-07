@@ -149,7 +149,7 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
   let active: Stream | undefined;
   let starting: { owner: symbol } | undefined;
   return {
-    async submit(sessionId, message, owner = Symbol()) {
+    async submit(sessionId, message, owner = Symbol(), isLive) {
       if (active || starting) throw new Error('OAP query hub is not available for submission');
       const submission = { owner };
       starting = submission;
@@ -195,8 +195,13 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
             return releasing;
           },
         };
-        if (starting !== submission) {
+        if (starting !== submission || (isLive && !isLive())) {
           await stream.release();
+          if (isLive)
+            throw new OapHubRequestError(
+              'invalid_submission',
+              'OAP query hub submission was closed'
+            );
           throw new Error('OAP query hub submission was closed');
         }
         active = stream;

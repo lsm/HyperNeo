@@ -597,9 +597,42 @@ describe('OAP query hub transport', () => {
     const submission = hub.submit('synthetic-session', prompt);
     releaseHub(hub);
     finishSubscription({ id: 3, unsubscribe: host.unsubscribe });
-    await expect(submission).rejects.toThrow(/closed/i);
+    const failure = await submission.catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(OapHubRequestError);
+    expect((failure as Error).message).toMatch(/closed/i);
     expect(host.unsubscribe).toHaveBeenCalledTimes(1);
     expect(host.request).not.toHaveBeenCalled();
+  });
+
+  test('unsubscribes without submitting when the attempt expires during subscription startup', async () => {
+    const host = fixture();
+    const request = mock(async () => ({
+      type: 'session.message.submit.response',
+      payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
+    }));
+    let finishSubscription!: (subscription: { id: number; unsubscribe(): Promise<void> }) => void;
+    const subscription = new Promise<{ id: number; unsubscribe(): Promise<void> }>((resolve) => {
+      finishSubscription = resolve;
+    });
+    const hub = createOapQueryHub({
+      subscribe: () => subscription,
+      request,
+    } as unknown as OapHubClient) as OapQueryHub & {
+      submit(
+        session: string,
+        message: SDKUserMessage,
+        owner: symbol,
+        isLive: () => boolean
+      ): Promise<{ runId: string }>;
+    };
+    let live = true;
+    const submission = hub.submit('synthetic-session', prompt, Symbol('attempt'), () => live);
+    live = false;
+    finishSubscription({ id: 3, unsubscribe: host.unsubscribe });
+    await expect(submission).rejects.toThrow(/closed|expired/i);
+    expect(host.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
   });
 
   test('refuses non-text input instead of silently dropping it', async () => {

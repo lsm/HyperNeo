@@ -513,7 +513,7 @@ describe('OapQuery', () => {
     await Promise.all([query.interrupt(), query.interrupt()]);
     await collected;
     expect(submit).toHaveBeenCalledTimes(1);
-    expect(submit).toHaveBeenCalledWith('s1', message, expect.anything());
+    expect(submit).toHaveBeenCalledWith('s1', message, expect.anything(), expect.any(Function));
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(cancel).toHaveBeenCalledWith('s1', 'r1');
     expect(translate).toHaveBeenCalledTimes(1);

@@ -14,7 +14,11 @@ export class OapReopenRefusedError extends Error {
 
 export type OapReopenStore = Pick<
   Database,
-  'updateSession' | 'getSDKMessages' | 'getUserMessagesByStatus' | 'saveSDKMessage'
+  | 'updateSession'
+  | 'getSDKMessages'
+  | 'getUserMessagesByStatus'
+  | 'saveSDKMessage'
+  | 'getSDKMessageRepo'
 >;
 export type OapReopenEvents = Pick<MessageHub, 'event'>;
 export type OapOpenPlan = {
