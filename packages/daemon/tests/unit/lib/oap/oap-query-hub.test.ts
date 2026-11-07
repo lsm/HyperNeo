@@ -92,7 +92,7 @@ describe('OAP query hub transport', () => {
         payload: {
           session_id: 'synthetic-session',
           delivery: 'auto',
-          messages: [{ role: 'user', content: [{ type: 'text', text: 'synthetic prompt' }] }],
+          messages: [{ role: 'user', content: 'synthetic prompt' }],
         },
       }),
     });
@@ -101,6 +101,32 @@ describe('OAP query hub transport', () => {
       'run.completed',
     ]);
     expect(host.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test('joins text blocks into the plain string required by the Codex adapter', async () => {
+    const host = fixture();
+    const hub = createOapQueryHub(host.client);
+    await hub.submit('synthetic-session', {
+      ...prompt,
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'first ' },
+          { type: 'text', text: 'second' },
+        ],
+      },
+    } as SDKUserMessage);
+    expect(host.request).toHaveBeenCalledWith(
+      'submit',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          payload: expect.objectContaining({
+            messages: [{ role: 'user', content: 'first second' }],
+          }),
+        }),
+      })
+    );
+    hub.close?.();
   });
 
   test('reports a stream failure without automatically resubmitting', async () => {
