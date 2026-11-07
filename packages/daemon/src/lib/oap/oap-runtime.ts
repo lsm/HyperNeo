@@ -163,7 +163,12 @@ export function createOapRuntime(
                   if (slot.deleted) throw new Error('Codex session was deleted');
                 });
                 if (slot.deleted) throw new Error('Codex session was deleted');
-                slot.hub = withOapRecovery(engine.createQueryHub(client), () => slot.session, db);
+                slot.hub = withOapRecovery(
+                  engine.createQueryHub(client),
+                  () => slot.session,
+                  db,
+                  messageHub
+                );
                 return slot.hub;
               })
               .catch((error: unknown) => {

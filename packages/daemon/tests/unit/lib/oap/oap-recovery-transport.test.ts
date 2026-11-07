@@ -121,6 +121,7 @@ function fixture(initial?: Recovery) {
   return {
     current,
     engine,
+    messageHub,
     db,
     persist,
     getStored: () => structuredClone(stored),
@@ -134,6 +135,75 @@ function fixture(initial?: Recovery) {
 }
 
 describe('OAP recovery claim transport', () => {
+  test('shows the unknown-outcome notice when admission refuses before transport submit', async () => {
+    const host = fixture({ ...recovery(), claim: 'original-message' });
+    const hub = await host.bind(host.current).hub;
+    const query = new OapQuery({
+      sessionId: 'session-a',
+      prompt: (async function* () {
+        yield prompt('original-message');
+      })(),
+      hub,
+      translator: { translate: () => [] },
+      onSubmitted: async () => {
+        throw new Error('Codex prompt was already submitted or cannot be submitted safely');
+      },
+    });
+    await expect(
+      (async () => {
+        for await (const item of query) void item;
+      })()
+    ).rejects.toThrow(/already submitted/i);
+    expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(host.db.saveSDKMessage.mock.calls[0])).toMatch(
+      /already submitted.*unknown/i
+    );
+    expect(host.messageHub.event).toHaveBeenCalledTimes(1);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
+  test('drops the unknown-outcome notice if its attempt is closed while saving', async () => {
+    const host = fixture({ ...recovery(), claim: 'original-message' });
+    const hub = await host.bind(host.current).hub;
+    let start!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    host.db.saveSDKMessage.mockImplementation(async () => {
+      start();
+      await gate;
+      return true;
+    });
+    const owner = Symbol('attempt');
+    const pending = hub
+      .submit('session-a', prompt('original-message'), owner)
+      .catch((error: Error) => error);
+    await Promise.race([
+      started,
+      pending.then(() => {
+        throw new Error('notice was not saved');
+      }),
+    ]);
+    hub.release?.(owner);
+    finish();
+    await pending;
+    expect(host.messageHub.event).not.toHaveBeenCalled();
+    expect(host.submit).not.toHaveBeenCalled();
+  });
+  test('a repeated ambiguous submission saves and emits a visible outcome-unknown notice', async () => {
+    const host = fixture({ ...recovery(), claim: 'original-message' });
+    const hub = await host.bind(host.current).hub;
+    await expect(hub.submit('session-a', prompt('original-message'))).rejects.toThrow(/unknown/i);
+    expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(host.db.saveSDKMessage.mock.calls[0])).toMatch(
+      /already submitted.*unknown/i
+    );
+    expect(host.messageHub.event).toHaveBeenCalledTimes(1);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
   test('does not leak a recovery excerpt to a rewritten synthetic delivery', async () => {
     const host = fixture(recovery());
     const wire = new RetryPromptIdentity().outgoing(prompt('agent-message'), true);
@@ -518,11 +588,13 @@ describe('OAP recovery claim transport', () => {
     }
   });
 
-  test('does not submit while the recovered thread is still opening', async () => {
+  test('finishes a pending recovered thread before accepting an explicit submission', async () => {
     const host = fixture({ ...recovery(), pendingOpen: true });
     const hub = await host.bind(host.current).hub;
-    await expect(hub.submit('session-a', prompt('message-1'))).rejects.toThrow(/recovery|opening/i);
     expect(host.submit).not.toHaveBeenCalled();
+    expect(host.current.metadata.oapRecovery?.pendingOpen).toBe(false);
+    await hub.submit('session-a', prompt('message-1'));
+    expect(JSON.stringify(host.submit.mock.calls[0])).toContain('saved excerpt');
   });
 
   test('a deliberate fresh clear discards a pending excerpt', async () => {

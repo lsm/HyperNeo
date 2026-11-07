@@ -5,6 +5,7 @@ import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-en
 import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
 import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 
 const options: OapEngineOptions = {
   binaryPath: '/synthetic/oapx',
@@ -123,7 +124,13 @@ function fixture(
     }),
     getSDKMessages: mock(() => ({
       messages: config.history
-        ? [{ type: 'assistant', message: { content: [{ type: 'text', text: 'previous answer' }] } }]
+        ? [
+            {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'previous answer' }] },
+            },
+            { type: 'result', subtype: 'success', is_error: false },
+          ]
         : config.failed
           ? [{ type: 'user', deliveryStatus: 'failed', message: { content: 'previous request' } }]
           : [],
@@ -134,6 +141,7 @@ function fixture(
       return { messages: prior ? [{ uuid: 'previous-request' }] : [], total: prior ? 1 : 0 };
     }),
     saveSDKMessage: mock(async () => true),
+    getSDKMessageRepo: mock(() => ({ getDeliveryContent: () => ({ inputKind: 'human' }) })),
   };
   const messageHub = { event: mock(() => {}) };
   const events = createDaemonInternalEventBus();
@@ -148,6 +156,98 @@ function fixture(
 }
 
 describe('OAP native session reopen wiring', () => {
+  test('an empty recovery opens a fresh thread without promising or attaching an excerpt', async () => {
+    const host = fixture({
+      known: true,
+      submitted: true,
+      freshId: 'native-thread-b',
+      refusal: new OapHubRequestError('unknown_session', 'missing'),
+    });
+    const current = session('native-thread-a', 1);
+    const hub = await host.runtime(current).hub;
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.metadata.oapRecovery).toBeUndefined();
+    const notice = JSON.stringify(host.db.saveSDKMessage.mock.calls[0]);
+    expect(notice).toMatch(/cannot be resumed/i);
+    expect(notice).not.toMatch(/saved conversation excerpt/i);
+    expect(host.submit).not.toHaveBeenCalled();
+    await hub.submit('session-a', {
+      type: 'user',
+      uuid: 'explicit-message',
+      session_id: 'session-a',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'next explicit request' },
+    } as SDKUserMessage);
+    expect(JSON.stringify(host.submit.mock.calls[0])).not.toMatch(/Previous conversation excerpt/i);
+  });
+  test('the fallback excerpt excludes an accepted turn with no successful terminal result', async () => {
+    const host = fixture({
+      known: true,
+      freshId: 'native-thread-b',
+      refusal: new OapHubRequestError('unknown_session', 'missing'),
+    });
+    host.db.getSDKMessages.mockReturnValue({
+      messages: [
+        { type: 'user', deliveryStatus: 'delivered', message: { content: 'completed request' } },
+        { type: 'assistant', message: { content: 'completed answer' } },
+        { type: 'result', subtype: 'success', is_error: false },
+        { type: 'user', deliveryStatus: 'delivered', message: { content: 'unfinished request' } },
+        { type: 'assistant', message: { content: 'partial answer' } },
+      ] as never,
+      hasMore: false,
+    });
+    const current = session('native-thread-a', 2);
+    await host.runtime(current).hub;
+    expect(current.metadata.oapRecovery?.text).toContain('completed request');
+    expect(current.metadata.oapRecovery?.text).toContain('completed answer');
+    expect(current.metadata.oapRecovery?.text).not.toContain('unfinished request');
+    expect(current.metadata.oapRecovery?.text).not.toContain('partial answer');
+    expect(host.submit).not.toHaveBeenCalled();
+  });
+  test('a refused reopen saves the excerpt and opens a new thread without submitting', async () => {
+    const host = fixture({
+      known: true,
+      history: true,
+      freshId: 'native-thread-b',
+      refusal: new OapHubRequestError('unknown_session', 'missing'),
+    });
+    const current = session('native-thread-a', 2);
+    const hub = await host.runtime(current).hub;
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.metadata.oapRecovery?.previous).toBe('native-thread-a');
+    expect(current.metadata.oapRecovery?.pendingOpen).toBe(false);
+    expect(current.metadata.oapRecovery?.text).toContain('previous answer');
+    expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
+    expect(host.messageHub.event).toHaveBeenCalledTimes(1);
+    expect(host.submit).not.toHaveBeenCalled();
+    await hub.submit('session-a', {
+      type: 'user',
+      uuid: 'next-message',
+      session_id: 'session-a',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'explicit request' },
+    } as SDKUserMessage);
+    expect(JSON.stringify(host.submit.mock.calls[0])).toContain('previous answer');
+  });
+
+  test('a lost fresh-open response is adopted without resending a prompt', async () => {
+    const host = fixture({
+      known: true,
+      history: true,
+      freshId: 'native-thread-b',
+      loseFreshOpenResponseOnce: true,
+      refusal: new OapHubRequestError('unknown_session', 'missing'),
+    });
+    const current = session('native-thread-a', 2);
+    const runtime = host.runtime(current);
+    await expect(runtime.hub).rejects.toThrow('synthetic lost fresh open response');
+    expect(current.metadata.oapRecovery?.pendingOpen).toBe(true);
+    expect(host.submit).not.toHaveBeenCalled();
+    await runtime.hub;
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(2);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
   test('clearing a session closes the old binding and persists a new native thread', async () => {
     const host = fixture({ known: true, freshId: 'native-thread-b' });
     const current = session('native-thread-a', 2);
@@ -291,25 +391,22 @@ describe('OAP native session reopen wiring', () => {
       ),
     },
     { known: true, supportsReopen: false },
-  ])(
-    'visibly refuses an unavailable original thread without silently creating a new one',
-    async (config) => {
-      const host = fixture(config);
-      await expect(host.runtime(session('native-thread-a', 2)).hub).rejects.toThrow(
-        /resum|reopen|absent/i
-      );
-      expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
-      expect(host.messageHub.event).toHaveBeenCalledTimes(1);
-      expect(host.db.updateSession).not.toHaveBeenCalled();
-      expect(
-        host.operations.filter(
-          ({ op, params }) =>
-            op === 'open' && !(params.request as { payload: { reopen?: boolean } }).payload.reopen
-        )
-      ).toHaveLength(0);
-      expect(host.submit).not.toHaveBeenCalled();
-    }
-  );
+  ])('visibly recovers an unavailable original thread without sending a prompt', async (config) => {
+    const host = fixture({ ...config, freshId: 'native-thread-b' });
+    const current = session('native-thread-a', 2);
+    await host.runtime(current).hub;
+    expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
+    expect(host.messageHub.event).toHaveBeenCalledTimes(1);
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.metadata.oapRecovery).toBeUndefined();
+    expect(
+      host.operations.filter(
+        ({ op, params }) =>
+          op === 'open' && !(params.request as { payload: { reopen?: boolean } }).payload.reopen
+      )
+    ).toHaveLength(1);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
 
   test('drops a reopen notice if its session is deleted while the notice is being saved', async () => {
     const host = fixture({
@@ -342,20 +439,22 @@ describe('OAP native session reopen wiring', () => {
     expect(host.submit).not.toHaveBeenCalled();
   });
 
-  test('does not replace a legacy session whose binding is missing and history already exists', async () => {
+  test('recovers a legacy session whose binding is missing and history already exists', async () => {
     const host = fixture({ history: true });
-    await expect(host.runtime(session(undefined, 1)).hub).rejects.toThrow(/resum|reopen/i);
+    const current = session(undefined, 1);
+    await host.runtime(current).hub;
     expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
-    expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
+    expect(current.metadata.oapRecovery?.text).toContain('previous answer');
+    expect(host.submit).not.toHaveBeenCalled();
   });
 
   test.each([{ submitted: true }, { failed: true }])(
-    'does not replace a legacy thread after an earlier submitted or failed delivery',
+    'recovers a legacy thread without resending an earlier submitted or failed delivery',
     async (config) => {
       const host = fixture(config);
-      await expect(host.runtime(session()).hub).rejects.toThrow(/resum|reopen/i);
+      await host.runtime(session()).hub;
       expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
-      expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
+      expect(host.submit).not.toHaveBeenCalled();
     }
   );
 
@@ -363,9 +462,9 @@ describe('OAP native session reopen wiring', () => {
     'detects an earlier %s delivery even when it is outside the history page',
     async (priorStatus) => {
       const host = fixture({ priorStatus });
-      await expect(host.runtime(session()).hub).rejects.toThrow(/resum|reopen/i);
+      await host.runtime(session()).hub;
       expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
-      expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(0);
+      expect(host.submit).not.toHaveBeenCalled();
     }
   );
 
