@@ -161,6 +161,27 @@ describe('admitCreateSessionConfig', () => {
 });
 
 describe('admitUpdateSessionConfig', () => {
+  it('refuses adding tool guards or worker operations to a Codex session', () => {
+    const guard = {
+      matcher: 'Bash',
+      pattern: 'git push',
+      decision: 'deny' as const,
+      reason: 'synthetic',
+    };
+    expect(() => admitUpdateSessionConfig({ toolGuards: [guard] }, undefined, 'codex')).toThrow(
+      /Codex.*not supported/i
+    );
+    expect(() => admitUpdateSessionConfig({ workerOperations: true }, undefined, 'codex')).toThrow(
+      /Codex.*not supported/i
+    );
+    expect(
+      admitUpdateSessionConfig({ toolGuards: [], workerOperations: false }, undefined, 'codex')
+    ).toEqual({ toolGuards: [], workerOperations: false });
+    expect(
+      admitUpdateSessionConfig({ toolGuards: [guard], workerOperations: true }, undefined, 'sdk')
+    ).toEqual({ toolGuards: [guard], workerOperations: true });
+  });
+
   it('allows an unchanged owned selection echoed with an ordinary update without writing it', () => {
     const current = {
       version: 1 as const,
