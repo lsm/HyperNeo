@@ -23,6 +23,11 @@ const reply = (id, result) => process.stdout.write(line({ id, ok: true, result }
 require('node:readline').createInterface({ input: process.stdin }).on('line', (text) => {
   const r = JSON.parse(text), count = counts[r.op] = (counts[r.op] || 0) + 1;
   if (r.op === 'hang') return;
+  if (r.op === 'overflow-partial') return process.stdout.write('x'.repeat(1048577));
+  if (r.op === 'overflow-complete') return reply(r.id,'x'.repeat(1048577));
+  if (r.op === 'overflow-utf8') return reply(r.id,'雪'.repeat(350000));
+  if (r.op === 'near-limit') return reply(r.id,'x'.repeat(1048000));
+  if (r.op === 'valid-batch') return process.stdout.write(Array.from({length:8},()=>line({id:-100,ok:true,result:'x'.repeat(150000)})).join('')+line({id:r.id,ok:true,result:'batch'}));
   if (r.op === 'busy-held') { if (count === 1) heldBusy = r; return; }
   if (r.op === 'release-busy') { process.stdout.write(line({id:heldBusy.id,ok:false,error:{code:'busy',message:'retry'}})); return reply(r.id,null); }
   if (r.op === 'ignore-term') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); return reply(r.id,process.pid); }
@@ -324,6 +329,26 @@ describe('OAP hub child lifecycle and correlation', () => {
     expect(first).toHaveLength(2);
     expect(second).toHaveLength(3);
     expect(await hub.request('stats')).toMatchObject({ unsubscribe: 1 });
+  });
+
+  test.each(['overflow-partial', 'overflow-complete', 'overflow-utf8'])(
+    'oversized stdout %s fails the client before parsing or timing out',
+    async (op) => {
+      const hub = await client(process.execPath, 200);
+      await hub.connect();
+      const outcome = await hub.request(op).catch((error: Error) => error);
+      expect(typeof outcome).toBe('object');
+      expect((outcome as Error).message).toContain('stdout line exceeds 1048576 bytes');
+      await expect(hub.request('later')).rejects.toThrow('stdout line exceeds');
+    }
+  );
+
+  test('a near-limit reply and multiple valid lines exceeding the aggregate limit stay usable', async () => {
+    const hub = await client();
+    await hub.connect();
+    expect(await hub.request('near-limit')).toHaveLength(1048000);
+    expect(await hub.request('valid-batch')).toBe('batch');
+    expect(await hub.request('fast')).toBe(1);
   });
 
   test('a malformed line fails the connection before a later valid reply', async () => {
