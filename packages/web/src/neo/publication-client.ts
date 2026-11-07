@@ -1,5 +1,9 @@
 import type { MessageHub } from '@hyperneo/shared';
-import { ARTIFACT_KINDS, type ArtifactRef } from '@hyperneo/shared/types/artifact-file';
+import {
+  ARTIFACT_KINDS,
+  type ArtifactRef,
+  type PublicHandoffReference,
+} from '@hyperneo/shared/types/artifact-file';
 import type { NeoCardReply, NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
@@ -27,11 +31,38 @@ const text = (value: unknown, max: number): value is string =>
 const counter = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
-function artifactRefs(value: unknown): ArtifactRef[] | null {
+function artifactRefs(value: unknown): (ArtifactRef | PublicHandoffReference)[] | null {
   if (!Array.isArray(value) || value.length > 16) return null;
-  const refs: ArtifactRef[] = [];
+  const refs: (ArtifactRef | PublicHandoffReference)[] = [];
   for (const entry of value) {
     const ref = object(entry);
+    if (ref?.type === 'handoff') {
+      if (
+        Object.keys(ref).length !== 7 ||
+        typeof ref.daemonId !== 'string' ||
+        !uuid.test(ref.daemonId) ||
+        typeof ref.artifactId !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(ref.artifactId) ||
+        ref.sha256 !== ref.artifactId ||
+        typeof ref.sessionId !== 'string' ||
+        !ref.sessionId.length ||
+        ref.sessionId.length > 200 ||
+        typeof ref.name !== 'string' ||
+        !/^[\w][\w .-]{0,127}$/.test(ref.name) ||
+        !counter(ref.byteLength)
+      )
+        return null;
+      refs.push({
+        type: 'handoff',
+        daemonId: ref.daemonId,
+        artifactId: ref.artifactId,
+        sha256: ref.artifactId,
+        sessionId: ref.sessionId,
+        name: ref.name,
+        byteLength: ref.byteLength,
+      });
+      continue;
+    }
     if (
       !ref ||
       !text(ref.daemonId, 200) ||

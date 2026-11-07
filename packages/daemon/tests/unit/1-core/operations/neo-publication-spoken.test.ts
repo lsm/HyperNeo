@@ -16,6 +16,10 @@ import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-tod
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 import { runDbOpOn } from '../../helpers/run-db-op.ts';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const sessionId = `neo:${conversationId}`;
@@ -258,6 +262,56 @@ describe('publication speech follows the committed version', () => {
     const spoken = events.filter((e) => e.type === 'say');
     expect(spoken.map((e) => e.text)).toEqual([draft.spoken, 'The updated result.']);
     expect(spoken[0].id).not.toBe(spoken[1].id);
+  });
+
+  test('a later card reply version retains its handoff and retries preserve the original identity', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'reply-handoff-')));
+    const previous = process.env.HYPERNEO_DATA_DIR;
+    process.env.HYPERNEO_DATA_DIR = dir;
+    try {
+      const drafts = join(dir, 'handoffs', 'worker', 'drafts');
+      mkdirSync(drafts, { recursive: true });
+      writeFileSync(join(drafts, 'report.md'), '# Synthetic report\n');
+      const snapshot = await publishHandoff(dir, 'worker', 'report.md');
+      if (snapshot.kind !== 'published') throw new Error('publish failed');
+      const reference = publicHandoffReference(snapshot.reference);
+      mailbox.db
+        .prepare(
+          "INSERT INTO neo_questions(id,ask_id,text,kind,start_todos,created_at) VALUES ('question','ask','Review?','choice','[]',1)"
+        )
+        .run();
+      const cardReply = {
+        askId: 'ask',
+        questionId: 'question',
+        mutationId: '30000000-0000-4000-8000-000000000001',
+        sourceMessageIds: [conversationId],
+      };
+      expect(await send({ ...draft, cardReply })).toMatchObject({ accepted: true });
+      const updated = await send({
+        ...draft,
+        requestId: 'revision-attachment',
+        cardReply,
+        fullText: 'Updated.',
+        artifacts: [reference],
+      });
+      expect(updated).toMatchObject({ accepted: true, publication: { artifacts: [reference] } });
+      expect(ledger.list(conversationId)[0].artifacts).toEqual([reference]);
+      expect(await send({ ...draft, cardReply })).toMatchObject({ accepted: true, created: false });
+      expect(
+        await send({
+          ...draft,
+          requestId: 'remove-attachment',
+          cardReply,
+          fullText: 'Another update.',
+          artifacts: [],
+        })
+      ).toMatchObject({ accepted: false, reason: 'publication_conflict' });
+      expect(ledger.list(conversationId)[0].artifacts).toEqual([reference]);
+    } finally {
+      if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;
+      else process.env.HYPERNEO_DATA_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('speech infrastructure failure still notifies the saved text and cannot cause retry replay', async () => {

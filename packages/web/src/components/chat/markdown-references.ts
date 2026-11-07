@@ -1,3 +1,4 @@
+import { PREVIEWABLE_FILE_EXTENSIONS } from '@hyperneo/shared/types/artifact-file';
 import { t } from '../../lib/i18n/index.ts';
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -8,6 +9,17 @@ function mark(element: Element, reference: string, label = reference) {
   element.setAttribute('role', 'link');
   element.setAttribute('tabindex', '0');
   element.setAttribute('aria-label', t('artifact.openNamed', { name: label }));
+}
+
+export function demoteLocalFileLinks(container: HTMLElement) {
+  container.querySelectorAll('a[href]').forEach((anchor) => {
+    const href = anchor.getAttribute('href') ?? '';
+    const local = /^(?:\/(?!\/)|~\/|file:)([^?#]*\.([\w-]+))([?#].*)?$/.exec(href);
+    if (!local || (!local[3] && PREVIEWABLE_FILE_EXTENSIONS.has(local[2].toLowerCase()))) return;
+    const span = document.createElement('span');
+    span.append(...anchor.childNodes);
+    anchor.replaceWith(span);
+  });
 }
 
 export function markPreviewReferences(

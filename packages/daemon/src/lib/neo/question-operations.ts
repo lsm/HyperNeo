@@ -26,7 +26,8 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
 import { TodoCheck, requireNeoOpenAsk } from './todo-operations.ts';
 import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
-import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
+import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
+import { readCardArtifactFacts, unverifiedCardArtifact } from './card-artifact-admission.ts';
 import { PublicHandoffReference } from '../handoffs/outbox.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
@@ -263,7 +264,11 @@ const Confirmation = z.object({
     .length(64)
     .regex(/^[a-f0-9]+$/),
 });
-const Artifacts = z.array(ArtifactRefSchema).max(16).readonly().optional();
+const Artifacts = z
+  .array(z.union([ArtifactRefSchema, PublicHandoffReference]))
+  .max(16)
+  .readonly()
+  .optional();
 const QuestionOutputArtifacts = z
   .array(z.union([ArtifactRefSchema, PublicHandoffReference]))
   .max(16)
@@ -714,18 +719,25 @@ export function createNeoQuestionOperations(
     )
     .pipe((input: Bound) => requireNeoOpenAsk(store.getAsk(input.askId)), 'input', 'result:outcome')
     .pipe(
-      (owned: NeoAsk, input: z.infer<typeof Ask>, caller: OperationCaller) => {
-        const unknown = unregisteredArtifact(
-          input.artifacts ?? [],
-          (input.artifacts ?? []).map((ref) => artifact(ref.artifactId, caller))
-        );
+      (input: z.infer<typeof Ask>, caller: OperationCaller) =>
+        readCardArtifactFacts(input.artifacts ?? [], caller, artifact),
+      ['input', 'caller'],
+      'artifactFacts'
+    )
+    .pipe(
+      (
+        owned: NeoAsk,
+        input: z.infer<typeof Ask>,
+        facts: Awaited<ReturnType<typeof readCardArtifactFacts>>
+      ) => {
+        const unknown = unverifiedCardArtifact(input.artifacts ?? [], facts);
         return unknown
           ? fail(
               `invalid_artifact_reference: artifact "${unknown.artifactId}" is not one you can attach as given.`
             )
           : { value: owned };
       },
-      ['outcome', 'input', 'caller'],
+      ['outcome', 'input', 'artifactFacts'],
       'result:outcome'
     )
     .pipe(
@@ -1053,7 +1065,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. Refused unless a reply card asks something, no other card is open on the ask (pass replaces to change it), text fits 400 characters (the rest goes in document), it has no internal ids, and it is in the language set for the human. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; passing both when they differ is refused with ask_mismatch. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. For a working document or evidence file, put its absolute path on the owning daemon in text or document with one sentence about it; preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. Optional artifacts retains up to 16 existing saved or fixed-head Git references (daemonId, artifactId, title, kind, byteLength), unchanged. Keep the question short instead of pasting the document. retireWhen is a pack check {pack,kind,params}, evaluated each sweep through the same pack check used by todos. Passing retires the card with its evidence, releases its holds and tells Neo; unreadable or unmet facts leave it open. Default: the linked todo check. Without a linked todo check, retireWhen is required (including legacy todos with no check). Its pack, kind and params must pass the same validation as a todo check; unsupported or malformed checks are refused before opening a card. Read returned records for pack warnings (for example missing PR URLs) and correct the condition before leaving a question waiting. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, closed unverified, removed or gone. If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed, supply explicit retireWhen to open the question on the ask without linking that todo; otherwise it is refused. A successful unlinked card includes a todo_closed record. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are omitted. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step; a closed question id is ignored and the new question opens on its own. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
+        'Ask the human one question on an open ask you own. Refused unless a reply card asks something, no other card is open on the ask (pass replaces to change it), text fits 400 characters (the rest goes in document), it has no internal ids, and it is in the language set for the human. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; passing both when they differ is refused with ask_mismatch. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. For a working document, put its absolute path on the owning daemon in text or document with one sentence about it; attach worker handoffs using publicReference and never expose private work or evidence paths. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. Optional artifacts retains up to 16 saved or fixed-head Git references, or verified local Markdown/HTML handoff publicReference values, unchanged. Keep the question short instead of pasting the document. retireWhen is a pack check {pack,kind,params}, evaluated each sweep through the same pack check used by todos. Passing retires the card with its evidence, releases its holds and tells Neo; unreadable or unmet facts leave it open. Default: the linked todo check. Without a linked todo check, retireWhen is required (including legacy todos with no check). Its pack, kind and params must pass the same validation as a todo check; unsupported or malformed checks are refused before opening a card. Read returned records for pack warnings (for example missing PR URLs) and correct the condition before leaving a question waiting. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, closed unverified, removed or gone. If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed, supply explicit retireWhen to open the question on the ask without linking that todo; otherwise it is refused. A successful unlinked card includes a todo_closed record. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are omitted. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step; a closed question id is ignored and the new question opens on its own. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

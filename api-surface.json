@@ -27266,47 +27266,99 @@
                             },
                             "artifacts": {
                               "items": {
-                                "additionalProperties": false,
-                                "properties": {
-                                  "artifactId": {
-                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                                    "type": "string"
-                                  },
-                                  "byteLength": {
-                                    "maximum": 9007199254740991,
-                                    "minimum": 0,
-                                    "type": "integer"
-                                  },
-                                  "daemonId": {
-                                    "format": "uuid",
-                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                                    "type": "string"
-                                  },
-                                  "kind": {
-                                    "enum": [
-                                      "markdown",
-                                      "html",
-                                      "image",
-                                      "json",
-                                      "log",
-                                      "text"
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "artifactId": {
+                                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                                        "type": "string"
+                                      },
+                                      "byteLength": {
+                                        "maximum": 9007199254740991,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "daemonId": {
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                        "type": "string"
+                                      },
+                                      "kind": {
+                                        "enum": [
+                                          "markdown",
+                                          "html",
+                                          "image",
+                                          "json",
+                                          "log",
+                                          "text"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "title": {
+                                        "maxLength": 200,
+                                        "minLength": 1,
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "daemonId",
+                                      "artifactId",
+                                      "title",
+                                      "kind",
+                                      "byteLength"
                                     ],
-                                    "type": "string"
+                                    "type": "object"
                                   },
-                                  "title": {
-                                    "maxLength": 200,
-                                    "minLength": 1,
-                                    "type": "string"
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "artifactId": {
+                                        "pattern": "^[a-f0-9]{64}$",
+                                        "type": "string"
+                                      },
+                                      "byteLength": {
+                                        "maximum": 9007199254740991,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "daemonId": {
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                        "type": "string"
+                                      },
+                                      "name": {
+                                        "maxLength": 128,
+                                        "minLength": 1,
+                                        "pattern": "^[\\w][\\w .-]*$",
+                                        "type": "string"
+                                      },
+                                      "sessionId": {
+                                        "maxLength": 200,
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "sha256": {
+                                        "pattern": "^[a-f0-9]{64}$",
+                                        "type": "string"
+                                      },
+                                      "type": {
+                                        "const": "handoff",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "artifactId",
+                                      "daemonId",
+                                      "sessionId",
+                                      "name",
+                                      "byteLength",
+                                      "sha256",
+                                      "type"
+                                    ],
+                                    "type": "object"
                                   }
-                                },
-                                "required": [
-                                  "daemonId",
-                                  "artifactId",
-                                  "title",
-                                  "kind",
-                                  "byteLength"
-                                ],
-                                "type": "object"
+                                ]
                               },
                               "maxItems": 16,
                               "type": "array"
@@ -32041,47 +32093,99 @@
                   },
                   "artifacts": {
                     "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "artifactId": {
-                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                          "type": "string"
-                        },
-                        "byteLength": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "daemonId": {
-                          "format": "uuid",
-                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                          "type": "string"
-                        },
-                        "kind": {
-                          "enum": [
-                            "markdown",
-                            "html",
-                            "image",
-                            "json",
-                            "log",
-                            "text"
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "artifactId": {
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                              "type": "string"
+                            },
+                            "byteLength": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "daemonId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "kind": {
+                              "enum": [
+                                "markdown",
+                                "html",
+                                "image",
+                                "json",
+                                "log",
+                                "text"
+                              ],
+                              "type": "string"
+                            },
+                            "title": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "daemonId",
+                            "artifactId",
+                            "title",
+                            "kind",
+                            "byteLength"
                           ],
-                          "type": "string"
+                          "type": "object"
                         },
-                        "title": {
-                          "maxLength": 200,
-                          "minLength": 1,
-                          "type": "string"
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "artifactId": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
+                            "byteLength": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "daemonId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "name": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[\\w][\\w .-]*$",
+                              "type": "string"
+                            },
+                            "sessionId": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
+                            "type": {
+                              "const": "handoff",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "artifactId",
+                            "daemonId",
+                            "sessionId",
+                            "name",
+                            "byteLength",
+                            "sha256",
+                            "type"
+                          ],
+                          "type": "object"
                         }
-                      },
-                      "required": [
-                        "daemonId",
-                        "artifactId",
-                        "title",
-                        "kind",
-                        "byteLength"
-                      ],
-                      "type": "object"
+                      ]
                     },
                     "maxItems": 16,
                     "type": "array"
@@ -32470,47 +32574,99 @@
         "properties": {
           "artifacts": {
             "items": {
-              "additionalProperties": false,
-              "properties": {
-                "artifactId": {
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                  "type": "string"
-                },
-                "byteLength": {
-                  "maximum": 9007199254740991,
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "daemonId": {
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                  "type": "string"
-                },
-                "kind": {
-                  "enum": [
-                    "markdown",
-                    "html",
-                    "image",
-                    "json",
-                    "log",
-                    "text"
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "artifactId": {
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                      "type": "string"
+                    },
+                    "byteLength": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "daemonId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "markdown",
+                        "html",
+                        "image",
+                        "json",
+                        "log",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "title": {
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "daemonId",
+                    "artifactId",
+                    "title",
+                    "kind",
+                    "byteLength"
                   ],
-                  "type": "string"
+                  "type": "object"
                 },
-                "title": {
-                  "maxLength": 200,
-                  "minLength": 1,
-                  "type": "string"
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "artifactId": {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    "byteLength": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "daemonId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "name": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[\\w][\\w .-]*$",
+                      "type": "string"
+                    },
+                    "sessionId": {
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "handoff",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "artifactId",
+                    "daemonId",
+                    "sessionId",
+                    "name",
+                    "byteLength",
+                    "sha256",
+                    "type"
+                  ],
+                  "type": "object"
                 }
-              },
-              "required": [
-                "daemonId",
-                "artifactId",
-                "title",
-                "kind",
-                "byteLength"
-              ],
-              "type": "object"
+              ]
             },
             "maxItems": 16,
             "type": "array"
@@ -32740,47 +32896,99 @@
                   },
                   "artifacts": {
                     "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "artifactId": {
-                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                          "type": "string"
-                        },
-                        "byteLength": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "daemonId": {
-                          "format": "uuid",
-                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                          "type": "string"
-                        },
-                        "kind": {
-                          "enum": [
-                            "markdown",
-                            "html",
-                            "image",
-                            "json",
-                            "log",
-                            "text"
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "artifactId": {
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                              "type": "string"
+                            },
+                            "byteLength": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "daemonId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "kind": {
+                              "enum": [
+                                "markdown",
+                                "html",
+                                "image",
+                                "json",
+                                "log",
+                                "text"
+                              ],
+                              "type": "string"
+                            },
+                            "title": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "daemonId",
+                            "artifactId",
+                            "title",
+                            "kind",
+                            "byteLength"
                           ],
-                          "type": "string"
+                          "type": "object"
                         },
-                        "title": {
-                          "maxLength": 200,
-                          "minLength": 1,
-                          "type": "string"
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "artifactId": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
+                            "byteLength": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "daemonId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "name": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[\\w][\\w .-]*$",
+                              "type": "string"
+                            },
+                            "sessionId": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
+                            "type": {
+                              "const": "handoff",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "artifactId",
+                            "daemonId",
+                            "sessionId",
+                            "name",
+                            "byteLength",
+                            "sha256",
+                            "type"
+                          ],
+                          "type": "object"
                         }
-                      },
-                      "required": [
-                        "daemonId",
-                        "artifactId",
-                        "title",
-                        "kind",
-                        "byteLength"
-                      ],
-                      "type": "object"
+                      ]
                     },
                     "maxItems": 16,
                     "type": "array"
@@ -33273,47 +33481,99 @@
                     },
                     "artifacts": {
                       "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text"
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "artifactId": {
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                                "type": "string"
+                              },
+                              "byteLength": {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "daemonId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "kind": {
+                                "enum": [
+                                  "markdown",
+                                  "html",
+                                  "image",
+                                  "json",
+                                  "log",
+                                  "text"
+                                ],
+                                "type": "string"
+                              },
+                              "title": {
+                                "maxLength": 200,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "daemonId",
+                              "artifactId",
+                              "title",
+                              "kind",
+                              "byteLength"
                             ],
-                            "type": "string"
+                            "type": "object"
                           },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "artifactId": {
+                                "pattern": "^[a-f0-9]{64}$",
+                                "type": "string"
+                              },
+                              "byteLength": {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "daemonId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "name": {
+                                "maxLength": 128,
+                                "minLength": 1,
+                                "pattern": "^[\\w][\\w .-]*$",
+                                "type": "string"
+                              },
+                              "sessionId": {
+                                "maxLength": 200,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "sha256": {
+                                "pattern": "^[a-f0-9]{64}$",
+                                "type": "string"
+                              },
+                              "type": {
+                                "const": "handoff",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "artifactId",
+                              "daemonId",
+                              "sessionId",
+                              "name",
+                              "byteLength",
+                              "sha256",
+                              "type"
+                            ],
+                            "type": "object"
                           }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
+                        ]
                       },
                       "maxItems": 16,
                       "type": "array"
@@ -34151,47 +34411,99 @@
             "properties": {
               "artifacts": {
                 "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "artifactId": {
-                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                      "type": "string"
-                    },
-                    "byteLength": {
-                      "maximum": 9007199254740991,
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "daemonId": {
-                      "format": "uuid",
-                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                      "type": "string"
-                    },
-                    "kind": {
-                      "enum": [
-                        "markdown",
-                        "html",
-                        "image",
-                        "json",
-                        "log",
-                        "text"
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "markdown",
+                            "html",
+                            "image",
+                            "json",
+                            "log",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "daemonId",
+                        "artifactId",
+                        "title",
+                        "kind",
+                        "byteLength"
                       ],
-                      "type": "string"
+                      "type": "object"
                     },
-                    "title": {
-                      "maxLength": 200,
-                      "minLength": 1,
-                      "type": "string"
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 128,
+                          "minLength": 1,
+                          "pattern": "^[\\w][\\w .-]*$",
+                          "type": "string"
+                        },
+                        "sessionId": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "handoff",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "artifactId",
+                        "daemonId",
+                        "sessionId",
+                        "name",
+                        "byteLength",
+                        "sha256",
+                        "type"
+                      ],
+                      "type": "object"
                     }
-                  },
-                  "required": [
-                    "daemonId",
-                    "artifactId",
-                    "title",
-                    "kind",
-                    "byteLength"
-                  ],
-                  "type": "object"
+                  ]
                 },
                 "maxItems": 16,
                 "readOnly": true,
@@ -34328,47 +34640,99 @@
             "properties": {
               "artifacts": {
                 "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "artifactId": {
-                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                      "type": "string"
-                    },
-                    "byteLength": {
-                      "maximum": 9007199254740991,
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "daemonId": {
-                      "format": "uuid",
-                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                      "type": "string"
-                    },
-                    "kind": {
-                      "enum": [
-                        "markdown",
-                        "html",
-                        "image",
-                        "json",
-                        "log",
-                        "text"
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "markdown",
+                            "html",
+                            "image",
+                            "json",
+                            "log",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "daemonId",
+                        "artifactId",
+                        "title",
+                        "kind",
+                        "byteLength"
                       ],
-                      "type": "string"
+                      "type": "object"
                     },
-                    "title": {
-                      "maxLength": 200,
-                      "minLength": 1,
-                      "type": "string"
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 128,
+                          "minLength": 1,
+                          "pattern": "^[\\w][\\w .-]*$",
+                          "type": "string"
+                        },
+                        "sessionId": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "handoff",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "artifactId",
+                        "daemonId",
+                        "sessionId",
+                        "name",
+                        "byteLength",
+                        "sha256",
+                        "type"
+                      ],
+                      "type": "object"
                     }
-                  },
-                  "required": [
-                    "daemonId",
-                    "artifactId",
-                    "title",
-                    "kind",
-                    "byteLength"
-                  ],
-                  "type": "object"
+                  ]
                 },
                 "maxItems": 16,
                 "readOnly": true,
@@ -34509,47 +34873,99 @@
             "properties": {
               "artifacts": {
                 "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "artifactId": {
-                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                      "type": "string"
-                    },
-                    "byteLength": {
-                      "maximum": 9007199254740991,
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "daemonId": {
-                      "format": "uuid",
-                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                      "type": "string"
-                    },
-                    "kind": {
-                      "enum": [
-                        "markdown",
-                        "html",
-                        "image",
-                        "json",
-                        "log",
-                        "text"
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "markdown",
+                            "html",
+                            "image",
+                            "json",
+                            "log",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "daemonId",
+                        "artifactId",
+                        "title",
+                        "kind",
+                        "byteLength"
                       ],
-                      "type": "string"
+                      "type": "object"
                     },
-                    "title": {
-                      "maxLength": 200,
-                      "minLength": 1,
-                      "type": "string"
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 128,
+                          "minLength": 1,
+                          "pattern": "^[\\w][\\w .-]*$",
+                          "type": "string"
+                        },
+                        "sessionId": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "handoff",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "artifactId",
+                        "daemonId",
+                        "sessionId",
+                        "name",
+                        "byteLength",
+                        "sha256",
+                        "type"
+                      ],
+                      "type": "object"
                     }
-                  },
-                  "required": [
-                    "daemonId",
-                    "artifactId",
-                    "title",
-                    "kind",
-                    "byteLength"
-                  ],
-                  "type": "object"
+                  ]
                 },
                 "maxItems": 16,
                 "readOnly": true,
@@ -34676,47 +35092,99 @@
             "properties": {
               "artifacts": {
                 "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "artifactId": {
-                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                      "type": "string"
-                    },
-                    "byteLength": {
-                      "maximum": 9007199254740991,
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "daemonId": {
-                      "format": "uuid",
-                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                      "type": "string"
-                    },
-                    "kind": {
-                      "enum": [
-                        "markdown",
-                        "html",
-                        "image",
-                        "json",
-                        "log",
-                        "text"
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "markdown",
+                            "html",
+                            "image",
+                            "json",
+                            "log",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "daemonId",
+                        "artifactId",
+                        "title",
+                        "kind",
+                        "byteLength"
                       ],
-                      "type": "string"
+                      "type": "object"
                     },
-                    "title": {
-                      "maxLength": 200,
-                      "minLength": 1,
-                      "type": "string"
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 128,
+                          "minLength": 1,
+                          "pattern": "^[\\w][\\w .-]*$",
+                          "type": "string"
+                        },
+                        "sessionId": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "handoff",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "artifactId",
+                        "daemonId",
+                        "sessionId",
+                        "name",
+                        "byteLength",
+                        "sha256",
+                        "type"
+                      ],
+                      "type": "object"
                     }
-                  },
-                  "required": [
-                    "daemonId",
-                    "artifactId",
-                    "title",
-                    "kind",
-                    "byteLength"
-                  ],
-                  "type": "object"
+                  ]
                 },
                 "maxItems": 16,
                 "readOnly": true,

@@ -19,6 +19,7 @@ const pressPair = (view: ReturnType<typeof render>) =>
 describe('PairPage', () => {
   afterEach(() => {
     cleanup();
+    sessionStorage.clear();
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -40,9 +41,16 @@ describe('PairPage', () => {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code: 'ABCDE23456', name: 'Work laptop' }),
       })
     );
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const sent = JSON.parse(init.body as string);
+    expect(sent).toEqual({
+      code: 'ABCDE23456',
+      name: 'Work laptop',
+      requestId: expect.any(String),
+    });
+    expect(sent.requestId.length).toBeGreaterThanOrEqual(16);
     expect(rewrite).toHaveBeenCalledWith(null, '', location.pathname);
     expect(view.getByRole('link', { name: 'Open HyperNeo' }).getAttribute('href')).toBe('/');
   });
@@ -54,6 +62,33 @@ describe('PairPage', () => {
     location.hash = '#NEWCODE234';
     dispatchEvent(new HashChangeEvent('hashchange'));
     await waitFor(() => expect(code()).toBe('NEWCODE234'));
+  });
+
+  it('pairs on plain HTTP, where crypto.randomUUID is missing', async () => {
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
+    const fetchMock = answer(200, { deviceId: 'device-1', kind: 'human' });
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await waitFor(() => view.getByText('This browser is paired.'));
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string).requestId.length).toBeGreaterThanOrEqual(16);
+  });
+
+  it('a reload while waiting asks again as the same requester, so the code stays valid', async () => {
+    const fetchMock = answer(403, { error: 'awaiting_approval' });
+    const waiting =
+      'Waiting for Allow on a paired phone or browser. This page will finish pairing automatically.';
+    pressPair(openPairPage('#ABCDE23456', fetchMock));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    cleanup();
+    const again = openPairPage('#abcde-23456', fetchMock);
+    pressPair(again);
+    await again.findByText(waiting);
+    const ids = fetchMock.mock.calls.map(
+      (call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string).requestId
+    );
+    expect(ids.length).toBeGreaterThan(1);
+    expect(new Set(ids).size).toBe(1);
   });
 
   it('pairs after Allow elsewhere without another click or re-entering the code', async () => {
@@ -72,6 +107,10 @@ describe('PairPage', () => {
     approved = true;
     await waitFor(() => view.getByText('This browser is paired.'), { timeout: 5000 });
     expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    const ids = fetchMock.mock.calls.map(
+      (call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string).requestId
+    );
+    expect(new Set(ids).size).toBe(1);
     expect(view.queryByRole('button', { name: 'Allow' })).toBeNull();
   });
 

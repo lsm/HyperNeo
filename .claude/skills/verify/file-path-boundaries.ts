@@ -53,8 +53,9 @@ try {
   for (const [index, vector] of vectors.entries()) {
     const translate = (text: string) => text.replaceAll('/Users/a/', `${workspace}/`);
     const text = translate(vector.text), paths = vector.paths.map(translate);
+    const reads = vector.read ? [translate(vector.read)] : paths;
     const content = `# Boundary ${index}\n`;
-    for (const reference of paths) {
+    for (const reference of reads) {
       const path = reference.startsWith('~/') ? join(run, 'home', reference.slice(2)) : reference;
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, content);
@@ -64,7 +65,7 @@ try {
     const source = response.publication.publicationId;
     const cards = previewLinkedReferenceCandidates(text).flatMap(item => item.kind === 'local' ? [item.path] : []);
     const replies = [];
-    for (const reference of paths) {
+    for (const reference of reads) {
       const reply = await read(source, reference);
       replies.push({ reference, accepted: reply.accepted, reason: reply.reason });
       observed.push({ index, text, cards, replies: [...replies] });

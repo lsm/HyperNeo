@@ -91,7 +91,7 @@ export function createHandoffOperations(status: (id: string) => string | null) {
     defineOperation({
       name: 'handoff.publish',
       description:
-        'Publish a regular file from your HYPERNEO_HANDOFF_DIR. name is one filename, at most 128 characters, never a path. The daemon snapshots in 256 KiB chunks, without trimming or expiry, and returns a local SHA-256 reference for a message or report. Identical retries never replace an artifact. API immutability is not OS isolation from same-user Bash; reads detect tampering.',
+        'Publish a regular file from your HYPERNEO_HANDOFF_DIR. name is one filename, at most 128 characters, never a path. The daemon snapshots in 256 KiB chunks, without trimming or expiry, and returns a local SHA-256 reference for a message or report. Pass publicReference in neo.publication.publish or neo.question.ask artifacts to attach supported Markdown or HTML without exposing an internal path. Identical retries never replace an artifact. API immutability is not OS isolation from same-user Bash; reads detect tampering.',
       inputSchema: z.strictObject({ name: HandoffName }),
       resultSchema: z.union([
         z.object({

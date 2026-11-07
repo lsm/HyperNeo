@@ -1,4 +1,7 @@
-import { ARTIFACT_DEFAULT_LIMITS as limits } from '@hyperneo/shared/types/artifact-file';
+import {
+  ARTIFACT_DEFAULT_LIMITS as limits,
+  PREVIEWABLE_FILE_EXTENSIONS,
+} from '@hyperneo/shared/types/artifact-file';
 import { neoImageSize } from '../neo/image-size.ts';
 import { prepareArtifactHtml } from './html-preview.ts';
 
@@ -10,13 +13,8 @@ const images = new Map([
   ['webp', 'image/webp'],
 ]);
 export function liveFileByteLimit(extension: string): number | null {
-  return images.has(extension)
-    ? limits.imageBytes
-    : ['md', 'markdown', 'txt', 'json', 'jsonl', 'log', 'csv', 'css', 'html', 'htm'].includes(
-          extension
-        )
-      ? limits.documentPreviewBytes
-      : null;
+  if (!PREVIEWABLE_FILE_EXTENSIONS.has(extension)) return null;
+  return images.has(extension) ? limits.imageBytes : limits.documentPreviewBytes;
 }
 
 type Image = { kind: 'image'; mediaType: string; width: number; height: number };

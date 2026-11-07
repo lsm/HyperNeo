@@ -77,8 +77,25 @@
   },
   {
     "text": "报告：/Users/a/b.abcdefghijklmnop",
-    "paths": ["/Users/a/b.abcdefghijklmnop"],
+    "paths": [],
+    "read": "/Users/a/b.abcdefghijklmnop",
     "readReason": "unsupported_type"
+  },
+  {
+    "text": "sudo /tmp/countersign/private/run-demo.sh",
+    "paths": []
+  },
+  {
+    "text": "[Run it](/Users/a/run-demo.sh) and read [the notes](/Users/a/notes.md)",
+    "paths": ["/Users/a/notes.md"]
+  },
+  {
+    "text": "`/Users/a/app.ts` changed; see /Users/a/out.log and /Users/a/build.py",
+    "paths": ["/Users/a/out.log"]
+  },
+  {
+    "text": "Notes: /Users/a/Notes.MD",
+    "paths": ["/Users/a/Notes.MD"]
   },
   {
     "text": "https://example.com/a.md",

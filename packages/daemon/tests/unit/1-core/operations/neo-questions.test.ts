@@ -13,6 +13,10 @@ import type { OperationCaller } from '../../../../src/lib/operations/registry.ts
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
 
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo-a', role: 'neo' };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -117,6 +121,51 @@ function setup(
 }
 
 describe('neo.question operations', () => {
+  test('retains an owner-verified HTML handoff and refuses altered references without replacing the card', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'question-handoff-')));
+    const previous = process.env.HYPERNEO_DATA_DIR;
+    process.env.HYPERNEO_DATA_DIR = dir;
+    const h = setup();
+    try {
+      const drafts = join(dir, 'handoffs', 'worker', 'drafts');
+      mkdirSync(drafts, { recursive: true });
+      writeFileSync(join(drafts, 'report.html'), '<h1>Synthetic</h1>');
+      const snapshot = await publishHandoff(dir, 'worker', 'report.html');
+      if (snapshot.kind !== 'published') throw new Error('publish failed');
+      const reference = publicHandoffReference(snapshot.reference);
+      const ask = (artifact: typeof reference, replaces?: string) =>
+        h.call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Review this report?',
+          artifacts: [artifact],
+          ...(replaces ? { replaces } : {}),
+        });
+      const foreign = { ...reference, daemonId: '00000000-0000-4000-8000-000000000000' };
+      expect(await ask(foreign)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('invalid_artifact_reference:'),
+      });
+      expect(h.store.listQuestions('ask')).toHaveLength(0);
+      const accepted = await ask(reference);
+      if (!accepted.ok) throw new Error(accepted.reason);
+      expect(accepted.question.artifacts).toEqual([reference]);
+      expect(JSON.stringify(accepted)).not.toContain(dir);
+      expect(h.store.getQuestion(accepted.question.id)?.artifacts).toEqual([reference]);
+      chmodSync(snapshot.reference.path, 0o600);
+      writeFileSync(snapshot.reference.path, 'tampered');
+      expect(await ask(reference, accepted.question.id)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('invalid_artifact_reference:'),
+      });
+      expect(h.store.getQuestion(accepted.question.id)?.state).toBe('open');
+    } finally {
+      h.db.close();
+      if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;
+      else process.env.HYPERNEO_DATA_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test('refuses a second todo question explicitly and accepts an explicit replacement', async () => {
     const h = setup();
     try {
