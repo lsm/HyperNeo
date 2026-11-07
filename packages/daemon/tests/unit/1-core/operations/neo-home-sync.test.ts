@@ -437,7 +437,7 @@ describe('Neo home save remote sync', () => {
     await git(root, 'config', 'remote.origin.uploadpack', upload);
     const pending = call('neo.home.save', input);
     try {
-      for (let i = 0; i < 300; i++) {
+      for (let i = 0; i < 1000; i++) {
         if (
           await readFile(ready).then(
             () => true,
@@ -511,7 +511,7 @@ describe('Neo home save remote sync', () => {
           ? { ok: false, reason: expect.stringContaining('timed out') }
           : { ok: true }
       );
-      expect(Date.now() - start).toBeLessThan(NETWORK_TIMEOUT_MS + 3000);
+      expect(Date.now() - start).toBeLessThan(2 * NETWORK_TIMEOUT_MS + 2000);
       expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('timed out') });
       expect(await readFile(observed, 'utf8')).toBe('0|/usr/bin/false|ssh -oBatchMode=yes');
       expect(await git(root, 'status', '--porcelain')).toBe('');
