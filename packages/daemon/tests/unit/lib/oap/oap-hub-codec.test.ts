@@ -8,13 +8,32 @@ describe('OAP hub wire codec', () => {
     for (const feature of ['session.open.reopen', 'run.cancel']) {
       expect(
         decodeOapHubLine(
-          JSON.stringify({ id: 3, ok: false, error: { code: 'unsupported_feature', message: 'unsupported', details: { feature, reason: 'unadvertised' } } })
+          JSON.stringify({
+            id: 3,
+            ok: false,
+            error: {
+              code: 'unsupported_feature',
+              message: 'unsupported',
+              details: { feature, reason: 'unadvertised' },
+            },
+          })
         )
       ).toMatchObject({ kind: 'refusal', code: 'unsupported_feature', feature });
     }
-    for (const details of [undefined, null, [], { feature: null }, { feature: 12 }, { reason: 'unknown' }]) {
+    for (const details of [
+      undefined,
+      null,
+      [],
+      { feature: null },
+      { feature: 12 },
+      { reason: 'unknown' },
+    ]) {
       const frame = decodeOapHubLine(
-        JSON.stringify({ id: 3, ok: false, error: { code: 'unsupported_feature', message: 'unsupported', details } })
+        JSON.stringify({
+          id: 3,
+          ok: false,
+          error: { code: 'unsupported_feature', message: 'unsupported', details },
+        })
       );
       expect(frame).not.toHaveProperty('feature');
     }

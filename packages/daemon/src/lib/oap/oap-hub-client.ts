@@ -17,7 +17,7 @@ type Dispatch =
   | { kind: 'retry' }
   | { kind: 'event'; frame: HubEvent }
   | { kind: 'resolve'; value: unknown }
-  | { kind: 'reject'; code: string; message: string };
+  | { kind: 'reject'; code: string; message: string; feature?: string };
 
 export interface OapHubClientOptions {
   command: string;
@@ -31,7 +31,8 @@ export interface OapHubClientOptions {
 export class OapHubRequestError extends Error {
   constructor(
     readonly code: string,
-    message: string
+    message: string,
+    readonly feature?: string
   ) {
     super(message);
     this.name = 'OapHubRequestError';
@@ -44,7 +45,7 @@ function decideFrame(frame: OapHubFrame, waiting: boolean, retried: boolean): Di
   if (frame.kind === 'response') return { kind: 'resolve', value: frame.result };
   return frame.retryable && !retried
     ? { kind: 'retry' }
-    : { kind: 'reject', code: frame.code, message: frame.message };
+    : { kind: 'reject', code: frame.code, message: frame.message, feature: frame.feature };
 }
 
 const planFrame = (superpipe({})('oap.hub.dispatch') as PipelineAPI)
@@ -233,7 +234,7 @@ export class OapHubClient {
     this.pending.delete(frame.id);
     clearTimeout(waiting.timer);
     if (decision.kind === 'resolve') waiting.resolve(decision.value);
-    else waiting.reject(new OapHubRequestError(decision.code, decision.message));
+    else waiting.reject(new OapHubRequestError(decision.code, decision.message, decision.feature));
   }
 
   private fail(error: Error): void {

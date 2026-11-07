@@ -84,7 +84,9 @@ describe('OAP hub child lifecycle and correlation', () => {
     const hub = await client();
     await hub.connect();
     for (const feature of ['session.open.reopen', 'run.cancel']) {
-      const error = await hub.request('feature-refusal', { feature }).catch((reason: Error) => reason);
+      const error = await hub
+        .request('feature-refusal', { feature })
+        .catch((reason: Error) => reason);
       expect(error).toMatchObject({ code: 'unsupported_feature', feature });
       expect(decideReopenFailure(error as { code: string; feature?: string }).mode).toBe(
         feature === 'session.open.reopen' ? 'summary' : 'error'
