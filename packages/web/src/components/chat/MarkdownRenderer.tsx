@@ -10,7 +10,7 @@ import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
 import { decideMarkdownImage, isNavigatableHref } from './markdown-image.ts';
 import { LruCache } from '../../lib/lru-cache.ts';
 import { decideArtifactImage, decideArtifactLink } from '../../lib/artifact-link-policy.ts';
-import { markPreviewReferences } from './markdown-references.ts';
+import { demoteLocalFileLinks, markPreviewReferences } from './markdown-references.ts';
 import { attachQuoteCopyButtons } from './markdown-quote-copy.tsx';
 
 interface MarkdownRendererProps {
@@ -557,6 +557,7 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleImageActivate);
     container.addEventListener('auxclick', handleImageActivate);
 
+    if (references) demoteLocalFileLinks(container);
     markPreviewReferences(container, JSON.parse(referenceKey), labels);
     const handleReference = (event: Event) => {
       if (event instanceof KeyboardEvent && event.key !== 'Enter') return;

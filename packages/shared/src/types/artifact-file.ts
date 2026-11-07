@@ -1,5 +1,23 @@
 export const ARTIFACT_KINDS = ['markdown', 'html', 'image', 'json', 'log', 'text'] as const;
 
+export const PREVIEWABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
+  'md',
+  'markdown',
+  'txt',
+  'json',
+  'jsonl',
+  'log',
+  'csv',
+  'css',
+  'html',
+  'htm',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+]);
+
 export const ARTIFACT_DEFAULT_LIMITS = {
   artifactBytes: 64 * 1024 * 1024,
   documentPreviewBytes: 2 * 1024 * 1024,

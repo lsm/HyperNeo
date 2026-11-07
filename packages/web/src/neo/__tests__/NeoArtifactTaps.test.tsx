@@ -232,9 +232,8 @@ describe('Neo artifact taps', () => {
       });
     });
 
-    it('lets unsupported file cards reach the reader and shows its accurate refusal', async () => {
-      const body = 'Open `/synthetic/unknown.bin`.';
-      request.mockResolvedValue({ accepted: false, reason: 'unsupported_type' });
+    it('leaves a file the reader cannot preview as plain text', async () => {
+      const body = 'Run `sudo /synthetic/run-demo.sh` and [the script](/synthetic/run-demo.sh).';
       render(
         <>
           <NeoPublicConversation
@@ -243,17 +242,10 @@ describe('Neo artifact taps', () => {
           <ArtifactPreviewPanel />
         </>
       );
-      fireEvent.click(
-        await screen.findByRole('button', { name: 'Open current file: unknown.bin' })
-      );
-      await screen.findByText('This format has no preview yet.');
-      expect(request.mock.calls[0][1]).toMatchObject({
-        name: 'file.reference.read',
-        input: {
-          reference: '/synthetic/unknown.bin',
-          sourceMessageOrCard: { kind: 'publication', id: publication().publicationId },
-        },
-      });
+      await screen.findByText('the script');
+      expect(screen.queryByRole('button', { name: /run-demo\.sh/ })).toBeNull();
+      expect(screen.queryByRole('link', { name: 'the script' })).toBeNull();
+      expect(request).not.toHaveBeenCalled();
     });
   });
   describe('publication paths without registered artifacts', () => {

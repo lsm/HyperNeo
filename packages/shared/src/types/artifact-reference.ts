@@ -1,6 +1,7 @@
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
+import { PREVIEWABLE_FILE_EXTENSIONS } from './artifact-file.ts';
 
 export type PreviewReferenceCandidate =
   | { kind: 'local'; reference: string; path: string }
@@ -125,6 +126,7 @@ export function previewLinkedReferenceCandidates(text: string): PreviewReference
     (item) =>
       item.kind !== 'local' ||
       ((item.path.startsWith('/') || item.path.startsWith('~/')) &&
-        (!item.reference.startsWith('file:') || item.reference.startsWith('file:/')))
+        (!item.reference.startsWith('file:') || item.reference.startsWith('file:/')) &&
+        PREVIEWABLE_FILE_EXTENSIONS.has(item.path.split('.').at(-1)?.toLowerCase() ?? ''))
   );
 }
