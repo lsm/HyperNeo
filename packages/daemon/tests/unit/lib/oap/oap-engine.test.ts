@@ -87,6 +87,7 @@ describe('OapEngine', () => {
           type: 'codex',
           executable: options.codexExecutable,
           environment: ['CODEX_HOME'],
+          any_directory: true,
           approval_policy: 'on-request',
           sandbox: 'workspace-write',
         },
