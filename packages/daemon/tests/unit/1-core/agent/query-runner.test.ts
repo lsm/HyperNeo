@@ -405,22 +405,35 @@ describe('QueryRunner', () => {
       let submitStarted!: () => void;
       let releaseTerminal!: () => void;
       let accepted!: () => void;
-      const submitted = new Promise<void>((resolve) => { submitStarted = resolve; });
-      const acceptedNotice = new Promise<void>((resolve) => { accepted = resolve; });
-      const terminalGate = new Promise<void>((resolve) => { releaseTerminal = resolve; });
+      const submitted = new Promise<void>((resolve) => {
+        submitStarted = resolve;
+      });
+      const acceptedNotice = new Promise<void>((resolve) => {
+        accepted = resolve;
+      });
+      const terminalGate = new Promise<void>((resolve) => {
+        releaseTerminal = resolve;
+      });
       const write = mock(async () => ['message-db-id']);
-      const yielded = mock(async () => { accepted(); });
+      const yielded = mock(async () => {
+        accepted();
+      });
       queue.onMessageYielded = yielded;
       const submit = mock(() => {
         submitStarted();
-        return new Promise<{ runId: string }>((resolve) => { resolveSubmit = resolve; });
+        return new Promise<{ runId: string }>((resolve) => {
+          resolveSubmit = resolve;
+        });
       });
       const events = async function* () {
         await terminalGate;
         yield { type: 'run.completed', id: 'end-1', payload: {} };
       };
       const ctx = createContext({
-        session: { ...mockSession, config: { model: 'unit', provider: providerId, harness: 'codex' } },
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
         db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
         messageQueue: queue,
         oap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
@@ -431,7 +444,9 @@ describe('QueryRunner', () => {
       const running = ctx.queryPromise!;
       await submitted;
       try {
-        expect(write).toHaveBeenCalledWith('markDeliverySubmittedByUuids', ctx.session.id, ['codex-admission']);
+        expect(write).toHaveBeenCalledWith('markDeliverySubmittedByUuids', ctx.session.id, [
+          'codex-admission',
+        ]);
         expect(yielded).not.toHaveBeenCalled();
         expect(queue.hasYielded('codex-admission')).toBe(true);
         resolveSubmit({ runId: 'r1' });
@@ -446,25 +461,66 @@ describe('QueryRunner', () => {
       }
     });
 
+    it('does not submit a prompt whose persisted delivery is already submitted', async () => {
+      const submit = mock(async () => ({ runId: 'duplicate' }));
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        db: {
+          ...mockDb,
+          writeSDKMessage: mock(async () => []),
+          getSDKMessageRepo: () => ({
+            getDeliveryContent: () => ({ sendStatus: 'submitted', content: 'prompt' }),
+          }),
+        } as unknown as Database,
+        messageQueue: queue,
+        oap: {
+          openDirectorySupported: true,
+          hub: {
+            submit,
+            events: async function* () { yield { type: 'run.completed', id: 'end', payload: {} }; },
+            cancel: async () => {},
+          },
+        },
+      });
+      const sent = queue.enqueueWithId('already-submitted', 'prompt', false, { durable: true }).catch((error: Error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      expect(await completesWithin(ctx.queryPromise!)).toBe(true);
+      expect(await sent).toEqual(expect.objectContaining({ message: expect.stringMatching(/already submitted/i) }));
+      expect(submit).not.toHaveBeenCalled();
+    });
+
     it('cancels a stale same-generation OAP acceptance without disturbing its successor', async () => {
       let resolveSubmit!: (result: { runId: string }) => void;
       let submitStarted!: () => void;
-      const submitted = new Promise<void>((resolve) => { submitStarted = resolve; });
+      const submitted = new Promise<void>((resolve) => {
+        submitStarted = resolve;
+      });
       const submit = mock(() => {
         submitStarted();
-        return new Promise<{ runId: string }>((resolve) => { resolveSubmit = resolve; });
+        return new Promise<{ runId: string }>((resolve) => {
+          resolveSubmit = resolve;
+        });
       });
       const cancel = mock(async () => {});
       const events = mock(async function* () {
         yield { type: 'run.completed', id: 'old-end', payload: {} };
       });
       const ctx = createContext({
-        session: { ...mockSession, config: { model: 'unit', provider: providerId, harness: 'codex' } },
+        session: {
+          ...mockSession,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
         db: { ...mockDb, writeSDKMessage: mock(async () => []) } as unknown as Database,
         messageQueue: queue,
         oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
       });
-      void queue.enqueueWithId('codex-old-accept', 'old prompt', false, { durable: true }).catch(() => {});
+      void queue
+        .enqueueWithId('codex-old-accept', 'old prompt', false, { durable: true })
+        .catch(() => {});
       runner = new QueryRunner(ctx);
       await runner.start();
       const running = ctx.queryPromise!;
@@ -485,20 +541,34 @@ describe('QueryRunner', () => {
       async (replaceAttempt) => {
         let listening!: () => void;
         let release!: () => void;
-        const ready = new Promise<void>((resolve) => { listening = resolve; });
-        const cancelled = new Promise<void>((resolve) => { release = resolve; });
-        const cancel = mock(async () => { release(); });
+        const ready = new Promise<void>((resolve) => {
+          listening = resolve;
+        });
+        const cancelled = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const cancel = mock(async () => {
+          release();
+        });
         const events = async function* () {
           listening();
           await cancelled;
           yield { type: 'run.cancelled', id: 'cancel-end', payload: { reason: 'cancelled' } };
         };
         const ctx = createContext({
-          session: { ...mockSession, config: { model: 'unit', provider: providerId, harness: 'codex' } },
+          session: {
+            ...mockSession,
+            config: { model: 'unit', provider: providerId, harness: 'codex' },
+          },
           messageQueue: queue,
-          oap: { openDirectorySupported: true, hub: { submit: async () => ({ runId: 'r1' }), events, cancel } },
+          oap: {
+            openDirectorySupported: true,
+            hub: { submit: async () => ({ runId: 'r1' }), events, cancel },
+          },
         });
-        void queue.enqueueWithId('codex-interrupt', 'prompt', false, { durable: true }).catch(() => {});
+        void queue
+          .enqueueWithId('codex-interrupt', 'prompt', false, { durable: true })
+          .catch(() => {});
         runner = new QueryRunner(ctx);
         await runner.start();
         const running = ctx.queryPromise!;
@@ -508,7 +578,9 @@ describe('QueryRunner', () => {
         await ctx.queryObject!.interrupt();
         expect(await completesWithin(running)).toBe(true);
         expect(cancel).toHaveBeenCalledTimes(1);
-        expect(onSDKMessageSpy.mock.calls.filter(([message]) => message.type === 'result')).toHaveLength(replaceAttempt ? 0 : 1);
+        expect(
+          onSDKMessageSpy.mock.calls.filter(([message]) => message.type === 'result')
+        ).toHaveLength(replaceAttempt ? 0 : 1);
         expect(successor?.isLive() ?? true).toBe(true);
       }
     );
