@@ -86,6 +86,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'schedules.reason.unchanged': '没有变化',
   'schedules.reason.delivery_unconfirmed': '尚未确认送达',
   'list.separator': '、',
+  'live.allTopics': '全部',
   'ask.state.waiting': '等你',
   'ask.state.doing': '在做',
   'ask.state.done': '做完',
