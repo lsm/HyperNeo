@@ -70,8 +70,8 @@
     ]
   },
   "coreAppend": {
-    "lines": 288,
-    "sha256": "7c7826275706f12f412338fbd1fa905a71040f944b6973cb9aaf963481b9cd00",
+    "lines": 332,
+    "sha256": "0be75c5169dd6dfad3b652f2ae66818c395ff61b526c2dbe365a64c335c06759",
     "units": [
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
@@ -93,87 +93,87 @@
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
         "name": "appendImmutable",
         "start": 66,
-        "end": 191,
-        "lines": 126,
-        "sha256": "85f7f31d1110d824e756aa77818bc016b948538294ed8e7909cf43aac6f52676"
+        "end": 201,
+        "lines": 136,
+        "sha256": "b3e5ab299633cd7af8c3f5e95b25abbb9ffd79731c37692c787d0c5d8fbc913c"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
         "name": "append",
-        "start": 193,
-        "end": 216,
+        "start": 203,
+        "end": 226,
         "lines": 24,
         "sha256": "b1ec46ca0549392e681869e4262031c6781e199a185009feafdec879a796cea1"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
         "name": "NeoPublicationRepository.constructor",
-        "start": 247,
-        "end": 247,
+        "start": 257,
+        "end": 257,
         "lines": 1,
         "sha256": "f3497513bcf32938aa5f7db1373dbba49a8a21a482ff030c347fc6d96437a2db"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
         "name": "NeoPublicationRepository.append",
-        "start": 265,
-        "end": 269,
+        "start": 275,
+        "end": 279,
         "lines": 5,
         "sha256": "d9e1ac2b14fc2b75c8e1303b3f2177867ef54e2c302a65fcbe635c9763ea8aea"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
         "name": "neoPublicationWrites",
-        "start": 424,
-        "end": 429,
+        "start": 434,
+        "end": 439,
         "lines": 6,
         "sha256": "d3580e3b7fa17c98b43494e1e16b64bcf5ac78875ebf226c3c5b26e4499917f1"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "text",
-        "start": 6,
-        "end": 10,
+        "start": 7,
+        "end": 11,
         "lines": 5,
         "sha256": "37c98425814174998a901d9654219655e2db1d08412c6b55c82575885f871b84"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "origin",
-        "start": 11,
-        "end": 11,
+        "start": 12,
+        "end": 12,
         "lines": 1,
         "sha256": "d36c9aa007387489375b96a893b4c7dcbb01fa5d351460826cc6f5f1f3d72372"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "NeoPublicationObject",
-        "start": 13,
-        "end": 80,
-        "lines": 68,
-        "sha256": "034621428daba387e84e95b0b4df22d8adac0499f3355f87a8d864a58758ed9e"
+        "start": 14,
+        "end": 84,
+        "lines": 71,
+        "sha256": "982137b0ee5523705c8044b50b337b37acba047b713b2694a0388bf399ae23f4"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "publicationTextRule",
-        "start": 85,
-        "end": 98,
+        "start": 89,
+        "end": 102,
         "lines": 14,
         "sha256": "2889df47295b5371c80d8c8faeef20a5cda66f9d52ece11e73cbe790d5c12c06"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "NeoPublicationSchema",
-        "start": 100,
-        "end": 100,
+        "start": 104,
+        "end": 104,
         "lines": 1,
         "sha256": "c33ea934eab18da87a93420af694b44801013f8935751b133b8c0a45ca7954e8"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "admitNeoPublication",
-        "start": 123,
-        "end": 128,
+        "start": 127,
+        "end": 132,
         "lines": 6,
         "sha256": "db3d6b7c83cd8196afdd2d5f7dab6c8d1edf84b2c84595b8ff79f12ff8862782"
       },
@@ -208,6 +208,38 @@
         "end": 1,
         "lines": 1,
         "sha256": "f61bf1095ec0272506c5a812ac5e7a1399033f625b1089c4c63a7d4cd6de873a"
+      },
+      {
+        "file": "packages/daemon/src/lib/handoffs/outbox.ts",
+        "name": "HandoffName",
+        "start": 17,
+        "end": 22,
+        "lines": 6,
+        "sha256": "910d73050755b8c004affca007f32de992c0cd737642c78bcc9bcd62737b0af7"
+      },
+      {
+        "file": "packages/daemon/src/lib/handoffs/outbox.ts",
+        "name": "HandoffReference",
+        "start": 23,
+        "end": 31,
+        "lines": 9,
+        "sha256": "7b94affc1018b192224ed0b2d0202cbd3670a82d21bbcce9c96bd86cdb4c9814"
+      },
+      {
+        "file": "packages/daemon/src/lib/handoffs/outbox.ts",
+        "name": "PublicHandoffReference",
+        "start": 33,
+        "end": 35,
+        "lines": 3,
+        "sha256": "13cddbf4f7f09d1657e8deff70ed245237787c505b3682e627433c73c858cb1b"
+      },
+      {
+        "file": "packages/daemon/src/lib/secret-file-name.ts",
+        "name": "secretName",
+        "start": 1,
+        "end": 13,
+        "lines": 13,
+        "sha256": "5e419f7c77a73595a1de908d43dfbca52ead6b1725cb0b4517081386a876b3f3"
       }
     ]
   }

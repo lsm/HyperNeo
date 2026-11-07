@@ -104,6 +104,15 @@ function appendImmutable(
           )
         )
           return { accepted: true, created: false, publication: current };
+        if (
+          input.artifacts &&
+          current.artifacts?.some(
+            (item) =>
+              'type' in item &&
+              !input.artifacts!.some((next) => JSON.stringify(next) === JSON.stringify(item))
+          )
+        )
+          return { accepted: false, reason: 'publication_conflict' };
         const revisions = [...(current.revisions ?? [])];
         for (const revisionId of new Set([
           current.revisionId ?? current.publicationId,
@@ -125,6 +134,7 @@ function appendImmutable(
           ...(JSON.parse(prior.payloadJson) as NeoPublicationInput),
           shortText: input.shortText,
           fullText: input.fullText,
+          artifacts: input.artifacts ?? current.artifacts,
           links: input.links,
           session: input.session,
           cardReply: input.cardReply,

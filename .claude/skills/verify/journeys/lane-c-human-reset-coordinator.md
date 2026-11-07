@@ -16,7 +16,10 @@ reset/receipt subtree and separately audited 283-line core append subtree. Neo
 authorized this audited-dependency split. The append manifest includes the later
 authorized optional publication session field and its revision retention, plus
 the transient versionCreated receipt flag for a newly appended card revision
-(publication speech). SQL and stored payloads are unchanged; the
+(publication speech). Card handoffs expand the audited append graph to 332 lines:
+the public handoff schema and its filename check are included, and card replies
+retain existing handoffs. Reset notices carry no card reply or artifacts, so the
+new conflict branch does not apply to them. The
 142-line reset/receipt subtree and its hash remain unchanged. Original measurement
 files retain the historical 277-line construction baseline. Keep both interfaces and all hashes in
 the contract test and each PR body. Do not change app.ts, service/publication,

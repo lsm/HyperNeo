@@ -1,4 +1,4 @@
-import type { ArtifactProjection } from './artifact-file.ts';
+import type { ArtifactRef, PublicHandoffReference } from './artifact-file.ts';
 
 import type { NeoInputOrigin } from './neo-message.ts';
 import type { NeoQuestionSource } from './neo-ask.ts';
@@ -28,7 +28,8 @@ export interface NeoPublicationRevision {
   readonly awaiting?: string;
 }
 
-export interface NeoPublicationInput extends ArtifactProjection {
+export interface NeoPublicationInput {
+  readonly artifacts?: readonly (ArtifactRef | PublicHandoffReference)[];
   readonly cardReply?: NeoCardReply;
   readonly conversationId: string;
   readonly publicationId: string;

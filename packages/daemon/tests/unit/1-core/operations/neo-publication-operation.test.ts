@@ -13,6 +13,10 @@ import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-or
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
@@ -76,6 +80,56 @@ describe('Neo publication without runtime input attribution', () => {
         payload_json: string;
       }
     ).payload_json;
+
+  test('retains verified worker handoffs and refuses forged, foreign or altered ones without writing', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'publication-handoff-')));
+    const prior = process.env.HYPERNEO_DATA_DIR;
+    process.env.HYPERNEO_DATA_DIR = dir;
+    try {
+      const drafts = join(dir, 'handoffs', 'worker', 'drafts');
+      mkdirSync(drafts, { recursive: true });
+      writeFileSync(join(drafts, 'report.md'), '# Synthetic report\n');
+      const snapshot = await publishHandoff(dir, 'worker', 'report.md');
+      if (snapshot.kind !== 'published') throw new Error('publish failed');
+      const reference = publicHandoffReference(snapshot.reference);
+      for (const invalid of [
+        { ...reference, daemonId: '00000000-0000-4000-8000-000000000000' },
+        { ...reference, name: 'other.md' },
+        { ...reference, byteLength: reference.byteLength + 1 },
+        { ...reference, sha256: '0'.repeat(64) },
+      ]) {
+        const rejected = await publish({ ...draft, artifacts: [report, invalid] }, caller);
+        expect(rejected).toMatchObject({ accepted: false, reason: 'invalid_artifact_reference' });
+        expect(ledger.list(conversationId)).toHaveLength(0);
+      }
+      const withPath = await publish(
+        { ...draft, artifacts: [{ ...reference, path: snapshot.reference.path }] },
+        caller
+      );
+      expect(withPath).toMatchObject({ accepted: false });
+      expect(ledger.list(conversationId)).toHaveLength(0);
+      const accepted = await publish({ ...draft, artifacts: [report, reference] }, caller);
+      expect(accepted).toMatchObject({
+        accepted: true,
+        publication: { artifacts: [report, reference] },
+      });
+      expect(rawPayload()).not.toContain(dir);
+      expect(await publish({ ...draft, artifacts: [report, reference] }, caller)).toMatchObject({
+        accepted: true,
+        created: false,
+      });
+      chmodSync(snapshot.reference.path, 0o600);
+      writeFileSync(snapshot.reference.path, 'tampered');
+      expect(
+        await publish({ ...draft, requestId: 'tampered', artifacts: [reference] }, caller)
+      ).toMatchObject({ accepted: false, reason: 'invalid_artifact_reference' });
+      expect(ledger.list(conversationId)).toHaveLength(1);
+    } finally {
+      if (prior === undefined) delete process.env.HYPERNEO_DATA_DIR;
+      else process.env.HYPERNEO_DATA_DIR = prior;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   test('published and retried messages tell the model no assistant text is needed unless a record was requested', async () => {
     const handler = createOperationMcpHandler(
