@@ -41,12 +41,12 @@ function EnumPackSettings({ pack, title }: { pack: string; title: Label }) {
     return invokeOperation<T>(hub, name, input);
   };
   useEffect(() => {
-    invoke<{ preferences: NeoPackSetting[]; declarations: Record<string, Field> }>(
+    invoke<{ preferences: NeoPackSetting[]; declarations?: Record<string, Field> }>(
       'pack.preferences.list',
       { pack }
     )
       .then((result) => {
-        setFields(result.declarations);
+        setFields(result.declarations ?? {});
         setRows(result.preferences);
       })
       .catch((cause) => setError(String(cause)));
@@ -110,8 +110,9 @@ function EnumPackSettings({ pack, title }: { pack: string; title: Label }) {
               onChange={(event) => void save(key, event.currentTarget.value)}
             >
               <option value="" disabled>
-                {text(['Unanswered', '未设置'])} —{' '}
-                {Object.values(field.valueLabels)[0][locale.value === 'zh-Hans' ? 'zh-Hans' : 'en']}
+                {text(['Unanswered', '未设置'])}
+                {Object.values(field.valueLabels)[0] &&
+                  ` — ${Object.values(field.valueLabels)[0][locale.value === 'zh-Hans' ? 'zh-Hans' : 'en']}`}
               </option>
               {Object.entries(field.valueLabels).map(([value, label]) => (
                 <option key={value} value={value}>
