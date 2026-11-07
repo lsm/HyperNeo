@@ -69,6 +69,19 @@ describe('MarkdownRenderer preview references', () => {
     expect(screen.getByText('the notes').closest('[data-preview-reference]')).toBeTruthy();
   });
 
+  it('keeps previewable local links when the reference list is empty', async () => {
+    const { container } = render(
+      <MarkdownRenderer
+        content="[the notes](/owner/notes.md) [the script](/owner/run.sh)"
+        references={[]}
+      />
+    );
+    await waitFor(() => expect(screen.getByText('the notes')).toBeTruthy());
+    expect(Array.from(container.querySelectorAll('a')).map((a) => a.textContent)).toEqual([
+      'the notes',
+    ]);
+  });
+
   it('keeps local links when no references are given', async () => {
     const { container } = render(<MarkdownRenderer content="[the script](/owner/run-demo.sh)" />);
     await waitFor(() => expect(screen.getByText('the script')).toBeTruthy());

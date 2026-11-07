@@ -1,3 +1,4 @@
+import { PREVIEWABLE_FILE_EXTENSIONS } from '@hyperneo/shared/types/artifact-file';
 import { t } from '../../lib/i18n/index.ts';
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -10,12 +11,11 @@ function mark(element: Element, reference: string, label = reference) {
   element.setAttribute('aria-label', t('artifact.openNamed', { name: label }));
 }
 
-export function demoteLocalFileLinks(container: HTMLElement, references: readonly string[]) {
-  const linked = new Set(references);
+export function demoteLocalFileLinks(container: HTMLElement) {
   container.querySelectorAll('a[href]').forEach((anchor) => {
     const href = anchor.getAttribute('href') ?? '';
-    const local = /^(?:\/(?!\/)|~\/|file:)/.test(href) && /\.[\w-]+$/.test(href);
-    if (!local || linked.has(href)) return;
+    const extension = /^(?:\/(?!\/)|~\/|file:).*\.([\w-]+)$/.exec(href)?.[1];
+    if (!extension || PREVIEWABLE_FILE_EXTENSIONS.has(extension.toLowerCase())) return;
     const span = document.createElement('span');
     span.append(...anchor.childNodes);
     anchor.replaceWith(span);

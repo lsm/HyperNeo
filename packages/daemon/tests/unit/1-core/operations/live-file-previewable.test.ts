@@ -18,6 +18,11 @@ const others = [
 ];
 
 describe('liveFileByteLimit', () => {
+  test('gives image limits only to the image formats', () => {
+    for (const extension of ['png', 'jpg', 'jpeg', 'gif', 'webp'])
+      expect(liveFileByteLimit(extension)).toBe(32 * 1024 * 1024);
+    expect(liveFileByteLimit('md')).toBe(2 * 1024 * 1024);
+  });
   test.each([...PREVIEWABLE_FILE_EXTENSIONS])('reads .%s, which clients link', (extension) => {
     expect(liveFileByteLimit(extension)).not.toBeNull();
   });

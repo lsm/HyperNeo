@@ -557,7 +557,7 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleImageActivate);
     container.addEventListener('auxclick', handleImageActivate);
 
-    if (references) demoteLocalFileLinks(container, JSON.parse(referenceKey));
+    if (references) demoteLocalFileLinks(container);
     markPreviewReferences(container, JSON.parse(referenceKey), labels);
     const handleReference = (event: Event) => {
       if (event instanceof KeyboardEvent && event.key !== 'Enter') return;
