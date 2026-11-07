@@ -3,6 +3,74 @@ import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { OapQuery } from '../../../../src/lib/oap/oap-query';
 
 describe('OapQuery', () => {
+  test('cancels unsupported free-text questions with a clear error instead of answering', async () => {
+    const message = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'hello' },
+    } as SDKUserMessage;
+    const cancel = mock(async () => {});
+    const translate = mock(() => []);
+    const query = new OapQuery({
+      sessionId: 's1',
+      prompt: (async function* () {
+        yield message;
+      })(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel,
+        events: async function* () {
+          yield {
+            type: 'user.input.requested',
+            payload: {
+              interaction_id: 'input-1',
+              title: 'Synthetic question',
+              questions: [{ id: 'q1', prompt: 'Explain?', kind: 'text' }],
+            },
+          };
+        },
+      },
+      translator: { translate },
+    });
+    const consume = async () => {
+      for await (const item of query) void item;
+    };
+    await expect(consume()).rejects.toThrow('unsupported text question');
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith('s1', 'r1');
+    expect(translate).not.toHaveBeenCalled();
+  });
+
+  test('cancels a permission request until permission handling is wired', async () => {
+    const message = {
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'hello' },
+    } as SDKUserMessage;
+    const cancel = mock(async () => {});
+    const query = new OapQuery({
+      sessionId: 's1',
+      prompt: (async function* () {
+        yield message;
+      })(),
+      hub: {
+        submit: async () => ({ runId: 'r1' }),
+        cancel,
+        events: async function* () {
+          yield { type: 'action.permission.requested' };
+        },
+      },
+      translator: { translate: () => [] },
+    });
+    const consume = async () => {
+      for await (const item of query) void item;
+    };
+    await expect(consume()).rejects.toThrow('permission requests are not supported');
+    expect(cancel).toHaveBeenCalledWith('s1', 'r1');
+  });
+
   test('yields messages returned by the injected translator in event order', async () => {
     const user = {
       type: 'user',
