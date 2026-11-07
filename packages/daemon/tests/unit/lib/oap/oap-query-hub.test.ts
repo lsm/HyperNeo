@@ -59,7 +59,10 @@ function fixture(mode: 'text' | 'failed-stream' | 'refused-submit' = 'text') {
         payload: { accepted: true, run_id: 'run-1' },
       };
     }
-    return { type: 'run.cancel.response', payload: { accepted: true } };
+    return {
+      type: 'run.cancel.response',
+      payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
+    };
   });
   const client = { subscribe, request } as unknown as OapHubClient;
   return { client, subscribe, request, unsubscribe, operations };
@@ -153,6 +156,29 @@ describe('OAP query hub transport', () => {
       'synthetic submit refusal'
     );
     expect(host.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejects an unaccepted or mis-scoped cancellation response', async () => {
+    const host = fixture();
+    const hub = createOapQueryHub(host.client);
+    for (const payload of [
+      { accepted: false, session_id: 'synthetic-session', run_id: 'run-1' },
+      { accepted: true, session_id: 'another-session', run_id: 'run-1' },
+      { accepted: true, session_id: 'synthetic-session', run_id: 'another-run' },
+    ]) {
+      host.request.mockImplementationOnce(async () => ({ type: 'run.cancel.response', payload }));
+      await expect(hub.cancel('synthetic-session', 'run-1')).rejects.toThrow(/cancel/i);
+    }
+    await expect(hub.cancel('synthetic-session', 'run-1')).resolves.toBeUndefined();
+    expect(host.request).toHaveBeenLastCalledWith('cancel', {
+      session_id: 'synthetic-session',
+      request: expect.objectContaining({
+        type: 'run.cancel.request',
+        session_id: 'synthetic-session',
+        run_id: 'run-1',
+        payload: { session_id: 'synthetic-session', run_id: 'run-1' },
+      }),
+    });
   });
 
   test('rejects an overlapping submission while the first subscription is starting', async () => {
