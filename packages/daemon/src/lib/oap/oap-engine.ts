@@ -1,7 +1,7 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { checkOapBinary, type BinaryCheck, type BinaryIdentity } from './oap-binary.ts';
+import { prepareOapBinary, type PreparedOapBinary, type BinaryIdentity } from './oap-binary.ts';
 import { OapHubClient, type OapHubClientOptions } from './oap-hub-client.ts';
 import { buildOapHubConfig, type OapHubConfigInput } from './oap-hub-config.ts';
 import { createOapQueryHub, type OapQueryHub } from './oap-query.ts';
@@ -15,6 +15,7 @@ type Slot = {
   key: string;
   failed: boolean;
   client?: OapHubClient;
+  binary?: Extract<PreparedOapBinary, { ok: true }>;
   start: Promise<OapHubClient>;
 };
 
@@ -36,32 +37,43 @@ function validateIdentity(options: OapEngineOptions): OapEngineOptions {
   return options;
 }
 
-function checkBinary(options: OapEngineOptions): Promise<BinaryCheck> {
-  return checkOapBinary(options.binaryPath, options.identity);
+function checkBinary(options: OapEngineOptions): Promise<PreparedOapBinary> {
+  return prepareOapBinary(options.binaryPath, options.identity, options.stateDirectory);
 }
 
 function ensureValidBinary(
-  check: BinaryCheck,
+  check: PreparedOapBinary,
   config: ReturnType<typeof buildOapHubConfig>
-): ReturnType<typeof buildOapHubConfig> {
+): {
+  config: ReturnType<typeof buildOapHubConfig>;
+  binary: Extract<PreparedOapBinary, { ok: true }>;
+} {
   if (!check.ok) throw new Error(`OAP binary rejected: ${check.reason}`);
-  return config;
+  return { config, binary: check };
 }
 
 async function writeConfig(
   options: OapEngineOptions,
-  config: ReturnType<typeof buildOapHubConfig>
-): Promise<OapHubClientOptions> {
-  await mkdir(options.stateDirectory, { recursive: true, mode: 0o700 });
-  await writeFile(join(options.stateDirectory, 'oap-serve.json'), JSON.stringify(config.config), {
-    mode: 0o600,
-  });
-  return {
-    command: options.binaryPath,
-    args: config.args,
-    cwd: options.stateDirectory,
-    env: config.environment,
-  };
+  validated: ReturnType<typeof ensureValidBinary>
+): Promise<{ launch: OapHubClientOptions; binary: typeof validated.binary }> {
+  const { config, binary } = validated;
+  try {
+    await writeFile(join(options.stateDirectory, 'oap-serve.json'), JSON.stringify(config.config), {
+      mode: 0o600,
+    });
+    return {
+      binary,
+      launch: {
+        command: binary.path,
+        args: config.args,
+        cwd: options.stateDirectory,
+        env: config.environment,
+      },
+    };
+  } catch (error) {
+    await binary.cleanup();
+    throw error;
+  }
 }
 
 const prepareHub = (superpipe({})('oap.engine.prepare') as PipelineAPI)
@@ -71,7 +83,7 @@ const prepareHub = (superpipe({})('oap.engine.prepare') as PipelineAPI)
   .pipe(checkBinary, 'validOptions', 'check')
   .pipe(ensureValidBinary, ['check', 'config'], 'validated')
   .pipe(writeConfig, ['validOptions', 'validated'], 'launch')
-  .endAsync('launch') as (options: OapEngineOptions) => Promise<OapHubClientOptions>;
+  .endAsync('launch') as (options: OapEngineOptions) => ReturnType<typeof writeConfig>;
 
 export class OapEngine {
   private slot?: Slot;
@@ -118,7 +130,8 @@ export class OapEngine {
     try {
       await this.closeSlot(previous);
       if (this.closed) throw new Error('OAP engine is closed');
-      const launch = await prepareHub(options);
+      const { launch, binary } = await prepareHub(options);
+      slot.binary = binary;
       if (this.closed) throw new Error('OAP engine is closed');
       const client = new OapHubClient({
         ...launch,
@@ -133,6 +146,7 @@ export class OapEngine {
     } catch (error) {
       slot.failed = true;
       await slot.client?.close();
+      await slot.binary?.cleanup();
       throw error;
     }
   }
@@ -141,5 +155,6 @@ export class OapEngine {
     if (!slot) return;
     await slot.start.catch(() => undefined);
     await slot.client?.close();
+    await slot.binary?.cleanup();
   }
 }

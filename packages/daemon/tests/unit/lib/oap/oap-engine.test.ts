@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OapEngine } from '../../../../src/lib/oap/oap-engine';
@@ -119,6 +119,13 @@ describe('OapEngine', () => {
     ).rejects.toThrow('sha256_mismatch');
     expect(existsSync(calls)).toBe(false);
     expect(existsSync(join(options.stateDirectory, 'oap-serve.json'))).toBe(false);
+  });
+
+  test('removes its verified copy when configuration cannot be written', async () => {
+    const { engine, options } = await fixture();
+    await mkdir(join(options.stateDirectory, 'oap-serve.json'), { recursive: true });
+    await expect(engine.getHub(options)).rejects.toThrow();
+    expect(await readdir(options.stateDirectory)).toEqual(['oap-serve.json']);
   });
 
   test('rejects an incomplete expected binary identity', async () => {

@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { constants } from 'node:fs';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
@@ -43,9 +45,45 @@ function checkIdentity(expected: BinaryIdentity, sha256: string, version: string
   return decideBinaryCheck(expected, { sha256, version });
 }
 
-export const checkOapBinary = (superpipe({})('check-oap-binary') as PipelineAPI)
+const checkSnapshot = (superpipe({})('check-oap-binary') as PipelineAPI)
   .input(['path', 'expected'])
   .pipe(readDigest, 'path', 'sha256')
   .pipe(readVersion, ['path', 'expected', 'sha256'], 'version')
   .pipe(checkIdentity, ['expected', 'sha256', 'version'], 'result')
   .endAsync('result') as (path: string, expected: BinaryIdentity) => Promise<BinaryCheck>;
+
+export type PreparedOapBinary =
+  | { ok: true; path: string; cleanup(): Promise<void> }
+  | Extract<BinaryCheck, { ok: false }>;
+
+export async function prepareOapBinary(
+  path: string,
+  expected: BinaryIdentity,
+  stateDirectory: string
+): Promise<PreparedOapBinary> {
+  if (!isAbsolute(path)) throw new Error('OAP binary path must be absolute');
+  await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+  const directory = await mkdtemp(join(stateDirectory, 'oap-verified-'));
+  const cleanup = () => rm(directory, { recursive: true, force: true });
+  try {
+    const verifiedPath = join(directory, basename(path));
+    await copyFile(path, verifiedPath, constants.COPYFILE_EXCL);
+    await chmod(verifiedPath, 0o500);
+    const check = await checkSnapshot(verifiedPath, expected);
+    if (!check.ok) {
+      await cleanup();
+      return check;
+    }
+    return { ok: true, path: verifiedPath, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
+export async function checkOapBinary(path: string, expected: BinaryIdentity): Promise<BinaryCheck> {
+  const binary = await prepareOapBinary(path, expected, tmpdir());
+  if (!binary.ok) return binary;
+  await binary.cleanup();
+  return { ok: true };
+}
