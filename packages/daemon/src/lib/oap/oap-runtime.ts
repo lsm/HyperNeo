@@ -48,6 +48,52 @@ type SessionSlot = {
   deleted: boolean;
 };
 
+function planClear(
+  session: Session,
+  slot: SessionSlot | undefined,
+  db: OapReopenStore | undefined,
+  _hub: OapQueryHub
+): Session['metadata'] {
+  if (!slot || slot.deleted || !db || !session.sdkSessionId)
+    throw new Error('Codex thread is unavailable for clearing');
+  return { ...session.metadata, oapClearThreadId: session.sdkSessionId };
+}
+
+async function recordClear(
+  session: Session,
+  db: OapReopenStore | undefined,
+  metadata: Session['metadata']
+): Promise<true> {
+  if ((await db!.updateSession(session.id, { metadata })) !== 'written')
+    throw new Error('Could not save the Codex clear request');
+  session.metadata = metadata;
+  return true;
+}
+
+async function reopenClearedSession(
+  runtime: OapQueryRuntime,
+  slot: SessionSlot | undefined,
+  _recorded: true
+): Promise<void> {
+  slot!.hub?.release?.();
+  slot!.hub = undefined;
+  slot!.opening = undefined;
+  await runtime.hub;
+}
+
+const clearSession = (superpipe({})('oap.runtime.clear') as PipelineAPI)
+  .input(['runtime', 'session', 'slot', 'db'])
+  .pipe((runtime: OapQueryRuntime) => runtime.hub, 'runtime', 'hub')
+  .pipe(planClear, ['session', 'slot', 'db', 'hub'], 'metadata')
+  .pipe(recordClear, ['session', 'db', 'metadata'], 'recorded')
+  .pipe(reopenClearedSession, ['runtime', 'slot', 'recorded'], 'cleared')
+  .endAsync('cleared') as (
+  runtime: OapQueryRuntime,
+  session: Session,
+  slot: SessionSlot | undefined,
+  db: OapReopenStore | undefined
+) => Promise<void>;
+
 export function createOapRuntime(
   engine: OapEngine,
   options?: OapEngineOptions,
@@ -81,8 +127,11 @@ export function createOapRuntime(
         ? (sessions.get(session.id) ?? { deleted: false })
         : undefined;
     if (slot) sessions.set(session.id, slot);
-    return {
+    const runtime: OapQueryRuntime = {
       openDirectorySupported: true,
+      clear() {
+        return clearSession(runtime, session, slot, db);
+      },
       get hub() {
         return (async () => {
           if (!slot || slot.deleted) throw new Error('Codex session was deleted or is unavailable');
@@ -121,5 +170,6 @@ export function createOapRuntime(
         })();
       },
     };
+    return runtime;
   };
 }

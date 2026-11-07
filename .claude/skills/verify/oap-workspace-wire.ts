@@ -8,6 +8,7 @@ import { checkOapBinary } from '../../../packages/daemon/src/lib/oap/oap-binary.
 import { OapHubRequestError } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
 import { decideReopenFailure } from '../../../packages/daemon/src/lib/oap/oap-session-open.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
+import { deliverAgentMessageToTarget, type AgentMessageDeliveryDeps } from '../../../packages/daemon/src/lib/messaging/delivery-pipeline.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
@@ -40,7 +41,13 @@ for line in sys.stdin:
  if 'id' not in request or not method: continue
  if method=='initialize': result={'userAgent':'synthetic','codexHome':'synthetic','platformFamily':'unix','platformOs':'synthetic'}
  elif method in ['thread/start','thread/resume']:
-  thread=request.get('params',{}).get('threadId','native-'+os.path.basename(os.getcwd()))
+  name=os.path.basename(os.getcwd())
+  countfile=os.path.join(os.environ['CODEX_HOME'],'thread-count-'+name)
+  if method=='thread/start':
+   count=int(open(countfile).read())+1 if os.path.exists(countfile) else 1
+   with open(countfile,'w') as counter: counter.write(str(count))
+   thread='native-'+name+('-'+str(count) if count>1 else '')
+  else: thread=request['params']['threadId']
   result={'thread':{'id':thread},'model':'synthetic-model','cwd':os.getcwd(),'approvalPolicy':'on-request','sandbox':{'type':'workspaceWrite','writableRoots':[],'networkAccess':False}}
  elif method=='turn/start': result={'turn':{'id':'turn-'+str(request['id']),'status':'inProgress'}}
  else: result={}
@@ -182,27 +189,94 @@ try {
     assert.equal(calls().length, 0);
     assert.equal(existsSync(join(run, 'data/oap/oap-serve.json')), false);
     Object.assign(evidence, { port: app.server.port, mismatchedDigestRefused: true, syntheticPeerStarts: 0, pass: true });
-  } else if (mode === 'clear-refused' || mode === 'clear-refused-web') {
+  } else if (mode === 'fresh-clear') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic original conversation' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 1 && !first.queryPromise, 'original native turn');
     const nativeId = app.db.getSession(firstId)?.sdkSessionId;
     assert.equal(nativeId, 'native-workspace-a');
-    await assert.rejects(first.startFreshContext(), /codex.*clear|clear.*codex/i);
-    await assert.rejects(first.clearConversationContext(), /codex.*clear|clear.*codex/i);
-    assert.equal(first.session.sdkSessionId, nativeId);
-    assert.equal(app.db.getSession(firstId)?.sdkSessionId, nativeId);
-    const notices = app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('Clearing a Codex conversation is not supported yet.'));
-    assert.equal(notices.length, 2);
-    if (mode === 'clear-refused-web') await verifyNoticeInBrowser(app, firstId, 'Clearing a Codex conversation is not supported yet. The existing thread was not cleared.');
+    await first.startFreshContext();
+    assert.equal(first.session.sdkSessionId, 'native-workspace-a-2');
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, 'native-workspace-a-2');
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic explicit next message' });
-    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 2 && !first.queryPromise, 'explicit turn after clear refusal');
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 2 && !first.queryPromise, 'explicit turn after fresh clear');
+    let handedOff = false;
+    const workerDeps: AgentMessageDeliveryDeps = {
+      workflowRunId: 'synthetic-run',
+      taskRepo: { getTask: () => ({ id: 'synthetic-task', workflowRunId: 'synthetic-run', status: 'in_progress' }) },
+      nodeExecutionRepo: { listByWorkflowRun: () => [{ agentSessionId: firstId, agentName: 'reviewer', workflowNodeId: 'synthetic-node' }] },
+      resolveTerminalStatus: () => null,
+      isPostApprovalWorker: () => false,
+      ensureSession: async () => ({ kind: 'resolved', sessionId: firstId, created: false }),
+      getSessionAsync: async () => first,
+      withSessionInjectLock: (_sessionId, fn) => fn(),
+      isRateOrUsageLimited: () => false,
+      slotResetsContext: () => true,
+      hasActiveDeliveryJob: () => false,
+      hasUnconsumedDeliveredWork: () => false,
+      hasHeldDeliveryBacklog: () => false,
+      hasSettledDelivery: () => false,
+      mailboxDeliveryPending: () => true,
+      verifyDeliveryContent: () => {},
+      handoffToMailbox: async (args) => {
+        assert.equal(args.deliveryMode, undefined);
+        assert.equal(first.session.sdkSessionId, 'native-workspace-a-3');
+        handedOff = true;
+        return { kind: 'enqueued', id: 'synthetic-mailbox' };
+      },
+      recordActivity: () => {},
+    };
+    const delivered = await deliverAgentMessageToTarget({
+      deps: workerDeps,
+      target: { kind: 'worker', taskId: 'synthetic-task', agentName: 'reviewer', workflowNodeId: 'synthetic-node' },
+      message: 'Synthetic worker task',
+      messageId: 'synthetic-worker-message',
+    });
+    assert.equal(delivered.state, 'delivered');
+    assert(handedOff);
+    assert.equal(first.session.sdkSessionId, 'native-workspace-a-3');
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, 'native-workspace-a-3');
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic second explicit message' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 3 && !first.queryPromise, 'explicit turn after second clear');
     const turns = calls().filter((call) => call.request.method === 'turn/start');
-    assert.equal(turns.length, 2);
-    assert(turns.every((call) => (call.request.params as { threadId?: string }).threadId === nativeId));
+    assert.deepEqual(turns.map((call) => (call.request.params as { threadId?: string }).threadId), [nativeId, 'native-workspace-a-2', 'native-workspace-a-3']);
     assert(turns.every((call) => !JSON.stringify(call).includes('/clear')));
-    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
-    Object.assign(evidence, { port: app.server.port, bothClearPathsRefused: true, visibleNotices: notices.length, originalIdPreserved: true, controlMessagesSent: 0, explicitTurns: turns.length, pass: true });
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 3);
+    Object.assign(evidence, { port: app.server.port, bothClearPathsCreatedFreshThreads: true, resetPerTurnWorkerHandedOff: true, distinctIdsPersisted: true, controlMessagesSent: 0, explicitTurns: turns.length, pass: true });
+  } else if (mode === 'fresh-clear-crash') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic prior conversation' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'prior native turn');
+    const nativeId = app.db.getSession(firstId)?.sdkSessionId;
+    assert.equal(nativeId, 'native-workspace-a');
+    const engineHub = await app.oapEngine.getHub(config.oap);
+    const child = (engineHub as unknown as { child: { pid: number; kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
+    assert(child && child.pid > 0);
+    const mutable = engineHub as unknown as { request: (op: string, params: Record<string, unknown>) => Promise<unknown> };
+    const originalRequest = mutable.request.bind(engineHub);
+    mutable.request = async (op, params) => {
+      const result = await originalRequest(op, params);
+      if (op === 'close' && params.session_id === firstId) {
+        const exited = new Promise<void>((resolveExit) => child.once('close', resolveExit));
+        assert(child.kill('SIGKILL'));
+        await exited;
+        throw new Error('synthetic hub crash after close');
+      }
+      return result;
+    };
+    await assert.rejects(first.clearConversationContext(), /could not clear/i);
+    assert.equal(app.db.getSession(firstId)?.metadata?.oapClearThreadId, nativeId);
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, nativeId);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    await first.oap!.hub;
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, 'native-workspace-a-2');
+    assert.equal(app.db.getSession(firstId)?.metadata?.oapClearThreadId, undefined);
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic message after interrupted clear' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 2 && !first.queryPromise, 'turn after interrupted clear');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal((turns[1].request.params as { threadId?: string }).threadId, 'native-workspace-a-2');
+    Object.assign(evidence, { port: app.server.port, hubCrashedAfterClose: true, intentSurvived: true, freshIdPersisted: true, automaticResends: 0, pass: true });
   } else if (mode === 'submit-internal') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic crash during admission' });
     await waitFor(() => calls().some((call) => call.request.method === 'turn/start'), 'native submit before crash');
@@ -212,7 +286,7 @@ try {
     assert.equal(app.db.getUserMessagesByStatus(firstId, 'failed').total, 0);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
     Object.assign(evidence, { port: app.server.port, backendOutcomeUnknown: true, submittedRows: 1, failedRows: 0, automaticResends: 0, pass: true });
-  } else if (mode === 'missing-history' || mode === 'missing-history-web') {
+  } else if (['missing-history', 'missing-history-web', 'clear-missing-history', 'clear-missing-history-web'].includes(mode)) {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic prior turn' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'prior native turn');
     const saved = app.db.getSession(firstId)?.sdkSessionId;
@@ -224,14 +298,17 @@ try {
     assert(child.kill('SIGKILL'));
     await exited;
     unlinkSync(join(config.oap.stateDirectory, 'session-history.jsonl'));
-    await assert.rejects(Promise.resolve(first.oap!.hub), /cannot be resumed/i);
+    if (mode.startsWith('clear-')) {
+      await assert.rejects(first.clearConversationContext(), /cannot be resumed/i);
+    } else await assert.rejects(Promise.resolve(first.oap!.hub), /cannot be resumed/i);
     const notices = app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('The previous Codex thread cannot be resumed'));
     assert.equal(notices.length, 1);
+    assert.equal(app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('Could not clear the Codex thread')).length, 0);
     assert.equal(app.db.getSession(firstId)?.sdkSessionId, saved);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
-    if (mode === 'missing-history-web') await verifyNoticeInBrowser(app, firstId, 'The previous Codex thread cannot be resumed. No new thread was started.');
-    Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, priorThreadIdPreserved: true, newThreads: 0, automaticResends: 0, pass: true });
+    if (mode.endsWith('-web')) await verifyNoticeInBrowser(app, firstId, 'The previous Codex thread cannot be resumed. No new thread was started.');
+    Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, noticeCount: notices.length, priorThreadIdPreserved: true, newThreads: 0, automaticResends: 0, pass: true });
   } else if (mode === 'reopen') {
     const seen: Array<{ type: string; uuid?: string }> = [];
     const handler = first.onSDKMessage.bind(first);

@@ -19,7 +19,7 @@ const bind = createOapRuntime as unknown as (
   events: ReturnType<typeof createDaemonInternalEventBus>,
   db: unknown,
   messageHub: unknown
-) => (session: Session) => { hub: Promise<OapQueryHub> };
+) => (session: Session) => { hub: Promise<OapQueryHub>; clear(): Promise<void> };
 
 function session(nativeId?: string, messageCount = 0): Session {
   return {
@@ -42,10 +42,16 @@ function fixture(
     failed?: boolean;
     priorStatus?: 'consumed' | 'failed';
     link?: string;
+    freshId?: string;
+    failIdentityOnce?: boolean;
+    failFreshOpenOnce?: boolean;
+    loseFreshOpenResponseOnce?: boolean;
   } = {}
 ) {
   const operations: Array<{ op: string; params: Record<string, unknown> }> = [];
   let opened = false;
+  let threadId = config.nativeId ?? 'native-thread-a';
+  let freshOpenFailed = false;
   const request = mock(async (op: string, params: Record<string, unknown>) => {
     operations.push({ op, params });
     if (op === 'work.status') {
@@ -54,7 +60,7 @@ function fixture(
         ? {
             ref: { adapter: 'codex', session_id: 'session-a' },
             directory: '/synthetic/workspace',
-            link: config.link ?? `codex://threads/${config.nativeId ?? 'native-thread-a'}`,
+            link: config.link ?? `codex://threads/${threadId}`,
           }
         : {
             ref: { adapter: 'codex', session_id: 'session-a' },
@@ -80,10 +86,22 @@ function fixture(
       if (payload.reopen && config.refusal) throw config.refusal;
       if (payload.reopen && !config.known)
         throw new OapHubRequestError('unknown_session', 'absent');
+      if (!payload.reopen && config.failFreshOpenOnce && !freshOpenFailed) {
+        freshOpenFailed = true;
+        throw new OapHubRequestError('timeout', 'synthetic interrupted fresh open');
+      }
+      if (!payload.reopen && config.freshId) threadId = config.freshId;
       opened = true;
+      if (!payload.reopen && config.loseFreshOpenResponseOnce && !freshOpenFailed) {
+        freshOpenFailed = true;
+        throw new OapHubRequestError('timeout', 'synthetic lost fresh open response');
+      }
       return { type: 'session.open.response', payload: { session_id: 'session-a' } };
     }
-    if (op === 'close') return {};
+    if (op === 'close') {
+      opened = false;
+      return {};
+    }
     throw new Error(`unexpected operation ${op}`);
   });
   const client = { request } as unknown as OapHubClient;
@@ -94,8 +112,15 @@ function fixture(
     isCurrentHub: mock(() => true),
     createQueryHub: mock(() => transport),
   } as unknown as OapEngine;
+  let identityFailed = false;
   const db = {
-    updateSession: mock(async () => 'written'),
+    updateSession: mock(async (_id: string, update: Partial<Session>) => {
+      if (config.failIdentityOnce && update.sdkSessionId === config.freshId && !identityFailed) {
+        identityFailed = true;
+        throw new Error('synthetic storage failure');
+      }
+      return 'written';
+    }),
     getSDKMessages: mock(() => ({
       messages: config.history
         ? [{ type: 'assistant', message: { content: [{ type: 'text', text: 'previous answer' }] } }]
@@ -123,6 +148,90 @@ function fixture(
 }
 
 describe('OAP native session reopen wiring', () => {
+  test('clearing a session closes the old binding and persists a new native thread', async () => {
+    const host = fixture({ known: true, freshId: 'native-thread-b' });
+    const current = session('native-thread-a', 2);
+    current.sdkOriginPath = '/synthetic/previous';
+    const runtime = host.runtime(current);
+    await runtime.hub;
+
+    await runtime.clear();
+
+    expect(host.operations.filter(({ op }) => op === 'close')).toHaveLength(1);
+    expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(2);
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.sdkOriginPath).toBeUndefined();
+    expect(host.db.updateSession).toHaveBeenCalledWith(
+      'session-a',
+      expect.objectContaining({ sdkSessionId: 'native-thread-b', sdkOriginPath: undefined })
+    );
+    expect(host.submit).not.toHaveBeenCalled();
+  });
+
+  test('a failed identity write adopts the already opened fresh thread', async () => {
+    const host = fixture({ known: true, freshId: 'native-thread-b', failIdentityOnce: true });
+    const current = session('native-thread-a', 2);
+    const runtime = host.runtime(current);
+    await runtime.hub;
+    await expect(runtime.clear()).rejects.toThrow('synthetic storage failure');
+    expect(current.sdkSessionId).toBe('native-thread-a');
+    expect(current.metadata.oapClearThreadId).toBe('native-thread-a');
+
+    await runtime.hub;
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.metadata.oapClearThreadId).toBeUndefined();
+    expect(
+      host.operations
+        .filter(({ op }) => op === 'open')
+        .map(({ params }) => (params.request as { payload: { reopen?: boolean } }).payload.reopen)
+    ).toEqual([true, undefined]);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
+
+  test('a clear interrupted before fresh open inspects the old binding without sending on it', async () => {
+    const host = fixture({ known: true, freshId: 'native-thread-b', failFreshOpenOnce: true });
+    const current = session('native-thread-a', 2);
+    const runtime = host.runtime(current);
+    await runtime.hub;
+    await expect(runtime.clear()).rejects.toThrow('synthetic interrupted fresh open');
+    expect(current.sdkSessionId).toBe('native-thread-a');
+    expect(current.metadata.oapClearThreadId).toBe('native-thread-a');
+
+    await runtime.hub;
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.metadata.oapClearThreadId).toBeUndefined();
+    expect(
+      host.operations
+        .filter(({ op }) => op === 'open')
+        .map(({ params }) => (params.request as { payload: { reopen?: boolean } }).payload.reopen)
+    ).toEqual([true, undefined, true, undefined]);
+    expect(host.operations.filter(({ op }) => op === 'close')).toHaveLength(2);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
+
+  test('a lost fresh-open response adopts that thread without opening another', async () => {
+    const host = fixture({
+      known: true,
+      freshId: 'native-thread-b',
+      loseFreshOpenResponseOnce: true,
+    });
+    const current = session('native-thread-a', 2);
+    const runtime = host.runtime(current);
+    await runtime.hub;
+    await expect(runtime.clear()).rejects.toThrow('synthetic lost fresh open response');
+    expect(current.metadata.oapClearThreadId).toBe('native-thread-a');
+
+    await runtime.hub;
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.metadata.oapClearThreadId).toBeUndefined();
+    expect(
+      host.operations
+        .filter(({ op }) => op === 'open')
+        .map(({ params }) => (params.request as { payload: { reopen?: boolean } }).payload.reopen)
+    ).toEqual([true, undefined]);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
+
   test('persists the native thread id and keeps a live session usable on later turns', async () => {
     const host = fixture();
     const current = session();

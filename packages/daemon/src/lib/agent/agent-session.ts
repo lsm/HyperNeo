@@ -48,6 +48,7 @@ import { ErrorCategory, ErrorManager, type StructuredError } from '../error-mana
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import { OapReopenRefusedError } from '../oap/oap-reopen.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import {
   type CallerScopeResolver,
@@ -86,10 +87,10 @@ export class ClearConversationCancelledError extends Error {
 }
 
 export class ClearConversationUnsupportedError extends Error {
-  constructor() {
-    super(
-      'Clearing a Codex conversation is not supported yet. The existing thread was not cleared.'
-    );
+  constructor(
+    message = 'Clearing a Codex conversation is not supported yet. The existing thread was not cleared.'
+  ) {
+    super(message);
     this.name = 'ClearConversationUnsupportedError';
   }
 }
@@ -1284,21 +1285,32 @@ export class AgentSession
   }
 
   async clearConversationContext(boundaryOwner?: ContextClearBoundaryOwner): Promise<void> {
-    if (this.session.config.harness === 'codex') await this.refuseContextClear();
+    const clear = () =>
+      this.session.config.harness === 'codex'
+        ? this.clearCodexContext()
+        : this.runClearConversationFlow();
     if (boundaryOwner) {
-      await this.runClearConversationFlow();
+      await clear();
       return;
     }
     const owner = await acquireContextClearBoundary(this.session.id);
     try {
-      await this.runClearConversationFlow();
+      await clear();
     } finally {
       owner.release();
     }
   }
 
   async startFreshContext(): Promise<void> {
-    if (this.session.config.harness === 'codex') await this.refuseContextClear();
+    if (this.session.config.harness === 'codex') {
+      const owner = await acquireContextClearBoundary(this.session.id);
+      try {
+        await this.clearCodexContext();
+      } finally {
+        owner.release();
+      }
+      return;
+    }
     const reset = await this.resetQuery({ restartQuery: false });
     if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
     await this.retirePastSdkContext();
@@ -1310,8 +1322,23 @@ export class AgentSession
     });
   }
 
-  private async refuseContextClear(): Promise<never> {
-    const error = new ClearConversationUnsupportedError();
+  private async clearCodexContext(): Promise<void> {
+    if (!this.oap?.clear) await this.refuseContextClear();
+    try {
+      const reset = await this.resetQuery({ restartQuery: false });
+      if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
+      await this.retirePastSdkContext();
+      await this.oap!.clear!();
+    } catch (error) {
+      if (error instanceof OapReopenRefusedError)
+        throw new ClearConversationUnsupportedError(error.message);
+      this.logger.warn('Failed to clear the Codex thread:', error);
+      await this.refuseContextClear('Could not clear the Codex thread. No message was sent.');
+    }
+  }
+
+  private async refuseContextClear(message?: string): Promise<never> {
+    const error = new ClearConversationUnsupportedError(message);
     try {
       await this.showNotice(error.message);
     } catch (cause) {

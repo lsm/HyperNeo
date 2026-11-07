@@ -360,6 +360,7 @@ interface RetryTeardownOptions {
 export interface OapQueryRuntime {
   openDirectorySupported: boolean;
   hub: OapQueryHub | Promise<OapQueryHub>;
+  clear?(): Promise<void>;
 }
 
 export interface QueryRunnerContext {
