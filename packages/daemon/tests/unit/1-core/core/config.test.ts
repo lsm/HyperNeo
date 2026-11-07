@@ -46,6 +46,11 @@ describe('getConfig', () => {
     expect(config.structuredLogMaxPendingBytes).toBe(2 * 1024 * 1024);
   });
 
+  test('does not add OAP settings to an unconfigured daemon', () => {
+    delete process.env.HYPERNEO_OAP_BINARY_PATH;
+    expect(getConfig()).not.toHaveProperty('oap');
+  });
+
   test('configures an explicitly pinned OAP binary without changing the SDK default', () => {
     process.env.HYPERNEO_DATA_DIR = '/synthetic/hyperneo';
     delete process.env.HYPERNEO_OAP_BINARY_PATH;
