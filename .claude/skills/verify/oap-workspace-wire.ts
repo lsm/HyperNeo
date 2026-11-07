@@ -23,6 +23,10 @@ const peer = join(run, 'synthetic-codex');
 writeFileSync(peer, `#!/usr/bin/python3
 import json,os,sys
 log=os.path.join(os.environ['CODEX_HOME'],'calls.jsonl')
+marker=os.path.join(os.environ['CODEX_HOME'],'fail-first')
+if os.path.exists(marker):
+ os.unlink(marker)
+ sys.exit(23)
 def emit(value): print(json.dumps(value),flush=True)
 for line in sys.stdin:
  request=json.loads(line)
@@ -50,6 +54,7 @@ for line in sys.stdin:
   emit({'method':'turn/completed','params':{'threadId':request['params']['threadId'],'turn':{'id':request['params']['turnId'],'status':'interrupted'}}})
 `);
 chmodSync(peer, 0o700);
+if (mode === 'retry') writeFileSync(join(run, 'codex-home/fail-first'), 'synthetic');
 Object.assign(process.env, {
   HYPERNEO_OAP_BINARY_PATH: binary,
   HYPERNEO_OAP_VERSION: version,
@@ -101,6 +106,17 @@ try {
     assert.equal(calls().length, 0);
     assert.equal(existsSync(join(run, 'data/oap/oap-serve.json')), false);
     Object.assign(evidence, { port: app.server.port, mismatchedDigestRefused: true, syntheticPeerStarts: 0, pass: true });
+  } else if (mode === 'retry') {
+    const failure = await Promise.resolve(first.oap!.hub).then(() => '', (error: Error) => error.message);
+    assert(failure, 'the first synthetic app-server start must fail');
+    const resumedHub = await first.oap!.hub;
+    assert(resumedHub);
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic after open retry' });
+    await waitFor(() => app!.db.getSDKMessages(firstId).messages.some((row) => row.type === 'result'), 'turn after open retry');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal(turns.length, 1);
+    assert(JSON.stringify(turns[0]).includes('Synthetic after open retry'));
+    Object.assign(evidence, { port: app.server.port, firstOpenFailed: true, laterOpenSucceeded: true, submittedTurns: turns.length, pass: true });
   } else if (mode === 'question') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic free text question' });
     await waitFor(() => errors.some((error) => /unsupported text question/i.test(error)), 'visible unsupported text question');
@@ -160,6 +176,12 @@ try {
     assert.equal(firstResults, 3);
     assert.equal(secondResults, 1);
     assert.equal(errors.length, 0, JSON.stringify(errors));
+    await hub.request('session.delete', { sessionId: secondId });
+    assert.equal(app.db.getSession(secondId), null);
+    await assert.rejects(Promise.resolve(second.oap!.hub), /deleted/i);
+    const live = await engineHub.request('sessions') as { sessions: Array<{ session_id: string }> };
+    assert(live.sessions.some((entry) => entry.session_id === firstId));
+    assert(!live.sessions.some((entry) => entry.session_id === secondId));
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic hold for crash' });
     await waitFor(() => calls().some((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash')), 'in-flight run before hub crash');
     const child = (engineHub as unknown as { child: { pid: number; kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
@@ -172,7 +194,7 @@ try {
     const heldTurns = calls().filter((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash'));
     assert.equal(heldTurns.length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 2);
-    Object.assign(evidence, { port: app.server.port, runtimeInjected: false, distinctWorkspaceSessions: 2, queryHubsPerSession: true, sharedDaemonHub: true, firstSessionCompletedTurns: firstResults, secondSessionCompletedTurns: secondResults, resultWindowQueued: true, queuedVia: 'messageQueue', textDeltasPerTurn: 96, isolatedCodexHome: true, approvalPolicy: 'on-request', sandbox: 'workspace-write', developerInstructionsSent: false, experimentalApiEnabled: false, crashedRunSubmissions: heldTurns.length, automaticResendsObserved: 0, pass: true });
+    Object.assign(evidence, { port: app.server.port, runtimeInjected: false, distinctWorkspaceSessions: 2, queryHubsPerSession: true, sharedDaemonHub: true, deletedSessionReleased: true, remainingSessionKept: true, firstSessionCompletedTurns: firstResults, secondSessionCompletedTurns: secondResults, resultWindowQueued: true, queuedVia: 'messageQueue', textDeltasPerTurn: 96, isolatedCodexHome: true, approvalPolicy: 'on-request', sandbox: 'workspace-write', developerInstructionsSent: false, experimentalApiEnabled: false, crashedRunSubmissions: heldTurns.length, automaticResendsObserved: 0, pass: true });
   }
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
