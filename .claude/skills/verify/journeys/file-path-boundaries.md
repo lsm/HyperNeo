@@ -5,8 +5,9 @@ synthetic vectors in `packages/shared/tests/fixtures/file-path-boundaries.json`.
 No captured messages or real database are fixtures.
 
 The helper publishes each vector through real Neo MCP and reads every expected
-path through the actual `file.reference.read` WebSocket door. An unknown extension
-still returns `unsupported_type`, rather than an authorization refusal. Shared extraction
+path through the actual `file.reference.read` WebSocket door. A path whose format
+the daemon cannot preview gets no link or card, and its explicit read still returns
+`unsupported_type`, rather than an authorization refusal. Shared extraction
 and web FileReferenceCards must agree with the same vectors. Before the fix,
 `报告：/…/b.md` has no card and its exact read is forbidden. After the fix, its
 current bytes are readable. Unmentioned files must stay forbidden and no artifact

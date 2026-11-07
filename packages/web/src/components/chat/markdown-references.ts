@@ -10,6 +10,18 @@ function mark(element: Element, reference: string, label = reference) {
   element.setAttribute('aria-label', t('artifact.openNamed', { name: label }));
 }
 
+export function demoteLocalFileLinks(container: HTMLElement, references: readonly string[]) {
+  const linked = new Set(references);
+  container.querySelectorAll('a[href]').forEach((anchor) => {
+    const href = anchor.getAttribute('href') ?? '';
+    const local = /^(?:\/(?!\/)|~\/|file:)/.test(href) && /\.[\w-]+$/.test(href);
+    if (!local || linked.has(href)) return;
+    const span = document.createElement('span');
+    span.append(...anchor.childNodes);
+    anchor.replaceWith(span);
+  });
+}
+
 export function markPreviewReferences(
   container: HTMLElement,
   references: readonly string[],

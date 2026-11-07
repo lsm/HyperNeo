@@ -24,4 +24,19 @@ describe('automatically linked file references', () => {
       )
     ).toEqual(refs);
   });
+  test('links local files only in formats the daemon previews, and leaves web links alone', () => {
+    const pinned = `https://github.com/example/project/blob/${'a'.repeat(40)}/scripts/run.sh`;
+    const text = [
+      '[Run](/owner/run.sh)',
+      '[Doc](/owner/doc.pdf)',
+      '[Notes](file:///owner/notes.md)',
+      `[Pinned](${pinned})`,
+      '[PR](https://github.com/example/project/pull/7)',
+    ].join('\n');
+    expect(previewLinkedReferenceCandidates(text).map((ref) => ref.reference)).toEqual([
+      'file:///owner/notes.md',
+      pinned,
+      'https://github.com/example/project/pull/7',
+    ]);
+  });
 });

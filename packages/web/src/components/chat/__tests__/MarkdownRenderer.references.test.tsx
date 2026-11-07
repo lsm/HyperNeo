@@ -56,6 +56,25 @@ describe('MarkdownRenderer preview references', () => {
     expect(onReference.mock.calls.map((call) => call[0])).toEqual(references);
   });
 
+  it('shows a local file link it cannot preview as plain text', async () => {
+    const text =
+      '[the script](/owner/run-demo.sh), [the notes](/owner/notes.md), [the session](/session/abc) and [a page](https://example.com/run.sh)';
+    const { container } = render(
+      <MarkdownRenderer content={text} references={['/owner/notes.md']} />
+    );
+    await waitFor(() => expect(screen.getByText('the script')).toBeTruthy());
+    const anchors = Array.from(container.querySelectorAll('a')).map((a) => a.textContent);
+    expect(anchors).toEqual(['the notes', 'the session', 'a page']);
+    expect(screen.getByText('the script').closest('[data-preview-reference]')).toBeNull();
+    expect(screen.getByText('the notes').closest('[data-preview-reference]')).toBeTruthy();
+  });
+
+  it('keeps local links when no references are given', async () => {
+    const { container } = render(<MarkdownRenderer content="[the script](/owner/run-demo.sh)" />);
+    await waitFor(() => expect(screen.getByText('the script')).toBeTruthy());
+    expect(container.querySelectorAll('a')).toHaveLength(1);
+  });
+
   it('leaves other links and code blocks alone', async () => {
     const { container, onReference } = await renderWith();
     expect(screen.getByText('the site').getAttribute('href')).toBe('https://example.com');
