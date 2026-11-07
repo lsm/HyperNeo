@@ -453,6 +453,90 @@ describe('QueryRunner', () => {
       startup.mockRestore();
     });
 
+    it('rejects a missing workspace capability even if a Codex factory is present', async () => {
+      const createQuery = mock(() => {
+        throw new Error('unexpected factory');
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        messageQueue: queue,
+        oap: { openDirectorySupported: false, createQuery },
+      });
+      const sent = queue
+        .enqueueWithId('missing-capability', 'hello', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      await ctx.queryPromise;
+      expect((await sent).message).toMatch(/open-directory.*not available/i);
+      expect(createQuery).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { name: 'tool guards', config: { toolGuards: [{}] }, context: undefined },
+      { name: 'worker operations', config: { workerOperations: true }, context: undefined },
+      { name: 'Space', config: {}, context: { spaceId: 'synthetic-space' } },
+    ])('refuses Codex sessions requiring $name', async ({ config, context }) => {
+      const createQuery = mock(() => {
+        throw new Error('unexpected factory');
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          context,
+          config: { model: 'unit', provider: providerId, harness: 'codex', ...config },
+        } as Session,
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, createQuery },
+      });
+      const sent = queue
+        .enqueueWithId('unsafe-session', 'hello', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      await ctx.queryPromise;
+      expect((await sent).message).toMatch(/Codex.*not supported/i);
+      expect(createQuery).not.toHaveBeenCalled();
+    });
+
+    it('does not replay a Codex submit when its hub disconnects', async () => {
+      const submit = mock(async () => {
+        throw new Error('ECONNRESET synthetic hub');
+      });
+      const createQuery = mock(
+        (prompt: AsyncIterable<SDKUserMessage>) =>
+          new OapQuery({
+            sessionId: 'test-session-id',
+            prompt,
+            hub: { submit, cancel: async () => {}, events: async function* () {} },
+            translator: { translate: () => [] },
+          })
+      );
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, createQuery },
+      });
+      const sent = queue
+        .enqueueWithId('hub-failure', 'hello', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      await ctx.queryPromise;
+      expect((await sent).message).toMatch(/ECONNRESET/);
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(createQuery).toHaveBeenCalledTimes(1);
+    });
+
     it('delivers injected query messages without calling the SDK query', async () => {
       const message = { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
       const fake = {
