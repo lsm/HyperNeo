@@ -85,6 +85,15 @@ export class ClearConversationCancelledError extends Error {
   }
 }
 
+export class ClearConversationUnsupportedError extends Error {
+  constructor() {
+    super(
+      'Clearing a Codex conversation is not supported yet. The existing thread was not cleared.'
+    );
+    this.name = 'ClearConversationUnsupportedError';
+  }
+}
+
 interface NoPidTrackedProcess {
   proc: TrackedAgentProcess;
   exitPromise?: Promise<void>;
@@ -1275,6 +1284,7 @@ export class AgentSession
   }
 
   async clearConversationContext(boundaryOwner?: ContextClearBoundaryOwner): Promise<void> {
+    if (this.session.config.harness === 'codex') await this.refuseContextClear();
     if (boundaryOwner) {
       await this.runClearConversationFlow();
       return;
@@ -1288,6 +1298,7 @@ export class AgentSession
   }
 
   async startFreshContext(): Promise<void> {
+    if (this.session.config.harness === 'codex') await this.refuseContextClear();
     const reset = await this.resetQuery({ restartQuery: false });
     if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
     await this.retirePastSdkContext();
@@ -1297,6 +1308,25 @@ export class AgentSession
       sdkSessionId: undefined,
       sdkOriginPath: undefined,
     });
+  }
+
+  private async refuseContextClear(): Promise<never> {
+    const error = new ClearConversationUnsupportedError();
+    try {
+      await this.showNotice(error.message);
+    } catch (cause) {
+      this.logger.warn('Failed to save the Codex context-clear refusal:', cause);
+      this.internalEventBus.publishAsync('session.error', {
+        sessionId: this.session.id,
+        error: error.message,
+        details: {
+          category: ErrorCategory.SYSTEM,
+          message: error.message,
+          userMessage: error.message,
+        },
+      });
+    }
+    throw error;
   }
 
   private async retirePastSdkContext(): Promise<void> {

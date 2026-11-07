@@ -4,6 +4,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   AgentSession,
   ClearConversationCancelledError,
+  ClearConversationUnsupportedError,
 } from '../../../../src/lib/agent/agent-session.ts';
 import {
   clearContextClearBoundariesForTest,
@@ -114,6 +115,107 @@ function makeClearErrorResult(uuid: string, userMessageUuid?: string): SDKMessag
 }
 
 describe('AgentSession.clearConversationContext', () => {
+  it.each(['startFreshContext', 'clearConversationContext'] as const)(
+    'visibly refuses %s for a Codex thread without changing its identity or sending /clear',
+    async (operation) => {
+      const session = createAgentSession({
+        sdkSessionId: 'native-thread-1',
+        sdkOriginPath: '/synthetic/original',
+        config: { model: 'synthetic', harness: 'codex' },
+      } as Partial<Session>);
+      const reset = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
+      const enqueue = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+      const start = spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(
+        undefined
+      );
+      spyOn(session.messageHandler, 'armSuppressedResultWait').mockResolvedValue('confirmed');
+      spyOn(session.messageHandler, 'startSuppressedResultTimer').mockImplementation(() => {});
+
+      await expect(session[operation]()).rejects.toThrow(/codex.*clear|clear.*codex/i);
+
+      expect(session.session.sdkSessionId).toBe('native-thread-1');
+      expect(session.session.sdkOriginPath).toBe('/synthetic/original');
+      expect(session.db.updateSession).not.toHaveBeenCalled();
+      expect(reset).not.toHaveBeenCalled();
+      expect(start).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(session.db.saveSDKMessage).toHaveBeenCalledWith(
+        session.session.id,
+        expect.objectContaining({
+          type: 'assistant',
+          message: expect.objectContaining({
+            content: [
+              expect.objectContaining({
+                text: expect.stringMatching(/codex.*clear|clear.*codex/i),
+              }),
+            ],
+          }),
+        })
+      );
+      expect(session.messageHub.event).toHaveBeenCalledWith(
+        'state.sdkMessages.delta',
+        expect.objectContaining({ added: expect.any(Array) }),
+        { channel: `session:${session.session.id}` }
+      );
+    }
+  );
+
+  it('still clears the SDK identity when starting a fresh SDK context', async () => {
+    const session = createAgentSession({
+      sdkSessionId: 'sdk-1',
+      sdkOriginPath: '/synthetic/original',
+    });
+    const reset = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
+    await session.startFreshContext();
+    expect(reset).toHaveBeenCalledWith({ restartQuery: false });
+    expect(session.session.sdkSessionId).toBeUndefined();
+    expect(session.db.updateSession).toHaveBeenCalledWith(session.session.id, {
+      sdkSessionId: undefined,
+      sdkOriginPath: undefined,
+    });
+  });
+
+  it.each(['startFreshContext', 'clearConversationContext'] as const)(
+    'keeps %s refused when persisting its Codex notice throws',
+    async (operation) => {
+      const session = createAgentSession({
+        sdkSessionId: 'native-thread-1',
+        config: { model: 'synthetic', harness: 'codex' },
+      } as Partial<Session>);
+      spyOn(session, 'showNotice').mockRejectedValue(new Error('synthetic storage failure'));
+      const reset = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
+      await expect(session[operation]()).rejects.toBeInstanceOf(ClearConversationUnsupportedError);
+      expect(session.session.sdkSessionId).toBe('native-thread-1');
+      expect(reset).not.toHaveBeenCalled();
+      expect(session.internalEventBus.publishAsync).toHaveBeenCalledWith(
+        'session.error',
+        expect.objectContaining({
+          sessionId: session.session.id,
+          error: expect.stringMatching(/codex.*clear|clear.*codex/i),
+        })
+      );
+    }
+  );
+
+  it('publishes a session error when the Codex refusal cannot be saved', async () => {
+    const session = createAgentSession({
+      sdkSessionId: 'native-thread-1',
+      config: { model: 'synthetic', harness: 'codex' },
+    } as Partial<Session>);
+    spyOn(session.db, 'saveSDKMessage').mockResolvedValue(false);
+    await expect(session.startFreshContext()).rejects.toBeInstanceOf(
+      ClearConversationUnsupportedError
+    );
+    expect(session.internalEventBus.publishAsync).toHaveBeenCalledWith(
+      'session.error',
+      expect.objectContaining({
+        sessionId: session.session.id,
+        error: expect.stringMatching(/codex.*clear|clear.*codex/i),
+      })
+    );
+    expect(session.session.sdkSessionId).toBe('native-thread-1');
+  });
+
   it('issues /clear as an internal control message after ensuring the query is pulling', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     const order: string[] = [];

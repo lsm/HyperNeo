@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session';
+import {
+  ClearConversationCancelledError,
+  ClearConversationUnsupportedError,
+} from '../../../../src/lib/agent/agent-session';
 import {
   admitAcrossContextClearBoundary,
   clearContextClearBoundariesForTest,
@@ -741,6 +744,32 @@ describe('QueryModeHandler', () => {
       await expect(handler.handleQueryTrigger()).rejects.toBeInstanceOf(
         ClearConversationCancelledError
       );
+    });
+
+    it('does not flush a deferred task when Codex context clearing is unsupported', async () => {
+      seedRow('uuid-task', 'do not send with old context', 'deferred', {
+        isSynthetic: true,
+        inputKind: 'task',
+      });
+      const handler = createHandler({
+        session: {
+          ...mockSession,
+          sdkSessionId: 'native-thread',
+          config: { ...mockSession.config, harness: 'codex' },
+        },
+        slotResetsContext: () => true,
+        clearConversationContext: async () => {
+          throw new ClearConversationUnsupportedError();
+        },
+      });
+
+      expect(await handler.handleQueryTrigger()).toMatchObject({
+        success: false,
+        messageCount: 0,
+        error: expect.stringMatching(/codex.*clear|clear.*codex/i),
+      });
+      expect(deliveryUuids()).toHaveLength(0);
+      expect(sendStatusByUuid('uuid-task')).toBe('deferred');
     });
   });
 });

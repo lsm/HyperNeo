@@ -91,6 +91,53 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 2000
     await new Promise((done) => setTimeout(done, 20));
   }
 }
+async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessionId: string, text: string): Promise<void> {
+  assert(process.env.VERIFY_BROWSER);
+  const root = resolve('packages/web/dist');
+  assert(existsSync(join(root, 'index.html')), 'build the web bundle before the browser proof');
+  const web = Bun.serve({ hostname: '127.0.0.1', port: 0,
+    websocket: createWebSocketHandlers(currentApp.transport, currentApp.sessionManager),
+    async fetch(req, server) {
+      const refused = await currentApp.guardRequest(req);
+      if (refused) return refused;
+      const path = new URL(req.url).pathname;
+      if (path === '/ws') {
+        const device = await currentApp.authenticateUpgrade(req, server.requestIP(req)?.address ?? null);
+        if (!device) return new Response('Device pairing required', { status: 401 });
+        if (server.upgrade(req, { data: { connectionSessionId: 'global', device } })) return;
+        return new Response('Upgrade failed', { status: 500 });
+      }
+      const file = resolve(root, `.${path}`);
+      if (file.startsWith(`${root}/`) && await Bun.file(file).exists()) return new Response(Bun.file(file));
+      const neo = resolveNeoEntry(new URL(req.url));
+      if (neo?.kind === 'redirect') return Response.redirect(new URL(neo.location, req.url));
+      return new Response(Bun.file(`${root}${neo?.kind === 'entry' ? neo.path : '/index.html'}`));
+    },
+  });
+  assert.notEqual(web.port, 8399);
+  assert.notEqual(web.port, 8499);
+  try {
+    const { chromium } = createRequire(import.meta.url)('playwright');
+    const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
+    try {
+      const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
+      const base = `http://127.0.0.1:${web.port}`;
+      await context.route('**/*', (route: { request(): { url(): string }; continue(): void; abort(): void }) => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      await context.addCookies([{ name: 'hyperneo_device', value: readFileSync(join(run, 'data/local-rpc.credential'), 'utf8'), url: base }]);
+      const page = await context.newPage();
+      await page.goto(`${base}/session/${sessionId}`);
+      const notice = page.getByText(text, { exact: true }).last();
+      await notice.waitFor({ timeout: 20000 });
+      await notice.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: join(run, 'evidence/oap-reopen-session.png'), animations: 'disabled' });
+      await page.goto(`${base}/neo`);
+      await page.locator('.neo-shell').waitFor({ timeout: 20000 });
+      await page.screenshot({ path: join(run, 'evidence/oap-reopen-neo.png'), animations: 'disabled' });
+      Object.assign(evidence, { browserPort: web.port, visibleNoticeRendered: true });
+      await context.close();
+    } finally { await browser.close(); }
+  } finally { web.stop(true); }
+}
 try {
   app = await createDaemonApp({ config: { ...config, disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
   assert.notEqual(app.server.port, 8399);
@@ -135,6 +182,27 @@ try {
     assert.equal(calls().length, 0);
     assert.equal(existsSync(join(run, 'data/oap/oap-serve.json')), false);
     Object.assign(evidence, { port: app.server.port, mismatchedDigestRefused: true, syntheticPeerStarts: 0, pass: true });
+  } else if (mode === 'clear-refused' || mode === 'clear-refused-web') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic original conversation' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 1 && !first.queryPromise, 'original native turn');
+    const nativeId = app.db.getSession(firstId)?.sdkSessionId;
+    assert.equal(nativeId, 'native-workspace-a');
+    await assert.rejects(first.startFreshContext(), /codex.*clear|clear.*codex/i);
+    await assert.rejects(first.clearConversationContext(), /codex.*clear|clear.*codex/i);
+    assert.equal(first.session.sdkSessionId, nativeId);
+    assert.equal(app.db.getSession(firstId)?.sdkSessionId, nativeId);
+    const notices = app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('Clearing a Codex conversation is not supported yet.'));
+    assert.equal(notices.length, 2);
+    if (mode === 'clear-refused-web') await verifyNoticeInBrowser(app, firstId, 'Clearing a Codex conversation is not supported yet. The existing thread was not cleared.');
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic explicit next message' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === 2 && !first.queryPromise, 'explicit turn after clear refusal');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal(turns.length, 2);
+    assert(turns.every((call) => (call.request.params as { threadId?: string }).threadId === nativeId));
+    assert(turns.every((call) => !JSON.stringify(call).includes('/clear')));
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
+    Object.assign(evidence, { port: app.server.port, bothClearPathsRefused: true, visibleNotices: notices.length, originalIdPreserved: true, controlMessagesSent: 0, explicitTurns: turns.length, pass: true });
   } else if (mode === 'submit-internal') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic crash during admission' });
     await waitFor(() => calls().some((call) => call.request.method === 'turn/start'), 'native submit before crash');
@@ -162,54 +230,7 @@ try {
     assert.equal(app.db.getSession(firstId)?.sdkSessionId, saved);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
-    if (mode === 'missing-history-web') {
-      assert(process.env.VERIFY_BROWSER);
-      const root = resolve('packages/web/dist');
-      assert(existsSync(join(root, 'index.html')), 'build the web bundle before the browser proof');
-      const currentApp = app;
-      const web = Bun.serve({ hostname: '127.0.0.1', port: 0,
-        websocket: createWebSocketHandlers(currentApp.transport, currentApp.sessionManager),
-        async fetch(req, server) {
-          const refused = await currentApp.guardRequest(req);
-          if (refused) return refused;
-          const path = new URL(req.url).pathname;
-          if (path === '/ws') {
-            const device = await currentApp.authenticateUpgrade(req, server.requestIP(req)?.address ?? null);
-            if (!device) return new Response('Device pairing required', { status: 401 });
-            if (server.upgrade(req, { data: { connectionSessionId: 'global', device } })) return;
-            return new Response('Upgrade failed', { status: 500 });
-          }
-          const file = resolve(root, `.${path}`);
-          if (file.startsWith(`${root}/`) && await Bun.file(file).exists()) return new Response(Bun.file(file));
-          const neo = resolveNeoEntry(new URL(req.url));
-          if (neo?.kind === 'redirect') return Response.redirect(new URL(neo.location, req.url));
-          return new Response(Bun.file(`${root}${neo?.kind === 'entry' ? neo.path : '/index.html'}`));
-        },
-      });
-      assert.notEqual(web.port, 8399);
-      assert.notEqual(web.port, 8499);
-      try {
-        const { chromium } = createRequire(import.meta.url)('playwright');
-        const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
-        try {
-          const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
-          const base = `http://127.0.0.1:${web.port}`;
-          await context.route('**/*', (route: { request(): { url(): string }; continue(): void; abort(): void }) => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
-          await context.addCookies([{ name: 'hyperneo_device', value: readFileSync(join(run, 'data/local-rpc.credential'), 'utf8'), url: base }]);
-          const page = await context.newPage();
-          await page.goto(`${base}/session/${firstId}`);
-          const notice = page.getByText('The previous Codex thread cannot be resumed. No new thread was started.', { exact: true });
-          await notice.waitFor({ timeout: 20000 });
-          await notice.scrollIntoViewIfNeeded();
-          await page.screenshot({ path: join(run, 'evidence/oap-reopen-session.png'), animations: 'disabled' });
-          await page.goto(`${base}/neo`);
-          await page.locator('.neo-shell').waitFor({ timeout: 20000 });
-          await page.screenshot({ path: join(run, 'evidence/oap-reopen-neo.png'), animations: 'disabled' });
-          Object.assign(evidence, { browserPort: web.port, visibleNoticeRendered: true });
-          await context.close();
-        } finally { await browser.close(); }
-      } finally { web.stop(true); }
-    }
+    if (mode === 'missing-history-web') await verifyNoticeInBrowser(app, firstId, 'The previous Codex thread cannot be resumed. No new thread was started.');
     Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, priorThreadIdPreserved: true, newThreads: 0, automaticResends: 0, pass: true });
   } else if (mode === 'reopen') {
     const seen: Array<{ type: string; uuid?: string }> = [];
