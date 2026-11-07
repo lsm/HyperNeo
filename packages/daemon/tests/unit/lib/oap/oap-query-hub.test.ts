@@ -155,6 +155,49 @@ describe('OAP query hub transport', () => {
     expect(host.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  test('rejects an overlapping submission while the first subscription is starting', async () => {
+    const host = fixture();
+    let finishSubscription!: (subscription: { id: number; unsubscribe(): Promise<void> }) => void;
+    const subscription = new Promise<{ id: number; unsubscribe(): Promise<void> }>((resolve) => {
+      finishSubscription = resolve;
+    });
+    const subscribe = mock(() => subscription);
+    const hub = createOapQueryHub({ subscribe, request: host.request } as unknown as OapHubClient);
+    const first = hub.submit('synthetic-session', prompt).catch((error: Error) => error);
+    const second = hub.submit('synthetic-session', prompt).then(
+      () => 'accepted',
+      () => 'rejected'
+    );
+    const outcome = await Promise.race([
+      second,
+      new Promise<string>((resolve) => setTimeout(() => resolve('pending'), 100)),
+    ]);
+    finishSubscription({ id: 3, unsubscribe: host.unsubscribe });
+    await first;
+    await second;
+    hub.close?.();
+    expect(outcome).toBe('rejected');
+    expect(subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test('unsubscribes without submitting when closed during subscription startup', async () => {
+    const host = fixture();
+    let finishSubscription!: (subscription: { id: number; unsubscribe(): Promise<void> }) => void;
+    const subscription = new Promise<{ id: number; unsubscribe(): Promise<void> }>((resolve) => {
+      finishSubscription = resolve;
+    });
+    const hub = createOapQueryHub({
+      subscribe: () => subscription,
+      request: host.request,
+    } as unknown as OapHubClient);
+    const submission = hub.submit('synthetic-session', prompt);
+    hub.close?.();
+    finishSubscription({ id: 3, unsubscribe: host.unsubscribe });
+    await expect(submission).rejects.toThrow(/closed/i);
+    expect(host.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(host.request).not.toHaveBeenCalled();
+  });
+
   test('refuses non-text input instead of silently dropping it', async () => {
     const host = fixture();
     const hub = createOapQueryHub(host.client);
