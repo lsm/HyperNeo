@@ -68,6 +68,10 @@ function fixture(mode: 'text' | 'failed-stream' | 'refused-submit' = 'text') {
   return { client, subscribe, request, unsubscribe, operations };
 }
 
+function releaseHub(hub: OapQueryHub): void {
+  (hub as unknown as { release(): void }).release();
+}
+
 describe('OAP query hub transport', () => {
   test('subscribes before submitting so immediate text and terminal events are not lost', async () => {
     const host = fixture();
@@ -106,6 +110,108 @@ describe('OAP query hub transport', () => {
     expect(host.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  test('keeps a session hub usable after a completed query is closed', async () => {
+    const host = fixture();
+    const hub = createOapQueryHub(host.client);
+    for (let turn = 0; turn < 2; turn++) {
+      const query = queryModule.createOapQuery({
+        sessionId: 'synthetic-session',
+        prompt: (async function* () {
+          yield prompt;
+        })(),
+        hub,
+      });
+      const messages: string[] = [];
+      for await (const message of query) messages.push(message.type);
+      query.close();
+      expect(messages).toEqual(['assistant', 'result']);
+    }
+    expect(host.operations.filter((op) => op === 'submit')).toHaveLength(2);
+    expect(host.unsubscribe).toHaveBeenCalledTimes(2);
+  });
+
+  test('delivers a synchronous burst of 512 events and its terminal without dropping any', async () => {
+    let receive!: Listener;
+    const unsubscribe = mock(async () => {});
+    const subscribe = mock(async (_session: string, listener: Listener) => {
+      receive = listener;
+      return { id: 3, unsubscribe };
+    });
+    const request = mock(async () => {
+      for (let index = 0; index < 512; index++) {
+        const envelope = {
+          type: 'content.delta',
+          id: `delta-${index}`,
+          run_id: 'run-1',
+          payload: { part: { type: 'text', text: String(index) } },
+        };
+        receive({
+          kind: 'event',
+          id: 3,
+          event: 'envelope',
+          data: { id: 3, event: 'envelope', envelope },
+        });
+      }
+      const envelope = { type: 'run.completed', id: 'terminal', run_id: 'run-1', payload: {} };
+      receive({
+        kind: 'event',
+        id: 3,
+        event: 'envelope',
+        data: { id: 3, event: 'envelope', envelope },
+      });
+      return {
+        type: 'session.message.submit.response',
+        payload: { accepted: true, run_id: 'run-1' },
+      };
+    });
+    const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
+    const { runId } = await hub.submit('synthetic-session', prompt);
+    const ids: unknown[] = [];
+    for await (const event of hub.events(
+      'synthetic-session',
+      runId,
+      new AbortController().signal
+    )) {
+      ids.push(event.id);
+      if (event.type === 'run.completed') break;
+    }
+    expect(ids).toEqual([
+      ...Array.from({ length: 512 }, (_, index) => `delta-${index}`),
+      'terminal',
+    ]);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test('releasing a pending subscription lets a successor start without submitting the old one', async () => {
+    let finishFirst!: (subscription: { id: number; unsubscribe(): Promise<void> }) => void;
+    const firstSubscription = new Promise<{ id: number; unsubscribe(): Promise<void> }>(
+      (resolve) => {
+        finishFirst = resolve;
+      }
+    );
+    const oldUnsubscribe = mock(async () => {});
+    const newUnsubscribe = mock(async () => {});
+    const subscribe = mock()
+      .mockImplementationOnce(() => firstSubscription)
+      .mockImplementationOnce(async () => ({ id: 4, unsubscribe: newUnsubscribe }));
+    const request = mock(async () => ({
+      type: 'session.message.submit.response',
+      payload: { accepted: true, run_id: 'run-2' },
+    }));
+    const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
+    const old = hub.submit('synthetic-session', prompt).catch((error: Error) => error);
+    releaseHub(hub);
+    const current = await hub.submit('synthetic-session', prompt);
+    finishFirst({ id: 3, unsubscribe: oldUnsubscribe });
+    expect(await old).toBeInstanceOf(Error);
+    expect(current.runId).toBe('run-2');
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(oldUnsubscribe).toHaveBeenCalledTimes(1);
+    releaseHub(hub);
+    await Promise.resolve();
+    expect(newUnsubscribe).toHaveBeenCalledTimes(1);
+  });
+
   test('joins text blocks into the plain string required by the Codex adapter', async () => {
     const host = fixture();
     const hub = createOapQueryHub(host.client);
@@ -129,7 +235,7 @@ describe('OAP query hub transport', () => {
         }),
       })
     );
-    hub.close?.();
+    releaseHub(hub);
   });
 
   test('reports a stream failure without automatically resubmitting', async () => {
@@ -201,7 +307,7 @@ describe('OAP query hub transport', () => {
     finishSubscription({ id: 3, unsubscribe: host.unsubscribe });
     await first;
     await second;
-    hub.close?.();
+    releaseHub(hub);
     expect(outcome).toBe('rejected');
     expect(subscribe).toHaveBeenCalledTimes(1);
   });
@@ -217,7 +323,7 @@ describe('OAP query hub transport', () => {
       request: host.request,
     } as unknown as OapHubClient);
     const submission = hub.submit('synthetic-session', prompt);
-    hub.close?.();
+    releaseHub(hub);
     finishSubscription({ id: 3, unsubscribe: host.unsubscribe });
     await expect(submission).rejects.toThrow(/closed/i);
     expect(host.unsubscribe).toHaveBeenCalledTimes(1);
