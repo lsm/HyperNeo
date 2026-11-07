@@ -68,7 +68,13 @@ describe('OapEngine', () => {
     expect(launch.env).toEqual({ HOME: options.stateDirectory, CODEX_HOME: options.codexHome });
     expect(JSON.parse(await readFile(join(root, 'state', 'oap-serve.json'), 'utf8'))).toEqual({
       adapters: {
-        codex: { type: 'codex', executable: options.codexExecutable, environment: ['CODEX_HOME'] },
+        codex: {
+          type: 'codex',
+          executable: options.codexExecutable,
+          environment: ['CODEX_HOME'],
+          approval_policy: 'on-request',
+          sandbox: 'workspace-write',
+        },
       },
     });
     await engine.close();

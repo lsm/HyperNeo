@@ -26,6 +26,8 @@ describe('buildOapHubConfig', () => {
           type: 'codex',
           executable: '/synthetic/bin/codex',
           environment: ['CODEX_HOME'],
+          approval_policy: 'on-request',
+          sandbox: 'workspace-write',
         },
       },
     });
