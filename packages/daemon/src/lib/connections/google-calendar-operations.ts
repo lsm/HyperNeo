@@ -111,7 +111,7 @@ function project(value: unknown, input: Input) {
       timeZone: zone.optional(),
     })
     .parse(value);
-  const items = page.items.map(input.kind === 'events' ? eventRow : calendarRow);
+  const items = input.kind === 'events' ? page.items.map(eventRow) : page.items.map(calendarRow);
   const result = {
     ok: true as const,
     untrusted: true as const,
