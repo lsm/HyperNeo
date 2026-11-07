@@ -70,6 +70,7 @@ describe('openVoiceStream', () => {
     const { hub, request } = fakeHub(streaming);
     const first = openVoiceStream(hub, vi.fn());
     setVoiceLanguage('zh');
+    await vi.waitFor(() => expect(calls(request, 'voice.stream.start')).toHaveLength(1));
     expect(calls(request, 'voice.stream.start')).toEqual([
       ['voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 }],
     ]);
@@ -156,6 +157,7 @@ describe('openVoiceStream', () => {
     const abandoned = fakeHub(streaming);
     const live = openVoiceStream(abandoned.hub, vi.fn());
     live.push(new Float32Array(1_600), 16_000);
+    await vi.waitFor(() => expect(calls(abandoned.request, 'voice.stream.start')).toHaveLength(1));
     live.close();
     live.close();
     await vi.waitFor(() =>
