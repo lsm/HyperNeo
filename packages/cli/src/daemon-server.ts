@@ -1,3 +1,4 @@
+import { secureDataRoot } from '@hyperneo/daemon/lib/data-root-private';
 import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
@@ -11,6 +12,7 @@ const log = createLogger('hyperneo:cli:daemon-server');
 
 export async function startDaemonServer(config: Config) {
   log.info('Starting standalone daemon...');
+  secureDataRoot(getDataDir(), { log: (line) => log.info(line) });
 
   let isShuttingDown = false;
   let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;

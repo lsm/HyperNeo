@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, type ChildProcess } from 'child_process';
+import { rmSync } from 'node:fs';
 import * as path from 'path';
 import * as net from 'net';
 
@@ -92,6 +93,7 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
     if (serverProcess && !serverProcess.killed) {
       serverProcess.kill('SIGKILL');
     }
+    rmSync(`${testWorkspace}-data`, { recursive: true, force: true });
   });
 
   test(
@@ -106,6 +108,8 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
           env: {
             ...process.env,
             NODE_ENV: 'test',
+            HYPERNEO_DATA_DIR: `${testWorkspace}-data`,
+            DB_PATH: `${testWorkspace}-data/daemon.db`,
           },
           stdio: 'pipe',
         }
@@ -172,6 +176,8 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
           env: {
             ...process.env,
             NODE_ENV: 'test',
+            HYPERNEO_DATA_DIR: `${testWorkspace}-data`,
+            DB_PATH: `${testWorkspace}-data/daemon.db`,
           },
           stdio: 'pipe',
         }

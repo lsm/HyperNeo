@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDaemonApp } from '../../../../src/app';
-import type { Config } from '../../../../src/config';
 import { secureDataRoot } from '../../../../src/lib/data-root-private';
 
 const mode = (path: string) => lstatSync(path).mode & 0o777;
@@ -66,16 +73,5 @@ describe('secureDataRoot', () => {
     const file = join(root, 'later.txt');
     writeFileSync(file, 'synthetic');
     expect(mode(file)).toBe(0o600);
-  });
-
-  test('the daemon refuses to start on a symlinked data root', async () => {
-    const target = join(home, 'elsewhere');
-    mkdirSync(target);
-    const root = join(home, '.hyperneo');
-    symlinkSync(target, root);
-    const config = { dbPath: join(home, 'daemon.db') } as Config;
-    await expect(createDaemonApp({ config, verbose: false, dataRoot: root })).rejects.toThrow(
-      'symlink'
-    );
   });
 });
