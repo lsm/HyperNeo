@@ -88,6 +88,17 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.neoUnhandled).toBe(2);
   });
 
+  test('retains the step details whose serialized payload fits the remaining budget', () => {
+    const full = snapshot(2, 0);
+    full.todoAsks![0].todos[0].worker = { adapter: 'hyperneo', id: 'w'.repeat(10_000) };
+    const fitted = fitNeoSnapshotBudget(full, 2_000);
+    expect(fitted.todoAsks?.map((item) => item.ask.id)).toEqual(['o0', 'o1']);
+    expect(fitted.todoAsks?.flatMap((item) => item.todos.map((todo) => todo.id))).toEqual(['o1-t']);
+    expect(bytes(fitted)).toBeLessThanOrEqual(2_000);
+    expect(fitted.trimmed).toContain('neo.ask.read');
+    expect(full.todoAsks![0].todos[0].worker?.id).toHaveLength(10_000);
+  });
+
   test('the trimmed note fits when mandatory headers fit the budget', () => {
     for (const budget of [6_000, 20_000]) {
       const fitted = fitNeoSnapshotBudget(snapshot(30, 30), budget);
