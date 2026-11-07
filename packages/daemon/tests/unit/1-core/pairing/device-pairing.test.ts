@@ -234,9 +234,9 @@ describe('device pairing', () => {
     const next = await call('device.pair.create', { kind: 'human' }, door);
     expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(403);
     expect((await call('device.pair.pending', {}, owner)).pending[0].requestedName).toBe('Tablet');
-    expect(await pair(next.code, 'Tablet', 'later-request-id-0002')).toMatchObject({
-      status: 401,
-      body: { error: 'invalid_code' },
+    expect(await pair(next.code, 'Tablet', 'later-request-id-0002')).toEqual({
+      status: 409,
+      body: { error: 'code_used_elsewhere' },
     });
     expect((await call('device.pair.pending', {}, owner)).pending).toEqual([]);
     expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(401);
@@ -254,7 +254,7 @@ describe('device pairing', () => {
     expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(403);
     expect(await call('device.pair.approve', { codeId: next.codeId }, owner)).toEqual({ ok: true });
     const intruder = await pair(next.code, 'Tablet', 'later-request-id-0002');
-    expect(intruder).toEqual({ status: 401, body: { error: 'invalid_code' } });
+    expect(intruder).toEqual({ status: 409, body: { error: 'code_used_elsewhere' } });
     expect(repo.listDevices().map((device) => device.name)).toEqual(['Laptop']);
 
     const again = await call('device.pair.create', { kind: 'human' }, door);
