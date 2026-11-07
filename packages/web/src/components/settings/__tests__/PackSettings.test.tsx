@@ -179,3 +179,22 @@ test('renders field and choice labels supplied by the pack preferences response'
   expect(ui.getByRole('combobox', { name: 'Pack-provided question' })).toBeTruthy();
   expect(ui.getByRole('option', { name: 'Pack-provided choice' })).toBeTruthy();
 });
+
+test('shows an unanswered field when its declaration has no choice labels', async () => {
+  request.mockResolvedValue({
+    preferences: [],
+    declarations: {
+      empty: { label: { en: 'Empty choices', 'zh-Hans': '空选项' }, valueLabels: {} },
+    },
+  });
+  const ui = await page();
+  expect(ui.getByRole('combobox', { name: 'Empty choices' })).toBeTruthy();
+  expect(ui.getByRole('option', { name: 'Unanswered' })).toBeTruthy();
+});
+
+test('keeps settings usable when an older daemon returns no declarations', async () => {
+  request.mockResolvedValue({ preferences: [] });
+  const ui = await page();
+  expect(ui.queryAllByRole('combobox')).toHaveLength(0);
+  expect(screen.getByRole('region', { name: 'Coding pack settings' })).toBeTruthy();
+});
