@@ -1,4 +1,4 @@
-import type { VoiceSettings as VoiceSettingsConfig } from '@hyperneo/shared';
+import type { VoiceMode, VoiceSettings as VoiceSettingsConfig } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
@@ -36,10 +36,21 @@ const PRESETS = {
   },
 };
 
+function hasLiveRoute(voice: VoiceSettingsConfig): boolean {
+  if (voice.streamProtocol && voice.streamProtocol !== 'deepgram') return false;
+  try {
+    const url = new URL(voice.streamEndpoint?.trim() ?? '');
+    return url.protocol === 'ws:' || url.protocol === 'wss:';
+  } catch {
+    return false;
+  }
+}
+
 export function VoiceSettings() {
   const [language, updateLanguage] = useState(getVoiceLanguage);
   const settings = globalSettings.value?.voice ?? DEFAULT_VOICE;
   const [draft, setDraft] = useState<VoiceSettingsConfig>(settings);
+  const liveRoute = hasLiveRoute(settings);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const pendingSaveRef = useRef<Promise<void>>(Promise.resolve());
@@ -234,7 +245,7 @@ export function VoiceSettings() {
 
         <SettingsRow
           label="API key"
-          description="Optional. Leave blank for local backends that do not require Authorization."
+          description="Optional. Leave blank for local backends that do not require Authorization. A saved key is bound to the batch endpoint it was saved for."
           layout="stacked"
         >
           <div class="space-y-2">
@@ -324,6 +335,45 @@ export function VoiceSettings() {
           </button>
         </SettingsRow>
       </SettingsGroup>
+      <details class="mt-4 rounded-xl border border-line">
+        <summary class="cursor-pointer px-4 py-3 text-sm font-medium text-fg">Advanced</summary>
+        <SettingsGroup>
+          <SettingsRow
+            label="Mode"
+            description="Auto uses live transcription when a route exists and falls back to batch without a route. Batch always uses batch. Streaming can only be chosen once a live endpoint route exists."
+            layout="stacked"
+          >
+            <select
+              aria-label="Voice mode"
+              value={draft.mode ?? 'auto'}
+              disabled={saving}
+              onChange={(event) => {
+                const mode = event.currentTarget.value as VoiceMode;
+                if (mode === 'streaming' && !liveRoute) {
+                  event.currentTarget.value = draft.mode ?? 'auto';
+                  toast.error('Set a supported live endpoint route before choosing streaming.');
+                  return;
+                }
+                patch({ mode });
+              }}
+              class={FORM_CONTROL_CLASS}
+            >
+              <option value="auto">Auto</option>
+              <option value="batch">Batch</option>
+              <option value="streaming" disabled={!liveRoute && draft.mode !== 'streaming'}>
+                Streaming{!liveRoute ? ' (needs a live endpoint route)' : ''}
+              </option>
+            </select>
+            {draft.mode === 'streaming' && !liveRoute && (
+              <p class="text-xs text-warning mt-2">
+                {settings.streamEndpoint?.trim()
+                  ? 'The saved streaming mode has no supported live route; streaming will be refused.'
+                  : 'The saved streaming mode has no live endpoint; voice falls back to batch.'}
+              </p>
+            )}
+          </SettingsRow>
+        </SettingsGroup>
+      </details>
     </SettingsSection>
   );
 }

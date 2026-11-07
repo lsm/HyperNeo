@@ -113,3 +113,85 @@ describe('VoiceSettings endpoint fields', () => {
     );
   });
 });
+
+describe('VoiceSettings mode', () => {
+  beforeEach(() => vi.mocked(updateGlobalSettings).mockReset());
+
+  it('exposes Auto in closed Advanced without writing, and refuses streaming without a route', () => {
+    render(<VoiceSettings />);
+    const advanced = screen.getByText('Advanced').closest('details');
+    expect(advanced?.open).toBe(false);
+    const mode = screen.getByLabelText('Voice mode') as HTMLSelectElement;
+    expect(mode.value).toBe('auto');
+    expect((mode.querySelector('option[value="streaming"]') as HTMLOptionElement).disabled).toBe(
+      true
+    );
+    fireEvent.change(mode, { target: { value: 'streaming' } });
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('preserves a saved streaming value without a live route and describes the fallback', () => {
+    globalSettings.value = {
+      voice: {
+        enabled: true,
+        endpoint: 'https://example.test/batch',
+        model: 'fixture',
+        mode: 'streaming',
+      },
+    } as GlobalSettings;
+    render(<VoiceSettings />);
+    expect((screen.getByLabelText('Voice mode') as HTMLSelectElement).value).toBe('streaming');
+    expect(screen.getByText(/saved streaming mode.*batch/i)).toBeTruthy();
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { streamEndpoint: 'https://example.test/live', streamProtocol: 'deepgram' },
+    { streamEndpoint: 'not a URL', streamProtocol: 'deepgram' },
+    { streamEndpoint: 'wss://example.test/live', streamProtocol: 'openai-realtime' },
+  ] as const)('does not offer streaming for unsupported routes: $streamEndpoint', (route) => {
+    globalSettings.value = {
+      voice: { enabled: true, endpoint: 'https://example.test/batch', model: 'fixture', ...route },
+    } as GlobalSettings;
+    render(<VoiceSettings />);
+    const option = screen.getByRole('option', {
+      name: /Streaming/,
+      hidden: true,
+    }) as HTMLOptionElement;
+    expect(option.disabled).toBe(true);
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('saves streaming when a supported live endpoint exists', async () => {
+    globalSettings.value = {
+      voice: {
+        enabled: true,
+        endpoint: 'https://example.test/batch',
+        model: 'fixture',
+        streamEndpoint: 'wss://example.test/live',
+        streamProtocol: 'deepgram',
+      },
+    } as GlobalSettings;
+    vi.mocked(updateGlobalSettings).mockResolvedValue({
+      success: true,
+      settings: {} as GlobalSettings,
+    });
+    render(<VoiceSettings />);
+    const mode = screen.getByLabelText('Voice mode') as HTMLSelectElement;
+    expect((mode.querySelector('option[value="streaming"]') as HTMLOptionElement).disabled).toBe(
+      false
+    );
+    fireEvent.change(mode, { target: { value: 'streaming' } });
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith(
+        {
+          voice: expect.objectContaining({
+            mode: 'streaming',
+            streamEndpoint: 'wss://example.test/live',
+          }),
+        },
+        { timeout: 120_000 }
+      )
+    );
+  });
+});
