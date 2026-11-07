@@ -102,6 +102,22 @@ const planFailure = (superpipe({})('oap.hub.failure') as PipelineAPI)
   .pipe(failureDiagnostic, ['message', 'stderr'], 'diagnostic')
   .end('diagnostic') as typeof failureDiagnostic;
 
+function readLine(
+  buffer: string
+): { kind: 'partial' } | { kind: 'overflow' } | { kind: 'line'; line: string; remaining: string } {
+  const newline = buffer.indexOf('\n');
+  const line = newline < 0 ? buffer : buffer.slice(0, newline);
+  if (Buffer.byteLength(line, 'utf8') > 1_048_576) return { kind: 'overflow' };
+  return newline < 0
+    ? { kind: 'partial' }
+    : { kind: 'line', line, remaining: buffer.slice(newline + 1) };
+}
+
+const planLine = (superpipe({})('oap.hub.stdoutLine') as PipelineAPI)
+  .input('buffer')
+  .pipe(readLine, 'buffer', 'line')
+  .end('line') as typeof readLine;
+
 const log = new Logger('OapHubClient');
 
 function notify(listener: Listener | undefined, frame: HubEvent | Error) {
@@ -249,16 +265,19 @@ export class OapHubClient {
   private receive(chunk: string): void {
     if (this.failure) return;
     this.buffer += chunk;
-    let newline = this.buffer.indexOf('\n');
-    while (!this.failure && newline >= 0) {
-      const line = this.buffer.slice(0, newline);
-      this.buffer = this.buffer.slice(newline + 1);
+    while (!this.failure) {
+      const decision = planLine(this.buffer);
+      if (decision.kind === 'partial') return;
+      if (decision.kind === 'overflow') {
+        this.fail(new Error('OAP hub stdout line exceeds 1048576 bytes'));
+        return;
+      }
+      this.buffer = decision.remaining;
       try {
-        this.dispatch(decodeOapHubLine(line));
+        this.dispatch(decodeOapHubLine(decision.line));
       } catch (error) {
         this.fail(error instanceof Error ? error : new Error(String(error)));
       }
-      newline = this.buffer.indexOf('\n');
     }
   }
 
