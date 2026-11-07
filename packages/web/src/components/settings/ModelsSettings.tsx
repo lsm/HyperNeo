@@ -566,8 +566,10 @@ function NeoModelSettings({
           title="Confirm Neo model"
           message={`Switch Neo to ${pendingPrimary ? (findSameModel(availableModels, pendingPrimary)?.name ?? pendingPrimary.model) : ''}?`}
           confirmButtonVariant="primary"
+          isLoading={busy}
           onClose={() => setPendingPrimary(null)}
           onConfirm={() => {
+            if (busy || savingRef.current || connectionState.value !== 'connected') return;
             if (pendingPrimary) void commitSave(pendingPrimary);
             setPendingPrimary(null);
           }}
@@ -738,7 +740,8 @@ function NeoModelSettings({
           onClose={() => setPicker(null)}
           onSelect={(model) => {
             if (picker === 'primary' && draft) {
-              void save({ ...draft, model: model.id, provider: model.provider });
+              const { autoCompactPercent: _previous, ...preference } = draft;
+              void save({ ...preference, model: model.id, provider: model.provider });
             } else {
               setList([
                 ...list,

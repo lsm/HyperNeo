@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals';
 import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { GlobalSettings } from '@hyperneo/shared';
 
@@ -17,7 +17,7 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   updateGlobalSettings: vi.fn(),
 }));
 import { NeoModelSettings } from '../NeoModelSettings.tsx';
-import { globalSettings } from '../../../lib/state.ts';
+import { connectionState, globalSettings } from '../../../lib/state.ts';
 
 const primary = { model: 'opus', provider: 'anthropic', thinkingLevel: 'think24k' };
 const glm = { model: 'glm-5', provider: 'glm', thinkingLevel: 'think8k' };
@@ -36,6 +36,7 @@ const models = [primary, glm, copilot, { model: 'router/test', provider: 'openro
 );
 
 beforeEach(() => {
+  connectionState.value = 'connected';
   (globalSettings as { value: GlobalSettings | null }).value = {
     neo: { preferences: { ...primary, fallbacks: [glm, copilot] } },
   } as GlobalSettings;
@@ -570,5 +571,53 @@ test('saves a primary switch only after confirmation', async () => {
       name: 'neo.preferences.set',
       input: { ...glm, fallbacks: [primary, copilot] },
     })
+  );
+});
+
+test('keeps a pending confirmation when the connection drops and saves after reconnection', async () => {
+  const ui = await editor();
+  fireEvent.click(ui.getByRole('button', { name: 'Make Neo model 2 primary' }));
+  expect(await screen.findByText('Switch Neo to glm-5?')).toBeTruthy();
+  act(() => {
+    connectionState.value = 'disconnected';
+  });
+  const confirm = screen.getByRole('button', { name: 'Processing...' }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+  fireEvent.click(confirm);
+  expect(screen.getByText('Switch Neo to glm-5?')).toBeTruthy();
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  act(() => {
+    connectionState.value = 'connected';
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...glm, fallbacks: [primary, copilot] },
+    })
+  );
+});
+
+test('changing primary via picker does not transfer the previous model compaction override', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    neo: { preferences: { ...primary, autoCompactPercent: 70, fallbacks: [glm, copilot] } },
+  } as GlobalSettings;
+  const ui = await editor();
+  fireEvent.click(ui.getByRole('button', { name: 'Change Neo primary' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: {
+        ...primary,
+        model: 'router/test',
+        provider: 'openrouter',
+        fallbacks: [glm, copilot],
+      },
+    })
+  );
+  expect((ui.getByLabelText('Neo model 1 auto-compact percentage') as HTMLInputElement).value).toBe(
+    '90'
   );
 });

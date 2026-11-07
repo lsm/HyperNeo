@@ -59,6 +59,11 @@ try {
   await page.getByRole('button', { name: first.display_name, exact: true }).click();
   await ready();
   assert.equal(rpc('neo.snapshot').preferences.model, first.id);
+  await section.getByText('Advanced', { exact: true }).click();
+  await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).fill('70');
+  await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).blur();
+  await ready();
+  assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, 70);
   await page.reload();
   assert.equal(await advanced.evaluate((element) => element.open), false);
   await section.getByRole('button', { name: 'Change Neo primary', exact: true }).click();
@@ -66,11 +71,14 @@ try {
   await page.getByText(`Switch Neo to ${primary.display_name}?`, { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   assert.equal(rpc('neo.snapshot').preferences.model, first.id);
+  assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, 70);
   await section.getByRole('button', { name: 'Change Neo primary', exact: true }).click();
   await page.getByRole('button', { name: primary.display_name, exact: true }).click();
   await page.getByText(`Switch Neo to ${primary.display_name}?`, { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Confirm', exact: true }).click();
   await ready();
+  assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, undefined);
+  evidence.primaryCompactionNotTransferred = true;
   await section.getByLabel('Neo model 1 thinking', { exact: true }).selectOption('think24k');
   await ready();
   assert.equal(rpc('neo.snapshot').preferences.model, primary.id);
