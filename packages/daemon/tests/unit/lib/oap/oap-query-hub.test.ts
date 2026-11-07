@@ -25,45 +25,47 @@ function fixture(mode: 'text' | 'failed-stream' | 'refused-submit' = 'text') {
     listener = received;
     return { id: 3, unsubscribe };
   });
-  const request = mock(async (op: string, _parameters: Record<string, unknown>) => {
-    operations.push(op);
-    if (op === 'submit') {
-      if (mode === 'refused-submit') throw new Error('synthetic submit refusal');
-      if (mode === 'failed-stream') {
-        listener({
-          kind: 'event',
-          id: 3,
-          event: 'oap-stream-failed',
-          data: { id: 3, event: 'oap-stream-failed', run_id: 'run-1' },
-        });
-      } else {
-        for (const envelope of [
-          {
-            type: 'content.delta',
-            id: 'delta-1',
-            run_id: 'run-1',
-            payload: { part: { type: 'text', text: 'synthetic reply' } },
-          },
-          { type: 'run.completed', id: 'end-1', run_id: 'run-1', payload: {} },
-        ]) {
+  const request = mock(
+    async (op: string, _parameters: Record<string, unknown>): Promise<unknown> => {
+      operations.push(op);
+      if (op === 'submit') {
+        if (mode === 'refused-submit') throw new Error('synthetic submit refusal');
+        if (mode === 'failed-stream') {
           listener({
             kind: 'event',
             id: 3,
-            event: 'envelope',
-            data: { id: 3, event: 'envelope', envelope },
+            event: 'oap-stream-failed',
+            data: { id: 3, event: 'oap-stream-failed', run_id: 'run-1' },
           });
+        } else {
+          for (const envelope of [
+            {
+              type: 'content.delta',
+              id: 'delta-1',
+              run_id: 'run-1',
+              payload: { part: { type: 'text', text: 'synthetic reply' } },
+            },
+            { type: 'run.completed', id: 'end-1', run_id: 'run-1', payload: {} },
+          ]) {
+            listener({
+              kind: 'event',
+              id: 3,
+              event: 'envelope',
+              data: { id: 3, event: 'envelope', envelope },
+            });
+          }
         }
+        return {
+          type: 'session.message.submit.response',
+          payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
+        };
       }
       return {
-        type: 'session.message.submit.response',
+        type: 'run.cancel.response',
         payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
       };
     }
-    return {
-      type: 'run.cancel.response',
-      payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
-    };
-  });
+  );
   const client = { subscribe, request } as unknown as OapHubClient;
   return { client, subscribe, request, unsubscribe, operations };
 }
@@ -73,6 +75,55 @@ function releaseHub(hub: OapQueryHub): void {
 }
 
 describe('OAP query hub transport', () => {
+  test.each(['queued', 'running', 'needs_you', 'invalid'])(
+    'a timed-out submit checks hub status %s before allowing another submit',
+    async (status) => {
+      const host = fixture();
+      const timeout = new OapHubRequestError('timeout', 'submit timed out');
+      const send = host.request.getMockImplementation()!;
+      let submitted = false;
+      host.request.mockImplementation(async (op, parameters) => {
+        if (op === 'work.status') {
+          host.operations.push(op);
+          return { ref: { session_id: 'synthetic-session' }, status, run_id: 'run-1' };
+        }
+        if (op === 'submit' && !submitted) {
+          submitted = true;
+          host.operations.push(op);
+          throw timeout;
+        }
+        return send(op, parameters);
+      });
+      const hub = createOapQueryHub(host.client);
+      await expect(hub.submit('synthetic-session', prompt)).rejects.toBe(timeout);
+      host.operations.length = 0;
+      await expect(hub.submit('synthetic-session', prompt)).rejects.toThrow(/outcome|unfinished/i);
+      expect(host.operations).toEqual(['work.status']);
+      expect(host.request.mock.calls.filter(([op]) => op === 'submit')).toHaveLength(1);
+    }
+  );
+
+  test.each(['done', 'failed', 'stopped'])(
+    'a new prompt can submit after a timeout when hub work is %s',
+    async (status) => {
+      const host = fixture();
+      const timeout = new OapHubRequestError('timeout', 'submit timed out');
+      host.request.mockRejectedValueOnce(timeout);
+      const hub = createOapQueryHub(host.client);
+      await expect(hub.submit('synthetic-session', prompt)).rejects.toBe(timeout);
+      host.request.mockResolvedValueOnce({ ref: { session_id: 'synthetic-session' }, status });
+      await expect(
+        hub.submit('synthetic-session', { ...prompt, uuid: 'new-prompt' })
+      ).resolves.toEqual({ runId: 'run-1' });
+      expect(host.request.mock.calls.map(([op]) => op)).toEqual([
+        'submit',
+        'work.status',
+        'submit',
+      ]);
+      releaseHub(hub);
+    }
+  );
+
   test.each([
     [
       new OapHubRequestError('timeout', 'submit timed out'),
