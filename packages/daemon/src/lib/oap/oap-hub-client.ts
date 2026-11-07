@@ -65,6 +65,23 @@ const planCleanupFailure = (superpipe({})('oap.hub.cleanupFailure') as PipelineA
   .pipe(decideCleanupFailure, 'error', 'decision')
   .end('decision') as typeof decideCleanupFailure;
 
+function appendStderr(tail: Buffer, chunk: Buffer): Buffer {
+  return Buffer.from(Buffer.concat([tail, chunk]).subarray(-16_384));
+}
+
+function failureDiagnostic(message: string, stderr: Buffer) {
+  const stderrTail = stderr.toString('utf8').trim();
+  return {
+    message: stderrTail ? `${message}\nOAP hub stderr:\n${stderrTail}` : message,
+    stderrTail,
+  };
+}
+
+const planFailure = (superpipe({})('oap.hub.failure') as PipelineAPI)
+  .input(['message', 'stderr'])
+  .pipe(failureDiagnostic, ['message', 'stderr'], 'diagnostic')
+  .end('diagnostic') as typeof failureDiagnostic;
+
 const log = new Logger('OapHubClient');
 
 function notify(listener: Listener | undefined, frame: HubEvent | Error) {
@@ -83,6 +100,7 @@ export class OapHubClient {
   private exited: Promise<void> = Promise.resolve();
   private failure: Error | null = null;
   private buffer = '';
+  private stderrTail: Buffer = Buffer.alloc(0);
   private nextId = 0;
   private readonly timeoutMs: number;
   private readonly pending = new Map<number, Pending>();
@@ -105,7 +123,9 @@ export class OapHubClient {
       this.exited = new Promise((resolve) => child.once('close', () => resolve()));
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => this.receive(chunk));
-      child.stderr.resume();
+      child.stderr.on('data', (chunk: Buffer) => {
+        this.stderrTail = appendStderr(this.stderrTail, chunk);
+      });
       child.stdin.on('error', (error) => this.fail(error));
       child.on('error', (error) => this.fail(error));
       child.on('close', (code, signal) =>
@@ -161,7 +181,7 @@ export class OapHubClient {
   }
 
   async close(): Promise<void> {
-    this.fail(new Error('OAP hub client closed'));
+    this.fail(new Error('OAP hub client closed'), false);
     await this.exited;
   }
 
@@ -244,9 +264,14 @@ export class OapHubClient {
     else waiting.reject(new OapHubRequestError(decision.code, decision.message, decision.feature));
   }
 
-  private fail(error: Error): void {
+  private fail(error: Error, diagnostic = true): void {
     if (this.failure) return;
     this.failure = error;
+    if (diagnostic) {
+      const detail = planFailure(error.message, this.stderrTail);
+      Object.assign(error, detail);
+      log.error('OAP hub failed', detail.stderrTail.slice(-768), error);
+    }
     const child = this.child;
     this.child = null;
     if (child?.exitCode === null && child.signalCode === null) {
