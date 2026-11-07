@@ -1,6 +1,7 @@
 import { type DbScopeType, getScopeConfig } from '../../src/lib/db-query/scope-config.ts';
 
 export const EXCLUDED_TABLE_NAMES: string[] = [
+  'pack_coding_todos',
   'neo_peers',
   'google_connections',
   'artifact_file_identity',

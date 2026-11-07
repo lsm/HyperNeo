@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
-import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import {
+  NeoAskTodoRepository,
+  type NeoTodoStorageBoundary,
+} from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -17,7 +20,11 @@ beforeEach(() => {
   createCodingPackTables(db);
   db.exec('PRAGMA foreign_keys=ON');
   gateway = new DbGateway(':memory:', db);
-  core = new NeoAskTodoRepository(db);
+  const legacy: NeoTodoStorageBoundary = {
+    project: (todo) => todo,
+    insert: (commit, args) => commit(...args),
+  };
+  core = new NeoAskTodoRepository(db, undefined, undefined, undefined, undefined, legacy);
   core.openAsk({
     id: 'ask',
     title: 'Legacy',
@@ -42,12 +49,12 @@ const rows = () => db.prepare('SELECT todo_id,repo FROM pack_coding_todos ORDER 
 const create = (id: string, repo: string | null) =>
   invoke('Writes', 'create', [{ id, askId: 'ask', draft, now: 10, repo }]);
 
-test('registration leaves current runtime schema and writes unchanged', () => {
+test('startup prepares storage while retained legacy data stays readable', () => {
   core.addTodo('old', 'ask', draft, 2, 'github.com/synthetic/old');
   expect(core.getTodo('old')?.repo).toBe('github.com/synthetic/old');
   expect(
     db.prepare("SELECT name FROM sqlite_master WHERE name='pack_coding_todos'").get()
-  ).toBeNull();
+  ).not.toBeNull();
 });
 
 test('explicit preparation backfills own values only and is idempotent', async () => {
@@ -63,7 +70,7 @@ test('explicit preparation backfills own values only and is idempotent', async (
   expect(core.getAsk('ask')?.repo).toBe('github.com/synthetic/legacy');
 });
 
-test('candidate creation writes the new fact once while public legacy reads stay unchanged', async () => {
+test('creation writes one pack fact and leaves the legacy column null', async () => {
   await invoke('Writes', 'prepare');
   expect(await create('new', 'github.com/synthetic/new')).toMatchObject({
     id: 'new',

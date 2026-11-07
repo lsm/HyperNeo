@@ -62,11 +62,12 @@ try {
   };
   store.openAsk({ id: 'policy', title: 'Repository policy', request: 'Preserve placement', sessionId: root, projectId: null, originMessageId: null, repo: 'github.com/synthetic/ask', createdAt: 1 });
   const check = { pack: 'core', kind: 'evidence', params: {} };
+  store.addTodo('repository-context','policy',{title:'Known repository',doneWhen:'Observed',check:null,instruction:null,named:null},1,'github.com/synthetic/ask');
   const target = { verb: 'start', adapter: 'hyperneo' };
   for (const rule of [check, { pack: 'coding', kind: 'pr_merged', params: { urls: [] } }]) {
     const refused = await call('neo.todo.add', { askId: 'policy', title: 'Missing place', check: rule, instruction: 'Work', target }, false);
     assert(refused.reason.startsWith('place_required:'));
-    assert.equal(store.listTodos('policy').length, 0);
+    assert.equal(store.listTodos('policy').length, 1);
   }
   const bad = await call('neo.todo.add', { askId: 'policy', title: 'Invalid check', check: { pack: 'core', kind: 'unknown', params: {} }, instruction: 'Work', target }, false);
   assert(bad.reason.startsWith('check_refused:'));
@@ -81,26 +82,27 @@ try {
   observed.admissionPreserved = true;
   await transport.connect();
   const urls = ['stored', 'ask', 'check'].map((name) => `https://github.com/synthetic/${name}/pull/1`);
-  db.prepare('UPDATE neo_todos SET repo = ?, report = ?, check_json = ?, named = ? WHERE id = ?').run('github.com/synthetic/stored', urls.join('\n'), JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [urls[2]] } }), JSON.stringify({ repository: 'synthetic/named' }), id);
+  db.prepare('UPDATE neo_todos SET report = ?, check_json = ?, named = ? WHERE id = ?').run(urls.join('\n'), JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [urls[2]] } }), JSON.stringify({ repository: 'synthetic/named' }), id);
+  db.prepare('UPDATE pack_coding_todos SET repo=? WHERE todo_id=?').run('github.com/synthetic/stored',id);
   const resolveReference = (reference: string) => hub.request<{ accepted: boolean; pr?: { repository: string } }>('operation.invoke', { name: 'artifact.reference.resolve', input: { sourceMessageOrCard: { kind: 'todo', id }, reference, requestId: crypto.randomUUID() } });
   const stored = await resolveReference(urls[0]);
   assert(stored.accepted && stored.pr?.repository === 'github.com/synthetic/stored', JSON.stringify(stored));
   assert(!(await resolveReference(urls[1])).accepted);
   assert(!(await resolveReference(urls[2])).accepted);
-  db.prepare('UPDATE neo_todos SET repo = NULL WHERE id = ?').run(id);
+  db.prepare('UPDATE pack_coding_todos SET repo = NULL WHERE todo_id = ?').run(id);
   const inherited = await resolveReference(urls[1]);
   assert(inherited.accepted && inherited.pr?.repository === 'github.com/synthetic/ask');
-  db.prepare("UPDATE neo_todos SET repo = '' WHERE id = ?").run(id);
+  db.prepare("UPDATE pack_coding_todos SET repo = '' WHERE todo_id = ?").run(id);
   assert(!(await resolveReference(urls[1])).accepted);
   observed.artifactStoredPrecedence = true;
   for (const repo of ['github.com/synthetic/stored', null, '']) {
-    db.prepare('UPDATE neo_todos SET repo = ? WHERE id = ?').run(repo, id);
+    db.prepare('UPDATE pack_coding_todos SET repo = ? WHERE todo_id = ?').run(repo, id);
     const refusal = await call('work.start', { todoId: id, adapter: 'synthetic', title: 'Work', message: 'Work' }, false);
     assert.equal(refusal.reason, 'invalid_place');
     assert.equal(starts, 0);
   }
   db.prepare('UPDATE neo_asks SET repo = NULL WHERE id = ?').run('policy');
-  db.prepare('UPDATE neo_todos SET repo = NULL WHERE id = ?').run(id);
+  db.prepare('UPDATE pack_coding_todos SET repo = NULL WHERE todo_id = ?').run(id);
   const local = await call('work.start', { todoId: id, adapter: 'synthetic', title: 'Work', message: 'Work' });
   assert.equal(local.value.place.folder, join(run, 'workspace'));
   assert.equal(starts, 1);

@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { neoTodoStorage } from '../../lib/neo/packs/todo-storage.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
@@ -363,12 +364,12 @@ export class NeoAskTodoRepository {
     private readonly rulesChanged: () => void = () => {},
     private readonly questionsPruned?: () => void,
     private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>,
-    private readonly storage?: NeoTodoStorageBoundary
+    private readonly storage: NeoTodoStorageBoundary = neoTodoStorage(db, changes)
   ) {}
 
   private projectTodo(row: TodoRow): NeoTodo {
     const todo = toTodo(row);
-    return this.storage ? this.storage.project(todo) : todo;
+    return this.storage.project(todo);
   }
 
   cardReplyQuestion(conversationId: string, mutationId: string): NeoQuestion | null {
@@ -636,7 +637,6 @@ export class NeoAskTodoRepository {
 
   addTodo(...args: Parameters<NeoTodoInsert>): NeoTodo {
     const storage = this.storage;
-    if (!storage) return this.insertTodo(...args);
     const todo = this.inTransaction(() =>
       storage.insert(
         (id, askId, draft, now, repo) => this.insertTodo(id, askId, draft, now, repo, false),

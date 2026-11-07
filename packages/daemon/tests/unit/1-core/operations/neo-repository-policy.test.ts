@@ -109,10 +109,10 @@ test('start-place uses its supplied repository policy instead of inferring from 
 test.each(['github.com/synthetic/stored', null, ''])(
   'artifact binding preserves stored nullish precedence: %j',
   (repo) => {
-    db.prepare('UPDATE neo_todos SET repo = ? WHERE id = ?').run(repo, 'todo');
+    db.prepare('UPDATE pack_coding_todos SET repo = ? WHERE todo_id = ?').run(repo, 'todo');
     const source = new ArtifactReferenceSourceRepository(db, 'synthetic-daemon', '/synthetic/home');
     expect(source.load({ kind: 'todo', id: 'todo' }, caller)?.bindings[0].repository).toBe(
-      repo ?? 'github.com/synthetic/ask'
+      repo === '' ? null : (repo ?? 'github.com/synthetic/ask')
     );
   }
 );

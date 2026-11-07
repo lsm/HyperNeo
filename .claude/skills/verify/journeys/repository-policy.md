@@ -7,14 +7,15 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .clau
 ```
 
 This owns an isolated daemon and ephemeral authenticated WebSocket. The actual
-MCP todo-add/edit doors must return place_required for a start with no place,
+MCP todo-add/edit doors must return place_required for a start with no place
+when one recorded sibling repository supplies the new draft context,
 including core evidence checks. Invalid new checks retain check_refused; a
 target edit retains placement refusal before checking a replacement check.
 Refused writes leave the todo and worker target unchanged.
 
 The actual artifact.reference.resolve RPC uses the production stored source
-reader, with only the PR-summary network boundary scripted. The stored todo
-repository wins over the ask, check and named hints. Null inherits the ask;
+reader, with only the PR-summary network boundary scripted. The stored canonical pack fact, even with a stale legacy column,
+wins over the ask, check and named hints. Null inherits the ask;
 an empty string stays empty for artifact binding and cannot authorize that PR.
 
 The production work.start pipeline and start-place policy use a synthetic adapter
@@ -27,4 +28,4 @@ Retain repository-policy.json, proof.log and the wrapper's exit status. The help
 closes its transports and daemon; the wrapper saves evidence and removes its
 synthetic data. Also run ask-bookkeeping-actions.ts for placement and historical
 card persistence across database reopen. Browser and native-client rendering are
-outside this policy extraction.
+outside this policy journey.

@@ -178,6 +178,19 @@ describe('todos given work later', () => {
         createdAt: 1,
         repo: 'synthetic/repo',
       });
+      store.addTodo(
+        'repository-anchor',
+        ask.id,
+        {
+          title: 'Repository context',
+          doneWhen: 'Observed',
+          check: null,
+          instruction: null,
+          named: null,
+        },
+        1,
+        'synthetic/repo'
+      );
       const placeless = {
         instruction: 'Do it.',
         target: { verb: 'start', adapter: 'hyperneo' },
@@ -185,7 +198,7 @@ describe('todos given work later', () => {
       expect(
         await invoke('neo.todo.add', { askId: ask.id, ...step('New'), ...placeless })
       ).toMatchObject({ ok: false, reason: expect.stringMatching(/^place_required:/) });
-      expect(store.listTodos(ask.id)).toEqual([]);
+      expect(store.listTodos(ask.id).map((todo) => todo.id)).toEqual(['repository-anchor']);
       const waiting = store.addTodo(
         'waiting',
         ask.id,

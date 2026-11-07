@@ -39,6 +39,7 @@ export type NeoTodoRepositoryDraft = Pick<NeoTodo, 'check' | 'named'> & {
 export type NeoTodoPolicyScope = {
   ask: Pick<NeoAsk, 'repo'> | null;
   todo?: Pick<NeoTodo, 'repo'> | null;
+  peers?: readonly Pick<NeoTodo, 'repo'>[];
   start?: true;
 };
 
@@ -66,11 +67,7 @@ export function neoTodoRepository(
   packs: readonly { todos?: Pick<NeoTodoPack, 'repository'> }[],
   scope: NeoTodoPolicyScope
 ): string | null {
-  return (
-    packs
-      .map((pack) => pack.todos?.repository?.(draft, scope))
-      .find((value) => value !== null && value !== undefined) ?? null
-  );
+  return packs.map((pack) => pack.todos?.repository?.(draft, scope)).find(Boolean) ?? null;
 }
 
 export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };

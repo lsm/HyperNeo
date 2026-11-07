@@ -9,6 +9,8 @@ import {
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { codingTodoRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { GitHubWatchInventory } from '../../../../src/lib/external-events/github/github-watch-inventory.ts';
+import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
 import { neoTodoRepository } from '../../../../src/lib/neo/pack-contract.ts';
 
 let db: Database;
@@ -175,4 +177,51 @@ test('historical ask-only association stays readable without invented pack rows'
   expect(
     db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('historical')
   ).toBeNull();
+});
+
+test('watch inventory follows the pack fact instead of a stale legacy column', () => {
+  db.prepare(
+    "INSERT INTO sessions (id,title,created_at,last_active_at,status,config,metadata) VALUES ('neo','Synthetic','now','now','active','{}','{}')"
+  ).run();
+  db.prepare('UPDATE neo_todos SET check_json=? WHERE id=?').run(
+    JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [] } }),
+    'stored'
+  );
+  const inventory = new GitHubWatchInventory(db, new SessionEventSubscriptionRepository(db));
+  expect(inventory.list()).toEqual([{ owner: 'synthetic', repo: 'canonical' }]);
+});
+
+test('a fresh schema can precede migrations without reading a missing source table', () => {
+  const fresh = new Database(':memory:');
+  try {
+    createTables(fresh);
+    runMigrations(fresh, () => {});
+    createTables(fresh);
+    expect(
+      fresh.prepare("SELECT name FROM sqlite_master WHERE name='pack_coding_todos'").get()
+    ).not.toBeNull();
+  } finally {
+    fresh.close();
+  }
+});
+
+test('the add writer publishes the pack fact notification after committing', async () => {
+  const tables: string[] = [];
+  gateway.onChanges = (changes) => tables.push(...changes.map((change) => change.table));
+  const result = (await gateway.run(DB_OPS.get('neo.todoAddWrites')!, {
+    askId: 'ask',
+    todoId: 'announced',
+    draft: {
+      title: 'Announced',
+      check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/result' } },
+      instruction: null,
+      named: { repository: 'synthetic/new' },
+      start: false,
+    },
+    now: 5,
+  })) as { ok: boolean; todo: NeoTodo };
+  expect(result.ok).toBe(true);
+  expect(result.todo.repo).toBe('github.com/synthetic/new');
+  expect(tables).toContain('pack_coding_todos');
+  expect(tables).toContain('neo_todos');
 });

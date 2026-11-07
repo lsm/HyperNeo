@@ -126,7 +126,10 @@ export function wireNeoTodoMutations(
           neoTodoRepository(
             { check: input.check, named: plan.todo.named, target: input.target },
             deps.packs(),
-            { ask }
+            {
+              ask,
+              peers: await deps.gateway.call(neoTodoReads, 'listTodosForAsks', [plan.todo.askId]),
+            }
           );
         const reason = neoEvidenceRefusal(input.check, repo, deps.userFolder, current?.check);
         return reason ? { reason: { ok: false as const, reason } } : { value: plan };

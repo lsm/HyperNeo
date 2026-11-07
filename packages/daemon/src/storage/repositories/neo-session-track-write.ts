@@ -43,7 +43,8 @@ const track = (superpipe({})('neo.session.track-commit') as PipelineAPI)
           changes.notifyChange('neo_todos');
         },
         undefined,
-        () => changes.notifyChange('neo_questions')
+        () => changes.notifyChange('neo_questions'),
+        changes
       ),
     ['db', 'changes'],
     'store'
