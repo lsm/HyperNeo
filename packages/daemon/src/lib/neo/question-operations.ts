@@ -27,6 +27,7 @@ import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
 import { TodoCheck, requireNeoOpenAsk } from './todo-operations.ts';
 import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
 import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
+import { PublicHandoffReference } from '../handoffs/outbox.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
@@ -263,6 +264,11 @@ const Confirmation = z.object({
     .regex(/^[a-f0-9]+$/),
 });
 const Artifacts = z.array(ArtifactRefSchema).max(16).readonly().optional();
+const QuestionOutputArtifacts = z
+  .array(z.union([ArtifactRefSchema, PublicHandoffReference]))
+  .max(16)
+  .readonly()
+  .optional();
 const questionPolicies = () => [{ id: 'core', todos: coreTodoPolicy }];
 const Asked = {
   retireWhen: TodoCheck.optional().describe(
@@ -364,7 +370,7 @@ export const NeoQuestionSchema = z.object({
     provider: z.string(),
     link: z.string().nullable(),
   }).optional(),
-  artifacts: Artifacts,
+  artifacts: QuestionOutputArtifacts,
   todoId: z.string().nullable().optional(),
   document: z.string().nullable().optional(),
   replyTo: z.array(z.uuid()).optional(),

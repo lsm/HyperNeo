@@ -320,6 +320,7 @@ export const en = {
   'artifact.openCurrentNamed': 'Open current file: {name}',
   'artifact.currentFile': 'Current file',
   'artifact.savedAttachment': 'Saved attachment',
+  'artifact.workerFile': 'Worker file',
   'artifact.openNamed': 'Open preview: {name}',
   'artifact.openPreview': 'Open preview',
   'artifact.attached': 'Attached files',

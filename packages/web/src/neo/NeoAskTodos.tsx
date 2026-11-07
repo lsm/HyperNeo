@@ -308,7 +308,10 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
         ownerHome={question.sourceSession?.daemon ? null : undefined}
         text={[neoQuestionText(question), question.document ?? ''].join('\n')}
       />
-      <ArtifactCards artifacts={question.artifacts} />
+      <ArtifactCards
+        artifacts={question.artifacts}
+        source={{ kind: 'question', id: question.id }}
+      />
     </>
   );
 }
@@ -396,7 +399,10 @@ function QuestionBox({
         ownerHome={question.sourceSession?.daemon ? null : undefined}
         text={[neoQuestionText(question), question.document ?? ''].join('\n')}
       />
-      <ArtifactCards artifacts={question.artifacts} />
+      <ArtifactCards
+        artifacts={question.artifacts}
+        source={{ kind: 'question', id: question.id }}
+      />
       {question.kind === 'start' &&
         listed.map((todo) => (
           <TodoRow

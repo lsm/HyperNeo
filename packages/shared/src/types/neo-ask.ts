@@ -1,5 +1,5 @@
 import type { WorkerIdentity } from './worker-identity.ts';
-import type { ArtifactProjection } from './artifact-file.ts';
+import type { ArtifactProjection, ArtifactRef, PublicHandoffReference } from './artifact-file.ts';
 
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
@@ -96,7 +96,8 @@ export interface NeoQuestionSource extends WorkerIdentity {
   link: string | null;
 }
 
-export interface NeoQuestion extends ArtifactProjection {
+export interface NeoQuestion {
+  readonly artifacts?: readonly (ArtifactRef | PublicHandoffReference)[];
   retireWhen?: NeoTodoCheck;
   sourceSession?: NeoQuestionSource;
   todoId?: string | null;

@@ -316,6 +316,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.openCurrentNamed': '打开当前文件：{name}',
   'artifact.currentFile': '当前文件',
   'artifact.savedAttachment': '历史附件',
+  'artifact.workerFile': '工作文件',
   'artifact.openNamed': '打开预览：{name}',
   'artifact.openPreview': '打开预览',
   'artifact.attached': '附带的文件',

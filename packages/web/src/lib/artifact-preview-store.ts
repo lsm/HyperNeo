@@ -1,4 +1,5 @@
 import { batch, signal } from '@preact/signals';
+import type { PublicHandoffReference } from '@hyperneo/shared/types/artifact-file';
 import { isLiveReference } from './live-file-client.ts';
 import {
   previewWorkspace,
@@ -25,6 +26,7 @@ export type ArtifactPreviewTarget =
       kind: 'reference';
       source: ArtifactPreviewSource;
       reference: string;
+      handoff?: PublicHandoffReference;
       file?: { path: string; headSha: string };
       context?: ArtifactPreviewContext;
     };
