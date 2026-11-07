@@ -382,11 +382,26 @@ describe('QueryRunner', () => {
       startup.mockRestore();
     });
 
-    it('runs a synthetic Codex text turn through OapQuery without the SDK gate', async () => {
+    async function completesWithin(promise: Promise<unknown>): Promise<boolean> {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          promise.then(() => true),
+          new Promise<false>((resolve) => {
+            timer = setTimeout(() => resolve(false), 1000);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+
+    it('finishes a synthetic Codex text turn and acknowledges its durable prompt', async () => {
       const startup = jest.spyOn(getSdkStartupGate(), 'acquire');
       const sdkQuery = query as unknown as ReturnType<typeof mock>;
       sdkQuery.mockClear();
       const submit = mock(async () => ({ runId: 'r1' }));
+      const cancel = mock(async () => {});
       const events = async function* () {
         yield {
           type: 'content.delta',
@@ -402,7 +417,82 @@ describe('QueryRunner', () => {
       const messages: SDKMessage[] = [];
       onSDKMessageSpy.mockImplementation(async (message: SDKMessage) => {
         messages.push(message);
-        if (message.type === 'result') queue.stop();
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
+      });
+      const sent = queue
+        .enqueueWithId('codex-text', 'Synthetic prompt', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      expect(await completesWithin(ctx.queryPromise!)).toBe(true);
+      expect(await sent).toBeUndefined();
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(messages.map((message) => message.type)).toEqual(['assistant', 'result']);
+      expect(messages[0]).toMatchObject({ message: { content: [{ text: 'synthetic reply' }] } });
+      expect(queue.isRunning()).toBe(false);
+      expect(ctx.queryObject).toBeNull();
+      expect(cancel).not.toHaveBeenCalled();
+      expect(sdkQuery).not.toHaveBeenCalled();
+      expect(startup).not.toHaveBeenCalled();
+      expect(trackAgentProcessSpy).not.toHaveBeenCalled();
+      startup.mockRestore();
+    });
+
+    it('finishes queued Codex prompts before stopping the query', async () => {
+      const submit = mock(async () => ({ runId: `r${submit.mock.calls.length}` }));
+      const cancel = mock(async () => {});
+      const events = async function* (_sessionId: string, runId: string) {
+        yield { type: 'run.completed', id: `end-${runId}`, payload: {} };
+      };
+      const messages: SDKMessage[] = [];
+      let secondSent: Promise<void | Error> | undefined;
+      onSDKMessageSpy.mockImplementation(async (message: SDKMessage) => {
+        messages.push(message);
+        if (message.type === 'result' && !secondSent) {
+          secondSent = queue
+            .enqueueWithId('codex-second', 'second prompt', false, { durable: true })
+            .catch((error: Error) => error);
+        }
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        messageQueue: queue,
+        oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
+      });
+      const firstSent = queue
+        .enqueueWithId('codex-first', 'first prompt', false, { durable: true })
+        .catch((error: Error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      expect(await completesWithin(ctx.queryPromise!)).toBe(true);
+      expect(await firstSent).toBeUndefined();
+      expect(secondSent).toBeDefined();
+      expect(await secondSent).toBeUndefined();
+      expect(submit).toHaveBeenCalledTimes(2);
+      expect(messages.map((message) => message.type)).toEqual(['result', 'result']);
+      expect(queue.isRunning()).toBe(false);
+      expect(cancel).not.toHaveBeenCalled();
+    });
+
+    it('does not stop or acknowledge a superseded Codex query after its result', async () => {
+      const submit = mock(async () => ({ runId: 'r1' }));
+      const events = async function* () {
+        yield { type: 'run.completed', id: 'stale-end', payload: {} };
+      };
+      onSDKMessageSpy.mockImplementation(async (message: SDKMessage) => {
+        if (message.type === 'result') queryGeneration++;
       });
       const ctx = createContext({
         session: {
@@ -413,20 +503,12 @@ describe('QueryRunner', () => {
         messageQueue: queue,
         oap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
       });
-      const sent = queue
-        .enqueueWithId('codex-text', 'Synthetic prompt', false, { durable: true })
-        .catch((error) => error);
+      void queue.enqueueWithId('codex-stale', 'prompt', false, { durable: true }).catch(() => {});
       runner = new QueryRunner(ctx);
       await runner.start();
-      await ctx.queryPromise;
-      await sent;
-      expect(submit).toHaveBeenCalledTimes(1);
-      expect(messages.map((message) => message.type)).toEqual(['assistant', 'result']);
-      expect(messages[0]).toMatchObject({ message: { content: [{ text: 'synthetic reply' }] } });
-      expect(sdkQuery).not.toHaveBeenCalled();
-      expect(startup).not.toHaveBeenCalled();
-      expect(trackAgentProcessSpy).not.toHaveBeenCalled();
-      startup.mockRestore();
+      expect(await completesWithin(ctx.queryPromise!)).toBe(true);
+      expect(queue.isRunning()).toBe(true);
+      expect(queue.hasYielded('codex-stale')).toBe(true);
     });
 
     it('rejects a missing workspace capability even if a hub is present', async () => {
