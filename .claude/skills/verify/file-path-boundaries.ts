@@ -29,6 +29,7 @@ try {
   await app.jobProcessor.stop();
   await waitForSdkBodyCopy(app.db.getDatabase());
   assert.notEqual(app.server.port, 8399);
+  assert.notEqual(app.server.port, 8499);
   const root = `neo:${crypto.randomUUID()}`;
   await app.db.createSession({ id: root, title: 'Synthetic path owner', workspacePath: workspace, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: {} } as never);
   const db = app.db.getDatabase();
@@ -81,11 +82,13 @@ try {
     const control = resolve(process.argv[browserAt + 1]);
     const path = join(workspace, '可读报告.md');
     writeFileSync(path, '# Chinese boundary report\n\nCurrent bytes from the source owner.');
-    const text = `报告：${path}。`;
+    const text = `报告：${path}。 Saved to ${path}.`;
     const result = JSON.parse((await publish({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), shortText: text, fullText: text } })).content[0].text);
     assert(result.accepted);
     const dist = resolve('packages/web/dist');
     front = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request, server) {
+      const refusal = await app.guardRequest(request);
+      if (refusal) return refusal;
       const route = new URL(request.url).pathname;
       if (route === '/proof-entry') return new Response(null, { status: 302, headers: { location: '/neo', 'set-cookie': `hyperneo_device=${readLocalCredential()}; HttpOnly; SameSite=Strict; Path=/` } });
       if (route === '/ws') {
@@ -96,6 +99,7 @@ try {
       return await file.exists() ? new Response(file) : new Response('Not found', { status: 404 });
     }, websocket: createWebSocketHandlers(app.transport, app.sessionManager) });
     assert.notEqual(front.port, 8399);
+    assert.notEqual(front.port, 8499);
     mkdirSync(control, { recursive: true });
     writeFileSync(join(control, 'browser.json'), JSON.stringify({ url: `http://127.0.0.1:${front.port}/proof-entry`, evidence: join(run, 'evidence'), doneFile: join(control, 'done') }));
     const until = Date.now() + 15 * 60_000;
