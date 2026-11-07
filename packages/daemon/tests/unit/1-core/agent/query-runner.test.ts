@@ -463,9 +463,13 @@ describe('QueryRunner', () => {
 
     it.each([
       { code: 'invalid_request', expected: 'failed' },
+      { code: 'invalid_submission', expected: 'failed' },
+      { code: 'busy', expected: 'failed' },
       { code: 'timeout', expected: 'submitted' },
+      { code: 'internal', expected: 'submitted' },
+      { code: 'unrecognized_error', expected: 'submitted' },
     ])(
-      'records a definite hub refusal without treating a $code as an unknown outcome',
+      'records a $code submit response as $expected',
       async ({ code, expected }) => {
         let status = 'enqueued';
         const write = mock(async (operation: string) => {
