@@ -25,6 +25,7 @@ export interface OapHubClientOptions {
   cwd?: string;
   env: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  onFailure?: (error: Error) => void;
 }
 
 export class OapHubRequestError extends Error {
@@ -245,6 +246,14 @@ export class OapHubClient {
       child.kill('SIGTERM');
       const escalation = setTimeout(() => child.kill('SIGKILL'), Math.min(this.timeoutMs, 1000));
       void this.exited.then(() => clearTimeout(escalation));
+    }
+    try {
+      this.options.onFailure?.(error);
+    } catch (cause) {
+      log.warn(
+        'Hub failure listener failed',
+        cause instanceof Error ? cause.message : String(cause)
+      );
     }
     for (const waiting of this.pending.values()) {
       clearTimeout(waiting.timer);

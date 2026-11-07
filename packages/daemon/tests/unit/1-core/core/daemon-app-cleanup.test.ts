@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemonApp, releaseStartupFileLogCapture } from '../../../../src/app';
@@ -135,6 +144,39 @@ describe('Daemon App Cleanup', () => {
     } finally {
       await daemonContext.cleanup();
     }
+  });
+
+  test('closes the daemon-owned OAP engine during cleanup', async () => {
+    const daemonContext = await createDaemonApp({ config, verbose: false, standalone: false });
+    const root = mkdtempSync(join(tmpdir(), 'oap-daemon-cleanup-'));
+    const binaryPath = join(root, 'hub');
+    const script = `#!${process.execPath}
+if (process.argv[2] === '--version') { console.log('fixture'); process.exit(0); }
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({id:request.id,ok:true,result:process.pid}) + '\\n');
+});
+`;
+    writeFileSync(binaryPath, script);
+    chmodSync(binaryPath, 0o700);
+    let cleaned = false;
+    try {
+      const hub = await daemonContext.oapEngine.getHub({
+        binaryPath,
+        identity: { version: 'fixture', sha256: createHash('sha256').update(script).digest('hex') },
+        stateDirectory: join(root, 'state'),
+        codexExecutable: join(root, 'codex'),
+        codexHome: join(root, 'codex-home'),
+      });
+      const pid = (await hub.request('ping')) as number;
+      await daemonContext.cleanup();
+      cleaned = true;
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      if (!cleaned) await daemonContext.cleanup();
+      rmSync(root, { recursive: true, force: true });
+    }
+    await expect(daemonContext.oapEngine.getHub({} as never)).rejects.toThrow('closed');
   });
 
   describe('pending RPC calls timeout', () => {
