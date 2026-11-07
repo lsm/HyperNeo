@@ -86,6 +86,7 @@ export const en = {
   'schedules.reason.unchanged': 'No changes',
   'schedules.reason.delivery_unconfirmed': 'Delivery unconfirmed',
   'list.separator': ', ',
+  'live.allTopics': 'All',
   'ask.state.waiting': 'Waiting on you',
   'ask.state.doing': 'In progress',
   'ask.state.done': 'Done',
