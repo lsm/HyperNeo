@@ -617,6 +617,103 @@ describe('QueryRunner', () => {
       expect(submit).toHaveBeenCalledTimes(1);
     });
 
+    it.each(['failure', 'abort'])(
+      'does not clear a replacement queue when a stale Codex %s arrives',
+      async (kind) => {
+        let rejectSubmit!: (error: Error) => void;
+        let markSubmitted!: () => void;
+        const submitted = new Promise<void>((resolve) => {
+          markSubmitted = resolve;
+        });
+        const submit = mock(
+          () =>
+            new Promise<{ runId: string }>((_resolve, reject) => {
+              rejectSubmit = reject;
+              markSubmitted();
+            })
+        );
+        const ctx = createContext({
+          session: {
+            ...mockSession,
+            workspacePath: null,
+            config: { model: 'unit', provider: providerId, harness: 'codex' },
+          },
+          messageQueue: queue,
+          oap: {
+            openDirectorySupported: true,
+            hub: { submit, cancel: async () => {}, events: async function* () {} },
+          },
+        });
+        void queue
+          .enqueueWithId('codex-old', 'old prompt', false, { durable: true })
+          .catch(() => {});
+        runner = new QueryRunner(ctx);
+        await runner.start();
+        const oldQuery = ctx.queryPromise!;
+        await submitted;
+
+        queue.stop();
+        ctx.incrementQueryGeneration();
+        queue.start();
+        const successor = ctx.attemptTokens.allocate();
+        void queue
+          .enqueueWithId('codex-replacement', 'new prompt', false, { durable: true })
+          .catch(() => {});
+        const error = new Error('old Codex run failed');
+        if (kind === 'abort') error.name = 'AbortError';
+        rejectSubmit(error);
+
+        expect(await completesWithin(oldQuery)).toBe(true);
+        expect(queue.isRunning()).toBe(true);
+        expect(queue.hasPendingOrInFlight('codex-replacement')).toBe(true);
+        expect(successor.isLive()).toBe(true);
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+      }
+    );
+
+    it('does not clear pending messages when a Codex failure arrives during cleanup', async () => {
+      let rejectSubmit!: (error: Error) => void;
+      let markSubmitted!: () => void;
+      let cleaning = false;
+      const submitted = new Promise<void>((resolve) => {
+        markSubmitted = resolve;
+      });
+      const submit = mock(
+        () =>
+          new Promise<{ runId: string }>((_resolve, reject) => {
+            rejectSubmit = reject;
+            markSubmitted();
+          })
+      );
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId, harness: 'codex' },
+        },
+        isCleaningUp: () => cleaning,
+        messageQueue: queue,
+        oap: {
+          openDirectorySupported: true,
+          hub: { submit, cancel: async () => {}, events: async function* () {} },
+        },
+      });
+      void queue.enqueueWithId('codex-old', 'old prompt', false, { durable: true }).catch(() => {});
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      const oldQuery = ctx.queryPromise!;
+      await submitted;
+      void queue
+        .enqueueWithId('codex-pending', 'pending prompt', false, { durable: true })
+        .catch(() => {});
+      cleaning = true;
+      rejectSubmit(new Error('late cleanup failure'));
+
+      expect(await completesWithin(oldQuery)).toBe(true);
+      expect(queue.hasPendingOrInFlight('codex-pending')).toBe(true);
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+    });
+
     it('delivers injected query messages without calling the SDK query', async () => {
       const message = { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
       const fake = {
