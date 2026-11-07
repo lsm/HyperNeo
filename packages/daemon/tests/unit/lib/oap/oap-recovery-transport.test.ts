@@ -121,6 +121,7 @@ function fixture(initial?: Recovery) {
   return {
     current,
     engine,
+    messageHub,
     db,
     persist,
     getStored: () => structuredClone(stored),
@@ -134,6 +135,17 @@ function fixture(initial?: Recovery) {
 }
 
 describe('OAP recovery claim transport', () => {
+  test('a repeated ambiguous submission saves and emits a visible outcome-unknown notice', async () => {
+    const host = fixture({ ...recovery(), claim: 'original-message' });
+    const hub = await host.bind(host.current).hub;
+    await expect(hub.submit('session-a', prompt('original-message'))).rejects.toThrow(/unknown/i);
+    expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(host.db.saveSDKMessage.mock.calls[0])).toMatch(
+      /already submitted.*unknown/i
+    );
+    expect(host.messageHub.event).toHaveBeenCalledTimes(1);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
   test('does not leak a recovery excerpt to a rewritten synthetic delivery', async () => {
     const host = fixture(recovery());
     const wire = new RetryPromptIdentity().outgoing(prompt('agent-message'), true);

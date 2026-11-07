@@ -5,6 +5,7 @@ import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-en
 import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
 import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 
 const options: OapEngineOptions = {
   binaryPath: '/synthetic/oapx',
@@ -134,6 +135,7 @@ function fixture(
       return { messages: prior ? [{ uuid: 'previous-request' }] : [], total: prior ? 1 : 0 };
     }),
     saveSDKMessage: mock(async () => true),
+    getSDKMessageRepo: mock(() => ({ getDeliveryContent: () => ({ inputKind: 'human' }) })),
   };
   const messageHub = { event: mock(() => {}) };
   const events = createDaemonInternalEventBus();
@@ -148,6 +150,52 @@ function fixture(
 }
 
 describe('OAP native session reopen wiring', () => {
+  test('a refused reopen saves the excerpt and opens a new thread without submitting', async () => {
+    const host = fixture({
+      known: true,
+      history: true,
+      freshId: 'native-thread-b',
+      refusal: new OapHubRequestError('unknown_session', 'missing'),
+    });
+    const current = session('native-thread-a', 2);
+    const hub = await host.runtime(current).hub;
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(current.metadata.oapRecovery).toMatchObject({
+      previous: 'native-thread-a',
+      pendingOpen: false,
+      text: expect.stringContaining('previous answer'),
+    });
+    expect(host.db.saveSDKMessage).toHaveBeenCalledTimes(1);
+    expect(host.messageHub.event).toHaveBeenCalledTimes(1);
+    expect(host.submit).not.toHaveBeenCalled();
+    await hub.submit('session-a', {
+      type: 'user',
+      uuid: 'next-message',
+      session_id: 'session-a',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'explicit request' },
+    } as SDKUserMessage);
+    expect(JSON.stringify(host.submit.mock.calls[0])).toContain('previous answer');
+  });
+
+  test('a lost fresh-open response is adopted without resending a prompt', async () => {
+    const host = fixture({
+      known: true,
+      history: true,
+      freshId: 'native-thread-b',
+      loseFreshOpenResponseOnce: true,
+      refusal: new OapHubRequestError('unknown_session', 'missing'),
+    });
+    const current = session('native-thread-a', 2);
+    const runtime = host.runtime(current);
+    await expect(runtime.hub).rejects.toThrow('synthetic lost fresh open response');
+    expect(current.metadata.oapRecovery?.pendingOpen).toBe(true);
+    expect(host.submit).not.toHaveBeenCalled();
+    await runtime.hub;
+    expect(current.sdkSessionId).toBe('native-thread-b');
+    expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(2);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
   test('clearing a session closes the old binding and persists a new native thread', async () => {
     const host = fixture({ known: true, freshId: 'native-thread-b' });
     const current = session('native-thread-a', 2);
