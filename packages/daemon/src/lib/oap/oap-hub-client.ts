@@ -8,6 +8,7 @@ type Listener = (event: HubEvent | Error) => void;
 type Pending = {
   line: string;
   retried: boolean;
+  timer: ReturnType<typeof setTimeout>;
   resolve(value: unknown): void;
   reject(error: Error): void;
 };
@@ -23,6 +24,7 @@ export interface OapHubClientOptions {
   args: string[];
   cwd?: string;
   env: NodeJS.ProcessEnv;
+  timeoutMs?: number;
 }
 
 export class OapHubRequestError extends Error {
@@ -68,10 +70,13 @@ export class OapHubClient {
   private failure: Error | null = null;
   private buffer = '';
   private nextId = 0;
+  private readonly timeoutMs: number;
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Map<number, Listener>();
 
-  constructor(private readonly options: OapHubClientOptions) {}
+  constructor(private readonly options: OapHubClientOptions) {
+    this.timeoutMs = options.timeoutMs ?? 30_000;
+  }
 
   async connect(): Promise<void> {
     if (this.child || this.failure) throw new Error('OAP hub client connects once');
@@ -152,7 +157,16 @@ export class OapHubClient {
     const id = ++this.nextId;
     const line = encodeOapHubRequest(id, op, parameters);
     const answer = new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { line, retried: false, resolve, reject });
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        this.listeners.delete(id);
+        reject(new OapHubRequestError('timeout', `OAP hub ${op} timed out`));
+        if (listener && !this.failure)
+          void this.request('unsubscribe', { subscription: id }).catch((error: Error) =>
+            this.fail(error)
+          );
+      }, this.timeoutMs);
+      this.pending.set(id, { line, retried: false, timer, resolve, reject });
       if (listener) this.listeners.set(id, listener);
       this.write(line);
     });
@@ -199,6 +213,7 @@ export class OapHubClient {
       return;
     }
     this.pending.delete(frame.id);
+    clearTimeout(waiting.timer);
     if (decision.kind === 'resolve') waiting.resolve(decision.value);
     else waiting.reject(new OapHubRequestError(decision.code, decision.message));
   }
@@ -208,9 +223,16 @@ export class OapHubClient {
     this.failure = error;
     const child = this.child;
     this.child = null;
-    child?.stdin.end();
-    child?.kill('SIGTERM');
-    for (const waiting of this.pending.values()) waiting.reject(error);
+    if (child?.exitCode === null && child.signalCode === null) {
+      child.stdin.end();
+      child.kill('SIGTERM');
+      const escalation = setTimeout(() => child.kill('SIGKILL'), Math.min(this.timeoutMs, 1000));
+      void this.exited.then(() => clearTimeout(escalation));
+    }
+    for (const waiting of this.pending.values()) {
+      clearTimeout(waiting.timer);
+      waiting.reject(error);
+    }
     for (const [id, listener] of this.listeners) if (!this.pending.has(id)) notify(listener, error);
     this.pending.clear();
     this.listeners.clear();
