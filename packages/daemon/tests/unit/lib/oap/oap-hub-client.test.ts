@@ -24,6 +24,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (t
   if (r.op === 'busy-once' && count === 1 || r.op === 'busy-always')
     return process.stdout.write(line({ id:r.id, ok:false, error:{code:'busy', message:'send this request again'} }));
   if (r.op === 'refused') return process.stdout.write(line({ id:r.id, ok:false, error:{code:'unknown_session', message:'synthetic'} }));
+  if (r.op === 'feature-refusal') return process.stdout.write(line({ id:r.id, ok:false, error:{code:'unsupported_feature', message:'synthetic', details:{feature:r.feature}} }));
   if (r.op === 'events') {
     subscriptions.add(r.id);
     if (r.session_id.startsWith('cleanup-')) { cleanupRefusal=r.session_id.slice(8); return; }
@@ -78,6 +79,19 @@ afterEach(async () => {
 });
 
 describe('OAP hub child lifecycle and correlation', () => {
+  test('delivers the refused feature to the reopen decision without replay', async () => {
+    const { decideReopenFailure } = await import('../../../../src/lib/oap/oap-session-open');
+    const hub = await client();
+    await hub.connect();
+    for (const feature of ['session.open.reopen', 'run.cancel']) {
+      const error = await hub.request('feature-refusal', { feature }).catch((reason: Error) => reason);
+      expect(error).toMatchObject({ code: 'unsupported_feature', feature });
+      expect(decideReopenFailure(error as { code: string; feature?: string }).mode).toBe(
+        feature === 'session.open.reopen' ? 'summary' : 'error'
+      );
+    }
+    expect(await hub.request('stats')).toMatchObject({ 'feature-refusal': 2 });
+  });
   test.each(['unknown_session', 'busy'])(
     'cleanup refusal %s keeps unrelated pending requests and subscribers alive',
     async (code) => {
