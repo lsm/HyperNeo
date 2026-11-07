@@ -7,6 +7,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import type { CredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -117,7 +118,7 @@ function observe(name: string, value: unknown) {
   observations.push({ name, value });
 }
 async function rpc(app: App, name: string, input: unknown = {}) {
-  const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  const ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   try {
     await new Promise<void>((done, fail) => { ws.onopen = () => done(); ws.onerror = () => fail(new Error('Isolated RPC unavailable')); });
     const value = await new Promise<ReturnType<typeof JSON.parse>>((done, fail) => {
