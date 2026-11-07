@@ -4,6 +4,7 @@ import { NeoSpeech } from './speech.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-track-write.ts';
+import { neoAskSettlementWrites } from '../../storage/repositories/neo-ask-settlement.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
@@ -101,6 +102,7 @@ import {
   type NeoSessionNoticeGroup,
 } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
+import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 
@@ -585,6 +587,95 @@ export class NeoService {
       this.todoSessions.recordNudge(input.todoId, { ...current, workerQuestion: undefined });
     return result;
   }
+
+  readonly relaySessionQuestion = (superpipe({})('neo.question.relaySession') as PipelineAPI)
+    .input(['input', 'sessionId', 'now'])
+    .pipe(
+      (input: { session?: string }) =>
+        findNeoSessionNotice(this.trackableNotices, input.session ?? ''),
+      'input',
+      'result:relayed'
+    )
+    .pipe(
+      (notice: NeoSessionNotice, input: { title: string }, sessionId: string | undefined) => {
+        const card = requireHumanCard(
+          { text: input.title, kind: 'choice' },
+          [],
+          null,
+          this.db.getGlobalSettings().language
+        );
+        if ('reason' in card) return card;
+        return notice.question && sessionId === this.defaultSessionId()
+          ? { value: notice }
+          : {
+              reason: {
+                ok: false,
+                reason: 'no_worker_question: this session has no question to relay.',
+              },
+            };
+      },
+      ['relayed', 'input', 'sessionId'],
+      'result:relayed'
+    )
+    .pipe((notice: NeoSessionNotice) => notice, 'relayed', 'notice')
+    .pipe(
+      async (notice: NeoSessionNotice, now: number) => {
+        const tracked = await this.runDbOp(neoSessionTrackWrites, {
+          askId: crypto.randomUUID(),
+          todoId: crypto.randomUUID(),
+          notice,
+          now,
+        });
+        return tracked.ok ? { value: tracked } : { reason: tracked };
+      },
+      ['relayed', 'now'],
+      'result:relayed'
+    )
+    .pipe(
+      async (
+        tracked: { ask: { id: string }; todo: NeoTodo; root: string },
+        notice: NeoSessionNotice,
+        input: { title: string; options: string[] },
+        now: number
+      ) => {
+        let relayed: { ok: boolean } | undefined;
+        try {
+          await this.todoSessions.write(
+            'stageTurnQuestion',
+            tracked.todo.id,
+            notice.question!,
+            now
+          );
+          this.notifyChanged();
+          relayed = await this.relayWorkerQuestion(
+            { todoId: tracked.todo.id, title: input.title, options: input.options },
+            tracked.root
+          );
+          return relayed;
+        } finally {
+          if (!relayed?.ok) {
+            await gatewayFor(this.db.getDatabase()).call(
+              neoAskSettlementWrites,
+              'settle',
+              {
+                askId: tracked.ask.id,
+                status: 'dropped',
+                outcome: 'The question card could not open.',
+              },
+              now
+            );
+            this.notifyChanged();
+          }
+        }
+      },
+      ['relayed', 'notice', 'input', 'now'],
+      'relayed'
+    )
+    .endAsync('relayed') as (
+    input: { session?: string; title: string; options: string[] },
+    sessionId: string | undefined,
+    now: number
+  ) => Promise<unknown>;
 
   readonly handleWorkerQuestion = (superpipe({})('neo.workerQuestionReport') as PipelineAPI)
     .input(['input', 'origin', 'retry'])

@@ -467,6 +467,7 @@ export interface ClaudeTranscriptEntry {
   uuid?: unknown;
   type?: unknown;
   isSidechain?: unknown;
+  isCompactSummary?: unknown;
   timestamp?: unknown;
   isMeta?: unknown;
   turnOrigin?: unknown;
@@ -488,6 +489,7 @@ function queuedPeerText(entry: ClaudeTranscriptEntry): string | null {
 
 export function claudeInputText(entry: ClaudeTranscriptEntry): string | null {
   if (entry.type === 'attachment') return queuedPeerText(entry);
+  if (entry.isCompactSummary === true) return null;
   if (entry.type !== 'user' || (entry.isMeta && !entry.turnOrigin && !entry.origin)) return null;
   const body = (entry.origin as { body?: unknown } | undefined)?.body;
   if (typeof body === 'string') return body;

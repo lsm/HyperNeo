@@ -149,6 +149,56 @@ describe('neo.session.track', () => {
     db.close();
   });
 
+  test.each(['unavailable', 'throws'] as const)(
+    'can retry a session relay after its source %s',
+    async (failure) => {
+      service.sessionWatcher.sessionNotices = [
+        notice({
+          kind: 'needs_you',
+          question: { id: 'question-1', at: 1, text: 'Continue?', actions: ['Yes', 'Wait'] },
+        }),
+      ];
+      const source = spyOn(service, 'readQuestionSource');
+      if (failure === 'unavailable') source.mockResolvedValue(null);
+      else source.mockRejectedValue(new Error('Source lookup failed'));
+      const registry = createOperationRegistry(createNeoOperations(service));
+      const relay = () =>
+        invokeOperation(
+          registry,
+          'neo.question.relay',
+          { session: key, title: 'Continue?', options: ['Yes', 'Wait'] },
+          { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
+        );
+      const failed = await relay();
+      expect(failed).toMatchObject(
+        failure === 'unavailable'
+          ? {
+              kind: 'completed',
+              value: { ok: false, reason: expect.stringContaining('source_session_unavailable') },
+            }
+          : { kind: 'failed', code: 'execution_failed' }
+      );
+      expect(service.todos.listOpenAsks()).toEqual([]);
+      expect(await service.followedCardRefs(Date.now())).toEqual([]);
+      expect(stopped).not.toHaveBeenCalled();
+      source.mockResolvedValue({
+        ...ref,
+        name: 'Worker',
+        label: 'Codex · Worker',
+        provider: 'Codex',
+        link: 'codex://threads/t1',
+      });
+      const retried = await relay();
+      expect(retried).toMatchObject({ kind: 'completed', value: { ok: true } });
+      expect(service.todos.listOpenAsks()).toHaveLength(1);
+      const [ask] = service.todos.listOpenAsks();
+      expect(service.todos.listQuestions(ask.id)).toMatchObject([
+        { state: 'open', text: 'Continue?', sourceSession: ref },
+      ]);
+      source.mockRestore();
+    }
+  );
+
   test('concurrent Track taps create only one card for the worker', async () => {
     Object.assign(service, { deliver: async () => {} });
     service.sessionWatcher.sessionNotices = [notice()];

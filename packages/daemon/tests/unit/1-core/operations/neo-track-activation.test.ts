@@ -133,3 +133,49 @@ test('a Neo MCP caller cannot Track on the human behalf', async () => {
   expect(service.todos.listOpenAsks()).toEqual([]);
   expect(told).toEqual([]);
 });
+const relay = () =>
+  invokeOperation(
+    createOperationRegistry(createNeoOperations(service)),
+    'neo.question.relay',
+    { session: key, title: 'Ship it?', options: ['Yes', 'Not now'] },
+    { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
+  );
+const asked = () => {
+  service.sessionWatcher.sessionNotices = [
+    {
+      key,
+      ref,
+      title: 'Asking worker',
+      kind: 'needs_you',
+      at: 1,
+      question: { id: 'wrap', at: 1, text: 'Ship it?', actions: ['Yes', 'Not now'] },
+    },
+  ];
+};
+test('a session relay whose card fails leaves the session free to relay again', async () => {
+  asked();
+  Object.assign(service, {
+    storeWorkerQuestion: async () => ({ ok: false, reason: 'source_session_unavailable: gone' }),
+  });
+
+  expect(await relay()).toMatchObject({
+    kind: 'completed',
+    value: { ok: false, reason: 'source_session_unavailable: gone' },
+  });
+
+  expect(service.todos.listOpenAsks()).toEqual([]);
+  expect(service.todos.followedRefs()).toEqual([]);
+});
+test('a session relay whose card write throws leaves no followed ask', async () => {
+  asked();
+  Object.assign(service, {
+    storeWorkerQuestion: async () => {
+      throw new Error('synthetic card failure');
+    },
+  });
+
+  expect(await relay()).toMatchObject({ kind: 'failed' });
+
+  expect(service.todos.listOpenAsks()).toEqual([]);
+  expect(service.todos.followedRefs()).toEqual([]);
+});

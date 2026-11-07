@@ -27,7 +27,10 @@ export const NeoSessionNoticeSchema = z.object({
   at: z.number(),
   link: z.string().optional(),
   remoteLink: z.string().optional(),
-  question: WorkTurnQuestionSchema.optional(),
+  question: WorkTurnQuestionSchema.extend({
+    id: z.string().default(''),
+    at: z.number().default(0),
+  }).optional(),
 });
 export const NeoSessionNoticeGroupSchema = z.object({
   id: z.string(),
@@ -70,6 +73,7 @@ export interface NeoListedSession {
 export interface NeoSessionSeen {
   listed: string;
   status: WorkStatus;
+  question?: string;
 }
 
 export const neoSessionKey = (ref: WorkRef) => `${ref.adapter}:${ref.daemon ?? ''}:${ref.id}`;
@@ -124,6 +128,9 @@ export function planNeoSessionWatch(
   };
 }
 
+export const neoHumanInSession = (lastInputAt: number | null, now: number) =>
+  lastInputAt != null && now - lastInputAt < NEO_SESSION_HUMAN_MS;
+
 export function planNeoSessionNotice(
   session: NeoListedSession,
   prior: NeoSessionSeen,
@@ -132,10 +139,15 @@ export function planNeoSessionNotice(
 ): { seen: NeoSessionSeen; notice: NeoSessionNotice | null } {
   if (!detail) return { seen: prior, notice: null };
   const status = detail.status;
-  const seen = { listed: fingerprint(session), status };
-  const human = detail.lastInputAt != null && now - detail.lastInputAt < NEO_SESSION_HUMAN_MS;
+  const seen = {
+    listed: fingerprint(session),
+    status,
+    ...(detail.question ? { question: detail.question.id } : {}),
+  };
+  const human = neoHumanInSession(detail.lastInputAt, now);
+  const asked = !!detail.question && detail.question.id !== prior.question;
   const kind: NeoSessionNoticeKind | null =
-    status === 'needs_you' && prior.status !== 'needs_you'
+    status === 'needs_you' && (prior.status !== 'needs_you' || asked)
       ? 'needs_you'
       : status === 'failed' && prior.status !== 'failed'
         ? 'failed'
@@ -163,12 +175,20 @@ export const neoTurnQuestionLine = (question: WorkTurnQuestion) =>
     ? `${question.text} Options: ${question.actions.join('; ')}.`
     : question.text;
 
-export const neoHumanCardLine = (link: string | undefined) =>
-  `If not, open a human card with sourceSession${link ? ` and this link: ${link}` : ''}.`;
-
 export function neoSessionQuestionNote(notice: NeoSessionNotice): string {
   const question = notice.question ? neoTurnQuestionLine(notice.question) : '';
-  return `Session "${notice.title}" (${notice.ref.adapter}:${notice.ref.id}) ended its turn with a question: ${question} It has no todo. If the plan, saved rules or your authority settle it, answer with work.send and notice:true. ${neoHumanCardLine(notice.remoteLink ?? notice.link)}`;
+  return `Session "${notice.title}" (${notice.ref.adapter}:${notice.ref.id}) ended its turn with a question: ${question} It has no todo. If the plan, saved rules or your authority settle it, answer with work.send and notice:true. If not, relay it with neo.question.relay {session:${JSON.stringify(notice.key)},title,options}.`;
+}
+
+export function planNeoSessionRevisit(
+  session: NeoListedSession,
+  prior: NeoSessionSeen,
+  detail: Parameters<typeof planNeoSessionNotice>[2],
+  now: number
+): ReturnType<typeof planNeoSessionNotice> | null {
+  return detail?.question && detail.question.id !== prior.question
+    ? planNeoSessionNotice(session, prior, detail, now)
+    : null;
 }
 
 export function keepNeoSessionNotices(

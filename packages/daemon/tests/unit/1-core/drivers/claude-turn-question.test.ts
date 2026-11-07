@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { claudeTurnQuestion } from '../../../../src/lib/drivers/claude-turn-question.ts';
 import {
+  claudeInputText,
   claudeTranscriptState,
   describeClaudeSession,
 } from '../../../../src/lib/drivers/claude-desktop-adapter.ts';
@@ -9,10 +10,11 @@ const row = (entry: object) => JSON.stringify(entry);
 const wrapUp = (input: object) =>
   row({
     type: 'assistant',
+    timestamp: '2026-11-06T00:00:00.000Z',
     message: {
       id: 'wrap',
       stop_reason: 'tool_use',
-      content: [{ type: 'tool_use', name: 'mcp__ccd_turn__wrap_up', input }],
+      content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__ccd_turn__wrap_up', input }],
     },
   });
 const ended = (id = 'closing') =>
@@ -39,6 +41,8 @@ const asking = {
 describe('claudeTurnQuestion', () => {
   test('returns the question and button labels when the turn ended on it', () => {
     expect(claudeTurnQuestion([human, wrapUp(asking), toolResult, ended()])).toEqual({
+      id: 'toolu_1',
+      at: Date.parse('2026-11-06T00:00:00.000Z'),
       text: 'Ship it?',
       actions: ['Yes, ship', 'commit', 'Not now'],
     });
@@ -76,7 +80,17 @@ describe('claudeTurnQuestion', () => {
   test('uses the recap when the worker is blocked without a question', () => {
     expect(
       claudeTurnQuestion([wrapUp({ recap: 'Waiting on a key.', blocked: true }), ended()])
-    ).toEqual({ text: 'Waiting on a key.', actions: [] });
+    ).toMatchObject({ text: 'Waiting on a key.', actions: [] });
+  });
+
+  test('keeps the question across a compaction', () => {
+    const summary = row({
+      type: 'user',
+      isCompactSummary: true,
+      message: { content: 'Summary of the conversation.' },
+    });
+    expect(claudeTurnQuestion([wrapUp(asking), ended(), summary])?.text).toBe('Ship it?');
+    expect(claudeInputText(JSON.parse(summary))).toBeNull();
   });
 
   test.each([
@@ -116,7 +130,7 @@ describe('describeClaudeSession with a turn-ended question', () => {
         value: {
           status: 'needs_you',
           waitingFor: 'Ship it?',
-          turnQuestion: { text: 'Ship it?', actions: ['Yes, ship', 'commit', 'Not now'] },
+          turnQuestion: { id: 'toolu_1', actions: ['Yes, ship', 'commit', 'Not now'] },
         },
       }
     );

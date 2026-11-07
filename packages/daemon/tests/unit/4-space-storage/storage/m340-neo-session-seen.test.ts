@@ -5,6 +5,7 @@ import {
   replaceNeoSessionSeen,
 } from '../../../../src/storage/repositories/neo-session-seen-repository';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen';
+import { runMigration483 } from '../../../../src/storage/schema/m483-neo-session-seen-question';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('runMigration340', () => {
@@ -23,22 +24,24 @@ describe('NeoSessionSeenRepository', () => {
     expect(DB_OPS.get(replaceNeoSessionSeen.name)).toBe(replaceNeoSessionSeen);
     const db = new Database(':memory:');
     runMigration340(db);
+    runMigration483(db);
     await new NeoSessionSeenRepository(db).replace([
       ['codex::a', { listed: 'running:1', status: 'running' }],
       ['codex::b', { listed: 'done:2', status: 'done' }],
     ]);
     await new NeoSessionSeenRepository(db).replace([
-      ['codex::b', { listed: 'failed:3', status: 'failed' }],
+      ['codex::b', { listed: 'failed:3', status: 'failed', question: 'tool-1' }],
     ]);
     expect(new NeoSessionSeenRepository(db).list()).toEqual([
-      ['codex::b', { listed: 'failed:3', status: 'failed' }],
+      ['codex::b', { listed: 'failed:3', status: 'failed', question: 'tool-1' }],
     ]);
   });
 
   test('skips a row whose status is no longer a work status', () => {
     const db = new Database(':memory:');
     runMigration340(db);
-    db.exec("INSERT INTO neo_session_seen VALUES ('codex::a', 'x:1', 'retired')");
+    runMigration483(db);
+    db.exec("INSERT INTO neo_session_seen VALUES ('codex::a', 'x:1', 'retired', NULL)");
     expect(new NeoSessionSeenRepository(db).list()).toEqual([]);
   });
 });

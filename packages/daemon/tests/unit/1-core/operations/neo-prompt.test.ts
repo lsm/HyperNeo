@@ -18,7 +18,7 @@ describe('root Neo system prompt', () => {
   });
   test('tells Neo to answer a worker question itself before asking the human', () => {
     expect(NEO_ROOT_TURN_END).toContain(
-      'A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise open a human card, with sourceSession so it links the session.'
+      'A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.relay, so the card links the session and the answer reaches the worker.'
     );
   });
   test('tells Neo to add parallel running work with after: [] before binding', () => {

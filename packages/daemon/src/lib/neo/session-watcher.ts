@@ -2,7 +2,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { isBusyWork } from '../drivers/work-operations.ts';
-import type { PlaceGroup, WorkRef, WorkStatus, WorkTurnQuestion } from '../drivers/types.ts';
+import type { PlaceGroup, WorkRef, WorkStatus } from '../drivers/types.ts';
 import type { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import type { Logger } from '../logger.ts';
 import { invokeOperation } from '../operations/invoke.ts';
@@ -16,6 +16,7 @@ import {
   neoSessionNoticeGroup,
   planNeoSessionNotice,
   planNeoSessionNoticeGroup,
+  planNeoSessionRevisit,
   planNeoSessionWatch,
   savedNeoSessionNoticeGroups,
   NEO_SESSION_GROUPS_MAX,
@@ -25,6 +26,9 @@ import {
   type NeoSessionNoticeGroup,
   type NeoSessionSeen,
 } from './session-watch.ts';
+
+type NeoSessionDetail = Parameters<typeof planNeoSessionNotice>[2];
+type PlannedNotice = ReturnType<typeof planNeoSessionNotice>;
 
 export type NeoSessionWatcherDeps = {
   db: Pick<Database, 'getSDKMessageRepo' | 'writeSDKMessage'>;
@@ -141,6 +145,7 @@ export class NeoSessionWatcher {
         );
         return {
           details: reads.slice(0, plan.reads.length),
+          revisited: reads.slice(plan.reads.length),
           statuses: new Map(
             revisits.sessions.flatMap((session, index) => {
               const detail = reads[plan.reads.length + index];
@@ -156,13 +161,8 @@ export class NeoSessionWatcher {
     .pipe(
       (
         plan: ReturnType<typeof planNeoSessionWatch>,
-        read: {
-          details: ({
-            status: WorkStatus;
-            lastInputAt: number | null;
-            question?: WorkTurnQuestion;
-          } | null)[];
-        },
+        revisits: { sessions: NeoListedSession[] },
+        read: { details: NeoSessionDetail[]; revisited: NeoSessionDetail[] },
         now: number
       ) => ({
         planned: plan.reads.map((session, index) =>
@@ -173,13 +173,20 @@ export class NeoSessionWatcher {
             now
           )
         ),
+        revisited: revisits.sessions.flatMap((session, index) => {
+          const seen = this.sessionsSeen.get(session.key);
+          const planned = seen && planNeoSessionRevisit(session, seen, read.revisited[index], now);
+          return planned ? [{ key: session.key, ...planned }] : [];
+        }),
       }),
-      ['plan', 'read', 'now'],
+      ['plan', 'revisits', 'read', 'now'],
       'notices'
     )
     .pipe(
-      (notices: { planned: ReturnType<typeof planNeoSessionNotice>[] }) => ({
-        notices: notices.planned.flatMap((item) => (item.notice ? [item.notice] : [])),
+      (notices: { planned: PlannedNotice[]; revisited: PlannedNotice[] }) => ({
+        notices: [...notices.planned, ...notices.revisited].flatMap((item) =>
+          item.notice ? [item.notice] : []
+        ),
       }),
       'notices',
       'added'
@@ -201,7 +208,7 @@ export class NeoSessionWatcher {
       async (
         listed: { sessions: NeoListedSession[]; complete: boolean },
         plan: ReturnType<typeof planNeoSessionWatch>,
-        notices: { planned: ReturnType<typeof planNeoSessionNotice>[] },
+        notices: { planned: PlannedNotice[]; revisited: (PlannedNotice & { key: string })[] },
         read: { statuses: ReadonlyMap<string, WorkStatus>; checked: readonly string[] },
         now: number
       ) => {
@@ -217,7 +224,10 @@ export class NeoSessionWatcher {
           const seen = this.sessionsSeen.get(key);
           if (seen) this.sessionsSeen.set(key, { ...seen, status });
         }
-        for (const key of read.checked) this.sessionsCheckedAt.set(key, now);
+        for (const { key, seen } of notices.revisited) this.sessionsSeen.set(key, seen);
+        const held = notices.revisited.filter((item) => !item.notice).map((item) => item.key);
+        for (const key of read.checked)
+          if (!held.includes(key)) this.sessionsCheckedAt.set(key, now);
         for (const key of [...this.sessionsCheckedAt.keys()])
           if (!this.sessionsSeen.has(key)) this.sessionsCheckedAt.delete(key);
         await this.saveSeen();
