@@ -38,7 +38,8 @@ describe('NeoSpeechAudio upstream retry', () => {
     const sent: { type: string }[] = [];
     const logs: StructuredLogEvent[] = [];
     const unsubscribe = subscribeToStructuredLogs((event) => {
-      if (event.message === 'voice.tts.failed') logs.push(event);
+      if (event.message === 'voice.tts.failed' || event.message === 'voice.tts.retry')
+        logs.push(event);
     });
     let calls = 0;
     let failed = 0;
@@ -69,6 +70,8 @@ describe('NeoSpeechAudio upstream retry', () => {
     expect(result.calls).toBe(2);
     expect(result.sent).toEqual(['audio', 'end']);
     expect(result.failed).toBe(0);
+    expect(result.logs.map((event) => event.message)).toEqual(['voice.tts.retry']);
+    expect(result.logs[0]?.metadata).toMatchObject({ status: 503, attempt: 0, retryInMs: 250 });
   });
 
   test('a non-retryable status fails once and logs the status', async () => {

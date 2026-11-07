@@ -115,7 +115,7 @@ export class NeoSpeechAudio {
     const controller = new AbortController();
     this.jobs.set(target.id, controller);
     const queuedAt = Date.now();
-    const failure = { reason: 'upstream_or_audio_error', status: null as number | null };
+    const fault = { reason: 'upstream_or_audio_error', status: null as number | null };
     const expires = setTimeout(() => controller.abort(), SPEECH_DEADLINE_MS);
     const job = this.serial
       .then(async () => {
@@ -136,7 +136,7 @@ export class NeoSpeechAudio {
           });
         let response = await synthesize();
         for (let attempt = 0; !response.ok; attempt++) {
-          failure.status = response.status;
+          fault.status = response.status;
           await response.body?.cancel().catch(() => {});
           const plan = planSpeechRetry(
             response.status,
@@ -145,11 +145,12 @@ export class NeoSpeechAudio {
             Date.now() - queuedAt,
             Date.now()
           );
-          if ('giveUp' in plan) throw new Error((failure.reason = plan.giveUp));
+          if ('giveUp' in plan) throw new Error((fault.reason = plan.giveUp));
+          voiceDiagnostic('voice.tts.retry', { ...timing, status: fault.status, ...plan, attempt });
           await sleep(plan.retryInMs, undefined, { signal: controller.signal });
           response = await synthesize();
         }
-        failure.status = response.status;
+        fault.status = response.status;
         if (
           !response.ok ||
           !response.headers.get('content-type')?.startsWith('audio/pcm') ||
@@ -200,13 +201,9 @@ export class NeoSpeechAudio {
       })
       .catch(async () => {
         if (!this.jobs.has(target.id)) return;
-        const reason = controller.signal.aborted ? 'deadline_exceeded' : failure.reason;
-        voiceDiagnostic('voice.tts.failed', { ...timing, ...failure, reason, atMs: Date.now() });
-        new Logger('NeoSpeechAudio').warn('Speech synthesis failed', {
-          id: target.id,
-          ...failure,
-          reason,
-        });
+        if (controller.signal.aborted) fault.reason = 'deadline_exceeded';
+        voiceDiagnostic('voice.tts.failed', { ...timing, ...fault, atMs: Date.now() });
+        new Logger('NeoSpeechAudio').warn('Speech synthesis failed', { id: target.id, ...fault });
         this.send(target.clientId, { type: 'failed', id: target.id, sessionId: target.sessionId });
         await this.failed(target);
       })
