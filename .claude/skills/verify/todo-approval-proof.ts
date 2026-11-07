@@ -268,6 +268,7 @@ try {
     assert.deepEqual(answered.answer, [one.id, two.id, three.id]);
     assert.equal(answered.answeredBy, 'button');
     assert.equal(typeof answered.answeredAt, 'number');
+    assert.equal(running.todos.find((t: { id: string }) => t.id === held.id)?.approvalQuestionId, answered.id);
     assert.deepEqual([state(running, one.id), state(running, two.id), state(running, three.id)], ['doing', 'todo', 'todo']);
     assert.equal(starts(), 1);
     if (process.argv.includes('--approval-source-only')) {
