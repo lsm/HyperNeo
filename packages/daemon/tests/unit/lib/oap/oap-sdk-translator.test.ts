@@ -160,6 +160,48 @@ describe('translateOapEvent', () => {
       []
     );
   });
+
+  it('keeps one text message when one OAP message spans a tool call', () => {
+    let state = initialOapTranslatorState('session-1');
+    const messages = [];
+    const events = [
+      {
+        type: 'content.delta',
+        id: 'text-1',
+        payload: { message_id: 'message-1', part: { type: 'text', text: 'Before. ' } },
+      },
+      {
+        type: 'action.call.started',
+        id: 'tool-start',
+        payload: { tool_call_id: 'tool-1', name: 'codex.command' },
+      },
+      {
+        type: 'action.call.completed',
+        id: 'tool-end',
+        payload: { tool_call_id: 'tool-1', result: 'ok' },
+      },
+      {
+        type: 'content.delta',
+        id: 'text-2',
+        payload: { message_id: 'message-1', part: { type: 'text', text: 'After.' } },
+      },
+      { type: 'run.completed', id: 'end', payload: {} },
+    ];
+    for (const event of events) {
+      const translated = translateOapEvent(state, event);
+      state = translated.state;
+      messages.push(...translated.messages.filter((message) => message.type !== 'stream_event'));
+    }
+    expect(messages).toMatchObject([
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool-1' }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1' }] } },
+      {
+        type: 'assistant',
+        message: { id: 'message-1', content: [{ type: 'text', text: 'Before. After.' }] },
+      },
+      { type: 'result' },
+    ]);
+  });
 });
 
 const commandFixture = [

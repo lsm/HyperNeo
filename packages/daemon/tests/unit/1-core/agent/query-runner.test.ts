@@ -654,7 +654,12 @@ describe('QueryRunner', () => {
         yield {
           type: 'content.delta',
           id: 'delta-1',
-          payload: { part: { type: 'text', text: 'synthetic reply' } },
+          payload: { message_id: 'message-1', part: { type: 'text', text: 'synthetic ' } },
+        };
+        yield {
+          type: 'content.delta',
+          id: 'delta-2',
+          payload: { message_id: 'message-1', part: { type: 'text', text: 'reply' } },
         };
         yield {
           type: 'run.completed',
@@ -683,8 +688,12 @@ describe('QueryRunner', () => {
       expect(await completesWithin(ctx.queryPromise!)).toBe(true);
       expect(await sent).toBeUndefined();
       expect(submit).toHaveBeenCalledTimes(1);
-      expect(messages.map((message) => message.type)).toEqual(['assistant', 'result']);
-      expect(messages[0]).toMatchObject({ message: { content: [{ text: 'synthetic reply' }] } });
+      expect(messages).toMatchObject([
+        { type: 'stream_event', event: { delta: { type: 'text_delta', text: 'synthetic ' } } },
+        { type: 'stream_event', event: { delta: { type: 'text_delta', text: 'reply' } } },
+        { type: 'assistant', message: { content: [{ text: 'synthetic reply' }] } },
+        { type: 'result', subtype: 'success' },
+      ]);
       expect(queue.isRunning()).toBe(false);
       expect(ctx.queryObject).toBeNull();
       expect(cancel).not.toHaveBeenCalled();
