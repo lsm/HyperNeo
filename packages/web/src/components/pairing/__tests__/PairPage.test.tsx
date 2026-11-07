@@ -63,6 +63,16 @@ describe('PairPage', () => {
     await waitFor(() => expect(code()).toBe('NEWCODE234'));
   });
 
+  it('pairs on plain HTTP, where crypto.randomUUID is missing', async () => {
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
+    const fetchMock = answer(200, { deviceId: 'device-1', kind: 'human' });
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await waitFor(() => view.getByText('This browser is paired.'));
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string).requestId.length).toBeGreaterThanOrEqual(16);
+  });
+
   it('pairs after Allow elsewhere without another click or re-entering the code', async () => {
     let approved = false;
     const fetchMock = vi.fn(
