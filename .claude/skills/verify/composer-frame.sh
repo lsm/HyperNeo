@@ -12,3 +12,4 @@ bash .claude/skills/verify/launch.sh "$PORT" "$RUN"
 bun .claude/skills/verify/rpc.ts rpc:settings.global.update \
   "{\"updates\":{\"language\":\"en\",\"voice\":{\"enabled\":true,\"endpoint\":\"http://127.0.0.1:$PORT/synthetic-asr-unused\",\"model\":\"synthetic\",\"mode\":\"batch\",\"allowPrivateNetwork\":true}}}" > "$RUN/evidence/settings.json"
 node .claude/skills/verify/composer-frame.mjs "$PORT" "$RUN"
+node .claude/skills/verify/composer-review.mjs "$PORT" "$RUN"
