@@ -70,3 +70,10 @@ input once at 390/1280px. The saved preference must change without hiding the me
 or modifying the draft; closing the menu and clicking outside must still collapse
 the empty composer. Before the fix, disabling the slider during save removes focus
 and incorrectly collapses the composer. Keep thinking-click.json and screenshots.
+
+The thinking regression must also compare the visible slider label against the
+pill after one click, drag the thumb through several steps without a save until
+release, and use an arrow key. Preact compat remaps JSX onChange to input; the
+slider deliberately uses native change capture to commit on release. The component
+regression loads compat and dispatches an actual native change event (the testing
+library compatibility helper otherwise rewrites fireEvent.change back to input).

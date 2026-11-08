@@ -1,5 +1,5 @@
 import 'preact/compat';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, createEvent, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoModelMenu } from '../NeoModelMenu.tsx';
 
@@ -27,7 +27,7 @@ describe('Neo model menu thinking slider', () => {
     fireEvent.input(slider, { target: { value: '4' } });
     expect(screen.getByTestId('thinking-slider-label').textContent).toBe('Extra High');
     expect(onThinking).not.toHaveBeenCalled();
-    fireEvent.change(slider, { target: { value: '4' } });
+    fireEvent(slider, createEvent.change(slider, { target: { value: '4' } }));
     expect(onThinking).toHaveBeenCalledExactlyOnceWith('think32k');
   });
 });
