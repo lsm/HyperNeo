@@ -328,7 +328,7 @@ export function NeoComposer({
   const frame =
     collapsed && !voiceBusy
       ? 'border-line-strong shadow-xl'
-      : `${voiceBusy ? 'border-accent/60' : 'border-transparent'} shadow-[0_6px_32px_rgb(0_0_0/0.12)]`;
+      : `${voiceBusy ? 'border-accent/60' : 'border-transparent'} shadow-composer`;
   return (
     <form
       onSubmit={(event) => {
@@ -342,7 +342,7 @@ export function NeoComposer({
       onFocusOut={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
       }}
-      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border bg-surface-raised/95 px-2 pt-4 pb-1.5 backdrop-blur-xl transition-colors focus-within:border-accent/60`}
+      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border bg-surface-raised/95 px-2 ${collapsed ? 'py-1.5' : 'pt-4 pb-1.5'} backdrop-blur-xl transition-colors focus-within:border-accent/60`}
     >
       {boundPreview && (
         <div class="mb-2 flex min-w-0 items-center gap-2 px-2 text-xs text-fg-muted">
@@ -558,20 +558,22 @@ export function NeoComposer({
               aria-label={t('composer.stop')}
               title={t('composer.stop')}
               onClick={onStop}
-              class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-line text-fg-muted hover:border-accent/40 hover:text-fg"
+              class="neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none"
             >
-              <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
+              <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 shadow-sm transition-[opacity,transform] group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
+                <NeoIcon name="stop" class="!h-[18px] !w-[18px]" />
+              </span>
             </button>
           )}
           {(!collapsed || voiceBusy) && (
             <button
               type="submit"
               disabled={noNetwork || (!voiceBusy && !draft.trim() && !hasAttachments)}
-              class="group grid h-11 w-11 shrink-0 place-items-center disabled:cursor-not-allowed"
+              class="neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none disabled:cursor-not-allowed"
               aria-label={t(recordingVoice ? 'composer.stopSend' : 'composer.send')}
               title={recordingVoice ? t('composer.stopSendTitle') : undefined}
             >
-              <span class="grid h-8 w-11 place-items-center rounded-[10px] bg-(--neo-send) text-(--neo-send-fg) group-hover:opacity-90 shadow-sm transition-[opacity,transform] group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
+              <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 shadow-sm transition-[opacity,transform] group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
                 <NeoIcon name="up" class="!h-[18px] !w-[18px]" />
               </span>
             </button>

@@ -178,8 +178,8 @@ export function NeoPreferences({
         <span class="flex shrink-0" style={{ color: providerLogoColor(info?.provider) }}>
           <ProviderLogo provider={info?.provider ?? 'anthropic'} class="h-3.5 w-3.5" />
         </span>
-        <span class="min-w-0 max-w-32 text-left">
-          <span class="block truncate">
+        <span class="flex min-w-0 flex-col items-start leading-tight">
+          <span class="max-w-32 truncate">
             {saving
               ? 'Switching…'
               : pending
@@ -187,7 +187,7 @@ export function NeoPreferences({
                 : name}
           </span>
           {pending && !saving && (
-            <span data-pending-model-switch class="block truncate text-[11px] text-accent">
+            <span data-pending-model-switch class="max-w-full truncate text-[11px] text-accent">
               {t('composer.switchesNextTurn')}
             </span>
           )}

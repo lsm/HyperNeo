@@ -28,17 +28,20 @@ try {
         maximum:getComputedStyle(column).maxWidth};
     });
     if(pillReceipt.height>35.5 || pillReceipt.display!=='flex' || pillReceipt.maximum!=='none') failures.push(`${theme}/${width}: pending pill ${JSON.stringify(pillReceipt)}`);
+    await page.keyboard.press('Tab');
+    const send = form.getByRole('button',{name:'Send message',exact:true}); await send.focus();
+    const outline = await send.evaluate(el=>({style:getComputedStyle(el).outlineStyle,width:getComputedStyle(el).outlineWidth,color:getComputedStyle(el).outlineColor,visible:el.matches(':focus-visible'),class:el.className}));
+    if(outline.style!=='none' && outline.width!=='0px' && outline.color!=='rgba(0, 0, 0, 0)') failures.push(`${theme}/${width}: send outline ${JSON.stringify(outline)}`);
+    await page.screenshot({path:`${run}/evidence/review-${theme}-${width}-pending-focus.png`});
+    await page.goto(`${base}/assets/composer-insets.html?pending&running`);
+    await form.waitFor();
     const stop = form.getByRole('button',{name:'Stop',exact:true});
     const stopReceipt = await stop.evaluate(el=>{
       const face=el.firstElementChild, box=el.getBoundingClientRect(), f=face.getBoundingClientRect();
       return {width:box.width,height:box.height,faceWidth:f.width,faceHeight:f.height,radius:getComputedStyle(face).borderRadius};
     });
     if(stopReceipt.width!==44 || stopReceipt.height!==44 || stopReceipt.faceWidth!==44 || stopReceipt.faceHeight!==32 || stopReceipt.radius!=='10px') failures.push(`${theme}/${width}: stop ${JSON.stringify(stopReceipt)}`);
-    await page.keyboard.press('Tab');
-    const send = form.getByRole('button',{name:'Send message',exact:true}); await send.focus();
-    const outline = await send.evaluate(el=>getComputedStyle(el).outlineStyle);
-    if(outline!=='none') failures.push(`${theme}/${width}: send outline ${outline}`);
-    await page.screenshot({path:`${run}/evidence/review-${theme}-${width}-pending-focus.png`});
+    await page.screenshot({path:`${run}/evidence/review-${theme}-${width}-running.png`});
     await page.goto(`${base}/neo`);
     const composer = page.locator('form.neo-composer-input');
     await composer.getByRole('button',{name:'Start voice input',exact:true}).click();

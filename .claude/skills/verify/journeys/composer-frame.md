@@ -23,7 +23,7 @@ The same matrix also checks a 44x32 send face inside its 44x44 target, full
 opacity while empty Send is disabled, and a 32px model pill with 14px text and
 control-fill background. Before/after screenshots live in separate run dirs.
 For a baseline capture, run `python3 .claude/skills/verify/composer-frame-before.py`
-with the same browser/mock environment. It preserves current bytes of the four
+with the same browser/mock environment. It preserves current bytes of the composer
 source files, builds them from the fetched origin/dev, captures phase=before,
 and restores every file in finally. Rebuild the current web afterward. The
 source backup path is printed and retained if the process is interrupted.
@@ -36,3 +36,25 @@ row to keep a 17px frame inset. A 9px receipt reproduces missing child padding.
 Auxiliary screenshots are retained. This component-state fixture verifies layout,
 not artifact capture or file-reading completion; the ordinary matrix still drives
 /neo and cancels fake dictation.
+
+Jason review regressions are covered by composer-review.mjs: the pending pill
+uses the mock's compact flex column, Send has only the face ring under keyboard
+focus, Stop has a 44x32 radius-10 face in a 44px target, and collapsed recording
+has 6px top/bottom padding. The scoped turn-control focus rule is required because
+the unlayered global button outline overrides Tailwind's layered outline utility.
+The microphone retains its existing focus styling.
+
+To refresh an exact pre-review baseline, set VERIFY_COMPOSER_BASE to its full
+commit SHA and VERIFY_REVIEW_ONLY=1 for composer-frame-before.py. A failing
+review receipt is expected on the old head; all source bytes are restored.
+Rebuild and run the current full journey afterward. Build the phone-safe comparison
+with `node .claude/skills/verify/composer-comparison.mjs <mock-overview.html>
+<before-evidence-dir> <after-evidence-dir> <absolute-output.html>` using the same
+browser environment. Every image is embedded; inspect the comparison against the
+mock directly. It labels differences intentionally deferred to later slices.
+
+Composer radius/shadow use @theme control/composer tokens. Send/foreground use
+@theme inline semantic colors with global accent fallbacks and Neo overrides.
+The geometry/color receipts must stay identical when replacing literal utilities
+with those named tokens. No new arbitrary color/radius/shadow classes belong in
+composer markup.
