@@ -28,6 +28,12 @@ db.close();
 const calls: unknown[] = [];
 let closed = 0;
 let opened = 0;
+let concurrentMode = false;
+let concurrentStarts = 0;
+let entered!: () => void;
+const firstNaming = new Promise<void>((resolve) => { entered = resolve; });
+let release!: () => void;
+const hold = new Promise<void>((resolve) => { release = resolve; });
 const create = adapterModule.createCodexDesktopAdapter;
 mock.module('../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts', () => ({
   ...adapterModule,
@@ -40,6 +46,19 @@ mock.module('../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts',
     bootstrapServer: async () => { opened++; let released = false; return ({
       call: async (method, params) => {
         calls.push({ method, params });
+        if (concurrentMode && method === 'thread/start') {
+          const id = `concurrent-${++concurrentStarts}`;
+          const state = new Database(statePath);
+          try { state.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, '', '', '', folder, 'desktop', 0, 1, rollout); }
+          finally { state.close(); }
+          return { thread: { id } };
+        }
+        if (concurrentMode && method === 'thread/name/set') {
+          if (params.threadId === 'concurrent-1') { entered(); await hold; }
+          const state = new Database(statePath);
+          try { state.prepare('UPDATE threads SET name = ?, title = ? WHERE id = ?').run(String(params.name), String(params.name), String(params.threadId)); }
+          finally { state.close(); }
+        }
         return method === 'thread/start' ? { thread: { id: 'synthetic' } } : {};
       },
       close: () => { if (!released) closed++; released = true; },
@@ -69,9 +88,24 @@ try {
   const renamed = await invokeOperation(registry, 'work.rename', { ref: { adapter: 'codex-desktop', id: 'synthetic' }, title: 'Codex hyperneo 3' }, caller);
   assert.equal(renamed.kind, 'completed', JSON.stringify(renamed));
   assert.deepEqual((renamed as { value: unknown }).value, { ok: true, value: { renamed: true, title: 'Codex hyperneo 3' } });
+  concurrentMode = true;
+  const first = invokeOperation(registry, unnamed.name, unnamed.input, caller);
+  await firstNaming;
+  const second = invokeOperation(registry, unnamed.name, unnamed.input, caller);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  release();
+  const concurrent = await Promise.all([first, second]);
+  const titles = concurrent.map((outcome) => {
+    assert.equal(outcome.kind, 'completed', JSON.stringify(outcome));
+    return (outcome as { value: { value: { title: string } } }).value.value.title;
+  });
+  assert.deepEqual(titles, ['Codex project 2', 'Codex project 3']);
+  const saved = new Database(statePath);
+  try { assert.deepEqual(saved.prepare("SELECT name FROM threads WHERE id LIKE 'concurrent-%' ORDER BY id").all().map((row) => (row as { name: string }).name), titles); }
+  finally { saved.close(); }
   assert.equal(closed, opened);
   assert(opened >= 2);
-  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, renamed, calls, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
+  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, concurrent, renamed, calls, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
 } finally {
   await app.cleanup();
 }

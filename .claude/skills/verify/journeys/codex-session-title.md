@@ -17,3 +17,7 @@ using the owned bootstrap server. Every opened server is closed.
 Retain codex-session-title.json, proof.log and run-status.json. No model, native
 Desktop, live daemon or real Codex state is used. Browser rendering and actual
 installed app-server compatibility remain unverified.
+
+Two overlapping real work.start operations hold the first synthetic name write
+until the second has started. The persisted synthetic thread state and receipts
+must show distinct next-free project names. No native Codex process runs.

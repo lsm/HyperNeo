@@ -1158,6 +1158,22 @@ export async function withCodexAppServer<Value>(
   }
 }
 
+const genericTitleQueues = new Map<string, Promise<void>>();
+
+async function lockGenericCodexTitle(key: string): Promise<() => void> {
+  const previous = genericTitleQueues.get(key);
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  genericTitleQueues.set(key, current);
+  await previous;
+  return () => {
+    release();
+    if (genericTitleQueues.get(key) === current) genericTitleQueues.delete(key);
+  };
+}
+
 async function genericCodexSessionTitle(
   projectFolder: string,
   deps: CodexDesktopAdapterDeps
@@ -1188,6 +1204,7 @@ export async function startCodexThread(
 ): Promise<Result<WorkStarted>> {
   return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
     let threadId: string | null = null;
+    let releaseTitle: (() => void) | undefined;
     let workFolder: CodexWorkFolder | null = null;
     try {
       const configuration = await selectCodexConfiguration(
@@ -1221,6 +1238,8 @@ export async function startCodexThread(
         ? folder
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
+      if (!request.sessionTitle)
+        releaseTitle = await lockGenericCodexTitle(JSON.stringify([deps.statePath, projectFolder]));
       const sessionTitle =
         request.sessionTitle ?? (await genericCodexSessionTitle(projectFolder, deps));
       const config = {
@@ -1266,6 +1285,8 @@ export async function startCodexThread(
         threadId,
         name: sessionTitle,
       });
+      releaseTitle?.();
+      releaseTitle = undefined;
       await server.close();
       const brief = request.provenance
         ? withWorkerProvenance(request.message, {
@@ -1314,6 +1335,7 @@ export async function startCodexThread(
         `${error instanceof Error ? error.message : String(error)}${made}`
       );
     } finally {
+      releaseTitle?.();
       if (!threadId) {
         await workFolder?.release();
         if (request.preparation) await releaseWorkerSandbox(workFolder?.cwd);

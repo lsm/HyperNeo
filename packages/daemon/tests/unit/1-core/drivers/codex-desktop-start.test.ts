@@ -654,6 +654,71 @@ describe('codex-desktop start', () => {
     }
   );
 
+  test('a failed thread creation releases its generic naming lock', async () => {
+    let attempts = 0;
+    const { instance } = adapter({
+      call: async (method) => {
+        if (method === 'thread/start') {
+          if (++attempts === 1) throw new Error('Synthetic creation failure');
+          return { thread: { id: 'recovered' } };
+        }
+        return {};
+      },
+    });
+    expect(await instance.start!(request, user)).toMatchObject({ ok: false });
+    expect(await instance.start!(request, user)).toMatchObject({
+      ok: true,
+      value: { title: 'Codex dolmen 1' },
+    });
+  });
+
+  test('overlapping starts serialize generic naming until the earlier name is persisted', async () => {
+    const threads: CodexSnapshot['threads'] = [];
+    let started = 0;
+    let entered!: () => void;
+    const firstNaming = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { instance } = adapter(
+      {
+        call: async (method, params) => {
+          if (method === 'thread/start') return { thread: { id: `th${++started}` } };
+          if (method === 'thread/name/set') {
+            if (params.threadId === 'th1') {
+              entered();
+              await hold;
+            }
+            threads.push({
+              id: String(params.threadId),
+              title: String(params.name),
+              folder: place.folder,
+              archived: 0,
+              updatedAt: NOW,
+            });
+          }
+          return {};
+        },
+      },
+      undefined,
+      { threads }
+    );
+    const first = instance.start!(request, user);
+    await firstNaming;
+    const second = instance.start!(request, user);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    release();
+    const results = await Promise.all([first, second]);
+    expect(results.map((result) => result.ok && result.value.title)).toEqual([
+      'Codex dolmen 1',
+      'Codex dolmen 2',
+    ]);
+    expect(threads.map((thread) => thread.title)).toEqual(['Codex dolmen 1', 'Codex dolmen 2']);
+  });
+
   test('an omitted session title uses the next free generic project name, never the task title', async () => {
     const { instance, calls } = adapter(
       {
