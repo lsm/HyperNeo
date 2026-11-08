@@ -9,7 +9,6 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema/index';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import type { DaemonHub } from '../../../helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Session } from '@hyperneo/shared';
 import type { ModelSwitchHandler } from '../../../../src/lib/agent/model-switch-handler';
@@ -17,7 +16,6 @@ import type { QueryModeHandler } from '../../../../src/lib/agent/query-mode-hand
 
 describe('EventSubscriptionSetup', () => {
   let setup: EventSubscriptionSetup;
-  let mockDaemonHub: DaemonHub;
   let mockInternalEventBus: InternalEventBus<any>;
   let mockContext: EventSubscriptionSetupContext;
 
@@ -47,11 +45,6 @@ describe('EventSubscriptionSetup', () => {
       subscribe: onSpy,
     } as unknown as InternalEventBus<any>;
 
-    mockDaemonHub = {
-      on: onSpy,
-      emit: emitSpy,
-    } as unknown as DaemonHub;
-
     mockModelSwitchHandler = {
       switchModel: mock(async () => ({ success: true, model: 'test-model' })),
     } as unknown as ModelSwitchHandler;
@@ -75,18 +68,24 @@ describe('EventSubscriptionSetup', () => {
       lastActiveAt: new Date().toISOString(),
       status: 'active',
       config: { model: 'default', maxTokens: 8192, temperature: 1.0 },
-      metadata: {},
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+      },
     };
 
     mockContext = {
       session: mockSession,
-      daemonHub: mockDaemonHub,
       internalEventBus: mockInternalEventBus,
       modelSwitchHandler: mockModelSwitchHandler,
       interruptHandler: mockInterruptHandler,
       queryModeHandler: mockQueryModeHandler,
       resetQuery: mock(async () => ({ success: true })),
-      startQueryAndEnqueue: mock(async () => {}),
+      startQueryAndEnqueue: mock(async () => 'started' as const),
       deliverChatMessage: mock(async () => {}),
     };
 
@@ -225,6 +224,7 @@ describe('EventSubscriptionSetup', () => {
           queryObject: null,
           queryPromise: null,
           queryAbortController: null,
+          processExitedPromise: null,
           internalEventBus: mockInternalEventBus,
         });
 
@@ -295,6 +295,7 @@ describe('EventSubscriptionSetup', () => {
           queryObject: null,
           queryPromise: null,
           queryAbortController: null,
+          processExitedPromise: null,
           internalEventBus: mockInternalEventBus,
         });
 
