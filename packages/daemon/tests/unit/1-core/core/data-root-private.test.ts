@@ -82,6 +82,18 @@ describe('secureDataRoot', () => {
     secureDataRoot(join(home, '.hyperneo'), { log });
     expect(process.umask()).toBe(0o022);
   });
+});
+
+describe('daemon package entry', () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'data-root-entry-'));
+  });
+
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
 
   test('the daemon package entry refuses a symlinked data root before writing to it', () => {
     const target = join(home, 'elsewhere');
