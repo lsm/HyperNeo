@@ -11,6 +11,7 @@ const rpc = (name, input = {}) => JSON.parse(execFileSync('bun', ['.claude/skill
   env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8',
 })).reply;
 const opened = rpc('neo.open');
+rpc('rpc:settings.global.update', { updates: { language: 'system' } });
 assert(opened.ok);
 const conversationId = opened.sessionId.slice(4);
 const quote = (s) => `'${String(s).replaceAll("'", "''")}'`;
@@ -45,10 +46,11 @@ try {
     await body.locator('blockquote').first().waitFor();
     await body.locator('.hljs-keyword').first().waitFor();
     await body.locator('.katex').waitFor();
-    const buttons = body.getByRole('button', { name: copyLabel, exact: true });
+    const buttons = body.locator('blockquote > div.absolute > button');
     const count = await buttons.count();
     assert.equal(count, phase === 'before' ? 0 : 3);
     if (phase !== 'before') {
+      assert.equal(await body.getByRole('button', { name: copyLabel, exact: true }).count(), count);
       await buttons.first().focus();
       await page.keyboard.press('Enter');
       await body.getByRole('button', { name: 'Copied!', exact: true }).waitFor();
@@ -65,9 +67,11 @@ try {
         const text = range.getBoundingClientRect();
         return { button: button.toJSON(), quote: bounds.toJSON(), text: text.toJSON(), padding: getComputedStyle(quote).paddingTop, background: getComputedStyle(quote).backgroundColor };
       }));
+      const reference = await body.getByRole('button', { name: 'Copy code', exact: true }).boundingBox();
       for (const { button, quote, text } of geometry) {
         assert(button.x >= text.right && button.right <= quote.right + 1);
-        assert(button.width >= 44 && button.height >= 44);
+        assert.equal(button.width, reference.width);
+        assert.equal(button.height, reference.height);
       }
       results.push({ theme, width, language, count, geometry, clipboard: 'plain text with paragraphs', keyboard: true, touch: width === 390 });
     } else results.push({ theme, width, language, count });
