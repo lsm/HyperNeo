@@ -3,6 +3,19 @@ import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
+import type { NeoAttachment } from '../neo-attachments.ts';
+
+const attachments = vi.hoisted(() => ({ files: [] as NeoAttachment[], reading: 0 }));
+vi.mock('../neo-attachments.ts', async (original) => ({
+  ...(await original<typeof import('../neo-attachments.ts')>()),
+  useNeoAttachments: () => ({
+    files: attachments.files,
+    reading: attachments.reading,
+    add: vi.fn(),
+    remove: vi.fn(),
+    clear: vi.fn(),
+  }),
+}));
 
 const interrupt = vi.hoisted(() => vi.fn());
 vi.mock('../../hooks/useInterrupt.ts', () => ({
@@ -38,11 +51,13 @@ function mount(working: boolean, draft: string, onStop?: () => void) {
   );
   return { ...view, store };
 }
-const stop = () => screen.queryByRole('button', { name: 'Stop Neo' });
+const stop = () => screen.queryByRole('button', { name: 'Stop', exact: true });
 const send = () => screen.queryByRole('button', { name: 'Send message' });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  attachments.files = [];
+  attachments.reading = 0;
   vi.stubGlobal(
     'matchMedia',
     vi
@@ -56,6 +71,38 @@ afterEach(() => {
 });
 
 describe('Neo composer send slot', () => {
+  it.each(['', '   '])('shows only Stop during a turn with empty draft %j', (draft) => {
+    const onStop = vi.fn();
+    mount(true, draft, onStop);
+    fireEvent.focusIn(screen.getByRole('textbox', { name: 'Message Neo' }));
+    expect(send()).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop', exact: true }));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it('replaces Stop with Send when a new draft is present during a turn', () => {
+    mount(true, 'A new request', vi.fn());
+    expect(stop()).toBeNull();
+    expect((send() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('offers Send instead of Stop for a staged attachment during a turn', () => {
+    attachments.files = [{ id: 'notes', name: 'notes.txt', size: 2, kind: 'text', text: 'hi' }];
+    mount(true, '', vi.fn());
+    expect(stop()).toBeNull();
+    expect((send() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('keeps an empty unfocused composer collapsed when a question arrives', () => {
+    const { store } = mount(false, '');
+    act(() => {
+      store.agentState.value = { status: 'waiting_for_input' };
+    });
+    expect(send()).toBeNull();
+    fireEvent.focusIn(screen.getByRole('textbox', { name: 'Message Neo' }));
+    expect(send()).toBeTruthy();
+  });
+
   it.each(['', '   '])('disables expanded Send for an empty draft %j', (draft) => {
     mount(false, draft);
     fireEvent.focusIn(screen.getByRole('textbox', { name: 'Message Neo' }));
