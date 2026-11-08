@@ -53,7 +53,7 @@ describe('VoiceWaveform', () => {
     expect(screen.getByTestId('voice-transcribing').textContent).toBe('正在转写…');
   });
 
-  it('renders the elapsed timer at 0:00 while recording', () => {
+  it('counts down the four-minute limit in the classic composer', () => {
     render(
       <VoiceWaveform
         getLevel={() => 0}
@@ -63,7 +63,27 @@ describe('VoiceWaveform', () => {
       />
     );
     expect(screen.getByTestId('voice-recording-panel')).toBeTruthy();
-    expect(screen.getByTestId('voice-timer').textContent).toBe('5:00');
+    expect(screen.getByTestId('voice-timer').textContent).toBe('4:00');
+  });
+
+  it('counts Neo dictation up from zero using elapsed time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    render(
+      <VoiceWaveform
+        appearance="neo"
+        getLevel={() => 0}
+        isRecording={true}
+        isTranscribing={false}
+        startedAt={Date.now()}
+        onCancel={() => {}}
+      />
+    );
+    expect(screen.getByTestId('voice-timer').textContent).toBe('0:00');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(75_000);
+    });
+    expect(screen.getByTestId('voice-timer').textContent).toBe('1:15');
   });
 
   it('shows the transcribing state instead of the timer while transcribing', () => {
