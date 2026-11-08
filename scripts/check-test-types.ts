@@ -34,18 +34,11 @@ export function compareTestTypes(
 }
 
 function runTypecheck(): Record<string, number> {
-  const result = Bun.spawnSync(
-    [
-      'bun',
-      'node_modules/typescript7/bin/tsc',
-      '-p',
-      'packages/daemon/tsconfig.tests.json',
-      '--noEmit',
-      '--pretty',
-      'false',
-    ],
-    { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' }
-  );
+  const result = Bun.spawnSync(['bun', 'run', 'typecheck:tests', '--pretty', 'false'], {
+    cwd: ROOT,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
   const output = `${result.stdout.toString()}${result.stderr.toString()}`;
   const counts = countTscErrors(output);
   if (result.exitCode !== 0 && Object.keys(counts).length === 0) {
