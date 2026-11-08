@@ -83,6 +83,15 @@ try {
       watchdog[flag] = false;
     }
     evidence.recoveryStates = recoveryStates;
+    const question = { toolUseId: 'synthetic-retry-question', questions: [], askedAt: Date.now() };
+    await session.stateManager.setWaitingForInput(question);
+    watchdog.retryCallbackInFlight = true;
+    assert.deepEqual(await hub.request('session.cancelRateLimitRetry', { sessionId }), { success: true });
+    const waiting = session.stateManager.getState();
+    assert.equal(waiting.status, 'waiting_for_input');
+    assert.deepEqual(waiting.pendingQuestion, question);
+    evidence.preservedQuestion = waiting;
+    watchdog.retryCallbackInFlight = false;
   } finally {
     evidence.mainSqlAttempts = mainSqlAttempts;
     raw.prepare = prepare;

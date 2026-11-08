@@ -1585,7 +1585,10 @@ export class AgentSession
       isInMemoryCooldown: () =>
         this.rateLimitWatchdog.isRecoveryPending() ||
         this.stateManager.getState().status === 'rate_limit_cooldown',
-      clearCooldown: () => this.stateManager.setIdle({ owner }),
+      clearCooldown: () =>
+        this.stateManager.getState().status === 'waiting_for_input'
+          ? undefined
+          : this.stateManager.setIdle({ owner }),
       publishStatusesFailed: async (messageIds) => {
         await this.internalEventBus
           .publish('messages.statusChanged', {

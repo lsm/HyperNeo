@@ -1305,6 +1305,33 @@ describe('AgentSession', () => {
       expect(agentSession.stateManager.getState().status).toBe('idle');
     });
 
+    it.each(['before', 'during'] as const)(
+      'manual cancel preserves a question raised %s delivery settlement',
+      async (timing) => {
+        const commit = attachCancelWriter();
+        const watchdog = (
+          agentSession as unknown as {
+            rateLimitWatchdog: { retryCallbackInFlight: boolean };
+          }
+        ).rateLimitWatchdog;
+        const question = { toolUseId: 'retry-question', questions: [], askedAt: Date.now() };
+        watchdog.retryCallbackInFlight = true;
+        await agentSession.stateManager.setProcessing('held-episode');
+        if (timing === 'before') await agentSession.stateManager.setWaitingForInput(question);
+        else
+          commit.mockImplementation(async () => {
+            await agentSession.stateManager.setWaitingForInput(question);
+            return 'db-episode';
+          });
+        await agentSession.cancelRateLimitRetry();
+        expect(agentSession.stateManager.getState()).toMatchObject({
+          status: 'waiting_for_input',
+          pendingQuestion: question,
+        });
+        expect(commit).toHaveBeenCalledTimes(1);
+      }
+    );
+
     it('cancelRateLimitRetry cancels the parked delivery for the episode message', async () => {
       const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {

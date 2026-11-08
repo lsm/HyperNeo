@@ -28,3 +28,7 @@ watchdog: fallback pending, billing pause, startup exhaustion and retry callback
 in flight. Each begins in processing rather than rate_limit_cooldown. Manual
 cancellation must return with the session idle. This simulates recovery flags;
 no provider failure or live stuck session is reproduced.
+
+A retry callback with a pending user question must retain waiting_for_input and
+the pendingQuestion after cancellation. Unit coverage also raises the question
+during asynchronous delivery settlement to ensure the final clear respects it.
