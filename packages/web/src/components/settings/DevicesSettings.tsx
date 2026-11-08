@@ -228,7 +228,7 @@ export function DevicesSettings() {
       </SettingsSection>
       <SettingsSection
         title="Terminal approval"
-        description="hyperneo pair --qr on this computer can allow a new device after you type the last group of its fingerprint."
+        description="The terminal on this computer can allow a new device after you type the last group of its fingerprint."
       >
         <SettingsGroup>
           <SettingsRow
