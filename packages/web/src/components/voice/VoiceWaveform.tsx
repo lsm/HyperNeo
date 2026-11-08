@@ -161,7 +161,7 @@ export function VoiceWaveform({
         role={isTranscribing ? 'status' : undefined}
       >
         {isTranscribing ? (
-          <span class="text-xs text-fg-muted">Transcribing…</span>
+          <span class="w-full text-center text-sm text-fg-muted">Transcribing…</span>
         ) : (
           Array.from({ length: barCount }, (_, i) => (
             <div

@@ -330,7 +330,9 @@ export function NeoVoice({
           )}
           <button
             type="button"
-            class="neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none"
+            class={`neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none ${
+              transcribing && transcribeIntent === 'send' ? 'opacity-50' : ''
+            }`}
             disabled={!!transcribing || recorder.isStarting}
             aria-busy={!!transcribing && transcribeIntent === 'draft'}
             onClick={() => void transcribe('draft')}

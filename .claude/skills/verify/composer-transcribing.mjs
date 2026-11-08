@@ -34,12 +34,17 @@ try {
       const label = form.getByTestId('voice-transcribing');
       await label.waitFor();
       assert.equal(await label.innerText(), 'Transcribing…');
+      const typography = await label.locator('span').evaluate(el => ({ align: getComputedStyle(el).textAlign, size: getComputedStyle(el).fontSize }));
+      assert.deepEqual(typography, { align: 'center', size: '14px' });
       assert.equal(await form.getByTestId('voice-bars').count(), 0);
       assert.equal(await form.getByTestId('voice-recording-panel').locator('.animate-spin').count(), 0);
       const busy = form.locator('button[aria-busy="true"]');
       assert.equal(await busy.count(), 1);
       assert.equal(await busy.getAttribute('aria-label'), intent === 'draft' ? 'Stop recording and keep the text as a draft' : 'Send message');
       assert.equal(await busy.getByRole('status', { name: 'Loading', exact: true }).count(), 1);
+      const stop = form.getByRole('button', { name: 'Stop recording and keep the text as a draft', exact: true });
+      assert.equal(await stop.isDisabled(), true);
+      assert.equal(await stop.evaluate(el => getComputedStyle(el).opacity), intent === 'send' ? '0.5' : '1');
       assert.equal(await page.getByText('Transcribing into your draft…', { exact: true }).count(), 0);
       await page.screenshot({ path: `${run}/evidence/${theme}-${width}-${intent}-transcribing.png` });
       receipts.push({ theme, width, intent, spinnerInActiveButton: true, textWithoutWaveform: true });
