@@ -5,6 +5,25 @@ import { sessionDoorPath } from '@hyperneo/daemon/lib/messaging/session-door';
 import { readLocalCredential } from '@hyperneo/daemon/lib/pairing/local-credential';
 import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
 import { readCard } from './read-card.ts';
+import { spawnProcess } from '@hyperneo/daemon/lib/runtime-spawn';
+import { runPairQr } from './pair-qr.ts';
+
+const TAILSCALE = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
+
+async function tailscale(args: string[]): Promise<unknown> {
+  for (const command of TAILSCALE) {
+    try {
+      const child = spawnProcess([command, ...args], {
+        stdout: 'pipe',
+        stderr: 'ignore',
+        env: { ...(process.env as Record<string, string>), TERM: process.env.TERM || 'dumb' },
+      });
+      const text = await new Response(child.stdout).text();
+      if ((await child.exited) === 0) return JSON.parse(text);
+    } catch {}
+  }
+  return null;
+}
 
 type Env = Record<string, string | undefined>;
 
@@ -104,12 +123,27 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     );
     return 1;
   }
+  const door = env.HYPERNEO_SESSION_DOOR ?? sessionDoorPath();
+  if (args[0] === 'pair' && args.includes('--qr'))
+    return runPairQr(args.slice(1), {
+      call: async (name, input) => {
+        const reply = await post(door, { sender, name, input }).catch((error: Error) => ({
+          body: { error: `the HyperNeo daemon is not reachable at ${door}: ${error.message}` },
+        }));
+        const { kind, value, error, message } = reply.body as Record<string, unknown>;
+        return kind === 'completed' ? value : { ok: false, reason: error ?? message ?? kind };
+      },
+      tailscale,
+      ask: async (question) => prompt(question) ?? '',
+      print: (text) => console.log(text),
+      now: Date.now,
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
   const plan = planSessionCommand(args, sender);
   if ('reason' in plan) {
     console.error(plan.reason);
     return 1;
   }
-  const door = env.HYPERNEO_SESSION_DOOR ?? sessionDoorPath();
   const reply = await post(door, { sender, ...plan.value }).catch((error: Error) => ({
     status: 0,
     body: { error: `the HyperNeo daemon is not reachable at ${door}: ${error.message}` },

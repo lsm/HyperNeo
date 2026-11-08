@@ -6,6 +6,8 @@ const commands = {
   build: `  hyperneo build                      Read daemon build and health through the owner-only session socket`,
   pair: `  hyperneo pair [--kind human|relay|daemon|agent] [--name <name>]
                                       Make a 10-minute pairing code; after the first device, it waits for Allow on a paired device
+  hyperneo pair --qr [--name <name>] [--address <tailnet origin>]
+                                      Show a QR code for the HyperNeo app over Tailscale; type the last fingerprint group to allow
   hyperneo pair --reset-lockout       Reopen pairing after too many bad codes`,
   devices: `  hyperneo devices                    List paired devices (never their credentials)
   hyperneo devices revoke <id>        Revoke a paired device and close its connections
