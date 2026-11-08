@@ -77,6 +77,15 @@ describe('secureDataRoot', () => {
     expect(lines).toEqual([`Data directory ${root} tightened from 0755 to 0700`]);
   });
 
+  test('without POSIX modes it neither changes nor logs the root', () => {
+    const root = join(home, '.hyperneo');
+    mkdirSync(root);
+    chmodSync(root, 0o755);
+    secureDataRoot(root, { log, posix: false });
+    expect(mode(root)).toBe(0o755);
+    expect(lines).toEqual([]);
+  });
+
   test('leaves the process umask as it was', () => {
     process.umask(0o022);
     secureDataRoot(join(home, '.hyperneo'), { log });
