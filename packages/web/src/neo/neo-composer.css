@@ -54,7 +54,7 @@
 }
 
 .neo-composer-input.is-collapsed.is-recording .neo-composer-actions {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   width: 100%;
 }
 
@@ -66,7 +66,7 @@
   clip-path: inset(50%);
 }
 
-.neo-composer-input.is-focused.is-recording .neo-composer-tools {
+.neo-composer-input.is-recording .neo-composer-tools {
   display: none;
 }
 

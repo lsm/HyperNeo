@@ -40,7 +40,8 @@ try {
     assert.notEqual(receipt.preferences.thinkingLevel, 'off');
     assert.equal(receipt.draft, '');
     await menu.getByRole('button', { name: 'Close model settings', exact: true }).click();
-    await page.locator('h1').first().click();
+    await page.mouse.click(1, 1);
+    await page.locator('.neo-composer-input.is-collapsed').waitFor();
     assert.equal(await menu.isVisible(), false);
     await context.close();
   }

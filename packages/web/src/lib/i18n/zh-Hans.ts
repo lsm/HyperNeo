@@ -257,6 +257,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.previewReference': '预览 · {file} · {snapshot}',
   'chat.previewUnavailable': '预览不可用 · {file} · {snapshot}',
   'composer.removePreview': '移除预览关联',
+  'composer.realtimeVoice': '实时语音',
   'composer.recordingDraft': '正在录音 · 停止后加入草稿，和{context}一起发送',
   'composer.recordingTap': '正在录音 · 点箭头停止并发送',
   'composer.recordingClick': '正在录音 · 点击箭头停止并发送',

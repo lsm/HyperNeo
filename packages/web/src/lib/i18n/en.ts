@@ -259,6 +259,7 @@ export const en = {
   'chat.previewReference': 'Preview · {file} · {snapshot}',
   'chat.previewUnavailable': 'Preview unavailable · {file} · {snapshot}',
   'composer.removePreview': 'Remove Preview context',
+  'composer.realtimeVoice': 'Realtime voice',
   'composer.recordingDraft': 'Recording · Stop adds it to your draft; send it with {context}',
   'composer.recordingTap': 'Recording · Tap the arrow to stop and send',
   'composer.recordingClick': 'Recording · Click the arrow to stop and send',

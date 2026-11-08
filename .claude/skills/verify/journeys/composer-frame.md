@@ -10,14 +10,14 @@ VERIFY_MOCK_PORT=19347 VERIFY_KEEP_RUN=1 \
 ```
 
 The wrapper launches an isolated daemon and mock, pairs a synthetic browser,
-and enables fake batch dictation. No real microphone, speech service or model
+and enables fake streaming dictation. No real microphone, speech service or model
 turn is used. Both themes run at 390px touch and 1280px desktop. Verify the idle
 capsule keeps its border and 48px height; an expanded blurred draft has a transparent
 border and the 6px/32px/12% shadow; focus and recording use the accent border.
 Token receipts cover send, send foreground, control fill and danger in both themes.
 Review all screenshots for clipping and contrast. Recording is cancelled without
 sending; both owned processes must stop. Keep composer-frame.json and screenshots.
-Button geometry, content layout and dictation behavior belong to later parity PRs.
+The matrix also checks one control row, centered status above it, horizontally scrolling attachments, hidden recording tools, flat 40×32 recording Stop, the inert realtime voice icon and growing/scrolling live words. Dictation cap/count direction, cancellation while transcribing, Stop/Send switching and question-driven expansion remain a separate behavior change.
 
 The same matrix also checks a 44x32 send face inside its 44x44 target, full
 opacity while empty Send is disabled, and a 32px model pill with 14px text and
@@ -51,7 +51,7 @@ Rebuild and run the current full journey afterward. Build the phone-safe compari
 with `node .claude/skills/verify/composer-comparison.mjs <mock-overview.html>
 <before-evidence-dir> <after-evidence-dir> <absolute-output.html>` using the same
 browser environment. Every image is embedded; inspect the comparison against the
-mock directly. It labels differences intentionally deferred to later slices.
+mock directly. It labels the remaining behavior differences.
 
 Composer radius/shadow use @theme control/composer tokens. Send/foreground use
 @theme inline semantic colors with global accent fallbacks and Neo overrides.
@@ -62,3 +62,11 @@ composer markup.
 The final glyph/text size receipts require a 14px turn-stop glyph and an 11px
 pending notice, with the notice using the named text-2xs theme utility. The send
 arrow stays 18px using the existing size-4.5 spacing utility.
+
+For the thinking-level focus regression, run `composer-thinking-click.sh 19346`
+through the same with-run.sh wrapper and browser environment. It seeds only the
+isolated model preference, opens the empty composer, and clicks the native range
+input once at 390/1280px. The saved preference must change without hiding the menu
+or modifying the draft; closing the menu and clicking outside must still collapse
+the empty composer. Before the fix, disabling the slider during save removes focus
+and incorrectly collapses the composer. Keep thinking-click.json and screenshots.

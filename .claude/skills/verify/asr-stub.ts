@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws';
 
 const port = Number(process.argv[2] ?? 0);
+const transcript = process.argv[3];
 const server = new WebSocketServer({ port });
 const result = (transcript: string, isFinal: boolean) =>
   JSON.stringify({
@@ -16,11 +17,11 @@ server.on('connection', (socket) => {
   let bytes = 0;
   socket.on('message', (data: Buffer, isBinary: boolean) => {
     if (!isBinary) {
-      socket.send(result(`heard ${bytes} bytes`, true));
+      socket.send(result(transcript ?? `heard ${bytes} bytes`, true));
       socket.close(1000);
       return;
     }
     bytes += data.length;
-    socket.send(result(`heard ${bytes} bytes`, false));
+    socket.send(result(transcript ?? `heard ${bytes} bytes`, false));
   });
 });

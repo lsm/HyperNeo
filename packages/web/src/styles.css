@@ -21,10 +21,15 @@
   --duration-instant: 0ms;
   --duration-deliberate: 400ms;
 
+  /* Type */
+  --text-2xs: 11px;
+  --text-3xs: 10px;
+
+  --spacing-composer-draft: 13em;
+
   /* Border radius */
   --radius-base: 8px;
   --radius-control: 10px;
-  --text-2xs: 11px;
   --radius-lg: 12px;
   --radius-xl: 20px;
   --shadow-composer: 0 6px 32px rgb(0 0 0 / 0.12);
@@ -52,6 +57,7 @@
   --color-control-fill: var(--control-fill, var(--fill-soft));
   --color-send: var(--neo-send, var(--accent));
   --color-send-fg: var(--neo-send-fg, var(--accent-fg));
+  --color-recording-control-fg: var(--recording-control-fg, var(--on-danger));
   --color-fill: var(--fill);
   --color-fill-strong: var(--fill-strong);
   --color-scrim: var(--scrim);

@@ -24,6 +24,7 @@ export function NeoPreferences({
   onError,
   preference,
   onSaved,
+  onMenuOpenChange,
   forSession,
 }: {
   sessionId: string;
@@ -31,11 +32,13 @@ export function NeoPreferences({
   onError: (message: string) => void;
   preference?: NeoPreference;
   onSaved?: () => void;
+  onMenuOpenChange?: (open: boolean) => void;
   forSession?: boolean;
 }) {
   const pending = store.sessionInfo.value?.metadata?.pendingModelSwitch ?? null;
   const model = useModelSwitcher(sessionId, pending);
   const [open, setOpen] = useState(false);
+  useEffect(() => onMenuOpenChange?.(open), [open, onMenuOpenChange]);
   const [saving, setSaving] = useState(false);
   const [auth, setAuth] = useState(new Map<string, ProviderAuthStatus>());
   const [saved, setSaved] = useState<NeoModelPreference | null>(null);

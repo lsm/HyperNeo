@@ -91,12 +91,40 @@ try {
     await page.evaluate(() => document.activeElement?.blur());
     await page.waitForTimeout(200);
     const recording = await sample();
+    assert.equal(await form.locator('.neo-composer-tools').isVisible(),false);
+    const stopRecording=form.getByRole('button',{name:'Stop recording and keep the text as a draft',exact:true});
+    const stopFace=await stopRecording.evaluate(el=>{const face=el.firstElementChild;return{height:face.getBoundingClientRect().height,width:face.getBoundingClientRect().width,color:getComputedStyle(face).color}});
+    assert.equal(stopFace.height,32);assert.equal(stopFace.width,40);assert.equal(stopFace.color,'rgb(255, 255, 255)');
+    const rt=form.getByRole('button',{name:'Realtime voice',exact:true});await rt.waitFor();
+    assert.equal(await rt.locator('svg').evaluate(el=>el.getBoundingClientRect().width),28);
     assert.notEqual(recording.border, 'rgba(0, 0, 0, 0)');
     if (!before) assert.equal(recording.border, focused.border);
     if (!before) assert(recording.shadow.includes('0.12') && recording.shadow.includes('32px'));
     await form.screenshot({ path: `${run}/evidence/${theme}-${width}-recording.png` });
     await form.getByRole('button', { name: 'Cancel recording', exact: true }).click();
-    observations.push({ theme, width, collapsed, focused, blurred, recording, geometry });
+    await input.fill('Book the venue for Saturday.\nInvite the whole team.');
+    await input.evaluate(el=>el.blur());
+    const draftHeight=(await input.boundingBox()).height;
+    await form.getByRole('button',{name:'Start voice input',exact:true}).click();
+    const live=form.getByTestId('voice-recording-draft');
+    const words=form.getByTestId('voice-interim-text'); await words.waitFor();
+    await page.waitForTimeout(200);
+    const liveReceipt=await live.evaluate(el=>({height:el.getBoundingClientRect().height,maxHeight:getComputedStyle(el).maxHeight,minimum:getComputedStyle(el).minHeight,scroll:el.scrollTop,scrollHeight:el.scrollHeight}));
+    assert(liveReceipt.height>=draftHeight && liveReceipt.height<=208);
+    assert.equal(liveReceipt.maxHeight,'208px');
+    assert.equal(await words.evaluate(el=>getComputedStyle(el).fontStyle),'italic');
+    await page.screenshot({path:`${run}/evidence/${theme}-${width}-live-words.png`});
+    await form.getByRole('button',{name:'Cancel recording',exact:true}).click();
+    await input.fill(''); await input.evaluate(el=>el.blur());
+    const clearDeadline=Date.now()+15000;
+    let savedDraft='pending';
+    while(Date.now()<clearDeadline) {
+      savedDraft=execFileSync('python3',['-c',"import sqlite3,sys;d=sqlite3.connect(sys.argv[1]);r=d.execute(\"select json_extract(metadata,'$.inputDraft') from sessions where id like 'neo:%' limit 1\").fetchone();print((r[0] if r else '') or '')",`${run}/data/daemon.db`],{encoding:'utf8'}).trim();
+      if(!savedDraft)break;
+      await page.waitForTimeout(50);
+    }
+    assert.equal(savedDraft,'','Wait for the real draft-clear write before closing this browser');
+    observations.push({ theme, width, collapsed, focused, blurred, recording, geometry, liveReceipt });
     await page.goto(`${base}/assets/composer-insets.html`);
     const fixture = page.locator('form.neo-composer-input');
     await fixture.waitFor().catch(async error => { await page.screenshot({ path: `${run}/evidence/fixture-error.png` }); throw error; });
@@ -116,6 +144,25 @@ try {
     await fixture.screenshot({ path: `${run}/evidence/${theme}-${width}-auxiliary.png` });
     assert(insetReceipts.every(value => Math.abs(value - 17) <= 1), `All auxiliary row content must retain 17px frame inset: ${insetReceipts}`);
     observations.at(-1).insets = insetReceipts;
+    await page.goto(`${base}/assets/composer-insets.html?files`);
+    const fileForm = page.locator('form.neo-composer-input');
+    await fileForm.locator('input[type=file]').setInputFiles([0,1,2].map(i=>({name:`synthetic-attachment-${i}.txt`,mimeType:'text/plain',buffer:Buffer.from('Synthetic attachment')})));
+    const list = fileForm.getByRole('list', {name:'Attachments',exact:true});
+    await list.locator('li').nth(2).waitFor();
+    const fileLayout = await list.evaluate(el=>({ys:[...el.children].map(c=>c.getBoundingClientRect().y),overflow:getComputedStyle(el).overflowX,scroll:el.scrollWidth,width:el.clientWidth}));
+    assert(fileLayout.ys.every(y=>Math.abs(y-fileLayout.ys[0])<1));
+    assert.equal(fileLayout.overflow,'auto');
+    if(width===390)assert(fileLayout.scroll>fileLayout.width);
+    await page.screenshot({path:`${run}/evidence/${theme}-${width}-attachments.png`});
+    for(const state of ['network','error']) {
+      await page.goto(`${base}/assets/composer-insets.html?status=${state}`);
+      const f = page.locator('form.neo-composer-input');
+      const line = f.locator('.neo-composer-status'); const toolbar=f.locator('.neo-composer-toolbar');
+      const a=await line.boundingBox(),b=await toolbar.boundingBox();
+      assert(a && b && a.y+a.height<=b.y+1);
+      assert.equal(await toolbar.evaluate(el=>getComputedStyle(el).flexWrap),'nowrap');
+      await page.screenshot({path:`${run}/evidence/${theme}-${width}-${state}.png`});
+    }
     await context.close();
   }
   writeFileSync(`${run}/evidence/composer-frame.json`, JSON.stringify({ phase: before ? 'before' : 'after', passed: true, observations }, null, 2));

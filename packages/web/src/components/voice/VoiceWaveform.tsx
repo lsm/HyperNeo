@@ -142,7 +142,7 @@ export function VoiceWaveform({
         disabled={isTranscribing}
         title="Discard recording"
         aria-label="Cancel recording"
-        class="grid h-9 w-9 flex-none place-items-center rounded-full bg-fill-strong/80 text-fg-muted transition-colors hover:bg-line-strong hover:text-fg-soft disabled:cursor-not-allowed disabled:opacity-40"
+        class="grid h-8 w-8 flex-none place-items-center text-fg-muted transition hover:text-fg-soft disabled:cursor-not-allowed disabled:opacity-40"
       >
         <svg
           class="h-3.5 w-3.5"
@@ -156,13 +156,13 @@ export function VoiceWaveform({
       </button>
       <div
         ref={rowRef}
-        class={`flex h-8 min-w-0 flex-1 items-center overflow-hidden ${isNarrow ? 'gap-px' : 'gap-[2px]'}`}
+        class={`flex h-8 min-w-0 flex-1 items-center overflow-hidden ${isNarrow ? 'gap-px' : 'gap-0.5'}`}
         data-testid="voice-bars"
       >
         {Array.from({ length: barCount }, (_, i) => (
           <div
             key={i}
-            class="h-8 min-w-0 flex-1 origin-center rounded-full bg-[#ff3b30]"
+            class="h-8 min-w-0 flex-1 origin-center rounded-full bg-accent"
             ref={(el) => {
               barsRef.current[i] = el;
             }}
@@ -171,23 +171,23 @@ export function VoiceWaveform({
       </div>
       {isTranscribing ? (
         <span
-          class="inline-flex flex-none items-center gap-1.5 text-xs text-danger"
+          class="inline-flex flex-none items-center gap-1.5 text-xs text-fg-muted"
           data-testid="voice-transcribing"
           aria-label="Transcribing"
         >
-          <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-danger/40 border-t-danger" />
+          <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-fg-muted/40 border-t-fg-muted" />
           {!isNarrow && 'Transcribing…'}
         </span>
       ) : isStarting && !isRecording ? (
         <span
-          class={`inline-flex flex-none animate-pulse items-center gap-1.5 text-fg-muted motion-reduce:animate-none ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
+          class={`inline-flex flex-none animate-pulse items-center gap-1.5 text-fg-muted motion-reduce:animate-none ${isNarrow ? 'text-2xs' : 'text-xs'}`}
           data-testid="voice-starting"
         >
           {isNarrow ? 'Mic…' : 'Waiting for mic…'}
         </span>
       ) : (
         <span
-          class={`flex-none tabular-nums text-fg ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
+          class={`flex-none tabular-nums text-fg ${isNarrow ? 'text-2xs' : 'text-xs'}`}
           data-testid="voice-timer"
         >
           {formatElapsed(MAX_SECONDS - elapsed)}

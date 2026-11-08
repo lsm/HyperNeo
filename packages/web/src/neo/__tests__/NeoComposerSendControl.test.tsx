@@ -110,10 +110,10 @@ describe('Neo composer send slot', () => {
       if (attention === 'error') store.error.value = 'Synthetic error';
       else store.agentState.value = { status: 'waiting_for_input' };
     });
-    expect(input.getAttribute('rows')).toBe('2');
-    expect(screen.getByRole('status').textContent).toContain(
-      attention === 'error' ? 'needs you' : 'A quick question'
-    );
+    expect(input.getAttribute('rows')).toBe('1');
+    if (attention === 'error')
+      expect(screen.getByRole('status').textContent).toContain('needs you');
+    else expect(screen.queryByText(/A quick question/)).toBeNull();
     act(() => {
       store.error.value = null;
       store.agentState.value = { status: 'idle' };

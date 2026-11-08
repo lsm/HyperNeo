@@ -19,7 +19,7 @@ describe('VoiceDraftPreview', () => {
     );
     const interim = screen.getByTestId('voice-interim-text');
     expect(interim.textContent).toBe('hello ne');
-    expect(interim.className).toContain('text-fg-faint');
+    expect(interim.className).toContain('text-fg-muted');
     expect(screen.getByTestId('voice-recording-draft').textContent).toBe('typed\nhello ne');
   });
 
