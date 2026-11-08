@@ -23,8 +23,14 @@ function readRootFacts(root: string): RootFacts {
   }
 }
 
-export function decideDataRoot(root: string, facts: RootFacts, euid?: number): DataRootStep {
+export function decideDataRoot(
+  root: string,
+  facts: RootFacts,
+  posix: boolean,
+  euid?: number
+): DataRootStep {
   if (!facts) return { create: true };
+  if (!posix) return { keep: true };
   if (facts.symlink) return { refuse: `Data directory ${root} is a symlink; refusing to start` };
   if (euid !== undefined && facts.uid !== euid)
     return {
@@ -47,15 +53,24 @@ function applyDataRootStep(root: string, step: DataRootStep, log: (line: string)
 }
 
 const secureDataRootPipeline = (superpipe({})('daemon.secure-data-root') as PipelineAPI)
-  .input(['root', 'log', 'euid'])
+  .input(['root', 'log', 'posix', 'euid'])
   .pipe(readRootFacts, 'root', 'facts')
-  .pipe(decideDataRoot, ['root', 'facts', 'euid'], 'step')
+  .pipe(decideDataRoot, ['root', 'facts', 'posix', 'euid'], 'step')
   .pipe(applyDataRootStep, ['root', 'step', 'log'], 'done')
-  .end('done') as (root: string, log: (line: string) => void, euid?: number) => true;
+  .end('done') as (
+  root: string,
+  log: (line: string) => void,
+  posix: boolean,
+  euid?: number
+) => true;
 
 export function secureDataRoot(
   root: string,
-  { log, euid = process.geteuid?.() }: { log: (line: string) => void; euid?: number }
+  {
+    log,
+    posix = process.platform !== 'win32',
+    euid = process.geteuid?.(),
+  }: { log: (line: string) => void; posix?: boolean; euid?: number }
 ): void {
-  secureDataRootPipeline(root, log, euid);
+  secureDataRootPipeline(root, log, posix, euid);
 }

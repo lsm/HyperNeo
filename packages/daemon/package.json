@@ -12,6 +12,7 @@
     "./sdk-cli-resolver": "./src/lib/agent/sdk-cli-resolver.ts",
     "./lib/agent/sdk-cli-resolver": "./src/lib/agent/sdk-cli-resolver.ts",
     "./lib/data-dir": "./src/lib/data-dir.ts",
+    "./lib/data-root-private": "./src/lib/data-root-private.ts",
     "./lib/drivers/claude-desktop-mods-server": "./src/lib/drivers/claude-desktop-mods-server.ts",
     "./lib/drivers/claude-desktop-mods-runtime": "./src/lib/drivers/claude-desktop-mods-runtime.ts",
     "./lib/drivers/claude-desktop-mods-control": "./src/lib/drivers/claude-desktop-mods-control.ts",
