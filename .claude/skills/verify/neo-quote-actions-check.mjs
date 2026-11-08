@@ -13,7 +13,14 @@ export async function verifyQuoteActions(page, options) {
   const codeCopy = article.locator('.code-block-wrapper button');
   const footer = article.locator(':scope > .flex').last();
   const actions = [copy, footer.getByRole('button').nth(0), footer.getByRole('button').nth(1)];
+  const settle = control => control.evaluate(async node => {
+    await Promise.all(node.getAnimations().map(animation => animation.finished));
+  });
   await page.waitForFunction(() => !document.querySelector('blockquote .text-success'));
+  await settle(copy);
+  const cancelReply = page.locator('[data-quote-bar]').getByRole('button');
+  if (touch) await cancelReply.tap(); else await cancelReply.click();
+  await page.locator('[data-quote-bar]').waitFor({ state: 'detached' });
   const measure = control => control.evaluate(node => {
     const button = node.getBoundingClientRect();
     const icon = node.querySelector('svg').getBoundingClientRect();
@@ -25,21 +32,20 @@ export async function verifyQuoteActions(page, options) {
   await writeFile(join(run, 'evidence', `${phase}-${theme}-parity.json`), JSON.stringify({ quoteGeometry, codeGeometry }, null, 2));
   await article.screenshot({ path: join(run, 'evidence', `${phase}-${theme}-controls.png`), scale: 'css' });
   assert.deepEqual(quoteGeometry, codeGeometry, 'quote copy must match code copy box, icon and top-right offset');
+  assert.equal(await quote.evaluate(node => node.style.paddingRight),
+    await article.locator('pre').evaluate(node => node.style.paddingRight));
   assert.equal(await quote.evaluate(node => getComputedStyle(node).paddingRight),
     await article.locator('pre').evaluate(node => getComputedStyle(node).paddingRight));
   const geometry = [quoteGeometry];
   for (const control of actions.slice(1)) {
     const actual = await measure(control);
-    assert.deepEqual(actual.box, [44, 44, 20, 20]);
+    assert.equal(actual.box.join(','), '44,44,20,20');
     geometry.push(actual);
   }
   const style = control => control.evaluate(node => {
     const value = getComputedStyle(node);
     return { colour: value.color, background: value.backgroundColor,
       outline: value.outline, outlineOffset: value.outlineOffset };
-  });
-  const settle = control => control.evaluate(async node => {
-    await Promise.all(node.getAnimations().map(animation => animation.finished));
   });
   const normalBackground = await quote.evaluate(node => getComputedStyle(node).backgroundColor);
   if (!touch) {
@@ -65,6 +71,7 @@ export async function verifyQuoteActions(page, options) {
   }
   await copy.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
   assert(await copy.evaluate(node => node.matches(':focus-visible')));
+  await settle(copy);
   const focus = await style(copy);
   await article.screenshot({ path: join(run, 'evidence', `${phase}-${theme}-focus.png`), scale: 'css' });
   await codeCopy.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
@@ -80,6 +87,8 @@ export async function verifyQuoteActions(page, options) {
   if (touch) await codeCopy.tap(); else await codeCopy.click();
   await page.waitForFunction(() => document.querySelector('.code-block-wrapper button')?.title === 'Copied!');
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'A code sample.\n');
+  await page.waitForFunction(() => !document.querySelector('.code-block-wrapper button')?.matches(':active'));
+  await settle(codeCopy);
   assert.deepEqual(await measure(codeCopy), codeGeometry);
   if (touch) await footer.getByRole('button').first().tap();
   else await footer.getByRole('button').first().click();

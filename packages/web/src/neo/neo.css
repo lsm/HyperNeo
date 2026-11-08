@@ -829,7 +829,8 @@
     min-height: 60px;
   }
 
-  .neo-shell .code-block-wrapper pre {
+  .neo-shell .code-block-wrapper pre,
+  .neo-shell .neo-markdown blockquote {
     padding-right: 60px !important;
     min-height: 60px;
   }

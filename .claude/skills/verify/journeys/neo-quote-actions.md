@@ -13,7 +13,8 @@ requires the approved text colours, italics, 6% quote overlay and AA contrast.
 The human’s later instruction replaces the mockup’s large quote target: quote copy
 must match the ordinary code-block copy button’s box, 16px icon, 8px top/right
 offsets, hover, focus and copied-title/checkmark feedback. Compare both controls
-in the same seeded publication, including their shared 2.5rem text gutter.
+in the same seeded publication, including their shared 2.5rem base gutter and
+existing 60px coarse-pointer gutter/minimum height.
 Keep the 44x44 footer controls, 20px footer icons and 5% footer hover overlay.
 It exercises keyboard focus, Enter-to-copy, the shared Copied! title and checkmark, without an inline feedback label, exact real
 clipboard text, whole-message copy and Reply. Gold headings and message-reference
