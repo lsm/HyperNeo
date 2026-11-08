@@ -8,6 +8,8 @@ import {
   statSync,
   symlinkSync,
 } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { secureDataRoot } from '../../../../src/lib/data-root-private';
@@ -80,4 +82,32 @@ describe('secureDataRoot', () => {
     secureDataRoot(join(home, '.hyperneo'), { log });
     expect(process.umask()).toBe(0o022);
   });
+
+  test('the daemon package entry refuses a symlinked data root before writing to it', () => {
+    const target = join(home, 'elsewhere');
+    mkdirSync(target);
+    const root = join(home, '.hyperneo');
+    symlinkSync(target, root);
+    const started = spawnSync(
+      process.execPath.endsWith('bun') ? process.execPath : 'bun',
+      ['main.ts'],
+      {
+        cwd: join(__dirname, '../../../..'),
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          TMPDIR: process.env.TMPDIR,
+          NODE_ENV: 'test',
+          HYPERNEO_DATA_DIR: root,
+          DB_PATH: join(home, 'db', 'daemon.db'),
+          PORT: '0',
+        },
+        encoding: 'utf8',
+        timeout: 20_000,
+      }
+    );
+    expect(started.status).toBe(1);
+    expect(`${started.stdout}${started.stderr}`).toContain('symlink');
+    expect(readdirSync(target)).toEqual([]);
+  }, 30_000);
 });
