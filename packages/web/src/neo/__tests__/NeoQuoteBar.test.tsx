@@ -19,7 +19,7 @@ it('renders excerpt markdown in the tappable bar without nested links', async ()
   expect(bar.textContent).not.toContain('**');
   expect(bar.querySelector('a')).toBeNull();
   expect(bar.querySelector('[data-demoted-link]')?.textContent).toBe('the doc');
-  expect(bar.querySelector('.neo-quote-copy')).toBeNull();
+  expect(bar.querySelector('.copy-button')).toBeNull();
 });
 
 it('renders real anchors in the static bar', async () => {
