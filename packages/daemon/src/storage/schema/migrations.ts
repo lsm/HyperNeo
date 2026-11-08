@@ -1,4 +1,5 @@
 import { runMigration488 } from './m488-pair-voided-at.ts';
+import { runMigration489 } from './m489-pair-two-way.ts';
 import { runMigration487 } from './m487-pair-requested-by.ts';
 import { runMigration486 } from './m486-neo-ask-topic.ts';
 import { runMigration485 } from './m485-pair-requested-name.ts';
@@ -1011,6 +1012,7 @@ export function runMigrations(
   run(migrationMarkerKey(486), () => runMigration486(db));
   run(migrationMarkerKey(487), () => runMigration487(db));
   run(migrationMarkerKey(488), () => runMigration488(db));
+  run(migrationMarkerKey(489), () => runMigration489(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

@@ -3,11 +3,14 @@ import type { Database } from '../sqlite-compat.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { pairingApproveWrite, pairingDenyWrite } from './pairing-approve-write.ts';
+import type { PairApprovalRequest } from './pairing-approve-write.ts';
 import { pairingRedeemWrite } from './pairing-redeem-write.ts';
 import type { PairRequest, PairRequestRecord } from '../../lib/pairing/pair-request.ts';
-import { pairingCodeCreateWrites, type PairingCodeCaller } from './pairing-code-create-write.ts';
+import { pairingCodeCreateWrites, type PairingCodeDraft } from './pairing-code-create-write.ts';
+import type { PairingCodeCaller } from './pairing-code-create-write.ts';
 import { pairingRevokeWrites } from './pairing-revoke-write.ts';
 import { pairingStateReads } from './pairing-state-read.ts';
+import { pairFingerprint } from '../../lib/pairing/pair-fingerprint.ts';
 
 export type DeviceKind = 'human' | 'relay' | 'daemon' | 'agent';
 
@@ -23,6 +26,8 @@ const CODE_LENGTH = 10;
 export const PAIRING_CODE_TTL_MS = 10 * 60_000;
 export const UNPAIRED_FIELD_MAX = 255;
 export const UNPAIRED_ROW_CAP = 500;
+
+type SqlRow<T> = { [K in keyof T]: T[K] extends boolean ? number : T[K] } | null;
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
@@ -272,25 +277,26 @@ export class DevicePairingRepository {
       .get() as { all: number; humans: number };
   }
 
-  createCodeAsync(kind: DeviceKind, name: string | null, caller: PairingCodeCaller, now: number) {
-    return gatewayFor(this.db).call(pairingCodeCreateWrites, 'create', kind, name, caller, now);
+  createCodeAsync(draft: PairingCodeDraft) {
+    return gatewayFor(this.db).call(pairingCodeCreateWrites, 'create', draft);
   }
 
   createCode(
     kind: DeviceKind,
     name: string | null,
     approved: boolean,
-    now: number
+    now: number,
+    twoWay = false
   ): { id: string; code: string; expiresAt: number } {
     const id = randomUUID();
     const code = Array.from(randomBytes(CODE_LENGTH), (byte) => CODE_ALPHABET[byte % 32]).join('');
     const expiresAt = now + PAIRING_CODE_TTL_MS;
     this.db
       .prepare(
-        `INSERT INTO pairing_codes (id, code_hash, kind, name, created_at, expires_at, approved_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO pairing_codes (id, code_hash, kind, name, created_at, expires_at, approved_at, two_way)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, hash(code), kind, name, now, expiresAt, approved ? now : null);
+      .run(id, hash(code), kind, name, now, expiresAt, approved ? now : null, twoWay ? 1 : 0);
     return { id, code, expiresAt };
   }
 
@@ -300,10 +306,12 @@ export class DevicePairingRepository {
     name: string | null;
     requestedName: string | null;
     expiresAt: number;
+    fingerprint: string[] | null;
   }[] {
-    return this.db
+    const rows = this.db
       .prepare(
-        `SELECT id, kind, name, requested_name AS requestedName, expires_at AS expiresAt FROM pairing_codes
+        `SELECT id, kind, name, requested_name AS requestedName, expires_at AS expiresAt,
+           code_hash AS codeHash, requested_by AS requestedBy, two_way AS twoWay FROM pairing_codes
          WHERE approved_at IS NULL AND used_at IS NULL AND expires_at > ? ORDER BY created_at`
       )
       .all(now) as {
@@ -312,11 +320,32 @@ export class DevicePairingRepository {
       name: string | null;
       requestedName: string | null;
       expiresAt: number;
+      codeHash: string;
+      requestedBy: string | null;
+      twoWay: number;
     }[];
+    return rows.map(({ codeHash, requestedBy, twoWay, ...row }) => ({
+      ...row,
+      fingerprint:
+        twoWay && requestedBy ? pairFingerprint(codeHash, requestedBy).slice(0, 7) : null,
+    }));
   }
 
-  approveAsync(codeId: string, deviceId: string, now: number) {
-    return gatewayFor(this.db).run(pairingApproveWrite, { codeId, deviceId, now });
+  pendingCode(
+    id: string,
+    now: number
+  ): { twoWay: boolean; codeHash: string; requestedBy: string | null } | null {
+    const row = this.db
+      .prepare(
+        `SELECT two_way AS twoWay, code_hash AS codeHash, requested_by AS requestedBy
+         FROM pairing_codes WHERE id = ? AND approved_at IS NULL AND used_at IS NULL AND expires_at > ?`
+      )
+      .get(id, now) as SqlRow<{ twoWay: boolean; codeHash: string; requestedBy: string | null }>;
+    return row && { ...row, twoWay: !!row.twoWay };
+  }
+
+  approveAsync(request: PairApprovalRequest) {
+    return gatewayFor(this.db).run(pairingApproveWrite, request);
   }
 
   approve(id: string, now: number): boolean {
@@ -358,13 +387,12 @@ export class DevicePairingRepository {
     const row = this.db
       .prepare(
         `SELECT id, approved_at IS NOT NULL AS approved, requested_name AS requestedName,
-           requested_by AS requestedBy, voided_at IS NOT NULL AS voided FROM pairing_codes
+           requested_by AS requestedBy, voided_at IS NOT NULL AS voided, two_way AS twoWay
+         FROM pairing_codes
          WHERE code_hash = ? AND used_at IS NULL AND (expires_at > ? OR voided_at IS NOT NULL)`
       )
-      .get(hash(normalizePairingCode(code)), now) as
-      | (Omit<PairRequestRecord, 'approved' | 'voided'> & { approved: number; voided: number })
-      | null;
-    return row && { ...row, approved: row.approved === 1, voided: row.voided === 1 };
+      .get(hash(normalizePairingCode(code)), now) as SqlRow<PairRequestRecord>;
+    return row && { ...row, approved: !!row.approved, voided: !!row.voided, twoWay: !!row.twoWay };
   }
 
   recordRequester(id: string, name: string, requestedBy: string | null): void {

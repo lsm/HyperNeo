@@ -12,6 +12,7 @@ export interface PairRequestRecord {
   requestedName: string | null;
   requestedBy: string | null;
   voided: boolean;
+  twoWay: boolean;
 }
 
 export type PairRequestStep = 'refuse' | 'record' | 'wait' | 'redeem' | 'void' | 'voided';
@@ -25,6 +26,7 @@ export function decidePairRequest(
 ): PairRequestStep {
   if (!record) return 'refuse';
   if (record.voided) return 'voided';
+  if (record.twoWay && !request.requestId) return 'refuse';
   if (record.requestedName === null) return record.approved ? 'redeem' : 'record';
   if (record.requestedName !== request.name || record.requestedBy !== requesterOf(request))
     return 'void';
