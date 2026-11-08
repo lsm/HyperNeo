@@ -21,6 +21,8 @@ try {
     const context = await browser.newContext({ storageState, viewport: { width, height: 900 }, hasTouch: width === 390, permissions: ['microphone'] });
     await context.addInitScript(theme => localStorage.setItem('theme', theme), theme);
     const page = await context.newPage();
+    page.setDefaultTimeout(15000);
+    page.on('pageerror', error => console.error(String(error)));
     await page.goto(`${base}/neo`);
     const input = page.getByRole('textbox', { name: 'Message Neo', exact: true });
     await input.waitFor();
@@ -95,6 +97,25 @@ try {
     await form.screenshot({ path: `${run}/evidence/${theme}-${width}-recording.png` });
     await form.getByRole('button', { name: 'Cancel recording', exact: true }).click();
     observations.push({ theme, width, collapsed, focused, blurred, recording, geometry });
+    await page.goto(`${base}/assets/composer-insets.html`);
+    const fixture = page.locator('form.neo-composer-input');
+    await fixture.waitFor().catch(async error => { await page.screenshot({ path: `${run}/evidence/fixture-error.png` }); throw error; });
+    await fixture.locator('input[type=file]').setInputFiles({ name: 'pending.txt', mimeType: 'text/plain', buffer: Buffer.from('Synthetic pending read') });
+    const reading = fixture.getByRole('status').filter({ hasText: /Reading/ });
+    await reading.waitFor();
+    const rows = [fixture.getByRole('region'), fixture.getByRole('status').filter({ hasText: /Bound preview/ }).locator('..'),
+      fixture.getByRole('button', { name: /Use current Preview/ }), reading];
+    const insetReceipts = [];
+    for (const row of rows) {
+      const inset = await row.evaluate(el => {
+        const form = el.closest('form');
+        return el.getBoundingClientRect().x - form.getBoundingClientRect().x + parseFloat(getComputedStyle(el).paddingLeft);
+      });
+      insetReceipts.push(inset);
+    }
+    await fixture.screenshot({ path: `${run}/evidence/${theme}-${width}-auxiliary.png` });
+    assert(insetReceipts.every(value => Math.abs(value - 17) <= 1), `All auxiliary row content must retain 17px frame inset: ${insetReceipts}`);
+    observations.at(-1).insets = insetReceipts;
     await context.close();
   }
   writeFileSync(`${run}/evidence/composer-frame.json`, JSON.stringify({ phase: before ? 'before' : 'after', passed: true, observations }, null, 2));
