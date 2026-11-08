@@ -76,7 +76,10 @@ function setup() {
 }
 
 const settledWithin = (promise: Promise<unknown>, ms: number) =>
-  Promise.race([promise.then(() => true), Bun.sleep(ms).then(() => false)]);
+  Promise.race([
+    promise.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
+  ]);
 
 describe('createPairWaits', () => {
   test('holds one request per code until released or timed out', async () => {
@@ -86,6 +89,10 @@ describe('createPairWaits', () => {
     waits.release('code-1');
     expect(await held).toBe(true);
     expect(await waits.hold('code-2', 5)).toBe(true);
+    const client = new AbortController();
+    const left = waits.hold('code-3', 10_000, client.signal);
+    client.abort();
+    expect(await left).toBe(false);
   });
 });
 

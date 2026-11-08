@@ -11,14 +11,16 @@ export function createPairWaits(): PairWaits {
     hold: (codeId, ms, signal) => {
       if (held.has(codeId) || signal?.aborted) return Promise.resolve(false);
       return new Promise((resolve) => {
-        const done = () => {
+        const finish = (released: boolean) => {
           clearTimeout(timer);
-          signal?.removeEventListener('abort', done);
+          signal?.removeEventListener('abort', abandon);
           held.delete(codeId);
-          resolve(true);
+          resolve(released);
         };
+        const done = () => finish(true);
+        const abandon = () => finish(false);
         const timer = setTimeout(done, ms);
-        signal?.addEventListener('abort', done);
+        signal?.addEventListener('abort', abandon);
         held.set(codeId, done);
       });
     },
