@@ -55,27 +55,27 @@ describe('pairLink', () => {
 
 describe('pairOrigin', () => {
   const host = 'mac.example.ts.net';
-  test('uses HTTPS when tailscale serve publishes 443, else the daemon port', () => {
-    expect(pairOrigin(host, 8399, { TCP: { '443': {} } })).toBe('https://mac.example.ts.net');
-    expect(pairOrigin(host, 8399, { Web: { 'mac.example.ts.net:443': {} } })).toBe(
+  test('uses HTTPS when tailscale serve publishes 443, and nothing otherwise', () => {
+    expect(pairOrigin(host, { TCP: { '443': {} } })).toBe('https://mac.example.ts.net');
+    expect(pairOrigin(host, { Web: { 'mac.example.ts.net:443': {} } })).toBe(
       'https://mac.example.ts.net'
     );
-    expect(pairOrigin(host, 8399, null)).toBe('http://mac.example.ts.net:8399');
-    expect(pairOrigin(null, 8399, null)).toBeNull();
-    expect(pairOrigin(host, null, null)).toBeNull();
+    expect(pairOrigin(host, null)).toBeNull();
+    expect(pairOrigin(host, { TCP: { '8443': {} } })).toBeNull();
+    expect(pairOrigin(null, { TCP: { '443': {} } })).toBeNull();
   });
 
   test('accepts an --address only on a tailnet host', () => {
-    expect(pairOrigin(null, null, null, 'https://mac.example.ts.net:8443/x')).toBe(
+    expect(pairOrigin(null, null, 'https://mac.example.ts.net:8443/x')).toBe(
       'https://mac.example.ts.net:8443'
     );
-    expect(pairOrigin(host, 8399, null, 'http://100.64.0.1:8399')).toBe('http://100.64.0.1:8399');
-    expect(pairOrigin(host, 8399, null, 'https://evil.example.com')).toBeNull();
-    expect(pairOrigin(host, 8399, null, 'ftp://mac.example.ts.net')).toBeNull();
-    expect(pairOrigin(host, 8399, null, 'not a url')).toBeNull();
-    expect(pairOrigin(host, 8399, null, 'https://100.evil.example.com')).toBeNull();
-    expect(pairOrigin(host, 8399, null, 'http://100.12.0.1:8399')).toBeNull();
-    expect(pairOrigin(host, 8399, null, 'http://100.127.255.254:8399')).toBe(
+    expect(pairOrigin(host, null, 'http://100.64.0.1:8399')).toBe('http://100.64.0.1:8399');
+    expect(pairOrigin(host, null, 'https://evil.example.com')).toBeNull();
+    expect(pairOrigin(host, null, 'ftp://mac.example.ts.net')).toBeNull();
+    expect(pairOrigin(host, null, 'not a url')).toBeNull();
+    expect(pairOrigin(host, null, 'https://100.evil.example.com')).toBeNull();
+    expect(pairOrigin(host, null, 'http://100.12.0.1:8399')).toBeNull();
+    expect(pairOrigin(host, null, 'http://100.127.255.254:8399')).toBe(
       'http://100.127.255.254:8399'
     );
   });
@@ -169,7 +169,6 @@ describe('runPairQr', () => {
         args[0] === 'status'
           ? { BackendState: 'Running', Self: { DNSName: 'mac.example.ts.net.', TailscaleIPs: [] } }
           : { TCP: { '443': {} } },
-      port: () => 8399,
       ask: async () => ' 7DCC ',
       print: (text) => out.push(text),
       now: () => 1,
@@ -197,7 +196,6 @@ describe('runPairQr', () => {
         return {};
       },
       tailscale: async () => null,
-      port: () => 8399,
       ask: async () => '',
       print: (text) => out.push(text),
       now: () => 1,
@@ -206,5 +204,30 @@ describe('runPairQr', () => {
     expect(code).toBe(1);
     expect(calls).toEqual([]);
     expect(out.join('\n')).toContain('Tailscale');
+  });
+
+  test('rejects flags it does not understand before making a code', async () => {
+    for (const args of [
+      ['--qr', '--kind', 'relay'],
+      ['--qr', '--reset-lockout'],
+      ['--qr', '--name'],
+    ]) {
+      const calls: string[] = [];
+      const out: string[] = [];
+      const code = await runPairQr(args, {
+        call: async (name) => {
+          calls.push(name);
+          return {};
+        },
+        tailscale: async () => null,
+        ask: async () => '',
+        print: (text) => out.push(text),
+        now: () => 1,
+        sleep: async () => {},
+      });
+      expect(code).toBe(1);
+      expect(calls).toEqual([]);
+      expect(out.join('\n')).toContain('hyperneo pair --qr');
+    }
   });
 });

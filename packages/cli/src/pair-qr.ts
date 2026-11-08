@@ -17,7 +17,6 @@ export type PairWatch =
 export interface PairQrDeps {
   call: (name: string, input: unknown) => Promise<unknown>;
   tailscale: (args: string[]) => Promise<unknown>;
-  port: () => number | null;
   ask: (question: string) => Promise<string>;
   print: (text: string) => void;
   now: () => number;
@@ -39,22 +38,16 @@ export function tailnetAddress(status: unknown): string | null {
 const isTailnetHost = (host: string) =>
   /\.ts\.net$|^\[fd7a:|^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])(\.\d{1,3}){2}$/i.test(host);
 
-export function pairOrigin(
-  host: string | null,
-  port: number | null,
-  serve: unknown,
-  override?: string
-): string | null {
+export function pairOrigin(host: string | null, serve: unknown, override?: string): string | null {
   if (override) {
     const url = URL.canParse(override) ? new URL(override) : null;
     return url && /^https?:$/.test(url.protocol) && isTailnetHost(url.hostname) ? url.origin : null;
   }
-  if (!host || !port) return null;
   const { TCP, Web } = (serve ?? {}) as { TCP?: object; Web?: object };
   const https =
     Object.keys(TCP ?? {}).includes('443') ||
     Object.keys(Web ?? {}).some((key) => key.endsWith(':443'));
-  return https ? `https://${host}` : `http://${host}:${port}`;
+  return host && https ? `https://${host}` : null;
 }
 
 export const pairLink = (code: string, origin: string) =>
@@ -98,17 +91,24 @@ export function planPairWatch(
 }
 
 export async function runPairQr(args: string[], deps: PairQrDeps): Promise<number> {
-  const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
-  const name = flag('--name');
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < args.length; i += args[i] === '--qr' ? 1 : 2) {
+    if (args[i] === '--qr') continue;
+    if (!['--name', '--address'].includes(args[i]) || !args[i + 1]?.trim()) {
+      deps.print('Usage: hyperneo pair --qr [--name <name>] [--address <tailnet origin>]');
+      return 1;
+    }
+    flags[args[i]] = args[i + 1];
+  }
+  const name = flags['--name'];
   const origin = pairOrigin(
     tailnetAddress(await deps.tailscale(['status', '--json'])),
-    deps.port(),
     await deps.tailscale(['serve', 'status', '--json']),
-    flag('--address')
+    flags['--address']
   );
   if (!origin) {
     deps.print(
-      'No Tailscale address for the daemon. Start Tailscale, or pass --address https://<tailnet name>.'
+      'No HTTPS Tailscale address for the daemon. Publish it with tailscale serve, or pass --address https://<tailnet name>.'
     );
     return 1;
   }

@@ -5,7 +5,6 @@ import { sessionDoorPath } from '@hyperneo/daemon/lib/messaging/session-door';
 import { readLocalCredential } from '@hyperneo/daemon/lib/pairing/local-credential';
 import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
 import { readCard } from './read-card.ts';
-import { readFileSync } from 'node:fs';
 import { spawnProcess } from '@hyperneo/daemon/lib/runtime-spawn';
 import { runPairQr } from './pair-qr.ts';
 
@@ -24,16 +23,6 @@ async function tailscale(args: string[]): Promise<unknown> {
     } catch {}
   }
   return null;
-}
-
-function daemonPort(door: string): number | null {
-  try {
-    return (
-      Number(JSON.parse(readFileSync(join(dirname(door), 'runtime.json'), 'utf8')).port) || null
-    );
-  } catch {
-    return null;
-  }
 }
 
 type Env = Record<string, string | undefined>;
@@ -145,7 +134,6 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
         return kind === 'completed' ? value : { ok: false, reason: error ?? message ?? kind };
       },
       tailscale,
-      port: () => daemonPort(door),
       ask: async (question) => prompt(question) ?? '',
       print: (text) => console.log(text),
       now: Date.now,
