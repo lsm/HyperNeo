@@ -1,3 +1,4 @@
+import { createPairWaits } from '../../../../src/lib/pairing/pair-waits';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { request, Server } from 'node:http';
@@ -140,6 +141,7 @@ describe('the session door', () => {
       () =>
         createOperationRegistry(
           createDevicePairingOperations({
+            waits: createPairWaits(),
             repo: () => repo,
             limiter: createPairingLimiter(),
             now: () => 1_000_000,

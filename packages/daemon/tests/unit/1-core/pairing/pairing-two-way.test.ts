@@ -1,3 +1,4 @@
+import { createPairWaits } from '../../../../src/lib/pairing/pair-waits.ts';
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { pairFingerprint } from '../../../../src/lib/pairing/pair-fingerprint.ts';
@@ -22,8 +23,14 @@ function setup() {
   ).run();
   const now = 1_000_000;
   const repo = new DevicePairingRepository(db);
-  const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: () => now });
+  const route = createPairRoute({
+    waits: createPairWaits(),
+    repo,
+    limiter: createPairingLimiter(),
+    now: () => now,
+  });
   const ops = createDevicePairingOperations({
+    waits: createPairWaits(),
     repo: () => repo,
     limiter: createPairingLimiter(),
     now: () => now,

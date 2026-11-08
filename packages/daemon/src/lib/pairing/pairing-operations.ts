@@ -6,6 +6,7 @@ import type {
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { PairingLimiter } from './pairing-limiter.ts';
+import type { PairWaits } from './pair-waits.ts';
 import { createDeviceRevoker } from './revoke-device.ts';
 
 export const SESSION_DOOR_PRINCIPAL = 'session-door';
@@ -19,6 +20,7 @@ export interface PairingOperationDeps {
   readonly limiter: PairingLimiter;
   readonly now: () => number;
   readonly revoked: (deviceId: string) => void;
+  readonly waits: PairWaits;
 }
 
 export const ALLOW_NEEDS_PAIRED_HUMAN =
@@ -72,6 +74,7 @@ export function createDevicePairingOperations({
   limiter,
   now,
   revoked,
+  waits,
 }: PairingOperationDeps) {
   const revoke = createDeviceRevoker(pairing, now, revoked);
   const isPairedHuman = (caller: OperationCaller) =>
@@ -84,12 +87,14 @@ export function createDevicePairingOperations({
   const decidePending = async (
     caller: OperationCaller,
     notPaired: string,
+    codeId: string,
     write: (deviceId: string) => Promise<string>,
     door = false
   ) => {
     if (!isLocalUser(caller) && !(door && fromDoor(caller))) return refused;
     if (caller.device?.kind !== 'human') return { ok: false as const, reason: notPaired };
     const decided = await write(caller.device.deviceId);
+    waits.release(codeId);
     if (decided === 'not_paired') return { ok: false as const, reason: notPaired };
     const reason = DECIDED_REASON[decided];
     return reason ? { ok: false as const, reason } : { ok: true as const };
@@ -180,6 +185,7 @@ export function createDevicePairingOperations({
         decidePending(
           caller,
           ALLOW_NEEDS_PAIRED_HUMAN,
+          input.codeId,
           (deviceId) =>
             pairing().approveAsync({
               codeId: input.codeId,
@@ -225,7 +231,7 @@ export function createDevicePairingOperations({
       inputSchema: z.object({ codeId: z.string().min(1) }).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
       execute: (input, caller) =>
-        decidePending(caller, DENY_NEEDS_PAIRED_HUMAN, (deviceId) =>
+        decidePending(caller, DENY_NEEDS_PAIRED_HUMAN, input.codeId, (deviceId) =>
           pairing().denyAsync(input.codeId, deviceId, now())
         ),
     }),

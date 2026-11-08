@@ -1,3 +1,4 @@
+import { createPairWaits } from '../../../../src/lib/pairing/pair-waits.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { MessageHub, MessageHubRouter } from '@hyperneo/shared';
@@ -54,7 +55,12 @@ async function startPairableDaemon() {
   const transport = new WebSocketServerTransport({ name: 'daemon-b', router });
   hub.registerTransport(transport);
   setupOperationHandlers(hub, registry, (clientId) => transport.deviceOf(clientId));
-  const pair = createPairRoute({ repo: devices, limiter: createPairingLimiter(), now: Date.now });
+  const pair = createPairRoute({
+    waits: createPairWaits(),
+    repo: devices,
+    limiter: createPairingLimiter(),
+    now: Date.now,
+  });
   const gateway = new DbGateway(':memory:', db);
   const authenticate = createUpgradeAuthenticator({ db: () => gateway, now: Date.now });
   const server: ServerHandle = await createHttpWsServer({

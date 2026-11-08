@@ -1,3 +1,4 @@
+import { createPairWaits } from '../../../../src/lib/pairing/pair-waits';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createDevicePairingOperations } from '../../../../src/lib/pairing/pairing-operations';
 import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter';
@@ -46,6 +47,7 @@ describe('pairing approval writer admission', () => {
     invokeOperation(
       createOperationRegistry(
         createDevicePairingOperations({
+          waits: createPairWaits(),
           repo: () => new DevicePairingRepository(main),
           limiter: createPairingLimiter(),
           now: () => now,
