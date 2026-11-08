@@ -38,8 +38,8 @@ function setup(repository: string | null, seedPeer = true) {
     title: 'Ship it',
     request: 'Ship it',
     createdAt: 1,
-    repo: repository,
   });
+  db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run(repository, 'ask');
   if (repository && seedPeer)
     store.addTodo(
       'repo-context',
@@ -147,9 +147,12 @@ describe('neo.todo.add evidence paths', () => {
   });
 
   test('an ask-only legacy hint does not assign a repository to new work', async () => {
-    const { add } = setup('lsm/hyperneo', false);
+    const { add, db } = setup('lsm/hyperneo', false);
     const result = await add({ path: join(userFolder, 'itinerary.md') });
-    expect(result).toMatchObject({ ok: true, todo: { repo: null } });
+    expect(result.ok).toBe(true);
+    expect(
+      db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(result.todo.id)
+    ).toEqual({ repo: null });
   });
 
   test('a todo with no repo may still save a result for the human', async () => {
@@ -206,7 +209,6 @@ describe('neo.todo.add evidence paths', () => {
       { title: 'Older', doneWhen: 'Observed', check: null, instruction: null, named: null },
       1
     );
-    expect(todo.repo).toBeNull();
     const result = await edit({
       todoId: todo.id,
       check: { pack: 'core', kind: 'evidence', params: { path: join(userFolder, 'proof.md') } },

@@ -15,7 +15,7 @@ let db: Database;
 let gateway: DbGateway;
 let core: NeoAskTodoRepository;
 const draft = { title: 'Work', doneWhen: 'Observed', check: null, named: null, instruction: null };
-const command = (mode: 'Reads' | 'Writes', method: string, args: unknown[] = []) =>
+const command = (mode: 'Writes', method: string, args: unknown[] = []) =>
   gateway.run(DB_OPS.get(`coding.todoStorage${mode}`)!, { method, args });
 beforeEach(() => {
   db = new Database(':memory:');
@@ -25,7 +25,6 @@ beforeEach(() => {
   db.exec('PRAGMA foreign_keys=ON');
   gateway = new DbGateway(':memory:', db);
   const legacy: NeoTodoStorageBoundary = {
-    project: (todo) => todo,
     insert: (commit, [id, askId, draft, now]) => commit(id, askId, draft, now),
   };
   core = new NeoAskTodoRepository(db, undefined, undefined, undefined, undefined, legacy);
@@ -36,9 +35,9 @@ beforeEach(() => {
     sessionId: 'neo',
     projectId: null,
     originMessageId: null,
-    repo: 'github.com/synthetic/history',
     createdAt: 1,
   });
+  db.prepare('UPDATE neo_asks SET repo=? WHERE id=?').run('github.com/synthetic/history', 'ask');
 });
 afterEach(async () => {
   await gateway.close();
@@ -47,42 +46,6 @@ afterEach(async () => {
 
 const candidate = (changed = () => {}) =>
   new NeoAskTodoRepository(db, changed, undefined, undefined, undefined, codingTodoStorage(db));
-
-test('an unprepared legacy fixture fails facts reads until preparation', async () => {
-  db.exec('DROP TABLE pack_coding_todos');
-  await expect(command('Reads', 'facts', ['ask'])).rejects.toThrow('no such table');
-  await command('Writes', 'prepare');
-  await expect(command('Reads', 'facts', ['ask'])).resolves.toEqual({
-    legacy: 'github.com/synthetic/history',
-    repositories: [],
-  });
-});
-
-test('projection fails before explicit preparation and reads after it', async () => {
-  const historical = core.addTodo('historical', 'ask', draft, 2);
-  db.exec('DROP TABLE pack_coding_todos');
-  await expect(command('Reads', 'project', [historical])).rejects.toThrow('no such table');
-  await command('Writes', 'prepare');
-  await expect(command('Reads', 'project', [historical])).resolves.toEqual(historical);
-});
-
-test('all six readers project pack data while core rows hold no repository', async () => {
-  const legacy = core.addTodo('stored', 'ask', draft, 2, 'github.com/synthetic/old');
-  await command('Writes', 'prepare');
-  await command('Writes', 'record', [legacy.id, 'github.com/synthetic/canonical']);
-  const legacyReader = core;
-  core = candidate();
-  const reads = [
-    core.getTodo(legacy.id),
-    ...core.getTodos([legacy.id]),
-    ...core.listTodos('ask'),
-    ...core.listTodosForAsks(['ask']),
-    ...core.listCheckable(),
-    core.getCheckable(legacy.id),
-  ];
-  expect(reads.map((todo) => todo?.repo)).toEqual(Array(6).fill('github.com/synthetic/canonical'));
-  expect(legacyReader.getTodo(legacy.id)?.repo).toBeNull();
-});
 
 test('explicit storage inserts only the pack repository fact and keeps the ask association', async () => {
   await command('Writes', 'prepare');
@@ -94,11 +57,13 @@ test('explicit storage inserts only the pack repository fact and keeps the ask a
     });
   });
   const receipt = core.addTodo('new', 'ask', draft, 2, 'github.com/synthetic/new');
-  expect(receipt.repo).toBe('github.com/synthetic/new');
+  expect(receipt).not.toHaveProperty('repo');
   expect(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('new')).toEqual({
     repo: 'github.com/synthetic/new',
   });
-  expect(core.getAsk('ask')?.repo).toBe('github.com/synthetic/history');
+  expect(db.prepare('SELECT repo FROM neo_asks WHERE id=?').get('ask')).toEqual({
+    repo: 'github.com/synthetic/history',
+  });
   expect(notices).toBe(1);
 });
 

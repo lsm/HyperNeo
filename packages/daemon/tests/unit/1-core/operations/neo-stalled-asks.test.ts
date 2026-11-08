@@ -159,7 +159,6 @@ test('a parent with an open child is not finished', async () => {
     request: 'Synthetic work',
     createdAt: clock,
     parentId: 'parent',
-    repo: 'github.com/synthetic/child',
   });
   const tell = spyOn(service, 'deliverForward').mockResolvedValue(undefined);
   await service.refreshDriverWork();

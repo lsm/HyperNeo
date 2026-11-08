@@ -29,7 +29,6 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   check: null,
   instruction: 'Do it',
   named: null,
-  repo: null,
   state: 'todo',
   reason: null,
   blockedReason: null,
@@ -75,7 +74,6 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
   ask: {
     id: 'ask',
     projectId: null,
-    repo: null,
     parentId: null,
     sessionId: 'neo',
     originMessageId: null,

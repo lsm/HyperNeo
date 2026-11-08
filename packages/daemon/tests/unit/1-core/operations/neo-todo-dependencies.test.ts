@@ -207,7 +207,6 @@ describe('todo dependencies', () => {
           request: id,
           createdAt: 1,
           parentId,
-          repo: parentId ? 'synthetic/child' : null,
         });
       const draft = (title: string, dependsOn?: string[]) => ({
         title,

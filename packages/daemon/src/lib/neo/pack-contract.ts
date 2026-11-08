@@ -37,9 +37,8 @@ export type NeoTodoRepositoryDraft = Pick<NeoTodo, 'check' | 'named'> & {
   target?: NeoDriverTarget | NeoTodoTarget | null;
 };
 export type NeoTodoPolicyScope = {
-  ask: Pick<NeoAsk, 'repo'> | null;
-  todo?: Pick<NeoTodo, 'repo'> | null;
-  peers?: readonly Pick<NeoTodo, 'repo'>[];
+  ask: Pick<NeoAsk, 'id'> | null;
+  todo?: Pick<NeoTodo, 'id'> | null;
   start?: true;
 };
 

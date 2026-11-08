@@ -121,13 +121,11 @@ export function wireNeoTodoMutations(
         if (input.kind !== 'edit' || !input.check) return { value: plan };
         const current = await deps.gateway.call(neoTodoReads, 'getTodo', input.todoId);
         const ask = await deps.gateway.call(neoTodoReads, 'getAsk', plan.todo.askId);
-        const repo =
-          plan.todo.repo ??
-          neoTodoRepository(
-            { check: input.check, named: plan.todo.named, target: input.target },
-            deps.packs(),
-            { ask, todo: current }
-          );
+        const repo = neoTodoRepository(
+          { check: input.check, named: plan.todo.named, target: input.target },
+          deps.packs(),
+          { ask, todo: current }
+        );
         const reason = neoEvidenceRefusal(input.check, repo, deps.userFolder, current?.check);
         return reason ? { reason: { ok: false as const, reason } } : { value: plan };
       },

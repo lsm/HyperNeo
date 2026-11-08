@@ -189,18 +189,19 @@ export function createNeoAskRecordOperations(
         const recorded = family(priorAsk);
         const recordedRow = (
           todo: (typeof input.todos)[number],
-          scope: Pick<NeoAsk, 'id' | 'repo'> | null = priorAsk
+          scope: Pick<NeoAsk, 'id'> | null = priorAsk
         ) => {
-          const peers = recorded.filter((item) => item.askId === scope?.id);
-          const repo = neoTodoRepository(todo, packs(), { ask: scope, peers });
+          const repo = neoTodoRepository(todo, packs(), { ask: scope });
+          const stored = (item: NeoTodo) =>
+            neoTodoRepository(item, packs(), { ask: null, todo: item });
           const filed = (item: NeoTodo) =>
             neoTodoRepository(
               { check: item.check, named: item.named, target: sessions.get(item.id) },
               packs(),
-              { ask: scope, peers }
+              { ask: scope }
             );
           return recorded.find(
-            (item) => item.title === todo.title && (item.repo === repo || filed(item) === repo)
+            (item) => item.title === todo.title && (stored(item) === repo || filed(item) === repo)
           );
         };
         const homeless =
@@ -220,10 +221,7 @@ export function createNeoAskRecordOperations(
             const check = withAssignedEvidence(todo.check, todoEvidenceFile('pending'));
             const reason = neoEvidenceRefusal(
               check,
-              neoTodoRepository(todo, packs(), {
-                ask: priorAsk,
-                peers: recorded.filter((item) => item.askId === priorAsk?.id),
-              }),
+              neoTodoRepository(todo, packs(), { ask: priorAsk }),
               controls.userFolder ?? neoUserFolder()
             );
             return reason
