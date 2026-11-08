@@ -5,12 +5,13 @@ import {
   subscribeToStructuredLogs,
 } from '../../../../src/lib/logger.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import {
+  codexConnectError,
   connectCodexAppServer,
   startCodexBootstrapServer,
 } from '../../../../src/lib/drivers/codex-app-server';
@@ -218,6 +219,25 @@ describe('connectCodexAppServer', () => {
     await expect(connectCodexAppServer(join(dir, 'missing.sock'))).rejects.toThrow();
   });
 
+  test('names the socket and the cause when the control socket link points nowhere', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'codex-app-server-'));
+    server = createServer();
+    sockets = new WebSocketServer({ noServer: true });
+    server.listen(join(dir, 'other.sock'));
+    const link = join(dir, 'app-server-control.sock');
+    symlinkSync(join(dir, 'deleted-by-tmp-cleanup'), link);
+    const failure = await connectCodexAppServer(link).then(
+      () => null,
+      (error: unknown) => error
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(link);
+    expect((failure as Error).message).toContain(
+      `points to ${join(dir, 'deleted-by-tmp-cleanup')}, which no longer exists`
+    );
+    expect((failure as Error).message).not.toContain('[object');
+  });
+
   test('exposes configuration selection without creating a thread on catalog failure', async () => {
     const { path, seen } = await listen();
     const client = await connectCodexAppServer(path);
@@ -308,5 +328,40 @@ lines.on('close', () => {
         (message: { method: string }) => message.method
       )
     ).toEqual(['initialize']);
+  });
+});
+
+describe('codexConnectError', () => {
+  const bunEvent = {
+    type: 'error',
+    message: "WebSocket connection to 'ws+unix:///x/control.sock:/' failed: Failed to connect",
+  };
+
+  test('turns a WebSocket error event into an Error naming the socket and the event text', () => {
+    const error = codexConnectError('/x/control.sock', bunEvent, { exists: true });
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe(
+      "Could not connect to the Codex app-server at /x/control.sock: WebSocket connection to 'ws+unix:///x/control.sock:/' failed: Failed to connect"
+    );
+    expect(error.cause).toBe(bunEvent);
+  });
+
+  test('says when the socket link points to a file that is gone', () => {
+    const error = codexConnectError('/x/control.sock', bunEvent, {
+      exists: false,
+      target: '/private/tmp/codex-daemon-501/abc',
+    });
+    expect(error.message).toBe(
+      'Could not connect to the Codex app-server at /x/control.sock: it points to /private/tmp/codex-daemon-501/abc, which no longer exists'
+    );
+  });
+
+  test('says when there is no socket file at all and keeps an Error cause text', () => {
+    const cause = new Error('connect ENOENT /x/control.sock');
+    const error = codexConnectError('/x/control.sock', cause, { exists: false });
+    expect(error.message).toBe(
+      'Could not connect to the Codex app-server at /x/control.sock: there is no socket file there'
+    );
+    expect(error.cause).toBe(cause);
   });
 });
