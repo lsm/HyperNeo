@@ -26,6 +26,25 @@ function stubClientWidth(px: number) {
 }
 
 describe('VoiceWaveform', () => {
+  it.each([undefined, 'neo'] as const)(
+    'allows cancellation during transcription only in the Neo appearance (%s)',
+    (appearance) => {
+      const onCancel = vi.fn();
+      render(
+        <VoiceWaveform
+          appearance={appearance}
+          getLevel={() => 0}
+          isRecording={false}
+          isTranscribing={true}
+          onCancel={onCancel}
+        />
+      );
+      const cancel = screen.getByRole('button', { name: 'Cancel recording' }) as HTMLButtonElement;
+      expect(cancel.disabled).toBe(appearance !== 'neo');
+      fireEvent.click(cancel);
+      expect(onCancel).toHaveBeenCalledTimes(appearance === 'neo' ? 1 : 0);
+    }
+  );
   it('keeps waveform bars and inline progress in the classic composer', () => {
     render(
       <VoiceWaveform

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
@@ -213,6 +213,88 @@ afterEach(async () => {
 });
 
 describe('NeoComposer and NeoVoice send integration', () => {
+  it('keeps a new transcription active when a cancelled response finishes later', async () => {
+    const releases: Array<(value: Record<string, unknown>) => void> = [];
+    hubRequest.mockImplementation(async (method, payload) =>
+      method === 'voice.transcribe'
+        ? new Promise((resolve) => releases.push(resolve))
+        : defaultHub(method, payload)
+    );
+    const view = renderComposer('keep typed words');
+    await awaitRecordingComposer();
+    fireEvent.click(stopControl());
+    await waitFor(() => expect(releases).toHaveLength(1));
+    fireEvent.click(buttonNamed('Cancel recording'));
+    await screen.findByRole('button', { name: 'Start voice input' });
+    fireEvent.click(buttonNamed('Start voice input'));
+    voice.recording = true;
+    view.rerender();
+    await awaitRecordingComposer();
+    fireEvent.click(stopControl());
+    await waitFor(() => expect(releases).toHaveLength(2));
+    await act(async () => {
+      releases[0]({ text: 'cancelled old words' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.getByTestId('voice-transcribing')).toBeTruthy();
+    expect(view.onTranscript).not.toHaveBeenCalled();
+    releases[1]({ text: 'new words' });
+    await waitFor(() => expect(view.onTranscript).toHaveBeenCalledExactlyOnceWith('new words'));
+    expect(view.current.value).toBe('keep typed words\nnew words');
+    expect(asks()).toHaveLength(0);
+  });
+
+  it('disables cancellation after the completed transcript is being delivered', async () => {
+    let finishDelivery: () => void = () => {};
+    hubRequest.mockImplementation(async (method, payload) => {
+      if (method === 'operation.invoke')
+        await new Promise<void>((resolve) => {
+          finishDelivery = resolve;
+        });
+      return defaultHub(method, payload);
+    });
+    const view = renderComposer();
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    expect(buttonNamed('Cancel recording').disabled).toBe(true);
+    finishDelivery();
+    await waitFor(() => expect(view.current.value).toBe(''));
+  });
+
+  it.each(['draft', 'send'] as const)(
+    'cancels pending %s transcription without inserting or sending its late result',
+    async (intent) => {
+      let release: (value: Record<string, unknown>) => void = () => {};
+      hubRequest.mockImplementation(async (method, payload) =>
+        method === 'voice.transcribe'
+          ? new Promise((resolve) => {
+              release = resolve;
+            })
+          : defaultHub(method, payload)
+      );
+      const view = renderComposer('keep typed words');
+      await awaitRecordingComposer();
+      fireEvent.click(intent === 'draft' ? stopControl() : sendControl());
+      await waitFor(() =>
+        expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+      );
+      const cancel = buttonNamed('Cancel recording');
+      expect(cancel.disabled).toBe(false);
+      fireEvent.click(cancel);
+      await screen.findByRole('button', { name: 'Start voice input' });
+      await waitFor(() => expect(store.records.size).toBe(0));
+      expect(view.current.value).toBe('keep typed words');
+      await act(async () => {
+        release({ text: 'late cancelled words' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(view.onTranscript).not.toHaveBeenCalled();
+      expect(asks()).toHaveLength(0);
+      expect(view.current.value).toBe('keep typed words');
+      expect(reportedErrors(view.onError)).toEqual([]);
+    }
+  );
   it.each([
     ['quote', false],
     ['quote', true],
