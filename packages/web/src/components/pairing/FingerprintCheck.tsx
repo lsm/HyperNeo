@@ -17,8 +17,8 @@ export function FingerprintCheck({
   onInput: (value: string) => void;
 }) {
   return (
-    <div class="mt-1 flex items-center gap-2 text-xs text-fg-muted">
-      <span class="whitespace-nowrap font-mono">{groups.join(' ')}</span>
+    <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-muted">
+      <span class="font-mono">{groups.join(' ')}</span>
       <span class="w-20 shrink-0">
         <input
           class={`${formControlClass()} font-mono`}

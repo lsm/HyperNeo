@@ -205,7 +205,7 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
       <h3 class="mb-2 text-sm font-medium text-fg-muted">Pending devices</h3>
       {pending.map((device) => (
         <div key={device.id} class="mb-3 flex items-center justify-between gap-2 text-sm">
-          <div>
+          <div class="min-w-0 flex-1">
             <p>{device.requestedName ?? device.name ?? 'Unnamed device'}</p>
             <p class="text-xs text-fg-muted">
               {device.kind} · expires {new Date(device.expiresAt).toLocaleTimeString()}
