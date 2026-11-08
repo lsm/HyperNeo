@@ -1428,22 +1428,12 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
         return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
       }
-      return withCodexAppServer(deps, async (server) => {
-        const read = z
-          .object({
-            thread: z.object({ id: z.literal(ref.id), status: z.object({ type: z.string() }) }),
-          })
-          .parse(await server.call('thread/read', { threadId: ref.id }));
-        if (
-          read.thread.status.type === 'active' ||
-          (await readActiveCodexTurn(found.value.thread.rolloutPath))
-        )
-          return reject('busy', 'The Codex thread still has a live turn.');
-        if (!['idle', 'notLoaded'].includes(read.thread.status.type))
-          return reject('unreachable', 'Codex cannot confirm an idle thread.');
-        const refused = admit();
-        if (refused) return refused;
-        await releaseWorkerSandbox(found.value.thread.folder);
+      if (await readActiveCodexTurn(found.value.thread.rolloutPath))
+        return reject('busy', 'The Codex thread still has a live turn.');
+      const refused = admit();
+      if (refused) return refused;
+      await releaseWorkerSandbox(found.value.thread.folder);
+      return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
         await server.call('thread/archive', { threadId: ref.id });
         const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
         return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };

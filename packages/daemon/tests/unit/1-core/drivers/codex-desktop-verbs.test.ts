@@ -401,6 +401,40 @@ describe('codex-desktop adapter status and send', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+  test('archives through its own app-server when the control socket is gone', async () => {
+    const calls: string[] = [];
+    let closed = false;
+    const driver = adapter(
+      0,
+      '',
+      () =>
+        Promise.reject(
+          new Error(
+            'Could not connect to the Codex app-server at /codex/control.sock: it points to /private/tmp/gone, which no longer exists'
+          )
+        ),
+      '/codex/worktrees',
+      '',
+      {
+        bootstrapServer: async () => ({
+          call: async (method, params) => {
+            calls.push(`${method}:${params.threadId}`);
+            return {};
+          },
+          close: () => {
+            closed = true;
+          },
+        }),
+      }
+    );
+    expect(await driver.archive!({ adapter: driver.id, id: 'idle' }, () => null)).toEqual({
+      ok: true,
+      value: { archived: true },
+    });
+    expect(calls).toEqual(['thread/archive:idle']);
+    expect(closed).toBe(true);
+  });
+
   test.each(['clean', 'dirty', 'unpushed'])(
     'archive removes only a clean pushed owned worktree: %s',
     async (state) => {
@@ -431,16 +465,9 @@ describe('codex-desktop adapter status and send', () => {
       const db = new Database(statePath);
       db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(folder, 'idle');
       db.close();
-      const driver = adapter(
-        0,
-        '',
-        async () => ({
-          call: async (method) =>
-            method === 'thread/read' ? { thread: { id: 'idle', status: { type: 'idle' } } } : null,
-          close: () => {},
-        }),
-        worktrees
-      );
+      const driver = adapter(0, '', undefined, worktrees, '', {
+        bootstrapServer: async () => ({ call: async () => null, close: () => {} }),
+      });
       const result = await driver.archive!(ref('idle'), () => null);
       expect(result).toMatchObject({
         ok: true,
@@ -452,13 +479,9 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test.each(
-    ['idle', 'active', 'systemError', 'notLoaded'].flatMap((status) =>
-      ['present', 'missing', 'unreadable'].map((rollout) => ({ status, rollout }))
-    )
-  )(
-    'archives only an idle Codex thread ($status, $rollout rollout)',
-    async ({ status, rollout }) => {
+  test.each(['present', 'missing', 'unreadable'])(
+    'archives a Codex thread whose rollout shows no live turn (%s rollout)',
+    async (rollout) => {
       if (rollout !== 'present') rmSync(join(dir, 'finished.jsonl'));
       if (rollout === 'unreadable') mkdirSync(join(dir, 'finished.jsonl'));
       const root = join(dir, 'prepared');
@@ -469,38 +492,40 @@ describe('codex-desktop adapter status and send', () => {
       db.close();
       const calls: string[] = [];
       let closed = false;
-      const driver = adapter(0, '', async () => ({
-        call: async (method, params) => {
-          calls.push(method);
-          expect(params.threadId).toBe('idle');
-          return method === 'thread/read'
-            ? { thread: { id: 'idle', status: { type: status } } }
-            : {};
-        },
-        close: () => {
-          closed = true;
-        },
-      }));
+      const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
+        bootstrapServer: async () => ({
+          call: async (method, params) => {
+            calls.push(method);
+            expect(params.threadId).toBe('idle');
+            return {};
+          },
+          close: () => {
+            closed = true;
+          },
+        }),
+      });
       const result = await driver.archive!({ adapter: driver.id, id: 'idle' }, () => null);
-      expect(result.ok).toBe(status === 'idle' || status === 'notLoaded');
-      expect(existsSync(env.TMPDIR)).toBe(!result.ok);
-      expect(existsSync(env.XDG_CACHE_HOME)).toBe(!result.ok);
+      expect(result.ok).toBe(true);
+      expect(existsSync(env.TMPDIR)).toBe(false);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
       expect(existsSync(root)).toBe(true);
       await releaseWorkerSandbox(root);
-      expect(calls).toEqual(result.ok ? ['thread/read', 'thread/archive'] : ['thread/read']);
+      expect(calls).toEqual(['thread/archive']);
       expect(closed).toBe(true);
     }
   );
 
   test('does not archive a Codex thread when runtime removal fails', async () => {
     const calls: string[] = [];
-    const driver = adapter(0, '', async () => ({
-      call: async (method) => {
-        calls.push(method);
-        return { thread: { id: 'idle', status: { type: 'idle' } } };
-      },
-      close: () => {},
-    }));
+    const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
+      bootstrapServer: async () => ({
+        call: async (method) => {
+          calls.push(method);
+          return {};
+        },
+        close: () => {},
+      }),
+    });
     const failure = vi
       .spyOn(sandbox, 'releaseWorkerSandbox')
       .mockRejectedValue(new Error('synthetic EBUSY'));
@@ -508,7 +533,7 @@ describe('codex-desktop adapter status and send', () => {
       await expect(driver.archive!({ adapter: driver.id, id: 'idle' }, () => null)).rejects.toThrow(
         'synthetic EBUSY'
       );
-      expect(calls).toEqual(['thread/read']);
+      expect(calls).toEqual([]);
     } finally {
       failure.mockRestore();
     }
@@ -537,13 +562,16 @@ describe('codex-desktop adapter status and send', () => {
   test('a running rollout, late refusal and an already archived thread never call thread/archive', async () => {
     appendFileSync(join(dir, 'running.jsonl'), `\n${said('x'.repeat(5 * 1024 * 1024))}`);
     const calls: string[] = [];
-    const driver = adapter(0, '', async () => ({
-      call: async (method, params) => {
+    const recording = async (): Promise<CodexAppServer> => ({
+      call: async (method) => {
         calls.push(method);
-        return { thread: { id: params.threadId, status: { type: 'idle' } } };
+        return {};
       },
       close: () => {},
-    }));
+    });
+    const driver = adapter(0, '', recording, '/codex/worktrees', '', {
+      bootstrapServer: recording,
+    });
     expect(await driver.archive!({ adapter: driver.id, id: 'busy' }, () => null)).toMatchObject({
       ok: false,
       reason: 'busy',
@@ -559,7 +587,7 @@ describe('codex-desktop adapter status and send', () => {
       ok: true,
       value: { archived: false },
     });
-    expect(calls).toEqual(['thread/read', 'thread/read']);
+    expect(calls).toEqual([]);
   });
 
   function adapter(
