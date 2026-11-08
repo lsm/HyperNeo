@@ -123,6 +123,7 @@ describe('Neo composer draft while voice is active', () => {
       voice.phase = phase;
       render(composer());
       expect(screen.getByTestId('voice-transcribing-placeholder')).toBeTruthy();
+      expect(screen.queryByText('Transcribing into your draft…')).toBeNull();
     }
   );
 

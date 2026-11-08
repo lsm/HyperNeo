@@ -134,7 +134,6 @@ export function NeoComposer({
   const attention =
     !!store.error.value || agentState.status === 'waiting_for_input' || noNetwork || !!waitingLine;
   const collapsed = !focused && !preferencesOpen && !draft && !needsDraft && !attention;
-  const voiceStatus = voicePhase === 'drafting' ? t('composer.transcribing') : null;
   const quoteAuthor = quote?.author === 'You' ? t('chat.you') : 'Neo';
   const thought = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
@@ -483,17 +482,13 @@ export function NeoComposer({
       <span
         role="status"
         class={`neo-composer-status px-2 min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
-          voiceBusy
-            ? voiceStatus
-              ? 'flex w-full'
-              : 'hidden'
-            : attention && agentState.status !== 'waiting_for_input'
-              ? 'flex w-full'
-              : 'hidden'
+          !voiceBusy && attention && agentState.status !== 'waiting_for_input'
+            ? 'flex w-full'
+            : 'hidden'
         }`}
       >
         {voiceBusy
-          ? voiceStatus
+          ? null
           : noNetwork
             ? t('composer.noNetwork')
             : store.error.value
