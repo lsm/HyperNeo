@@ -217,7 +217,7 @@ describe('neo.ask.open repo', () => {
         todos: [{ ...draft, named: { repository: 'lsm/HyperNeo' } }],
       }),
       { source: 'mcp', sessionId: 'neo', role: 'neo' }
-    )) as { ok: true; ask: { repo: string | null } };
+    )) as { ok: true; ask: { id: string } };
     expect(askRepo(db, receipt.ask.id)).toBeNull();
     db.close();
   });

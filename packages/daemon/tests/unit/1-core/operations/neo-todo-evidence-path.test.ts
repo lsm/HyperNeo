@@ -150,6 +150,7 @@ describe('neo.todo.add evidence paths', () => {
     const { add, db } = setup('lsm/hyperneo', false);
     const result = await add({ path: join(userFolder, 'itinerary.md') });
     expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
     expect(
       db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(result.todo.id)
     ).toEqual({ repo: null });
