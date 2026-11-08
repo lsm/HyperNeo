@@ -18,3 +18,12 @@ Token receipts cover send, send foreground, control fill and danger in both them
 Review all screenshots for clipping and contrast. Recording is cancelled without
 sending; both owned processes must stop. Keep composer-frame.json and screenshots.
 Button geometry, content layout and dictation behavior belong to later parity PRs.
+
+The same matrix also checks a 44x32 send face inside its 44x44 target, full
+opacity while empty Send is disabled, and a 32px model pill with 14px text and
+control-fill background. Before/after screenshots live in separate run dirs.
+For a baseline capture, run `python3 .claude/skills/verify/composer-frame-before.py`
+with the same browser/mock environment. It preserves current bytes of the four
+source files, builds them from the fetched origin/dev, captures phase=before,
+and restores every file in finally. Rebuild the current web afterward. The
+source backup path is printed and retained if the process is interrupted.

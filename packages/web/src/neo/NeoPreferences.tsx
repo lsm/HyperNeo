@@ -11,7 +11,6 @@ import { invokeOperation } from '../lib/operations.ts';
 import { connectionState } from '../lib/state.ts';
 import { providerLogoColor, shortenModelName } from '../lib/provider-brand.ts';
 import type { SessionStore } from '../lib/session-store.ts';
-import { NeoIcon } from './NeoIcon.tsx';
 import { NeoModelMenu } from './NeoModelMenu.tsx';
 import { t } from '../lib/i18n/index.ts';
 import { NeoThinkingIcon } from './NeoThinkingIcon.tsx';
@@ -174,23 +173,25 @@ export function NeoPreferences({
         aria-controls={forSession ? 'neo-preferences-session' : 'neo-preferences'}
         onClick={() => setOpen(!open)}
         title={`${name} · Thinking: ${thinking}`}
-        class="flex max-w-full items-center gap-1.5 rounded-full bg-fill-soft px-2.5 py-2 text-xs text-fg-muted transition-colors hover:text-fg sm:gap-2 sm:px-3"
+        class="flex max-w-full min-w-0 items-center gap-1 rounded-full bg-control-fill px-2.5 min-h-8 py-0.5 text-sm text-fg-muted transition-colors hover:text-fg sm:gap-2"
       >
         <span class="flex shrink-0" style={{ color: providerLogoColor(info?.provider) }}>
           <ProviderLogo provider={info?.provider ?? 'anthropic'} class="h-3.5 w-3.5" />
         </span>
-        <span class="max-w-32 truncate">
-          {saving
-            ? 'Switching…'
-            : pending
-              ? shortenModelName(pendingInfo?.name || pending.model)
-              : name}
-        </span>
-        {pending && !saving && (
-          <span data-pending-model-switch class="shrink-0 text-[11px] text-accent">
-            {t('composer.switchesNextTurn')}
+        <span class="min-w-0 max-w-32 text-left">
+          <span class="block truncate">
+            {saving
+              ? 'Switching…'
+              : pending
+                ? shortenModelName(pendingInfo?.name || pending.model)
+                : name}
           </span>
-        )}
+          {pending && !saving && (
+            <span data-pending-model-switch class="block truncate text-[11px] text-accent">
+              {t('composer.switchesNextTurn')}
+            </span>
+          )}
+        </span>
         <span
           class="shrink-0"
           role="img"
@@ -199,10 +200,6 @@ export function NeoPreferences({
         >
           <NeoThinkingIcon level={level} />
         </span>
-        <NeoIcon
-          name="chevron"
-          class={`!h-3.5 !w-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
-        />
       </button>
       {open && (
         <NeoModelMenu

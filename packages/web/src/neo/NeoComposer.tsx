@@ -2,7 +2,6 @@ import type { NeoFlightOrigin } from './neo-send-flight.ts';
 import './neo-composer.css';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { Button } from '../components/ui/Button.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -343,7 +342,7 @@ export function NeoComposer({
       onFocusOut={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
       }}
-      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border bg-surface-raised/95 p-4 backdrop-blur-xl transition-colors focus-within:border-accent/60`}
+      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border bg-surface-raised/95 px-2 pt-4 pb-1.5 backdrop-blur-xl transition-colors focus-within:border-accent/60`}
     >
       {boundPreview && (
         <div class="mb-2 flex min-w-0 items-center gap-2 text-xs text-fg-muted">
@@ -406,7 +405,9 @@ export function NeoComposer({
         </div>
       )}
       {attachments.files.length > 0 && (
-        <NeoAttachments files={attachments.files} onRemove={attachments.remove} />
+        <div class="px-2">
+          <NeoAttachments files={attachments.files} onRemove={attachments.remove} />
+        </div>
       )}
       {attachments.reading > 0 && (
         <p role="status" class="mb-2 text-xs text-fg-muted">
@@ -436,7 +437,7 @@ export function NeoComposer({
           newLine
           hint={listening ? t('composer.listening') : undefined}
           heightPx={idleHeight.current || undefined}
-          class="neo-composer-draft text-base leading-relaxed text-fg-muted"
+          class="neo-composer-draft px-2 text-base leading-relaxed text-fg-muted"
         />
       ) : (
         <textarea
@@ -482,7 +483,7 @@ export function NeoComposer({
                 ? 'composer.placeholderTouch'
                 : 'composer.placeholderKeys'
           )}
-          class="w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
+          class={`w-full ${collapsed ? '' : 'px-2'} resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none`}
         />
       )}
       <div class="neo-composer-toolbar mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -510,7 +511,7 @@ export function NeoComposer({
         </div>
         <span
           role="status"
-          class={`neo-composer-status min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
+          class={`neo-composer-status px-2 min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
             voiceBusy
               ? voiceStatus
                 ? 'order-last flex w-full'
@@ -562,16 +563,17 @@ export function NeoComposer({
             </button>
           )}
           {(!collapsed || voiceBusy) && (
-            <Button
+            <button
               type="submit"
-              size="sm"
-              disabled={noNetwork}
-              class="h-11 min-w-11 shrink-0"
+              disabled={noNetwork || (!voiceBusy && !draft.trim() && !hasAttachments)}
+              class="group grid h-11 w-11 shrink-0 place-items-center disabled:cursor-not-allowed"
               aria-label={t(recordingVoice ? 'composer.stopSend' : 'composer.send')}
               title={recordingVoice ? t('composer.stopSendTitle') : undefined}
             >
-              <NeoIcon name="up" />
-            </Button>
+              <span class="grid h-8 w-11 place-items-center rounded-[10px] bg-(--neo-send) text-(--neo-send-fg) group-hover:opacity-90 shadow-sm transition-[opacity,transform] group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
+                <NeoIcon name="up" class="!h-[18px] !w-[18px]" />
+              </span>
+            </button>
           )}
         </div>
       </div>
