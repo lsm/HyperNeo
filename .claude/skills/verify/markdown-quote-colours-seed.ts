@@ -10,7 +10,7 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert(sessionId.startsWith('neo:'));
 const publicationId = crypto.randomUUID();
-const text = '## A short update\n\n> The release notes are ready for review. Please check the small changes before publishing.\n>\n> Thank you for taking a look.\n\nThe preview is ready.';
+const text = '## A short update\n\n> The release notes are ready for review. Please check the small changes before publishing.\n>\n> Thank you for taking a look.\n\nThe preview is ready.\n\n```text\nA code sample.\n```';
 const db = new Database(join(run, 'data/daemon.db'));
 try {
   assert(new NeoPublicationRepository(db).append({conversationId:sessionId.slice(4),publicationId,producerInput:{sessionId,messageId:'synthetic-colour-proof'},shortText:text,fullText:text,links:[]}).accepted);

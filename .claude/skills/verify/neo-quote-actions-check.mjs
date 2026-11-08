@@ -6,66 +6,81 @@ import { verifyQuoteColours } from './markdown-quote-colours-proof.mjs';
 export async function verifyQuoteActions(page, options) {
   const { run, phase, theme, touch = false } = options;
   assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), touch);
-  const colours = await verifyQuoteColours(page, options);
+  const colours = await verifyQuoteColours(page, { ...options, phase: 'after' });
   const article = page.locator('[data-public-entry]').filter({ hasText: 'A short update' });
   const quote = article.locator('blockquote');
-  const copy = article.getByRole('button', { name: 'Copy quote', exact: true });
+  const copy = quote.locator('button');
+  const codeCopy = article.locator('.code-block-wrapper button');
   const footer = article.locator(':scope > .flex').last();
   const actions = [copy, footer.getByRole('button').nth(0), footer.getByRole('button').nth(1)];
-  await page.waitForFunction(() => !document.querySelector('.neo-quote-copy-button.text-success'));
-  const geometry = [];
-  for (const [index, control] of actions.entries()) {
-    const box = await control.boundingBox();
-    const icon = await control.locator('svg').boundingBox();
-    const expected = phase === 'after'
-      ? (index === 0 ? [64, touch ? 44 : 48, 20] : [44, 44, 20])
-      : (index === 0 ? [60, 44, 16] : [touch ? 44 : 28, touch ? 44 : 28, 16]);
-    assert.deepEqual([box.width, box.height, icon.width, icon.height], [...expected.slice(0, 2), expected[2], expected[2]]);
-    geometry.push({ button: box, icon });
+  await page.waitForFunction(() => !document.querySelector('blockquote .text-success'));
+  const measure = control => control.evaluate(node => {
+    const button = node.getBoundingClientRect();
+    const icon = node.querySelector('svg').getBoundingClientRect();
+    const parent = node.parentElement.parentElement.getBoundingClientRect();
+    return { box: [button.width, button.height, icon.width, icon.height],
+      offset: [button.top - parent.top, parent.right - button.right] };
+  });
+  const quoteGeometry = await measure(copy), codeGeometry = await measure(codeCopy);
+  await writeFile(join(run, 'evidence', `${phase}-${theme}-parity.json`), JSON.stringify({ quoteGeometry, codeGeometry }, null, 2));
+  await article.screenshot({ path: join(run, 'evidence', `${phase}-${theme}-controls.png`), scale: 'css' });
+  assert.deepEqual(quoteGeometry, codeGeometry, 'quote copy must match code copy box, icon and top-right offset');
+  assert.equal(await quote.evaluate(node => getComputedStyle(node).paddingRight),
+    await article.locator('pre').evaluate(node => getComputedStyle(node).paddingRight));
+  const geometry = [quoteGeometry];
+  for (const control of actions.slice(1)) {
+    const actual = await measure(control);
+    assert.deepEqual(actual.box, [44, 44, 20, 20]);
+    geometry.push(actual);
   }
-  const quoteBackground = () => quote.evaluate(node => getComputedStyle(node).backgroundColor);
-  const normalBackground = await quoteBackground();
+  const style = control => control.evaluate(node => {
+    const value = getComputedStyle(node);
+    return { colour: value.color, background: value.backgroundColor,
+      outline: value.outline, outlineOffset: value.outlineOffset };
+  });
+  const settle = control => control.evaluate(async node => {
+    await Promise.all(node.getAnimations().map(animation => animation.finished));
+  });
+  const normalBackground = await quote.evaluate(node => getComputedStyle(node).backgroundColor);
   if (!touch) {
-    for (const [index, control] of actions.entries()) {
-      await control.hover();
-      await control.evaluate(async node => {
-        await Promise.all(node.getAnimations().map(animation => animation.finished));
-      });
-      const hover = await control.evaluate(node => {
-        const style = getComputedStyle(node);
+    await copy.hover(); await settle(copy);
+    const quoteHover = await style(copy);
+    await article.screenshot({ path: join(run, 'evidence', `${phase}-${theme}-hover.png`), scale: 'css' });
+    await codeCopy.hover(); await settle(codeCopy);
+    assert.deepEqual(quoteHover, await style(codeCopy));
+    for (const control of actions.slice(1)) {
+      await control.hover(); await settle(control);
+      const alpha = await control.evaluate(node => {
         const canvas = document.createElement('canvas');
         canvas.width = canvas.height = 1;
         const context = canvas.getContext('2d');
-        context.fillStyle = style.backgroundColor;
+        context.fillStyle = getComputedStyle(node).backgroundColor;
         context.fillRect(0, 0, 1, 1);
-        return { colour: style.color, background: [...context.getImageData(0, 0, 1, 1).data] };
+        return context.getImageData(0, 0, 1, 1).data[3] / 255;
       });
-      if (phase === 'after') assert(Math.abs(hover.background[3] / 255 - .05) < .005);
-      assert.equal(await quoteBackground(), normalBackground);
-      geometry[index].hover = hover;
-      await article.screenshot({ path: join(run, 'evidence', `${phase}-${theme}-hover-${index}.png`), scale: 'css' });
+      assert(Math.abs(alpha - .05) < .005);
     }
+    assert.equal(await quote.evaluate(node => getComputedStyle(node).backgroundColor), normalBackground);
     await page.mouse.move(0, 0);
   }
-  await copy.focus();
-  await page.keyboard.press('Tab');
-  await page.keyboard.press('Shift+Tab');
-  const focus = await copy.evaluate(node => {
-    const style = getComputedStyle(node);
-    return { visible: node.matches(':focus-visible'), colour: style.outlineColor, width: style.outlineWidth, offset: style.outlineOffset };
-  });
-  assert(focus.visible);
-  if (phase === 'after') {
-    assert.equal(focus.width, '2px');
-    assert.equal(focus.offset, '2px');
-  }
+  await copy.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
+  assert(await copy.evaluate(node => node.matches(':focus-visible')));
+  const focus = await style(copy);
   await article.screenshot({ path: join(run, 'evidence', `${phase}-${theme}-focus.png`), scale: 'css' });
-  await page.keyboard.press('Enter');
-  await copy.getByText('Copied', { exact: true }).waitFor();
+  await codeCopy.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
+  await settle(codeCopy); await settle(copy);
+  assert.deepEqual(focus, await style(codeCopy));
+  await copy.focus(); await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('blockquote button')?.title === 'Copied!');
+  assert.equal(await copy.textContent(), '');
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'The release notes are ready for review. Please check the small changes before publishing.\n\nThank you for taking a look.');
-  assert.equal((await copy.boundingBox()).width, geometry[0].button.width);
+  assert.deepEqual(await measure(copy), quoteGeometry);
   await article.screenshot({ path: join(run, 'evidence', `${phase}-${theme}-copied.png`), scale: 'css' });
-  await page.waitForFunction(() => !document.querySelector('.neo-quote-copy-button.text-success'));
+  await page.waitForFunction(() => document.querySelector('blockquote button')?.title === 'Copy quote');
+  if (touch) await codeCopy.tap(); else await codeCopy.click();
+  await page.waitForFunction(() => document.querySelector('.code-block-wrapper button')?.title === 'Copied!');
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'A code sample.\n');
+  assert.deepEqual(await measure(codeCopy), codeGeometry);
   if (touch) await footer.getByRole('button').first().tap();
   else await footer.getByRole('button').first().click();
   assert((await page.evaluate(() => navigator.clipboard.readText())).includes('## A short update'));
@@ -76,7 +91,7 @@ export async function verifyQuoteActions(page, options) {
   });
   assert(gutter > 0);
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  const result = { ...colours, touch, geometry, focus, gutter, quoteBackgroundStable: true, actualClipboardExact: true };
+  const result = { ...colours, phase, touch, geometry, codeGeometry, focus, gutter, quoteBackgroundStable: true, actualClipboardExact: true };
   await writeFile(join(run, 'evidence', `${phase}-${theme}-actions.json`), JSON.stringify(result, null, 2));
   return result;
 }
