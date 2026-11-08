@@ -2,6 +2,7 @@ import { DEVICE_COOKIE } from './upgrade-auth.ts';
 import { z } from 'zod';
 import type { DevicePairingRepository } from '../../storage/repositories/device-pairing-repository.ts';
 import type { PairingLimiter } from './pairing-limiter.ts';
+import { PAIR_HOLD_MS, type PairWaits } from './pair-waits.ts';
 
 const PairRequest = z.object({
   code: z.string().trim().min(1).max(40),
@@ -13,6 +14,7 @@ export interface PairRouteDeps {
   readonly repo: DevicePairingRepository;
   readonly limiter: PairingLimiter;
   readonly now: () => number;
+  readonly waits: PairWaits;
 }
 
 const MAX_BODY_BYTES = 4 * 1024;
@@ -79,7 +81,7 @@ function answerPaired(
   return response;
 }
 
-export function createPairRoute({ repo, limiter, now }: PairRouteDeps) {
+export function createPairRoute({ repo, limiter, now, waits }: PairRouteDeps) {
   return async (req: Request): Promise<Response> => {
     if (req.method !== 'POST') return answer(405, { error: 'method_not_allowed' });
     const admitted = limiter.admit(now());
@@ -95,8 +97,17 @@ export function createPairRoute({ repo, limiter, now }: PairRouteDeps) {
       limiter.fail(now());
       return answer(400, { error: 'invalid_request' });
     }
-    const at = now();
-    const { paired, awaitingApproval, usedElsewhere } = await repo.redeemAsync(parsed.data, at);
+    let at = now();
+    let outcome = await repo.redeemAsync(parsed.data, at);
+    const { hold } = outcome;
+    if (
+      hold &&
+      (await waits.hold(hold.codeId, Math.min(PAIR_HOLD_MS, hold.expiresAt - at), req.signal))
+    ) {
+      at = now();
+      outcome = await repo.redeemAsync(parsed.data, at);
+    }
+    const { paired, awaitingApproval, usedElsewhere } = outcome;
     if (paired) return answerPaired(req, paired);
     if (awaitingApproval) return answer(403, { error: 'awaiting_approval' });
     limiter.fail(at);

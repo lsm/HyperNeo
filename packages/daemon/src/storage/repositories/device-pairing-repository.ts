@@ -418,7 +418,8 @@ export class DevicePairingRepository {
     const row = this.db
       .prepare(
         `SELECT id, approved_at IS NOT NULL AS approved, requested_name AS requestedName,
-           requested_by AS requestedBy, voided_at IS NOT NULL AS voided, two_way AS twoWay
+           requested_by AS requestedBy, voided_at IS NOT NULL AS voided, two_way AS twoWay,
+           expires_at AS expiresAt
          FROM pairing_codes
          WHERE code_hash = ? AND used_at IS NULL AND (expires_at > ? OR voided_at IS NOT NULL)`
       )

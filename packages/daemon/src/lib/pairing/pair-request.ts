@@ -12,6 +12,7 @@ export interface PairRequestRecord {
   requestedName: string | null;
   requestedBy: string | null;
   voided: boolean;
+  expiresAt: number;
   twoWay: boolean;
 }
 

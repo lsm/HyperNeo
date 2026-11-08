@@ -9,6 +9,7 @@ import { createCardHandoffRead } from '../handoffs/card-read.ts';
 import { createArtifactReferenceResolve } from '../artifacts/resolve-operation.ts';
 import { createBuildOperation } from '../system/build-operation.ts';
 import { daemonPairingLimiter } from '../pairing/pairing-limiter.ts';
+import { daemonPairWaits } from '../pairing/pair-waits.ts';
 import { createDevicePairingOperations } from '../pairing/pairing-operations.ts';
 import { createHumanDeviceResetOperation } from '../pairing/human-device-reset.ts';
 import { announceDeviceRevoked } from '../pairing/upgrade-auth.ts';
@@ -103,6 +104,7 @@ export function createDatabaseOperationCatalog(
         limiter: daemonPairingLimiter,
         now: Date.now,
         revoked: announceDeviceRevoked,
+        waits: daemonPairWaits,
       }),
       createHumanDeviceResetOperation(() => db.getDatabase()),
       createConnectionList(() => db.getDatabase()),

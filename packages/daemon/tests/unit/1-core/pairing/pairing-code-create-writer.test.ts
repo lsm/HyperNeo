@@ -1,3 +1,4 @@
+import { createPairWaits } from '../../../../src/lib/pairing/pair-waits';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
@@ -56,6 +57,7 @@ describe('pairing code creation writer admission', () => {
     invokeOperation(
       createOperationRegistry(
         createDevicePairingOperations({
+          waits: createPairWaits(),
           repo: () => new DevicePairingRepository(main),
           limiter: createPairingLimiter(),
           now: () => now,

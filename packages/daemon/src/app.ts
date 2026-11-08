@@ -23,6 +23,7 @@ import { ensureLocalCredential } from './lib/pairing/local-credential.ts';
 import { createMessageImageHandler } from './lib/rpc-handlers/message-image-route.ts';
 import { createAgentReadGuard } from './lib/pairing/agent-read.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
+import { daemonPairWaits } from './lib/pairing/pair-waits.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
 import { Database } from './storage/database.ts';
 import { migrateSessionToolSelections } from './storage/repositories/session-tool-selection-migration.ts';
@@ -1201,6 +1202,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       repo: pairing,
       limiter: daemonPairingLimiter,
       now: Date.now,
+      waits: daemonPairWaits,
     });
     const authenticateUpgrade = createUpgradeAuthenticator({
       db: () => db.gateway,

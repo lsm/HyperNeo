@@ -1,3 +1,4 @@
+import { createPairWaits } from '../../../../src/lib/pairing/pair-waits.ts';
 import { describe, expect, test } from 'bun:test';
 import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter.ts';
 import { createPairRoute } from '../../../../src/lib/pairing/pair-route.ts';
@@ -27,9 +28,10 @@ function setup(start = 1_000_000) {
   const clock = { now: () => now, advance: (ms: number) => (now += ms) };
   const repo = new DevicePairingRepository(db);
   const limiter = createPairingLimiter();
-  const route = createPairRoute({ repo, limiter, now: clock.now });
+  const route = createPairRoute({ waits: createPairWaits(), repo, limiter, now: clock.now });
   const revoked: string[] = [];
   const ops = createDevicePairingOperations({
+    waits: createPairWaits(),
     repo: () => repo,
     limiter,
     now: clock.now,
@@ -109,6 +111,7 @@ describe('device pairing', () => {
     const { db, repo } = setup();
     try {
       const route = createPairRoute({
+        waits: createPairWaits(),
         repo,
         limiter: createPairingLimiter(),
         now: () => 1_000_000,
@@ -484,6 +487,7 @@ describe('device pairing', () => {
     const { db, repo } = setup();
     try {
       const route = createPairRoute({
+        waits: createPairWaits(),
         repo,
         limiter: createPairingLimiter(),
         now: () => 1_000_000,
@@ -509,7 +513,12 @@ describe('device pairing', () => {
 
   test('a browser gets its credential only as an HttpOnly cookie, Secure when its page is HTTPS', async () => {
     const { db, repo } = setup();
-    const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: () => 1_000_000 });
+    const route = createPairRoute({
+      waits: createPairWaits(),
+      repo,
+      limiter: createPairingLimiter(),
+      now: () => 1_000_000,
+    });
     const redeem = async (origin: string) => {
       const made = repo.createCode('human', null, true, 1_000_000);
       const response = await route(
@@ -666,7 +675,12 @@ describe('device pairing', () => {
   test('an oversized or malformed pairing body is refused unread and counts against the limit', async () => {
     const { db, call, clock } = setup();
     const repo = new DevicePairingRepository(db);
-    const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: clock.now });
+    const route = createPairRoute({
+      waits: createPairWaits(),
+      repo,
+      limiter: createPairingLimiter(),
+      now: clock.now,
+    });
     const post = (body: string) =>
       route(new Request('http://127.0.0.1/pair', { method: 'POST', body }));
     expect((await post('x'.repeat(1_000_000))).status).toBe(413);
