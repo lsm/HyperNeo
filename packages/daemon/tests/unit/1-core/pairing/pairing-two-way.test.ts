@@ -176,15 +176,101 @@ describe('two-way pairing codes', () => {
   });
 });
 
-describe('local tools', () => {
-  test('cannot approve a two-way code even with the right last group', async () => {
+describe('terminal approval', () => {
+  test('pairs the first device by QR end to end from the terminal', async () => {
+    const t = setup();
+    const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
+    expect(made).toMatchObject({ ok: true, approval: 'pending' });
+    expect((await t.pair(made.code, REQUEST)).status).toBe(403);
+    const fingerprint = t.fingerprintOf(made.code, REQUEST);
+    expect((await t.call('device.pair.pending', {}, door)).pending).toEqual([
+      expect.objectContaining({
+        id: made.codeId,
+        requestedName: 'New phone',
+        fingerprint: fingerprint.slice(0, 7),
+      }),
+    ]);
+    expect(
+      await t.call('device.pair.approve', { codeId: made.codeId, lastGroup: fingerprint[7] }, door)
+    ).toEqual({ ok: true });
+    expect((await t.pair(made.code, REQUEST)).status).toBe(200);
+    expect((await t.pair(made.code, REQUEST)).status).toBe(401);
+  });
+
+  test('is on by default, so local tools approve legacy and two-way codes', async () => {
     const t = setup();
     await withFirstPhone(t);
-    const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
-    await t.pair(made.code, REQUEST);
-    const lastGroup = t.fingerprintOf(made.code, REQUEST)[7];
+    expect(await t.call('device.pair.terminal_approval.get', {}, door)).toEqual({
+      ok: true,
+      enabled: true,
+    });
+    const legacy = await t.call('device.pair.create', { kind: 'human' }, door);
+    const twoWay = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
+    await t.pair(twoWay.code, REQUEST);
+    expect(await t.call('device.pair.approve', { codeId: legacy.codeId }, localTools)).toEqual({
+      ok: true,
+    });
     expect(
-      await t.call('device.pair.approve', { codeId: made.codeId, lastGroup }, localTools)
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('not_paired') });
+      await t.call('device.pair.approve', { codeId: twoWay.codeId, lastGroup: '0000' }, door)
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('wrong_fingerprint') });
+    const again = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
+    await t.pair(again.code, OTHER);
+    expect(
+      await t.call(
+        'device.pair.approve',
+        { codeId: again.codeId, lastGroup: t.fingerprintOf(again.code, OTHER)[7] },
+        localTools
+      )
+    ).toEqual({ ok: true });
+  });
+
+  test('once off, local tools approve neither legacy nor two-way codes, and pending is closed to them', async () => {
+    const t = setup();
+    const phoneId = await withFirstPhone(t);
+    expect(await t.call('device.pair.terminal_approval.set', { enabled: false }, door)).toEqual({
+      ok: true,
+      enabled: false,
+    });
+    const legacy = await t.call('device.pair.create', { kind: 'human' }, door);
+    const twoWay = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
+    await t.pair(twoWay.code, REQUEST);
+    const lastGroup = t.fingerprintOf(twoWay.code, REQUEST)[7];
+    for (const caller of [door, localTools]) {
+      expect(await t.call('device.pair.approve', { codeId: legacy.codeId }, caller)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('not_paired'),
+      });
+      expect(
+        await t.call('device.pair.approve', { codeId: twoWay.codeId, lastGroup }, caller)
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('not_paired') });
+      expect(await t.call('device.pair.pending', {}, caller)).toMatchObject({ ok: false });
+    }
+    expect(
+      await t.call('device.pair.approve', { codeId: twoWay.codeId, lastGroup }, phone(phoneId))
+    ).toEqual({ ok: true });
+    expect(await t.call('device.pair.approve', { codeId: legacy.codeId }, phone(phoneId))).toEqual({
+      ok: true,
+    });
+  });
+
+  test('anyone local turns it off; only a paired phone turns it back on', async () => {
+    const t = setup();
+    const phoneId = await withFirstPhone(t);
+    await t.call('device.pair.terminal_approval.set', { enabled: false }, localTools);
+    for (const caller of [door, localTools])
+      expect(
+        await t.call('device.pair.terminal_approval.set', { enabled: true }, caller)
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('not_paired') });
+    expect(await t.call('device.pair.terminal_approval.get', {}, door)).toEqual({
+      ok: true,
+      enabled: false,
+    });
+    expect(
+      await t.call('device.pair.terminal_approval.set', { enabled: true }, phone(phoneId))
+    ).toEqual({ ok: true, enabled: true });
+    expect(await t.call('device.pair.terminal_approval.get', {}, door)).toEqual({
+      ok: true,
+      enabled: true,
+    });
   });
 });
