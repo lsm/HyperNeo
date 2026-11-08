@@ -345,7 +345,7 @@ export function NeoComposer({
       class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border bg-surface-raised/95 px-2 pt-4 pb-1.5 backdrop-blur-xl transition-colors focus-within:border-accent/60`}
     >
       {boundPreview && (
-        <div class="mb-2 flex min-w-0 items-center gap-2 text-xs text-fg-muted">
+        <div class="mb-2 flex min-w-0 items-center gap-2 px-2 text-xs text-fg-muted">
           <span role="status" class="min-w-0 flex-1 break-words">
             {t(
               boundPreview.state === 'available'
@@ -370,7 +370,7 @@ export function NeoComposer({
           previewCandidate.snapshot !== boundPreview?.snapshot) && (
           <button
             type="button"
-            class="mb-2 text-xs text-accent hover:underline"
+            class="mb-2 px-2 text-xs text-accent hover:underline"
             onClick={onRebindPreview}
           >
             {t('composer.usePreview')}
@@ -379,6 +379,7 @@ export function NeoComposer({
       {showQuote && (
         <div
           role="region"
+          class="px-2"
           aria-label={t('composer.replyingToExcerpt', {
             author: quoteAuthor,
             excerpt: neoQuoteExcerpt(quote.text),
@@ -410,7 +411,7 @@ export function NeoComposer({
         </div>
       )}
       {attachments.reading > 0 && (
-        <p role="status" class="mb-2 text-xs text-fg-muted">
+        <p role="status" class="mb-2 px-2 text-xs text-fg-muted">
           {t('composer.reading')}
         </p>
       )}

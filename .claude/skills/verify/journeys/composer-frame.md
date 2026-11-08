@@ -27,3 +27,12 @@ with the same browser/mock environment. It preserves current bytes of the four
 source files, builds them from the fetched origin/dev, captures phase=before,
 and restores every file in finally. Rebuild the current web afterward. The
 source backup path is printed and retained if the process is interrupted.
+
+The wrapper also bundles the real NeoComposer with synthetic quote, bound-preview,
+replacement-preview and deferred File.text() reading states. Its assets are served
+by the isolated daemon's existing guarded static route; no extra listener or
+production fixture route is added. Both themes and widths require every auxiliary
+row to keep a 17px frame inset. A 9px receipt reproduces missing child padding.
+Auxiliary screenshots are retained. This component-state fixture verifies layout,
+not artifact capture or file-reading completion; the ordinary matrix still drives
+/neo and cancels fake dictation.
