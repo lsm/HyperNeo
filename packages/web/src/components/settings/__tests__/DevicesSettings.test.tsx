@@ -185,6 +185,34 @@ describe('DevicesSettings', () => {
     ]);
   });
 
+  it('allows a two-way code only with the last fingerprint group', async () => {
+    daemon({
+      paired: true,
+      pending: [
+        {
+          id: 'code-2',
+          kind: 'human',
+          name: null,
+          requestedName: 'New phone',
+          expiresAt: Date.now() + 300_000,
+          fingerprint: ['3008', 'b30a', '60a3', 'ac09', 'd97a', '9655', '80c6'],
+        },
+      ],
+    });
+    render(<DevicesSettings />);
+    const allow = await waitFor(() => screen.getByRole('button', { name: 'Allow New phone' }));
+    expect(screen.getByText('3008 b30a 60a3 ac09 d97a 9655 80c6')).toBeTruthy();
+    expect((allow as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.input(screen.getByRole('textbox', { name: 'Last group for New phone' }), {
+      target: { value: ' 7dcc ' },
+    });
+    fireEvent.click(allow);
+    await waitFor(() => screen.getByText('No codes are waiting for Allow.'));
+    expect(invoked('device.pair.approve')).toEqual([
+      { name: 'device.pair.approve', input: { codeId: 'code-2', lastGroup: '7dcc' } },
+    ]);
+  });
+
   it('shows the submitted label as text and falls back to the code label', async () => {
     daemon({
       paired: true,

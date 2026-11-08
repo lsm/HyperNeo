@@ -57,6 +57,35 @@ describe('NeoDrawer', () => {
     expect(screen.queryByRole('combobox', { name: /Move under/ })).toBeNull();
   });
 
+  it('shows seven fingerprint groups and allows only after the last group is typed', async () => {
+    const pending = {
+      id: 'two-way',
+      kind: 'human',
+      name: null,
+      requestedName: 'New phone',
+      expiresAt: 4e12,
+      fingerprint: ['3008', 'b30a', '60a3', 'ac09', 'd97a', '9655', '80c6'],
+    };
+    invoke
+      .mockResolvedValueOnce({ ok: true, pending: [pending] })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, pending: [] });
+    drawer();
+    const allow = await screen.findByRole('button', { name: 'Allow New phone' });
+    expect(screen.getByText('3008 b30a 60a3 ac09 d97a 9655 80c6')).toBeTruthy();
+    expect((allow as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.input(screen.getByRole('textbox', { name: 'Last group for New phone' }), {
+      target: { value: '7DCC' },
+    });
+    expect((allow as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(allow);
+    await waitFor(() => expect(screen.queryByText('New phone')).toBeNull());
+    expect(invoke).toHaveBeenCalledWith(hub, 'device.pair.approve', {
+      codeId: 'two-way',
+      lastGroup: '7dcc',
+    });
+  });
+
   it('shows the submitted pairing label as text', async () => {
     invoke.mockResolvedValueOnce({
       ok: true,

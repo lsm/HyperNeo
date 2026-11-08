@@ -7,6 +7,7 @@ import { formatRelativeTime } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 import { PairPhoneFlow } from './PairPhoneFlow.tsx';
+import { FingerprintCheck, lastGroupOf } from '../pairing/FingerprintCheck.tsx';
 import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
 
 type Kind = 'human' | 'relay' | 'daemon' | 'agent';
@@ -26,6 +27,7 @@ interface Pending {
   kind: Kind;
   name: string | null;
   expiresAt: number;
+  fingerprint?: string[] | null;
 }
 interface WouldRefuse {
   reason: 'host_not_allowed' | 'origin_not_allowed';
@@ -108,6 +110,7 @@ const seen = (at: number | null) => (at ? formatRelativeTime(new Date(at)) : 'Ne
 
 export function DevicesSettings() {
   const [view, setView] = useState<View>({ kind: 'loading' });
+  const [groups, setGroups] = useState<Record<string, string>>({});
   const [confirming, setConfirming] = useState<string | null>(null);
   const [code, setCode] = useState<Code | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -199,6 +202,14 @@ export function DevicesSettings() {
                     {item.requestedName ?? item.name ?? 'Unnamed device'}
                   </div>
                   <div class="text-xs text-fg-faint">{KIND_LABEL[item.kind]}</div>
+                  {item.fingerprint && (
+                    <FingerprintCheck
+                      label={item.requestedName ?? item.name ?? 'Unnamed device'}
+                      groups={item.fingerprint}
+                      value={groups[item.id] ?? ''}
+                      onInput={(value) => setGroups({ ...groups, [item.id]: value })}
+                    />
+                  )}
                 </div>
                 <Button
                   size="sm"
@@ -210,8 +221,17 @@ export function DevicesSettings() {
                 </Button>
                 <Button
                   size="sm"
+                  disabled={!!item.fingerprint && !lastGroupOf(groups[item.id])}
                   aria-label={`Allow ${item.requestedName ?? item.name ?? 'Unnamed device'}`}
-                  onClick={() => act(() => call('device.pair.approve', { codeId: item.id }))}
+                  onClick={() => {
+                    const lastGroup = lastGroupOf(groups[item.id]);
+                    act(() =>
+                      call('device.pair.approve', {
+                        codeId: item.id,
+                        ...(lastGroup ? { lastGroup } : {}),
+                      })
+                    );
+                  }}
                 >
                   Allow
                 </Button>

@@ -5,6 +5,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { setTheme, themeSetting, type ThemeSetting } from '../lib/theme.ts';
 import { t } from '../lib/i18n/index.ts';
+import { FingerprintCheck, lastGroupOf } from '../components/pairing/FingerprintCheck.tsx';
 
 const CONNECTION_TEXT: Record<ConnectionState, string> = {
   connected: 'Connected',
@@ -142,6 +143,7 @@ type PendingDevice = {
   kind: string;
   name: string | null;
   expiresAt: number;
+  fingerprint?: string[] | null;
 };
 type PendingResult = { ok: true; pending: PendingDevice[] } | { ok: false; reason: string };
 
@@ -149,6 +151,7 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
   const [pending, setPending] = useState<PendingDevice[]>([]);
   const [error, setError] = useState('');
   const [deciding, setDeciding] = useState<string | null>(null);
+  const [groups, setGroups] = useState<Record<string, string>>({});
   const live = useRef(true);
   const read = async () => {
     const hub = connectionManager.getHubIfConnected();
@@ -175,13 +178,18 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
       live.current = false;
     };
   }, [connection]);
-  const decide = async (operation: 'device.pair.approve' | 'device.pair.deny', codeId: string) => {
+  const decide = async (
+    operation: 'device.pair.approve' | 'device.pair.deny',
+    codeId: string,
+    lastGroup?: string | null
+  ) => {
     setDeciding(codeId);
     try {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Reconnect before deciding on a device.');
       const result = await invokeOperation<{ ok: boolean; reason?: string }>(hub, operation, {
         codeId,
+        ...(lastGroup ? { lastGroup } : {}),
       });
       if (!result.ok) throw new Error(result.reason ?? 'Could not update the device.');
       await read();
@@ -202,6 +210,14 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
             <p class="text-xs text-fg-muted">
               {device.kind} · expires {new Date(device.expiresAt).toLocaleTimeString()}
             </p>
+            {device.fingerprint && (
+              <FingerprintCheck
+                label={device.requestedName ?? device.name ?? 'Unnamed device'}
+                groups={device.fingerprint}
+                value={groups[device.id] ?? ''}
+                onInput={(value) => setGroups({ ...groups, [device.id]: value })}
+              />
+            )}
           </div>
           <div class="flex shrink-0 gap-2">
             <button
@@ -216,9 +232,13 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
             <button
               type="button"
               class="neo-drawer-action"
-              disabled={deciding !== null}
+              disabled={
+                deciding !== null || (!!device.fingerprint && !lastGroupOf(groups[device.id]))
+              }
               aria-label={`Allow ${device.requestedName ?? device.name ?? 'Unnamed device'}`}
-              onClick={() => void decide('device.pair.approve', device.id)}
+              onClick={() =>
+                void decide('device.pair.approve', device.id, lastGroupOf(groups[device.id]))
+              }
             >
               Allow
             </button>
