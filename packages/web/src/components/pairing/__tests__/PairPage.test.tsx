@@ -258,6 +258,16 @@ describe('PairPage', () => {
       wrong.getByText('That code is wrong or expired. Make a new one with hyperneo pair.')
     );
     wrong.unmount();
+    const denied = openPairPage('#ZZZZZZZZZZ', answer(401, { error: 'code_denied' }));
+    pressPair(denied);
+    await waitFor(() =>
+      denied.getByText('This code was denied. Make a new one with hyperneo pair.')
+    );
+    denied.unmount();
+    const expired = openPairPage('#ZZZZZZZZZZ', answer(401, { error: 'code_expired' }));
+    pressPair(expired);
+    await waitFor(() => expired.getByText('This code expired. Make a new one with hyperneo pair.'));
+    expired.unmount();
     const locked = openPairPage(
       '#ZZZZZZZZZZ',
       answer(429, { error: 'locked', retryAfterMs: 120_000 })

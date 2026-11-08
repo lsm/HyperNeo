@@ -36,9 +36,9 @@ function setup() {
     revoked: () => {},
     waits,
   });
-  const call = (name: string, input: unknown) => {
+  const call = (name: string, input: unknown, caller = door) => {
     const op = ops.find((item) => item.name === name)!;
-    return op.execute(op.inputSchema.parse(input), door) as Promise<Record<string, any>>;
+    return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
   const pair = async (code: string, requestId?: string, signal?: AbortSignal) => {
     const response = await route(
@@ -51,13 +51,28 @@ function setup() {
     );
     return response.status;
   };
+  const refusal = async (code: string, requestId?: string) => {
+    const response = await route(
+      new Request('http://127.0.0.1/pair', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code, name: 'New phone', ...(requestId ? { requestId } : {}) }),
+      })
+    );
+    const body = (await response.json()) as { error?: string; deviceId?: string };
+    return {
+      status: response.status,
+      ...(body.error ? { error: body.error } : {}),
+      deviceId: body.deviceId,
+    };
+  };
   const twoWay = async () => {
     const made = await call('device.pair.create', { kind: 'human', confirm: 'two-way' });
     expect(await pair(made.code, REQUEST)).toBe(403);
     const lastGroup = pairFingerprint(sha256(made.code), sha256(REQUEST))[7];
     return { ...made, lastGroup } as Record<string, any>;
   };
-  return { db, call, pair, twoWay };
+  return { db, call, pair, refusal, twoWay };
 }
 
 const settledWithin = (promise: Promise<unknown>, ms: number) =>
@@ -98,10 +113,10 @@ describe('pairing long-poll', () => {
   test('a wrong last group releases the held phone with a refusal', async () => {
     const t = setup();
     const made = await t.twoWay();
-    const waiting = t.pair(made.code, REQUEST);
+    const waiting = t.refusal(made.code, REQUEST);
     expect(await settledWithin(waiting, 50)).toBe(false);
     await t.call('device.pair.approve', { codeId: made.codeId, lastGroup: '0000' });
-    expect(await waiting).toBe(401);
+    expect(await waiting).toMatchObject({ status: 401, error: 'code_denied' });
   });
 
   test('a second hold for the same code answers at once', async () => {
@@ -120,7 +135,31 @@ describe('pairing long-poll', () => {
     t.db
       .prepare('UPDATE pairing_codes SET expires_at = ? WHERE id = ?')
       .run(Date.now() + 100, made.codeId);
-    expect(await t.pair(made.code, REQUEST)).toBe(401);
+    expect(await t.refusal(made.code, REQUEST)).toMatchObject({
+      status: 401,
+      error: 'code_expired',
+    });
+  });
+
+  test('a denied, expired, unknown or spent code each says which', async () => {
+    const t = setup();
+    const first = await t.call('device.pair.create', { kind: 'human' });
+    const phone = await t.refusal(first.code);
+    expect(phone.status).toBe(200);
+    expect(await t.refusal(first.code)).toMatchObject({ status: 401, error: 'invalid_code' });
+    const later = await t.call('device.pair.create', { kind: 'human' });
+    expect(
+      await t.call(
+        'device.pair.deny',
+        { codeId: later.codeId },
+        { source: 'rpc', principal: 'local', device: { deviceId: phone.deviceId!, kind: 'human' } }
+      )
+    ).toEqual({ ok: true });
+    expect(await t.refusal(later.code)).toMatchObject({ status: 401, error: 'code_denied' });
+    const old = await t.call('device.pair.create', { kind: 'human' });
+    t.db.prepare('UPDATE pairing_codes SET expires_at = 1 WHERE id = ?').run(old.codeId);
+    expect(await t.refusal(old.code)).toMatchObject({ status: 401, error: 'code_expired' });
+    expect(await t.refusal('ZZZZZZZZZZ')).toMatchObject({ status: 401, error: 'invalid_code' });
   });
 
   test('a disconnected phone frees the hold', async () => {
