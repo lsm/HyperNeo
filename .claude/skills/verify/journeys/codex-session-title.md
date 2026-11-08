@@ -21,3 +21,18 @@ installed app-server compatibility remain unverified.
 Two overlapping real work.start operations hold the first synthetic name write
 until the second has started. The persisted synthetic thread state and receipts
 must show distinct next-free project names. No native Codex process runs.
+
+Shared Codex state across processes also uses the production PID-file lock,
+scoped to canonical state path and project. Run the independent-process proof:
+
+```sh
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/process-evidence .claude/skills/verify/codex-session-name-processes.ts
+```
+
+Two independent Bun processes share synthetic state, hold the first selected
+name before persistence, and must persist names 1 and 2. This tests the actual
+cross-process lock; the daemon proof separately exercises the operation path.
+Explicit titles enter the same lock and are refused before thread creation if
+a live project thread already uses that title. Unit coverage races explicit
+and automatic titles. Lock contention times out after 30 seconds; existing PID
+lock recovery handles dead owners. No real Codex state or native process is used.

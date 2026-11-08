@@ -1,3 +1,4 @@
+import { lockCodexSessionName } from './codex-session-name-lock.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { basename, join } from 'node:path';
@@ -1158,25 +1159,10 @@ export async function withCodexAppServer<Value>(
   }
 }
 
-const genericTitleQueues = new Map<string, Promise<void>>();
-
-async function lockGenericCodexTitle(key: string): Promise<() => void> {
-  const previous = genericTitleQueues.get(key);
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  genericTitleQueues.set(key, current);
-  await previous;
-  return () => {
-    release();
-    if (genericTitleQueues.get(key) === current) genericTitleQueues.delete(key);
-  };
-}
-
 async function genericCodexSessionTitle(
   projectFolder: string,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  requested?: string
 ): Promise<string> {
   const snapshot = await loadCodexSnapshot(
     { includeClosed: false, limit: Number.MAX_SAFE_INTEGER },
@@ -1192,6 +1178,13 @@ async function genericCodexSessionTitle(
       )
       .map((thread) => thread.title)
   );
+  if (requested) {
+    if (names.has(requested))
+      throw new Error(
+        `Codex session title ${requested} is already in use in this project; choose another generic title.`
+      );
+    return requested;
+  }
   let number = 1;
   while (names.has(`${prefix}${number}`)) number++;
   return `${prefix}${number}`;
@@ -1238,10 +1231,12 @@ export async function startCodexThread(
         ? folder
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
-      if (!request.sessionTitle)
-        releaseTitle = await lockGenericCodexTitle(JSON.stringify([deps.statePath, projectFolder]));
-      const sessionTitle =
-        request.sessionTitle ?? (await genericCodexSessionTitle(projectFolder, deps));
+      releaseTitle = await lockCodexSessionName(deps.statePath, projectFolder);
+      const sessionTitle = await genericCodexSessionTitle(
+        projectFolder,
+        deps,
+        request.sessionTitle
+      );
       const config = {
         shell_environment_policy: { set: workerWorkEnvironment(workFolder.cwd) },
         ...sandbox?.config,

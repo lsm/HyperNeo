@@ -15,6 +15,12 @@ import {
   startedThreadId,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
 
+let namingDir: string;
+beforeEach(() => {
+  namingDir = mkdtempSync(join(tmpdir(), 'codex-name-lock-'));
+});
+afterEach(() => rmSync(namingDir, { recursive: true, force: true }));
+
 const NOW = Date.parse('2026-10-05T12:00:00.000Z');
 const user = { from: 'user', caller: { source: 'rpc' as const } };
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' };
@@ -61,7 +67,7 @@ function adapter(
   const spawned: Array<{ args: string[]; cwd?: string }> = [];
   let closed = false;
   const instance = createCodexDesktopAdapter({
-    statePath: '/codex/state.sqlite',
+    statePath: join(namingDir, 'state.sqlite'),
     readSnapshot: async () => ({ roots: [], folders: [], threads: git.threads ?? [] }),
     prepareExecution: git.prepareExecution,
     worktreesDir: '/codex/worktrees',
@@ -654,6 +660,24 @@ describe('codex-desktop start', () => {
     }
   );
 
+  test('refuses an explicit title already used by a live project thread', async () => {
+    const { instance, calls } = adapter({ call: async () => ({}) }, undefined, {
+      threads: [
+        {
+          id: 'existing',
+          title: 'Codex dolmen 1',
+          folder: place.folder,
+          archived: 0,
+          updatedAt: NOW,
+        },
+      ],
+    });
+    expect(
+      await instance.start!({ ...request, sessionTitle: 'Codex dolmen 1' }, user)
+    ).toMatchObject({ ok: false, detail: expect.stringContaining('already in use') });
+    expect(calls.some(([method]) => method === 'thread/start')).toBe(false);
+  });
+
   test('a failed thread creation releases its generic naming lock', async () => {
     let attempts = 0;
     const { instance } = adapter({
@@ -672,52 +696,55 @@ describe('codex-desktop start', () => {
     });
   });
 
-  test('overlapping starts serialize generic naming until the earlier name is persisted', async () => {
-    const threads: CodexSnapshot['threads'] = [];
-    let started = 0;
-    let entered!: () => void;
-    const firstNaming = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    let release!: () => void;
-    const hold = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const { instance } = adapter(
-      {
-        call: async (method, params) => {
-          if (method === 'thread/start') return { thread: { id: `th${++started}` } };
-          if (method === 'thread/name/set') {
-            if (params.threadId === 'th1') {
-              entered();
-              await hold;
+  test.each([undefined, 'Codex dolmen 1'])(
+    'overlapping starts serialize naming with explicit title %s',
+    async (sessionTitle) => {
+      const threads: CodexSnapshot['threads'] = [];
+      let started = 0;
+      let entered!: () => void;
+      const firstNaming = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let release!: () => void;
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const { instance } = adapter(
+        {
+          call: async (method, params) => {
+            if (method === 'thread/start') return { thread: { id: `th${++started}` } };
+            if (method === 'thread/name/set') {
+              if (params.threadId === 'th1') {
+                entered();
+                await hold;
+              }
+              threads.push({
+                id: String(params.threadId),
+                title: String(params.name),
+                folder: place.folder,
+                archived: 0,
+                updatedAt: NOW,
+              });
             }
-            threads.push({
-              id: String(params.threadId),
-              title: String(params.name),
-              folder: place.folder,
-              archived: 0,
-              updatedAt: NOW,
-            });
-          }
-          return {};
+            return {};
+          },
         },
-      },
-      undefined,
-      { threads }
-    );
-    const first = instance.start!(request, user);
-    await firstNaming;
-    const second = instance.start!(request, user);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    release();
-    const results = await Promise.all([first, second]);
-    expect(results.map((result) => result.ok && result.value.title)).toEqual([
-      'Codex dolmen 1',
-      'Codex dolmen 2',
-    ]);
-    expect(threads.map((thread) => thread.title)).toEqual(['Codex dolmen 1', 'Codex dolmen 2']);
-  });
+        undefined,
+        { threads }
+      );
+      const first = instance.start!({ ...request, sessionTitle }, user);
+      await firstNaming;
+      const second = instance.start!(request, user);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      release();
+      const results = await Promise.all([first, second]);
+      expect(results.map((result) => result.ok && result.value.title)).toEqual([
+        'Codex dolmen 1',
+        'Codex dolmen 2',
+      ]);
+      expect(threads.map((thread) => thread.title)).toEqual(['Codex dolmen 1', 'Codex dolmen 2']);
+    }
+  );
 
   test('an omitted session title uses the next free generic project name, never the task title', async () => {
     const { instance, calls } = adapter(
