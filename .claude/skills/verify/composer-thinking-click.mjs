@@ -9,8 +9,9 @@ const rpc = (name, input = {}) => JSON.parse(execFileSync('bun', ['.claude/skill
 assert(rpc('rpc:providers.create', { params: { providerId: 'anthropic', displayName: 'Fixture', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } }).success);
 const model = rpc('rpc:models.list', { forceRefresh: true }).models.find(item => item.provider === 'anthropic');
 assert(model);
-const { chromium } = createRequire(import.meta.url)(process.env.VERIFY_PLAYWRIGHT || 'playwright');
-const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
+const browsers = createRequire(import.meta.url)(process.env.VERIFY_PLAYWRIGHT || 'playwright');
+const engine = process.env.VERIFY_BROWSER_ENGINE || 'chromium';
+const browser = await browsers[engine].launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const receipts = [];
 try {
   const pair = await browser.newContext();
@@ -33,12 +34,13 @@ try {
     const box = await slider.boundingBox();
     await slider.click({ position: { x: box.width * 0.7, y: box.height / 2 } });
     await page.waitForFunction(() => document.querySelector('[aria-label="Thinking"]')?.disabled === false);
-    const receipt = { width, visible: await menu.isVisible(), preferences: rpc('neo.snapshot').preferences, draft: await input.inputValue() };
+    const receipt = { width, visible: await menu.isVisible(), preferences: rpc('neo.snapshot').preferences, draft: await input.inputValue(), slider: await slider.getAttribute('aria-valuetext'), pill: await page.getByRole('img', { name: /^Thinking:/ }).getAttribute('aria-label') };
     receipts.push(receipt);
     await page.screenshot({ path: `${run}/evidence/thinking-click-${width}.png` });
     assert(receipt.visible, 'the menu stays visible after a single thinking-level click');
     assert.notEqual(receipt.preferences.thinkingLevel, 'off');
     assert.equal(receipt.draft, '');
+    assert.equal(receipt.pill, `Thinking: ${receipt.slider}`, 'one click updates the visible slider and pill to the same saved level');
     await menu.getByRole('button', { name: 'Close model settings', exact: true }).click();
     await page.mouse.click(1, 1);
     await page.locator('.neo-composer-input.is-collapsed').waitFor();
