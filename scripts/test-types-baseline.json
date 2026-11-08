@@ -101,7 +101,6 @@
     "packages/daemon/tests/unit/1-core/drivers/claude-owner-delivery.test.ts": 2,
     "packages/daemon/tests/unit/1-core/drivers/codex-cu-reaper.test.ts": 2,
     "packages/daemon/tests/unit/1-core/drivers/codex-desktop-ipc.test.ts": 1,
-    "packages/daemon/tests/unit/1-core/drivers/codex-desktop-verbs.test.ts": 1,
     "packages/daemon/tests/unit/1-core/drivers/copilot-archive.test.ts": 1,
     "packages/daemon/tests/unit/1-core/drivers/copilot-history-find.test.ts": 25,
     "packages/daemon/tests/unit/1-core/drivers/copilot-rename.test.ts": 8,
