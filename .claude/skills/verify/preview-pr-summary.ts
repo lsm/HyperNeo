@@ -17,7 +17,6 @@ const data = join(root, 'data'); let db = new Database(join(data, 'daemon.db'));
 const url = 'https://github.com/lsm/HyperNeo/pull/42'; const sha = 'a'.repeat(40);
 function source(text = `[PR](${url})`) { db.prepare(`UPDATE sdk_message_bodies SET sdk_message = ? WHERE seq = (SELECT rowid FROM sdk_messages WHERE id='source')`).run(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } })); }
 source(); db.prepare(`UPDATE pack_coding_todos SET repo = 'github.com/lsm/hyperneo' WHERE todo_id='todo'`).run();
-assert.equal((db.prepare(`SELECT repo FROM neo_todos WHERE id='todo'`).get() as { repo: string | null }).repo, null);
 const raw = { url, title: 'Synthetic design PR', body: '# Complete untrusted body\n<script>inert string</script>', state: 'OPEN', headRefOid: sha,
  reviews: [{ state: 'APPROVED', commit: { oid: 'b'.repeat(40) }, author: { login: 'reviewer' } }], statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }], changedFiles: 3,
  files: [{ path: 'docs/report.md', additions: 10, deletions: 2 }] };

@@ -26,7 +26,7 @@ beforeEach(() => {
   gateway = new DbGateway(':memory:', db);
   const legacy: NeoTodoStorageBoundary = {
     project: (todo) => todo,
-    insert: (commit, args) => commit(...args),
+    insert: (commit, [id, askId, draft, now]) => commit(id, askId, draft, now),
   };
   core = new NeoAskTodoRepository(db, undefined, undefined, undefined, undefined, legacy);
   core.openAsk({
@@ -66,7 +66,7 @@ test('projection fails before explicit preparation and reads after it', async ()
   await expect(command('Reads', 'project', [historical])).resolves.toEqual(historical);
 });
 
-test('all six readers project pack data without rewriting retained legacy data', async () => {
+test('all six readers project pack data while core rows hold no repository', async () => {
   const legacy = core.addTodo('stored', 'ask', draft, 2, 'github.com/synthetic/old');
   await command('Writes', 'prepare');
   await command('Writes', 'record', [legacy.id, 'github.com/synthetic/canonical']);
@@ -81,10 +81,10 @@ test('all six readers project pack data without rewriting retained legacy data',
     core.getCheckable(legacy.id),
   ];
   expect(reads.map((todo) => todo?.repo)).toEqual(Array(6).fill('github.com/synthetic/canonical'));
-  expect(legacyReader.getTodo(legacy.id)?.repo).toBe('github.com/synthetic/old');
+  expect(legacyReader.getTodo(legacy.id)?.repo).toBeNull();
 });
 
-test('explicit storage inserts only the pack repository fact and freezes legacy hints', async () => {
+test('explicit storage inserts only the pack repository fact and keeps the ask association', async () => {
   await command('Writes', 'prepare');
   let notices = 0;
   core = candidate(() => {
@@ -98,13 +98,11 @@ test('explicit storage inserts only the pack repository fact and freezes legacy 
   expect(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('new')).toEqual({
     repo: 'github.com/synthetic/new',
   });
-  expect(db.prepare('SELECT repo FROM neo_todos WHERE id=?').get('new')).toEqual({ repo: null });
   expect(core.getAsk('ask')?.repo).toBe('github.com/synthetic/history');
   expect(notices).toBe(1);
 });
 
-test('an outer failure rolls back successful nested preparation and its backfill', () => {
-  core.addTodo('old', 'ask', draft, 2, 'github.com/synthetic/old');
+test('an outer failure rolls back successful nested preparation', () => {
   db.exec('DROP TABLE pack_coding_todos');
   const op = DB_OPS.get('coding.todoStorageWrites')! as DbOp<
     { method: string; args: unknown[] },
@@ -113,16 +111,15 @@ test('an outer failure rolls back successful nested preparation and its backfill
   expect(() =>
     db.transaction(() => {
       op.run(db, { method: 'prepare', args: [] }, new ChangeRecorder());
-      expect(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('old')).toEqual({
-        repo: 'github.com/synthetic/old',
-      });
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name='pack_coding_todos'").get()
+      ).not.toBeNull();
       throw new Error('outer failure after savepoint');
     })()
   ).toThrow('outer failure after savepoint');
   expect(
     db.prepare("SELECT name FROM sqlite_master WHERE name='pack_coding_todos'").get()
   ).toBeNull();
-  expect(core.getTodo('old')?.repo).toBe('github.com/synthetic/old');
 });
 
 test('a late injected storage failure rolls back insertion without announcing a change', async () => {
