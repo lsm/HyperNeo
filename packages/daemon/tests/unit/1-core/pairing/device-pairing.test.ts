@@ -309,7 +309,7 @@ describe('device pairing', () => {
       ]);
       expect(await pair(denied.code)).toMatchObject({
         status: 401,
-        body: { error: 'invalid_code' },
+        body: { error: 'code_denied' },
       });
       expect(await call('device.pair.approve', { codeId: denied.codeId }, owner)).toMatchObject({
         ok: false,
