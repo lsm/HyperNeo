@@ -228,8 +228,6 @@
     "packages/daemon/tests/unit/1-core/operations/session-schedules.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/task-schema-options.test.ts": 8,
     "packages/daemon/tests/unit/1-core/operations/work-start-configuration.test.ts": 1,
-    "packages/daemon/tests/unit/1-core/pairing/device-pairing.test.ts": 4,
-    "packages/daemon/tests/unit/1-core/pairing/human-device-reset.test.ts": 3,
     "packages/daemon/tests/unit/1-core/process-json-rpc.test.ts": 17,
     "packages/daemon/tests/unit/1-core/providers/anthropic-copilot/conversation.test.ts": 2,
     "packages/daemon/tests/unit/1-core/providers/anthropic-copilot/provider.test.ts": 17,

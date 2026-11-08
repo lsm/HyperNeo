@@ -1,3 +1,4 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createPairWaits } from '../../../../src/lib/pairing/pair-waits.ts';
 import { describe, expect, test } from 'bun:test';
 import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter.ts';
@@ -539,7 +540,7 @@ describe('device pairing', () => {
       ['HttpOnly', 'Max-Age=34560000', 'Path=/', 'SameSite=Strict', 'Secure'].sort()
     );
     expect(
-      touchDevice.run(db, {
+      await gatewayFor(db).run(touchDevice, {
         credential: cookie.slice('hyperneo_device='.length, cookie.indexOf(';')),
         host: 'h',
         now: 1,
@@ -551,7 +552,7 @@ describe('device pairing', () => {
 
   test('a paired human or the CLI reads the unpaired connections seen, newest first', async () => {
     const { db, call, pair, repo } = setup();
-    recordUnpaired.run(db, {
+    await gatewayFor(db).run(recordUnpaired, {
       seen: {
         client: 'native',
         origin: null,
@@ -561,7 +562,7 @@ describe('device pairing', () => {
       },
       now: 1_000,
     });
-    recordUnpaired.run(db, {
+    await gatewayFor(db).run(recordUnpaired, {
       seen: {
         client: 'browser',
         origin: 'https://evil.example',
@@ -620,7 +621,7 @@ describe('device pairing', () => {
 
   test('a paired human or the CLI reads the requests Origin/Host checks would refuse', async () => {
     const { db, call, pair, repo } = setup();
-    recordWouldRefuse.run(db, {
+    await gatewayFor(db).run(recordWouldRefuse, {
       seen: { reason: 'host_not_allowed', kind: 'ws', host: 'mac.ts.net', origin: null },
       now: 5,
     });
