@@ -16,6 +16,7 @@
   --accent-fg: light-dark(#ffffff, #25272c);
   --neo-send: light-dark(#b87c5c, #efc2a6);
   --recording-control-fg: #ffffff;
+  --recording-waveform: var(--accent);
   --neo-send-fg: light-dark(#ffffff, #25272c);
   --control-fill: light-dark(#ebecef, #2e3139);
   --danger: light-dark(#c53030, #f28b82);

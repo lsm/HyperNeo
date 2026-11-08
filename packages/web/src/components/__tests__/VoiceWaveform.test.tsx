@@ -39,10 +39,11 @@ describe('VoiceWaveform', () => {
     expect(screen.getByTestId('voice-transcribing').querySelector('.animate-spin')).toBeTruthy();
   });
 
-  it('localizes the transcription label for Chinese users', () => {
+  it.each([undefined, 'neo'] as const)('localizes Chinese transcription for %s', (appearance) => {
     applyLanguage('zh-Hans');
     render(
       <VoiceWaveform
+        appearance={appearance}
         getLevel={() => 0}
         isRecording={false}
         isTranscribing={true}
@@ -68,6 +69,7 @@ describe('VoiceWaveform', () => {
   it('shows the transcribing state instead of the timer while transcribing', () => {
     render(
       <VoiceWaveform
+        appearance="neo"
         getLevel={() => 0}
         isRecording={false}
         isTranscribing={true}

@@ -88,3 +88,10 @@ ASR has no delay; a preview can use five seconds without changing app timing.
 The browser waits for actual interim text inside the recording draft and a timer
 advance before stopping, so a too-short fake recording cannot take the silence
 rejection path instead of the transcription path.
+
+The same wrapper also runs composer-review-scope.mjs against the real classic
+/session route. Classic recording must retain red waveform bars, a filled 36px
+cancel control and inline transcription progress outside .neo-shell. Four theme/
+viewport combinations cover that surface; two additional Neo views verify the
+Chinese transcription label. The ASR fixture accepts both live WebSocket audio
+and batch HTTP uploads, with the same optional finalization delay.

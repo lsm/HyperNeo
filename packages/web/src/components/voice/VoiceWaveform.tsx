@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useVisibleTick } from '../../hooks/useVisibleTick.ts';
+import { t } from '../../lib/i18n/index.ts';
 
 const BAR_PITCH_WIDE = 5;
 const BAR_PITCH_NARROW = 4;
@@ -14,6 +15,7 @@ interface VoiceWaveformProps {
   isStarting?: boolean;
   onCancel: () => void;
   startedAt?: number | null;
+  appearance?: 'neo';
 }
 
 function formatElapsed(seconds: number): string {
@@ -27,7 +29,9 @@ export function VoiceWaveform({
   isStarting = false,
   onCancel,
   startedAt,
+  appearance,
 }: VoiceWaveformProps) {
+  const neo = appearance === 'neo';
   const [isNarrow] = useState(
     () =>
       typeof window !== 'undefined' && window.matchMedia?.('(max-width: 639px)').matches === true
@@ -142,7 +146,9 @@ export function VoiceWaveform({
         disabled={isTranscribing}
         title="Discard recording"
         aria-label="Cancel recording"
-        class="grid h-8 w-8 flex-none place-items-center text-fg-muted transition hover:text-fg-soft disabled:cursor-not-allowed disabled:opacity-40"
+        class={`grid flex-none place-items-center text-fg-muted transition hover:text-fg-soft disabled:cursor-not-allowed disabled:opacity-40 ${
+          neo ? 'h-8 w-8' : 'h-9 w-9 rounded-full bg-fill-strong/80 hover:bg-line-strong'
+        }`}
       >
         <svg
           class="h-3.5 w-3.5"
@@ -157,16 +163,16 @@ export function VoiceWaveform({
       <div
         ref={rowRef}
         class={`flex h-8 min-w-0 flex-1 items-center overflow-hidden ${isNarrow ? 'gap-px' : 'gap-0.5'}`}
-        data-testid={isTranscribing ? 'voice-transcribing' : 'voice-bars'}
-        role={isTranscribing ? 'status' : undefined}
+        data-testid={isTranscribing && neo ? 'voice-transcribing' : 'voice-bars'}
+        role={isTranscribing && neo ? 'status' : undefined}
       >
-        {isTranscribing ? (
-          <span class="w-full text-center text-sm text-fg-muted">Transcribing…</span>
+        {isTranscribing && neo ? (
+          <span class="w-full text-center text-sm text-fg-muted">{t('composer.transcribing')}</span>
         ) : (
           Array.from({ length: barCount }, (_, i) => (
             <div
               key={i}
-              class="h-8 min-w-0 flex-1 origin-center rounded-full bg-accent"
+              class="h-8 min-w-0 flex-1 origin-center rounded-full bg-recording-waveform"
               ref={(el) => {
                 barsRef.current[i] = el;
               }}
@@ -174,7 +180,18 @@ export function VoiceWaveform({
           ))
         )}
       </div>
-      {isTranscribing ? null : isStarting && !isRecording ? (
+      {isTranscribing ? (
+        !neo && (
+          <span
+            class="inline-flex flex-none items-center gap-1.5 text-xs text-danger"
+            data-testid="voice-transcribing"
+            aria-label={t('composer.transcribing')}
+          >
+            <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-danger/40 border-t-danger" />
+            {!isNarrow && t('composer.transcribing')}
+          </span>
+        )
+      ) : isStarting && !isRecording ? (
         <span
           class={`inline-flex flex-none animate-pulse items-center gap-1.5 text-fg-muted motion-reduce:animate-none ${isNarrow ? 'text-2xs' : 'text-xs'}`}
           data-testid="voice-starting"
