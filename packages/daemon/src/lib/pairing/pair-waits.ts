@@ -11,6 +11,7 @@ export function createPairWaits(): PairWaits {
     hold: (codeId, ms, signal) => {
       if (held.has(codeId) || signal?.aborted) return Promise.resolve(false);
       return new Promise((resolve) => {
+        const deadline = Date.now() + ms;
         const finish = (released: boolean) => {
           clearTimeout(timer);
           signal?.removeEventListener('abort', abandon);
@@ -19,7 +20,12 @@ export function createPairWaits(): PairWaits {
         };
         const done = () => finish(true);
         const abandon = () => finish(false);
-        const timer = setTimeout(done, ms);
+        const wake = () => {
+          const remaining = deadline - Date.now();
+          if (remaining > 0) timer = setTimeout(wake, remaining);
+          else done();
+        };
+        let timer = setTimeout(wake, ms);
         signal?.addEventListener('abort', abandon);
         held.set(codeId, done);
       });
