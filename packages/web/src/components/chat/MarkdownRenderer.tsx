@@ -574,7 +574,10 @@ export default function MarkdownRenderer({
 
     const copyMounts = bare
       ? []
-      : [...attachQuoteCopyButtons(container), ...attachCodeBlockCopyButtons(container)];
+      : [
+          ...attachQuoteCopyButtons(container, codeBlockCopyGutter),
+          ...attachCodeBlockCopyButtons(container),
+        ];
 
     let mermaidCancelled = false;
     const mermaidMounts: Array<HTMLElement> = [];

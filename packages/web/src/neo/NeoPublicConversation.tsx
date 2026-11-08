@@ -794,7 +794,7 @@ function PublicEntry({
               })
             }
           >
-            <NeoIcon name="reply" class="!h-4 !w-4" />
+            <NeoIcon name="reply" />
           </button>
         )}
       </div>
