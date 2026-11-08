@@ -35,8 +35,10 @@ export function decideDataRoot(root: string, facts: RootFacts, euid?: number): D
 
 function applyDataRootStep(root: string, step: DataRootStep, log: (line: string) => void): true {
   if ('refuse' in step) throw new Error(step.refuse);
-  process.umask(0o077);
-  if ('create' in step) mkdirSync(root, { recursive: true, mode: PRIVATE_MODE });
+  if ('create' in step) {
+    mkdirSync(root, { recursive: true, mode: PRIVATE_MODE });
+    chmodSync(root, PRIVATE_MODE);
+  }
   if ('tighten' in step) {
     chmodSync(root, PRIVATE_MODE);
     log(`Data directory ${root} tightened from ${octal(step.tighten)} to ${octal(PRIVATE_MODE)}`);
