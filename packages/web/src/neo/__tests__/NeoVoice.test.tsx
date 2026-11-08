@@ -364,6 +364,8 @@ describe('Neo voice', () => {
       if (via === 'Stop') fireEvent.click(stop);
       else (sendFromComposer as unknown as (intent: 'draft' | 'send') => void)('send');
       await waitFor(() => expect(onPhase).toHaveBeenLastCalledWith(phase));
+      expect(stop.getAttribute('aria-busy')).toBe(String(phase === 'drafting'));
+      expect(Boolean(stop.querySelector('[aria-label="Loading"]'))).toBe(phase === 'drafting');
       finish({ kind: 'silent-recording' });
       await waitFor(() => expect(onPhase).toHaveBeenLastCalledWith('idle'));
     }

@@ -124,6 +124,9 @@ describe('Neo composer draft while voice is active', () => {
       render(composer());
       expect(screen.getByTestId('voice-transcribing-placeholder')).toBeTruthy();
       expect(screen.queryByText('Transcribing into your draft…')).toBeNull();
+      const send = screen.getByRole('button', { name: 'Send message' });
+      expect(send.getAttribute('aria-busy')).toBe(String(phase === 'sending'));
+      expect(Boolean(send.querySelector('[aria-label="Loading"]'))).toBe(phase === 'sending');
     }
   );
 

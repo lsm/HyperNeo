@@ -47,6 +47,9 @@ describe('VoiceWaveform', () => {
       />
     );
     expect(screen.getByTestId('voice-transcribing')).toBeTruthy();
+    expect(screen.getByTestId('voice-transcribing').textContent).toBe('Transcribing…');
+    expect(screen.queryByTestId('voice-bars')).toBeNull();
+    expect(document.querySelector('.animate-spin')).toBeNull();
     expect(screen.queryByTestId('voice-timer')).toBeNull();
   });
 
