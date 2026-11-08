@@ -1631,11 +1631,13 @@ describe('codex-desktop adapter status and send', () => {
           ...(!withdrawn ? { reason: 'not_queued' } : {}),
         },
       });
+      const deleted: [string, Record<string, unknown>] = [
+        'thread/queue/delete',
+        { threadId: 'busy', queuedSubmissionId: 'queue-1' },
+      ];
       expect(calls).toEqual([
         ['thread/queue/list', { threadId: 'busy' }],
-        ...(['withdrawn', 'delivery-race'].includes(state)
-          ? [['thread/queue/delete', { threadId: 'busy', queuedSubmissionId: 'queue-1' }]]
-          : []),
+        ...(['withdrawn', 'delivery-race'].includes(state) ? [deleted] : []),
       ]);
       expect(closed).toBe(true);
       expect(spawned).toEqual([]);
