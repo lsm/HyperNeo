@@ -3,6 +3,7 @@ import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../../../../storage/reactive-database.ts';
 import {
   NeoAskTodoRepository,
+  type NeoTodoCommit,
   type NeoTodoDraft,
   type NeoTodoInsert,
   type NeoTodoStorageBoundary,
@@ -49,7 +50,7 @@ class CodingTodoStorage implements NeoTodoStorageBoundary {
   }
 
   insert(
-    commit: NeoTodoInsert,
+    commit: NeoTodoCommit,
     [id, askId, draft, now, repo = null]: Parameters<NeoTodoInsert>
   ): NeoTodo {
     const todo = commit(id, askId, draft, now);

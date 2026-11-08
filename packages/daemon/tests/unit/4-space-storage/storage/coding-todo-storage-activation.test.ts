@@ -26,7 +26,7 @@ beforeEach(() => {
   gateway = new DbGateway(':memory:', db);
   const legacy: NeoTodoStorageBoundary = {
     project: (todo) => todo,
-    insert: (commit, args) => commit(...args),
+    insert: (commit, [id, askId, draft, now]) => commit(id, askId, draft, now),
   };
   core = new NeoAskTodoRepository(db, undefined, undefined, undefined, undefined, legacy);
   core.openAsk({

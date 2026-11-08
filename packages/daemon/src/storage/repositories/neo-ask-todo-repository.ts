@@ -50,9 +50,16 @@ export type NeoTodoInsert = (
   repo?: string | null
 ) => NeoTodo;
 
+export type NeoTodoCommit = (
+  id: string,
+  askId: string,
+  draft: NeoTodoDraft,
+  now: number
+) => NeoTodo;
+
 export interface NeoTodoStorageBoundary {
   project(todo: NeoTodo): NeoTodo;
-  insert(commit: NeoTodoInsert, args: Parameters<NeoTodoInsert>): NeoTodo;
+  insert(commit: NeoTodoCommit, args: Parameters<NeoTodoInsert>): NeoTodo;
 }
 
 export type NeoTodoPatch = Partial<

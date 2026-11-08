@@ -25,7 +25,7 @@ writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const root='neo:10000000-0000-4000-8000-000000000052',path=join(run,'data/daemon.db');
 const seed=new Database(path);runMigrations(seed,()=>{});createTables(seed);
 seed.exec("ALTER TABLE neo_todos ADD COLUMN repo TEXT;DELETE FROM migration_markers WHERE key='migration_492'");
-const legacy:NeoTodoStorageBoundary={project:todo=>todo,insert:(commit,args)=>commit(...args)};
+const legacy:NeoTodoStorageBoundary={project:todo=>todo,insert:(commit,[id,askId,draft,now])=>commit(id,askId,draft,now)};
 const old=new NeoAskTodoRepository(seed,undefined,undefined,undefined,undefined,legacy);
 const draft={title:'Historical',doneWhen:'Observed',check:null,named:null,instruction:null};
 for(const [id,peers] of [['historical-zero',0],['historical-many',4]] as const){
