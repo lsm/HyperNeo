@@ -1,15 +1,8 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, type ChildProcess } from 'child_process';
+import { rmSync } from 'node:fs';
 import * as path from 'path';
 import * as net from 'net';
-
-const hasCredentials = !!(
-  process.env.ANTHROPIC_API_KEY ||
-  process.env.GLM_API_KEY ||
-  process.env.CLAUDE_CODE_OAUTH_TOKEN
-);
-
-const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
 async function findAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -78,7 +71,7 @@ function waitForServerReady(
   });
 }
 
-describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => {
+describe('SIGINT Shutdown Integration', () => {
   let serverProcess: ChildProcess | null = null;
   let testPort: number;
   let testWorkspace: string;
@@ -92,6 +85,8 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
     if (serverProcess && !serverProcess.killed) {
       serverProcess.kill('SIGKILL');
     }
+    rmSync(`${testWorkspace}-data`, { recursive: true, force: true });
+    rmSync(`${testWorkspace}-home`, { recursive: true, force: true });
   });
 
   test(
@@ -104,8 +99,12 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
         ['run', mainPath, '--port', testPort.toString(), '--workspace', testWorkspace],
         {
           env: {
-            ...process.env,
+            PATH: process.env.PATH,
+            HOME: `${testWorkspace}-home`,
+            TMPDIR: process.env.TMPDIR,
             NODE_ENV: 'test',
+            HYPERNEO_DATA_DIR: `${testWorkspace}-data`,
+            DB_PATH: `${testWorkspace}-data/daemon.db`,
           },
           stdio: 'pipe',
         }
@@ -170,8 +169,12 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
         ['run', mainPath, '--port', (testPort + 1).toString(), '--workspace', testWorkspace + '-2'],
         {
           env: {
-            ...process.env,
+            PATH: process.env.PATH,
+            HOME: `${testWorkspace}-home`,
+            TMPDIR: process.env.TMPDIR,
             NODE_ENV: 'test',
+            HYPERNEO_DATA_DIR: `${testWorkspace}-data`,
+            DB_PATH: `${testWorkspace}-data/daemon.db`,
           },
           stdio: 'pipe',
         }
@@ -218,11 +221,4 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
     },
     { timeout: 60000 }
   );
-});
-
-describe.skipIf(hasCredentials && isBun)('SIGINT Shutdown Integration (skipped)', () => {
-  test('requires Bun runtime + API credentials (ANTHROPIC_API_KEY, GLM_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN)', () => {
-    console.log('Skipping SIGINT integration tests - no API credentials available');
-    expect(true).toBe(true);
-  });
 });
