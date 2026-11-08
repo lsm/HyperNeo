@@ -91,14 +91,16 @@ describe('Data-only atomic ask settlement', () => {
       request: 'Keep child work',
       createdAt: 3,
     });
+  const moveToChild = (id: string) => {
+    db.prepare('UPDATE neo_todos SET ask_id = ? WHERE id = ?').run('child', id);
+    db.prepare(
+      `INSERT INTO pack_coding_todos (todo_id, repo) VALUES (?, ?)
+        ON CONFLICT(todo_id) DO UPDATE SET repo = excluded.repo`
+    ).run(id, 'github.com/synthetic/child');
+  };
   const emptiedParent = () => {
     child();
-    for (const todo of store.listTodos('ask'))
-      db.prepare('UPDATE neo_todos SET ask_id = ?, repo = ? WHERE id = ?').run(
-        'child',
-        'github.com/synthetic/child',
-        todo.id
-      );
+    for (const todo of store.listTodos('ask')) moveToChild(todo.id);
   };
 
   test.each(['todo', 'doing', 'blocked', 'failed', 'removed'] as const)(
@@ -358,11 +360,7 @@ describe('Data-only atomic ask settlement', () => {
   );
   test('shared stop context returns the current ask, adopted ref and live status without writes', async () => {
     child();
-    db.prepare('UPDATE neo_todos SET ask_id = ?, repo = ? WHERE id = ?').run(
-      'child',
-      'github.com/synthetic/child',
-      'first'
-    );
+    moveToChild('first');
     sessions.bind('first', { adapter: 'hyperneo', id: 'adopted' }, 5);
     sessions.recordLive('first', 'done', undefined);
     expect(await run('neo.todoSessionReads', 'stopContext', ['first'])).toMatchObject({

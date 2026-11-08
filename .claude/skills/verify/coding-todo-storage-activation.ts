@@ -24,13 +24,14 @@ for(const folder of ['workspace','bin','evidence','data'])mkdirSync(join(run,fol
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const root='neo:10000000-0000-4000-8000-000000000052',path=join(run,'data/daemon.db');
 const seed=new Database(path);runMigrations(seed,()=>{});createTables(seed);
+seed.exec("ALTER TABLE neo_todos ADD COLUMN repo TEXT;DELETE FROM migration_markers WHERE key='migration_492'");
 const legacy:NeoTodoStorageBoundary={project:todo=>todo,insert:(commit,args)=>commit(...args)};
 const old=new NeoAskTodoRepository(seed,undefined,undefined,undefined,undefined,legacy);
 const draft={title:'Historical',doneWhen:'Observed',check:null,named:null,instruction:null};
 for(const [id,peers] of [['historical-zero',0],['historical-many',4]] as const){
  old.openAsk({id,title:id,request:'Keep historical association',sessionId:root,projectId:null,originMessageId:null,repo:'github.com/synthetic/history',createdAt:1});
  old.addTodo(id,id,draft,1);
- for(let n=0;n<peers;n++)old.addTodo(`${id}-${n}`,id,draft,1,`github.com/synthetic/peer-${n}`);
+ for(let n=0;n<peers;n++){old.addTodo(`${id}-${n}`,id,draft,1);seed.prepare('UPDATE neo_todos SET repo=? WHERE id=?').run(`github.com/synthetic/peer-${n}`,`${id}-${n}`);}
 }
 seed.exec('DROP TABLE pack_coding_todos');seed.close();
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
@@ -60,7 +61,8 @@ async function phase(reopen:boolean){
    result.reopenAndRepeatBackfill=true;return;
   }
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM pack_coding_todos').get() as {n:number}).n,4);
-  result.backfillBeforeFirstRead=true;
+  assert(!(db.prepare('PRAGMA table_info(neo_todos)').all() as {name:string}[]).some(column=>column.name==='repo'));
+  result.backfillBeforeFirstRead=true;result.legacyTodoColumnDropped=true;
   await app.db.createSession({id:root,title:'Synthetic repository activation',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
   store.openAsk({id:'work',title:'Multi-repository work',request:'Keep canonical facts',sessionId:root,projectId:null,originMessageId:null,createdAt:2});
@@ -73,7 +75,6 @@ async function phase(reopen:boolean){
   const third=(await call('neo.todo.add',input('Other','synthetic/two'))).todo as NeoTodo;assert.equal(third.repo,'github.com/synthetic/two');
   const unknown=(await call('neo.todo.add',input('No guess'))).todo as NeoTodo;assert.equal(unknown.repo,null);
   assert.equal(store.getAsk('work')?.repo,null);
-  for(const todo of [first,second,third,unknown])assert.deepEqual(db.prepare('SELECT repo FROM neo_todos WHERE id=?').get(todo.id),{repo:null});
   const reads=[
    await method<NeoTodo>('neo.todoReads','read','getTodo',[first.id]),
    (await method<{todos:NeoTodo[]}>('neo.askSettlementReads','read','snapshot',['work'])).todos.find(t=>t.id===first.id)!,
@@ -85,7 +86,6 @@ async function phase(reopen:boolean){
   assert.equal((await visible()).entry.todos.find(t=>t.id===first.id)?.repo,first.repo);
   result.publicReceiptsAndIndependentGatewayReaders=true;result.homogeneousInheritanceAndNoDualWrites=true;
   const watched=(await call('neo.todo.add',{askId:'work',title:'Watch canonical',check:{pack:'coding',kind:'pr_merged',params:{urls:['https://github.com/synthetic/watch/pull/1']}}})).todo as NeoTodo;
-  db.prepare('UPDATE neo_todos SET repo=? WHERE id=?').run('synthetic/stale',watched.id);
   const inventory=new GitHubWatchInventory(db,new SessionEventSubscriptionRepository(db));assert(inventory.references('synthetic','watch'));assert(!inventory.references('synthetic','stale'));result.watcherUsesPackFact=true;
   const before=await visible();db.exec("CREATE TRIGGER refuse_pack BEFORE INSERT ON pack_coding_todos BEGIN SELECT RAISE(ABORT,'late pack failure'); END");
   recording=true;const failed=await mcp({name:'neo.todo.add',input:input('Fail after core insert','synthetic/failure')});recording=false;
@@ -94,9 +94,8 @@ async function phase(reopen:boolean){
   const pending=command<{ok:true;todo:NeoTodo}>('neo.todoAddWrites','write',{askId:'work',todoId:'held',draft:{...input('Held','synthetic/held'),instruction:null,start:false,named:{repository:'synthetic/held'},check:{pack:'core',kind:'evidence',params:{path:'/synthetic/result'}}},now:Date.now()});void pending.then(()=>{replied=true;},()=>{replied=true;});
   await new Promise(done=>setTimeout(done,500));assert(!replied);assert.equal(tables.length,0);assert.deepEqual(await visible(),before);await hub.request('system.health',{});
   db.exec('ROLLBACK');held=false;const committed=await pending;recording=false;assert.equal(committed.todo.repo,'github.com/synthetic/held');assert(tables.includes('pack_coding_todos'));result.gatewayWriterCommitBeforeReceiptUnderContention=true;
-  db.prepare('UPDATE neo_todos SET repo=? WHERE id=?').run('github.com/synthetic/stale',first.id);
   listeningForFact=true;await method('coding.todoStorageWrites','write','record',[first.id,null]);await visible();assert(committedFact&&deliveredFact,'canonical fact changes must publish neo.changed after commit');listeningForFact=false;result.factUpdatesNotifyAfterCommit=true;await method('coding.todoStorageWrites','write','prepare',[]);
-  assert.equal((await visible()).entry.todos.find(t=>t.id===first.id)?.repo,null);result.explicitNullOverridesStaleLegacy=true;
+  assert.equal((await visible()).entry.todos.find(t=>t.id===first.id)?.repo,null);result.explicitNullSurvivesPreparation=true;
   expected=(await visible()).entry.todos.map(({id,repo})=>({id,repo})).sort((a,b)=>a.id.localeCompare(b.id));
  }finally{
   if(held)db.exec('ROLLBACK');recording=false;app.db.gateway.onChanges=replay;offFact();await transport.close();hub.cleanup();await app.cleanup();

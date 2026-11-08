@@ -1,15 +1,10 @@
 import type { Database } from '../../../../../storage/sqlite-compat.ts';
 
 export function prepareCodingTodoStorage(db: Database): void {
-  db.transaction(() => {
-    db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_todos (
-      todo_id TEXT PRIMARY KEY REFERENCES neo_todos(id) ON DELETE CASCADE,
-      repo TEXT
-    );`);
-    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='neo_todos'").get())
-      db.prepare(`INSERT OR IGNORE INTO pack_coding_todos (todo_id, repo)
-        SELECT id, repo FROM neo_todos WHERE repo IS NOT NULL`).run();
-  })();
+  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_todos (
+    todo_id TEXT PRIMARY KEY REFERENCES neo_todos(id) ON DELETE CASCADE,
+    repo TEXT
+  );`);
 }
 
 export function createCodingPackTables(db: Database, activatedAt = Date.now()): void {

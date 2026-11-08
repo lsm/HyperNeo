@@ -38,7 +38,6 @@ beforeEach(async () => {
   store.addTodo('stored', 'ask', draft, 2, 'github.com/synthetic/legacy');
   await command('coding.todoStorageWrites', 'prepare', []);
   await command('coding.todoStorageWrites', 'record', ['stored', 'github.com/synthetic/canonical']);
-  db.prepare('UPDATE neo_todos SET repo=? WHERE id=?').run('github.com/synthetic/legacy', 'stored');
 });
 afterEach(async () => {
   await gateway.close();
@@ -48,13 +47,13 @@ afterEach(async () => {
 test('startup prepares the pack table before a default reader needs it', () => {
   db.exec('DROP TABLE pack_coding_todos');
   createTables(db);
-  expect(store.getTodo('stored')?.repo).toBe('github.com/synthetic/legacy');
-  expect(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('stored')).toEqual({
-    repo: 'github.com/synthetic/legacy',
-  });
+  expect(store.getTodo('stored')?.repo).toBeNull();
+  expect(
+    (db.prepare('PRAGMA table_info(neo_todos)').all() as { name: string }[]).map((c) => c.name)
+  ).not.toContain('repo');
 });
 
-test('default core and the write-op repository cannot fall back to stale columns', () => {
+test('default core and the write-op repository read the pack fact', () => {
   expect(store.getTodo('stored')?.repo).toBe('github.com/synthetic/canonical');
   expect(new neoTodoWrites.Repository(db).getTodo('stored')?.repo).toBe(
     'github.com/synthetic/canonical'
@@ -109,17 +108,16 @@ test('mutation commit receipts do not recreate an unprojected repository', async
   expect(result.todo.repo).toBe('github.com/synthetic/canonical');
 });
 
-test('new default writes commit one pack fact and freeze both legacy columns', () => {
+test('new default writes commit one pack fact and leave the ask association unchanged', () => {
   const created = store.addTodo('new', 'ask', draft, 3, 'github.com/synthetic/new');
   expect(created.repo).toBe('github.com/synthetic/new');
-  expect(db.prepare('SELECT repo FROM neo_todos WHERE id=?').get('new')).toEqual({ repo: null });
   expect(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('new')).toEqual({
     repo: 'github.com/synthetic/new',
   });
   expect(store.getAsk('ask')?.repo).toBe('github.com/synthetic/history');
 });
 
-test('canonical null survives repeated preparation and a stale non-null legacy column', async () => {
+test('canonical null survives repeated preparation', async () => {
   await command('coding.todoStorageWrites', 'record', ['stored', null]);
   await command('coding.todoStorageWrites', 'prepare', []);
   expect(((await command('neo.todoReads', 'getTodo', ['stored'])) as NeoTodo).repo).toBeNull();
@@ -179,7 +177,7 @@ test('historical ask-only association stays readable without invented pack rows'
   ).toBeNull();
 });
 
-test('watch inventory follows the pack fact instead of a stale legacy column', () => {
+test('watch inventory follows the pack fact', () => {
   db.prepare(
     "INSERT INTO sessions (id,title,created_at,last_active_at,status,config,metadata) VALUES ('neo','Synthetic','now','now','active','{}','{}')"
   ).run();

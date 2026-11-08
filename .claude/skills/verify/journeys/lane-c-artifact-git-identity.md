@@ -45,6 +45,5 @@ holding a lock before all source planning leaves the main thread responsive.
 Do not change core receipt code here. The final lock proof isolates this slice
 at Git identity admission, with source callbacks after its committed receipt.
 
-Seed the source todo repository in `pack_coding_todos` and assert its legacy
-`neo_todos.repo` stays null. A frozen legacy value cannot authorize Git capture
-after canonical storage activation.
+Seed the source todo repository in `pack_coding_todos`; migration 492 removed
+the legacy `neo_todos.repo` column, so the pack fact is the only todo source.

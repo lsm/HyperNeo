@@ -97,7 +97,8 @@ try {
   if (!resume) github.repo.updatePollCursorJson(heavy!.id, { lastSeenAt: 0, recentPullRequestHeadShas: Object.fromEntries(Array.from({ length: 201 }, (_, i) => [i + 1, `head-${i + 1}`])) });
   if (mode === 'reconciliation-verify') {
     db.exec(`INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('fixture-ask','${sessionId}','Ask','Request','open',1,1);
-      INSERT INTO neo_todos (id,ask_id,position,title,done_when,repo,check_json,state,created_at,updated_at) VALUES ('fixture-todo','fixture-ask',0,'Todo','Done','verify-test/z-todo','{"pack":"coding","kind":"pr","params":{}}','doing',1,1)`);
+      INSERT INTO neo_todos (id,ask_id,position,title,done_when,check_json,state,created_at,updated_at) VALUES ('fixture-todo','fixture-ask',0,'Todo','Done','{"pack":"coding","kind":"pr","params":{}}','doing',1,1);
+      INSERT INTO pack_coding_todos (todo_id,repo) VALUES ('fixture-todo','verify-test/z-todo')`);
     for (const repo of github.repo.listPollingRepos()) github.repo.removeWatchedRepo(repo.spaceId, repo.owner, repo.repo);
     assert.equal(github.repo.listPollingRepos().length, 0);
     await app.cleanup();

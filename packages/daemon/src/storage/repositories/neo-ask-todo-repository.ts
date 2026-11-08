@@ -121,7 +121,7 @@ const toAsk = ({ focusedSessionJson, ...row }: AskRow): NeoAsk => ({
 const foundAsk = (row: AskRow | null): NeoAsk | null => (row ? toAsk(row) : null);
 
 const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS doneWhen,
-  check_json AS checkJson, instruction, named, repo, state, reason, blocked_reason AS blockedReason,
+  check_json AS checkJson, instruction, named, NULL AS repo, state, reason, blocked_reason AS blockedReason,
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
@@ -650,10 +650,7 @@ export class NeoAskTodoRepository {
   addTodo(...args: Parameters<NeoTodoInsert>): NeoTodo {
     const storage = this.storage;
     const todo = this.inTransaction(() =>
-      storage.insert(
-        (id, askId, draft, now, repo) => this.insertTodo(id, askId, draft, now, repo, false),
-        args
-      )
+      storage.insert((id, askId, draft, now) => this.insertTodo(id, askId, draft, now, false), args)
     );
     this.changed();
     return todo;
@@ -664,14 +661,13 @@ export class NeoAskTodoRepository {
     askId: string,
     draft: NeoTodoDraft,
     now: number,
-    repo: string | null = null,
     notify = true
   ): NeoTodo {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           repo, added_after_start, priority, depends_on, approved_at, created_at, updated_at)
-         VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?, ?,
+           added_after_start, priority, depends_on, approved_at, created_at, updated_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?,
            EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?, ?, ?, ?, ?)`
       )
       .run(
@@ -683,7 +679,6 @@ export class NeoAskTodoRepository {
         draft.check ? JSON.stringify(draft.check) : null,
         draft.instruction,
         draft.named ? JSON.stringify(draft.named) : null,
-        repo,
         askId,
         draft.priority ?? 'normal',
         draft.dependsOn ? JSON.stringify(draft.dependsOn) : null,

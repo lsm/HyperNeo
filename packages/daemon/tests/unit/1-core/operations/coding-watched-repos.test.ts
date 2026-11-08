@@ -88,8 +88,9 @@ describe('Coding watched repositories', () => {
         VALUES ('foreign/repo', 1, 'Old PR', 'work', 'old', 'unreviewed', 1, 1);
       INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at)
         VALUES ('old-ask', 'old-session', 'Old work', 'Old work', 1, 1);
-      INSERT INTO neo_todos (id, ask_id, position, title, done_when, repo, created_at, updated_at)
-        VALUES ('old-todo', 'old-ask', 0, 'Old work', 'Done', 'other/repo', 1, 1);
+      INSERT INTO neo_todos (id, ask_id, position, title, done_when, created_at, updated_at)
+        VALUES ('old-todo', 'old-ask', 0, 'Old work', 'Done', 1, 1);
+      INSERT INTO pack_coding_todos (todo_id, repo) VALUES ('old-todo', 'other/repo');
       INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at)
         VALUES ('old-todo', '["https://github.com/other/repo/pull/2"]', 1);`);
     f.pack.todos!.schema(f.db);

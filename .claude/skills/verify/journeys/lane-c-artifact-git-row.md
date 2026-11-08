@@ -45,6 +45,5 @@ The existing 30-second deadline and proof assertions remain unchanged; the origi
 Linux CI timeout is not reproduced by a passing macOS run. A new CI failure must
 identify its actual phase before changing budgets or production behavior.
 
-Seed the source todo repository in `pack_coding_todos` and assert its legacy
-`neo_todos.repo` stays null. A frozen legacy value cannot authorize Git capture
-after canonical storage activation.
+Seed the source todo repository in `pack_coding_todos`; migration 492 removed
+the legacy `neo_todos.repo` column, so the pack fact is the only todo source.
