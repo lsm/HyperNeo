@@ -24,6 +24,7 @@
   /* Border radius */
   --radius-base: 8px;
   --radius-control: 10px;
+  --text-2xs: 11px;
   --radius-lg: 12px;
   --radius-xl: 20px;
   --shadow-composer: 0 6px 32px rgb(0 0 0 / 0.12);

@@ -25,9 +25,9 @@ try {
       const column=el.querySelector('[data-pending-model-switch]').parentElement;
       return {height:el.getBoundingClientRect().height, display:getComputedStyle(column).display,
         direction:getComputedStyle(column).flexDirection, lineHeight:getComputedStyle(column).lineHeight,
-        maximum:getComputedStyle(column).maxWidth};
+        maximum:getComputedStyle(column).maxWidth,noticeSize:getComputedStyle(el.querySelector('[data-pending-model-switch]')).fontSize};
     });
-    if(pillReceipt.height>35.5 || pillReceipt.display!=='flex' || pillReceipt.maximum!=='none') failures.push(`${theme}/${width}: pending pill ${JSON.stringify(pillReceipt)}`);
+    if(pillReceipt.height>35.5 || pillReceipt.display!=='flex' || pillReceipt.maximum!=='none' || pillReceipt.noticeSize!=='11px') failures.push(`${theme}/${width}: pending pill ${JSON.stringify(pillReceipt)}`);
     await page.keyboard.press('Tab');
     const send = form.getByRole('button',{name:'Send message',exact:true}); await send.focus();
     const outline = await send.evaluate(el=>({style:getComputedStyle(el).outlineStyle,width:getComputedStyle(el).outlineWidth,color:getComputedStyle(el).outlineColor,visible:el.matches(':focus-visible'),class:el.className}));
@@ -38,9 +38,9 @@ try {
     const stop = form.getByRole('button',{name:'Stop',exact:true});
     const stopReceipt = await stop.evaluate(el=>{
       const face=el.firstElementChild, box=el.getBoundingClientRect(), f=face.getBoundingClientRect();
-      return {width:box.width,height:box.height,faceWidth:f.width,faceHeight:f.height,radius:getComputedStyle(face).borderRadius};
+      return {width:box.width,height:box.height,faceWidth:f.width,faceHeight:f.height,radius:getComputedStyle(face).borderRadius,glyph:el.querySelector('svg').getBoundingClientRect().width};
     });
-    if(stopReceipt.width!==44 || stopReceipt.height!==44 || stopReceipt.faceWidth!==44 || stopReceipt.faceHeight!==32 || stopReceipt.radius!=='10px') failures.push(`${theme}/${width}: stop ${JSON.stringify(stopReceipt)}`);
+    if(stopReceipt.width!==44 || stopReceipt.height!==44 || stopReceipt.faceWidth!==44 || stopReceipt.faceHeight!==32 || stopReceipt.radius!=='10px' || stopReceipt.glyph!==14) failures.push(`${theme}/${width}: stop ${JSON.stringify(stopReceipt)}`);
     await page.screenshot({path:`${run}/evidence/review-${theme}-${width}-running.png`});
     await page.goto(`${base}/neo`);
     const composer = page.locator('form.neo-composer-input');

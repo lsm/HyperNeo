@@ -561,7 +561,7 @@ export function NeoComposer({
               class="neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none"
             >
               <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 shadow-sm transition-[opacity,transform] group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
-                <NeoIcon name="stop" class="!h-[18px] !w-[18px]" />
+                <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
               </span>
             </button>
           )}
@@ -574,7 +574,7 @@ export function NeoComposer({
               title={recordingVoice ? t('composer.stopSendTitle') : undefined}
             >
               <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 shadow-sm transition-[opacity,transform] group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
-                <NeoIcon name="up" class="!h-[18px] !w-[18px]" />
+                <NeoIcon name="up" class="!size-4.5" />
               </span>
             </button>
           )}

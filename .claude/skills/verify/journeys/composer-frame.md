@@ -58,3 +58,7 @@ Composer radius/shadow use @theme control/composer tokens. Send/foreground use
 The geometry/color receipts must stay identical when replacing literal utilities
 with those named tokens. No new arbitrary color/radius/shadow classes belong in
 composer markup.
+
+The final glyph/text size receipts require a 14px turn-stop glyph and an 11px
+pending notice, with the notice using the named text-2xs theme utility. The send
+arrow stays 18px using the existing size-4.5 spacing utility.

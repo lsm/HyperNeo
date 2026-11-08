@@ -187,7 +187,7 @@ export function NeoPreferences({
                 : name}
           </span>
           {pending && !saving && (
-            <span data-pending-model-switch class="max-w-full truncate text-[11px] text-accent">
+            <span data-pending-model-switch class="max-w-full truncate text-2xs text-accent">
               {t('composer.switchesNextTurn')}
             </span>
           )}
