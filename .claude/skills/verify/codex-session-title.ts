@@ -1,0 +1,73 @@
+import { strict as assert } from 'node:assert';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
+import { join, resolve } from 'node:path';
+import { mock } from 'bun:test';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import * as adapterModule from '../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import { driverWorkCall, NeoTodoTargetSchema } from '../../../packages/daemon/src/lib/neo/driver-work.ts';
+
+const run = resolve(process.argv[2]);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+const home = join(run, 'home', '.codex');
+const folder = join(run, 'project');
+mkdirSync(home, { recursive: true });
+mkdirSync(folder, { recursive: true });
+mkdirSync(join(run, 'evidence'), { recursive: true });
+const statePath = join(home, 'state_5.sqlite');
+const db = new Database(statePath);
+db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+CREATE TABLE projects (id TEXT, name TEXT, updated_at_ms INTEGER);
+CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+const rollout = join(run, 'rollout.jsonl');
+writeFileSync(rollout, '');
+db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('synthetic', 'Old', '', '', folder, 'desktop', 0, 1, rollout);
+db.close();
+const calls: unknown[] = [];
+let closed = 0;
+let opened = 0;
+const create = adapterModule.createCodexDesktopAdapter;
+mock.module('../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts', () => ({
+  ...adapterModule,
+  createCodexDesktopAdapter: (deps: Parameters<typeof create>[0]) => create({
+    ...deps,
+    readSnapshot: undefined,
+    prepareExecution: undefined,
+    gitCheckout: async () => null,
+    appServer: async () => { throw new Error('Desktop is closed'); },
+    bootstrapServer: async () => { opened++; let released = false; return ({
+      call: async (method, params) => {
+        calls.push({ method, params });
+        return method === 'thread/start' ? { thread: { id: 'synthetic' } } : {};
+      },
+      close: () => { if (!released) closed++; released = true; },
+    }); },
+    prepareDesktopProject: async () => 'synthetic-project',
+    startDesktopTurn: async () => {},
+  }),
+}));
+const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
+const { getConfig } = await import('../../../packages/daemon/src/config.ts');
+const app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
+try {
+  await app.jobProcessor.stop();
+  assert(![8399, 8499].includes(app.server.port));
+  const registry = app.sessionManager.getOperationRegistry();
+  const caller = { source: 'rpc' as const, principal: 'local' };
+  const target = NeoTodoTargetSchema.parse({ verb: 'start', adapter: 'codex-desktop', place: { machine: hostname(), folder, name: 'Synthetic' }, sessionTitle: 'Codex hyperneo 2' });
+  const call = driverWorkCall(target, { title: 'Task-specific title', instruction: 'Synthetic instruction' });
+  const started = await invokeOperation(registry, call.name, call.input, caller);
+  assert.equal(started.kind, 'completed', JSON.stringify(started));
+  assert.deepEqual((started as { value: { ok: boolean; value: { title: string } } }).value.ok, true, JSON.stringify(started));
+  assert.equal((started as { value: { value: { title: string } } }).value.value.title, 'Codex hyperneo 2');
+  const renamed = await invokeOperation(registry, 'work.rename', { ref: { adapter: 'codex-desktop', id: 'synthetic' }, title: 'Codex hyperneo 3' }, caller);
+  assert.equal(renamed.kind, 'completed', JSON.stringify(renamed));
+  assert.deepEqual((renamed as { value: unknown }).value, { ok: true, value: { renamed: true, title: 'Codex hyperneo 3' } });
+  assert.equal(closed, opened);
+  assert(opened >= 2);
+  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, renamed, calls, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
+} finally {
+  await app.cleanup();
+}

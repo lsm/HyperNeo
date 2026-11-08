@@ -139,6 +139,7 @@ export const StartWorkInputSchema = z.object({
   adapter: z.string().min(1),
   place: PlaceSchema.optional(),
   title: z.string().trim().min(1).max(200),
+  sessionTitle: z.string().trim().min(1).max(200).optional(),
   message: z.string().trim().min(1).max(100_000),
   excludeRefs: z.array(WorkRefSchema).max(30).optional(),
   createFolder: z.boolean().optional(),

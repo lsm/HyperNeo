@@ -1070,7 +1070,7 @@ const runCodexRename = (superpipe({})('codex-rename-work') as PipelineAPI)
   .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
   .pipe(
     (detail: CodexThreadDetail, title: string, deps: CodexDesktopAdapterDeps) =>
-      withCodexMessageServer(deps, async (server) => {
+      withCodexMessageServer({ ...deps, appServer: deps.bootstrapServer }, async (server) => {
         await server.call('thread/name/set', { threadId: detail.thread.id, name: title });
         return { ok: true, value: { renamed: true as const, title } };
       }),
@@ -1237,7 +1237,10 @@ export async function startCodexThread(
           `${confirmed.detail} Thread ${threadId} was created without its first turn.`
         );
       }
-      await server.call('thread/name/set', { threadId, name: request.title });
+      await server.call('thread/name/set', {
+        threadId,
+        name: request.sessionTitle ?? request.title,
+      });
       await server.close();
       const brief = request.provenance
         ? withWorkerProvenance(request.message, {
@@ -1267,7 +1270,7 @@ export async function startCodexThread(
         ok: true,
         value: {
           ref: { adapter: 'codex-desktop', id: threadId },
-          title: request.title,
+          title: request.sessionTitle ?? request.title,
           place: { machine: deps.machine, folder, name: request.place.name },
           status: 'running',
           lastActivityAt: deps.now(),

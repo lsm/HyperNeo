@@ -84,6 +84,15 @@ const driverWorkCall = (
 ) => buildDriverWorkCall(target, work, goal, withWorkGoal);
 
 describe('driverWorkCall', () => {
+  test('passes a session title from the todo start target independently of its title', () => {
+    expect(
+      driverWorkCall({ ...startTarget, sessionTitle: 'Codex hyperneo 2' }, work).input
+    ).toMatchObject({
+      title: 'Bigger font',
+      sessionTitle: 'Codex hyperneo 2',
+    });
+  });
+
   test('sends the goal with a started or continued driver session', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: null };
     for (const target of [startTarget, sendTarget])

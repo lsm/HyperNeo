@@ -21798,6 +21798,11 @@
                           "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                           "type": "boolean"
                         },
+                        "sessionTitle": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "verb": {
                           "const": "start",
                           "type": "string"
@@ -40675,6 +40680,11 @@
                     "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                     "type": "boolean"
                   },
+                  "sessionTitle": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "verb": {
                     "const": "start",
                     "type": "string"
@@ -43768,6 +43778,11 @@
                   "sandbox": {
                     "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                     "type": "boolean"
+                  },
+                  "sessionTitle": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
                   },
                   "verb": {
                     "const": "start",
@@ -59072,6 +59087,11 @@
           },
           "provenance": {
             "type": "boolean"
+          },
+          "sessionTitle": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
           },
           "title": {
             "maxLength": 200,

@@ -651,6 +651,18 @@ describe('codex-desktop start', () => {
     }
   );
 
+  test('uses the requested session title independently of the task title', async () => {
+    const { instance, calls } = adapter({
+      call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+    });
+    const result = await instance.start?.({ ...request, sessionTitle: 'Codex hyperneo 2' }, user);
+    expect(result).toMatchObject({ ok: true, value: { title: 'Codex hyperneo 2' } });
+    expect(calls).toContainEqual([
+      'thread/name/set',
+      { threadId: 'th1', name: 'Codex hyperneo 2' },
+    ]);
+  });
+
   test('starts a named thread in the folder and sends the first turn', async () => {
     const { instance, calls, closed } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),

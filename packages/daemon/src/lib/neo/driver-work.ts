@@ -35,6 +35,7 @@ import { NeoReadWorkTarget } from './read-work.ts';
 
 const NeoStartWorkTarget = z.object({
   verb: z.literal('start'),
+  sessionTitle: z.string().trim().min(1).max(200).optional(),
   adapter: z.string().min(1).max(80),
   place: PlaceSchema.optional(),
   createFolder: z.boolean().optional(),
@@ -118,6 +119,7 @@ export function driverWorkCall(
           adapter: target.adapter,
           place: target.place,
           title: work.title,
+          ...(target.sessionTitle ? { sessionTitle: target.sessionTitle } : {}),
           message,
           ...(target.createFolder ? { createFolder: true } : {}),
           ...(target.model ? { model: target.model } : {}),
