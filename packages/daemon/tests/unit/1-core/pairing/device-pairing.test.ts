@@ -350,12 +350,14 @@ describe('device pairing', () => {
     }
   });
 
-  test('only an active paired human can see codes waiting for Allow', async () => {
+  test('with terminal approval off, only an active paired human can see codes waiting for Allow', async () => {
     const h = setup();
     try {
       const first = await h.call('device.pair.create', { kind: 'human' }, door);
       const phone = await h.pair(first.code);
       await h.call('device.pair.create', { kind: 'human', name: 'Not this device' }, door);
+      expect((await h.call('device.pair.pending', {}, door)).pending).toHaveLength(1);
+      await h.call('device.pair.terminal_approval.set', { enabled: false }, door);
       for (const caller of [human, door, agent, pairedHuman('missing')])
         expect((await h.call('device.pair.pending', {}, caller)).ok).toBe(false);
       expect(

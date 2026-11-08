@@ -42,6 +42,9 @@ export const NOT_REQUESTED =
 export const WRONG_FINGERPRINT =
   'wrong_fingerprint: the last group did not match the new phone, so the code is denied. Scan a new code.';
 
+export const TERMINAL_APPROVAL_NEEDS_PHONE =
+  'not_paired: only a paired phone or browser can turn terminal approval back on.';
+
 const DECIDED_REASON: Partial<Record<string, string>> = {
   not_pending: 'not_pending: no pending code with that id.',
   not_requested: NOT_REQUESTED,
@@ -75,12 +78,16 @@ export function createDevicePairingOperations({
     isLocalUser(caller) &&
     caller.device?.kind === 'human' &&
     pairing().isActiveDevice(caller.device.deviceId);
+  const isPhone = (caller: OperationCaller) =>
+    isPairedHuman(caller) && !caller.device?.deviceId.startsWith('local-rpc:');
+  const isLocal = (caller: OperationCaller) => isLocalUser(caller) || fromDoor(caller);
   const decidePending = async (
     caller: OperationCaller,
     notPaired: string,
-    write: (deviceId: string) => Promise<string>
+    write: (deviceId: string) => Promise<string>,
+    door = false
   ) => {
-    if (!isLocalUser(caller)) return refused;
+    if (!isLocalUser(caller) && !(door && fromDoor(caller))) return refused;
     if (caller.device?.kind !== 'human') return { ok: false as const, reason: notPaired };
     const decided = await write(caller.device.deviceId);
     if (decided === 'not_paired') return { ok: false as const, reason: notPaired };
@@ -128,7 +135,7 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.pair.pending',
       description:
-        'List issued codes waiting for Allow by an active paired human (never the codes themselves). A two-way code shows the first 7 fingerprint groups once its phone confirmed.',
+        'List issued codes waiting for Allow by an active paired human, or by the terminal while it may approve (never the codes themselves). A two-way code shows the first 7 fingerprint groups once its phone confirmed.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([
@@ -148,14 +155,14 @@ export function createDevicePairingOperations({
         Refused,
       ]),
       execute: async (_input, caller) =>
-        isPairedHuman(caller)
+        isPhone(caller) || (isLocal(caller) && pairing().terminalMayApprove())
           ? { ok: true as const, pending: pairing().listPending(now()) }
           : { ok: false as const, reason: NEEDS_PAIRED_HUMAN },
     }),
     defineOperation({
       name: 'device.pair.approve',
       description:
-        'Allow a pending pairing code so its device can pair. A two-way code needs lastGroup, the last fingerprint group shown on the new phone, typed on a paired phone or browser; a wrong one denies the code.',
+        'Allow a pending pairing code so its device can pair. A two-way code needs lastGroup, the last fingerprint group shown on the new phone; a wrong one denies the code. The terminal and local tools may allow only while terminal approval is on, or for the first device or recovery.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z
         .object({
@@ -169,14 +176,46 @@ export function createDevicePairingOperations({
         .strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
       execute: (input, caller) =>
-        decidePending(caller, ALLOW_NEEDS_PAIRED_HUMAN, (deviceId) =>
-          pairing().approveAsync({
-            codeId: input.codeId,
-            deviceId,
-            lastGroup: input.lastGroup,
-            now: now(),
-          })
+        decidePending(
+          caller,
+          ALLOW_NEEDS_PAIRED_HUMAN,
+          (deviceId) =>
+            pairing().approveAsync({
+              codeId: input.codeId,
+              deviceId,
+              door: fromDoor(caller),
+              lastGroup: input.lastGroup,
+              now: now(),
+            }),
+          true
         ),
+    }),
+    defineOperation({
+      name: 'device.pair.terminal_approval.get',
+      description:
+        'Whether the terminal and local tools may allow device codes (two-way codes still need the last fingerprint group). On by default.',
+      policy: { safetyClass: 'human_only' },
+      inputSchema: z.object({}).strict(),
+      resultSchema: z.union([z.object({ ok: z.literal(true), enabled: z.boolean() }), Refused]),
+      execute: async (_input, caller) =>
+        isLocal(caller) ? { ok: true as const, enabled: pairing().terminalApproval() } : refused,
+    }),
+    defineOperation({
+      name: 'device.pair.terminal_approval.set',
+      description:
+        'Turn terminal approval of device codes on or off. Any local caller can turn it off; only a paired phone or browser can turn it back on.',
+      policy: { safetyClass: 'human_only' },
+      inputSchema: z.object({ enabled: z.boolean() }).strict(),
+      resultSchema: z.union([z.object({ ok: z.literal(true), enabled: z.boolean() }), Refused]),
+      execute: async (input, caller) => {
+        if (!isLocal(caller)) return refused;
+        if (input.enabled && !isPhone(caller))
+          return { ok: false as const, reason: TERMINAL_APPROVAL_NEEDS_PHONE };
+        const changedBy = caller.device?.deviceId ?? caller.sessionId ?? caller.source;
+        return (await pairing().setTerminalApprovalAsync(input.enabled, changedBy, now()))
+          ? { ok: true as const, enabled: input.enabled }
+          : { ok: false as const, reason: TERMINAL_APPROVAL_NEEDS_PHONE };
+      },
     }),
     defineOperation({
       name: 'device.pair.deny',

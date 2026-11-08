@@ -1,5 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { defineDbOp } from '../db-gateway/db-op.ts';
+import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { DevicePairingRepository } from './device-pairing-repository.ts';
 import {
@@ -14,6 +14,7 @@ type PairingDenial = 'denied' | 'not_pending' | 'not_paired';
 export interface PairApprovalRequest {
   codeId: string;
   deviceId: string;
+  door: boolean;
   lastGroup?: string;
   now: number;
 }
@@ -23,7 +24,8 @@ const approvalFacts = (
   request: PairApprovalRequest
 ): PairApprovalFacts => ({
   active: repo.isActiveDevice(request.deviceId),
-  localTools: request.deviceId.startsWith('local-rpc:'),
+  terminal: request.door || request.deviceId.startsWith('local-rpc:'),
+  terminalMayApprove: repo.terminalMayApprove(),
   code: repo.pendingCode(request.codeId, request.now),
   lastGroup: request.lastGroup,
 });
@@ -51,6 +53,23 @@ export const pairingApproveWrite = defineDbOp<PairApprovalRequest, PairingApprov
   mode: 'write',
   run: (db, request) => approvePairCode(db, request),
 });
+
+class TerminalApprovalWriter {
+  constructor(private readonly db: Database) {}
+
+  set(enabled: boolean, changedBy: string, now: number): boolean {
+    const repo = new DevicePairingRepository(this.db);
+    if (enabled && !repo.isActiveDevice(changedBy)) return false;
+    return repo.setTerminalApproval(enabled, changedBy, now) === enabled;
+  }
+}
+
+export const pairingTerminalApprovalWrites = defineRepositoryOp(
+  'pairing.terminalApproval.write',
+  'write',
+  TerminalApprovalWriter,
+  ['set'] as const
+);
 
 export const pairingDenyWrite = defineDbOp<
   { codeId: string; deviceId: string; now: number },

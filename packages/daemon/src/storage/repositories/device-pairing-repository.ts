@@ -2,7 +2,11 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { pairingApproveWrite, pairingDenyWrite } from './pairing-approve-write.ts';
+import {
+  pairingApproveWrite,
+  pairingDenyWrite,
+  pairingTerminalApprovalWrites,
+} from './pairing-approve-write.ts';
 import type { PairApprovalRequest } from './pairing-approve-write.ts';
 import { pairingRedeemWrite } from './pairing-redeem-write.ts';
 import type { PairRequest, PairRequestRecord } from '../../lib/pairing/pair-request.ts';
@@ -346,6 +350,33 @@ export class DevicePairingRepository {
 
   approveAsync(request: PairApprovalRequest) {
     return gatewayFor(this.db).run(pairingApproveWrite, request);
+  }
+
+  terminalApproval(): boolean {
+    const row = this.db
+      .prepare('SELECT terminal_approval AS enabled FROM pairing_policy WHERE id = 1')
+      .get() as { enabled: number } | null;
+    return !row || row.enabled === 1;
+  }
+
+  terminalMayApprove(): boolean {
+    return this.countDevices().all === 0 || this.humanRecoveryOpen() || this.terminalApproval();
+  }
+
+  setTerminalApproval(enabled: boolean, changedBy: string, now: number): boolean {
+    const stored = this.db
+      .prepare(
+        `INSERT INTO pairing_policy (id, terminal_approval, changed_by, changed_at) VALUES (1, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET terminal_approval = excluded.terminal_approval,
+           changed_by = excluded.changed_by, changed_at = excluded.changed_at
+         RETURNING terminal_approval AS enabled`
+      )
+      .get(enabled ? 1 : 0, changedBy, now) as { enabled: number };
+    return stored.enabled === 1;
+  }
+
+  setTerminalApprovalAsync(enabled: boolean, changedBy: string, now: number) {
+    return gatewayFor(this.db).call(pairingTerminalApprovalWrites, 'set', enabled, changedBy, now);
   }
 
   approve(id: string, now: number): boolean {

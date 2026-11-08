@@ -5,6 +5,8 @@ export const DEVICE_OPERATION_NAMES = [
   'device.pair.deny',
   'device.pair.pending',
   'device.pair.reset_lockout',
+  'device.pair.terminal_approval.get',
+  'device.pair.terminal_approval.set',
   'device.reset_human',
   'device.revoke',
   'device.unpaired.list',
