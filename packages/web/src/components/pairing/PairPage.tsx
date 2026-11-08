@@ -15,6 +15,10 @@ function pairFailureMessage(
   body: { error?: unknown; retryAfterMs?: unknown }
 ): string {
   if (status === 403) return 'Approval was refused. Use an already paired phone or browser.';
+  if (status === 401 && body.error === 'code_denied')
+    return 'This code was denied. Make a new one with hyperneo pair.';
+  if (status === 401 && body.error === 'code_expired')
+    return 'This code expired. Make a new one with hyperneo pair.';
   if (status === 401) return 'That code is wrong or expired. Make a new one with hyperneo pair.';
   if (status === 409 && body.error === 'code_used_elsewhere')
     return 'This code was used from another window. Make a new one with hyperneo pair.';

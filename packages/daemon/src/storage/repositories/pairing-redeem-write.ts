@@ -15,6 +15,7 @@ type Outcome = {
   paired: Redeemed;
   awaitingApproval: boolean;
   usedElsewhere?: true;
+  refusal?: 'code_denied' | 'code_expired';
   hold?: { codeId: string; expiresAt: number };
 };
 type Facts = {
@@ -42,6 +43,8 @@ const applyStep: Record<PairRequestStep, (facts: Facts) => Outcome> = {
     return { ...refused, usedElsewhere: true };
   },
   voided: () => ({ ...refused, usedElsewhere: true }),
+  denied: () => ({ ...refused, refusal: 'code_denied' }),
+  expired: () => ({ ...refused, refusal: 'code_expired' }),
   redeem: ({ repo, request, now }) => ({
     paired: repo.redeem(request.code, request.name, now),
     awaitingApproval: false,

@@ -398,10 +398,10 @@ export class DevicePairingRepository {
     return (
       this.db
         .prepare(
-          `UPDATE pairing_codes SET expires_at = ?
+          `UPDATE pairing_codes SET expires_at = ?, denied_at = ?
            WHERE id = ? AND approved_at IS NULL AND used_at IS NULL AND expires_at > ?`
         )
-        .run(now, id, now).changes > 0
+        .run(now, now, id, now).changes > 0
     );
   }
 
@@ -419,12 +419,20 @@ export class DevicePairingRepository {
       .prepare(
         `SELECT id, approved_at IS NOT NULL AS approved, requested_name AS requestedName,
            requested_by AS requestedBy, voided_at IS NOT NULL AS voided, two_way AS twoWay,
-           expires_at AS expiresAt
-         FROM pairing_codes
-         WHERE code_hash = ? AND used_at IS NULL AND (expires_at > ? OR voided_at IS NOT NULL)`
+           expires_at AS expiresAt, denied_at IS NOT NULL AS denied, expires_at <= ? AS expired
+         FROM pairing_codes WHERE code_hash = ? AND used_at IS NULL`
       )
-      .get(hash(normalizePairingCode(code)), now) as SqlRow<PairRequestRecord>;
-    return row && { ...row, approved: !!row.approved, voided: !!row.voided, twoWay: !!row.twoWay };
+      .get(now, hash(normalizePairingCode(code))) as SqlRow<PairRequestRecord>;
+    return (
+      row && {
+        ...row,
+        approved: !!row.approved,
+        voided: !!row.voided,
+        twoWay: !!row.twoWay,
+        denied: !!row.denied,
+        expired: !!row.expired,
+      }
+    );
   }
 
   recordRequester(id: string, name: string, requestedBy: string | null): void {
