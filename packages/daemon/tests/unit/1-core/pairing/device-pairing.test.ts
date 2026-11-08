@@ -199,7 +199,8 @@ describe('device pairing', () => {
         kind: 'human',
         name: null,
         requestedName: 'Agent',
-        fingerprint: null,
+        twoWay: false,
+        phoneConfirmed: false,
         expiresAt: next.expiresAt,
       },
     ]);
@@ -304,7 +305,8 @@ describe('device pairing', () => {
           kind: 'human',
           name: null,
           requestedName: null,
-          fingerprint: null,
+          twoWay: false,
+          phoneConfirmed: false,
           expiresAt: allowed.expiresAt,
         },
       ]);

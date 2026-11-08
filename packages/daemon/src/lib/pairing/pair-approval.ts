@@ -1,11 +1,11 @@
-import { pairFingerprint } from './pair-fingerprint.ts';
+import { normalizeConfirmCode, pairConfirmCode } from './pair-confirm-code.ts';
 
 export interface PairApprovalFacts {
   active: boolean;
   terminal: boolean;
   terminalMayApprove: boolean;
   code: { twoWay: boolean; codeHash: string; requestedBy: string | null } | null;
-  lastGroup?: string;
+  confirmCode?: string;
 }
 
 export type PairApprovalStep =
@@ -22,6 +22,8 @@ export function decidePairApproval(facts: PairApprovalFacts): PairApprovalStep {
   if (facts.terminal && !facts.terminalMayApprove) return 'not_paired';
   if (!code.twoWay) return 'approve';
   if (!code.requestedBy) return 'not_requested';
-  const lastGroup = pairFingerprint(code.codeHash, code.requestedBy)[7];
-  return facts.lastGroup?.toLowerCase() === lastGroup ? 'approve' : 'wrong_fingerprint';
+  const confirmCode = pairConfirmCode(code.codeHash, code.requestedBy);
+  return normalizeConfirmCode(facts.confirmCode ?? '') === normalizeConfirmCode(confirmCode)
+    ? 'approve'
+    : 'wrong_fingerprint';
 }

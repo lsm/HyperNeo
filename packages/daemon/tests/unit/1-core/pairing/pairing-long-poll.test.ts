@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { pairFingerprint } from '../../../../src/lib/pairing/pair-fingerprint.ts';
+import { pairConfirmCode } from '../../../../src/lib/pairing/pair-confirm-code.ts';
 import { createPairWaits } from '../../../../src/lib/pairing/pair-waits.ts';
 import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter.ts';
 import { createPairRoute } from '../../../../src/lib/pairing/pair-route.ts';
@@ -69,8 +69,8 @@ function setup() {
   const twoWay = async () => {
     const made = await call('device.pair.create', { kind: 'human', confirm: 'two-way' });
     expect(await pair(made.code, REQUEST)).toBe(403);
-    const lastGroup = pairFingerprint(sha256(made.code), sha256(REQUEST))[7];
-    return { ...made, lastGroup } as Record<string, any>;
+    const confirmCode = pairConfirmCode(sha256(made.code), sha256(REQUEST));
+    return { ...made, confirmCode } as Record<string, any>;
   };
   return { db, call, pair, refusal, twoWay };
 }
@@ -103,7 +103,7 @@ describe('pairing long-poll', () => {
     const waiting = t.pair(made.code, REQUEST);
     expect(await settledWithin(waiting, 50)).toBe(false);
     expect(
-      await t.call('device.pair.approve', { codeId: made.codeId, lastGroup: made.lastGroup })
+      await t.call('device.pair.approve', { codeId: made.codeId, confirmCode: made.confirmCode })
     ).toEqual({
       ok: true,
     });
@@ -115,7 +115,7 @@ describe('pairing long-poll', () => {
     const made = await t.twoWay();
     const waiting = t.refusal(made.code, REQUEST);
     expect(await settledWithin(waiting, 50)).toBe(false);
-    await t.call('device.pair.approve', { codeId: made.codeId, lastGroup: '0000' });
+    await t.call('device.pair.approve', { codeId: made.codeId, confirmCode: '0000' });
     expect(await waiting).toMatchObject({ status: 401, error: 'code_denied' });
   });
 
@@ -125,7 +125,7 @@ describe('pairing long-poll', () => {
     const first = t.pair(made.code, REQUEST);
     expect(await settledWithin(first, 50)).toBe(false);
     expect(await settledWithin(t.pair(made.code, REQUEST), 50)).toBe(true);
-    await t.call('device.pair.approve', { codeId: made.codeId, lastGroup: made.lastGroup });
+    await t.call('device.pair.approve', { codeId: made.codeId, confirmCode: made.confirmCode });
     expect(await first).toBe(200);
   });
 
@@ -172,7 +172,7 @@ describe('pairing long-poll', () => {
     expect(await settledWithin(gone, 200)).toBe(true);
     const next = t.pair(made.code, REQUEST);
     expect(await settledWithin(next, 50)).toBe(false);
-    await t.call('device.pair.approve', { codeId: made.codeId, lastGroup: made.lastGroup });
+    await t.call('device.pair.approve', { codeId: made.codeId, confirmCode: made.confirmCode });
     expect(await next).toBe(200);
   });
 

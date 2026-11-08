@@ -15,7 +15,7 @@ export interface PairApprovalRequest {
   codeId: string;
   deviceId: string;
   door: boolean;
-  lastGroup?: string;
+  confirmCode?: string;
   now: number;
 }
 
@@ -27,7 +27,7 @@ const approvalFacts = (
   terminal: request.door || request.deviceId.startsWith('local-rpc:'),
   terminalMayApprove: repo.terminalMayApprove(),
   code: repo.pendingCode(request.codeId, request.now),
-  lastGroup: request.lastGroup,
+  confirmCode: request.confirmCode,
 });
 
 const applyApproval = (

@@ -39,10 +39,10 @@ export const NO_HUMAN_DEVICE =
   'no_human_device: no active human device can Allow this code. For lost-phone recovery, run hyperneo devices reset-human on the daemon machine, then hyperneo pair. The reset notifies Neo.';
 
 export const NOT_REQUESTED =
-  'not_requested: the new phone has not confirmed yet. Wait until it shows the fingerprint and asks for confirmation.';
+  'not_requested: the new phone has not confirmed yet. Wait until it shows the confirmation code and asks for confirmation.';
 
 export const WRONG_FINGERPRINT =
-  'wrong_fingerprint: the last group did not match the new phone, so the code is denied. Scan a new code.';
+  'wrong_fingerprint: the confirmation code did not match the new phone, so the code is denied. Scan a new code.';
 
 export const TERMINAL_APPROVAL_NEEDS_PHONE =
   'not_paired: only a paired phone or browser can turn terminal approval back on.';
@@ -103,7 +103,7 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.pair.create',
       description:
-        'Make a single-use pairing code, valid 10 minutes, for a new device of the given kind. The local CLI makes the first device’s code; later codes need Allow from a paired human. Explicit local devices reset-human recovery permits one replacement human pairing without Allow. confirm two-way (human only) starts pending and needs the last fingerprint group typed on approval.',
+        'Make a single-use pairing code, valid 10 minutes, for a new device of the given kind. The local CLI makes the first device’s code; later codes need Allow from a paired human. Explicit local devices reset-human recovery permits one replacement human pairing without Allow. confirm two-way (human only) starts pending and needs the confirmation code shown on the phone typed on approval.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z
         .object({
@@ -140,7 +140,7 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.pair.pending',
       description:
-        'List issued codes waiting for Allow by an active paired human, or by the terminal while it may approve (never the codes themselves). A two-way code shows the first 7 fingerprint groups once its phone confirmed.',
+        'List issued codes waiting for Allow by an active paired human, or by the terminal while it may approve (never the codes themselves). Two-way codes report only whether the phone has confirmed; no confirmation code is returned.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([
@@ -153,7 +153,8 @@ export function createDevicePairingOperations({
               name: z.string().nullable(),
               requestedName: z.string().nullable(),
               expiresAt: z.number(),
-              fingerprint: z.array(z.string()).nullable(),
+              twoWay: z.boolean(),
+              phoneConfirmed: z.boolean(),
             })
           ),
         }),
@@ -168,16 +169,12 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.pair.approve',
       description:
-        'Allow a pending pairing code so its device can pair. A two-way code needs lastGroup, the last fingerprint group shown on the new phone; a wrong one denies the code. The terminal and local tools may allow only while terminal approval is on, or for the first device or recovery.',
+        'Allow a pending pairing code so its device can pair. A two-way code needs confirmCode, the eight-letter confirmation code shown on the new phone; a wrong one denies the code. The terminal and local tools may allow only while terminal approval is on, or for the first device or recovery.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z
         .object({
           codeId: z.string().min(1),
-          lastGroup: z
-            .string()
-            .trim()
-            .regex(/^[0-9a-fA-F]{4}$/)
-            .optional(),
+          confirmCode: z.string().optional(),
         })
         .strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
@@ -191,7 +188,7 @@ export function createDevicePairingOperations({
               codeId: input.codeId,
               deviceId,
               door: fromDoor(caller),
-              lastGroup: input.lastGroup,
+              confirmCode: input.confirmCode,
               now: now(),
             }),
           true
@@ -200,7 +197,7 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.pair.terminal_approval.get',
       description:
-        'Whether the terminal and local tools may allow device codes (two-way codes still need the last fingerprint group). On by default.',
+        'Whether the terminal and local tools may allow device codes (two-way codes still need the confirmation code shown on the phone). On by default.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true), enabled: z.boolean() }), Refused]),

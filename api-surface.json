@@ -6702,8 +6702,7 @@
             "minLength": 1,
             "type": "string"
           },
-          "lastGroup": {
-            "pattern": "^[0-9a-fA-F]{4}$",
+          "confirmCode": {
             "type": "string"
           }
         },
@@ -6912,19 +6911,6 @@
                     "expiresAt": {
                       "type": "number"
                     },
-                    "fingerprint": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
                     "id": {
                       "type": "string"
                     },
@@ -6943,11 +6929,17 @@
                         "null"
                       ]
                     },
+                    "phoneConfirmed": {
+                      "type": "boolean"
+                    },
                     "requestedName": {
                       "type": [
                         "string",
                         "null"
                       ]
+                    },
+                    "twoWay": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -6956,7 +6948,8 @@
                     "name",
                     "requestedName",
                     "expiresAt",
-                    "fingerprint"
+                    "twoWay",
+                    "phoneConfirmed"
                   ],
                   "type": "object"
                 },

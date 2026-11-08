@@ -14,7 +14,6 @@ import { pairingCodeCreateWrites, type PairingCodeDraft } from './pairing-code-c
 import type { PairingCodeCaller } from './pairing-code-create-write.ts';
 import { pairingRevokeWrites } from './pairing-revoke-write.ts';
 import { pairingStateReads } from './pairing-state-read.ts';
-import { pairFingerprint } from '../../lib/pairing/pair-fingerprint.ts';
 
 export type DeviceKind = 'human' | 'relay' | 'daemon' | 'agent';
 
@@ -310,12 +309,13 @@ export class DevicePairingRepository {
     name: string | null;
     requestedName: string | null;
     expiresAt: number;
-    fingerprint: string[] | null;
+    twoWay: boolean;
+    phoneConfirmed: boolean;
   }[] {
     const rows = this.db
       .prepare(
         `SELECT id, kind, name, requested_name AS requestedName, expires_at AS expiresAt,
-           code_hash AS codeHash, requested_by AS requestedBy, two_way AS twoWay FROM pairing_codes
+           requested_by AS requestedBy, two_way AS twoWay FROM pairing_codes
          WHERE approved_at IS NULL AND used_at IS NULL AND expires_at > ? ORDER BY created_at`
       )
       .all(now) as {
@@ -324,14 +324,13 @@ export class DevicePairingRepository {
       name: string | null;
       requestedName: string | null;
       expiresAt: number;
-      codeHash: string;
       requestedBy: string | null;
       twoWay: number;
     }[];
-    return rows.map(({ codeHash, requestedBy, twoWay, ...row }) => ({
+    return rows.map(({ requestedBy, twoWay, ...row }) => ({
       ...row,
-      fingerprint:
-        twoWay && requestedBy ? pairFingerprint(codeHash, requestedBy).slice(0, 7) : null,
+      twoWay: !!twoWay,
+      phoneConfirmed: !!requestedBy,
     }));
   }
 

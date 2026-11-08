@@ -38,6 +38,76 @@ const drawer = (connection: 'connected' | 'disconnected' = 'connected') =>
   );
 
 describe('NeoDrawer', () => {
+  it('requires the phone code for two-way approval', async () => {
+    const pending = {
+      id: 'scan',
+      kind: 'human',
+      name: 'Phone',
+      expiresAt: 4e12,
+      twoWay: true,
+      phoneConfirmed: true,
+    };
+    invoke
+      .mockResolvedValueOnce({ ok: true, pending: [pending] })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, pending: [] });
+    drawer();
+    const input = await screen.findByRole('textbox', { name: 'Code shown on Phone' });
+    const allow = screen.getByRole('button', { name: 'Allow Phone' });
+    expect((allow as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.input(input, { target: { value: 'MRNV-JHMH' } });
+    fireEvent.click(allow);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(hub, 'device.pair.approve', {
+        codeId: 'scan',
+        confirmCode: 'MRNV-JHMH',
+      })
+    );
+  });
+
+  it('refreshes the field once the phone confirms', async () => {
+    const pending = {
+      id: 'scan',
+      kind: 'human',
+      name: 'Phone',
+      expiresAt: 4e12,
+      twoWay: true,
+      phoneConfirmed: false,
+    };
+    invoke.mockImplementation(async () => ({ ok: true, pending: [pending] }));
+    drawer();
+    await screen.findByText('Waiting for the phone to confirm.');
+    pending.phoneConfirmed = true;
+    expect(
+      await screen.findByRole('textbox', { name: 'Code shown on Phone' }, { timeout: 3000 })
+    ).toBeTruthy();
+  });
+
+  it('waits for phone confirmation and keeps Deny available', async () => {
+    invoke.mockResolvedValue({
+      ok: true,
+      pending: [
+        {
+          id: 'scan',
+          kind: 'human',
+          name: 'Phone',
+          expiresAt: 4e12,
+          twoWay: true,
+          phoneConfirmed: false,
+        },
+      ],
+    });
+    drawer();
+    expect(await screen.findByText('Waiting for the phone to confirm.')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: 'Allow Phone' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect((screen.getByRole('button', { name: 'Deny Phone' }) as HTMLButtonElement).disabled).toBe(
+      false
+    );
+    expect(screen.queryByRole('textbox', { name: 'Code shown on Phone' })).toBeNull();
+  });
+
   it('lists pending devices after Connection and approves through the existing operation', async () => {
     const pending = { id: 'pending', kind: 'relay', name: 'Synthetic relay', expiresAt: 4e12 };
     invoke
