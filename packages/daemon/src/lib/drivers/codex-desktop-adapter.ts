@@ -1158,6 +1158,29 @@ export async function withCodexAppServer<Value>(
   }
 }
 
+async function genericCodexSessionTitle(
+  projectFolder: string,
+  deps: CodexDesktopAdapterDeps
+): Promise<string> {
+  const snapshot = await loadCodexSnapshot(
+    { includeClosed: false, limit: Number.MAX_SAFE_INTEGER },
+    deps
+  );
+  const folders = await resolveCodexFolders(snapshot, deps);
+  const prefix = `Codex ${basename(projectFolder)} `;
+  const names = new Set(
+    snapshot.threads
+      .filter(
+        (thread) =>
+          !thread.archived && (folders.get(thread.folder) ?? thread.folder) === projectFolder
+      )
+      .map((thread) => thread.title)
+  );
+  let number = 1;
+  while (names.has(`${prefix}${number}`)) number++;
+  return `${prefix}${number}`;
+}
+
 export async function startCodexThread(
   folder: string,
   request: StartRequest,
@@ -1198,6 +1221,8 @@ export async function startCodexThread(
         ? folder
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
+      const sessionTitle =
+        request.sessionTitle ?? (await genericCodexSessionTitle(projectFolder, deps));
       const config = {
         shell_environment_policy: { set: workerWorkEnvironment(workFolder.cwd) },
         ...sandbox?.config,
@@ -1239,7 +1264,7 @@ export async function startCodexThread(
       }
       await server.call('thread/name/set', {
         threadId,
-        name: request.sessionTitle ?? request.title,
+        name: sessionTitle,
       });
       await server.close();
       const brief = request.provenance
@@ -1270,7 +1295,7 @@ export async function startCodexThread(
         ok: true,
         value: {
           ref: { adapter: 'codex-desktop', id: threadId },
-          title: request.sessionTitle ?? request.title,
+          title: sessionTitle,
           place: { machine: deps.machine, folder, name: request.place.name },
           status: 'running',
           lastActivityAt: deps.now(),

@@ -21799,6 +21799,7 @@
                           "type": "boolean"
                         },
                         "sessionTitle": {
+                          "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
                           "maxLength": 200,
                           "minLength": 1,
                           "type": "string"
@@ -40681,6 +40682,7 @@
                     "type": "boolean"
                   },
                   "sessionTitle": {
+                    "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
                     "maxLength": 200,
                     "minLength": 1,
                     "type": "string"
@@ -43780,6 +43782,7 @@
                     "type": "boolean"
                   },
                   "sessionTitle": {
+                    "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
                     "maxLength": 200,
                     "minLength": 1,
                     "type": "string"
@@ -59089,6 +59092,7 @@
             "type": "boolean"
           },
           "sessionTitle": {
+            "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
             "maxLength": 200,
             "minLength": 1,
             "type": "string"

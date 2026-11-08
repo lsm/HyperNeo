@@ -1224,7 +1224,7 @@ describe('codex-desktop adapter status and send', () => {
 
   test('rename updates a busy thread through Codex without starting or interrupting a turn', async () => {
     const calls: unknown[] = [];
-    const server = async () => ({
+    const server: () => Promise<CodexAppServer> = async () => ({
       call: async (method, params) => {
         calls.push([method, params]);
         return {};
@@ -1242,7 +1242,7 @@ describe('codex-desktop adapter status and send', () => {
 
   test('rename refuses archived and missing Codex threads and reports API failure', async () => {
     const calls: string[] = [];
-    const server = async () => ({
+    const server: () => Promise<CodexAppServer> = async () => ({
       call: async (method) => {
         calls.push(method);
         throw new Error('rename refused');

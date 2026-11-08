@@ -9,6 +9,7 @@ import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-serve
 import { vi } from 'vitest';
 import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import {
+  type CodexSnapshot,
   codexStartReceipt,
   createCodexDesktopAdapter,
   startedThreadId,
@@ -48,6 +49,7 @@ function adapter(
   server: Partial<CodexAppServer> | Error,
   folders = ['/focus/dolmen'],
   git: {
+    threads?: CodexSnapshot['threads'];
     root?: string;
     exit?: number;
     linked?: boolean;
@@ -60,6 +62,7 @@ function adapter(
   let closed = false;
   const instance = createCodexDesktopAdapter({
     statePath: '/codex/state.sqlite',
+    readSnapshot: async () => ({ roots: [], folders: [], threads: git.threads ?? [] }),
     prepareExecution: git.prepareExecution,
     worktreesDir: '/codex/worktrees',
     machine: 'laptop',
@@ -417,7 +420,7 @@ describe('codex-desktop start', () => {
     expect(calls).toEqual([
       ['model/list', { limit: 100, includeHidden: false }],
       ['thread/start', { ...threadAccess, cwd: '/focus/dolmen', model: 'gpt-6.1-sol' }],
-      ['thread/name/set', { threadId: 'th1', name: request.title }],
+      ['thread/name/set', { threadId: 'th1', name: 'Codex dolmen 1' }],
       [
         'desktop/start-turn',
         {
@@ -457,7 +460,7 @@ describe('codex-desktop start', () => {
           config: { ...threadAccess.config, model_reasoning_effort: 'medium' },
         },
       ],
-      ['thread/name/set', { threadId: 'th1', name: request.title }],
+      ['thread/name/set', { threadId: 'th1', name: 'Codex dolmen 1' }],
       [
         'desktop/start-turn',
         {
@@ -651,6 +654,34 @@ describe('codex-desktop start', () => {
     }
   );
 
+  test('an omitted session title uses the next free generic project name, never the task title', async () => {
+    const { instance, calls } = adapter(
+      {
+        call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+      },
+      undefined,
+      {
+        threads: [
+          { id: 'one', title: 'Codex dolmen 1', folder: place.folder, archived: 0, updatedAt: NOW },
+          {
+            id: 'three',
+            title: 'Codex dolmen 3',
+            folder: place.folder,
+            archived: 0,
+            updatedAt: NOW,
+          },
+          { id: 'old', title: 'Codex dolmen 2', folder: place.folder, archived: 1, updatedAt: NOW },
+          { id: 'foreign', title: 'Codex dolmen 2', folder: '/other', archived: 0, updatedAt: NOW },
+        ],
+      }
+    );
+    expect(await instance.start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { title: 'Codex dolmen 2' },
+    });
+    expect(calls).toContainEqual(['thread/name/set', { threadId: 'th1', name: 'Codex dolmen 2' }]);
+  });
+
   test('uses the requested session title independently of the task title', async () => {
     const { instance, calls } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
@@ -671,7 +702,7 @@ describe('codex-desktop start', () => {
       ok: true,
       value: {
         ref: { adapter: 'codex-desktop', id: 'th1' },
-        title: 'Bigger font',
+        title: 'Codex dolmen 1',
         place,
         status: 'running',
         lastActivityAt: NOW,
@@ -680,7 +711,7 @@ describe('codex-desktop start', () => {
     });
     expect(calls).toEqual([
       ['thread/start', { ...threadAccess, cwd: '/focus/dolmen' }],
-      ['thread/name/set', { threadId: 'th1', name: 'Bigger font' }],
+      ['thread/name/set', { threadId: 'th1', name: 'Codex dolmen 1' }],
       [
         'desktop/start-turn',
         {

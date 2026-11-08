@@ -23,7 +23,7 @@ CREATE TABLE projects (id TEXT, name TEXT, updated_at_ms INTEGER);
 CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
 const rollout = join(run, 'rollout.jsonl');
 writeFileSync(rollout, '');
-db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('synthetic', 'Old', '', '', folder, 'desktop', 0, 1, rollout);
+db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('synthetic', 'Codex project 1', '', '', folder, 'desktop', 0, 1, rollout);
 db.close();
 const calls: unknown[] = [];
 let closed = 0;
@@ -62,12 +62,16 @@ try {
   assert.equal(started.kind, 'completed', JSON.stringify(started));
   assert.deepEqual((started as { value: { ok: boolean; value: { title: string } } }).value.ok, true, JSON.stringify(started));
   assert.equal((started as { value: { value: { title: string } } }).value.value.title, 'Codex hyperneo 2');
+  const unnamed = driverWorkCall({ ...target, sessionTitle: undefined }, { title: 'Never use this task title', instruction: 'Synthetic instruction' });
+  const generic = await invokeOperation(registry, unnamed.name, unnamed.input, caller);
+  assert.equal(generic.kind, 'completed', JSON.stringify(generic));
+  assert.equal((generic as { value: { value: { title: string } } }).value.value.title, 'Codex project 2');
   const renamed = await invokeOperation(registry, 'work.rename', { ref: { adapter: 'codex-desktop', id: 'synthetic' }, title: 'Codex hyperneo 3' }, caller);
   assert.equal(renamed.kind, 'completed', JSON.stringify(renamed));
   assert.deepEqual((renamed as { value: unknown }).value, { ok: true, value: { renamed: true, title: 'Codex hyperneo 3' } });
   assert.equal(closed, opened);
   assert(opened >= 2);
-  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, renamed, calls, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
+  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, renamed, calls, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
 } finally {
   await app.cleanup();
 }

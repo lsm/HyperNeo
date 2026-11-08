@@ -10,7 +10,8 @@ The helper boots an isolated daemon on an ephemeral port, with synthetic Codex
 state and scripted server boundaries. A parsed todo start target carries
 sessionTitle through driverWorkCall and the real work.start operation. The
 created thread and returned title use that session title independently of the
-todo title. work.rename succeeds while the Desktop control connection throws,
+todo title. Omitting sessionTitle selects the next free generic project name
+among live project threads, never the task title. work.rename succeeds while the Desktop control connection throws,
 using the owned bootstrap server. Every opened server is closed.
 
 Retain codex-session-title.json, proof.log and run-status.json. No model, native
