@@ -7,7 +7,6 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -67,11 +66,18 @@ describe('secureDataRoot', () => {
     expect(mode(root)).toBe(0o755);
   });
 
-  test('a file created after securing is 0600', () => {
+  test('a root loosened later is 0700 again on the next start', () => {
     const root = join(home, '.hyperneo');
     secureDataRoot(root, { log });
-    const file = join(root, 'later.txt');
-    writeFileSync(file, 'synthetic');
-    expect(mode(file)).toBe(0o600);
+    chmodSync(root, 0o755);
+    secureDataRoot(root, { log });
+    expect(mode(root)).toBe(0o700);
+    expect(lines).toEqual([`Data directory ${root} tightened from 0755 to 0700`]);
+  });
+
+  test('leaves the process umask as it was', () => {
+    process.umask(0o022);
+    secureDataRoot(join(home, '.hyperneo'), { log });
+    expect(process.umask()).toBe(0o022);
   });
 });
