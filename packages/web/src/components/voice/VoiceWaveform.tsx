@@ -157,28 +157,24 @@ export function VoiceWaveform({
       <div
         ref={rowRef}
         class={`flex h-8 min-w-0 flex-1 items-center overflow-hidden ${isNarrow ? 'gap-px' : 'gap-0.5'}`}
-        data-testid="voice-bars"
+        data-testid={isTranscribing ? 'voice-transcribing' : 'voice-bars'}
+        role={isTranscribing ? 'status' : undefined}
       >
-        {Array.from({ length: barCount }, (_, i) => (
-          <div
-            key={i}
-            class="h-8 min-w-0 flex-1 origin-center rounded-full bg-accent"
-            ref={(el) => {
-              barsRef.current[i] = el;
-            }}
-          />
-        ))}
+        {isTranscribing ? (
+          <span class="text-xs text-fg-muted">Transcribing…</span>
+        ) : (
+          Array.from({ length: barCount }, (_, i) => (
+            <div
+              key={i}
+              class="h-8 min-w-0 flex-1 origin-center rounded-full bg-accent"
+              ref={(el) => {
+                barsRef.current[i] = el;
+              }}
+            />
+          ))
+        )}
       </div>
-      {isTranscribing ? (
-        <span
-          class="inline-flex flex-none items-center gap-1.5 text-xs text-fg-muted"
-          data-testid="voice-transcribing"
-          aria-label="Transcribing"
-        >
-          <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-fg-muted/40 border-t-fg-muted" />
-          {!isNarrow && 'Transcribing…'}
-        </span>
-      ) : isStarting && !isRecording ? (
+      {isTranscribing ? null : isStarting && !isRecording ? (
         <span
           class={`inline-flex flex-none animate-pulse items-center gap-1.5 text-fg-muted motion-reduce:animate-none ${isNarrow ? 'text-2xs' : 'text-xs'}`}
           data-testid="voice-starting"

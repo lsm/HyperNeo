@@ -77,3 +77,14 @@ release, and use an arrow key. Preact compat remaps JSX onChange to input; the
 slider deliberately uses native change capture to commit on release. The component
 regression loads compat and dispatches an actual native change event (the testing
 library compatibility helper otherwise rewrites fireEvent.change back to input).
+
+For transcription progress, run `composer-transcribing.sh 19346` through the same
+wrapper on a designated test host. The ASR fixture takes an optional fourth
+argument in milliseconds; this journey delays final output by four seconds.
+Both themes and widths must show a spinner only inside the initiating Stop or
+Send button, plain Transcribing text instead of waveform bars, and no extra draft
+status line. Retain eight screenshots and transcribing.json. The shared default
+ASR has no delay; a preview can use five seconds without changing app timing.
+The browser waits for actual interim text inside the recording draft and a timer
+advance before stopping, so a too-short fake recording cannot take the silence
+rejection path instead of the transcription path.

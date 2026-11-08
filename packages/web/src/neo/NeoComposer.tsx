@@ -4,6 +4,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
+import { Spinner } from '../components/ui/Spinner.tsx';
 import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import {
@@ -563,10 +564,15 @@ export function NeoComposer({
               disabled={noNetwork || (!voiceBusy && !draft.trim() && !hasAttachments)}
               class="neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none disabled:cursor-not-allowed"
               aria-label={t(recordingVoice ? 'composer.stopSend' : 'composer.send')}
+              aria-busy={voicePhase === 'sending'}
               title={recordingVoice ? t('composer.stopSendTitle') : undefined}
             >
               <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 shadow-sm transition group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
-                <NeoIcon name="up" class="!size-4.5" />
+                {voicePhase === 'sending' ? (
+                  <Spinner size="sm" color="border-current" />
+                ) : (
+                  <NeoIcon name="up" class="!size-4.5" />
+                )}
               </span>
             </button>
           )}

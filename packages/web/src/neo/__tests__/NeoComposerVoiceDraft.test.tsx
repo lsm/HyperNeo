@@ -157,10 +157,10 @@ describe('Neo composer draft while voice is active', () => {
     );
   });
 
-  it('says where a transcript is going once recording stops', () => {
+  it('omits the redundant footer once recording stops', () => {
     voice.phase = 'drafting';
     const { rerender } = render(composer());
-    expect(screen.getByRole('status').textContent).toBe('Transcribing into your draft…');
+    expect(screen.queryByText('Transcribing into your draft…')).toBeNull();
 
     voice.phase = 'sending';
     rerender(composer());
