@@ -49,18 +49,20 @@ const rows = () => db.prepare('SELECT todo_id,repo FROM pack_coding_todos ORDER 
 const create = (id: string, repo: string | null) =>
   invoke('Writes', 'create', [{ id, askId: 'ask', draft, now: 10, repo }]);
 
-test('startup prepares storage while retained legacy data stays readable', () => {
-  core.addTodo('old', 'ask', draft, 2, 'github.com/synthetic/old');
-  expect(core.getTodo('old')?.repo).toBe('github.com/synthetic/old');
+test('startup prepares storage and the core todo table holds no repository', () => {
+  expect(
+    (db.prepare('PRAGMA table_info(neo_todos)').all() as { name: string }[]).map((c) => c.name)
+  ).not.toContain('repo');
   expect(
     db.prepare("SELECT name FROM sqlite_master WHERE name='pack_coding_todos'").get()
   ).not.toBeNull();
 });
 
-test('explicit preparation backfills own values only and is idempotent', async () => {
-  core.addTodo('old', 'ask', draft, 2, 'github.com/synthetic/old');
+test('explicit preparation is idempotent and keeps recorded facts', async () => {
+  core.addTodo('old', 'ask', draft, 2);
   core.addTodo('ask-only', 'ask', draft, 2);
   const before = core.listTodos('ask');
+  await invoke('Writes', 'record', ['old', 'github.com/synthetic/old']);
   await invoke('Writes', 'prepare');
   expect(rows()).toEqual([{ todo_id: 'old', repo: 'github.com/synthetic/old' }]);
   await invoke('Writes', 'record', ['old', null]);
@@ -93,8 +95,8 @@ test('a late pack write failure rolls back core creation and ask timestamps', as
   expect(rows()).toEqual([]);
 });
 
-test('projection prefers a recorded null over stale legacy data without writing', async () => {
-  const old = core.addTodo('old', 'ask', draft, 2, 'github.com/synthetic/old');
+test('projection reads a recorded null without writing', async () => {
+  const old = core.addTodo('old', 'ask', draft, 2);
   await invoke('Writes', 'prepare');
   await invoke('Writes', 'record', ['old', null]);
   const before = rows();
@@ -107,8 +109,10 @@ test.each([0, 4])(
   'historical fallback facts survive with %i sibling repositories',
   async (peers) => {
     core.addTodo('historical', 'ask', draft, 2);
-    for (let i = 0; i < peers; i++)
-      core.addTodo(`peer-${i}`, 'ask', draft, 2, `github.com/synthetic/peer-${i}`);
+    for (let i = 0; i < peers; i++) {
+      core.addTodo(`peer-${i}`, 'ask', draft, 2);
+      await invoke('Writes', 'record', [`peer-${i}`, `github.com/synthetic/peer-${i}`]);
+    }
     await invoke('Writes', 'prepare');
     expect(await invoke('Reads', 'facts', ['ask'])).toEqual({
       legacy: 'github.com/synthetic/legacy',
@@ -126,20 +130,10 @@ test('candidate repository rows follow core foreign-key deletion', async () => {
   expect(rows()).toEqual([]);
 });
 
-test('a backfill failure rolls back the entire preparation command', async () => {
+test('a missing candidate row projects no repository', async () => {
   await invoke('Writes', 'prepare');
-  core.addTodo('one', 'ask', draft, 2, 'github.com/synthetic/one');
-  core.addTodo('two', 'ask', draft, 2, 'github.com/synthetic/two');
-  db.exec(`CREATE TRIGGER reject_backfill BEFORE INSERT ON pack_coding_todos
-    WHEN NEW.todo_id='two' BEGIN SELECT RAISE(ABORT,'backfill failed'); END`);
-  await expect(invoke('Writes', 'prepare')).rejects.toThrow('backfill failed');
-  expect(rows()).toEqual([]);
-  expect(core.listTodos('ask')).toHaveLength(2);
-});
-
-test('a missing candidate row preserves the legacy projection', async () => {
-  await invoke('Writes', 'prepare');
-  const legacy = core.addTodo('late', 'ask', draft, 2, 'github.com/synthetic/late');
+  const legacy = core.addTodo('late', 'ask', draft, 2);
+  expect(legacy.repo).toBeNull();
   expect(await invoke('Reads', 'project', [legacy])).toEqual(legacy);
   expect(rows()).toEqual([]);
 });
