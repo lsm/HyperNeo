@@ -28,8 +28,9 @@ async function tailscale(args: string[]): Promise<unknown> {
 
 function daemonPort(door: string): number | null {
   try {
-    const { port } = JSON.parse(readFileSync(join(dirname(door), 'runtime.json'), 'utf8'));
-    return typeof port === 'number' ? port : null;
+    return (
+      Number(JSON.parse(readFileSync(join(dirname(door), 'runtime.json'), 'utf8')).port) || null
+    );
   } catch {
     return null;
   }
@@ -137,11 +138,11 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
   if (args[0] === 'pair' && args.includes('--qr'))
     return runPairQr(args.slice(1), {
       call: async (name, input) => {
-        const reply = await post(door, { sender, name, input });
-        const outcome = reply.body as { kind?: string; value?: unknown; error?: string };
-        return outcome.kind === 'completed'
-          ? outcome.value
-          : { ok: false, reason: outcome.error ?? JSON.stringify(outcome) };
+        const reply = await post(door, { sender, name, input }).catch((error: Error) => ({
+          body: { error: `the HyperNeo daemon is not reachable at ${door}: ${error.message}` },
+        }));
+        const { kind, value, error, message } = reply.body as Record<string, unknown>;
+        return kind === 'completed' ? value : { ok: false, reason: error ?? message ?? kind };
       },
       tailscale,
       port: () => daemonPort(door),

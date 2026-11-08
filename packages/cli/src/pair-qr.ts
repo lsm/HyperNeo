@@ -32,13 +32,12 @@ export function tailnetAddress(status: unknown): string | null {
   if (BackendState !== 'Running' || !Self) return null;
   const name = Self.DNSName?.replace(/\.$/, '') ?? '';
   if (name.endsWith('.ts.net')) return name;
-  const ip = Self.TailscaleIPs?.find((value) => /^100\.|^fd7a:/i.test(value));
-  if (!ip) return null;
-  return ip.includes(':') ? `[${ip}]` : ip;
+  const ip = Self.TailscaleIPs?.find((value) => isTailnetHost(value) || /^fd7a:/i.test(value));
+  return !ip ? null : ip.includes(':') ? `[${ip}]` : ip;
 }
 
 const isTailnetHost = (host: string) =>
-  /\.ts\.net$/.test(host) || /^100\./.test(host) || /^\[fd7a:/i.test(host);
+  /\.ts\.net$|^\[fd7a:|^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])(\.\d{1,3}){2}$/i.test(host);
 
 export function pairOrigin(
   host: string | null,
@@ -87,7 +86,9 @@ export function planPairWatch(
 ): PairWatch {
   const stop = (message: string, exit = 0) => ({ kind: 'stop' as const, message, exit });
   if (!reply.ok)
-    return stop('Terminal approval is off. Allow this device on a paired phone or browser.');
+    return reply.reason.startsWith('not_paired')
+      ? stop('Terminal approval is off. Allow this device on a paired phone or browser.')
+      : stop(reply.reason, 1);
   if (now >= code.expiresAt) return stop('The code expired. Run hyperneo pair --qr again.', 1);
   const entry = reply.pending.find((item) => item.id === code.codeId);
   if (!entry) return stop('The code was used or withdrawn. Check the new device.');

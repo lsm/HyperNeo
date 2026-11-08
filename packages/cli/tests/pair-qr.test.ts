@@ -73,6 +73,11 @@ describe('pairOrigin', () => {
     expect(pairOrigin(host, 8399, null, 'https://evil.example.com')).toBeNull();
     expect(pairOrigin(host, 8399, null, 'ftp://mac.example.ts.net')).toBeNull();
     expect(pairOrigin(host, 8399, null, 'not a url')).toBeNull();
+    expect(pairOrigin(host, 8399, null, 'https://100.evil.example.com')).toBeNull();
+    expect(pairOrigin(host, 8399, null, 'http://100.12.0.1:8399')).toBeNull();
+    expect(pairOrigin(host, 8399, null, 'http://100.127.255.254:8399')).toBe(
+      'http://100.127.255.254:8399'
+    );
   });
 });
 
@@ -124,6 +129,11 @@ describe('planPairWatch', () => {
     expect(planPairWatch({ ok: true, pending: [] }, code, 1)).toMatchObject({
       kind: 'stop',
       message: expect.stringContaining('used or withdrawn'),
+    });
+    expect(planPairWatch({ ok: false, reason: 'the daemon is not reachable' }, code, 1)).toEqual({
+      kind: 'stop',
+      message: 'the daemon is not reachable',
+      exit: 1,
     });
     expect(planPairWatch({ ok: true, pending: [] }, code, 10_000)).toMatchObject({
       kind: 'stop',

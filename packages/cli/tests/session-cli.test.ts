@@ -129,4 +129,19 @@ describe('hyperneo send, question and build', () => {
     });
     expect(planSessionCommand(['send', 'neo-root'], 's1')).toHaveProperty('reason');
   });
+
+  test('pair --qr reports an unreachable daemon instead of crashing', async () => {
+    const errors: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((text: string) => errors.push(text));
+    try {
+      expect(
+        await runSessionCommand(['pair', '--qr', '--address', 'https://mac.example.ts.net'], {
+          HYPERNEO_SESSION_DOOR: '/nonexistent-hyperneo/session-door.sock',
+        })
+      ).toBe(1);
+    } finally {
+      log.mockRestore();
+    }
+    expect(errors.join('\n')).toContain('not reachable');
+  });
 });
