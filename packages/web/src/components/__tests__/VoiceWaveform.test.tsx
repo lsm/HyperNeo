@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VoiceWaveform } from '../voice/VoiceWaveform.tsx';
+import { applyLanguage } from '../../lib/i18n/index.ts';
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -11,6 +12,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  applyLanguage('en');
   vi.unstubAllGlobals();
   vi.useRealTimers();
   delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
@@ -24,6 +26,33 @@ function stubClientWidth(px: number) {
 }
 
 describe('VoiceWaveform', () => {
+  it('keeps waveform bars and inline progress in the classic composer', () => {
+    render(
+      <VoiceWaveform
+        getLevel={() => 0}
+        isRecording={false}
+        isTranscribing={true}
+        onCancel={() => {}}
+      />
+    );
+    expect(screen.getByTestId('voice-bars')).toBeTruthy();
+    expect(screen.getByTestId('voice-transcribing').querySelector('.animate-spin')).toBeTruthy();
+  });
+
+  it.each([undefined, 'neo'] as const)('localizes Chinese transcription for %s', (appearance) => {
+    applyLanguage('zh-Hans');
+    render(
+      <VoiceWaveform
+        appearance={appearance}
+        getLevel={() => 0}
+        isRecording={false}
+        isTranscribing={true}
+        onCancel={() => {}}
+      />
+    );
+    expect(screen.getByTestId('voice-transcribing').textContent).toBe('正在转写…');
+  });
+
   it('renders the elapsed timer at 0:00 while recording', () => {
     render(
       <VoiceWaveform
@@ -40,6 +69,7 @@ describe('VoiceWaveform', () => {
   it('shows the transcribing state instead of the timer while transcribing', () => {
     render(
       <VoiceWaveform
+        appearance="neo"
         getLevel={() => 0}
         isRecording={false}
         isTranscribing={true}
@@ -47,6 +77,9 @@ describe('VoiceWaveform', () => {
       />
     );
     expect(screen.getByTestId('voice-transcribing')).toBeTruthy();
+    expect(screen.getByTestId('voice-transcribing').textContent).toBe('Transcribing…');
+    expect(screen.queryByTestId('voice-bars')).toBeNull();
+    expect(document.querySelector('.animate-spin')).toBeNull();
     expect(screen.queryByTestId('voice-timer')).toBeNull();
   });
 

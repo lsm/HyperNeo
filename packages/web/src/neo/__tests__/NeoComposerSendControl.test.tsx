@@ -56,6 +56,11 @@ afterEach(() => {
 });
 
 describe('Neo composer send slot', () => {
+  it.each(['', '   '])('disables expanded Send for an empty draft %j', (draft) => {
+    mount(false, draft);
+    fireEvent.focusIn(screen.getByRole('textbox', { name: 'Message Neo' }));
+    expect((send() as HTMLButtonElement).disabled).toBe(true);
+  });
   it('shows why a silent turn waits, then drops the line when output returns', () => {
     const { store } = mount(true, '');
     const line = 'The connection got stuck. Reconnecting.';
@@ -105,10 +110,10 @@ describe('Neo composer send slot', () => {
       if (attention === 'error') store.error.value = 'Synthetic error';
       else store.agentState.value = { status: 'waiting_for_input' };
     });
-    expect(input.getAttribute('rows')).toBe('2');
-    expect(screen.getByRole('status').textContent).toContain(
-      attention === 'error' ? 'needs you' : 'A quick question'
-    );
+    expect(input.getAttribute('rows')).toBe('1');
+    if (attention === 'error')
+      expect(screen.getByRole('status').textContent).toContain('needs you');
+    else expect(screen.queryByText(/A quick question/)).toBeNull();
     act(() => {
       store.error.value = null;
       store.agentState.value = { status: 'idle' };

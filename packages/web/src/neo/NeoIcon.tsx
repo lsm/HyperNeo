@@ -6,6 +6,7 @@ const paths = {
   context: 'M5 7h14M5 12h10M5 17h6M19 14v6m-3-3h6',
   arrow: 'M5 12h14m-6-6 6 6-6 6',
   up: 'M12 19V5m-6 6 6-6 6 6',
+  voice: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM8 10.5v3M10.67 8.5v7M13.33 9.5v5M16 11v2',
   mic: 'M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0V5Zm-3 6v1a6 6 0 0 0 12 0v-1M12 18v4m-3 0h6',
   chevron: 'm8 14 4-4 4 4',
   close: 'm6 6 12 12M6 18 18 6',
@@ -39,7 +40,7 @@ export function NeoIcon({
       viewBox="0 0 24 24"
       fill={name === 'stop' ? 'currentColor' : 'none'}
       stroke="currentColor"
-      strokeWidth={name === 'mic' ? 2.2 : 1.6}
+      strokeWidth={name === 'mic' ? 2.2 : name === 'voice' ? 1.9 : 1.6}
       strokeLinecap="round"
       strokeLinejoin="round"
       class={`h-5 w-5 shrink-0 ${className}`}

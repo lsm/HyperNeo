@@ -24,6 +24,7 @@ import {
   type VoiceSendOutcome,
 } from '../lib/voice/voice-audio-outbox.ts';
 import { VoiceWaveform } from '../components/voice/VoiceWaveform.tsx';
+import { Spinner } from '../components/ui/Spinner.tsx';
 import { PendingVoiceAudioTray } from '../components/voice/PendingVoiceAudioTray.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
@@ -302,6 +303,7 @@ export function NeoVoice({
         <div class="flex min-w-0 flex-1 items-center gap-2">
           <div class="min-w-0 flex-1">
             <VoiceWaveform
+              appearance="neo"
               getLevel={recorder.getLevel}
               isRecording={recorder.isRecording}
               isStarting={recorder.isStarting}
@@ -327,23 +329,31 @@ export function NeoVoice({
               {streamFormat === 'pcm16' ? 'PCM16' : 'Batch'}
             </span>
           )}
-          <Button
-            size="sm"
-            class="h-11 min-w-11 shrink-0"
-            variant="danger"
+          <button
+            type="button"
+            class={`neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none ${
+              transcribing && transcribeIntent === 'send' ? 'opacity-50' : ''
+            }`}
             disabled={!!transcribing || recorder.isStarting}
+            aria-busy={!!transcribing && transcribeIntent === 'draft'}
             onClick={() => void transcribe('draft')}
             aria-label="Stop recording and keep the text as a draft"
             title="Stop — transcribe into an editable draft, never send"
           >
-            <NeoIcon name="stop" />
-          </Button>
+            <span class="grid h-8 w-10 place-items-center rounded-control bg-danger text-recording-control-fg transition group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
+              {transcribing && transcribeIntent === 'draft' ? (
+                <Spinner size="sm" color="border-current" />
+              ) : (
+                <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
+              )}
+            </span>
+          </button>
         </div>
       ) : (
         enabled && (
           <Button
             size="sm"
-            class="h-11 min-w-11 shrink-0 !rounded-full"
+            class="h-11 w-11 min-w-11 shrink-0 px-0 !rounded-full"
             variant="ghost"
             disabled={!connected || !isVoiceRecordingSupported()}
             title={

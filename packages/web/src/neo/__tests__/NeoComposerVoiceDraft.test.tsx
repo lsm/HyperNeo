@@ -105,7 +105,8 @@ describe('Neo composer draft while voice is active', () => {
       const preview = screen.getByTestId('voice-recording-draft');
       expect(preview.textContent).toContain('Fictional draft about lunch');
       expect(preview.getAttribute('aria-readonly')).toBe('true');
-      expect(preview.style.height).toBe(idleHeight);
+      expect(preview.style.minHeight).toBe(idleHeight);
+      expect(preview.style.height).toBe('');
 
       voice.phase = 'idle';
       rerender(composer());
@@ -122,6 +123,10 @@ describe('Neo composer draft while voice is active', () => {
       voice.phase = phase;
       render(composer());
       expect(screen.getByTestId('voice-transcribing-placeholder')).toBeTruthy();
+      expect(screen.queryByText('Transcribing into your draft…')).toBeNull();
+      const send = screen.getByRole('button', { name: 'Send message' });
+      expect(send.getAttribute('aria-busy')).toBe(String(phase === 'sending'));
+      expect(Boolean(send.querySelector('[aria-label="Loading"]'))).toBe(phase === 'sending');
     }
   );
 
@@ -152,14 +157,14 @@ describe('Neo composer draft while voice is active', () => {
     );
   });
 
-  it('says where a transcript is going once recording stops', () => {
+  it('omits the redundant footer once recording stops', () => {
     voice.phase = 'drafting';
     const { rerender } = render(composer());
-    expect(screen.getByRole('status').textContent).toBe('Transcribing into your draft…');
+    expect(screen.queryByText('Transcribing into your draft…')).toBeNull();
 
     voice.phase = 'sending';
     rerender(composer());
-    expect(screen.getByRole('status').textContent).toBe('Sending with your draft…');
+    expect(screen.queryByText('Sending with your draft…')).toBeNull();
 
     rerender(composer(''));
     expect(screen.queryByText('Sending with your draft…')).toBeNull();
@@ -173,7 +178,7 @@ describe('Neo composer focus layout', () => {
       screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
     expect(textarea().getAttribute('rows')).toBe('1');
     act(() => textarea().focus());
-    expect(textarea().getAttribute('rows')).toBe('2');
+    expect(textarea().getAttribute('rows')).toBe('1');
     fireEvent.focusOut(textarea(), { relatedTarget: document.body });
     expect(textarea().getAttribute('rows')).toBe('1');
     expect(textarea().value).toBe('');
@@ -185,7 +190,7 @@ describe('Neo composer focus layout', () => {
     fireEvent.focusOut(textarea(), {
       relatedTarget: screen.getByRole('button', { name: 'Send message' }),
     });
-    expect(textarea().getAttribute('rows')).toBe('2');
+    expect(textarea().getAttribute('rows')).toBe('1');
   });
 
   it.each(['First line\nSecond line', ' '])(
@@ -193,12 +198,12 @@ describe('Neo composer focus layout', () => {
     (draft) => {
       render(composer(draft));
       const input = screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
-      expect(input.getAttribute('rows')).toBe('2');
+      expect(input.getAttribute('rows')).toBe('1');
       expect(input.value).toBe(draft);
       act(() => input.focus());
-      expect(input.getAttribute('rows')).toBe('2');
+      expect(input.getAttribute('rows')).toBe('1');
       fireEvent.focusOut(input, { relatedTarget: document.body });
-      expect(input.getAttribute('rows')).toBe('2');
+      expect(input.getAttribute('rows')).toBe('1');
       expect(input.value).toBe(draft);
     }
   );
@@ -210,4 +215,19 @@ describe('Neo composer focus layout', () => {
       screen.getByRole('button', { name: 'Stop recording and send the message' })
     ).toBeTruthy();
   });
+});
+
+it('does not add an instructional footer while recording', () => {
+  voice.phase = 'recording';
+  render(composer());
+  expect(screen.queryByText(/Recording ·.*arrow to stop and send/)).toBeNull();
+});
+
+it('shows an inert realtime voice entry without sending', () => {
+  const onSend = vi.fn();
+  render(composer('', { onSend }));
+  const button = screen.getByRole('button', { name: 'Realtime voice', exact: true });
+  fireEvent.click(button);
+  expect(onSend).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox', { name: 'Message Neo' }).textContent).toBe('');
 });
