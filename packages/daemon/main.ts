@@ -2,6 +2,8 @@ import { getConfig } from './src/config.ts';
 import { createDaemonApp } from './src/app.ts';
 import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './src/lib/logger.ts';
 import { installProcessFatalLogging } from './src/lib/process-fatal-logger.ts';
+import { getDataDir } from './src/lib/data-dir.ts';
+import { secureDataRoot } from './src/lib/data-root-private.ts';
 
 let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
 
@@ -13,6 +15,8 @@ async function flushFatalLogs(): Promise<void> {
 }
 
 installProcessFatalLogging({ flush: flushFatalLogs });
+
+secureDataRoot(getDataDir(), { log: console.log });
 
 const config = getConfig();
 

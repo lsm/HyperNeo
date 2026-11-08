@@ -1,3 +1,4 @@
+import { secureDataRoot } from '@hyperneo/daemon/lib/data-root-private';
 import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
@@ -79,6 +80,7 @@ const VITE_CLIENT_SHIM = [
 
 export async function startDevServer(config: Config) {
   log.info('🔧 Starting unified development server...');
+  secureDataRoot(getDataDir(), { log: (line) => log.info(line) });
 
   let isShuttingDown = false;
   let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;

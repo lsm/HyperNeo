@@ -1,3 +1,5 @@
+import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
+import { secureDataRoot } from '@hyperneo/daemon/lib/data-root-private';
 import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
 import { createDaemonApp } from '@hyperneo/daemon/app';
@@ -19,6 +21,7 @@ const log = createLogger('hyperneo:cli:prod-server');
 
 export async function startProdServer(config: Config) {
   log.info('🚀 Starting production server...');
+  secureDataRoot(getDataDir(), { log: (line) => log.info(line) });
 
   let isShuttingDown = false;
   let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
