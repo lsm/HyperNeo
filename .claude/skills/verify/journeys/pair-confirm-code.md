@@ -9,7 +9,8 @@ inherited. Use the pinned Bun runtime and resource guard.
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/pair-confirm-code.ts
 ```
 
-The actual daemon owns an ephemeral listener and disposable database. A synthetic
+The actual daemon owns an ephemeral listener and disposable database. A legacy
+lastGroup approval is schema-refused without consuming the request. A synthetic
 trusted browser waits for the phone, then Settings accepts a normalized code and
 the bound requester redeems once. The Neo drawer rejects a wrong code permanently;
 a subsequent correct approval cannot recover the denied request. The pending RPC

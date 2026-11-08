@@ -163,6 +163,27 @@ describe('two-way pairing codes', () => {
     expect((await t.pair(made.code, REQUEST)).status).toBe(401);
   });
 
+  test('legacy group approval is schema-refused without consuming the request', async () => {
+    const t = setup();
+    const phoneId = await withFirstPhone(t);
+    const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
+    await t.pair(made.code, REQUEST);
+    expect(() =>
+      t.call('device.pair.approve', { codeId: made.codeId, lastGroup: 'abcd' }, phone(phoneId))
+    ).toThrow(/lastGroup/);
+    expect((await t.call('device.pair.pending', {}, phone(phoneId))).pending).toEqual([
+      expect.objectContaining({ id: made.codeId, phoneConfirmed: true }),
+    ]);
+    expect(
+      await t.call(
+        'device.pair.approve',
+        { codeId: made.codeId, confirmCode: t.confirmCodeOf(made.code, REQUEST) },
+        phone(phoneId)
+      )
+    ).toEqual({ ok: true });
+    expect((await t.pair(made.code, REQUEST)).status).toBe(200);
+  });
+
   test('a wrong or missing confirmation code denies the request', async () => {
     for (const confirmCode of [undefined, '0000']) {
       const t = setup();

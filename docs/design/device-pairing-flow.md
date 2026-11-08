@@ -22,6 +22,26 @@ eight-letter code is entered. Deny remains available. Ordinary one-way requests
 still use `{codeId}` without a confirmation field. The QR CLI prints no fingerprint
 or expected confirmation code; it prompts `Type the code shown on the phone:`.
 
+## Coordinated rollout
+
+This is a breaking change to two-way pairing, not a rolling-compatible upgrade.
+A phone build that displays fingerprint groups or sends `lastGroup` cannot use
+this flow. The strict approval schema refuses `lastGroup` before any approval or
+denial write; it does not translate groups into a confirmation code. A missing
+`confirmCode` in an otherwise valid approval still denies the request.
+
+Before enabling scanned pairing, coordinate the daemon/CLI/web deployment with a
+phone build that displays the eight-letter code, reads `phoneConfirmed`, and sends
+`confirmCode` when approving. Check the shared vector below in both builds. Merge
+alone does not authorize deployment or establish phone compatibility. Keep scanned
+pairing unavailable until the matching phone build is installed; existing paired
+credentials and ordinary one-way requests are unaffected.
+
+After both sides are installed, discard any QR request begun with an older build,
+scan a fresh code, and run an attended phone-to-computer approval and wrong-code
+denial check. Do not fall back to fingerprint approval during a mixed-version
+rollout. Native phone validation remains a release gate beyond the browser proof.
+
 ## Shared derivation
 
 Normalize the pairing code by stripping spaces and hyphens and uppercasing.

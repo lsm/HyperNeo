@@ -98,6 +98,12 @@ try {
   assert.equal(row.phoneConfirmed, true); assert.equal(row.twoWay, true);
   assert(!('fingerprint' in row)); assert(!('confirmCode' in row));
   assert(!JSON.stringify(row).includes(expected));
+  await assert.rejects(
+    invoke('device.pair.approve', { codeId: made.codeId, lastGroup: 'abcd' }),
+    /lastGroup/
+  );
+  assert(repo.pendingCode(made.codeId, Date.now()));
+  evidence.legacySchemaRefusalPreservesRequest = true;
   await input.fill(` ${expected.toLowerCase().replace('-', ' - ')} `);
   await page.getByRole('button', { name: 'Allow Synthetic phone', exact: true }).click();
   await input.waitFor({ state: 'detached' });
