@@ -326,6 +326,10 @@ export function NeoComposer({
     }
   }
   const showQuote = quote && (!sending || quote !== sendingQuote.current);
+  const frame =
+    collapsed && !voiceBusy
+      ? 'border-line-strong shadow-xl'
+      : `${voiceBusy ? 'border-accent/60' : 'border-transparent'} shadow-[0_6px_32px_rgb(0_0_0/0.12)]`;
   return (
     <form
       onSubmit={(event) => {
@@ -339,7 +343,7 @@ export function NeoComposer({
       onFocusOut={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
       }}
-      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60`}
+      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border bg-surface-raised/95 p-4 backdrop-blur-xl transition-colors focus-within:border-accent/60`}
     >
       {boundPreview && (
         <div class="mb-2 flex min-w-0 items-center gap-2 text-xs text-fg-muted">

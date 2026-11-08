@@ -46,6 +46,7 @@
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
   --color-fill-soft: var(--fill-soft);
+  --color-control-fill: var(--control-fill, var(--fill-soft));
   --color-fill: var(--fill);
   --color-fill-strong: var(--fill-strong);
   --color-scrim: var(--scrim);
