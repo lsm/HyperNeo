@@ -22,3 +22,9 @@ publication and cooldown clearing to check their ordering outside the transactio
 
 This journey does not exercise a provider turn, other cancellation paths, reclaim,
 manual retry, shutdown recovery, or performance and contention targets.
+
+The same RPC proof seeds each in-memory recovery hold on the real session's
+watchdog: fallback pending, billing pause, startup exhaustion and retry callback
+in flight. Each begins in processing rather than rate_limit_cooldown. Manual
+cancellation must return with the session idle. This simulates recovery flags;
+no provider failure or live stuck session is reproduced.

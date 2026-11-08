@@ -70,6 +70,19 @@ try {
     assert.equal(released.status, 'pending');
     assert(released.runAt < retryAt);
     assert.equal(released.retryCount, 0);
+    const recoveryStates: Record<string, string> = {};
+    const watchdog = (session as unknown as {
+      rateLimitWatchdog: Record<string, boolean>;
+    }).rateLimitWatchdog;
+    for (const flag of ['fallbackPending', 'billingPauseSurfaced', 'startupExhausted', 'retryCallbackInFlight']) {
+      await session.stateManager.setProcessing(`synthetic-${flag}`);
+      watchdog[flag] = true;
+      assert.deepEqual(await hub.request('session.cancelRateLimitRetry', { sessionId }), { success: true });
+      recoveryStates[flag] = session.stateManager.getState().status;
+      assert.equal(recoveryStates[flag], 'idle', flag);
+      watchdog[flag] = false;
+    }
+    evidence.recoveryStates = recoveryStates;
   } finally {
     evidence.mainSqlAttempts = mainSqlAttempts;
     raw.prepare = prepare;

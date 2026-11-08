@@ -114,7 +114,7 @@ describe('captureEpisodeStage', () => {
     expect(inMemory.cooldownClearPending).toBe(true);
   });
 
-  test('captures both episode sources before cancelling the watchdog and reading the cooldown state', () => {
+  test('captures both episode sources and recovery state before cancelling the watchdog', () => {
     const calls: string[] = [];
     captureEpisodeStage(
       ctx({
@@ -142,7 +142,7 @@ describe('captureEpisodeStage', () => {
         },
       })
     );
-    expect(calls).toEqual(['live', 'arm', 'cancel', 'in-memory', 'persisted']);
+    expect(calls).toEqual(['live', 'arm', 'in-memory', 'cancel', 'persisted']);
   });
 });
 

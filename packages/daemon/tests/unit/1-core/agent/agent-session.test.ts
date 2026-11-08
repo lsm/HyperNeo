@@ -1286,10 +1286,30 @@ describe('AgentSession', () => {
       expect(retrySpy).not.toHaveBeenCalled();
     });
 
+    it.each([
+      'fallbackPending',
+      'billingPauseSurfaced',
+      'startupExhausted',
+      'retryCallbackInFlight',
+    ] as const)('manual cancel clears held processing during %s', async (flag) => {
+      attachCancelWriter();
+      const watchdog = (
+        agentSession as unknown as {
+          rateLimitWatchdog: Record<typeof flag, boolean> & { isRecoveryPending(): boolean };
+        }
+      ).rateLimitWatchdog;
+      await agentSession.stateManager.setProcessing('held-episode');
+      watchdog[flag] = true;
+      expect(watchdog.isRecoveryPending()).toBe(true);
+      await agentSession.cancelRateLimitRetry();
+      expect(agentSession.stateManager.getState().status).toBe('idle');
+    });
+
     it('cancelRateLimitRetry cancels the parked delivery for the episode message', async () => {
       const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
+        isRecoveryPending: mock(() => false),
         getState: mock(() => ({
           lastUserMessage: { uuid: 'msg-episode', content: 'hi' },
         })),
@@ -1585,6 +1605,7 @@ describe('AgentSession', () => {
       const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
+        isRecoveryPending: mock(() => false),
         getState: mock(() => ({ lastUserMessage: null })),
         getPersistedEpisodeMessageUuid: () => 'msg-arm-episode',
       } as never;
@@ -1619,6 +1640,7 @@ describe('AgentSession', () => {
       );
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
+        isRecoveryPending: mock(() => false),
         getState: mock(() => ({ lastUserMessage: null })),
       } as never;
 
@@ -1648,6 +1670,7 @@ describe('AgentSession', () => {
       );
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
+        isRecoveryPending: mock(() => false),
         getState: mock(() => ({ lastUserMessage: null })),
       } as never;
 
@@ -1666,6 +1689,7 @@ describe('AgentSession', () => {
       const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
+        isRecoveryPending: mock(() => false),
         getState: mock(() => ({
           lastUserMessage: { uuid: 'msg-episode', content: 'hi' },
         })),
