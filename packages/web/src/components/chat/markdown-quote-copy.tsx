@@ -3,15 +3,7 @@ import { CopyButton } from '../ui/CopyButton.tsx';
 import { t } from '../../lib/i18n/index.ts';
 
 function QuoteCopyButton({ text }: { text: string }) {
-  return (
-    <CopyButton
-      text={text}
-      label={t('chat.copyQuote')}
-      copiedLabel={t('chat.copied')}
-      showFeedback
-      class="neo-quote-copy-button"
-    />
-  );
+  return <CopyButton text={text} label={t('chat.copyQuote')} />;
 }
 
 function quoteText(node: Node): string {
@@ -43,7 +35,7 @@ function quoteText(node: Node): string {
   return text;
 }
 
-export function attachQuoteCopyButtons(container: HTMLElement) {
+export function attachQuoteCopyButtons(container: HTMLElement, copyGutter: string) {
   if (!container.classList.contains('neo-markdown')) return [];
   const quotes = Array.from(container.querySelectorAll('blockquote'), (quote) => ({
     quote,
@@ -51,7 +43,8 @@ export function attachQuoteCopyButtons(container: HTMLElement) {
   }));
   return quotes.map(({ quote, text }) => {
     const mount = document.createElement('div');
-    mount.className = 'neo-quote-copy';
+    mount.className = 'absolute top-2 right-2';
+    quote.style.paddingRight = copyGutter;
     quote.prepend(mount);
     render(<QuoteCopyButton text={text} />, mount);
     return mount;
