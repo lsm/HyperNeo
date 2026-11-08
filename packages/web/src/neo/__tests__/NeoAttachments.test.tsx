@@ -250,6 +250,8 @@ describe('Neo attachments', () => {
     expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
     fireEvent.focusIn(screen.getByRole('textbox', { name: 'Message Neo' }));
     const send = await screen.findByRole('button', { name: 'Send message' });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    await attach();
     expect((send as HTMLButtonElement).disabled).toBe(false);
   });
   it('does not clear a new attachment added while sending or submit twice', async () => {
