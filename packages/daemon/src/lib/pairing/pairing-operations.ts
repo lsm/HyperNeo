@@ -155,7 +155,8 @@ export function createDevicePairingOperations({
         Refused,
       ]),
       execute: async (_input, caller) =>
-        isPhone(caller) || (isLocal(caller) && pairing().terminalMayApprove())
+        isPhone(caller) ||
+        (isLocal(caller) && caller.device?.kind === 'human' && pairing().terminalMayApprove())
           ? { ok: true as const, pending: pairing().listPending(now()) }
           : { ok: false as const, reason: NEEDS_PAIRED_HUMAN },
     }),

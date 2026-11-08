@@ -356,7 +356,12 @@ describe('device pairing', () => {
       const first = await h.call('device.pair.create', { kind: 'human' }, door);
       const phone = await h.pair(first.code);
       await h.call('device.pair.create', { kind: 'human', name: 'Not this device' }, door);
-      expect((await h.call('device.pair.pending', {}, door)).pending).toHaveLength(1);
+      const terminal: OperationCaller = {
+        ...door,
+        device: { deviceId: 'local-rpc:terminal', kind: 'human' },
+      };
+      expect((await h.call('device.pair.pending', {}, terminal)).pending).toHaveLength(1);
+      expect((await h.call('device.pair.pending', {}, human)).ok).toBe(false);
       await h.call('device.pair.terminal_approval.set', { enabled: false }, door);
       for (const caller of [human, door, agent, pairedHuman('missing')])
         expect((await h.call('device.pair.pending', {}, caller)).ok).toBe(false);
