@@ -13,7 +13,8 @@ export type PairApprovalStep =
   | 'wrong_fingerprint'
   | 'not_pending'
   | 'not_paired'
-  | 'not_requested';
+  | 'not_requested'
+  | 'needs_last_group';
 
 export function decidePairApproval(facts: PairApprovalFacts): PairApprovalStep {
   const { code } = facts;
@@ -22,6 +23,7 @@ export function decidePairApproval(facts: PairApprovalFacts): PairApprovalStep {
   if (facts.terminal && !facts.terminalMayApprove) return 'not_paired';
   if (!code.twoWay) return 'approve';
   if (!code.requestedBy) return 'not_requested';
+  if (!facts.lastGroup) return 'needs_last_group';
   const lastGroup = pairFingerprint(code.codeHash, code.requestedBy)[7];
   return facts.lastGroup?.toLowerCase() === lastGroup ? 'approve' : 'wrong_fingerprint';
 }

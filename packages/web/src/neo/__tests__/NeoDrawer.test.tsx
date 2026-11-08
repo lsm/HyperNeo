@@ -74,11 +74,12 @@ describe('NeoDrawer', () => {
     const allow = await screen.findByRole('button', { name: 'Allow New phone' });
     expect(screen.getByText('3008 b30a 60a3 ac09 d97a 9655 80c6')).toBeTruthy();
     expect((allow as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.input(screen.getByRole('textbox', { name: 'Last group for New phone' }), {
-      target: { value: '7DCC' },
-    });
+    const group = screen.getByRole('textbox', { name: 'Last group for New phone' });
+    fireEvent.keyDown(group, { key: 'Enter' });
+    expect(invoke).not.toHaveBeenCalledWith(hub, 'device.pair.approve', expect.anything());
+    fireEvent.input(group, { target: { value: '7DCC' } });
     expect((allow as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(allow);
+    fireEvent.keyDown(group, { key: 'Enter' });
     await waitFor(() => expect(screen.queryByText('New phone')).toBeNull());
     expect(invoke).toHaveBeenCalledWith(hub, 'device.pair.approve', {
       codeId: 'two-way',

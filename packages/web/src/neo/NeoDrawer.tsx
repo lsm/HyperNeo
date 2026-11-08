@@ -216,6 +216,9 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
                 groups={device.fingerprint}
                 value={groups[device.id] ?? ''}
                 onInput={(value) => setGroups({ ...groups, [device.id]: value })}
+                onSubmit={(lastGroup) => {
+                  if (deciding === null) void decide('device.pair.approve', device.id, lastGroup);
+                }}
               />
             )}
           </div>

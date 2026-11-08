@@ -51,6 +51,8 @@ const DECIDED_REASON: Partial<Record<string, string>> = {
   not_pending: 'not_pending: no pending code with that id.',
   not_requested: NOT_REQUESTED,
   wrong_fingerprint: WRONG_FINGERPRINT,
+  needs_last_group:
+    'needs_last_group: this device has confirmed its fingerprint. Type the last group it shows, then allow it.',
 };
 
 export function planPairingCode(

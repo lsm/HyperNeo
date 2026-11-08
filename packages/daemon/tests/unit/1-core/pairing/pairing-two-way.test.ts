@@ -161,25 +161,37 @@ describe('two-way pairing codes', () => {
     expect((await t.pair(made.code, REQUEST)).status).toBe(401);
   });
 
-  test('a wrong or missing last group denies the code', async () => {
-    for (const lastGroup of [undefined, '0000']) {
-      const t = setup();
-      const phoneId = await withFirstPhone(t);
-      const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
-      await t.pair(made.code, REQUEST);
-      expect(
-        await t.call(
-          'device.pair.approve',
-          { codeId: made.codeId, ...(lastGroup ? { lastGroup } : {}) },
-          phone(phoneId)
-        )
-      ).toMatchObject({ ok: false, reason: expect.stringContaining('wrong_fingerprint') });
-      expect((await t.pair(made.code, REQUEST)).status).toBe(401);
-      expect(await t.call('device.pair.pending', {}, phone(phoneId))).toEqual({
-        ok: true,
-        pending: [],
-      });
-    }
+  test('a wrong last group denies the code', async () => {
+    const t = setup();
+    const phoneId = await withFirstPhone(t);
+    const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
+    await t.pair(made.code, REQUEST);
+    expect(
+      await t.call(
+        'device.pair.approve',
+        { codeId: made.codeId, lastGroup: '0000' },
+        phone(phoneId)
+      )
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('wrong_fingerprint') });
+    expect((await t.pair(made.code, REQUEST)).status).toBe(401);
+    expect(await t.call('device.pair.pending', {}, phone(phoneId))).toEqual({
+      ok: true,
+      pending: [],
+    });
+  });
+
+  test('a missing last group is refused and leaves the code pending', async () => {
+    const t = setup();
+    const phoneId = await withFirstPhone(t);
+    const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
+    await t.pair(made.code, REQUEST);
+    expect(
+      await t.call('device.pair.approve', { codeId: made.codeId }, phone(phoneId))
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('needs_last_group') });
+    const lastGroup = t.fingerprintOf(made.code, REQUEST)[7];
+    expect(
+      await t.call('device.pair.approve', { codeId: made.codeId, lastGroup }, phone(phoneId))
+    ).toEqual({ ok: true });
   });
 });
 

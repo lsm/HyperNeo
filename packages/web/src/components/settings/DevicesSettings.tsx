@@ -208,6 +208,9 @@ export function DevicesSettings() {
                       groups={item.fingerprint}
                       value={groups[item.id] ?? ''}
                       onInput={(value) => setGroups({ ...groups, [item.id]: value })}
+                      onSubmit={(lastGroup) =>
+                        act(() => call('device.pair.approve', { codeId: item.id, lastGroup }))
+                      }
                     />
                   )}
                 </div>

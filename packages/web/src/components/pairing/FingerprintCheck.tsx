@@ -10,11 +10,13 @@ export function FingerprintCheck({
   groups,
   value,
   onInput,
+  onSubmit,
 }: {
   label: string;
   groups: string[];
   value: string;
   onInput: (value: string) => void;
+  onSubmit: (lastGroup: string) => void;
 }) {
   return (
     <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-muted">
@@ -29,8 +31,13 @@ export function FingerprintCheck({
           spellcheck={false}
           value={value}
           onInput={(event) => onInput(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            const lastGroup = lastGroupOf(event.currentTarget.value);
+            if (event.key === 'Enter' && lastGroup) onSubmit(lastGroup);
+          }}
         />
       </span>
+      <span>A wrong group denies the code.</span>
     </div>
   );
 }
