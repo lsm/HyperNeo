@@ -12,7 +12,6 @@ export function questionCheckTodo(question: NeoQuestion, todo: NeoTodo | null): 
     doneWhen: '',
     instruction: null,
     named: null,
-    repo: null,
     state: 'todo',
     reason: null,
     blockedReason: null,

@@ -271,7 +271,6 @@ describe('neo.ask.open and neo.ask.settle', () => {
       ...result.ask,
       id: 'historical-child',
       parentId: result.ask.id,
-      repo: 'github.com/verify/second',
     });
     expect(child.goalId).toBe(mine.id);
     expect(store.listGoalAsks(mine.id).map((ask) => ask.id)).toEqual(

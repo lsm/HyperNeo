@@ -39,9 +39,8 @@ export type NeoTodoRepositoryDraft = Pick<NeoTodo, 'check' | 'named'> & {
 };
 export type NeoTodoPolicyScope = {
   workerRemotes?: readonly string[];
-  ask: Pick<NeoAsk, 'repo'> | null;
-  todo?: Pick<NeoTodo, 'repo'> | null;
-  peers?: readonly Pick<NeoTodo, 'repo'>[];
+  ask: Pick<NeoAsk, 'id'> | null;
+  todo?: Pick<NeoTodo, 'id'> | null;
   start?: true;
 };
 

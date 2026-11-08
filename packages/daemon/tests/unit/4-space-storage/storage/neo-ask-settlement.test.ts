@@ -83,7 +83,6 @@ describe('Data-only atomic ask settlement', () => {
     store.openAsk({
       id: 'child',
       parentId: 'ask',
-      repo: 'github.com/synthetic/child',
       projectId: null,
       sessionId: 'neo',
       originMessageId: null,

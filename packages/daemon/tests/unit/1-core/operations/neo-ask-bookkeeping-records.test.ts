@@ -143,7 +143,6 @@ describe('todo and ask bookkeeping records through MCP', () => {
           h.store.openAsk({
             id: 'recorded-child',
             parentId: first.ask.id,
-            repo: 'github.com/synthetic/child',
             projectId: null,
             sessionId: first.ask.sessionId,
             originMessageId: null,
@@ -179,7 +178,6 @@ describe('todo and ask bookkeeping records through MCP', () => {
       h.store.openAsk({
         id: 'settled-child',
         parentId: h.ask.id,
-        repo: 'github.com/synthetic/child',
         projectId: null,
         sessionId: h.ask.sessionId,
         originMessageId: null,
@@ -335,7 +333,6 @@ describe('todo and ask bookkeeping records through MCP', () => {
       h.store.openAsk({
         id: 'child',
         parentId: h.ask.id,
-        repo: 'github.com/synthetic/child',
         projectId: null,
         sessionId: h.ask.sessionId,
         originMessageId: null,

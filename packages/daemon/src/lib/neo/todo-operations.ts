@@ -280,10 +280,9 @@ export async function recordNeoTodo(
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
   const peers = todos.listTodos(ask.id);
-  const repo = neoTodoRepository(draft, packs, { ask, peers });
+  const repo = neoTodoRepository(draft, packs, { ask });
   const placeless = neoTodoPlaceRefusal(draft, packs, {
     ask,
-    peers,
     workerRemotes: input.workerRemotes,
   });
   if (placeless) return { ok: false, reason: placeless };
@@ -447,7 +446,6 @@ export const NeoTodoSchema = z.object({
   check: TodoCheck.nullable(),
   instruction: z.string().nullable(),
   named: z.record(z.string(), z.unknown()).nullable(),
-  repo: z.string().nullable(),
   state: z.enum(['todo', 'doing', 'blocked', 'done', 'closed_unverified', 'failed', 'removed']),
   reason: z.string().nullable(),
   blockedReason: z.string().nullable(),

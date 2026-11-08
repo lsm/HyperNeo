@@ -5,12 +5,12 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import {
+  CodingTodoPrRepository,
   codingTodoRepository,
   codingTodoDoneWhen,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
-import { neoTodoRepository } from '../../../../src/lib/neo/pack-contract.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -24,16 +24,25 @@ const draft = {
   named: null,
   start: false,
 };
-const coding = {
-  id: 'coding',
-  todos: {
-    repository: (
-      todo: Parameters<typeof codingTodoRepository>[0],
-      scope?: Parameters<typeof codingTodoRepository>[2]
-    ) => codingTodoRepository(todo, [], scope),
-    doneWhen: codingTodoDoneWhen,
-  },
-} as unknown as NeoPack;
+const recordedRepo = (db: Database, todoId: string) =>
+  (
+    db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(todoId) as {
+      repo: string | null;
+    } | null
+  )?.repo ?? null;
+const askRepo = (db: Database, askId: string) =>
+  (db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get(askId) as { repo: string | null }).repo;
+const codingFor = (db: Database) =>
+  ({
+    id: 'coding',
+    todos: {
+      repository: (
+        todo: Parameters<typeof codingTodoRepository>[0],
+        scope?: Parameters<CodingTodoPrRepository['place']>[0]
+      ) => codingTodoRepository(todo, [], scope && new CodingTodoPrRepository(db).place(scope)),
+      doneWhen: codingTodoDoneWhen,
+    },
+  }) as unknown as NeoPack;
 const place = {
   machine: 'laptop',
   name: 'ops',
@@ -69,7 +78,7 @@ describe('codingTodoRepository', () => {
   });
 });
 
-describe('neoTodoRepository', () => {
+describe('codingTodoRepository', () => {
   test('prefers explicit clues and inherits only a single sibling repository', () => {
     const pr = {
       ...draft,
@@ -85,17 +94,17 @@ describe('neoTodoRepository', () => {
       instruction: 'Go',
       target: { verb: 'start' as const, adapter: 'hyperneo', place },
     };
-    expect(neoTodoRepository(pr, [coding], { ask: { repo: 'github.com/lsm/ops' } })).toBe(
+    expect(codingTodoRepository(pr, [], { ask: 'github.com/lsm/ops', peers: [] })).toBe(
       'github.com/lsm/hyperneo'
     );
-    expect(neoTodoRepository(started, [coding], { ask: null })).toBe('github.com/lsm/ops');
+    expect(codingTodoRepository(started, [], { ask: null, peers: [] })).toBe('github.com/lsm/ops');
     expect(
-      neoTodoRepository(draft, [coding], {
-        ask: { repo: 'github.com/lsm/stale' },
-        peers: [{ repo: 'github.com/lsm/makai' }],
+      codingTodoRepository(draft, [], {
+        ask: 'github.com/lsm/stale',
+        peers: ['github.com/lsm/makai'],
       })
     ).toBe('github.com/lsm/makai');
-    expect(neoTodoRepository(draft, [coding], { ask: null })).toBeNull();
+    expect(codingTodoRepository(draft, [], { ask: null, peers: [] })).toBeNull();
   });
 
   test.each([{ remotes: undefined }, { remotes: [] }, { remotes: ['not a git remote'] }])(
@@ -108,13 +117,10 @@ describe('neoTodoRepository', () => {
         instruction: 'Go',
         target: { verb: 'start' as const, adapter: 'hyperneo', place: folder },
       };
+      const facts = { ask: 'github.com/lsm/ops', peers: [] };
+      expect(codingTodoRepository(started, [], facts)).toBeNull();
       expect(
-        neoTodoRepository(started, [coding], { ask: { repo: 'github.com/lsm/ops' } })
-      ).toBeNull();
-      expect(
-        neoTodoRepository({ ...started, named: { repository: 'synthetic/explicit' } }, [coding], {
-          ask: { repo: 'github.com/lsm/ops' },
-        })
+        codingTodoRepository({ ...started, named: { repository: 'synthetic/explicit' } }, [], facts)
       ).toBe('github.com/synthetic/explicit');
     }
   );
@@ -146,7 +152,7 @@ describe('neo.todo.add repo', () => {
         retry: async () => ({ ok: false as const, reason: 'no' }),
         stop: async () => null,
       },
-      () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
+      () => [codingFor(db), ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
       () => null
     ).find((op) => op.name === 'neo.todo.add')!;
     const call = async (input: unknown) =>
@@ -161,10 +167,10 @@ describe('neo.todo.add repo', () => {
       check: pendingTodoCheck,
       named: { repository: 'lsm/HyperNeo' },
     });
-    expect(first.todo.repo).toBe('github.com/lsm/hyperneo');
-    expect(store.getAsk('ask')?.repo).toBeNull();
+    expect(recordedRepo(db, first.todo.id)).toBe('github.com/lsm/hyperneo');
+    expect(askRepo(db, 'ask')).toBeNull();
     const second = await call({ askId: 'ask', ...draft, title: 'Deploy' });
-    expect(second.todo.repo).toBe('github.com/lsm/hyperneo');
+    expect(recordedRepo(db, second.todo.id)).toBe('github.com/lsm/hyperneo');
     const placed = await call({
       askId: 'ask',
       ...draft,
@@ -172,8 +178,9 @@ describe('neo.todo.add repo', () => {
       instruction: 'Go',
       target: { verb: 'start', adapter: 'hyperneo', place: { ...place, remotes: undefined } },
     });
-    expect(placed.todo).toMatchObject({ askId: 'ask', repo: null });
-    expect(store.getAsk('ask')?.repo).toBeNull();
+    expect(placed.todo.askId).toBe('ask');
+    expect(recordedRepo(db, placed.todo.id)).toBeNull();
+    expect(askRepo(db, 'ask')).toBeNull();
     db.close();
   });
 });
@@ -198,7 +205,7 @@ describe('neo.ask.open repo', () => {
       () => null,
       () => true,
       () => [],
-      () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
+      () => [codingFor(db), ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
       () => null,
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
@@ -211,7 +218,7 @@ describe('neo.ask.open repo', () => {
       }),
       { source: 'mcp', sessionId: 'neo', role: 'neo' }
     )) as { ok: true; ask: { repo: string | null } };
-    expect(receipt.ask.repo).toBeNull();
+    expect(askRepo(db, receipt.ask.id)).toBeNull();
     db.close();
   });
 });
@@ -262,7 +269,7 @@ describe('repository steps on one card', () => {
         () => null,
         () => true,
         () => [],
-        () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
+        () => [codingFor(db), ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
         undefined,
         undefined,
         { gateway: gatewayFor(db), changed: () => {} }
@@ -278,7 +285,7 @@ describe('repository steps on one card', () => {
           resolveTarget: existingTodoTarget,
           recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
         },
-        () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
+        () => [codingFor(db), ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
         () => null
       ),
       'neo.todo.add'
@@ -297,7 +304,7 @@ describe('repository steps on one card', () => {
       expect(result.ask.status).toBe('open');
       expect(store.listChildAsks(result.ask.id)).toEqual([]);
       const steps = store.listTodos(result.ask.id);
-      expect(steps.map((todo) => todo.repo)).toEqual([
+      expect(steps.map((todo) => recordedRepo(db, todo.id))).toEqual([
         'github.com/lsm/hyperneo',
         'github.com/lsm/ops',
       ]);
@@ -322,7 +329,7 @@ describe('repository steps on one card', () => {
       const first = await open(input);
       const again = await open(input);
       expect(again.ask.id).toBe(first.ask.id);
-      expect(store.listTodos(first.ask.id).map((todo) => todo.repo)).toEqual([
+      expect(store.listTodos(first.ask.id).map((todo) => recordedRepo(db, todo.id))).toEqual([
         'github.com/lsm/hyperneo',
         'github.com/lsm/ops',
       ]);
@@ -346,7 +353,6 @@ describe('repository steps on one card', () => {
         id: 'legacy-child',
         parentId: original.ask.id,
         title: 'Historical child',
-        repo: 'github.com/lsm/ops',
       });
       const existing = store.addTodo('legacy', child.id, pr('ops', 2), 2, 'github.com/lsm/ops');
       store.settleAsk(original.ask, 'done', 'Historical settlement', 3);

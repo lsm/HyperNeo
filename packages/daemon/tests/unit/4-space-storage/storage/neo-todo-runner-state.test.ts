@@ -224,8 +224,11 @@ describe('Data-only atomic runner state commands', () => {
     expect(result).toMatchObject({
       ok: true,
       todo: { state: 'doing', askId: 'ask', report },
-      ask: { id: 'ask', repo: 'github.com/synthetic/base', parentId: null },
+      ask: { id: 'ask', parentId: null },
       changed: true,
+    });
+    expect(db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('ask')).toEqual({
+      repo: 'github.com/synthetic/base',
     });
     expect(result.ok && result.todo.askId).toBe('ask');
     expect(store.listChildAsks('ask')).toEqual([]);

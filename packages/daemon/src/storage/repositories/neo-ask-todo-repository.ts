@@ -63,7 +63,6 @@ export type NeoTodoCommit = (
 ) => NeoTodo;
 
 export interface NeoTodoStorageBoundary {
-  project(todo: NeoTodo): NeoTodo;
   insert(commit: NeoTodoCommit, args: Parameters<NeoTodoInsert>): NeoTodo;
 }
 
@@ -114,7 +113,7 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   instruction: 'instruction',
 };
 
-const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, repo, parent_id AS parentId, session_id AS sessionId,
+const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, parent_id AS parentId, session_id AS sessionId,
   origin_message_id AS originMessageId, title, topic, request, status, outcome, focused_session_json AS focusedSessionJson,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
 
@@ -133,7 +132,7 @@ const toAsk = ({ focusedSessionJson, ...row }: AskRow): NeoAsk => ({
 const foundAsk = (row: AskRow | null): NeoAsk | null => (row ? toAsk(row) : null);
 
 const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS doneWhen,
-  check_json AS checkJson, instruction, named, NULL AS repo, state, reason, blocked_reason AS blockedReason,
+  check_json AS checkJson, instruction, named, state, reason, blocked_reason AS blockedReason,
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
@@ -379,11 +378,6 @@ export class NeoAskTodoRepository {
     private readonly storage: NeoTodoStorageBoundary = neoTodoStorage(db, changes)
   ) {}
 
-  private projectTodo(row: TodoRow): NeoTodo {
-    const todo = toTodo(row);
-    return this.storage.project(todo);
-  }
-
   cardReplyQuestion(conversationId: string, mutationId: string): NeoQuestion | null {
     const row = this.db
       .prepare(`SELECT json_extract(payload_json, '$.cardReply.questionId') AS id
@@ -433,22 +427,18 @@ export class NeoAskTodoRepository {
   }
 
   openAsk(
-    ask: Omit<
-      NeoAsk,
-      'repo' | 'parentId' | 'topic' | 'status' | 'outcome' | 'updatedAt' | 'settledAt'
-    > &
-      Partial<Pick<NeoAsk, 'repo' | 'parentId' | 'topic'>>
+    ask: Omit<NeoAsk, 'parentId' | 'topic' | 'status' | 'outcome' | 'updatedAt' | 'settledAt'> &
+      Partial<Pick<NeoAsk, 'parentId' | 'topic'>>
   ): NeoAsk {
     this.db
       .prepare(
-        `INSERT INTO neo_asks (id, goal_id, project_id, repo, parent_id, session_id, origin_message_id, title, topic, request, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO neo_asks (id, goal_id, project_id, parent_id, session_id, origin_message_id, title, topic, request, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         ask.id,
         ask.goalId ?? null,
         ask.projectId,
-        ask.repo ?? null,
         ask.parentId ?? null,
         ask.sessionId,
         ask.originMessageId,
@@ -628,7 +618,7 @@ export class NeoAskTodoRepository {
 
   getTodo(id: string): NeoTodo | null {
     const row = this.db.prepare(`${TODO_SELECT} WHERE id = ?`).get(id) as TodoRow | null;
-    return row ? this.projectTodo(row) : null;
+    return row ? toTodo(row) : null;
   }
 
   getTodos(ids: readonly string[]): NeoTodo[] {
@@ -636,7 +626,7 @@ export class NeoAskTodoRepository {
       this.db
         .prepare(`${TODO_SELECT} WHERE id IN (SELECT value FROM json_each(?))`)
         .all(JSON.stringify(ids)) as TodoRow[]
-    ).map((row) => this.projectTodo(row));
+    ).map((row) => toTodo(row));
   }
 
   getAsks(ids: readonly string[]): NeoAsk[] {
@@ -652,7 +642,7 @@ export class NeoAskTodoRepository {
       this.db
         .prepare(`${TODO_SELECT} WHERE ask_id = ? ORDER BY position, created_at`)
         .all(askId) as TodoRow[]
-    ).map((row) => this.projectTodo(row));
+    ).map((row) => toTodo(row));
   }
 
   listFamilyTodos(askId: string): NeoTodo[] {
@@ -666,7 +656,7 @@ export class NeoAskTodoRepository {
         .prepare(`${TODO_SELECT} WHERE ask_id IN (SELECT value FROM json_each(?))
           ORDER BY ask_id, position, created_at`)
         .all(JSON.stringify(askIds)) as TodoRow[]
-    ).map((row) => this.projectTodo(row));
+    ).map((row) => toTodo(row));
   }
 
   addTodo(...args: Parameters<NeoTodoInsert>): NeoTodo {
@@ -870,7 +860,7 @@ export class NeoAskTodoRepository {
                AND ask_id IN (SELECT a.id FROM neo_asks a JOIN sessions s ON s.id = a.session_id WHERE s.status = 'active')))`
         )
         .all(stalledBefore ?? null, queuedBefore ?? null) as TodoRow[]
-    ).map((row) => this.projectTodo(row));
+    ).map((row) => toTodo(row));
   }
 
   getCheckable(id: string): NeoTodo | null {
@@ -880,7 +870,7 @@ export class NeoAskTodoRepository {
            AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
       )
       .get(id) as TodoRow | null;
-    return row ? this.projectTodo(row) : null;
+    return row ? toTodo(row) : null;
   }
 
   openQuestionChecks() {
