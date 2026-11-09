@@ -663,8 +663,9 @@ export function createNeoOperations(service: NeoService) {
   return [
     ...createPeerOperations(service),
     ...service.speech.operations,
-    createNeoProjectForgetOperation(service.repo, (repos) => {
+    createNeoProjectForgetOperation(service.repo, async (repos) => {
       for (const pack of service.installedPacks()) pack.forgetRepositories?.(repos);
+      await service.refreshPackPreferences();
     }),
     createNeoIntakeOperation(
       service.db,
