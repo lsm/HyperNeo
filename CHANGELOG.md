@@ -6,6 +6,8 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [0.56.2] - 2026-11-09
 
+- Refresh Neo's prompt and notify it when a pack setting changes (#10295).
+- CI: fall back to the pinned Bun package when the GitHub download fails (#10309).
 - Keep coding todo sends in their worker repository, including renamed GitHub repositories (#10283, #10301).
 - Guide multi-PR work through dependent todos and attach unclaimed worker PRs to their sole coding todo (#10285, #10297).
 - Ship coding guidance as an SDK skill and finish composer interaction behavior (#10292, #10291).
