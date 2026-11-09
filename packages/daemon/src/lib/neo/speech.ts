@@ -1,5 +1,5 @@
 import { createEventMessage, type MessageHub } from '@hyperneo/shared';
-import { NEO_QUICK_ACK } from '@hyperneo/prompts';
+import { NEO_QUICK_ACK, NEO_QUICK_ACK_LISTENING } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
@@ -76,9 +76,7 @@ function spokenReply(text: string): string {
 }
 
 function neoHumanInputNote(listening: boolean): string {
-  return listening
-    ? 'Human input while listening: before time-consuming work, call neo.speech.say with one short natural acknowledgment. For a quick answer, publish with spoken instead of a separate say. Then continue.'
-    : NEO_QUICK_ACK;
+  return listening ? NEO_QUICK_ACK_LISTENING : NEO_QUICK_ACK;
 }
 
 const listeningInput = (superpipe({})('neo.input.listening') as PipelineAPI)

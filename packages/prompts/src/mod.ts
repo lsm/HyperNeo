@@ -40,6 +40,9 @@ import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoSystemFocusedDiscussion from './neo/system/focused-discussion.md' with { type: 'text' };
 import mdneoSystemGoalCycle from './neo/system/goal-cycle.md' with { type: 'text' };
 import mdneoSystemQuickAck from './neo/system/quick-ack.md' with { type: 'text' };
+import mdneoSystemQuickAckListening from './neo/system/quick-ack-listening.md' with {
+  type: 'text',
+};
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdneoSystemPackPreferences from './neo/system/pack-preferences.md' with { type: 'text' };
 import mdneoSystemStandingRules from './neo/system/standing-rules.md' with { type: 'text' };
@@ -284,6 +287,7 @@ const registry: Record<string, string> = {
   'neo/system/focused-discussion.md': mdneoSystemFocusedDiscussion,
   'neo/system/goal-cycle.md': mdneoSystemGoalCycle,
   'neo/system/quick-ack.md': mdneoSystemQuickAck,
+  'neo/system/quick-ack-listening.md': mdneoSystemQuickAckListening,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
   'neo/system/pack-preferences.md': mdneoSystemPackPreferences,
@@ -427,6 +431,7 @@ export const {
   NEO_SESSION_TRACK,
   NEO_GOAL_CYCLE,
   NEO_QUICK_ACK,
+  NEO_QUICK_ACK_LISTENING,
   NEO_FOCUSED_DISCUSSION,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
