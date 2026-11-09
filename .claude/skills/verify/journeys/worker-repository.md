@@ -16,3 +16,7 @@ Dispatch sentries require zero work.send/work.start calls, and the delivery inpu
 count stays zero. Refused adds create no todo; refused edits and binds create no
 worker target. Evidence includes operation replies and the dispatch counts.
 The helper stops its daemon; the wrapper retains evidence and removes test data.
+
+Remote status and discovery fixtures model an attached daemon whose status has no
+remotes. Its exact worker discovery remotes accept the matching repository and
+refuse mismatched or absent remotes. External daemon transport is simulated.

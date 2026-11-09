@@ -68,6 +68,28 @@ export const resolveNeoTodoTarget = (superpipe({})('neo.todo.resolve-target') as
     ['ref', 'status', 'invoke'],
     'target'
   )
+  .pipe(
+    async (target: Result, invoke: Invoke): Promise<Result> => {
+      if ('reason' in target || !target.value.daemon || target.place?.remotes?.length)
+        return target;
+      const found = await invoke('work.find', {
+        idPrefix: target.value.id,
+        adapters: [target.value.adapter],
+        includeClosed: true,
+        limit: 50,
+      });
+      const result = found.kind === 'completed' && FindWorkResultSchema.safeParse(found.value);
+      const worker =
+        result && result.success
+          ? result.data.places
+              .flatMap((place) => place.work)
+              .find((work) => work.ref.id === target.value.id && sameOwner(work.ref, target.value))
+          : undefined;
+      return { ...target, place: { ...target.place, remotes: worker?.place.remotes } };
+    },
+    ['target', 'invoke'],
+    'target'
+  )
   .endAsync('target') as (ref: WorkRef, invoke: Invoke) => Promise<Result>;
 
 async function resolvedPlace(ref: WorkRef, invoke: Invoke): Promise<Result> {

@@ -44,7 +44,24 @@ try {
   const todos = new NeoAskTodoRepository(db), sessions = new NeoTodoSessionRepository(db);
   todos.openAsk({ id: 'ask', sessionId: sender, projectId: null, originMessageId: null, title: 'Repository admission', request: 'Use the correct repository', createdAt: 1 });
   const production = app.sessionManager.getOperationRegistry();
-  const registry = createOperationRegistry(production.entries.map(op => ['work.send', 'work.start'].includes(op.name) ? { ...op, execute: async () => { sends++; throw new Error('Unexpected dispatch'); } } : op));
+  const remoteRef = { adapter: 'hyperneo', id: 'synthetic-remote-worker', daemon: 'synthetic-remote-owner' };
+  let remoteRemotes = ['git@github.com:example/repo.git'];
+  let remoteLookups = 0;
+  const registry = createOperationRegistry(production.entries.map(op => {
+    if (['work.send', 'work.start'].includes(op.name)) return { ...op, execute: async () => { sends++; throw new Error('Unexpected dispatch'); } };
+    if (op.name === 'work.status') return { ...op, execute: async (input, caller) => {
+      const { ref } = input as { ref: typeof remoteRef };
+      if (ref.daemon !== remoteRef.daemon) return op.execute(input, caller);
+      return { ok: true, value: { ref, title: 'Synthetic remote worker', status: 'done', lastActivityAt: 1, place: { machine: 'synthetic-remote', name: 'Remote repository', folder: '/synthetic/remote-repository' } } };
+    } };
+    if (op.name === 'work.find') return { ...op, execute: async (input, caller) => {
+      if ((input as { idPrefix?: string }).idPrefix !== remoteRef.id) return op.execute(input, caller);
+      remoteLookups++;
+      const place = { machine: 'synthetic-remote', name: 'Remote repository', remotes: remoteRemotes };
+      return { places: [{ place, adapters: [remoteRef.adapter], lastActivityAt: 1, openCount: 1, archivedCount: 0, work: [{ ref: remoteRef, place, title: 'Synthetic remote worker', status: 'done', lastActivityAt: 1 }] }], unreachable: [] };
+    } };
+    return op;
+  }));
   app.sessionManager.setOperationRegistryProvider(() => registry);
   const handler = createOperationMcpHandler(() => registry, () => ({ sessionId: sender, role: 'neo' }));
   const call = async (name: string, input: unknown) => {
@@ -96,8 +113,14 @@ try {
   const pending = await add();
   assert.equal((await call('neo.todo.bind', { todoId: pending.todo.id, ref: refs[0] })).ok, true);
   assert.equal((await add({ check: { pack: 'core', kind: 'evidence', params: {} }, instruction: 'Non-coding task', target: { verb: 'send', ref: refs[1] } })).ok, true);
+  assert.equal((await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } })).ok, true);
+  assert(remoteLookups > 0);
+  for (const remotes of [['https://github.com/example/other.git'], []]) {
+    remoteRemotes = remotes;
+    refusal(await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef }, start: true }));
+  }
   assert.equal(sends, 0);
-  evidence.push({ sends, deliveryInputs: db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n });
+  evidence.push({ remoteLookups, sends, deliveryInputs: db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n });
   console.log(`PASS: same repository accepted; other/unknown refused on add/edit/bind/continue; non-coding accepted; sends=${sends}; deliveryInputs=0`);
 } finally {
   await app.cleanup();
