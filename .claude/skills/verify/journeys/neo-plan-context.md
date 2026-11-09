@@ -37,7 +37,7 @@ The same proof also seeds a legacy two-generation family. The gateway must
 return each step once. The real compact response must retain some step details
 within its byte budget. Detail admission measures the serialized objects and
 array separators, including the omission guidance, rather than digest text.
-Run snapshot-compact, ask-entry/pack-row retention, the refusal-catalog audit
+Run snapshot-index, ask-entry summaries, the refusal-catalog audit
 and the storage reader-worker regression, then
 check:neo-pack-imports and check:db-main-thread. New core files contain no domain
 vocabulary. Per-turn SDK delivery and streaming-hook behavior belong to 7-B.
