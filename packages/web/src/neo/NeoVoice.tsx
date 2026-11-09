@@ -76,6 +76,7 @@ export function NeoVoice({
     persisted: Promise<void>;
     upgrade?: Promise<boolean>;
     cancelled: boolean;
+    delivering: boolean;
     live: VoiceLiveStream | null;
   } | null>(null);
   const mounted = useRef(true);
@@ -154,7 +155,8 @@ export function NeoVoice({
     }
   }
 
-  async function deliverSendIntent(recordId: string, text: string) {
+  async function deliverSendIntent(task: { delivering: boolean }, recordId: string, text: string) {
+    task.delivering = true;
     if (mounted.current) setDelivering(true);
     const outcome = await delivery.current.onSendVoice(text, recordId);
     if (outcome.kind === 'refused') {
@@ -178,6 +180,7 @@ export function NeoVoice({
       intent,
       live,
       cancelled: false,
+      delivering: false,
       persisted: new Promise<void>((resolve) => {
         persisted = resolve;
       }),
@@ -195,7 +198,7 @@ export function NeoVoice({
         : (recordingDraft.current ?? captureDraft()));
     try {
       if (intent === 'send' && entry?.sendText) {
-        await deliverSendIntent(entry.id, entry.sendText);
+        await deliverSendIntent(task, entry.id, entry.sendText);
         return;
       }
       const result = await runVoiceSubmit(
@@ -245,7 +248,7 @@ export function NeoVoice({
             return;
           }
           if (task.intent === 'send') {
-            await deliverSendIntent(result.recordId, result.outcome.transcript);
+            await deliverSendIntent(task, result.recordId, result.outcome.transcript);
           } else {
             onTranscript(result.outcome.transcript);
             await deleteVoiceRecord(result.recordId);
@@ -287,7 +290,7 @@ export function NeoVoice({
       await recorder.cancel();
       return;
     }
-    if (task.cancelled || delivering) return;
+    if (task.cancelled || task.delivering) return;
     task.cancelled = true;
     task.live?.close();
     interim.current?.('');
@@ -299,7 +302,10 @@ export function NeoVoice({
       if (pending.current === task) {
         pending.current = null;
         running.current = false;
-        if (mounted.current) setTranscribing(null);
+        if (mounted.current) {
+          setTranscribing(null);
+          setDelivering(false);
+        }
       }
       endInteractiveVoiceSubmit();
       unmarkVoiceAudioBusy(task.id);

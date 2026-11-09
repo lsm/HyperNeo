@@ -712,7 +712,7 @@ export default function MessageInput({
       try {
         const stoppedRecording = await voiceRecorder.stop();
         if (stoppedRecording.hitDurationLimit) {
-          toast.info('Voice recording stopped at 5 minutes — transcribing…');
+          toast.info('Voice recording stopped at 4 minutes — transcribing…');
         }
         const result = await runVoiceSubmit(
           { sessionId: targetSessionId, mode },
