@@ -77,7 +77,6 @@ try {
   let mainThreadBindingQueries = 0;
   db.prepare = ((sql: string) => {
     if (sql.includes('neo_ask_inputs')) mainThreadBindingQueries++;
-    assert(!sql.includes('neo_ask_inputs'), 'Input bindings must use the DB gateway worker');
     return prepare.call(db, sql);
   }) as typeof db.prepare;
   restorePrepare = () => { db.prepare = prepare; };
@@ -117,6 +116,7 @@ try {
   console.log('PASS settled input opens a fresh ask; parallel input calls share one ask');
   restorePrepare();
   evidence.mainThreadBindingQueries = mainThreadBindingQueries;
+  assert.equal(mainThreadBindingQueries, 0, 'Input bindings must use the DB gateway worker');
   evidence.links = app.db.getDatabase().prepare('SELECT session_id, message_id, ask_id FROM neo_ask_inputs').all();
   assert.equal((evidence.links as unknown[]).length, 1);
   console.log(`PASS ask count=${count}; bound todo askId=${bound.todo.askId}; reused todo askId=${reused.todo.askId}`);

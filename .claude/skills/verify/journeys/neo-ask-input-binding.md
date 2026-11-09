@@ -26,10 +26,10 @@ The first neo.todo.add call uses input A and opens one ask. Plain message B then
 continues it through neo.todo.add with input B and that askId. A later call with
 input B alone must reach the same ask. The helper prints ask count 1 and both
 follow-up todos' askId, and asserts that one neo_ask_inputs row owns message B.
-The main daemon connection refuses any SQL mentioning neo_ask_inputs during
-these calls. Successful binding therefore also proves that its registered read
-and write operations use the actual gateway workers. The evidence records zero
-main-thread binding queries. This proves the public input and tool paths without
+The proof counts SQL mentioning neo_ask_inputs on the main daemon connection
+during these calls. It records that measured count, then requires it to be zero.
+A nonzero count fails the proof and remains in its failure evidence. This checks
+that registered input-binding operations use the actual gateway workers. This proves the public input and tool paths without
 a model turn or web UI.
 
 It then settles that synthetic ask through neo.ask.settle and reuses input B to
