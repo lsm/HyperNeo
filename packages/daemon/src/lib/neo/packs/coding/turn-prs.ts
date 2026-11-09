@@ -60,6 +60,8 @@ function planCodingPrAttachment(
   named: ReadonlySet<string>
 ): string | null {
   if (producer.state !== 'placed' || named.has(pr.url)) return null;
+  if (!producer.turns.some((turn) => turn.finalUrls.some((url) => codingPrKey(url) === pr.url)))
+    return null;
   const parsed = parsePrUrl(pr.url)!;
   const repository = neoRepositoryIdentity(`${parsed.host}/${parsed.owner}/${parsed.repo}`);
   const eligible = candidates.filter((candidate) => {

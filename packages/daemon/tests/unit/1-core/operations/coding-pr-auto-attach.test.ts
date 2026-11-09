@@ -106,6 +106,7 @@ test.each([
   'non-coding',
   'finished',
   'historical PR',
+  'shown-only PR',
 ])('does not attach with %s', (scenario) => {
   const owner = add(
     'owner',
@@ -122,6 +123,7 @@ test.each([
   }
   if (scenario === 'non-coding')
     todos.updateTodo(owner, { check: { pack: 'core', kind: 'evidence', params: {} } }, 3);
+  if (scenario === 'shown-only PR') db.prepare("UPDATE work_turns SET final_urls = '[]'").run();
   if (scenario === 'historical PR') todos.updateTodo(owner, { startedAt: 120 }, 3);
   if (scenario === 'finished') todos.updateTodo(owner, { state: 'done', finishedAt: 100 }, 3);
   ledger.assignOwners();
