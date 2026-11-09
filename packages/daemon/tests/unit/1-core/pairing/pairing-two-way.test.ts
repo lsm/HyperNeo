@@ -128,6 +128,16 @@ describe('two-way pairing codes', () => {
     ]);
   });
 
+  test('a submitted one-way request does not report two-way phone confirmation', async () => {
+    const t = setup();
+    const phoneId = await withFirstPhone(t);
+    const made = await t.call('device.pair.create', { kind: 'human' }, door);
+    expect((await t.pair(made.code, REQUEST)).status).toBe(403);
+    expect((await t.call('device.pair.pending', {}, phone(phoneId))).pending).toEqual([
+      expect.objectContaining({ id: made.codeId, twoWay: false, phoneConfirmed: false }),
+    ]);
+  });
+
   test('a paired phone approves with the right confirmation code and only that requester redeems once', async () => {
     const t = setup();
     const phoneId = await withFirstPhone(t);

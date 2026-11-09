@@ -330,7 +330,7 @@ export class DevicePairingRepository {
     return rows.map(({ requestedBy, twoWay, ...row }) => ({
       ...row,
       twoWay: !!twoWay,
-      phoneConfirmed: !!requestedBy,
+      phoneConfirmed: !!twoWay && !!requestedBy,
     }));
   }
 
