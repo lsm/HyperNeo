@@ -34,7 +34,9 @@ beforeEach(async () => {
   service = createNeoService(
     db,
     {
-      updateSession: (id: string, updates: Partial<Session>) => db.updateSession(id, updates),
+      updateSession: async (id: string, updates: Partial<Session>) => {
+        await db.updateSession(id, updates);
+      },
     } as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,
     new InternalEventBus()
