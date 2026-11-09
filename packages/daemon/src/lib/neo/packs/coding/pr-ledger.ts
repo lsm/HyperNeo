@@ -695,6 +695,21 @@ export class CodingPrLedgerRepository {
   }
 
   assignOwners(): void {
+    const rows = this.db
+      .prepare(
+        'SELECT repo, number, branch, owner, created_at AS createdAt FROM pack_coding_pr_ledger'
+      )
+      .all() as {
+      repo: string;
+      number: number;
+      branch: string;
+      owner: string | null;
+      createdAt: number | null;
+    }[];
+    const watched = rows.filter((row) => this.watches(row.repo));
+    const turns = new CodingTurnPrRepository(this.db);
+    const mentions = turns.mentions(watched.map(codingLedgerPrUrl));
+    turns.attachUnclaimed(watched, mentions);
     const named = new Map(
       (
         this.db
@@ -711,19 +726,6 @@ export class CodingPrLedgerRepository {
         return key ? [[key, row.ref] as const] : [];
       })
     );
-    const rows = this.db
-      .prepare(
-        'SELECT repo, number, branch, owner, created_at AS createdAt FROM pack_coding_pr_ledger'
-      )
-      .all() as {
-      repo: string;
-      number: number;
-      branch: string;
-      owner: string | null;
-      createdAt: number | null;
-    }[];
-    const watched = rows.filter((row) => this.watches(row.repo));
-    const mentions = new CodingTurnPrRepository(this.db).mentions(watched.map(codingLedgerPrUrl));
     const update = this.db.prepare(
       'UPDATE pack_coding_pr_ledger SET owner = ? WHERE repo = ? AND number = ?'
     );
