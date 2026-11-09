@@ -258,7 +258,7 @@ export function DevicesSettings() {
       </SettingsSection>
       <SettingsSection
         title="Terminal approval"
-        description="The terminal on this computer can allow a new device after you type the last group of its fingerprint."
+        description="The terminal on this computer can allow a new device after you type the 8-letter code shown on the phone."
       >
         <SettingsGroup>
           <SettingsRow
