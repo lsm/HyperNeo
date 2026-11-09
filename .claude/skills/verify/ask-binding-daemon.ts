@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
+import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
-import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
-import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -16,61 +18,77 @@ assert(!existsSync(join(run, 'data')));
 for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) assert.equal(process.env[key], undefined);
 for (const dir of ['bin', 'evidence', 'workspace']) mkdirSync(join(run, dir), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
-const conversationId = '7c2f0f8e-1d54-4a51-9a39-5f0f3d1c2b6a', root = `neo:${conversationId}`;
-const fresh = 'c1d0a5c2-36a4-4f37-a7f0-0b4c2e1f9a11', followUp = 'f2e4b6a8-1c3d-4e5f-8a7b-9c0d1e2f3a4b';
-const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+const root = `neo:${crypto.randomUUID()}`;
+const app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
+const sdk = createOperationMcpServer(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
+const client = new Client({ name: 'synthetic-ask-binding', version: '1.0' });
+const [local, remote] = InMemoryTransport.createLinkedPair();
+let ws: WebSocket | undefined;
+let restorePrepare = () => {};
+const evidence: Record<string, unknown> = { transports: ['human WebSocket RPC', 'Neo MCP JSON-RPC over linked SDK transports'] };
 const call = async (name: string, input: Record<string, unknown>) => {
-  const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
-  const result = await handler({ name, input });
+  const result = await client.callTool({ name: 'invoke', arguments: { name, input } });
   assert(!result.isError, JSON.stringify(result));
-  return JSON.parse(result.content[0].text);
+  return JSON.parse((result.content as { text: string }[])[0].text);
 };
-const evidence: Record<string, unknown> = {};
 try {
   await app.jobProcessor.stop();
-  assert.notEqual(app.server.port, 8399);
+  assert(![8399, 8499].includes(app.server.port));
+  await sdk.instance.connect(remote);
+  await client.connect(local);
   await app.db.createSession({ id: root, title: 'Synthetic ask binding', workspacePath: join(run, 'workspace'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-  const store = new NeoAskTodoRepository(app.db.getDatabase());
-  store.openAsk({ id: 'slow-sql', title: 'Slow sdk_messages SQL', request: 'Synthetic', sessionId: root, projectId: null, originMessageId: null, createdAt: 1 });
-  const sends = [
-    { requestId: fresh, content: 'The card shows two Open buttons' },
-    { requestId: followUp, content: 'Also check the count query', replyTo: { kind: 'ask', id: 'slow-sql' } },
-  ];
-  for (const send of sends) {
-    const sent = await invokeOperation(app.sessionManager.getOperationRegistry(), 'neo.message.send', { sessionId: root, ...send }, { source: 'rpc', principal: 'local' });
-    assert.equal(sent.kind, 'completed');
-    const ids = app.db.getDatabase().prepare('SELECT id FROM sdk_messages WHERE session_id=? AND sdk_uuid=?').all(root, send.requestId) as { id: string }[];
-    await app.db.writeSDKMessage('updateMessageStatus', ids.map((row) => row.id), 'consumed');
-  }
-  const mismatch = await call('neo.question.ask', { input: fresh, askId: 'slow-sql', kind: 'reply', text: 'Which Open button should stay?', retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'answered.md') } } });
-  assert(!mismatch.ok && mismatch.reason.startsWith('ask_mismatch'), JSON.stringify(mismatch));
-  const question = await call('neo.question.ask', { input: fresh, kind: 'reply', text: 'Which Open button should stay?', retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'answered.md') } } });
-  assert(question.ok, JSON.stringify(question));
-  assert.notEqual(question.question.askId, 'slow-sql');
-  const opened = store.getAsk(question.question.askId)!;
-  assert.equal(opened.originMessageId, fresh);
-  assert.equal(opened.request, 'The card shows two Open buttons');
-  const check = { pack: 'core', kind: 'human_confirmed', params: { questionId: question.question.id } };
-  const sameInput = await call('neo.todo.add', { input: fresh, title: 'Keep one Open button', check });
-  assert(sameInput.ok, JSON.stringify(sameInput));
-  assert.equal(sameInput.todo.askId, opened.id);
-  const reply = await call('neo.todo.add', { input: followUp, title: 'Index the count query', check });
-  assert(reply.ok, JSON.stringify(reply));
-  assert.equal(reply.todo.askId, 'slow-sql');
-  const followOnly = await call('neo.todo.add', { askId: 'slow-sql', title: 'Worker report follow-up', check });
-  assert(followOnly.ok && followOnly.todo.askId === 'slow-sql');
-  const neither = await call('neo.todo.add', { title: 'No binding', check }).catch((error: Error) => ({ rejected: error.message }));
-  const unknown = await call('neo.todo.add', { input: crypto.randomUUID(), title: 'Unknown input', check });
-  assert(!unknown.ok && unknown.reason.startsWith('unknown_input'));
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as unknown as string[]);
+  await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
+  const human = async (content: string) => {
+    const id = crypto.randomUUID();
+    const response = await new Promise<{ error?: unknown; data?: { ok: boolean } }>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Human input RPC timed out')), 10000);
+      ws!.onmessage = event => { const message = JSON.parse(String(event.data)); if (message.requestId === id) { clearTimeout(timer); resolve(message); } };
+      ws!.send(JSON.stringify({ id, type: 'REQ', method: 'operation.invoke', data: { name: 'neo.message.send', input: { sessionId: root, requestId: id, content } }, sessionId: 'global', timestamp: new Date().toISOString(), version: '1.0.0' }));
+    });
+    assert(!response.error, JSON.stringify(response));
+    const ids = app.db.getDatabase().prepare('SELECT id FROM sdk_messages WHERE session_id=? AND sdk_uuid=?').all(root, id) as { id: string }[];
+    assert.equal(ids.length, 1);
+    await app.db.writeSDKMessage('updateMessageStatus', ids.map(row => row.id), 'consumed');
+    return id;
+  };
   const db = app.db.getDatabase();
-  evidence.receipts = { question, sameInput, reply, followOnly, neither, unknown };
-  evidence.asks = db.prepare('SELECT id, title, request, origin_message_id FROM neo_asks WHERE session_id = ? ORDER BY created_at').all(root);
-  evidence.todos = db.prepare('SELECT title, ask_id FROM neo_todos ORDER BY created_at').all();
-  evidence.questions = db.prepare('SELECT text, ask_id FROM neo_questions ORDER BY created_at').all();
-  assert.equal((evidence.questions as { ask_id: string }[]).filter((row) => row.ask_id === 'slow-sql').length, 0);
-  console.log(`PASS ask binding daemon; ${run}/evidence/ask-binding.json`);
+  const prepare = db.prepare;
+  let mainThreadBindingQueries = 0;
+  db.prepare = ((sql: string) => {
+    if (sql.includes('neo_ask_inputs')) mainThreadBindingQueries++;
+    assert(!sql.includes('neo_ask_inputs'), 'Input bindings must use the DB gateway worker');
+    return prepare.call(db, sql);
+  }) as typeof db.prepare;
+  restorePrepare = () => { db.prepare = prepare; };
+  const check = { pack: 'core', kind: 'evidence', params: { path: join(run, 'finished.md') } };
+  const first = await call('neo.todo.add', { input: await human('Make the query faster'), title: 'Index the query', check });
+  assert(first.ok, JSON.stringify(first));
+  const follow = await human('Also check the count query');
+  const bound = await call('neo.todo.add', { input: follow, askId: first.todo.askId, title: 'Index the count query', check });
+  evidence.bound = bound;
+  assert(bound.ok, JSON.stringify(bound));
+  const reused = await call('neo.todo.add', { input: follow, title: 'Verify the count result', check });
+  assert(reused.ok, JSON.stringify(reused));
+  assert.equal(bound.todo.askId, first.todo.askId);
+  assert.equal(reused.todo.askId, first.todo.askId);
+  const store = new NeoAskTodoRepository(app.db.getDatabase());
+  const count = store.listOpenAsks().length;
+  assert.equal(count, 1);
+  evidence.receipts = { first, bound, reused };
+  evidence.askCount = count;
+  evidence.todoAskIds = [bound.todo.askId, reused.todo.askId];
+  restorePrepare();
+  evidence.mainThreadBindingQueries = mainThreadBindingQueries;
+  evidence.links = app.db.getDatabase().prepare('SELECT session_id, message_id, ask_id FROM neo_ask_inputs').all();
+  assert.equal((evidence.links as unknown[]).length, 1);
+  console.log(`PASS ask count=${count}; bound todo askId=${bound.todo.askId}; reused todo askId=${reused.todo.askId}`);
 } finally {
+  restorePrepare();
+  ws?.close();
+  await client.close();
+  await sdk.instance.close();
   await app.cleanup();
   writeFileSync(join(run, 'evidence/ask-binding.json'), JSON.stringify(evidence, null, 2));
 }

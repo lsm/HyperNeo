@@ -1,3 +1,4 @@
+import { runMigration493 } from './m493-neo-ask-inputs.ts';
 import { runMigration488 } from './m488-pair-voided-at.ts';
 import { runMigration489 } from './m489-pair-two-way.ts';
 import { runMigration490 } from './m490-pairing-policy.ts';
@@ -1019,6 +1020,7 @@ export function runMigrations(
   run(migrationMarkerKey(490), () => runMigration490(db));
   run(migrationMarkerKey(491), () => runMigration491(db));
   run(migrationMarkerKey(492), () => runMigration492(db));
+  run(migrationMarkerKey(493), () => runMigration493(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

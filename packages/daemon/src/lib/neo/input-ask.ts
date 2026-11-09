@@ -1,4 +1,5 @@
-import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import type { NeoAsk, NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -37,18 +38,38 @@ function repliedAskId(
   return told?.cardReply?.askId ?? origin?.id ?? null;
 }
 
-const neoInputAskRefusal = (input: string, askId: string | undefined, owner: string | null) =>
-  askId && askId !== owner
-    ? `ask_mismatch: input ${input} belongs to ${owner ? `ask ${owner}` : 'no ask yet'}, not ${askId}. Pass only input for that human message, or only askId for follow-up work with no human input.`
-    : null;
+type Request = { input?: string; askId?: string; sessionId: string };
+type Plan = { use: string } | { bind: string } | { open: true } | { refuse: string };
+const mismatch = (input: string | undefined, owner: string, target: string) =>
+  `ask_mismatch: input ${input} belongs to ask ${owner}, not ${target}. Use the owning ask.`;
+const settled = 'ask_settled: this ask is no longer open. Omit askId to open a new card.';
 
-export function resolveNeoInputAsk(
+export function planNeoInputAsk(
+  facts: {
+    replyOwner: string | null;
+    originAsk: NeoAsk | null;
+    boundAsk: string | null;
+    target: NeoAsk | null;
+  },
+  request: Request
+): Plan {
+  const owner = facts.replyOwner ?? facts.originAsk?.id ?? facts.boundAsk;
+  if (owner && request.askId && request.askId !== owner)
+    return { refuse: mismatch(request.input, owner, request.askId) };
+  if (!request.askId) return owner ? { use: owner } : { open: true };
+  if (!facts.target || facts.target.sessionId !== request.sessionId)
+    return { refuse: 'not_owned: this ask is unknown or belongs to another session.' };
+  if (facts.target.status !== 'open') return { refuse: settled };
+  return owner ? { use: owner } : { bind: request.askId };
+}
+
+export async function resolveNeoInputAsk(
   store: NeoAskTodoRepository,
   reads: NeoInputReads,
   caller: OperationCaller,
   request: { input?: string; askId?: string },
   title: string
-): Binding {
+): Promise<Binding> {
   if (!request.input)
     return request.askId
       ? { value: { askId: request.askId } }
@@ -68,27 +89,53 @@ export function resolveNeoInputAsk(
       },
     };
   const { sessionId, messageId } = human.askOrigin;
-  const owner =
-    (human.replyTo && repliedAskId(store, reads, sessionId, human.replyTo)) ??
-    store.findAsk(sessionId, messageId, null)?.id ??
-    null;
-  const refusal = neoInputAskRefusal(request.input, request.askId, owner);
-  if (refusal) return { reason: { ok: false, reason: refusal } };
-  const askId =
-    owner ??
-    store.openAsk({
-      id: crypto.randomUUID(),
-      projectId: null,
-      goalId: null,
-      sessionId,
-      originMessageId: messageId,
-      title:
-        title
-          .split('\n')[0]
-          .replace(/^[#*\s]+|\*+/g, '')
-          .slice(0, 120) || title,
-      request: words(human.content) || title,
-      createdAt: Date.now(),
-    }).id;
-  return { value: { askId } };
+  const facts = {
+    replyOwner: human.replyTo ? repliedAskId(store, reads, sessionId, human.replyTo) : null,
+    originAsk: store.findAsk(sessionId, messageId, null),
+    boundAsk: await store.findAskInput(sessionId, messageId),
+    target: request.askId ? store.getAsk(request.askId) : null,
+  };
+  return (superpipe({})('neo.input.ask') as PipelineAPI)
+    .input(['facts', 'request'])
+    .pipe(planNeoInputAsk, ['facts', 'request'], 'plan')
+    .pipe(
+      async (plan: Plan): Promise<Binding> => {
+        if ('refuse' in plan) return { reason: { ok: false, reason: plan.refuse } };
+        if ('use' in plan) return { value: { askId: plan.use } };
+        if ('bind' in plan) {
+          const winner = await store.bindAskInput(
+            sessionId,
+            human.askOrigin.messageId,
+            plan.bind,
+            Date.now()
+          );
+          return winner === plan.bind
+            ? { value: { askId: winner } }
+            : {
+                reason: {
+                  ok: false,
+                  reason: winner ? mismatch(request.input, winner, plan.bind) : settled,
+                },
+              };
+        }
+        const ask = store.openAsk({
+          id: crypto.randomUUID(),
+          projectId: null,
+          goalId: null,
+          sessionId,
+          originMessageId: human.askOrigin.messageId,
+          title:
+            title
+              .split('\n')[0]
+              .replace(/^[#*\s]+|\*+/g, '')
+              .slice(0, 120) || title,
+          request: words(human.content) || title,
+          createdAt: Date.now(),
+        });
+        return { value: { askId: ask.id } };
+      },
+      'plan',
+      'binding'
+    )
+    .endAsync('binding')(facts, { ...request, sessionId }) as Promise<Binding>;
 }

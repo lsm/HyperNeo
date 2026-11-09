@@ -1,3 +1,4 @@
+import { neoAskInputReads, neoAskInputWrites } from '../repositories/neo-ask-input-worker.ts';
 import { gitHubWatchPollingWrite } from '../repositories/github-watch-polling-write.ts';
 import { gitHubWatchedConfigWrite } from '../repositories/github-watched-config-write.ts';
 import { gitHubWatchedRepoRead } from '../repositories/github-watched-repo-read.ts';
@@ -237,6 +238,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoSessionWrites,
     neoStallReminderWrite,
     codingTodoPrReads,
+    neoAskInputReads,
+    neoAskInputWrites,
     neoTodoReads,
     neoTodoWrites,
     sdkMessageWrites,

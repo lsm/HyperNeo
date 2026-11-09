@@ -181,24 +181,23 @@ describe('neo ask binding from human input', () => {
     }
   });
 
-  test('an insert racing a stale decision preserves the other binding', () => {
+  test('an insert racing a stale decision preserves the other binding', async () => {
     const f = setup();
     try {
       const other = f.open('other', 'Other request');
       const input = f.human('Also check the count query');
-      const getAsk = f.store.getAsk.bind(f.store);
+      const bind = f.store.bindAskInput.bind(f.store);
       let interleave = true;
-      f.store.getAsk = (id) => {
-        const ask = getAsk(id);
-        if (id === f.slow.id && interleave) {
+      f.store.bindAskInput = async (...args) => {
+        if (interleave) {
           interleave = false;
           expect(
-            resolveNeoInputAsk(f.store, f.reads, owner, { input, askId: other.id }, 'Other')
+            await resolveNeoInputAsk(f.store, f.reads, owner, { input, askId: other.id }, 'Other')
           ).toEqual({ value: { askId: other.id } });
         }
-        return ask;
+        return bind(...args);
       };
-      const result = resolveNeoInputAsk(
+      const result = await resolveNeoInputAsk(
         f.store,
         f.reads,
         owner,
@@ -216,6 +215,26 @@ describe('neo ask binding from human input', () => {
       expect(f.db.prepare('SELECT ask_id FROM neo_ask_inputs').all()).toEqual([
         { ask_id: other.id },
       ]);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test('an ask settled after planning does not receive the input binding', async () => {
+    const f = setup();
+    try {
+      const input = f.human('Also check the count query');
+      const bind = f.store.bindAskInput.bind(f.store);
+      f.store.bindAskInput = async (...args) => {
+        f.store.settleAsk(f.slow, 'done', 'Finished', 2);
+        return bind(...args);
+      };
+      const result = await f.add({ input, askId: f.slow.id });
+      expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('ask_settled') });
+      expect(f.db.prepare('SELECT COUNT(*) AS count FROM neo_ask_inputs').get()).toEqual({
+        count: 0,
+      });
+      expect(f.store.listTodos(f.slow.id)).toEqual([]);
     } finally {
       f.db.close();
     }
@@ -259,11 +278,11 @@ describe('neo ask binding from human input', () => {
     }
   });
 
-  test('a reply to a Neo message tied to an ask binds to that ask', () => {
+  test('a reply to a Neo message tied to an ask binds to that ask', async () => {
     const f = setup();
     try {
       const origin = f.human('Make the query fast');
-      const bound = resolveNeoInputAsk(f.store, f.reads, owner, { input: origin }, 'Speed');
+      const bound = await resolveNeoInputAsk(f.store, f.reads, owner, { input: origin }, 'Speed');
       if ('reason' in bound) throw new Error(bound.reason.reason);
       const publicationId = crypto.randomUUID();
       const told = f.publications.append({
@@ -280,7 +299,7 @@ describe('neo ask binding from human input', () => {
         id: publicationId,
         author: 'neo',
       });
-      const again = resolveNeoInputAsk(f.store, f.reads, owner, { input }, 'Count');
+      const again = await resolveNeoInputAsk(f.store, f.reads, owner, { input }, 'Count');
       expect(again).toEqual({ value: { askId: bound.value.askId } });
     } finally {
       f.db.close();
@@ -290,13 +309,13 @@ describe('neo ask binding from human input', () => {
   test('askId alone stays valid; unknown input and neither field are rejected', async () => {
     const f = setup();
     try {
-      expect(resolveNeoInputAsk(f.store, f.reads, owner, { askId: f.slow.id }, 't')).toEqual({
+      expect(await resolveNeoInputAsk(f.store, f.reads, owner, { askId: f.slow.id }, 't')).toEqual({
         value: { askId: f.slow.id },
       });
       const unknown = await f.add({ input: crypto.randomUUID() });
       expect(unknown.ok ? '' : unknown.reason).toContain('unknown_input');
       expect(() => f.store.listAsks(null, 10)).not.toThrow();
-      expect(resolveNeoInputAsk(f.store, f.reads, owner, {}, 't')).toEqual({
+      expect(await resolveNeoInputAsk(f.store, f.reads, owner, {}, 't')).toEqual({
         reason: {
           ok: false,
           reason: expect.stringContaining('input_required'),

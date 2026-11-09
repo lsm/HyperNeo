@@ -9,4 +9,4 @@ cd "$REPO"
 env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
   PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
   bun .claude/skills/verify/ask-binding-daemon.ts "$RUN"
-git rev-parse HEAD > "$RUN/evidence/head.txt"
+if [[ -n "${2:-}" ]]; then printf '%s\n' "$2"; else git rev-parse HEAD; fi > "$RUN/evidence/head.txt"
