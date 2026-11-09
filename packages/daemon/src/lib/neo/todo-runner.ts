@@ -1,3 +1,4 @@
+import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
 import { planNeoTrackerStarts } from './tracker-start-gate.ts';
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
@@ -57,6 +58,8 @@ import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
+
+const log = new Logger('neo-todo-runner');
 
 type Rejection = { ok: false; reason: string };
 type Recorded = { ok: true; todo: NeoTodo; records: string[] };
@@ -533,12 +536,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     });
     const plan = planNeoTrackerStarts(facts, enabled);
     for (const todo of plan.missing)
-      await deps.tell(
-        facts.asks.find((ask) => ask.id === todo.askId)!,
-        todo,
-        'Tracker item is missing after three failures; work continues.',
-        `neo-tracker-missing:${todo.id}`
-      );
+      await deps
+        .tell(
+          facts.asks.find((ask) => ask.id === todo.askId)!,
+          todo,
+          'Tracker item is missing after three failures; work continues.',
+          `neo-tracker-missing:${todo.id}`
+        )
+        .catch((error) => log.warn('Missing tracker note pending', { todoId: todo.id }, error));
     return plan.holds;
   };
   const readQueueFacts = async () => sessions.read('queueFacts', await trackerHolds());

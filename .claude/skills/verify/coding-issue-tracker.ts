@@ -171,6 +171,7 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       assert(publicRows.every((row) => row.failures === 3));
       const sends: string[] = [],
         notes: string[] = [];
+      let rejectNotes = false;
       const sessions = new NeoTodoSessionRepository(app.db.getDatabase());
       const runner = createNeoTodoRunner({
         store,
@@ -180,6 +181,7 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
         limits: () => ({ running: 9, perGroup: 9 }),
         changed: () => {},
         tell: async (_ask, _todo, note) => {
+          if (rejectNotes) throw new Error('Synthetic mailbox failure');
           notes.push(note);
         },
         invoke: async (_caller, name, input) => {
@@ -193,7 +195,7 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       const prepareStart = (id: string) => {
         store.updateTodo(
           store.getTodo(id)!,
-          { instruction: 'Synthetic worker task', approvedAt: 1 },
+          { instruction: 'Synthetic worker task', approvedAt: 1, dependsOn: [] },
           Date.now()
         );
         sessions.create(id, { verb: 'send', ref: { adapter: 'hyperneo', id: `worker-${id}` } });
@@ -274,10 +276,17 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
         .all() as { state: string; ref: string | null }[];
       assert.equal(retired.length, 2);
       assert(retired.every((row) => row.state === 'closed' && row.ref === null));
+      add('note-error', 'example/public', 'public');
+      prepareStart('note-error');
+      for (let attempt = 0; attempt < 3; attempt++) await neo.sweepPacks();
+      rejectNotes = true;
+      await runner.fill();
+      assert.equal(sends.length, 4);
       writeFileSync(
         join(run, 'evidence/observed.json'),
         JSON.stringify({
           parentCreateCount: 1,
+          failedNoteReleasedSends: 1,
           retiredPlaceholderCount: 2,
           retiredExternalCreateCount: 0,
           noHomeFailures: 3,

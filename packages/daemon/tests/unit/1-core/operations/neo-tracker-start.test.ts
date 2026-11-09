@@ -15,6 +15,7 @@ let mirrors: NeoTrackerMirrorRepository, gateway: DbGateway;
 let enabled: boolean, sends: string[], notes: string[];
 let runner: ReturnType<typeof createNeoTodoRunner>;
 let tracker: NeoTrackerAdapter;
+let failNotes: boolean;
 beforeEach(() => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -26,6 +27,7 @@ beforeEach(() => {
   enabled = true;
   sends = [];
   notes = [];
+  failNotes = false;
   tracker = {
     id: 'synthetic',
     enabled: () => enabled,
@@ -45,6 +47,7 @@ beforeEach(() => {
     limits: () => ({ running: 9, perGroup: 9 }),
     changed: () => {},
     tell: async (_ask, _todo, note) => {
+      if (failNotes) throw new Error('Synthetic mailbox failure');
       notes.push(note);
     },
     invoke: async (_caller, name) => {
@@ -252,3 +255,14 @@ test('a final owner with a recorded home still recovers an uncertain create', as
     state: 'bound',
   });
 });
+
+test.each(['explicit', 'queued'])(
+  'a failed missing-tracker note does not block a %s start',
+  async (path) => {
+    row(3);
+    failNotes = true;
+    if (path === 'explicit') expect(await runner.start('todo')).toMatchObject({ ok: true });
+    else await runner.fill();
+    expect(sends).toEqual(['work.send']);
+  }
+);

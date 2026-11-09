@@ -30,3 +30,6 @@ row. Three failures release the hold without creating an external item.
 If an owner settles before a blank-home placeholder gets a home, the sweep
 retires that placeholder without contacting the tracker. Recorded-home rows
 retain marker recovery for uncertain creates.
+
+A synthetic mailbox failure rejects the missing-item note after the retry cap.
+The queued worker send must still proceed.
