@@ -331,6 +331,17 @@ export function createCodingTodoPolicy(
     refuse: (draft, _peers, scope) => {
       if (scope) {
         const name = repository({ ...draft, named: draft.named ?? null }, scope);
+        if (draft.check?.pack === 'coding' && draft.target?.verb === 'send') {
+          const expected =
+            name ??
+            repository(
+              { ...draft, named: draft.named ?? null },
+              { ask: scope.ask, peers: scope.peers }
+            );
+          const remotes = scope.workerRemotes?.map(neoGitRepo).filter(Boolean) ?? [];
+          if (expected && !remotes.includes(neoGitRepo(expected)))
+            return `worker_repository_mismatch: todo is ${expected}, worker ${draft.target.ref.id} is in ${remotes.join(', ') || 'unknown'}; send it to a worker of ${expected} or start one there.`;
+        }
         return draft.target?.verb === 'start' && !draft.target.place && name
           ? `place_required: coding work for ${name} starts in its repository; pass target.place from work.find.`
           : null;

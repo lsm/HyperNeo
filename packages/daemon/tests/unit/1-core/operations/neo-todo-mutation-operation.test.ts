@@ -123,6 +123,32 @@ describe('Writer-backed todo operation activation', () => {
     db.close();
   });
 
+  test('an edit introducing a coding check refuses an unknown worker repository before commit', async () => {
+    const current = store.updateTodo(
+      store.getTodo('first')!,
+      {
+        check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } },
+      },
+      2
+    );
+    order.length = 0;
+    expect(
+      await call('neo.todo.edit', {
+        todoId: current.id,
+        check: {
+          pack: 'coding',
+          kind: 'pr_merged',
+          params: { urls: ['https://github.com/example/repo/pull/1'] },
+        },
+        instruction: 'Implement the change',
+        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/^worker_repository_mismatch:/) });
+    expect(store.getTodo(current.id)).toEqual(current);
+    expect(new NeoTodoSessionRepository(db).get(current.id)).toBeNull();
+    expect(order).toEqual([]);
+  });
+
   test('edit uses the atomic command and returns the entire committed report', async () => {
     const text = 'Complete report 🦊\n'.repeat(20000).trim();
     expect(
