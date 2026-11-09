@@ -5,7 +5,11 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { recordWorkTurns } from '../../../../src/storage/repositories/work-turn-repository.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
-import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import {
+  CodingPrLedgerRepository,
+  codingLedgerWrites,
+} from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import { ChangeRecorder } from '../../../../src/storage/db-gateway/db-op.ts';
 import {
   CodingPrEventRepository,
   deliverCodingPrEvents,
@@ -107,6 +111,8 @@ test.each([
   'finished',
   'historical PR',
   'shown-only PR',
+  'merged PR',
+  'closed PR',
 ])('does not attach with %s', (scenario) => {
   const owner = add(
     'owner',
@@ -123,6 +129,10 @@ test.each([
   }
   if (scenario === 'non-coding')
     todos.updateTodo(owner, { check: { pack: 'core', kind: 'evidence', params: {} } }, 3);
+  if (scenario === 'merged PR' || scenario === 'closed PR')
+    db.prepare('UPDATE pack_coding_pr_ledger SET state = ?').run(
+      scenario === 'merged PR' ? 'merged' : 'closed'
+    );
   if (scenario === 'shown-only PR') db.prepare("UPDATE work_turns SET final_urls = '[]'").run();
   if (scenario === 'historical PR') todos.updateTodo(owner, { startedAt: 120 }, 3);
   if (scenario === 'finished') todos.updateTodo(owner, { state: 'done', finishedAt: 100 }, 3);
@@ -162,4 +172,12 @@ test('merge confirmation for the attached PR is delivered to the worker', async 
   });
   expect(deliveries).toEqual([{ ref, text: expect.stringContaining('was merged') }]);
   expect(wakes).toBe(0);
+});
+
+test('attachment announces the todo and ask changes through the existing writer', () => {
+  add('owner');
+  const changes = new ChangeRecorder();
+  codingLedgerWrites.run(db, { method: 'assignOwners', args: [] }, changes);
+  expect(changes.changes.map(({ table }) => table)).toContain('neo_todos');
+  expect(changes.changes.map(({ table }) => table)).toContain('neo_asks');
 });

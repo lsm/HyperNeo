@@ -28,6 +28,7 @@ import { CodingWorkFactsRepository } from './work-facts.ts';
 import { CodingBranchFactsRepository } from './branch-facts.ts';
 import { CodingMergeFactsRepository } from './merge-facts.ts';
 import { CodingTurnPrRepository } from './turn-prs.ts';
+import type { ReactiveDatabase } from '../../../../storage/reactive-database.ts';
 import {
   type CodingTurnMentions,
   type CodingTurnOwner,
@@ -330,7 +331,10 @@ export class CodingPrLedgerRepository {
   readonly workFacts: CodingWorkFactsRepository;
   readonly queryFacts: CodingQueryFactsRepository;
 
-  constructor(private readonly db: Database) {
+  constructor(
+    private readonly db: Database,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
+  ) {
     this.health = new CodingRepoHealthRepository(db);
     this.stageFacts = new CodingStageFactsRepository(db);
     this.pollFacts = new CodingPollFactsRepository(db);
@@ -697,19 +701,23 @@ export class CodingPrLedgerRepository {
   assignOwners(): void {
     const rows = this.db
       .prepare(
-        'SELECT repo, number, branch, owner, created_at AS createdAt FROM pack_coding_pr_ledger'
+        'SELECT repo, number, branch, owner, state, created_at AS createdAt FROM pack_coding_pr_ledger'
       )
       .all() as {
       repo: string;
       number: number;
       branch: string;
       owner: string | null;
+      state: CodingPrState;
       createdAt: number | null;
     }[];
     const watched = rows.filter((row) => this.watches(row.repo));
-    const turns = new CodingTurnPrRepository(this.db);
+    const turns = new CodingTurnPrRepository(this.db, this.changes);
     const mentions = turns.mentions(watched.map(codingLedgerPrUrl));
-    turns.attachUnclaimed(watched, mentions);
+    turns.attachUnclaimed(
+      watched.filter((row) => row.state !== 'merged' && row.state !== 'closed'),
+      mentions
+    );
     const named = new Map(
       (
         this.db

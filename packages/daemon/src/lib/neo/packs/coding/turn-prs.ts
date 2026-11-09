@@ -1,3 +1,4 @@
+import type { ReactiveDatabase } from '../../../../storage/reactive-database.ts';
 import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoRepositoryIdentity } from '../../project-mirror.ts';
 import { codingPrKey } from './pr-key.ts';
@@ -85,7 +86,10 @@ export class CodingTurnPrRepository {
   private readonly turns: WorkTurnRepository;
   private readonly deliveries: WorkDeliveryInputRepository;
 
-  constructor(private readonly db: Database) {
+  constructor(
+    private readonly db: Database,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
+  ) {
     this.turns = new WorkTurnRepository(db);
     this.deliveries = new WorkDeliveryInputRepository(db);
   }
@@ -166,7 +170,16 @@ export class CodingTurnPrRepository {
     rows: readonly { repo: string; number: number; createdAt: number | null }[],
     mentions: CodingTurnMentions
   ): void {
-    const store = new NeoAskTodoRepository(this.db);
+    const store = new NeoAskTodoRepository(
+      this.db,
+      () => {
+        this.changes?.notifyChange('neo_todos');
+        this.changes?.notifyChange('neo_asks');
+      },
+      undefined,
+      undefined,
+      this.changes
+    );
     const active = this.db
       .prepare(`SELECT t.id, s.ref FROM neo_todos t
       JOIN neo_asks a ON a.id = t.ask_id
