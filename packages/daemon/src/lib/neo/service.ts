@@ -914,7 +914,17 @@ export class NeoService {
         pinnedSlotVetoes: () => [],
       }
     );
-    if (!result.ok) this.log.warn(`Neo pack skills not selected: ${result.reason}`);
+    if (!result.ok) {
+      this.log.warn(`Neo pack skills not selected: ${result.reason}`);
+      return;
+    }
+    const live = this.sessions.getCachedSession(sessionId)?.getSessionData();
+    if (live) live.config = { ...live.config, toolSelection: result.selection };
+    await this.events.publish('session.updated', {
+      sessionId,
+      source: 'tool-preferences',
+      session: { config: this.db.getSession(sessionId)?.config },
+    });
   }
 
   private readonly alignCoordinatorConfig = (superpipe({})('neo-session-config') as PipelineAPI)

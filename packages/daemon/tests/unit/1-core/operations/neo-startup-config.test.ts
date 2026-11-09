@@ -20,10 +20,12 @@ describe('Neo startup configuration', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: ReturnType<typeof createNeoService>;
   const updateSession = vi.fn();
+  let live: Session | undefined;
 
   beforeEach(async () => {
     db = await createTestDb();
     updateSession.mockReset();
+    live = undefined;
     updateSession.mockImplementation(async (id: string, updates: Partial<Session>) => {
       await db.updateSession(id, updates);
     });
@@ -31,6 +33,8 @@ describe('Neo startup configuration', () => {
       db,
       {
         updateSession,
+        getCachedSession: (id: string) =>
+          live?.id === id ? { getSessionData: () => live! } : undefined,
         createSession: async (params: CreateSessionParams) => {
           await db.createSession({
             ...createTestSession(params.sessionId!),
@@ -146,8 +150,10 @@ describe('Neo startup configuration', () => {
     await db.createSession(session);
     service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
     expect(selectedSkills(root)).toEqual(['playwright', 'playwright-interactive']);
+    live = structuredClone(db.getSession(root)!);
     await service.recover();
     expect(selectedSkills(root)).toEqual(['coding-pack', 'delegation-pack']);
+    expect(live.config.toolSelection).toEqual(db.getSession(root)!.config.toolSelection);
     vi.spyOn(service, 'packBriefs').mockReturnValue([
       { id: 'delegation', describe: 'Delegation', skill: 'delegation-pack' },
     ]);
