@@ -1,4 +1,3 @@
-import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import { DELEGATION_PACK_BRIEF } from '../../../../src/lib/neo/packs/delegation/pack.ts';
 import { describe, expect, test } from 'bun:test';
 import {
@@ -168,7 +167,7 @@ describe('neoSettingsPackBriefs', () => {
         id: 'coding',
         describe:
           'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
-        guidance: NEO_PACK_CODING_INSTRUCTIONS,
+        skill: 'coding-pack',
       },
       DELEGATION_PACK_BRIEF,
     ]);

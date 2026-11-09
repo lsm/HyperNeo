@@ -9,10 +9,11 @@ import { createNeoService } from '../../helpers/neo-service.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import { SkillsManager } from '../../../../src/lib/skills-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:synthetic-startup';
-const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
+const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash', 'Skill'];
 const allowed = [...tools, 'mcp__hyperneo-operations__invoke', 'mcp__fetch-mcp'];
 
 describe('Neo startup configuration', () => {
@@ -122,6 +123,36 @@ describe('Neo startup configuration', () => {
     await service.recover();
     expect(db.getSession(id)?.config.systemPrompt).toBe(neoPrompt(packs));
     expect(updateSession).toHaveBeenCalledTimes(1);
+  });
+
+  const selectedSkills = (id: string) => {
+    const choices = db.getSession(id)!.config.toolSelection!.choices;
+    return db.skills
+      .findAll()
+      .filter((skill) => choices[`skill:${skill.id}`]?.selected)
+      .map((skill) => skill.name)
+      .sort();
+  };
+
+  test('a new root selects exactly the enabled pack skills', async () => {
+    await new SkillsManager(db.skills, db.appMcpServers, db).initializeBuiltins();
+    const id = await service.open();
+    expect(selectedSkills(id)).toEqual(['coding-pack', 'delegation-pack']);
+  });
+
+  test('a recovered root drops other skills and follows the enabled packs', async () => {
+    await new SkillsManager(db.skills, db.appMcpServers, db).initializeBuiltins();
+    const session = createTestSession(root);
+    await db.createSession(session);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    expect(selectedSkills(root)).toEqual(['playwright', 'playwright-interactive']);
+    await service.recover();
+    expect(selectedSkills(root)).toEqual(['coding-pack', 'delegation-pack']);
+    vi.spyOn(service, 'packBriefs').mockReturnValue([
+      { id: 'delegation', describe: 'Delegation', skill: 'delegation-pack' },
+    ]);
+    await service.recover();
+    expect(selectedSkills(root)).toEqual(['delegation-pack']);
   });
 
   test('recovery without a root does not create one', async () => {
