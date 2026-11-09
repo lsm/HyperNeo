@@ -1,3 +1,6 @@
+import { createCodingIssueTracker, planCodingIssueHome } from './issue-tracker.ts';
+import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
+import { listPackPreferences } from '../../preference-operations.ts';
 import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
 import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
 import { createCodingRetryMergeOperation } from './retry-merge-operation.ts';
@@ -109,7 +112,25 @@ export function createCodingPack(deps: {
           (async (args) => ({ data: await listNeoGithub(args), at: new Date().toISOString() })),
       }),
     ],
+    tracker: createCodingIssueTracker({
+      todos: (askId) => new NeoAskTodoRepository(deps.database()).listTodosForAsks([askId]),
+      enabled: (repo) =>
+        listPackPreferences(deps.database(), 'coding').find(
+          (preference) =>
+            preference.key === 'mirror_issues' &&
+            preference.scope.kind === 'repo' &&
+            planCodingIssueHome([{ repo: preference.scope.key }]) === repo
+        )?.value === true,
+    }),
     preferences: {
+      mirror_issues: {
+        label: { en: 'Mirror plans to GitHub Issues', 'zh-Hans': 'Mirror plans to GitHub Issues' },
+        valueLabels: {},
+        scope: 'repo',
+        type: { kind: 'boolean' },
+        default: false,
+        ask: 'Mirror plans and their todos to GitHub Issues in this repository?',
+      },
       watchedRepos: {
         label: { en: 'Watched repositories', 'zh-Hans': '关注的仓库' },
         valueLabels: {},
