@@ -85,6 +85,7 @@ const hubRequest = vi.fn(
       };
     }
     if (method === 'voice.transcribe') return { text: 'spoken second' };
+    if (method === 'voice.transcribe.cancel') return { ok: true };
     throw new Error(`No handler for method: ${method}`);
   }
 );
@@ -359,6 +360,13 @@ describe('NeoComposer and NeoVoice send integration', () => {
       await screen.findByRole('button', { name: 'Start voice input' });
       await waitFor(() => expect(store.records.size).toBe(0));
       expect(view.current.value).toBe('keep typed words');
+      const upload = hubRequest.mock.calls.find(
+        ([method]) => method === 'voice.transcribe'
+      )?.[1] as { transcriptionId?: string };
+      expect(upload.transcriptionId).toEqual(expect.any(String));
+      expect(
+        hubRequest.mock.calls.filter(([method]) => method === 'voice.transcribe.cancel')
+      ).toEqual([['voice.transcribe.cancel', { transcriptionId: upload.transcriptionId }]]);
       await act(async () => {
         release({ text: 'late cancelled words' });
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -614,6 +622,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'operation.invoke') throw new Error('Request timeout: operation.invoke');
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     const { onError } = renderComposer();
@@ -783,6 +792,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
       if (method === 'operation.invoke')
         return { ok: false, reason: 'Open a Neo conversation before sending.' };
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     const { onError, onDraft } = renderComposer();
@@ -804,6 +814,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'operation.invoke') return { ok: true, requestId: 'someone-else' };
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     const { onError } = renderComposer();
@@ -821,6 +832,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'operation.invoke') return { ok: false, reason: 'Session archived.' };
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     renderComposer();
@@ -836,6 +848,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'operation.invoke') throw new Error('Request timeout: operation.invoke');
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     const { onError } = renderComposer();
