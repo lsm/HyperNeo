@@ -411,6 +411,7 @@ jobs:
           fi
           bash build-bundle.sh ${{ matrix.rust-target }} $BUNDLES_FLAG
         env:
+          HYPERNEO_SIGNED_DESKTOP: ${{ runner.os == 'macOS' && '1' || '0' }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}

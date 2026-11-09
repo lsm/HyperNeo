@@ -9,7 +9,7 @@ fi
 if [[ -n "$target" ]]; then
     set -- --target "$target" "$@"
 fi
-if [[ "${target:-$(rustc --print host-tuple)}" != *-apple-darwin ]]; then
+if [[ "${HYPERNEO_SIGNED_DESKTOP:-0}" != 1 || "${target:-$(rustc --print host-tuple)}" != *-apple-darwin ]]; then
     exec cargo tauri build "$@"
 fi
 

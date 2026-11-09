@@ -99,6 +99,15 @@ Cross-target builds use the `build:macos`, `build:macos-intel`, `build:macos-uni
 > at the monorepo root and copy the result yourself; richer cross-compilation
 > wiring is a follow-up.
 
+### Signed macOS builds
+
+Set `HYPERNEO_SIGNED_DESKTOP=1` for the macOS release path. It downloads the
+pinned Cua driver v0.44.0 from GitHub, checks its SHA-256 and version, and bundles
+the executable and its license notices. Configure Tauri with the Developer ID
+Application identity for team P5R65T296V and Apple notarization credentials.
+The build requires the app and nested driver signatures and a stapled ticket.
+Local builds without this flag use the standard Tauri bundle.
+
 ## GitHub release
 
 Tagged releases build desktop artifacts in `.github/workflows/release.yml`. The workflow
