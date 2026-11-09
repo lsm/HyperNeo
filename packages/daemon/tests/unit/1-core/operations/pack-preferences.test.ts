@@ -71,7 +71,7 @@ describe('pack setting changes reach Neo at once', () => {
     expect(text).toContain('"phoneOnly"');
     expect(text).toContain('unset (default)');
     expect(db.getSession('neo:root')!.config.systemPrompt).toContain(
-      '"humanStep":{"value":"phoneOnly","configured":true}'
+      '"key":"humanStep","value":"phoneOnly"'
     );
     expect(await run(humanStep)).toMatchObject({ value: { ok: true } });
     expect(told).toHaveBeenCalledTimes(1);
