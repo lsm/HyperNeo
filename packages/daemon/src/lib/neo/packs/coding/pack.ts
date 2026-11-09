@@ -93,7 +93,7 @@ export function createCodingPack(deps: {
     deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),
     (url) => checkCodingPrApproved(url, (repo) => deps.prLedger.policy(repo))
   );
-  const trackerOwners = new NeoAskTodoRepository(deps.database());
+  const trackerOwners = () => new NeoAskTodoRepository(deps.database());
   return {
     ...CODING_PACK_BRIEF,
     readMergeFacts: readCodingDaemonMergeFacts,
@@ -114,12 +114,13 @@ export function createCodingPack(deps: {
       }),
     ],
     tracker: createCodingIssueTracker({
-      todos: (askId) => trackerOwners.listTodosForAsks([askId]),
+      todos: (askId) => trackerOwners().listTodosForAsks([askId]),
       createdAt: (marker) => {
         const [, kind, id] = marker.split(':');
         if (!id) return null;
         return (
-          (kind === 'ask' ? trackerOwners.getAsk(id) : trackerOwners.getTodo(id))?.createdAt ?? null
+          (kind === 'ask' ? trackerOwners().getAsk(id) : trackerOwners().getTodo(id))?.createdAt ??
+          null
         );
       },
       enabled: (repo) =>
