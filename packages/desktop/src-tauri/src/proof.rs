@@ -9,6 +9,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
+use tauri::{webview::PageLoadEvent, Manager};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
@@ -20,7 +21,17 @@ type ProofResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 static STARTED: AtomicBool = AtomicBool::new(false);
 
 pub fn run() {
+    let exit_after_load = std::env::var("CUA_PROOF_EXIT_AFTER_LOAD").as_deref() == Ok("1");
     tauri::Builder::default()
+        .on_page_load(move |webview, payload| {
+            if exit_after_load
+                && webview.label() == "main"
+                && payload.event() == PageLoadEvent::Finished
+            {
+                println!("Proof window loaded");
+                webview.app_handle().exit(0);
+            }
+        })
         .invoke_handler(tauri::generate_handler![check_once])
         .run(tauri::generate_context!())
         .expect("start proof window");
