@@ -37,6 +37,47 @@ afterEach(() => {
 const invoke = (name: string, input: unknown, caller = human) =>
   invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, caller);
 
+describe('pack setting changes reach Neo at once', () => {
+  test('tells Neo once per real change and refreshes its stored prompt', async () => {
+    const told = mock(async (..._args: unknown[]) => {});
+    const live = createNeoService(
+      db,
+      {
+        updateSession: async (id: string, updates: object) => db.updateSession(id, updates),
+      } as unknown as SessionManager,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    live.deliverForward = told as unknown as typeof live.deliverForward;
+    const run = (input: unknown) =>
+      invokeOperation(
+        createOperationRegistry(createNeoOperations(live)),
+        'pack.preferences.set',
+        input,
+        human
+      );
+    const humanStep = {
+      pack: 'delegation',
+      scope: { kind: 'global', key: '' },
+      key: 'humanStep',
+      value: 'phoneOnly',
+    };
+    expect(await run(humanStep)).toMatchObject({ value: { ok: true } });
+    expect(told).toHaveBeenCalledTimes(1);
+    const [to, , text, from, kind] = told.mock.calls[0];
+    expect([to, from, kind]).toEqual(['neo:root', 'neo:root', 'event']);
+    expect(text).toContain('delegation');
+    expect(text).toContain('humanStep');
+    expect(text).toContain('"phoneOnly"');
+    expect(db.getSession('neo:root')!.config.systemPrompt).toContain(
+      '"humanStep":{"value":"phoneOnly","configured":true}'
+    );
+    expect(await run(humanStep)).toMatchObject({ value: { ok: true } });
+    expect(told).toHaveBeenCalledTimes(1);
+    live.dispose();
+  });
+});
+
 describe('pack settings operations', () => {
   const watch = {
     pack: 'coding',
