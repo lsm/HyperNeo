@@ -14,6 +14,17 @@ if ! verify_signature "$driver"; then
     echo "cua-driver signature verification failed" >&2
     exit 1
 fi
+entitlements="$(mktemp)"
+trap 'rm -f "$entitlements"' EXIT
+codesign --display --entitlements - --xml "$driver" > "$entitlements"
+cat "$entitlements"
+for key in com.apple.security.automation.apple-events com.apple.security.device.screen-capture; do
+    if [[ "$(/usr/libexec/PlistBuddy -c "Print :$key" "$entitlements" 2>/dev/null)" != true ]]; then
+        echo "cua-driver entitlement missing: $key" >&2
+        exit 1
+    fi
+done
+
 verify_signature "$app"
 codesign --verify --deep --strict "$app"
 xcrun stapler validate "$app"

@@ -37,8 +37,6 @@ source_dir="$staging/$archive"
 verify_driver "$source_dir/cua-driver"
 
 mkdir -p "$binaries"
-for target in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
-    install -m 755 "$source_dir/cua-driver" "$binaries/cua-driver-$target"
-done
+install -m 755 "$source_dir/cua-driver" "$binaries/cua-driver"
 install -m 644 "$source_dir/LICENSE" "$binaries/cua-driver-LICENSE"
 install -m 644 "$source_dir/THIRD_PARTY_NOTICES.md" "$binaries/cua-driver-THIRD_PARTY_NOTICES.md"
