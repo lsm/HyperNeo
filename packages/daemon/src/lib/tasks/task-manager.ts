@@ -314,7 +314,7 @@ export class SpaceTaskManager {
           this.onTerminalTransition?.(taskId, task.status);
         }
         return result;
-      })();
+      }, 'immediate')();
       this.reactiveDb?.commitTransaction();
     } catch (err) {
       this.reactiveDb?.abortTransaction();
