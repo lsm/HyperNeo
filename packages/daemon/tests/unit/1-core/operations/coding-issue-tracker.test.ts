@@ -9,6 +9,7 @@ import {
 import { planNeoTrackerMirror } from '../../../../src/lib/neo/tracker-mirror-plan.ts';
 import type { SpawnFn, SpawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
 
+const ownerCreatedAt = Date.UTC(2026, 0, 1);
 let db: Database, store: NeoAskTodoRepository;
 beforeEach(() => {
   db = new Database(':memory:');
@@ -22,7 +23,7 @@ beforeEach(() => {
     originMessageId: null,
     title: 'Plan',
     request: 'Private details',
-    createdAt: 1,
+    createdAt: ownerCreatedAt,
   });
 });
 afterEach(() => db.close());
@@ -31,7 +32,7 @@ const add = (id: string, repo: string) => {
     id,
     'ask',
     { title: id, instruction: null, named: null, check: null, doneWhen: 'Done' },
-    2,
+    ownerCreatedAt + 1,
     repo
   );
 };
@@ -48,7 +49,16 @@ const tracker = (
   spawn: SpawnFn = () => {
     throw new Error('Unexpected gh');
   }
-) => createCodingIssueTracker({ todos: readTodos, enabled, spawn });
+) =>
+  createCodingIssueTracker({
+    todos: readTodos,
+    createdAt: (marker) => {
+      const [, kind, id] = marker.split(':');
+      return (kind === 'ask' ? store.getAsk(id!) : store.getTodo(id!))?.createdAt ?? null;
+    },
+    enabled,
+    spawn,
+  });
 const item = {
   home: 'example/one',
   title: 'Plan',
@@ -230,4 +240,17 @@ test('a failed recovery lookup throws instead of allowing a duplicate create', a
     })
   );
   await expect(adapter.find(item.marker, item.home)).rejects.toThrow('Permission denied');
+});
+
+test('recovery bounds history by the recorded owner creation time', async () => {
+  let request: string[] = [];
+  const adapter = tracker(
+    () => true,
+    (args) => {
+      request = args;
+      return response([]);
+    }
+  );
+  expect(await adapter.find(item.marker, item.home)).toBeNull();
+  expect(request).toContain('since=2025-12-31T23:59:59Z');
 });

@@ -23,7 +23,7 @@ const githubRepo = (repo: string | null) => {
 export const planCodingIssueHome = (todos: readonly Pick<NeoTodo, 'repo'>[]) =>
   todos.map((todo) => githubRepo(todo.repo)).find(Boolean) ?? null;
 const issuePath = (ref: string) => {
-  const match = /^([\w.-]+\/[\w.-]+)#([1-9]\d*)$/.exec(ref);
+  const match = ref.match(/^([\w.-]+\/[\w.-]+)#([1-9]\d*)$/);
   if (!match) throw new Error('Invalid tracker issue ref');
   return `repos/${match[1]}/issues/${match[2]}`;
 };
@@ -60,6 +60,7 @@ async function operation<T>(spawn: SpawnFn, action: (api: Api) => Promise<T>): P
 
 export function createCodingIssueTracker(deps: {
   todos: (askId: string) => readonly NeoTodo[];
+  createdAt: (marker: string) => number | null;
   enabled: (repo: string) => boolean;
   spawn?: SpawnFn;
 }): NeoTrackerAdapter {
@@ -94,6 +95,11 @@ export function createCodingIssueTracker(deps: {
       }),
     find: (marker, home) =>
       operation(spawn, async (api) => {
+        const createdAt = deps.createdAt(marker);
+        if (createdAt === null) throw new Error('Tracker owner is unavailable');
+        const since = new Date(Math.floor(createdAt / 1000) * 1000 - 1000)
+          .toISOString()
+          .replace('.000Z', 'Z');
         for (let page = 1; ; page++) {
           const issues = z
             .array(Issue)
@@ -104,6 +110,8 @@ export function createCodingIssueTracker(deps: {
                 'GET',
                 '-f',
                 'state=all',
+                '-f',
+                `since=${since}`,
                 '-f',
                 'per_page=100',
                 '-f',
