@@ -6,6 +6,9 @@ import {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -128,6 +131,26 @@ describe('Neo startup configuration', () => {
       sdkToolsPreset: tools,
       allowedTools: allowed,
     });
+  });
+
+  test("a saved preference appears in Neo's system prompt", async () => {
+    const saved = await invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      'pack.preferences.set',
+      {
+        pack: 'coding',
+        scope: { kind: 'repo', key: 'synthetic/prompt' },
+        key: 'reviewBot',
+        value: 'synthetic-prompt-bot',
+      },
+      { source: 'rpc', principal: 'local' }
+    );
+    expect(saved).toMatchObject({ value: { ok: true } });
+    const id = await service.open();
+    const prompt = db.getSession(id)?.config.systemPrompt;
+    expect(prompt).toContain('Saved pack preferences');
+    expect(prompt).toContain('"scope":{"kind":"repo","key":"synthetic/prompt"}');
+    expect(prompt).toContain('"key":"reviewBot","value":"synthetic-prompt-bot"');
   });
 
   test('a later startup refreshes changed pack guidance', async () => {
