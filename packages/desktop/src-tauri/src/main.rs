@@ -1,6 +1,12 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "macos")]
+mod proof;
+
 fn main() {
-	hyperneo_lib::run();
+    #[cfg(target_os = "macos")]
+    proof::run();
+
+    #[cfg(not(target_os = "macos"))]
+    hyperneo_lib::run();
 }

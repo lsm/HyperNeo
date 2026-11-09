@@ -5,15 +5,14 @@
   "identifier": "io.hyperneo.app",
   "build": {
     "frontendDist": "loading",
-    "devUrl": "http://localhost:9283",
-    "beforeDevCommand": "echo 'Make sure hyperneo daemon is running: cd ../.. && make dev PORT=9283'",
     "beforeBuildCommand": "echo 'Sidecar will be bundled with the app'"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "HyperNeo",
-        "url": "loading/index.html",
+        "url": "proof.html",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -31,7 +30,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' http://localhost:9283 ws://localhost:9283; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
     },
     "trayIcon": {
       "iconPath": "icons/icon.png",

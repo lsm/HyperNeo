@@ -27,3 +27,8 @@ tauri-plugin-global-shortcut = "2"
 tokio = { version = "1", features = ["full"] }
 dirs = "6"
 reqwest = { version = "0.12", features = ["json"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cua-driver-sdk = { git = "https://github.com/trycua/cua.git", tag = "cua-driver-rs-v0.44.0" }
+libc = "0.2"
+tempfile = "3"

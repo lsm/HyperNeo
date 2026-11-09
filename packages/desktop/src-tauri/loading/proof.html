@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>HyperNeo Permission Proof</title>
+</head>
+<body>
+  <h1>HyperNeo Permission Proof</h1>
+  <p>Enable Accessibility and Screen Recording for this app in System Settings before starting.</p>
+  <button type="button">Run permission check</button>
+  <pre aria-live="polite"></pre>
+  <script>
+    const button = document.querySelector('button');
+    const result = document.querySelector('pre');
+
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      result.textContent = 'Checking permissions…';
+      try {
+        result.textContent = await window.__TAURI__.core.invoke('check_once');
+      } catch (error) {
+        result.textContent = String(error);
+      }
+    });
+  </script>
+</body>
+</html>
