@@ -891,6 +891,7 @@ export class NeoService {
   private async alignNeoSkills(sessionId: string): Promise<void> {
     const wanted = new Set(this.packBriefs().flatMap((pack) => (pack.skill ? [pack.skill] : [])));
     const skills = this.db.skills.findAll();
+    if (!skills.length) return;
     const current = this.db.getSession(sessionId)?.config.toolSelection;
     const changes = skills
       .filter((skill) => skill.sourceType !== 'mcp_server')
