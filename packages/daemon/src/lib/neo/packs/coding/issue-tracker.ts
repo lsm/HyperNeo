@@ -100,7 +100,7 @@ export function createCodingIssueTracker(deps: {
       operation(spawn, async (api) => {
         const createdAt = deps.createdAt(marker);
         if (createdAt === null) throw new Error('Tracker owner is unavailable');
-        const since = new Date(Math.floor(createdAt / 1000) * 1000 - 1000)
+        const since = new Date(Math.floor(createdAt / 1000) * 1000 - 86_400_000)
           .toISOString()
           .replace('.000Z', 'Z');
         for (let page = 1; ; page++) {

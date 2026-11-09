@@ -263,7 +263,7 @@ test('recovery bounds history by the recorded owner creation time', async () => 
     }
   );
   expect(await adapter.find(item.marker, item.home)).toBeNull();
-  expect(request).toContain('since=2025-12-31T23:59:59Z');
+  expect(request).toContain('since=2025-12-31T00:00:00Z');
 });
 
 test('a public repository creates nothing and reports public_repository', async () => {
@@ -299,4 +299,18 @@ test('a private repository creates as before', async () => {
   expect(calls[1]).toEqual(
     expect.arrayContaining(['repos/example/one/issues', 'POST', `body=${item.body}`])
   );
+});
+
+test('recovery finds a marker when the owner clock is five minutes ahead', async () => {
+  const issueUpdatedAt = ownerCreatedAt - 5 * 60_000;
+  const adapter = tracker(
+    () => true,
+    (args) => {
+      const since = args.find((arg) => arg.startsWith('since='))!.slice('since='.length);
+      return response(
+        Date.parse(since) <= issueUpdatedAt ? [{ id: 10, number: 1, body: item.body }] : []
+      );
+    }
+  );
+  expect(await adapter.find(item.marker, item.home)).toBe('example/one#1');
 });
