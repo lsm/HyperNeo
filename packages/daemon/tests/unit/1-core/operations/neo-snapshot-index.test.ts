@@ -166,23 +166,38 @@ test('RPC snapshot output is unchanged by MCP paging', async () => {
   expect(after).toHaveProperty('packPreferences');
 });
 test('working over 100 says more.working.count', async () => {
-  for (let i = 0; i < 103; i++) {
-    const session = createTestSession(`working-${i}`);
-    await db.createSession(session);
-    db.getDatabase()
-      .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
-      .run(JSON.stringify({ status: 'processing' }), session.id);
-    db.getDatabase()
-      .prepare(
-        "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES (?, 'Synthetic', '', '', 1, 1, 1)"
-      )
-      .run(`project-${i}`);
-    service.repo.reserveBinding({ sessionId: session.id, kind: 'neo', projectId: `project-${i}` });
+  const raw = db.getDatabase();
+  const prepare = raw.prepare.bind(raw);
+  const rows = Array.from({ length: 103 }, (_, i) => ({
+    sessionId: `working-${i}`,
+    projectId: null,
+    title: `Working ${i}`,
+    status: 'processing',
+  }));
+  const reader = spyOn(raw, 'prepare').mockImplementation(
+    <TRow = unknown, TParams extends unknown[] = unknown[]>(
+      sql: string,
+      options?: Parameters<typeof raw.prepare>[1]
+    ) => {
+      const statement = prepare<TRow, TParams>(sql, options);
+      if (!sql.includes('SELECT b.session_id AS sessionId')) return statement;
+      return new Proxy(statement, {
+        get(target, key) {
+          if (key === 'all') return () => rows;
+          const value = Reflect.get(target, key, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    }
+  );
+  try {
+    const index = await snapshot();
+    expect(index.working).toHaveLength(100);
+    expect(index.more?.working).toEqual({ count: 3 });
+    expect((await snapshot(rpc)).working).toEqual(index.working);
+  } finally {
+    reader.mockRestore();
   }
-  const index = await snapshot();
-  expect(index.working).toHaveLength(100);
-  expect(index.more?.working).toEqual({ count: 3 });
-  expect((await snapshot(rpc)).working).toEqual(index.working);
 });
 
 test('MCP historyCursor retains the finished-ask continuation', async () => {
