@@ -7,7 +7,7 @@ import { formatRelativeTime } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 import { PairPhoneFlow } from './PairPhoneFlow.tsx';
-import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsRow, SettingsSection, SettingsToggle } from './SettingsSection.tsx';
 
 type Kind = 'human' | 'relay' | 'daemon' | 'agent';
 type Refused = { ok: false; reason: string };
@@ -59,6 +59,7 @@ type View =
       pending: Pending[];
       unpaired: Unpaired[];
       wouldRefuse: WouldRefuse[];
+      terminalApproval: boolean;
     };
 
 const REFUSAL_LABEL = {
@@ -90,10 +91,11 @@ async function loadView(): Promise<View> {
     return devices.reason.startsWith('not_paired')
       ? { kind: 'unpaired' }
       : { kind: 'failed', reason: devices.reason };
-  const [pending, unpaired, wouldRefuse] = await Promise.all([
+  const [pending, unpaired, wouldRefuse, terminal] = await Promise.all([
     call<{ pending: Pending[] }>('device.pair.pending'),
     call<{ connections: Unpaired[] }>('device.unpaired.list'),
     call<{ requests: WouldRefuse[] }>('device.would_refuse.list'),
+    call<{ enabled: boolean }>('device.pair.terminal_approval.get'),
   ]);
   return {
     kind: 'ready',
@@ -101,6 +103,7 @@ async function loadView(): Promise<View> {
     pending: pending.ok ? pending.pending : [],
     unpaired: unpaired.ok ? unpaired.connections : [],
     wouldRefuse: wouldRefuse.ok ? wouldRefuse.requests : [],
+    terminalApproval: terminal.ok && terminal.enabled,
   };
 }
 
@@ -180,6 +183,9 @@ export function DevicesSettings() {
     );
 
   const link = code ? `${location.origin}/pair#${code.code}` : '';
+  const canEnableTerminal = view.devices.some(
+    (device) => device.current && device.kind === 'human' && !device.id.startsWith('local-rpc:')
+  );
   return (
     <>
       {error && <div class="px-1 text-xs text-danger">{error}</div>}
@@ -219,6 +225,30 @@ export function DevicesSettings() {
             ))}
           </SettingsGroup>
         )}
+      </SettingsSection>
+      <SettingsSection
+        title="Terminal approval"
+        description="The terminal on this computer can allow a new device after you type the last group of its fingerprint."
+      >
+        <SettingsGroup>
+          <SettingsRow
+            label="Allow from the terminal"
+            description={
+              view.terminalApproval || canEnableTerminal
+                ? 'Anyone on this computer can turn this off; only a paired phone or browser can turn it back on.'
+                : 'Turn this back on from a paired phone or browser.'
+            }
+          >
+            <SettingsToggle
+              aria-label="Allow from the terminal"
+              checked={view.terminalApproval}
+              disabled={!view.terminalApproval && !canEnableTerminal}
+              onChange={(enabled) =>
+                act(() => call('device.pair.terminal_approval.set', { enabled }))
+              }
+            />
+          </SettingsRow>
+        </SettingsGroup>
       </SettingsSection>
       <SettingsSection
         title="Devices"
