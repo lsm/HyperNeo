@@ -26,7 +26,7 @@ import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-reposito
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 
 type Input =
-  | ({ kind: 'edit' } & Parameters<typeof planNeoTodoEdit>[1])
+  | ({ kind: 'edit'; workerRemotes?: readonly string[] } & Parameters<typeof planNeoTodoEdit>[1])
   | ({ kind: 'close' } & Parameters<typeof planNeoTodoClose>[1])
   | ({ kind: 'remove' } & Parameters<typeof planNeoTodoRemove>[2]);
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -137,6 +137,7 @@ class NeoTodoMutationPlanner {
             neoTodoPlaceRefusal({ ...plan.todo, target: input.target }, this.policies, {
               ask: todos.getAsk(plan.todo.askId),
               todo: plan.todo,
+              workerRemotes: input.workerRemotes,
             });
           return placeless
             ? { reason: { ok: false as const, reason: placeless } }

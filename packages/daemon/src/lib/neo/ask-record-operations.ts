@@ -249,7 +249,7 @@ export function createNeoAskRecordOperations(
           })
           .find(Boolean);
         if (badAfter) return { ok: false as const, reason: badAfter };
-        const drafts: typeof input.todos = [];
+        const drafts: ((typeof input.todos)[number] & { workerRemotes?: readonly string[] })[] = [];
         for (const todo of input.todos) {
           if (recordedRow(todo) || (priorAsk && priorAsk.status !== 'open')) {
             drafts.push(todo);
