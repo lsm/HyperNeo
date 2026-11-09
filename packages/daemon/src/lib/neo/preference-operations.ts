@@ -97,19 +97,20 @@ export function createPackPreferenceOperations(
   changed?: (change: PackPreferenceChange) => Promise<void>
 ) {
   const save = db.transaction((input: Input): PackPreferenceChange | undefined => {
-    const address = [input.pack, input.scope.kind, input.scope.key, input.key];
-    const row = db
-      .prepare(`SELECT value_json FROM neo_pack_preferences
-        WHERE pack = ? AND scope_kind = ? AND scope_key = ? AND key = ?`)
-      .get(...address) as { value_json: string } | null | undefined;
-    const before: unknown = row ? JSON.parse(row.value_json) : undefined;
-    const json = JSON.stringify(input.value);
+    const { pack, scope, key, value } = input;
+    const saved = getNeoPackPreference(db, pack, scope, key);
+    const before =
+      saved?.scope.kind === scope.kind && saved.scope.key === scope.key ? saved.value : undefined;
+    const json = JSON.stringify(value);
     if (JSON.stringify(before) === json) return;
 
     db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
       VALUES (?, ?, ?, ?, ?, 'human', ?) ON CONFLICT (pack, scope_kind, scope_key, key)
       DO UPDATE SET value_json=excluded.value_json, set_by=excluded.set_by, set_at=excluded.set_at`).run(
-      ...address,
+      pack,
+      scope.kind,
+      scope.key,
+      key,
       json,
       Date.now()
     );
