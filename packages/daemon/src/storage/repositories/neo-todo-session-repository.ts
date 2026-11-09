@@ -280,7 +280,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         next.startedAt === null &&
         !(next.instruction
           ? neoTodoStartRefusal(next, family, asked, trackerHolds[next.id])
-          : neoTodoWaitReason(next, family, asked, trackerHolds[next.id]))
+          : neoTodoWaitReason(next, family, asked))
           ? [{ ask, next, target: this.get(next.id) }]
           : []
       );

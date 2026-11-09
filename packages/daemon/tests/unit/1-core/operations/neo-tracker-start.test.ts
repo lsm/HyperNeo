@@ -36,7 +36,9 @@ beforeEach(() => {
     store,
     sessions,
     write: (op, args) => gateway.run(op, args),
-    packs: () => [{ id: 'synthetic', describe: 'Synthetic tracker', tracker }],
+    packs: () => [
+      { id: 'synthetic', describe: 'Synthetic tracker', instructions: () => null, tracker },
+    ],
     limits: () => ({ running: 9, perGroup: 9 }),
     changed: () => {},
     tell: async (_ask, _todo, note) => {
@@ -134,4 +136,10 @@ test('no tracker never holds', async () => {
   await runner.fill();
   expect(sends).toEqual(['work.send']);
   expect(notes).toEqual([]);
+});
+
+test('an unbound mirror does not hide an unworked todo', () => {
+  store.updateTodo(store.getTodo('todo')!, { instruction: null }, 4);
+  db.prepare('DELETE FROM neo_todo_sessions WHERE todo_id=?').run('todo');
+  expect(sessions.queueFacts({ todo: 'tracker_pending: waiting' }).unworked).toEqual(['todo']);
 });
