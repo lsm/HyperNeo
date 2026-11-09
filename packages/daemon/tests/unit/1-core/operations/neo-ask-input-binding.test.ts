@@ -220,25 +220,37 @@ describe('neo ask binding from human input', () => {
     }
   });
 
-  test('an ask settled after planning does not receive the input binding', async () => {
-    const f = setup();
-    try {
-      const input = f.human('Also check the count query');
-      const bind = f.store.claimNeoInputAsk.bind(f.store);
-      f.store.claimNeoInputAsk = async (...args) => {
-        f.store.settleAsk(f.slow, 'done', 'Finished', 2);
-        return bind(...args);
-      };
-      const result = await f.add({ input, askId: f.slow.id });
-      expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('ask_settled') });
-      expect(f.db.prepare('SELECT COUNT(*) AS count FROM neo_ask_inputs').get()).toEqual({
-        count: 0,
-      });
-      expect(f.store.listTodos(f.slow.id)).toEqual([]);
-    } finally {
-      f.db.close();
+  test.each(['settled', 'missing', 'foreign'] as const)(
+    'a target made %s after planning refuses the claim with its current reason',
+    async (kind) => {
+      const f = setup();
+      try {
+        const input = f.human('Also check the count query');
+        const claim = f.store.claimNeoInputAsk.bind(f.store);
+        f.store.claimNeoInputAsk = async (...args) => {
+          if (kind === 'settled') f.store.settleAsk(f.slow, 'done', 'Finished', 2);
+          if (kind === 'missing') f.db.prepare('DELETE FROM neo_asks WHERE id = ?').run(f.slow.id);
+          if (kind === 'foreign')
+            f.db
+              .prepare('UPDATE neo_asks SET session_id = ? WHERE id = ?')
+              .run('neo:other', f.slow.id);
+          return claim(...args);
+        };
+        const result = await f.add({ input, askId: f.slow.id });
+        expect(result).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining(kind === 'settled' ? 'ask_settled' : 'not_owned'),
+        });
+        expect(f.db.prepare('SELECT COUNT(*) AS count FROM neo_ask_inputs').get()).toEqual({
+          count: 0,
+        });
+        expect(f.store.findAsk(session, input, null)).toBeNull();
+        expect(f.store.listTodos(f.slow.id)).toEqual([]);
+      } finally {
+        f.db.close();
+      }
     }
-  });
+  );
 
   test('a settled binding lets input-only calls open and reuse a new ask', async () => {
     const f = setup();
