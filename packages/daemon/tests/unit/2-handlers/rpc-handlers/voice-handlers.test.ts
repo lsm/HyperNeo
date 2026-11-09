@@ -98,6 +98,106 @@ describe('voice RPC handlers', () => {
     mock.restore();
   });
 
+  it('cancels a batch upload and admits the next recording before the old provider responds', async () => {
+    let started: () => void = () => {};
+    let finishOld: () => void = () => {};
+    let uploadSignal: AbortSignal | undefined;
+    const uploading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let uploads = 0;
+    globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+      if (++uploads > 1) return Response.json({ text: 'new recording' });
+      uploadSignal = init?.signal ?? undefined;
+      return new Promise<Response>((resolve, reject) => {
+        finishOld = () => resolve(Response.json({ text: 'old recording' }));
+        uploadSignal?.addEventListener('abort', () =>
+          reject(new DOMException('cancelled', 'AbortError'))
+        );
+        started();
+      });
+    }) as typeof fetch;
+    const old = handlers.get('voice.transcribe')!({
+      transcriptionId: 'cancelled-upload',
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    }).then(
+      (value) => value,
+      (error: Error) => error.message
+    );
+    await uploading;
+    try {
+      expect(
+        await handlers.get('voice.transcribe.cancel')?.({ transcriptionId: 'cancelled-upload' })
+      ).toEqual({ ok: true });
+      expect(uploadSignal?.aborted).toBe(true);
+      expect(await old).toBe('Voice transcription cancelled');
+      expect(
+        await handlers.get('voice.transcribe')!({
+          transcriptionId: 'next-upload',
+          audioBase64: wavBase64(),
+          mimeType: 'audio/wav',
+        })
+      ).toEqual({ text: 'new recording' });
+      expect(uploads).toBe(2);
+    } finally {
+      finishOld();
+      await old;
+    }
+  });
+
+  it('does not let another client cancel an active batch upload', async () => {
+    let started: () => void = () => {};
+    let finishOld: () => void = () => {};
+    let uploadSignal: AbortSignal | undefined;
+    const uploading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+      uploadSignal = init?.signal ?? undefined;
+      return new Promise<Response>((resolve, reject) => {
+        finishOld = () => resolve(Response.json({ text: 'retained recording' }));
+        uploadSignal?.addEventListener('abort', () =>
+          reject(new DOMException('cancelled', 'AbortError'))
+        );
+        started();
+      });
+    }) as typeof fetch;
+    const owner: CallContext = {
+      clientId: 'owner',
+      sessionId: 'session-1',
+      messageId: 'upload',
+      method: 'voice.transcribe',
+      timestamp: new Date().toISOString(),
+    };
+    const old = handlers.get('voice.transcribe')!(
+      {
+        transcriptionId: 'owned-upload',
+        audioBase64: wavBase64(),
+        mimeType: 'audio/wav',
+      },
+      owner
+    ).then(
+      (value) => value,
+      (error: Error) => error.message
+    );
+    await uploading;
+    try {
+      expect(
+        await handlers.get('voice.transcribe.cancel')?.(
+          { transcriptionId: 'owned-upload' },
+          { ...owner, clientId: 'other' }
+        )
+      ).toEqual({ ok: true });
+      expect(uploadSignal?.aborted).toBe(false);
+      finishOld();
+      expect(await old).toEqual({ text: 'retained recording' });
+    } finally {
+      finishOld();
+      await old;
+    }
+  });
+
   it('posts wav multipart without authorization for local backends', async () => {
     let init: (RequestInit & { tls?: { rejectUnauthorized: boolean } }) | undefined;
     globalThis.fetch = mock(async (_url: string | URL | Request, requestInit?: RequestInit) => {
