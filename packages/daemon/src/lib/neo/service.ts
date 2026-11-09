@@ -95,6 +95,7 @@ import {
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
+import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import {
   neoSessionQuestionNote,
@@ -882,8 +883,49 @@ export class NeoService {
     } else {
       await this.alignCoordinatorConfig(binding.sessionId);
     }
+    await this.alignNeoSkills(binding.sessionId);
 
     return binding.sessionId;
+  }
+
+  private async alignNeoSkills(sessionId: string): Promise<void> {
+    const wanted = new Set(this.packBriefs().flatMap((pack) => (pack.skill ? [pack.skill] : [])));
+    const skills = this.db.skills.findAll();
+    if (!skills.length) return;
+    const current = this.db.getSession(sessionId)?.config.toolSelection;
+    const changes = skills
+      .filter((skill) => skill.sourceType !== 'mcp_server')
+      .map((skill) => ({
+        key: `skill:${skill.id}` as const,
+        selected:
+          skill.builtIn && skill.config.type === 'builtin' && wanted.has(skill.config.commandName),
+      }))
+      .filter((edit) => (current?.choices[edit.key]?.selected ?? false) !== edit.selected);
+    if (!changes.length) return;
+    const result = await changeSessionToolChoice(
+      { sessionId, changes },
+      {
+        capture: (id) => this.db.captureSessionRuntimeSettings(id),
+        commit: (snapshot, patch) => this.db.casSessionRuntimeSettings(snapshot, patch),
+        catalog: () => ({
+          skills,
+          registry: this.db.appMcpServers.list(),
+          overrides: this.db.mcpEnablement.listAll(),
+        }),
+        pinnedSlotVetoes: () => [],
+      }
+    );
+    if (!result.ok) {
+      this.log.warn(`Neo pack skills not selected: ${result.reason}`);
+      return;
+    }
+    const live = this.sessions.getCachedSession(sessionId)?.getSessionData();
+    if (live) live.config = { ...live.config, toolSelection: result.selection };
+    await this.events.publish('session.updated', {
+      sessionId,
+      source: 'tool-preferences',
+      session: { config: this.db.getSession(sessionId)?.config },
+    });
   }
 
   private readonly alignCoordinatorConfig = (superpipe({})('neo-session-config') as PipelineAPI)
@@ -915,6 +957,7 @@ export class NeoService {
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
     if (id) await this.alignCoordinatorConfig(id);
+    if (id && this.db.getSession(id)) await this.alignNeoSkills(id);
     const session = id ? this.db.getSession(id) : null;
     const metadata = session?.metadata as
       | (NonNullable<typeof session>['metadata'] & { neoAutoCompactPercent?: number })

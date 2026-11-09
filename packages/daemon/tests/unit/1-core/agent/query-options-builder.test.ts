@@ -2434,7 +2434,9 @@ describe('QueryOptionsBuilder', () => {
           expect(options.model).toBe('default');
           expect(options.maxTurns).toBe(Infinity);
           expect(options.tools).toEqual(
-            kind === 'neo' ? ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'] : [...tools]
+            kind === 'neo'
+              ? ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash', 'Skill']
+              : [...tools]
           );
           if (kind === 'neo') {
             expect(options.allowedTools).toEqual([
@@ -2444,6 +2446,7 @@ describe('QueryOptionsBuilder', () => {
               'WebSearch',
               'WebFetch',
               'Bash',
+              'Skill',
               'mcp__hyperneo-operations__invoke',
               'mcp__fetch-mcp',
             ]);

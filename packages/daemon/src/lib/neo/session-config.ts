@@ -4,7 +4,7 @@ import type { NeoPackBrief } from './pack-contract.ts';
 import { neoPrompt } from './prompt.ts';
 
 export function neoReadTools() {
-  const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
+  const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash', 'Skill'];
   return {
     sdkToolsPreset: tools,
     allowedTools: [...tools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`, 'mcp__fetch-mcp'],

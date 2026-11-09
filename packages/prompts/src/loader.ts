@@ -10,6 +10,27 @@ export function parsePromptMarkdown(content: string, label: string): { id: strin
   return { id: match[1], body };
 }
 
+export interface SkillMarkdown {
+  name: string;
+  description: string;
+  body: string;
+}
+
+export function parseSkillMarkdown(content: string, label: string): SkillMarkdown {
+  const text = content.replace(/\r\n/g, '\n');
+  if (!text.startsWith('---\n')) throw new Error(`${label}: missing frontmatter`);
+  const end = text.indexOf('\n---\n', 3);
+  if (end === -1) throw new Error(`${label}: unterminated frontmatter`);
+  const head = text.slice(4, end);
+  const field = (key: string) => head.match(new RegExp(`^${key}:[ \\t]*(.+?)[ \\t]*$`, 'm'))?.[1];
+  const name = field('name');
+  const description = field('description');
+  if (!name || !description) throw new Error(`${label}: needs name and description`);
+  let body = text.slice(end + 5);
+  if (body.endsWith('\n')) body = body.slice(0, -1);
+  return { name, description, body };
+}
+
 const includePattern = /(?:\n)?<!--[ \t]*include:[ \t]*(\S+?)[ \t]*-->\n?/g;
 
 export function expandIncludes(

@@ -1,5 +1,6 @@
 ---
-id: NEO_PACK_CODING_INSTRUCTIONS
+name: coding-pack
+description: Neo's coding pack guidance. Load it before planning, assigning, reviewing or merging any software work in a git repository, such as pull requests, CI, review, merge rules and coding workers.
 ---
 Read repository code from <HyperNeo data dir>/worktrees/<lowercase owner>/<lowercase repo>/neo-read, kept current by the GitHub poller; never use or update the human's checkout.
 Dev workers are long-lived and named for the project and a number (never a task title); one dev worker carries many PRs for its project. Use work.rename if a session inherits a task title.

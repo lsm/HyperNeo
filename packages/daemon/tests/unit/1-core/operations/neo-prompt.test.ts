@@ -49,14 +49,10 @@ describe('root Neo system prompt', () => {
       "work.start may reuse an existing idle worker of the same project; trust the receipt's ref."
     );
     expect(prompt).not.toContain('Give a new item to an idle worker');
-    if (enabled) {
-      expect(prompt).toContain('named for the project and a number');
-      expect(prompt).toContain('work.rename');
-    } else {
-      expect(prompt).not.toContain('project and a number');
-      expect(prompt).not.toContain('never a task title');
-      expect(prompt).not.toContain('work.rename');
-    }
+    expect(prompt).not.toContain('project and a number');
+    expect(prompt).not.toContain('never a task title');
+    expect(prompt).not.toContain('work.rename');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('named for the project and a number');
     expect(prompt).toContain('Coordination questions');
     expect(prompt).toContain('never human cards');
     expect(prompt).toContain('Message Neo only at milestones');
@@ -198,7 +194,8 @@ describe('root Neo system prompt', () => {
   test('appends the pack briefing only when packs are enabled', () => {
     const coding = neoPrompt(neoSettingsPackBriefs());
     expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);
-    expect(coding).toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(coding).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(coding).toContain('load its guidance skill: coding-pack.');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('never sleep or poll gh');
     expect(coding.trim().endsWith(NEO_ROOT_TURN_END.trim())).toBe(true);
     expect(neoPrompt([])).not.toContain('Domain packs');

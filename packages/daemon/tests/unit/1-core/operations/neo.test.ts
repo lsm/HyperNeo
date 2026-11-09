@@ -81,6 +81,7 @@ describe('Neo MVP', () => {
       getGlobalSettings: () => real.getGlobalSettings(),
       getSession: (id: string) => (active.has(id) ? { id } : null),
       getJobQueueRepo: () => queue,
+      skills: { findAll: () => [] },
       getSDKMessageRepo: () => ({
         getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
         listQueuedInputs: () => [],

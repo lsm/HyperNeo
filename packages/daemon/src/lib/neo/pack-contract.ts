@@ -11,6 +11,7 @@ export interface NeoPackBrief {
   id: string;
   describe: string;
   guidance?: string;
+  skill?: string;
   alwaysEnabled?: boolean;
 }
 
