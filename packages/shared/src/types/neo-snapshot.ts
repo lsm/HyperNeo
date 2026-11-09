@@ -204,7 +204,10 @@ export interface NeoSnapshot {
   historyCursor?: { updatedAt: number; id: string } | null;
   packRows?: NeoPackRows[];
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
-  trimmed?: string;
+  more?: {
+    asks?: { count: number; cursor: number };
+    working?: { count: number };
+  };
 }
 
 export type NeoWorkingStatus = 'queued' | 'processing' | 'rate_limit_cooldown';

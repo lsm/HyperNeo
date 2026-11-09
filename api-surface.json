@@ -29231,6 +29231,46 @@
                   }
                 ]
               },
+              "more": {
+                "additionalProperties": false,
+                "properties": {
+                  "asks": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cursor": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "cursor"
+                    ],
+                    "type": "object"
+                  },
+                  "working": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "count"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
               "mutedSessions": {
                 "items": {
                   "type": "string"
@@ -30938,9 +30978,6 @@
                   "type": "object"
                 },
                 "type": "array"
-              },
-              "trimmed": {
-                "type": "string"
               },
               "wakes": {
                 "items": {
@@ -38237,6 +38274,11 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "default": {},
         "properties": {
+          "cursor": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
           "projectId": {
             "minLength": 1,
             "type": "string"
@@ -38328,6 +38370,46 @@
                     "type": "null"
                   }
                 ]
+              },
+              "more": {
+                "additionalProperties": false,
+                "properties": {
+                  "asks": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cursor": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "cursor"
+                    ],
+                    "type": "object"
+                  },
+                  "working": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "count"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
               },
               "mutedSessions": {
                 "items": {
@@ -40036,9 +40118,6 @@
                   "type": "object"
                 },
                 "type": "array"
-              },
-              "trimmed": {
-                "type": "string"
               },
               "wakes": {
                 "items": {
