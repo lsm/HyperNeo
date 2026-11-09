@@ -33,8 +33,10 @@ try {
     const outline = await send.evaluate(el=>({style:getComputedStyle(el).outlineStyle,width:getComputedStyle(el).outlineWidth,color:getComputedStyle(el).outlineColor,visible:el.matches(':focus-visible'),class:el.className}));
     if(outline.style!=='none' && outline.width!=='0px' && outline.color!=='rgba(0, 0, 0, 0)') failures.push(`${theme}/${width}: send outline ${JSON.stringify(outline)}`);
     await page.screenshot({path:`${run}/evidence/review-${theme}-${width}-pending-focus.png`});
-    await page.goto(`${base}/assets/composer-insets.html?pending&running`);
+    await page.goto(`${base}/assets/composer-insets.html?pending&running&empty`);
     await form.waitFor();
+    await form.getByRole('textbox').focus();
+    assert.equal(await form.getByRole('button',{name:'Send message',exact:true}).count(),0);
     const stop = form.getByRole('button',{name:'Stop',exact:true});
     const stopReceipt = await stop.evaluate(el=>{
       const face=el.firstElementChild, box=el.getBoundingClientRect(), f=face.getBoundingClientRect();

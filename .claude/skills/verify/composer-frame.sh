@@ -16,6 +16,6 @@ echo $! > "$RUN/asr.pid"
 bun .claude/skills/verify/rpc.ts rpc:settings.global.update \
   "{\"updates\":{\"language\":\"en\",\"voice\":{\"enabled\":true,\"endpoint\":\"http://127.0.0.1:$PORT/synthetic-asr-unused\",\"model\":\"synthetic\",\"mode\":\"streaming\",\"streamEndpoint\":\"ws://127.0.0.1:$ASR_PORT/v1/listen\",\"streamProtocol\":\"deepgram\",\"allowPrivateNetwork\":true}}}" > "$RUN/evidence/settings.json"
 if [ "${VERIFY_REVIEW_ONLY:-0}" != 1 ]; then
-  node .claude/skills/verify/composer-frame.mjs "$PORT" "$RUN"
+  bun .claude/skills/verify/composer-frame.mjs "$PORT" "$RUN"
 fi
-node .claude/skills/verify/composer-review.mjs "$PORT" "$RUN"
+bun .claude/skills/verify/composer-review.mjs "$PORT" "$RUN"

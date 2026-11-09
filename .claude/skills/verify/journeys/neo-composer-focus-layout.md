@@ -1,52 +1,53 @@
-# Neo composer uses a compact empty capsule
+# Neo composer focus and action ownership
 
-Use shared isolation and resource preflight in SKILL.md. Build the web, then run
-this wrapper from the repository root with a fresh absolute evidence directory:
+Follow SKILL.md isolation, pinned runtime and resource preflight on a designated
+test host. Build the web from the source tree being verified. Use the guarded,
+paired composer-frame.sh journey in composer-frame.md for the idle capsule,
+expanded draft, control geometry, attachment row and recording appearance.
 
-```bash
-bun run --cwd packages/web build
-VERIFY_BROWSER=<installed-chromium> VERIFY_PLAYWRIGHT=<playwright-package-path> \
-  bash .claude/skills/verify/composer-layout.sh /absolute/fresh/evidence-directory
-```
+The empty idle capsule stays about 48px high, centered at 83% of the column.
+Focusing expands it; clearing and blurring restores it. The inert realtime-voice
+entry remains visible. Recording uses its full-width row with flat controls.
 
-The wrapper owns a synthetic HOME/DB, an isolated metadata-only daemon and a
-loopback ASR fixture. It uses fake browser media, no real microphone, credentials,
-provider/model or speech service. Optional second argument selects a free daemon
-port (default 9374); its ASR uses the next port. Neither can be 8399. It stops and
-waits for its children, retains evidence and logs, and deletes its temporary data.
-
-The helper drives real /neo at 390px and 1280px. An empty, unfocused composer must
-have no Send button, a height about 48px, centered at about 83% of the column
-width, fully semicircular ends, + and placeholder on the left, and mic on the right with usable 44px targets. Focus expands the composer and
-reveals preferences; a blurred multiline draft stays expanded and unchanged.
-Clearing and blurring restores the capsule. First-click attachment and mic
-actions must work without focus expansion moving the target before activation.
-Unfocused empty recording retains its previous full-width 78px row; idle capsule
-sizing does not apply to recording. Recording keeps mic/stop and send
-controls 16px apart, measured together after the parent enters recording state.
-With voice disabled, the capsule has + and placeholder with no mic or Send.
-Screenshots and composer-layout.json are retained.
-
-Inspect screenshots for readable text, a heavier mic glyph, capsule proportions
-and no overflow. Native iOS parity needs separate inspection of its implementation.
-Mic hover, focus and pointer-down rounding in both themes is covered separately
-by neo-composer-mic-shape.md, including fake-media activation and cancellation.
-A browser launch failure is not a layout pass: retain its error, say screenshots
-are unverified and leave browser proof pending. Do not bypass host restrictions.
-
-For session Stop and attention-state regressions, build the web first and run:
+For the actual Neo session pane, run:
 
 ```bash
-bash .claude/skills/verify/proof-run.sh /absolute/fresh/attention-evidence \
-  .claude/skills/verify/composer-attention.ts <chromium-executable> <playwright-package>
+bash .claude/skills/verify/proof-run.sh <fresh-absolute-evidence-directory> \
+  .claude/skills/verify/composer-attention.ts <chromium-executable> <playwright-package> after
 ```
 
-This helper owns an ephemeral isolated daemon and static frontend. A synthetic
-worker opens through its question-card logo + Open in the actual Neo session
-pane. The focused header retains context with no duplicate opener. Production state events supply
-working, waiting and error states; a synthetic interrupt RPC peer records Stop
-activation without running a model. At 390/1280px, Stop must remain visible and
-clickable with an empty, unfocused composer. Waiting/error text uses the expanded
-layout with normal padding, then idle returns to the 48px capsule. Inspect the
-six screenshots, attention.json and cleanup.json. Real SDK interruption is not
-claimed by this frontend regression proof.
+The helper owns its daemon, synthetic HOME/DB and guarded frontend. It pairs a
+synthetic browser, then opens the worker through the question-card session link.
+Both themes at 390px/1280px must show only Stop when a turn runs with an empty
+focused draft. Typing switches that position to Send. Stop reaches the synthetic
+interrupt RPC peer. A later question leaves an empty unfocused composer collapsed;
+errors still expand it and show the status. No SDK interruption is claimed.
+
+A baseline snapshot can use the final argument `before`: it captures the previous
+two-button focused row and question-expanded layout. Run that against the actual
+baseline source/build in the test host snapshot, then restore the current source
+and rebuild. Retain attention.json, sixteen screenshots and cleanup.json per run.
+
+For recording behavior, use:
+
+```bash
+VERIFY_BROWSER=<chromium> VERIFY_PLAYWRIGHT=<playwright-package> \
+VERIFY_MOCK_PORT=19347 VERIFY_KEEP_RUN=1 \
+  bash .claude/skills/verify/with-run.sh bash .claude/skills/verify/composer-behavior.sh 19346
+```
+
+This uses fake microphone media and a delayed, numbered ASR fixture. Eight cases
+cover streaming/batch, phone/desktop and Stop/Send cancellation. Cancel restores
+the original draft without a saved recording or sent message. A second recording
+starts before the cancelled response arrives and must retain its own capture.
+Batch mode waits for that old response while capture remains active, then submits
+the new audio: the daemon admits one batch transcription per client at a time.
+The new recording must complete with its own unique text.
+The fixture status reader only reports synthetic utterance counters.
+
+A final real-time case records for four minutes. The timer starts at zero and
+advances through three minutes while capture remains active; the recorder then
+automatically stops around 240 seconds and returns the text to the draft. The
+long waits are the feature boundary itself, not increased production timeouts.
+Retain behavior.json, progress logs and screenshots, and inspect them for clipping.
+A browser or transport refusal is not a pass; preserve its failure evidence.
