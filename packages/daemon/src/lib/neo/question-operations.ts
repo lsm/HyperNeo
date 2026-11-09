@@ -663,8 +663,8 @@ export function createNeoQuestionOperations(
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      async (input: z.infer<typeof Ask>, caller: OperationCaller) =>
-        await resolveNeoInputAsk(store, inputs, caller, input, input.text),
+      (input: z.infer<typeof Ask>, caller: OperationCaller) =>
+        resolveNeoInputAsk(store, inputs, caller, input, input.text),
       ['input', 'caller'],
       'binding'
     )

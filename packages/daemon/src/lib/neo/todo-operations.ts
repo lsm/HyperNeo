@@ -775,8 +775,8 @@ export function createNeoTodoOperations(
   const add = (superpipe({})('neo.todo.add') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      async (input: z.infer<typeof Add>, caller: OperationCaller) =>
-        await resolveNeoInputAsk(todos, inputs, caller, input, input.title),
+      (input: z.infer<typeof Add>, caller: OperationCaller) =>
+        resolveNeoInputAsk(todos, inputs, caller, input, input.title),
       ['input', 'caller'],
       'binding'
     )

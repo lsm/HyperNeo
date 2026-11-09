@@ -28,6 +28,11 @@ and write operations use the actual gateway workers. The evidence records zero
 main-thread binding queries. This proves the public input and tool paths without
 a model turn or web UI.
 
+It then settles that synthetic ask through neo.ask.settle and reuses input B to
+open a fresh ask. Two simultaneous neo.todo.add calls for a further plain input
+must share one new ask. The old ask stays settled, and the evidence records both
+concurrent receipts and the new input owner.
+
 Retain evidence/ask-binding.json and head.txt alongside the command exit status.
 The helper closes the WebSocket, MCP client/server and owned daemon in finally.
 After copying evidence, remove only that run's synthetic data and HOME.

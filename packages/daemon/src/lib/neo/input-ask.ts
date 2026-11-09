@@ -118,20 +118,22 @@ export async function resolveNeoInputAsk(
                 },
               };
         }
-        const ask = store.openAsk({
-          id: crypto.randomUUID(),
-          projectId: null,
-          goalId: null,
-          sessionId,
-          originMessageId: human.askOrigin.messageId,
-          title:
-            title
-              .split('\n')[0]
-              .replace(/^[#*\s]+|\*+/g, '')
-              .slice(0, 120) || title,
-          request: words(human.content) || title,
-          createdAt: Date.now(),
-        });
+        const ask =
+          store.findAsk(sessionId, messageId, null) ??
+          store.openAsk({
+            id: crypto.randomUUID(),
+            projectId: null,
+            goalId: null,
+            sessionId,
+            originMessageId: human.askOrigin.messageId,
+            title:
+              title
+                .split('\n')[0]
+                .replace(/^[#*\s]+|\*+/g, '')
+                .slice(0, 120) || title,
+            request: words(human.content) || title,
+            createdAt: Date.now(),
+          });
         return { value: { askId: ask.id } };
       },
       'plan',

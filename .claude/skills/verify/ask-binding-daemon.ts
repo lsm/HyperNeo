@@ -79,6 +79,23 @@ try {
   evidence.receipts = { first, bound, reused };
   evidence.askCount = count;
   evidence.todoAskIds = [bound.todo.askId, reused.todo.askId];
+  const settled = await call('neo.ask.settle', { askId: first.todo.askId, status: 'dropped', outcome: 'Synthetic matter ended' });
+  assert(settled.ok, JSON.stringify(settled));
+  const afterSettlement = await call('neo.todo.add', { input: follow, title: 'Check the query again', check });
+  assert(afterSettlement.ok && afterSettlement.todo, JSON.stringify(afterSettlement));
+  assert.notEqual(afterSettlement.todo.askId, first.todo.askId);
+  assert.equal(store.getAsk(first.todo.askId)?.status, 'dropped');
+  const parallelInput = await human('Check another query');
+  const parallel = await Promise.all([
+    call('neo.todo.add', { input: parallelInput, title: 'Index another query', check }),
+    call('neo.todo.add', { input: parallelInput, title: 'Verify another query', check }),
+  ]);
+  for (const receipt of parallel) assert(receipt.ok && receipt.todo, JSON.stringify(receipt));
+  assert.equal(parallel[0].todo.askId, parallel[1].todo.askId);
+  assert.equal(store.listOpenAsks().length, 2);
+  evidence.afterSettlement = afterSettlement;
+  evidence.parallel = parallel;
+  console.log('PASS settled input opens a fresh ask; parallel input calls share one ask');
   restorePrepare();
   evidence.mainThreadBindingQueries = mainThreadBindingQueries;
   evidence.links = app.db.getDatabase().prepare('SELECT session_id, message_id, ask_id FROM neo_ask_inputs').all();
