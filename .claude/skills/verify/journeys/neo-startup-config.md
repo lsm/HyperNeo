@@ -14,7 +14,8 @@ is obsolete and sdkToolsPreset is empty, retaining that SDK id and origin path, 
 the actual daemon at the ordinary Neo cwd. No live session, transcript or DB is inspected.
 
 Through session.get and Neo message/publication RPC, verify the stored and model-received
-prompt is neoPrompt(packBriefs), native Read/Bash tools are present, the prior marker still
+prompt matches `neoPrompt(packBriefs, standingRules, packPreferences)`, native Read/Bash tools
+are present, the prior marker still
 reaches the model, SDK session identity is unchanged, the shared lifecycle copied the
 transcript to the new cwd, and the human-visible publication is readable. The resumed fixture uses dontAsk with
 Read/Grep/Glob/web/Bash approved and native mutation tools unavailable. The scripted reply proves transport/config/publication

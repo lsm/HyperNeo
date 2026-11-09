@@ -63,7 +63,13 @@ describe('Neo ordinary sessions', () => {
     expect(createSession).toHaveBeenCalledTimes(1);
     expect(db.getSession(root)).toMatchObject({
       sdkSessionId,
-      config: { systemPrompt: neoPrompt(service.packBriefs()) },
+      config: {
+        systemPrompt: neoPrompt(
+          service.packBriefs(),
+          service.standingRules(),
+          service.packPreferences()
+        ),
+      },
     });
     expect(db.getSession(root)?.config.maxTurns).toBe(32);
   });
