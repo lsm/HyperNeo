@@ -197,7 +197,11 @@ export class CodingTurnPrRepository {
     const policy = createCodingTodoPolicy({ urls: () => [] });
     const attach = (superpipe({})('coding.attach-unclaimed-pr') as PipelineAPI)
       .input(['pr'])
-      .pipe((pr: (typeof prs)[number]) => planCodingTurnProducer(pr, mentions.turns), 'pr', 'owner')
+      .pipe(
+        (pr: (typeof prs)[number]) => planCodingTurnProducer(pr, mentions.turns),
+        'pr',
+        'producer'
+      )
       .pipe(
         (pr: (typeof prs)[number], producer: CodingTurnProducer) =>
           planCodingPrAttachment(pr, producer, candidates, named),
