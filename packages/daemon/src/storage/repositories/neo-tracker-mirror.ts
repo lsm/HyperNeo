@@ -12,7 +12,8 @@ export class NeoTrackerMirrorRepository {
   facts() {
     const mirrors = this.db
       .prepare(`SELECT owner_kind AS ownerKind, owner_id AS ownerId,
-      tracker, home, ref, state, failures, updated_at AS updatedAt FROM neo_tracker_mirrors`)
+      tracker, home, ref, parent_ref AS parentRef, state, failures, updated_at AS updatedAt
+      FROM neo_tracker_mirrors WHERE state != 'closed'`)
       .all() as NeoTrackerMirror[];
     const store = new NeoAskTodoRepository(this.db);
     const asks = [
@@ -30,15 +31,16 @@ export class NeoTrackerMirrorRepository {
   }
   put(row: NeoTrackerMirror) {
     this.db
-      .prepare(`INSERT INTO neo_tracker_mirrors VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      .prepare(`INSERT INTO neo_tracker_mirrors VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(owner_kind, owner_id, tracker) DO UPDATE SET
-      ref=excluded.ref, state=excluded.state, failures=excluded.failures, updated_at=excluded.updated_at`)
+      ref=excluded.ref, parent_ref=excluded.parent_ref, state=excluded.state, failures=excluded.failures, updated_at=excluded.updated_at`)
       .run(
         row.ownerKind,
         row.ownerId,
         row.tracker,
         row.home,
         row.ref,
+        row.parentRef,
         row.state,
         row.failures,
         row.updatedAt

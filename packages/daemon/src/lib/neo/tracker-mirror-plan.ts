@@ -7,6 +7,7 @@ export type NeoTrackerMirror = {
   tracker: string;
   home: string;
   ref: string | null;
+  parentRef: string | null;
   state: 'creating' | 'bound' | 'closed';
   failures: number;
   updatedAt: number;
@@ -54,16 +55,18 @@ export function planNeoTrackerMirror(
         tracker: adapter.id,
         home,
         ref: null,
+        parentRef: null,
         state: 'creating',
         failures: 0,
         updatedAt: 0,
       };
       const marker = neoTrackerMarker(owner);
+      const title = owner.todo?.title ?? owner.ask.title;
       const item = {
         home,
         marker,
-        title: owner.todo?.title ?? owner.ask.title,
-        body: `${(owner.todo?.instruction ?? owner.ask.request).slice(0, 500)}\n\n<!-- ${marker} -->`,
+        title,
+        body: `${title}\n\n<!-- ${marker} -->`,
       };
       const parent = mirrors.find(
         (mirror) =>
@@ -75,7 +78,7 @@ export function planNeoTrackerMirror(
       if (row.state === 'creating') plans.push({ row, adapter, item, action: 'create' });
       else if (owner.kind === 'ask' && owner.ask.status !== 'open')
         plans.push({ row, adapter, item, action: 'close' });
-      else if (owner.kind === 'todo' && parent)
+      else if (owner.kind === 'todo' && parent && row.parentRef !== parent)
         plans.push({ row, adapter, item, action: 'link', parent });
     }
   return plans;

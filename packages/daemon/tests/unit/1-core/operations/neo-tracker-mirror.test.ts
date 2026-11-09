@@ -121,7 +121,7 @@ test('marker survives the tracker body', () => {
   const owner = { kind: 'ask' as const, ask: todos.getAsk('ask')! };
   const marker = neoTrackerMarker(owner);
   expect(marker).toBe('hyperneo:ask:ask');
-  expect(plan()[0].item.body).toBe(`Implement\n\n<!-- ${marker} -->`);
+  expect(plan()[0].item.body).toBe(`Plan\n\n<!-- ${marker} -->`);
   expect(readNeoTrackerMarker(plan()[0].item.body)).toBe(marker);
   expect(readNeoTrackerMarker('No marker')).toBeNull();
 });
@@ -139,4 +139,35 @@ test('a settled ask referenced only by a creating todo mirror remains recoverabl
   expect(planNeoTrackerRecovery(plan()[0].row, 'example/repo#1')).toEqual({
     ref: 'example/repo#1',
   });
+});
+
+test('a successfully linked child is not linked again', () => {
+  bindParent();
+  addTodo('child');
+  mirrors.put({ ...plan()[0].row, ref: 'example/repo#2', state: 'bound' });
+  const link = plan()[0];
+  expect(link.action).toBe('link');
+  mirrors.put({ ...link.row, parentRef: link.parent! });
+  expect(plan()).toEqual([]);
+});
+
+test('tracker bodies expose only titles and markers', () => {
+  addTodo('child');
+  db.prepare("UPDATE neo_todos SET instruction = 'Private implementation details'").run();
+  const items = plan().map((entry) => entry.item);
+  expect(items.map((item) => item.body)).toEqual([
+    'Plan\n\n<!-- hyperneo:ask:ask -->',
+    'child\n\n<!-- hyperneo:todo:child -->',
+  ]);
+  expect(items.every((item) => !item.body.includes('Implement'))).toBe(true);
+  expect(items.every((item) => !item.body.includes('Private'))).toBe(true);
+});
+
+test('facts exclude closed mirrors while retaining open mirrors', () => {
+  bindParent();
+  addTodo('child');
+  mirrors.put({ ...plan()[0].row, ref: 'example/repo#2', state: 'bound' });
+  const parent = mirrors.facts().mirrors.find((row) => row.ownerKind === 'ask')!;
+  mirrors.put({ ...parent, state: 'closed' });
+  expect(mirrors.facts().mirrors.map((row) => row.ownerId)).toEqual(['child']);
 });
