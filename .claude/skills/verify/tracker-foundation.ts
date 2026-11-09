@@ -27,7 +27,7 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
   if (process.argv.includes('--seed')) {
     const todos = new NeoAskTodoRepository(app.db.getDatabase());
     todos.openAsk({ id: 'ask', projectId: null, sessionId: 'synthetic', originMessageId: null, title: 'Synthetic plan', request: 'Mirror', createdAt: 1 });
-    todos.addTodo('todo', 'ask', { title: 'Synthetic step', instruction: null, named: null, check: null, doneWhen: 'Done' }, 2);
+    todos.addTodo('todo', 'ask', { title: 'Synthetic step', instruction: 'Private details', named: null, check: null, doneWhen: 'Done' }, 2);
     const facts = await gateway.call(neoTrackerReads, 'facts');
     const op = planNeoTrackerMirror(facts.asks, facts.todos, facts.mirrors, [adapter])[0];
     await gateway.call(neoTrackerWrites, 'put', { ...op.row, updatedAt: Date.now() });
@@ -49,6 +49,25 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       assert.equal(bound.mirrors[0].ref, 'example/repo#1');
       assert.equal(bound.mirrors[0].state, 'bound');
       assert.equal(planNeoTrackerMirror(bound.asks, bound.todos, bound.mirrors, [adapter]).length, 0);
+      assert.equal(op.item.body, 'Synthetic step\n\n<!-- hyperneo:todo:todo -->');
+      app.db.getDatabase().prepare("UPDATE neo_asks SET status = 'open'").run();
+      adapter.enabled = () => true;
+      const parentFacts = await gateway.call(neoTrackerReads, 'facts');
+      const parent = planNeoTrackerMirror(parentFacts.asks, parentFacts.todos, parentFacts.mirrors, [adapter])[0];
+      assert.equal(parent.item.body, 'Synthetic plan\n\n<!-- hyperneo:ask:ask -->');
+      await gateway.call(neoTrackerWrites, 'put', { ...parent.row, ref: 'example/repo#2', state: 'bound' });
+      const linkFacts = await gateway.call(neoTrackerReads, 'facts');
+      const link = planNeoTrackerMirror(linkFacts.asks, linkFacts.todos, linkFacts.mirrors, [adapter])[0];
+      assert.equal(link.action, 'link');
+      assert.equal(await adapter.link(link.parent!, link.row.ref!), true);
+      await gateway.call(neoTrackerWrites, 'put', { ...link.row, parentRef: link.parent! });
+      const linked = await gateway.call(neoTrackerReads, 'facts');
+      assert.equal(planNeoTrackerMirror(linked.asks, linked.todos, linked.mirrors, [adapter]).length, 0);
+      app.db.getDatabase().prepare("UPDATE neo_asks SET status = 'done'").run();
+      await gateway.call(neoTrackerWrites, 'put', { ...parent.row, ref: 'example/repo#2', state: 'closed' });
+      const open = await gateway.call(neoTrackerReads, 'facts');
+      assert.deepEqual(open.mirrors.map((row) => row.ownerId), ['todo']);
+      writeFileSync(join(run, 'evidence/review-fixes.json'), JSON.stringify({ titleOnlyBodies: true, repeatedLinks: 0, closedRowsReturned: 0 }));
       writeFileSync(join(run, 'evidence/recovery.json'), JSON.stringify({ recovered: bound.mirrors[0], port: app.server.port, constructionOnly: true }));
     } finally { await app.cleanup(); }
   }
