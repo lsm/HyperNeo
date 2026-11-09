@@ -47,6 +47,31 @@ function calls(request: ReturnType<typeof vi.fn>, method: string) {
 }
 
 describe('openVoiceStream', () => {
+  it('finishes closing only after the server acknowledges stream cancellation', async () => {
+    let acknowledge: (value: unknown) => void = () => {};
+    const { hub, request } = fakeHub((method) =>
+      method === 'voice.stream.cancel'
+        ? new Promise((resolve) => {
+            acknowledge = resolve;
+          })
+        : streaming(method)
+    );
+    const live = openVoiceStream(hub, vi.fn());
+    await vi.waitFor(() => expect(calls(request, 'voice.stream.start')).toHaveLength(1));
+    let closed = false;
+    const closing = Promise.resolve(live.close()).then(() => {
+      closed = true;
+    });
+    await vi.waitFor(() => expect(calls(request, 'voice.stream.cancel')).toHaveLength(1));
+    try {
+      expect(closed).toBe(false);
+    } finally {
+      acknowledge({ ok: true });
+      await closing;
+    }
+    expect(closed).toBe(true);
+  });
+
   it('does not report a late stop error after the stream was cancelled', async () => {
     let rejectStop: (error: Error) => void = () => {};
     const { hub, request } = fakeHub((method) =>
