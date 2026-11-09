@@ -27,7 +27,19 @@ export class NeoTrackerMirrorRepository {
         ].map((ask) => [ask.id, ask])
       ).values(),
     ];
-    return { asks, todos: store.listTodosForAsks(asks.map((ask) => ask.id)), mirrors };
+    const todos = store.listTodosForAsks(asks.map((ask) => ask.id));
+    const owners = [
+      ...asks.map((ask) => ['ask', ask.id]),
+      ...todos.map((todo) => ['todo', todo.id]),
+    ];
+    const closed = this.db
+      .prepare(`SELECT owner_kind AS ownerKind, owner_id AS ownerId,
+      tracker, home, ref, parent_ref AS parentRef, state, failures, updated_at AS updatedAt
+      FROM json_each(?) AS owner JOIN neo_tracker_mirrors AS mirror
+      ON mirror.owner_kind = json_extract(owner.value, '$[0]')
+      AND mirror.owner_id = json_extract(owner.value, '$[1]') WHERE state = 'closed'`)
+      .all(JSON.stringify(owners)) as NeoTrackerMirror[];
+    return { asks, todos, mirrors: [...mirrors, ...closed] };
   }
   put(row: NeoTrackerMirror) {
     this.db

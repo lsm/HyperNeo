@@ -18,6 +18,7 @@ export type NeoTrackerPlan = {
   item: NeoTrackerItem;
   action: 'create' | 'link' | 'close';
   parent?: string;
+  outcome?: 'completed' | 'not_planned';
 };
 export const neoTrackerMarker = (owner: NeoTrackerOwner) =>
   `hyperneo:${owner.kind}:${owner.todo?.id ?? owner.ask.id}`;
@@ -76,9 +77,29 @@ export function planNeoTrackerMirror(
           mirror.tracker === adapter.id &&
           mirror.state === 'bound'
       )?.ref;
+      const final =
+        owner.todo?.state === 'done' ||
+        owner.todo?.state === 'closed_unverified' ||
+        owner.todo?.state === 'removed';
+      const settled = owner.ask.status !== 'open';
+      const openChildren = mirrors.some(
+        (mirror) =>
+          mirror.ownerKind === 'todo' &&
+          mirror.tracker === adapter.id &&
+          mirror.state !== 'closed' &&
+          todos.some((todo) => todo.id === mirror.ownerId && todo.askId === owner.ask.id)
+      );
       if (row.state === 'creating') plans.push({ row, adapter, item, action: 'create' });
-      else if (owner.kind === 'ask' && owner.ask.status !== 'open')
-        plans.push({ row, adapter, item, action: 'close' });
+      else if (owner.kind === 'todo' && (final || settled))
+        plans.push({
+          row,
+          adapter,
+          item,
+          action: 'close',
+          outcome: owner.todo?.state === 'done' ? 'completed' : 'not_planned',
+        });
+      else if (owner.kind === 'ask' && settled && !openChildren)
+        plans.push({ row, adapter, item, action: 'close', outcome: 'completed' });
       else if (owner.kind === 'todo' && parent && row.parentRef !== parent)
         plans.push({ row, adapter, item, action: 'link', parent });
     }

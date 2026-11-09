@@ -102,7 +102,7 @@ export interface NeoTrackerAdapter {
   create(item: NeoTrackerItem): Promise<{ ref: string } | { reason: string }>;
   find(marker: string, home: string): Promise<string | null>;
   link(parent: string, child: string): Promise<true | { reason: string }>;
-  close(ref: string): Promise<true | { reason: string }>;
+  close(ref: string, outcome: 'completed' | 'not_planned'): Promise<true | { reason: string }>;
 }
 
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
