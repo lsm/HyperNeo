@@ -26,14 +26,16 @@ export async function sweepNeoTrackerMirrors(
   if (active) return active;
   const gateway = gatewayFor(db);
   const sweep = (superpipe({})('neo.tracker.mirror') as PipelineAPI)
+    .input(['adapters'])
     .pipe(() => gateway.call(neoTrackerReads, 'facts'), undefined, 'facts')
     .pipe(
       (
         facts: ReturnType<
           import('../../storage/repositories/neo-tracker-mirror.ts').NeoTrackerMirrorRepository['facts']
-        >
+        >,
+        adapters: readonly NeoTrackerAdapter[]
       ) => planNeoTrackerMirror(facts.asks, facts.todos, facts.mirrors, adapters),
-      'facts',
+      ['facts', 'adapters'],
       'plans'
     )
     .pipe(
@@ -79,8 +81,8 @@ export async function sweepNeoTrackerMirrors(
       'plans',
       'done'
     )
-    .endAsync('done') as () => Promise<void>;
-  const pending = sweep().finally(() => activeSweeps.delete(db));
+    .endAsync('done') as (adapters: readonly NeoTrackerAdapter[]) => Promise<void>;
+  const pending = sweep(adapters).finally(() => activeSweeps.delete(db));
   activeSweeps.set(db, pending);
   return pending;
 }
