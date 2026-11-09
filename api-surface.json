@@ -29243,9 +29243,21 @@
                         "type": "integer"
                       },
                       "cursor": {
-                        "maximum": 9007199254740991,
-                        "minimum": 0,
-                        "type": "integer"
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "updatedAt",
+                          "id"
+                        ],
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -38275,9 +38287,20 @@
         "default": {},
         "properties": {
           "cursor": {
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "updatedAt",
+              "id"
+            ],
+            "type": "object"
           },
           "projectId": {
             "minLength": 1,
@@ -38383,9 +38406,21 @@
                         "type": "integer"
                       },
                       "cursor": {
-                        "maximum": 9007199254740991,
-                        "minimum": 0,
-                        "type": "integer"
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "updatedAt",
+                          "id"
+                        ],
+                        "type": "object"
                       }
                     },
                     "required": [

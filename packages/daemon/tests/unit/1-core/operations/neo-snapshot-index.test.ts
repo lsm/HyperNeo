@@ -159,7 +159,7 @@ test('RPC snapshot output is unchanged by MCP paging', async () => {
   seed(40);
   const before = await snapshot(rpc);
   await snapshot();
-  const after = await snapshot(rpc, { cursor: 30 });
+  const after = await snapshot(rpc, { cursor: { updatedAt: 10, id: 'index-10' } });
   expect(after).toEqual(before);
   expect(after.todoAsks).toHaveLength(40);
   expect(after).not.toHaveProperty('more');
@@ -210,6 +210,41 @@ test('MCP historyCursor retains the finished-ask continuation', async () => {
   expect(index.historyCursor).toEqual(app.historyCursor);
   expect(index.historyCursor).not.toBeNull();
   expect(index.todoAsks).toEqual(app.todoAsks);
-  const page = await snapshot(mcp, { cursor: 30 });
+  const page = await snapshot(mcp, { cursor: { updatedAt: 15, id: 'index-15' } });
   expect(page.todoAsks).toEqual([]);
+});
+
+test.each(['settle', 'insert'] as const)(
+  'a %s between pages does not skip or duplicate existing open asks',
+  async (change) => {
+    seed(65);
+    const first = await snapshot();
+    if (change === 'settle') {
+      db.getDatabase().exec("UPDATE neo_asks SET status = 'done' WHERE id = 'index-64'");
+    } else {
+      db.getDatabase().exec(
+        "INSERT INTO neo_asks (id, session_id, title, request, status, created_at, updated_at) VALUES ('new-ask', 'neo:index', 'New ask', '', 'open', 1000, 1000)"
+      );
+    }
+    const seen = first.todoAsks!.map((entry) => entry.ask.id);
+    let page = first;
+    while (page.more?.asks) {
+      page = await snapshot(mcp, { cursor: page.more.asks.cursor });
+      seen.push(...page.todoAsks!.map((entry) => entry.ask.id));
+    }
+    expect(seen).toEqual(Array.from({ length: 65 }, (_, i) => `index-${64 - i}`));
+  }
+);
+
+test('equal update times page in the same id order as RPC', async () => {
+  seed(65);
+  db.getDatabase().exec('UPDATE neo_asks SET updated_at = 1');
+  const expected = (await snapshot(rpc)).todoAsks!.map((entry) => entry.ask.id);
+  let page = await snapshot();
+  const seen = page.todoAsks!.map((entry) => entry.ask.id);
+  while (page.more?.asks) {
+    page = await snapshot(mcp, { cursor: page.more.asks.cursor });
+    seen.push(...page.todoAsks!.map((entry) => entry.ask.id));
+  }
+  expect(seen).toEqual(expected);
 });

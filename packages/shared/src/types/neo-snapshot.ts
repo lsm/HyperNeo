@@ -205,7 +205,7 @@ export interface NeoSnapshot {
   packRows?: NeoPackRows[];
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
   more?: {
-    asks?: { count: number; cursor: number };
+    asks?: { count: number; cursor: { updatedAt: number; id: string } };
     working?: { count: number };
   };
 }

@@ -79,6 +79,17 @@ try {
     assert.equal(seen.length, 40);
     assert.equal(new Set(seen).size, 40);
     console.log(`Cursor walk total asks: ${seen.length}`);
+    const changing = await snapshot();
+    raw.exec("UPDATE neo_asks SET status = 'done' WHERE id = 'ask-39'");
+    raw.prepare("INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('incoming',?,'New ask','','open',1000,1000)").run(sessionId);
+    const concurrentSeen = changing.todoAsks.map((entry: { ask: { id: string } }) => entry.ask.id);
+    let concurrentPage = changing;
+    while (concurrentPage.more?.asks) {
+      concurrentPage = await snapshot({ cursor: concurrentPage.more.asks.cursor });
+      concurrentSeen.push(...concurrentPage.todoAsks.map((entry: { ask: { id: string } }) => entry.ask.id));
+    }
+    assert.deepEqual(concurrentSeen, seen);
+    console.log('Concurrent walk preserved original asks: true');
   } else {
     assert.equal(first.todoAsks.length, 30, 'Baseline must fail the new first-page contract');
   }
