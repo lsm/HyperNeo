@@ -1,3 +1,4 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { Logger } from '../../../../src/lib/logger.ts';
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -273,4 +274,28 @@ test('link failures stop at the same cap', async () => {
   for (let sweep = 0; sweep < 5; sweep++) await sweepNeoTrackerMirrors(db, [adapter]);
   expect(attempts).toBe(3);
   expect(mirrors.facts().mirrors.find((row) => row.ownerKind === 'todo')?.failures).toBe(3);
+});
+
+test('an uncertain close write never restores the stale bound row', async () => {
+  await sweepNeoTrackerMirrors(db, [adapter]);
+  db.prepare("UPDATE neo_asks SET status = 'done'").run();
+  const gateway = gatewayFor(db);
+  const run = gateway.run.bind(gateway);
+  const write = spyOn(gateway, 'run').mockImplementation((async (op, args) => {
+    const result = await run(op, args);
+    const input = args as { method?: string; args?: [{ state: string }] };
+    if (op.name === 'neo.tracker.write' && input.args?.[0].state === 'closed')
+      throw new Error('DB gateway write outcome unknown');
+    return result;
+  }) as typeof gateway.run);
+  try {
+    await expect(sweepNeoTrackerMirrors(db, [adapter])).rejects.toThrow('outcome unknown');
+  } finally {
+    write.mockRestore();
+  }
+  expect(db.prepare('SELECT state FROM neo_tracker_mirrors').get()).toMatchObject({
+    state: 'closed',
+  });
+  await sweepNeoTrackerMirrors(db, [adapter]);
+  expect(closed).toEqual(['example/repo#1']);
 });

@@ -42,8 +42,8 @@ export async function sweepNeoTrackerMirrors(
           const write = (change: Partial<typeof row>) =>
             gateway.call(neoTrackerWrites, 'put', { ...row, updatedAt: Date.now(), ...change });
           await write({});
+          let ref = row.ref;
           try {
-            let ref = row.ref;
             if (action === 'create') {
               const result =
                 planNeoTrackerRecovery(row, await adapter.find(item.marker, row.home)) ??
@@ -57,12 +57,6 @@ export async function sweepNeoTrackerMirrors(
                   : await adapter.close(ref!, outcome!);
               if (result !== true) throw new Error(result.reason);
             }
-            await write({
-              ref,
-              parentRef: action === 'link' ? parent! : row.parentRef,
-              state: action === 'close' ? 'closed' : 'bound',
-              failures: 0,
-            });
           } catch (error) {
             const failures = row.failures + 1;
             await write({ failures });
@@ -72,7 +66,14 @@ export async function sweepNeoTrackerMirrors(
                 { ownerKind: row.ownerKind, ownerId: row.ownerId, tracker: row.tracker, action },
                 error
               );
+            continue;
           }
+          await write({
+            ref,
+            parentRef: action === 'link' ? parent! : row.parentRef,
+            state: action === 'close' ? 'closed' : 'bound',
+            failures: 0,
+          });
         }
       },
       'plans',
