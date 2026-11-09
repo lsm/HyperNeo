@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
@@ -18,6 +19,24 @@ assert(!existsSync(join(run, 'data')));
 for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) assert.equal(process.env[key], undefined);
 for (const dir of ['bin', 'evidence', 'workspace']) mkdirSync(join(run, dir), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
+const sourceFiles = (directory: string): string[] => readdirSync(directory, { withFileTypes: true })
+  .flatMap(entry => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? sourceFiles(path) : entry.isFile() ? [path] : [];
+  });
+const materialFiles = [
+  ...['packages/daemon/src', 'packages/shared/src', 'packages/space/src',
+    'packages/prompts/src', 'scripts', '.claude/skills/verify'].flatMap(sourceFiles),
+  'package.json', 'bun.lock',
+].sort();
+const material = Object.fromEntries(materialFiles.map(path => [path,
+  createHash('sha256').update(readFileSync(path)).digest('hex')]));
+writeFileSync(join(run, 'evidence/source-material.json'), JSON.stringify({
+  head: process.argv[3], headSource: process.argv[4],
+  materialHash: createHash('sha256').update(JSON.stringify(material)).digest('hex'), files: material,
+}, null, 2));
+writeFileSync(join(run, 'evidence/head.txt'), `${process.argv[3]}\n`);
+
 const root = `neo:${crypto.randomUUID()}`;
 const app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
 const sdk = createOperationMcpServer(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));

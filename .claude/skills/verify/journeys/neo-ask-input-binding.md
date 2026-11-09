@@ -9,8 +9,12 @@ bash .claude/skills/verify/resource-check.sh && \
 ```
 
 For an archived source snapshot without Git metadata, supply its verified full
-commit SHA as the second argument. Retain the matching source hashes separately.
-The wrapper records that SHA in evidence/head.txt.
+commit SHA as the second argument. Git checkouts reject a supplied SHA that
+differs from HEAD. Archives require a full SHA and label it declared-archive.
+The proof pairs that identity with actual source-file SHA-256 hashes and their
+combined material hash in evidence/source-material.json. Compare those hashes
+against the claimed commit before accepting archive evidence. The SHA is also
+recorded in evidence/head.txt.
 
 The helper starts an isolated daemon with NODE_ENV=test, fresh HOME, data and DB,
 an ephemeral port, no provider and a refusing gh stub. It stops its job processor
