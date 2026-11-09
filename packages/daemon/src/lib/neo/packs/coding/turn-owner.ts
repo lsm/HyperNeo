@@ -14,6 +14,11 @@ export type CodingTurnOwner =
   | { state: 'unknown' }
   | { state: 'none' };
 
+export type CodingTurnProducer =
+  | { state: 'placed'; session: WorkRef; turns: readonly CodingTurn[] }
+  | { state: 'unknown' }
+  | { state: 'none' };
+
 const ABORTED = /abort|interrupt/;
 
 const namedPrKeys = (todo: Pick<NeoTodo, 'check'>) => {
@@ -56,11 +61,10 @@ export function codingTurnBoundUnknown(turn: CodingTurn, todos: CodingTurnTodos)
 export const codingTurnSessionKey = ({ adapter, id, daemon }: WorkRef) =>
   JSON.stringify([adapter, id, daemon]);
 
-export function planCodingTurnOwner(
+export function planCodingTurnProducer(
   pr: { url: string; createdAt?: number },
-  turns: readonly CodingTurn[],
-  todos: CodingSessionTodos
-): CodingTurnOwner {
+  turns: readonly CodingTurn[]
+): CodingTurnProducer {
   const key = codingPrKey(pr.url);
   const isPr = (url: string) => codingPrKey(url) === key;
   const shown = turns.filter((turn) => turn.urls.some(isPr));
@@ -75,6 +79,17 @@ export function planCodingTurnOwner(
     return { state: 'unknown' };
   if (!reported.length && (inside.length > 1 || inside[0].finalUrls.some(codingPrKey)))
     return { state: 'unknown' };
+  return { state: 'placed', session: placing[0].ref, turns: placing };
+}
+
+export function planCodingTurnOwner(
+  pr: { url: string; createdAt?: number },
+  turns: readonly CodingTurn[],
+  todos: CodingSessionTodos
+): CodingTurnOwner {
+  const producer = planCodingTurnProducer(pr, turns);
+  if (producer.state !== 'placed') return producer;
+  const placing = producer.turns;
   const sessionTodos = (turn: CodingTurn) => todos[codingTurnSessionKey(turn.ref)] ?? {};
   if (placing.some((turn) => codingTurnBoundUnknown(turn, sessionTodos(turn))))
     return { state: 'unknown' };
