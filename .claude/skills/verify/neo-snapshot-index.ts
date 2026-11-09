@@ -93,6 +93,11 @@ try {
     }
     assert.deepEqual(concurrentSeen, seen);
     console.log('Concurrent walk preserved original asks: true');
+    raw.exec("UPDATE neo_asks SET updated_at = 2000 WHERE id = 'ask-5'");
+    const continuation = await snapshot({ cursor: first.more.asks.cursor });
+    assert(!continuation.todoAsks.some((entry: { ask: { id: string } }) => entry.ask.id === 'ask-5'));
+    assert.equal((await snapshot()).todoAsks[0].ask.id, 'ask-5');
+    console.log('Fresh restart reveals updated unseen ask: true');
   } else {
     assert.equal(first.todoAsks.length, 30, 'Baseline must fail the new first-page contract');
   }

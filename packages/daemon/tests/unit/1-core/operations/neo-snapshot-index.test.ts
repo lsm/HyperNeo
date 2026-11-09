@@ -261,3 +261,13 @@ test('cursor replies contain the next ask page and shared counts', async () => {
     ['ok', 'sessionId', 'projects', 'todoAsks', 'needsYou', 'neoUnhandled', 'rev'].sort()
   );
 });
+
+test('a fresh first page reveals an unseen ask updated ahead of the cursor', async () => {
+  seed(65);
+  const first = await snapshot();
+  db.getDatabase().exec("UPDATE neo_asks SET updated_at = 1000 WHERE id = 'index-10'");
+  const next = await snapshot(mcp, { cursor: first.more!.asks!.cursor });
+  expect(next.todoAsks!.some((entry) => entry.ask.id === 'index-10')).toBe(false);
+  const refreshed = await snapshot();
+  expect(refreshed.todoAsks![0].ask.id).toBe('index-10');
+});
