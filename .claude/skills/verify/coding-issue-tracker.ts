@@ -142,10 +142,37 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
         external().issues.filter((issue) => issue.body.includes('hyperneo:ask:timeout')).length,
         1
       );
+      const privateIssueCount = external().issues.length;
+      store.openAsk({
+        id: 'public',
+        projectId: null,
+        sessionId: 'synthetic',
+        originMessageId: null,
+        title: 'Private plan title',
+        request: 'Private details',
+        createdAt: 4,
+      });
+      add('public-child', 'example/public', 'public');
+      app.db
+        .getDatabase()
+        .prepare(
+          "INSERT INTO neo_pack_preferences VALUES ('coding','repo','example/public','mirror_issues','true','human',2)"
+        )
+        .run();
+      for (let attempt = 0; attempt < 4; attempt++) await neo.sweepPacks();
+      assert.equal(external().issues.length, privateIssueCount);
+      const refused = await app.db.gateway.call(neoTrackerReads, 'facts');
+      const publicRows = refused.mirrors.filter(
+        (row) => row.ownerId === 'public' || row.ownerId === 'public-child'
+      );
+      assert.equal(publicRows.length, 2);
+      assert(publicRows.every((row) => row.failures === 3));
       writeFileSync(
         join(run, 'evidence/observed.json'),
         JSON.stringify({
           parentCreateCount: 1,
+          publicCreateCount: 0,
+          publicFailureCounts: publicRows.map((row) => row.failures),
           crossRepoChildren: true,
           lateStep: true,
           completedClose: true,
@@ -182,7 +209,9 @@ parts = endpoint.split('/')
 repo = '/'.join(parts[1:3])
 number = int(parts[4]) if len(parts) > 4 else None
 key = repo + '#' + str(number)
-if len(parts) == 4 and method == 'POST':
+if len(parts) == 3:
+  result = {'private': repo != 'example/public'}
+elif len(parts) == 4 and method == 'POST':
   if os.path.exists(os.path.join(root, 'slow-create')) and 'hyperneo:ask:timeout' in fields['body']:
     json.dump({'pid': os.getpid()}, open(os.path.join(root, 'hung-gh.json'), 'w'))
     time.sleep(60)
@@ -229,6 +258,6 @@ print(json.dumps(result))
   writeFileSync(join(run, 'evidence/recovery.log'), (await out) + (await err));
   assert.equal(exit, 0);
   console.log(
-    'PASS: GitHub adapter service sweep; parentCreateCount=1; recoveryExit=0; timedOutGhAlive=false'
+    'PASS: GitHub adapter service sweep; parentCreateCount=1; recoveryExit=0; timedOutGhAlive=false; publicCreateCount=0'
   );
 }

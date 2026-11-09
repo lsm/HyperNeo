@@ -93,6 +93,7 @@ test('a cross-repo plan has one parent in the first enabled repository', () => {
 test('create, marker lookup, sub-issue link and close use REST fields', async () => {
   const calls: string[][] = [];
   const replies: unknown[] = [
+    { private: true },
     { id: 10, number: 1 },
     [{ id: 10, number: 1, body: item.body }],
     { id: 20, number: 2 },
@@ -113,14 +114,14 @@ test('create, marker lookup, sub-issue link and close use REST fields', async ()
   expect(await adapter.link('example/one#1', 'example/two#2')).toBe(true);
   expect(await adapter.close('example/one#1', 'completed')).toBe(true);
   expect(await adapter.close('example/two#2', 'not_planned')).toBe(true);
-  expect(calls[0]).toEqual(
+  expect(calls[1]).toEqual(
     expect.arrayContaining(['repos/example/one/issues', 'title=Plan', `body=${item.body}`])
   );
-  expect(calls[4]).toEqual(
+  expect(calls[5]).toEqual(
     expect.arrayContaining(['repos/example/one/issues/1/sub_issues', 'sub_issue_id=20'])
   );
-  expect(calls[5]).toContain('state_reason=completed');
-  expect(calls[6]).toContain('state_reason=not_planned');
+  expect(calls[6]).toContain('state_reason=completed');
+  expect(calls[7]).toContain('state_reason=not_planned');
 });
 
 test('an existing sub-issue link is idempotent', async () => {
@@ -135,18 +136,27 @@ test('an existing sub-issue link is idempotent', async () => {
 
 test('a timed-out create kills its gh subprocess', async () => {
   let finish!: (code: number) => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let calls = 0;
   const kill = mock(() => finish(137));
   const adapter = tracker(
     () => true,
-    () => ({
-      stdout: null,
-      stderr: null,
-      exited: new Promise((resolve) => {
-        finish = resolve;
-      }),
-      exitCode: null,
-      kill,
-    })
+    () => {
+      if (++calls === 1) return response({ private: true });
+      entered();
+      return {
+        stdout: null,
+        stderr: null,
+        exited: new Promise((resolve) => {
+          finish = resolve;
+        }),
+        exitCode: null,
+        kill,
+      };
+    }
   );
   jest.useFakeTimers();
   try {
@@ -155,6 +165,7 @@ test('a timed-out create kills its gh subprocess', async () => {
       () => null,
       (error: unknown) => error
     );
+    await started;
     jest.advanceTimersByTime(30_000);
     expect(kill).toHaveBeenCalledWith('SIGKILL');
     expect(await failed).toBeInstanceOf(Error);
@@ -253,4 +264,39 @@ test('recovery bounds history by the recorded owner creation time', async () => 
   );
   expect(await adapter.find(item.marker, item.home)).toBeNull();
   expect(request).toContain('since=2025-12-31T23:59:59Z');
+});
+
+test('a public repository creates nothing and reports public_repository', async () => {
+  const calls: string[][] = [];
+  const adapter = tracker(
+    () => true,
+    (args) => {
+      calls.push(args);
+      return response(args.includes('POST') ? { id: 10, number: 1 } : { private: false });
+    }
+  );
+  expect(await adapter.create(item)).toEqual({
+    reason: 'public_repository: issue mirroring is for private repositories only',
+  });
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toContain('repos/example/one');
+  expect(calls[0]).not.toContain('POST');
+  expect(calls[0]).not.toContain(`body=${item.body}`);
+});
+
+test('a private repository creates as before', async () => {
+  const calls: string[][] = [];
+  const adapter = tracker(
+    () => true,
+    (args) => {
+      calls.push(args);
+      return response(args.includes('POST') ? { id: 10, number: 1 } : { private: true });
+    }
+  );
+  expect(await adapter.create(item)).toEqual({ ref: 'example/one#1' });
+  expect(calls).toHaveLength(2);
+  expect(calls[0]).toContain('repos/example/one');
+  expect(calls[1]).toEqual(
+    expect.arrayContaining(['repos/example/one/issues', 'POST', `body=${item.body}`])
+  );
 });

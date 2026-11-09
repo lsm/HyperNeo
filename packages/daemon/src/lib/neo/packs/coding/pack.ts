@@ -138,7 +138,7 @@ export function createCodingPack(deps: {
         scope: 'repo',
         type: { kind: 'boolean' },
         default: false,
-        ask: 'Mirror plans and their todos to GitHub Issues in this repository?',
+        ask: 'Mirror plans and their todos to GitHub Issues in this private repository?',
       },
       watchedRepos: {
         label: { en: 'Watched repositories', 'zh-Hans': '关注的仓库' },

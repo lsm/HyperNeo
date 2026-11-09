@@ -80,6 +80,9 @@ export function createCodingIssueTracker(deps: {
     home,
     create: (item) =>
       operation(spawn, async (api) => {
+        const repository = await api([`repos/${item.home}`]);
+        if (!z.object({ private: z.literal(true) }).safeParse(repository).success)
+          return { reason: 'public_repository: issue mirroring is for private repositories only' };
         const issue = Issue.parse(
           await api([
             `repos/${item.home}/issues`,
