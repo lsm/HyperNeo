@@ -26,7 +26,7 @@ try {
   const registry = app.sessionManager.getOperationRegistry();
   for (const name of ['neo.todo.add', 'neo.todo.edit']) {
     const description = registry.entries.find(op => op.name === name)!.description;
-    for (const term of ['one PR per todo', 'pr_merged', 'after', 'addUrls']) assert(description.includes(term), `${name}: ${term}`);
+    for (const term of ['one PR per todo', 'merge check', 'after', 'addUrls']) assert(description.includes(term), `${name}: ${term}`);
     evidence.push({ name, description });
   }
   const handler = createOperationMcpHandler(() => registry, () => ({ sessionId: sender, role: 'neo' }));
@@ -42,9 +42,13 @@ try {
   for (const term of ['one PR per todo', 'queue starts', 'Example:', 'addUrls']) assert(pack.instructions.includes(term));
   const store = new NeoAskTodoRepository(db);
   store.openAsk({ id: 'ask', sessionId: sender, projectId: null, originMessageId: null, title: 'Parser and callers', request: 'Track two PRs separately', createdAt: 1 });
-  const check = { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/example/project/pull/123'] } };
+  const check = { pack: 'coding', kind: 'pr_merged', params: {} };
   const first = await invoke('neo.todo.add', { askId: 'ask', title: 'Extract parser', check });
-  const second = await invoke('neo.todo.add', { askId: 'ask', title: 'Update callers', after: [first.todo.id], check: { ...check, params: { urls: ['https://github.com/example/project/pull/124'] } } });
+  const second = await invoke('neo.todo.add', { askId: 'ask', title: 'Update callers', after: [first.todo.id], check });
+  assert.deepEqual(store.getTodo(first.todo.id)!.check?.params, {});
+  assert.deepEqual(store.getTodo(second.todo.id)!.check?.params, {});
+  await invoke('neo.todo.edit', { todoId: first.todo.id, addUrls: ['https://github.com/example/project/pull/123'] });
+  await invoke('neo.todo.edit', { todoId: second.todo.id, addUrls: ['https://github.com/example/project/pull/124'] });
   assert.deepEqual(store.getTodo(second.todo.id)!.dependsOn, [first.todo.id]);
   assert.deepEqual(store.getTodo(first.todo.id)!.check?.params.urls, ['https://github.com/example/project/pull/123']);
   assert.deepEqual(store.getTodo(second.todo.id)!.check?.params.urls, ['https://github.com/example/project/pull/124']);

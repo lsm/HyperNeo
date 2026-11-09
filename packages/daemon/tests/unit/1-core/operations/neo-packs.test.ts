@@ -1,4 +1,3 @@
-import ts from 'typescript';
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -88,24 +87,7 @@ describe('core stays pack-agnostic', () => {
       ),
     ].filter((file) => file.endsWith('.ts'));
     const offending = files
-      .filter((file) => {
-        let text = readFileSync(file, 'utf8');
-        const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-        const descriptions: ts.Node[] = [];
-        const visit = (node: ts.Node) => {
-          if (
-            ts.isPropertyAssignment(node) &&
-            node.name.getText(source) === 'description' &&
-            ts.isStringLiteralLike(node.initializer)
-          )
-            descriptions.push(node.initializer);
-          ts.forEachChild(node, visit);
-        };
-        visit(source);
-        for (const node of descriptions.sort((a, b) => b.pos - a.pos))
-          text = text.slice(0, node.pos) + text.slice(node.end);
-        return /['"`]coding['"`.]|pr_merged/.test(text);
-      })
+      .filter((file) => /['"`]coding['"`.]|pr_merged/.test(readFileSync(file, 'utf8')))
       .map((file) => relative(src, file));
     expect(files.length).toBeGreaterThan(20);
     expect(offending).toEqual([]);

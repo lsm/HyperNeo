@@ -17,7 +17,7 @@ const operations = createNeoTodoOperations(
 
 test.each(['neo.todo.add', 'neo.todo.edit'])('%s explains the PR todo chain', (name) => {
   const description = operations.find((op) => op.name === name)!.description;
-  for (const term of ['one PR per todo', 'pr_merged', 'after', 'addUrls'])
+  for (const term of ['one PR per todo', 'merge check', 'after', 'addUrls'])
     expect(description).toContain(term);
 });
 
