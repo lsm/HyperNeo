@@ -69,11 +69,22 @@ describe('pack setting changes reach Neo at once', () => {
     expect(text).toContain('delegation');
     expect(text).toContain('humanStep');
     expect(text).toContain('"phoneOnly"');
+    expect(text).toContain('unset (default)');
     expect(db.getSession('neo:root')!.config.systemPrompt).toContain(
       '"humanStep":{"value":"phoneOnly","configured":true}'
     );
     expect(await run(humanStep)).toMatchObject({ value: { ok: true } });
     expect(told).toHaveBeenCalledTimes(1);
+    expect(await run({ ...humanStep, value: 'computer' })).toMatchObject({ value: { ok: true } });
+    expect(told).toHaveBeenCalledTimes(2);
+    expect(told.mock.calls[1][2]).toContain('was "phoneOnly"');
+    expect(await run({ ...setting, scope: { kind: 'global', key: '' } })).toMatchObject({
+      value: { ok: true },
+    });
+    expect(await run(setting)).toMatchObject({ value: { ok: true } });
+    expect(told).toHaveBeenCalledTimes(4);
+    expect(told.mock.calls[3][2]).toContain('repo synthetic/repo');
+    expect(told.mock.calls[3][2]).toContain('unset (default)');
     live.dispose();
   });
 });

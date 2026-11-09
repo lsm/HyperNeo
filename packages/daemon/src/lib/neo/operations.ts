@@ -712,7 +712,11 @@ export function createNeoOperations(service: NeoService) {
       () => service.db.getGlobalSettings().language
     ),
     createNeoPreferenceOperation(service),
-    ...createPackPreferenceOperations(service.db.getDatabase(), () => service.installedPacks()),
+    ...createPackPreferenceOperations(
+      service.db.getDatabase(),
+      () => service.installedPacks(),
+      (change) => service.preferenceChanged(change)
+    ),
     ...wireNeoTodoMutations(
       createNeoTodoOperations(
         service.todos,

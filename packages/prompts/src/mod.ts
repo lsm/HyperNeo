@@ -65,6 +65,7 @@ import mdneoPacksDelegationInstructions from './neo/packs/delegation/instruction
 };
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
 import mdneoWorkBlocker from './neo/work/blocker.md' with { type: 'text' };
+import mdneoWorkPreferenceChanged from './neo/work/preference-changed.md' with { type: 'text' };
 
 export { fillPrompt } from './loader.ts';
 import { parseSkillMarkdown, type SkillMarkdown } from './loader.ts';
@@ -294,6 +295,7 @@ const registry: Record<string, string> = {
   'neo/work/files.md': mdneoWorkFiles,
   'neo/work/goal.md': mdneoWorkGoal,
   'neo/work/blocker.md': mdneoWorkBlocker,
+  'neo/work/preference-changed.md': mdneoWorkPreferenceChanged,
   'agents/default-instructions.md': mdagentsDefaultInstructions,
   'evolution/episode-judge.md': mdevolutionEpisodeJudge,
   'providers/codex-probe-instructions.md': mdprovidersCodexProbeInstructions,
@@ -429,6 +431,7 @@ export const {
   NEO_WORK_GOAL_REMAINING,
   NEO_WORK_GOAL,
   NEO_WORK_BLOCKER,
+  NEO_PREFERENCE_CHANGED,
   NEO_NON_CODING_FILES,
   AGENT_DEFAULT_INSTRUCTIONS,
   EVOLUTION_EPISODE_JUDGE_PROMPT,

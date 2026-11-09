@@ -43,7 +43,8 @@ import { z } from 'zod';
 import { readNeoSessionSource } from './session-open-source.ts';
 import { presentNeoPublications } from './publication-presentation.ts';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
+import { fillPrompt, NEO_PREFERENCE_CHANGED, NEO_SESSION_TRACK } from '@hyperneo/prompts';
+import type { PackPreferenceChange } from './preference-operations.ts';
 import type {
   GlobalSettings,
   MessageHub,
@@ -947,6 +948,29 @@ export class NeoService {
 
   defaultSessionId(): string | undefined {
     return this.repo.defaultBinding()?.sessionId;
+  }
+
+  async preferenceChanged(change: PackPreferenceChange): Promise<void> {
+    const root = this.defaultSessionId();
+    if (!root || !this.db.getSession(root)) return;
+    await this.alignCoordinatorConfig(root).catch((error) =>
+      this.log.warn('Neo prompt refresh after pack setting change failed', error)
+    );
+    const scope =
+      change.scope.kind === 'global' ? 'global' : `${change.scope.kind} ${change.scope.key}`;
+    await this.deliverForward(
+      root,
+      `neo-preference:${crypto.randomUUID()}`,
+      fillPrompt(NEO_PREFERENCE_CHANGED, {
+        pack: change.pack,
+        key: change.key,
+        scope,
+        value: JSON.stringify(change.value),
+        before: change.before === undefined ? 'unset (default)' : JSON.stringify(change.before),
+      }),
+      root,
+      'event'
+    ).catch((error) => this.log.warn('Neo pack setting notice delivery failed', error));
   }
 
   async openDefault(): Promise<string> {
