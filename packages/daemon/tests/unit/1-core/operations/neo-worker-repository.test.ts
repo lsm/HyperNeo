@@ -4,6 +4,7 @@ import { createCodingTodoPolicy } from '../../../../src/lib/neo/packs/coding/tod
 
 const policy = createCodingTodoPolicy({ urls: () => [] });
 const draft = {
+  title: 'Synthetic coding work',
   check: { pack: 'coding', kind: 'pr_merged', params: {} },
   instruction: 'Implement the change',
   named: { repository: 'example/repo' },
@@ -44,7 +45,10 @@ describe('remote todo worker repository resolution', () => {
       const ref = { ...draft.target.ref, daemon: 'remote-owner' };
       const resolved = await resolveNeoTodoDraft(
         { ...draft, target: { verb: 'send', ref }, start: false, priority: 'normal' },
-        async () => ({ value: ref, place: { folder: '/not-a-local-worker', remotes } })
+        async () => ({
+          value: ref,
+          place: { folder: '/not-a-local-worker', remotes: remotes ? [...remotes] : undefined },
+        })
       );
       expect('reason' in resolved).toBe(false);
       if ('reason' in resolved) throw new Error('Unexpected resolution failure');
