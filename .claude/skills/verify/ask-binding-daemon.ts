@@ -114,11 +114,33 @@ try {
   evidence.afterSettlement = afterSettlement;
   evidence.parallel = parallel;
   console.log('PASS settled input opens a fresh ask; parallel input calls share one ask');
+  const mixed = [];
+  for (const firstClaim of ['open', 'bind']) {
+    const input = await human(`Continue the query with ${firstClaim} submitted first`);
+    const before = store.listOpenAsks().length;
+    const open = { input, title: 'Check the query', check };
+    const bind = { ...open, askId: afterSettlement.todo.askId };
+    const receipts = await Promise.all((firstClaim === 'open' ? [open, bind] : [bind, open])
+      .map(request => call('neo.todo.add', request)));
+    const accepted = receipts.filter(receipt => receipt.ok);
+    assert(accepted.length > 0, JSON.stringify(receipts));
+    const winner = accepted[0].todo.askId;
+    assert(accepted.every(receipt => receipt.todo.askId === winner), JSON.stringify(receipts));
+    for (const receipt of receipts.filter(receipt => !receipt.ok)) {
+      assert.match(receipt.reason, new RegExp(`ask_mismatch:.*belongs to ask ${winner}`));
+    }
+    const repeated = await call('neo.todo.add', { ...open, title: 'Verify the chosen owner' });
+    assert(repeated.ok && repeated.todo.askId === winner, JSON.stringify(repeated));
+    assert.equal(store.listOpenAsks().length, before + Number(winner !== bind.askId));
+    mixed.push({ firstSubmitted: firstClaim, winner, receipts, repeated });
+  }
+  evidence.mixed = mixed;
+  console.log('PASS mixed bind/open MCP calls select one owner in both submission orders');
   restorePrepare();
   evidence.mainThreadBindingQueries = mainThreadBindingQueries;
   assert.equal(mainThreadBindingQueries, 0, 'Input bindings must use the DB gateway worker');
   evidence.links = app.db.getDatabase().prepare('SELECT session_id, message_id, ask_id FROM neo_ask_inputs').all();
-  assert.equal((evidence.links as unknown[]).length, 1);
+  assert.equal((evidence.links as unknown[]).length, 5);
   console.log(`PASS ask count=${count}; bound todo askId=${bound.todo.askId}; reused todo askId=${reused.todo.askId}`);
 } finally {
   restorePrepare();

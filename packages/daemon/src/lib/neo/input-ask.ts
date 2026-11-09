@@ -63,6 +63,16 @@ export function planNeoInputAsk(
   return owner ? { use: owner } : { bind: request.askId };
 }
 
+const neoInputAsk = (superpipe({})('neo.input.ask') as PipelineAPI)
+  .input(['facts', 'request', 'claim'])
+  .pipe(planNeoInputAsk, ['facts', 'request'], 'plan')
+  .pipe(
+    (plan: Plan, claim: (plan: Plan) => Promise<Binding>) => claim(plan),
+    ['plan', 'claim'],
+    'binding'
+  )
+  .endAsync('binding');
+
 export async function resolveNeoInputAsk(
   store: NeoAskTodoRepository,
   reads: NeoInputReads,
@@ -95,49 +105,27 @@ export async function resolveNeoInputAsk(
     boundAsk: await store.findAskInput(sessionId, messageId),
     target: request.askId ? store.getAsk(request.askId) : null,
   };
-  return (superpipe({})('neo.input.ask') as PipelineAPI)
-    .input(['facts', 'request'])
-    .pipe(planNeoInputAsk, ['facts', 'request'], 'plan')
-    .pipe(
-      async (plan: Plan): Promise<Binding> => {
-        if ('refuse' in plan) return { reason: { ok: false, reason: plan.refuse } };
-        if ('use' in plan) return { value: { askId: plan.use } };
-        if ('bind' in plan) {
-          const winner = await store.bindAskInput(
-            sessionId,
-            human.askOrigin.messageId,
-            plan.bind,
-            Date.now()
-          );
-          return winner === plan.bind
-            ? { value: { askId: winner } }
-            : {
-                reason: {
-                  ok: false,
-                  reason: winner ? mismatch(request.input, winner, plan.bind) : settled,
-                },
-              };
-        }
-        const ask =
-          store.findAsk(sessionId, messageId, null) ??
-          store.openAsk({
-            id: crypto.randomUUID(),
-            projectId: null,
-            goalId: null,
-            sessionId,
-            originMessageId: human.askOrigin.messageId,
-            title:
-              title
-                .split('\n')[0]
-                .replace(/^[#*\s]+|\*+/g, '')
-                .slice(0, 120) || title,
-            request: words(human.content) || title,
-            createdAt: Date.now(),
-          });
-        return { value: { askId: ask.id } };
-      },
-      'plan',
-      'binding'
-    )
-    .endAsync('binding')(facts, { ...request, sessionId }) as Promise<Binding>;
+  return neoInputAsk(facts, { ...request, sessionId }, async (plan: Plan): Promise<Binding> => {
+    if ('refuse' in plan) return { reason: { ok: false, reason: plan.refuse } };
+    if ('use' in plan) return { value: { askId: plan.use } };
+    const winner = await store.claimNeoInputAsk({
+      sessionId,
+      messageId,
+      ...('bind' in plan ? { askId: plan.bind } : {}),
+      title:
+        title
+          .split('\n')[0]
+          .replace(/^[#*\s]+|\*+/g, '')
+          .slice(0, 120) || title,
+      request: words(human.content) || title,
+    });
+    return winner && (!('bind' in plan) || winner === plan.bind)
+      ? { value: { askId: winner } }
+      : {
+          reason: {
+            ok: false,
+            reason: winner && 'bind' in plan ? mismatch(request.input, winner, plan.bind) : settled,
+          },
+        };
+  }) as Promise<Binding>;
 }

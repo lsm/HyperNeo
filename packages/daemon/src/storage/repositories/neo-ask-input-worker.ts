@@ -1,5 +1,14 @@
 import type { Database } from '../sqlite-compat.ts';
+import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+
+export type NeoAskInputClaim = {
+  sessionId: string;
+  messageId: string;
+  askId?: string;
+  title: string;
+  request: string;
+};
 
 class NeoAskInputs {
   constructor(private readonly db: Database) {}
@@ -13,15 +22,33 @@ class NeoAskInputs {
     return row?.askId ?? null;
   }
 
-  bind(sessionId: string, messageId: string, askId: string, now: number): string | null {
+  claimNeoInputAsk(input: NeoAskInputClaim): string | null {
+    const store = new NeoAskTodoRepository(this.db);
+    const owner =
+      store.findAsk(input.sessionId, input.messageId, null)?.id ??
+      this.owner(input.sessionId, input.messageId);
+    if (owner) return owner;
+    const target = input.askId ? store.getAsk(input.askId) : null;
+    if (input.askId && (target?.sessionId !== input.sessionId || target.status !== 'open'))
+      return null;
+    const now = Date.now();
+    const askId =
+      input.askId ??
+      store.openAsk({
+        id: crypto.randomUUID(),
+        projectId: null,
+        sessionId: input.sessionId,
+        originMessageId: input.messageId,
+        title: input.title,
+        request: input.request,
+        createdAt: now,
+      }).id;
     this.db
       .prepare(`INSERT INTO neo_ask_inputs (session_id, message_id, ask_id, bound_at)
-      SELECT ?, ?, id, ? FROM neo_asks WHERE id = ? AND session_id = ? AND status = 'open'
-      ON CONFLICT(session_id, message_id) DO UPDATE
-      SET ask_id = excluded.ask_id, bound_at = excluded.bound_at
-      WHERE neo_ask_inputs.ask_id IN (SELECT id FROM neo_asks WHERE status != 'open')`)
-      .run(sessionId, messageId, now, askId, sessionId);
-    return this.owner(sessionId, messageId);
+        VALUES (?, ?, ?, ?) ON CONFLICT(session_id, message_id) DO UPDATE
+        SET ask_id = excluded.ask_id, bound_at = excluded.bound_at`)
+      .run(input.sessionId, input.messageId, askId, now);
+    return askId;
   }
 }
 
@@ -29,5 +56,5 @@ export const neoAskInputReads = defineRepositoryOp('neo.askInputs.read', 'read',
   'owner',
 ]);
 export const neoAskInputWrites = defineRepositoryOp('neo.askInputs.write', 'write', NeoAskInputs, [
-  'bind',
+  'claimNeoInputAsk',
 ]);

@@ -186,9 +186,9 @@ describe('neo ask binding from human input', () => {
     try {
       const other = f.open('other', 'Other request');
       const input = f.human('Also check the count query');
-      const bind = f.store.bindAskInput.bind(f.store);
+      const bind = f.store.claimNeoInputAsk.bind(f.store);
       let interleave = true;
-      f.store.bindAskInput = async (...args) => {
+      f.store.claimNeoInputAsk = async (...args) => {
         if (interleave) {
           interleave = false;
           expect(
@@ -224,8 +224,8 @@ describe('neo ask binding from human input', () => {
     const f = setup();
     try {
       const input = f.human('Also check the count query');
-      const bind = f.store.bindAskInput.bind(f.store);
-      f.store.bindAskInput = async (...args) => {
+      const bind = f.store.claimNeoInputAsk.bind(f.store);
+      f.store.claimNeoInputAsk = async (...args) => {
         f.store.settleAsk(f.slow, 'done', 'Finished', 2);
         return bind(...args);
       };
@@ -276,21 +276,60 @@ describe('neo ask binding from human input', () => {
     }
   });
 
-  test('concurrent input-only and explicit binding choose one owning ask', async () => {
+  test.each(['open', 'bind'] as const)(
+    'concurrent input-only and explicit binding choose one owner when %s claims first',
+    async (first) => {
+      const f = setup();
+      try {
+        const input = f.human('Also check the count query');
+        const claim = f.store.claimNeoInputAsk.bind(f.store);
+        let release: () => void = () => {};
+        const claimed = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        f.store.claimNeoInputAsk = async (request) => {
+          const goesFirst = (first === 'bind') === Boolean(request.askId);
+          if (!goesFirst) await claimed;
+          const winner = await claim(request);
+          if (goesFirst) release();
+          return winner;
+        };
+        const results = await Promise.all([
+          f.add({ input, title: 'Check the query' }),
+          f.add({ input, askId: f.slow.id, title: 'Check the count' }),
+        ]);
+        const accepted = results.flatMap((result) =>
+          result.ok && result.todo ? [result.todo.askId] : []
+        );
+        expect(new Set(accepted).size).toBe(1);
+        if (first === 'bind') {
+          expect(results.every((result) => result.ok)).toBe(true);
+          expect(accepted).toEqual([f.slow.id, f.slow.id]);
+        } else {
+          expect(results[1]).toMatchObject({
+            ok: false,
+            reason: expect.stringContaining(`belongs to ask ${accepted[0]}`),
+          });
+        }
+        const repeated = await f.add({ input, title: 'Check again' });
+        expect(repeated.ok && repeated.todo?.askId).toBe(accepted[0]);
+        expect(f.store.listOpenAsks()).toHaveLength(accepted[0] === f.slow.id ? 1 : 2);
+      } finally {
+        f.db.close();
+      }
+    }
+  );
+
+  test('a failed input link rolls back its newly opened ask', async () => {
     const f = setup();
     try {
-      const input = f.human('Also check the count query');
-      const results = await Promise.all([
-        f.add({ input, title: 'Check the query' }),
-        f.add({ input, askId: f.slow.id, title: 'Check the count' }),
-      ]);
-      const accepted = results.flatMap((result) =>
-        result.ok && result.todo ? [result.todo.askId] : []
-      );
-      expect(new Set(accepted).size).toBe(1);
-      const repeated = await f.add({ input, title: 'Check again' });
-      expect(repeated.ok && repeated.todo?.askId).toBe(accepted[0]);
-      expect(f.store.listOpenAsks()).toHaveLength(accepted[0] === f.slow.id ? 1 : 2);
+      const input = f.human('Make the query faster');
+      f.db.exec(`CREATE TRIGGER refuse_input_link BEFORE INSERT ON neo_ask_inputs
+        BEGIN SELECT RAISE(ABORT, 'Synthetic link failure'); END`);
+      await expect(f.add({ input })).rejects.toThrow('Synthetic link failure');
+      expect(f.store.listOpenAsks().map((ask) => ask.id)).toEqual([f.slow.id]);
+      expect(f.store.findAsk(session, input, null)).toBeNull();
+      expect(await f.store.findAskInput(session, input)).toBeNull();
     } finally {
       f.db.close();
     }

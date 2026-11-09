@@ -44,3 +44,11 @@ After copying evidence, remove only that run's synthetic data and HOME.
 The focused neo-ask-input-binding unit file also covers refused mismatched replies,
 settled/foreign/unknown targets, unchanged input-only creation and competing
 bindings, including an insert interleaved after a stale ownership read.
+
+Both new asks and explicit bindings now use the same atomic gateway claim. The
+helper submits a mixed input-only/explicit-bind pair in each submission order.
+Each pair must select one owner, every refused bind must name that winner, and
+later input-only work must reuse it without an extra ask. Evidence records both
+submission orders and their receipts. The focused unit test controls claim order
+to cover both winning paths, and a forced link-insert failure checks that a newly
+opened ask rolls back with its link.
