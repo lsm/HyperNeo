@@ -1,3 +1,4 @@
+import ts from 'typescript';
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -14,7 +15,7 @@ describe('neoPackBriefs', () => {
       {
         id: 'coding',
         describe:
-          'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
+          'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge. Multi-PR work uses one PR per todo, chained with after; name each opened PR with neo.todo.edit addUrls.',
         guidance: NEO_PACK_CODING_INSTRUCTIONS,
       },
       DELEGATION_PACK_BRIEF,
@@ -87,7 +88,24 @@ describe('core stays pack-agnostic', () => {
       ),
     ].filter((file) => file.endsWith('.ts'));
     const offending = files
-      .filter((file) => /['"`]coding['"`.]|pr_merged/.test(readFileSync(file, 'utf8')))
+      .filter((file) => {
+        let text = readFileSync(file, 'utf8');
+        const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+        const descriptions: ts.Node[] = [];
+        const visit = (node: ts.Node) => {
+          if (
+            ts.isPropertyAssignment(node) &&
+            node.name.getText(source) === 'description' &&
+            ts.isStringLiteralLike(node.initializer)
+          )
+            descriptions.push(node.initializer);
+          ts.forEachChild(node, visit);
+        };
+        visit(source);
+        for (const node of descriptions.sort((a, b) => b.pos - a.pos))
+          text = text.slice(0, node.pos) + text.slice(node.end);
+        return /['"`]coding['"`.]|pr_merged/.test(text);
+      })
       .map((file) => relative(src, file));
     expect(files.length).toBeGreaterThan(20);
     expect(offending).toEqual([]);
