@@ -1,3 +1,4 @@
+import { sweepNeoTrackerMirrors } from './tracker-mirror.ts';
 import { createQuestionRetirement } from './question-retirement.ts';
 import { neoStallReminderWrite } from '../../storage/repositories/neo-stall-reminder-write.ts';
 import { NeoSpeech } from './speech.ts';
@@ -1027,6 +1028,10 @@ export class NeoService {
   }
 
   async sweepPacks(): Promise<void> {
+    await sweepNeoTrackerMirrors(
+      this.db.getDatabase(),
+      this.packs().flatMap((pack) => pack.tracker ?? [])
+    ).catch((error) => this.log.warn('Tracker mirror pending', error));
     await this.catchUpOpenTodoTurns().catch((error) =>
       this.log.warn('Worker turns pending', error)
     );

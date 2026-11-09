@@ -1,20 +1,18 @@
-# Tracker mirror foundation
+# Tracker mirror service sweep
 
-Run the metadata-only proof wrapper with Bun 1.4.2.
+Run with Bun 1.4.2 from the repository root.
 
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/tracker-foundation.ts
 ```
 
-The helper owns its HOME, DB and two successive daemons on ephemeral ports. It
-registers no provider and makes no model turn. A fake gh stores an external item
-marker. The first daemon writes creating through the registered gateway, creates
-that item, then is killed before binding. The second daemon reads the durable
-facts, finds the marker, and binds the original ref through the gateway. It must
-print createCount=1 and recoveryExit=0. It also checks title-only bodies, a persisted
-parent link that produces no repeat, and exclusion of closed mirror rows. Retain
-observed.json, recovery.json and review-fixes.json.
+The helper owns its HOME, DB and successive daemons on ephemeral ports. It uses a
+synthetic tracker and no provider. It invokes the service sweep, kills the first
+daemon after external create but before binding, then recovers through marker
+lookup. It prints createCount=1 for the recovered parent and recoveryExit=0.
 
-This slice proves the construction APIs and storage. Automatic sweep wiring is
-exercised in the following slice. The tracker is synthetic. The helper stops its
-recovery daemon, and the wrapper removes its synthetic data.
+Later sweeps create a late child, persist its link, close a completed child once,
+and leave that closed mirror alone when its todo becomes active again. A settled
+ask closes active and failed children as not_planned before closing its parent.
+A failing child stops after three closes and its parent then closes. Retain
+observed.json, recovery.json and retry-cap.json. The wrapper removes its temporary data.

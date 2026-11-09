@@ -163,13 +163,14 @@ test('tracker bodies expose only titles and markers', () => {
   expect(items.every((item) => !item.body.includes('Private'))).toBe(true);
 });
 
-test('facts exclude closed mirrors while retaining open mirrors', () => {
+test('facts include closed mirrors only for current owners', () => {
   bindParent();
   addTodo('child');
   mirrors.put({ ...plan()[0].row, ref: 'example/repo#2', state: 'bound' });
   const parent = mirrors.facts().mirrors.find((row) => row.ownerKind === 'ask')!;
   mirrors.put({ ...parent, state: 'closed' });
-  expect(mirrors.facts().mirrors.map((row) => row.ownerId)).toEqual(['child']);
+  mirrors.put({ ...parent, ownerId: 'historical', state: 'closed' });
+  expect(mirrors.facts().mirrors.map((row) => row.ownerId)).toEqual(['child', 'ask']);
 });
 
 test('a marker-shaped title cannot shadow the appended marker comment', () => {
@@ -188,7 +189,9 @@ test('removed owners retain open mirrors without creating new mirrors', () => {
   db.prepare("UPDATE neo_todos SET state = 'removed'").run();
   expect(plan()).toMatchObject([{ action: 'create', row: { ownerId: 'child' } }]);
   mirrors.put({ ...row, ref: 'example/repo#2', state: 'bound' });
-  expect(plan()).toMatchObject([{ action: 'link', row: { ownerId: 'child' } }]);
+  expect(plan()).toMatchObject([
+    { action: 'close', outcome: 'not_planned', row: { ownerId: 'child' } },
+  ]);
   mirrors.put({ ...row, ref: 'example/repo#2', state: 'closed' });
   expect(plan()).toEqual([]);
   addTodo('never-mirrored');

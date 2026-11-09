@@ -1,6 +1,8 @@
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTrackerAdapter, NeoTrackerItem, NeoTrackerOwner } from './pack-contract.ts';
 
+export const NEO_TRACKER_FAILURE_LIMIT = 3;
+
 export type NeoTrackerMirror = {
   ownerKind: 'ask' | 'todo';
   ownerId: string;
@@ -18,6 +20,7 @@ export type NeoTrackerPlan = {
   item: NeoTrackerItem;
   action: 'create' | 'link' | 'close';
   parent?: string;
+  outcome?: 'completed' | 'not_planned';
 };
 export const neoTrackerMarker = (owner: NeoTrackerOwner) =>
   `hyperneo:${owner.kind}:${owner.todo?.id ?? owner.ask.id}`;
@@ -46,6 +49,7 @@ export function planNeoTrackerMirror(
       const existing = mirrors.find(
         (row) => row.ownerKind === owner.kind && row.ownerId === id && row.tracker === adapter.id
       );
+      if (existing && existing.failures >= NEO_TRACKER_FAILURE_LIMIT) continue;
       if (owner.todo?.state === 'removed' && !existing) continue;
       const home = existing?.home ?? adapter.home(owner);
       if (!home || existing?.state === 'closed' || (!existing && owner.ask.status !== 'open'))
@@ -76,9 +80,36 @@ export function planNeoTrackerMirror(
           mirror.tracker === adapter.id &&
           mirror.state === 'bound'
       )?.ref;
+      const final =
+        owner.todo?.state === 'done' ||
+        owner.todo?.state === 'closed_unverified' ||
+        owner.todo?.state === 'removed';
+      const settled = owner.ask.status !== 'open';
+      const openChildren = mirrors.some(
+        (mirror) =>
+          mirror.ownerKind === 'todo' &&
+          mirror.tracker === adapter.id &&
+          mirror.state !== 'closed' &&
+          mirror.failures < NEO_TRACKER_FAILURE_LIMIT &&
+          todos.some((todo) => todo.id === mirror.ownerId && todo.askId === owner.ask.id)
+      );
       if (row.state === 'creating') plans.push({ row, adapter, item, action: 'create' });
-      else if (owner.kind === 'ask' && owner.ask.status !== 'open')
-        plans.push({ row, adapter, item, action: 'close' });
+      else if (owner.kind === 'todo' && (final || settled))
+        plans.push({
+          row,
+          adapter,
+          item,
+          action: 'close',
+          outcome: owner.todo?.state === 'done' ? 'completed' : 'not_planned',
+        });
+      else if (owner.kind === 'ask' && settled && !openChildren)
+        plans.push({
+          row,
+          adapter,
+          item,
+          action: 'close',
+          outcome: owner.ask.status === 'dropped' ? 'not_planned' : 'completed',
+        });
       else if (owner.kind === 'todo' && parent && row.parentRef !== parent)
         plans.push({ row, adapter, item, action: 'link', parent });
     }
