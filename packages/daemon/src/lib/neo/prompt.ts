@@ -10,7 +10,7 @@ function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
       .join(' ')}`,
     'A todo in an enabled pack’s domain names it in check {pack, kind, params} so the pack reads it; neo.pack.read {id} returns the pack’s guidance in full.',
     ...(skills.length
-      ? [`Load the pack guidance skills ${skills.join(', ')} before work in their domain.`]
+      ? [`Before work in an enabled pack’s domain, load its guidance skill: ${skills.join(', ')}.`]
       : []),
     ...briefs.flatMap((pack) =>
       pack.guidance ? [`\n\nGuidance for work under the ${pack.id} pack:\n${pack.guidance}`] : []

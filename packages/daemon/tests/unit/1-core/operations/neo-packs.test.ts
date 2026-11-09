@@ -26,11 +26,11 @@ describe('neoPackBriefs', () => {
     ]);
   });
 
-  test('ships the default packs as skills whose bodies are the pack instructions', () => {
+  test('ships the coding pack as a skill whose body is the pack instructions', () => {
     const briefs = neoPackBriefs(NEO_DEFAULT_PACKS);
-    expect(briefs.map((brief) => brief.skill)).toEqual(['coding-pack', 'delegation-pack']);
-    expect(briefs.every((brief) => brief.guidance === undefined)).toBe(true);
-    expect(Object.keys(NEO_PACK_SKILLS)).toEqual(['coding-pack', 'delegation-pack']);
+    expect(briefs.map((brief) => brief.skill)).toEqual(['coding-pack', undefined]);
+    expect(briefs[0].guidance).toBeUndefined();
+    expect(Object.keys(NEO_PACK_SKILLS)).toEqual(['coding-pack']);
     for (const [name, skill] of Object.entries(NEO_PACK_SKILLS)) {
       expect(skill.name).toBe(name);
       expect(skill.description).not.toContain('\n');
@@ -39,16 +39,15 @@ describe('neoPackBriefs', () => {
       expect(skill.files['SKILL.md']).toStartWith(`---\nname: ${name}\ndescription: `);
     }
     expect(NEO_PACK_SKILLS['coding-pack'].body).toBe(NEO_PACK_CODING_INSTRUCTIONS);
-    expect(NEO_PACK_SKILLS['delegation-pack'].body).toBe(NEO_PACK_DELEGATION_INSTRUCTIONS);
   });
 
-  test('keeps skill pack guidance out of the Neo system prompt', () => {
+  test('keeps coding guidance out of the Neo system prompt and delegation in it', () => {
     const prompt = neoPrompt(neoPackBriefs(NEO_DEFAULT_PACKS));
     expect(prompt).not.toContain(NEO_PACK_CODING_INSTRUCTIONS.slice(0, 80));
-    expect(prompt).not.toContain(NEO_PACK_DELEGATION_INSTRUCTIONS.slice(0, 80));
-    expect(prompt).not.toContain('Guidance for work under the');
+    expect(prompt).not.toContain('Guidance for work under the coding pack');
+    expect(prompt).toContain(NEO_PACK_DELEGATION_INSTRUCTIONS);
     expect(prompt).toContain('coding — Software work in git repositories');
-    expect(prompt).toContain('skills coding-pack, delegation-pack');
+    expect(prompt).toContain('load its guidance skill: coding-pack.');
   });
 
   test('publishes approval checks for both todos and question retirement in the coding guidance', () => {

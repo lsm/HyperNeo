@@ -903,11 +903,11 @@ describe('SkillsManager', () => {
     }
   });
 
-  test('initializeBuiltins registers all eight built-in skills total', async () => {
+  test('initializeBuiltins registers all seven built-in skills total', async () => {
     await mgr.initializeBuiltins();
 
     const builtIns = mgr.listSkills().filter((s) => s.builtIn);
-    expect(builtIns).toHaveLength(8);
+    expect(builtIns).toHaveLength(7);
     const names = builtIns.map((s) => s.name);
     expect(names).toContain('fetch-mcp');
     expect(names).toContain('chrome-devtools-mcp');
@@ -916,10 +916,7 @@ describe('SkillsManager', () => {
     expect(names).toContain('playwright-interactive');
     expect(names).toContain('space-coordination');
     const packs = builtIns.filter((s) => s.name.endsWith('-pack'));
-    expect(packs.map((s) => [s.name, s.enabled])).toEqual([
-      ['coding-pack', false],
-      ['delegation-pack', false],
-    ]);
+    expect(packs.map((s) => [s.name, s.enabled])).toEqual([['coding-pack', false]]);
   });
 
   test('ensureBuiltinPluginWrappers rewrites embedded pack skills on every start', async () => {
@@ -940,9 +937,6 @@ describe('SkillsManager', () => {
       expect(
         await readFile(join(skillsRoot, 'coding-pack', 'old.md'), 'utf8').catch(() => null)
       ).toBeNull();
-      expect(await readFile(join(skillsRoot, 'delegation-pack', 'SKILL.md'), 'utf8')).toBe(
-        NEO_PACK_SKILLS['delegation-pack'].files['SKILL.md']
-      );
       expect(result.get('coding-pack')).toBe(join(wrappersRoot, 'coding-pack'));
       expect(await readlink(join(wrappersRoot, 'coding-pack', 'skills', 'coding-pack'))).toBe(
         join(skillsRoot, 'coding-pack')
@@ -963,7 +957,7 @@ describe('SkillsManager', () => {
       await mgr.initializeBuiltins();
       const result = await mgr.ensureBuiltinPluginWrappers(wrappersRoot, skillsRoot);
 
-      expect(result.size).toBe(5);
+      expect(result.size).toBe(4);
       expect(result.has('playwright')).toBe(true);
       expect(result.has('playwright-interactive')).toBe(true);
       expect(result.has('space-coordination')).toBe(true);

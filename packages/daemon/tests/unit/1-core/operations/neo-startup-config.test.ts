@@ -141,7 +141,7 @@ describe('Neo startup configuration', () => {
   test('a new root selects exactly the enabled pack skills', async () => {
     await new SkillsManager(db.skills, db.appMcpServers, db).initializeBuiltins();
     const id = await service.open();
-    expect(selectedSkills(id)).toEqual(['coding-pack', 'delegation-pack']);
+    expect(selectedSkills(id)).toEqual(['coding-pack']);
   });
 
   test('a recovered root drops other skills and follows the enabled packs', async () => {
@@ -152,13 +152,11 @@ describe('Neo startup configuration', () => {
     expect(selectedSkills(root)).toEqual(['playwright', 'playwright-interactive']);
     live = structuredClone(db.getSession(root)!);
     await service.recover();
-    expect(selectedSkills(root)).toEqual(['coding-pack', 'delegation-pack']);
+    expect(selectedSkills(root)).toEqual(['coding-pack']);
     expect(live.config.toolSelection).toEqual(db.getSession(root)!.config.toolSelection);
-    vi.spyOn(service, 'packBriefs').mockReturnValue([
-      { id: 'delegation', describe: 'Delegation', skill: 'delegation-pack' },
-    ]);
+    vi.spyOn(service, 'packBriefs').mockReturnValue([]);
     await service.recover();
-    expect(selectedSkills(root)).toEqual(['delegation-pack']);
+    expect(selectedSkills(root)).toEqual([]);
   });
 
   test('recovery without a root does not create one', async () => {

@@ -195,7 +195,7 @@ describe('root Neo system prompt', () => {
     const coding = neoPrompt(neoSettingsPackBriefs());
     expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);
     expect(coding).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
-    expect(coding).toContain('skills coding-pack, delegation-pack');
+    expect(coding).toContain('load its guidance skill: coding-pack.');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('never sleep or poll gh');
     expect(coding.trim().endsWith(NEO_ROOT_TURN_END.trim())).toBe(true);
     expect(neoPrompt([])).not.toContain('Domain packs');
