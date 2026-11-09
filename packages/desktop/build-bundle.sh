@@ -16,5 +16,6 @@ fi
 export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-Developer ID Application: ARCOBY, LLC (P5R65T296V)}"
 bash tests/cua-driver.sh
 bash prepare-cua-driver.sh
+bash sign-cua-driver.sh
 cargo tauri build --config cua-driver-bundle.json "$@"
 bash verify-macos-bundle.sh "${CARGO_TARGET_DIR:-src-tauri/target}/${target:+$target/}release/bundle/macos/HyperNeo.app"
