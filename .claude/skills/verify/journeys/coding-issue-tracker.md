@@ -18,3 +18,8 @@ Real GitHub cross-repository sub-issue behavior remains a separate verification.
 
 A public repository fixture refuses issue creation and reaches the existing
 three-failure cap while its external issue count stays fixed.
+
+The start gate is exercised through the runner with synthetic worker dispatch.
+An enabled unbound mirror blocks explicit and queued starts with zero sends.
+Binding releases the queue. A capped missing mirror releases work with a card
+note. Worker dispatch is synthetic; the daemon and tracker subprocesses are real.

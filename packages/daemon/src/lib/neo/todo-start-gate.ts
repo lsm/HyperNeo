@@ -29,7 +29,8 @@ export const neoTodoPrerequisiteRefusal = (todo: NeoTodo, family: readonly NeoTo
 export function neoTodoWaitReason(
   todo: NeoTodo,
   family: readonly NeoTodo[],
-  questions: readonly NeoQuestion[]
+  questions: readonly NeoQuestion[],
+  trackerHold: string | null = null
 ): string | null {
   if (todo.blockedBy === 'held') return 'todo_held: the human is holding this todo.';
   if (neoTodoPrerequisitesOpen(todo, family)) return NEO_TODO_NOT_READY;
@@ -40,15 +41,18 @@ export function neoTodoWaitReason(
       (!question.todoId || question.todoId === todo.id)
   )
     ? NEO_TODO_QUESTION_OPEN
-    : null;
+    : trackerHold;
 }
 
 export const neoTodoStartRefusal = (
   todo: NeoTodo,
   family: readonly NeoTodo[],
-  questions: readonly NeoQuestion[]
+  questions: readonly NeoQuestion[],
+  trackerHold: string | null = null
 ): string | null =>
-  todo.approvedAt === null ? NEO_TODO_NOT_APPROVED : neoTodoWaitReason(todo, family, questions);
+  todo.approvedAt === null
+    ? NEO_TODO_NOT_APPROVED
+    : neoTodoWaitReason(todo, family, questions, trackerHold);
 
 export const neoTodoAwaitsApproval = (todo: NeoTodo) =>
   todo.approvedAt === null &&

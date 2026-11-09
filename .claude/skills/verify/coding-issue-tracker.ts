@@ -1,3 +1,5 @@
+import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -167,10 +169,65 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       );
       assert.equal(publicRows.length, 2);
       assert(publicRows.every((row) => row.failures === 3));
+      const sends: string[] = [],
+        notes: string[] = [];
+      const sessions = new NeoTodoSessionRepository(app.db.getDatabase());
+      const runner = createNeoTodoRunner({
+        store,
+        sessions,
+        write: (op, args) => app.db.gateway.run(op, args),
+        packs: () => neo.packs(),
+        limits: () => ({ running: 9, perGroup: 9 }),
+        changed: () => {},
+        tell: async (_ask, _todo, note) => {
+          notes.push(note);
+        },
+        invoke: async (_caller, name, input) => {
+          if (name === 'work.send') sends.push(String(input.message));
+          return {
+            kind: 'completed',
+            value: { ok: true, value: { status: 'done', delivered: true, ref: input.ref } },
+          };
+        },
+      });
+      const prepareStart = (id: string) => {
+        store.updateTodo(
+          store.getTodo(id)!,
+          { instruction: 'Synthetic worker task', approvedAt: 1 },
+          Date.now()
+        );
+        sessions.create(id, { verb: 'send', ref: { adapter: 'hyperneo', id: `worker-${id}` } });
+      };
+      store.openAsk({
+        id: 'hold',
+        projectId: null,
+        sessionId: 'synthetic',
+        originMessageId: null,
+        title: 'Held plan',
+        request: 'Work',
+        createdAt: Date.now(),
+      });
+      add('held', 'example/one', 'hold');
+      prepareStart('held');
+      const held = await runner.start('held');
+      assert(!held.ok && held.reason.startsWith('tracker_pending:'));
+      await runner.fill();
+      assert.equal(sends.length, 0);
+      await neo.sweepPacks();
+      await runner.fill();
+      assert.equal(sends.length, 1);
+      prepareStart('public-child');
+      await runner.fill();
+      assert.equal(sends.length, 2);
+      assert(notes.some((note) => note.includes('Tracker item is missing')));
       writeFileSync(
         join(run, 'evidence/observed.json'),
         JSON.stringify({
           parentCreateCount: 1,
+          heldSends: 0,
+          boundSends: 1,
+          cappedSends: 1,
+          missingTrackerNote: true,
           publicCreateCount: 0,
           publicFailureCounts: publicRows.map((row) => row.failures),
           crossRepoChildren: true,

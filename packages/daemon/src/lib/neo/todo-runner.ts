@@ -1,3 +1,5 @@
+import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
+import { planNeoTrackerStarts } from './tracker-start-gate.ts';
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
@@ -516,6 +518,24 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: committed.todo ?? todo };
   };
 
+  const trackerHolds = async () => {
+    const adapters = (deps.enabledPacks?.() ?? deps.packs()).flatMap((pack) => pack.tracker ?? []);
+    if (!adapters.length) return {};
+    const facts = (await deps.write(neoTrackerReads, { method: 'facts', args: [] })) as ReturnType<
+      import('../../storage/repositories/neo-tracker-mirror.ts').NeoTrackerMirrorRepository['facts']
+    >;
+    const plan = planNeoTrackerStarts(facts, adapters);
+    for (const todo of plan.missing)
+      await deps.tell(
+        facts.asks.find((ask) => ask.id === todo.askId)!,
+        todo,
+        'Tracker item is missing after three failures; work continues.',
+        `neo-tracker-missing:${todo.id}`
+      );
+    return plan.holds;
+  };
+  const readQueueFacts = async () => sessions.read('queueFacts', await trackerHolds());
+
   type QueueFacts = ReturnType<NeoTodoSessionRepository['queueFacts']>;
   const readBusyWorkers = async ({
     candidates,
@@ -565,7 +585,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const readQueue = (superpipe({})('neo.todo.read-queue') as PipelineAPI)
     .input(['now'])
-    .pipe(() => sessions.read('queueFacts'), 'now', 'facts')
+    .pipe(() => readQueueFacts(), 'now', 'facts')
     .pipe(readBusyWorkers, 'facts', 'busy')
     .pipe(planNeoTodoWaits, ['facts', 'busy'], 'plan')
     .pipe(recordWaits, ['plan', 'now'], 'recorded')
@@ -585,7 +605,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (todo?.state !== 'todo' || todo.startedAt !== null || target?.verb !== 'send')
       return { value: null };
     const worker = neoWorkerKey(target.ref);
-    const facts = await sessions.read('queueFacts');
+    const facts = await readQueueFacts();
     const candidate = { id: todoId, worker, ref: target.ref };
     const busy = await readBusyWorkers({ candidates: [candidate] });
     if (!busy.length) {
@@ -600,8 +620,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .input(['todoId'])
     .pipe(awaitFreeWorker, 'todoId', 'result:outcome')
     .pipe(
-      (todoId: string) =>
-        deps.write(neoTodoRunnerWrites, { method: 'claim', args: [todoId, Date.now()] }),
+      async (todoId: string) =>
+        deps.write(neoTodoRunnerWrites, {
+          method: 'claim',
+          args: [todoId, Date.now(), (await trackerHolds())[todoId] ?? null],
+        }),
       'todoId',
       'receipt'
     )
@@ -626,7 +649,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const queue = createWorkQueue<NudgeClaim>(
     {
-      queue: () => sessions.read('queueFacts'),
+      queue: () => readQueueFacts(),
       waiting: () => readQueue(Date.now()),
       claim: (todoId, now, move) => nudge(todoId, now, move),
       act: (claim, now) => act(claim, now),
@@ -1651,8 +1674,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
       }
       await fill().catch((error) => warn('Queued todo start pending', error));
-      await sessions
-        .read('queueFacts')
+      await readQueueFacts()
         .then(noteUnworked)
         .catch((error) => warn('Unworked todo note pending', error));
     },
