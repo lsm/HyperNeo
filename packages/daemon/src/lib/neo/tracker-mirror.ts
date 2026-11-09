@@ -1,3 +1,4 @@
+import { Logger } from '../logger.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -12,11 +13,16 @@ import {
   type NeoTrackerPlan,
 } from './tracker-mirror-plan.ts';
 
+const log = new Logger('tracker-mirror');
+const activeSweeps = new WeakMap<Database, Promise<void>>();
+
 export async function sweepNeoTrackerMirrors(
   db: Database,
   adapters: readonly NeoTrackerAdapter[]
 ): Promise<void> {
   if (!adapters.length) return;
+  const active = activeSweeps.get(db);
+  if (active) return active;
   const gateway = gatewayFor(db);
   const sweep = (superpipe({})('neo.tracker.mirror') as PipelineAPI)
     .pipe(() => gateway.call(neoTrackerReads, 'facts'), undefined, 'facts')
@@ -56,7 +62,12 @@ export async function sweepNeoTrackerMirrors(
               state: action === 'close' ? 'closed' : 'bound',
               failures: 0,
             });
-          } catch {
+          } catch (error) {
+            log.warn(
+              'Tracker effect failed',
+              { ownerKind: row.ownerKind, ownerId: row.ownerId, tracker: row.tracker, action },
+              error
+            );
             await write({ failures: row.failures + 1 });
           }
         }
@@ -65,5 +76,7 @@ export async function sweepNeoTrackerMirrors(
       'done'
     )
     .endAsync('done') as () => Promise<void>;
-  await sweep();
+  const pending = sweep().finally(() => activeSweeps.delete(db));
+  activeSweeps.set(db, pending);
+  return pending;
 }

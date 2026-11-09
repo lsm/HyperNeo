@@ -40,7 +40,7 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
   try {
     if (process.argv.includes('--seed')) {
       store.openAsk({ id: 'ask', projectId: null, sessionId: 'synthetic', originMessageId: null, title: 'Synthetic plan', request: 'Private details', createdAt: 1 });
-      await neo.sweepPacks();
+      await Promise.all([neo.sweepPacks(), neo.sweepPacks()]);
     } else {
       const facts = await app.db.gateway.call(neoTrackerReads, 'facts');
       assert.equal(facts.mirrors[0].state, 'creating');
@@ -49,7 +49,7 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       assert.equal(recovered.mirrors[0].state, 'bound');
       assert.equal(readFileSync(join(run, 'bin/gh.items'), 'utf8').trim().split('\n').length, 1);
       add('late');
-      await neo.sweepPacks();
+      await Promise.all([neo.sweepPacks(), neo.sweepPacks()]);
       await neo.sweepPacks();
       await neo.sweepPacks();
       assert.equal(readFileSync(join(run, 'bin/gh.effects'), 'utf8').trim().split('\n').length, 1);
@@ -111,6 +111,6 @@ esac
   const createCount = items.filter((marker) => marker === 'hyperneo:ask:ask').length;
   assert.equal(items.length, 5);
   assert.equal(createCount, 1);
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ createCount, recoveryExit: exit, seedKilledBeforeBound: true, seed: JSON.parse(readFileSync(join(run, 'seed-ready.json'), 'utf8')) }));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ createCount, recoveryExit: exit, seedKilledBeforeBound: true, concurrentSweeps: true, seed: JSON.parse(readFileSync(join(run, 'seed-ready.json'), 'utf8')) }));
   console.log(`PASS: service sweep recovery and lifecycle; createCount=${createCount}; recoveryExit=${exit}; totalCreateCount=${items.length}`);
 }

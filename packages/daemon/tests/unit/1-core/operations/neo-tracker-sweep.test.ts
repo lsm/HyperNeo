@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { Logger } from '../../../../src/lib/logger.ts';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -164,4 +165,48 @@ test('a final todo closes once and is not recreated after becoming active', asyn
   await sweepNeoTrackerMirrors(db, [adapter]);
   expect(outcomes).toEqual(['example/repo#2:completed']);
   expect(creates).toHaveLength(2);
+});
+
+test('overlapping sweeps create one external item', async () => {
+  let entered!: () => void;
+  let release!: () => void;
+  const creating = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const finish = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  adapter.create = async (item) => {
+    creates.push(item.marker);
+    entered();
+    await finish;
+    return { ref: 'example/repo#1' };
+  };
+  const first = sweepNeoTrackerMirrors(db, [adapter]);
+  await creating;
+  const second = sweepNeoTrackerMirrors(db, [adapter]);
+  release();
+  await Promise.all([first, second]);
+  expect(creates).toEqual(['hyperneo:ask:ask']);
+});
+
+test('failed tracker effects report the error and remain retryable', async () => {
+  const warning = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+  try {
+    adapter.find = async () => {
+      throw new Error('Unavailable');
+    };
+    await sweepNeoTrackerMirrors(db, [adapter]);
+    expect(warning).toHaveBeenCalledWith(
+      'Tracker effect failed',
+      expect.objectContaining({ tracker: 'fixture', action: 'create' }),
+      expect.any(Error)
+    );
+    expect(mirrors.facts().mirrors[0].failures).toBe(1);
+    adapter.find = async () => null;
+    await sweepNeoTrackerMirrors(db, [adapter]);
+    expect(creates).toHaveLength(1);
+  } finally {
+    warning.mockRestore();
+  }
 });
