@@ -276,6 +276,26 @@ describe('neo ask binding from human input', () => {
     }
   });
 
+  test('concurrent input-only and explicit binding choose one owning ask', async () => {
+    const f = setup();
+    try {
+      const input = f.human('Also check the count query');
+      const results = await Promise.all([
+        f.add({ input, title: 'Check the query' }),
+        f.add({ input, askId: f.slow.id, title: 'Check the count' }),
+      ]);
+      const accepted = results.flatMap((result) =>
+        result.ok && result.todo ? [result.todo.askId] : []
+      );
+      expect(new Set(accepted).size).toBe(1);
+      const repeated = await f.add({ input, title: 'Check again' });
+      expect(repeated.ok && repeated.todo?.askId).toBe(accepted[0]);
+      expect(f.store.listOpenAsks()).toHaveLength(accepted[0] === f.slow.id ? 1 : 2);
+    } finally {
+      f.db.close();
+    }
+  });
+
   test('parallel input-only calls open one ask for their shared human message', async () => {
     const f = setup();
     try {
