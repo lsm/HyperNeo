@@ -5,7 +5,9 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../helpers/neo-service.ts';
+import { createNeoOperations, createNeoService } from '../../helpers/neo-service.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -73,7 +75,9 @@ describe('Neo startup configuration', () => {
       service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
       await service[method]();
       const restored = db.getSession(root)!;
-      expect(restored.config.systemPrompt).toBe(neoPrompt(service.packBriefs()));
+      expect(restored.config.systemPrompt).toBe(
+        neoPrompt(service.packBriefs(), [], service.packPreferences())
+      );
       expect(restored.config.systemPrompt).toContain('the human sees none of your assistant text');
       expect(restored.config.sdkToolsPreset).toEqual(tools);
       expect(restored.config.allowedTools).toEqual(allowed);
@@ -99,7 +103,11 @@ describe('Neo startup configuration', () => {
       await service.rulesChanged();
       const ruled = db.getSession(root)!.config.systemPrompt;
       expect(ruled).toBe(
-        neoPrompt(service.packBriefs(), ['Synthetic rule A.', 'Synthetic rule B.'])
+        neoPrompt(
+          service.packBriefs(),
+          ['Synthetic rule A.', 'Synthetic rule B.'],
+          service.packPreferences()
+        )
       );
       expect(ruled).toContain('1. Synthetic rule A.\n2. Synthetic rule B.');
       expect(restored.config.systemPrompt).not.toContain('Standing rules the human approved');
@@ -124,10 +132,30 @@ describe('Neo startup configuration', () => {
   test('new roots start with current prompt and native tools', async () => {
     const id = await service.open();
     expect(db.getSession(id)?.config).toMatchObject({
-      systemPrompt: neoPrompt(service.packBriefs()),
+      systemPrompt: neoPrompt(service.packBriefs(), [], service.packPreferences()),
       sdkToolsPreset: tools,
       allowedTools: allowed,
     });
+  });
+
+  test("a saved preference appears in Neo's system prompt", async () => {
+    const saved = await invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      'pack.preferences.set',
+      {
+        pack: 'coding',
+        scope: { kind: 'repo', key: 'synthetic/prompt' },
+        key: 'reviewBot',
+        value: 'synthetic-prompt-bot',
+      },
+      { source: 'rpc', principal: 'local' }
+    );
+    expect(saved).toMatchObject({ value: { ok: true } });
+    const id = await service.open();
+    const prompt = db.getSession(id)?.config.systemPrompt;
+    expect(prompt).toContain('Saved pack preferences');
+    expect(prompt).toContain('"scope":{"kind":"repo","key":"synthetic/prompt"}');
+    expect(prompt).toContain('"key":"reviewBot","value":"synthetic-prompt-bot"');
   });
 
   test('a later startup refreshes changed pack guidance', async () => {
@@ -135,7 +163,9 @@ describe('Neo startup configuration', () => {
     const packs = [{ id: 'synthetic', describe: 'Test domain', guidance: 'New pack instruction' }];
     vi.spyOn(service, 'packBriefs').mockReturnValue(packs);
     await service.recover();
-    expect(db.getSession(id)?.config.systemPrompt).toBe(neoPrompt(packs));
+    expect(db.getSession(id)?.config.systemPrompt).toBe(
+      neoPrompt(packs, [], service.packPreferences())
+    );
     expect(updateSession).toHaveBeenCalledTimes(1);
   });
 

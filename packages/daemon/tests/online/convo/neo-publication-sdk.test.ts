@@ -743,12 +743,15 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(nudged, 'ending with Done. keeps the CLI from nudging for visible output').toEqual([]);
     const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
+    const { listPackPreferences } = await import('../../../src/lib/neo/preference-operations.ts');
     const { neoSettingsPackBriefs } = await import('../../../src/lib/neo/packs/index.ts');
     const { createDelegationPack } = await import('../../../src/lib/neo/packs/delegation/pack.ts');
     const database = daemon.db.getDatabase();
     const delegation = createDelegationPack(() => database);
     const expectedPrompt = neoPrompt(
-      neoSettingsPackBriefs().map((brief) => (brief.id === delegation.id ? delegation : brief))
+      neoSettingsPackBriefs().map((brief) => (brief.id === delegation.id ? delegation : brief)),
+      [],
+      listPackPreferences(database)
     );
     if (process.env.VERIFY_EVIDENCE_DIR) {
       await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });

@@ -71,7 +71,7 @@ describe('pack setting changes reach Neo at once', () => {
     expect(text).toContain('"phoneOnly"');
     expect(text).toContain('unset (default)');
     expect(db.getSession('neo:root')!.config.systemPrompt).toContain(
-      '"humanStep":{"value":"phoneOnly","configured":true}'
+      '"key":"humanStep","value":"phoneOnly"'
     );
     expect(await run(humanStep)).toMatchObject({ value: { ok: true } });
     expect(told).toHaveBeenCalledTimes(1);
@@ -85,6 +85,9 @@ describe('pack setting changes reach Neo at once', () => {
     expect(told).toHaveBeenCalledTimes(4);
     expect(told.mock.calls[3][2]).toContain('repo synthetic/repo');
     expect(told.mock.calls[3][2]).toContain('unset (default)');
+    expect(db.getSession('neo:root')!.config.systemPrompt).toContain(
+      '"scope":{"kind":"repo","key":"synthetic/repo"},"key":"mergePolicy","value":"review_bot"'
+    );
     live.dispose();
   });
 });
@@ -126,6 +129,21 @@ describe('pack settings operations', () => {
     expect(await invoke('pack.preferences.list', {})).toMatchObject({
       value: { preferences: [watch, { ...preference, value: 'human' }] },
     });
+  });
+  test('the MCP snapshot has no packPreferences', async () => {
+    expect(await invoke('pack.preferences.set', setting)).toMatchObject({ value: { ok: true } });
+    const snapshot = await invoke(
+      'neo.snapshot',
+      {},
+      {
+        source: 'mcp',
+        role: 'neo',
+        sessionId: 'neo:root',
+      }
+    );
+    expect(snapshot.kind).toBe('completed');
+    if (snapshot.kind !== 'completed') throw new Error('MCP snapshot failed');
+    expect(snapshot.value).not.toHaveProperty('packPreferences');
   });
   test.each([
     { source: 'mcp', role: 'neo' },

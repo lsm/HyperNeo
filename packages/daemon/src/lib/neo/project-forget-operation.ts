@@ -74,7 +74,7 @@ export const runNeoProjectForget = (superpipe({})('neo.project.forget') as Pipel
 
 export function createNeoProjectForgetOperation(
   repo: Pick<NeoRepository, 'forgetProjectCommand'>,
-  forgetRepositories: ForgetRepositories = () => {}
+  afterForget: (repos: readonly string[]) => void | Promise<void> = () => {}
 ) {
   return defineOperation({
     name: 'neo.project.forget',
@@ -85,7 +85,7 @@ export function createNeoProjectForgetOperation(
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     execute: async (input, caller) => {
       const result = await repo.forgetProjectCommand(input.projectId, caller);
-      if (result.ok) forgetRepositories(result.repos);
+      if (result.ok) await afterForget(result.repos);
       return result;
     },
   });
