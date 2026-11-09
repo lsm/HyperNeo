@@ -15,6 +15,15 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 mkdirSync(join(run, 'evidence'), { recursive: true });
+writeFileSync(join(run, 'bin/gh'), `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = repos/example/old-name ]; then
+    printf '%s\\n' '{"full_name":"example/repo"}'
+    exit 0
+  fi
+done
+exit 1
+`, { mode: 0o700 });
 const evidence: unknown[] = [];
 let sends = 0;
 const network = globalThis.fetch;
@@ -25,7 +34,7 @@ try {
   assert.notEqual(app.server.port, 8399);
   const db = app.db.getDatabase();
   const sender = 'neo:30000000-0000-4000-8000-000000000001';
-  const refs = ['same', 'other', 'unknown'].map((name, i) => {
+  const refs = ['same', 'other', 'unknown', 'renamed', 'lookup-failed'].map((name, i) => {
     const folder = join(run, name);
     mkdirSync(folder);
     execFileSync('git', ['init', '-q', folder]);
@@ -34,7 +43,7 @@ try {
       input: `tree ${tree}\nauthor Fixture <fixture@example.invalid> 1 +0000\ncommitter Fixture <fixture@example.invalid> 1 +0000\n\nSynthetic repository fixture\n`, encoding: 'utf8',
     }).trim();
     execFileSync('git', ['-C', folder, 'update-ref', 'HEAD', commit]);
-    if (name !== 'unknown') execFileSync('git', ['-C', folder, 'remote', 'add', 'origin', name === 'same' ? 'git@github.com:EXAMPLE/REPO.git' : 'https://github.com/example/other.git']);
+    if (name !== 'unknown') execFileSync('git', ['-C', folder, 'remote', 'add', 'origin', name === 'same' ? 'git@github.com:EXAMPLE/REPO.git' : name === 'renamed' ? 'git@github.com:example/old-name.git' : name === 'lookup-failed' ? 'https://github.com/example/unreadable.git' : 'https://github.com/example/other.git']);
     const id = `30000000-0000-4000-8000-00000000000${i + 2}`;
     db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,type,config,metadata) VALUES (?, 'Synthetic worker', ?, '2026-11-08T00:00:00Z', '2026-11-08T00:00:00Z', 'active', 'worker', '{}', '{}')").run(id, folder);
     return { adapter: 'hyperneo' as const, id };
@@ -81,7 +90,10 @@ try {
   };
   await call('work.status', { ref: refs[0] });
   assert.equal((await add({ instruction: 'Implement change', target: { verb: 'send', ref: refs[0] } })).ok, true);
-  for (const ref of refs.slice(1)) {
+  assert.equal((await add({ instruction: 'Renamed repository', target: { verb: 'send', ref: refs[3] } })).ok, true);
+  assert.equal((await add({ check: { ...check, params: { urls: ['https://github.com/example/old-name/pull/1'] } }, instruction: 'Existing repository name', target: { verb: 'send', ref: refs[3] } })).ok, true);
+  refusal(await add({ instruction: 'Unreadable repository', target: { verb: 'send', ref: refs[4] }, start: true }));
+  for (const ref of refs.slice(1, 3)) {
     const before = todos.listTodos('ask').length;
     refusal(await add({ instruction: 'Implement change', target: { verb: 'send', ref }, start: true }));
     assert.equal(todos.listTodos('ask').length, before);
@@ -121,7 +133,7 @@ try {
   }
   assert.equal(sends, 0);
   evidence.push({ remoteLookups, sends, deliveryInputs: db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n });
-  console.log(`PASS: same repository accepted; other/unknown refused on add/edit/bind/continue; non-coding accepted; sends=${sends}; deliveryInputs=0`);
+  console.log(`PASS: same and renamed repositories accepted; failed lookup refused; other/unknown refused on add/edit/bind/continue; non-coding accepted; sends=${sends}; deliveryInputs=0`);
 } finally {
   await app.cleanup();
   globalThis.fetch = network;

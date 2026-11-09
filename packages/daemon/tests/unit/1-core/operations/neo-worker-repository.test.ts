@@ -1,7 +1,24 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resolveNeoTodoTarget } from '../../../../src/lib/neo/todo-target.ts';
 import { resolveNeoTodoDraft } from '../../../../src/lib/neo/todo-operations.ts';
 import { createCodingTodoPolicy } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+
+let fixture: string;
+let originalPath: string | undefined;
+beforeEach(() => {
+  fixture = mkdtempSync(join(tmpdir(), 'worker-remote-'));
+  originalPath = process.env.PATH;
+  process.env.PATH = `${fixture}:${originalPath ?? ''}`;
+  writeFileSync(join(fixture, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+});
+afterEach(() => {
+  if (originalPath === undefined) delete process.env.PATH;
+  else process.env.PATH = originalPath;
+  rmSync(fixture, { recursive: true, force: true });
+});
 
 const policy = createCodingTodoPolicy({ urls: () => [] });
 const draft = {
@@ -175,5 +192,56 @@ test.each([
     });
     if (accepted) expect(reason).toBeNull();
     else expect(reason).toContain('worker_repository_mismatch:');
+  }
+);
+
+test.each([
+  { succeeds: true, repository: 'repo', accepted: true },
+  { succeeds: false, repository: 'repo', accepted: false },
+  { succeeds: true, repository: 'old-name', accepted: true },
+])(
+  'canonical worker remote $repository lookup succeeds=$succeeds',
+  async ({ succeeds, repository, accepted }) => {
+    writeFileSync(
+      join(fixture, 'gh'),
+      `#!/bin/sh
+printf '%s\\n' "$@" > "$0.calls"
+${succeeds ? 'printf \'%s\\n\' \'{"full_name":"example/repo"}\'' : 'exit 1'}
+`,
+      { mode: 0o700 }
+    );
+    const ref = { ...draft.target.ref, daemon: 'remote-owner' };
+    const remote = 'git@github.com:example/old-name.git';
+    const resolved = await resolveNeoTodoDraft(
+      {
+        ...draft,
+        named: { repository: `example/${repository}` },
+        target: { verb: 'send', ref },
+        start: false,
+        priority: 'normal',
+      },
+      async () => ({ value: ref, place: { remotes: [remote] } })
+    );
+    if ('reason' in resolved) throw new Error(resolved.reason.reason);
+    const refusal = policy.refuse(resolved.value, [], {
+      ask: null,
+      workerRemotes: resolved.value.workerRemotes,
+    });
+    if (accepted) expect(refusal).toBeNull();
+    else {
+      expect(resolved.value.workerRemotes).toEqual([remote]);
+      expect(refusal).toContain('worker_repository_mismatch:');
+    }
+    expect(readFileSync(join(fixture, 'gh.calls'), 'utf8').trim().split('\n')).toEqual([
+      'api',
+      '--hostname',
+      'github.com',
+      '--method',
+      'GET',
+      '--cache',
+      '24h',
+      'repos/example/old-name',
+      '--include',
+    ]);
   }
 );

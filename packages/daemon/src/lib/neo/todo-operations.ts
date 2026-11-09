@@ -1,3 +1,7 @@
+import { homedir } from 'node:os';
+import { runGhJson } from '../github/gh-lookup-helpers.ts';
+import { spawnProcess } from '../runtime-spawn/index.ts';
+import { neoRepositoryIdentity } from './project-mirror.ts';
 import {
   NEO_TODO_CANCELLED_DEPENDENCY,
   neoTodoAfterRefusal,
@@ -173,7 +177,44 @@ export async function resolveNeoTodoWorker(
     !resolved.value.daemon && resolved.place?.folder
       ? (await readWorkspaceIdentity(resolved.place.folder)).remotes
       : resolved.place?.remotes;
-  return { value: resolved.value, workerRemotes };
+  const canonicalRemotes =
+    workerRemotes &&
+    (await Promise.all(
+      workerRemotes.map(async (remote) => {
+        const repo = neoRepositoryIdentity(remote)?.match(
+          /^repository:github\.com\/([\w.-]+\/[\w.-]+)$/
+        )?.[1];
+        if (!repo) return remote;
+        const result = await runGhJson(
+          [
+            'gh',
+            'api',
+            '--hostname',
+            'github.com',
+            '--method',
+            'GET',
+            '--cache',
+            '24h',
+            `repos/${repo}`,
+          ],
+          homedir(),
+          spawnProcess,
+          { stripGHRepo: true }
+        );
+        const fullName = result.ok
+          ? (result.data as { full_name?: unknown } | null)?.full_name
+          : null;
+        return typeof fullName === 'string' && /^[\w.-]+\/[\w.-]+$/.test(fullName)
+          ? `https://github.com/${fullName}`
+          : remote;
+      })
+    ));
+  return {
+    value: resolved.value,
+    workerRemotes: canonicalRemotes && [
+      ...new Set([...(workerRemotes ?? []), ...canonicalRemotes]),
+    ],
+  };
 }
 
 export type ResolvedNeoTodoDraft = z.infer<typeof NeoTodoDraftSchema> & {
