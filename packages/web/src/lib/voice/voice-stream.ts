@@ -196,7 +196,7 @@ export function openVoiceStream(
         if (error instanceof Error && error.message.includes('Unknown voice stream')) {
           stopped = true;
           live = false;
-          options.onError?.(error);
+          if (!closed) options.onError?.(error);
           return null;
         }
         throw error;

@@ -595,10 +595,18 @@ describe('Neo voice', () => {
 
   it('keeps the batch path when no stream was opened', async () => {
     voice.recording = true;
-    voice.submit.mockResolvedValue({
-      kind: 'routed',
-      outcome: { kind: 'insert', transcript: 'batch only', autoSend: false },
-      recordId: 'recording',
+    voice.batch.mockResolvedValueOnce({ text: 'batch only' });
+    voice.submit.mockImplementationOnce(async (_input, deps: Partial<VoiceSubmitDeps>) => {
+      const result = await deps.transcribe!({
+        audioBase64: 'aGk=',
+        mimeType: 'audio/wav',
+        peakLevel: 0.5,
+      });
+      return {
+        kind: 'routed',
+        outcome: { kind: 'insert', transcript: result.text, autoSend: false },
+        recordId: 'recording',
+      };
     });
     const onTranscript = vi.fn();
     render(
@@ -617,6 +625,6 @@ describe('Neo voice', () => {
       screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
     );
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('batch only'));
-    expect(voice.submit.mock.calls[0][1]).not.toHaveProperty('transcribe');
+    expect(voice.batch).toHaveBeenCalledOnce();
   });
 });

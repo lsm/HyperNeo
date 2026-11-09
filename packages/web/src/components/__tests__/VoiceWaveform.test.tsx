@@ -33,6 +33,7 @@ describe('VoiceWaveform', () => {
       render(
         <VoiceWaveform
           appearance={appearance}
+          canCancel={appearance === 'neo'}
           getLevel={() => 0}
           isRecording={false}
           isTranscribing={true}
