@@ -8,6 +8,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
+import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
   neoTodoPlaceRefusal,
@@ -132,13 +133,24 @@ class NeoTodoMutationPlanner {
       .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
       .pipe(
         (plan: Plan, input: Input) => {
-          const placeless =
-            input.kind === 'edit' &&
-            neoTodoPlaceRefusal({ ...plan.todo, target: input.target }, this.policies, {
-              ask: todos.getAsk(plan.todo.askId),
-              todo: plan.todo,
-              workerRemotes: input.workerRemotes,
+          if (input.kind !== 'edit') return { value: plan };
+          const draft = {
+            ...plan.todo,
+            check: input.check ?? plan.todo.check,
+            target: input.target,
+          };
+          const ask = todos.getAsk(plan.todo.askId);
+          const repo =
+            plan.todo.repo ??
+            neoTodoRepository(draft, this.policies, {
+              ask,
+              peers: todos.listTodos(plan.todo.askId),
             });
+          const placeless = neoTodoPlaceRefusal(draft, this.policies, {
+            ask,
+            todo: { repo },
+            workerRemotes: input.workerRemotes,
+          });
           return placeless
             ? { reason: { ok: false as const, reason: placeless } }
             : { value: plan };

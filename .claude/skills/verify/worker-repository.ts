@@ -68,6 +68,10 @@ try {
     const before = todos.listTodos('ask').length;
     refusal(await add({ instruction: 'Implement change', target: { verb: 'send', ref }, start: true }));
     assert.equal(todos.listTodos('ask').length, before);
+    const converted = await add({ check: { pack: 'core', kind: 'evidence', params: {} } });
+    refusal(await call('neo.todo.edit', { todoId: converted.todo.id, check, instruction: 'Implement change', target: { verb: 'send', ref } }));
+    assert.equal(sessions.get(converted.todo.id), null);
+    assert.equal(todos.getTodo(converted.todo.id)!.check!.pack, 'core');
     const pending = await add();
     assert.equal(pending.ok, true);
     refusal(await call('neo.todo.edit', { todoId: pending.todo.id, instruction: 'Implement change', target: { verb: 'send', ref } }));

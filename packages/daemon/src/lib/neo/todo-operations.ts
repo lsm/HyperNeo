@@ -840,7 +840,8 @@ export function createNeoTodoOperations(
             workerRemotes: 'value' in resolved ? resolved.workerRemotes : undefined,
           }
         );
-        return reason ? fail(reason) : { value: todo };
+        if (!reason) return { value: todo };
+        return 'reason' in resolved ? resolved : fail(reason);
       },
       'outcome',
       'result:outcome'
