@@ -304,12 +304,12 @@ describe('human-approved standing rules', () => {
     });
     expect(saved()).toEqual(before);
   });
-  test('a proposal can replace one of twenty rules without dropping the other nineteen', async () => {
+  test('with twenty rules a proposal must replace one, and keeps the other nineteen', async () => {
     const rules = Array.from({ length: 20 }, (_, i) => `Synthetic rule ${i}.`);
     db.updateGlobalSettings({ neo: { standingRules: rules } });
     expect(
       await invoke('neo.rule.ask', { askId: 'ask', requestId: 'over', add: edit.add })
-    ).toMatchObject({ value: { ok: true } });
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('At most 20') } });
     const id = await propose('replace', { add: edit.add, remove: [rules[0]] });
     service.todos.answerQuestion(service.todos.getQuestion(id)!, 'yes', 'chat', 2);
     expect(saved()).toEqual([...rules.slice(1), ...edit.add]);
@@ -323,7 +323,7 @@ describe('human-approved standing rules', () => {
     ).toMatchObject({ value: { ok: false, reason: 'question_closed' } });
     expect(await propose('new-request')).not.toBe(id);
   });
-  test('human consent adds beyond twenty without discarding another rule', async () => {
+  test('a human yes that would pass twenty rules changes nothing', async () => {
     const id = await propose('cap-change', {
       add: [...edit.add, 'One more rule.'],
       remove: edit.remove,
@@ -333,13 +333,11 @@ describe('human-approved standing rules', () => {
       ...Array.from({ length: 19 }, (_, i) => `Other rule ${i}.`),
     ];
     db.updateGlobalSettings({ neo: { standingRules: current } });
-    expect(
-      await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
-    ).toMatchObject({ value: { ok: true } });
-    expect(saved()).toEqual([...current.slice(1), ...edit.add, 'One more rule.']);
+    await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human);
+    expect(saved()).toEqual(current);
     expect(service.todos.getQuestion(id)?.state).toBe('answered');
     expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
-      value: { ok: true },
+      value: { ok: false, reason: expect.stringContaining('At most 20') },
     });
   });
   test('an unbound human yes and a changed question body cannot authorize rule edits', async () => {

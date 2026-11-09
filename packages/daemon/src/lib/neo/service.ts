@@ -55,7 +55,11 @@ import type {
 import type { NeoQuestion, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
-import { type NeoModelPreference, neoTodoLimits } from '@hyperneo/shared/types/settings';
+import {
+  type NeoModelPreference,
+  neoStandingRules,
+  neoTodoLimits,
+} from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -239,9 +243,10 @@ export class NeoService {
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
-    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, () =>
-      this.publishSettings?.(db.getGlobalSettings())
-    );
+    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, () => {
+      this.publishSettings?.(db.getGlobalSettings());
+      void this.rulesChanged();
+    });
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
     this.todoRunner = createNeoTodoRunner({
       write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
@@ -870,7 +875,7 @@ export class NeoService {
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
-          ...neoPromptTools(this.packBriefs()),
+          ...neoPromptTools(this.packBriefs(), this.standingRules()),
           autoCompactPercent: preference?.autoCompactPercent,
           ...(preference
             ? {
@@ -933,7 +938,8 @@ export class NeoService {
     .input(['sessionId'])
     .pipe((sessionId: string) => this.db.getSession(sessionId), 'sessionId', 'session')
     .pipe(
-      (session: Session | null) => planNeoSessionConfig(session, this.packBriefs()),
+      (session: Session | null) =>
+        planNeoSessionConfig(session, this.packBriefs(), this.standingRules()),
       'session',
       'config'
     )
@@ -948,6 +954,18 @@ export class NeoService {
 
   defaultSessionId(): string | undefined {
     return this.repo.defaultBinding()?.sessionId;
+  }
+
+  standingRules(): string[] {
+    return neoStandingRules(this.db.getGlobalSettings().neo);
+  }
+
+  async rulesChanged(): Promise<void> {
+    const root = this.defaultSessionId();
+    if (!root) return;
+    await this.alignCoordinatorConfig(root).catch((error) =>
+      this.log.warn('Neo prompt refresh after a standing rule change failed', error)
+    );
   }
 
   async preferenceChanged(change: PackPreferenceChange): Promise<void> {

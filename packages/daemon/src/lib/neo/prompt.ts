@@ -1,4 +1,10 @@
-import { NEO_ROOT_PROMPT, NEO_ROOT_TURN_END, NEO_FOCUSED_DISCUSSION } from '@hyperneo/prompts';
+import {
+  NEO_ROOT_PROMPT,
+  NEO_ROOT_TURN_END,
+  NEO_FOCUSED_DISCUSSION,
+  NEO_STANDING_RULES,
+  fillPrompt,
+} from '@hyperneo/prompts';
 import type { NeoPackBrief } from './pack-contract.ts';
 
 function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
@@ -18,11 +24,19 @@ function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
   ].join(' ');
 }
 
-export function neoPrompt(packs: readonly NeoPackBrief[]): string {
+function neoStandingRulesPrompt(rules: readonly string[]): string {
+  if (!rules.length) return '';
+  return fillPrompt(NEO_STANDING_RULES, {
+    rules: rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n'),
+  });
+}
+
+export function neoPrompt(packs: readonly NeoPackBrief[], rules: readonly string[] = []): string {
   const humanWork =
     'When the daemon reports that the human worked directly in a worker, treat it as news about that matter. Update the ask’s todos and state; record new work the human started as a todo on that ask. Do not assign again work the human already directed. If the worker succeeded and nothing needs the human, stay quiet. If failed or blocked, first try to unblock it yourself or through the worker using tools and access this instance actually has. Follow the human preferences supplied by enabled packs. Tell the human only what they must know or decide, with the concrete next step you propose.';
   return [
     NEO_ROOT_PROMPT,
+    neoStandingRulesPrompt(rules),
     neoPackBriefing(packs),
     NEO_FOCUSED_DISCUSSION,
     humanWork,

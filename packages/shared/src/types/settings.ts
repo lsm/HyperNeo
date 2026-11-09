@@ -144,6 +144,7 @@ export function neoWorkerPermissionMode(settings?: NeoSettings): NeoWorkerPermis
   return mode && NEO_WORKER_PERMISSION_MODES.includes(mode) ? mode : 'auto';
 }
 
+export const NEO_STANDING_RULES_MAX = 20;
 export const NEO_STANDING_RULE_MAX_CHARS = 500;
 
 export function neoStandingRules(settings?: NeoSettings): string[] {
