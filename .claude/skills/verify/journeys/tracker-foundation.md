@@ -16,3 +16,7 @@ and leave that closed mirror alone when its todo becomes active again. A settled
 ask closes active and failed children as not_planned before closing its parent.
 A failing child stops after three closes and its parent then closes. Retain
 observed.json, recovery.json and retry-cap.json. The wrapper removes its temporary data.
+
+A real 30-second create timeout records one failure, then marker lookup recovers
+the created item on the next sweep. Capped settled history is excluded from facts.
+Retain timeout.json alongside the recovery evidence.

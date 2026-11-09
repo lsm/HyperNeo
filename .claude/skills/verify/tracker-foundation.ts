@@ -85,9 +85,24 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       for (let sweep = 0; sweep < 6; sweep++) await neo.sweepPacks();
       assert.deepEqual(closeCalls, ['example/repo#7', 'example/repo#7', 'example/repo#7', 'example/repo#6']);
       const capped = await app.db.gateway.call(neoTrackerReads, 'facts');
-      assert.equal(capped.mirrors.find((row) => row.ownerId === 'cap-child')?.failures, 3);
-      assert.equal(capped.mirrors.find((row) => row.ownerId === 'capped')?.state, 'closed');
+      assert.equal(capped.mirrors.length, 0);
+      assert.deepEqual(app.db.getDatabase().prepare("SELECT failures FROM neo_tracker_mirrors WHERE owner_id = 'cap-child'").get(), { failures: 3 });
       writeFileSync(join(run, 'evidence/retry-cap.json'), JSON.stringify({ closeCalls, failures: 3, parentClosed: true }));
+      store.openAsk({ id: 'timed-out', projectId: null, sessionId: 'synthetic', originMessageId: null, title: 'Timeout recovery', request: 'Private details', createdAt: 6 });
+      const create = adapter.create;
+      adapter.create = async (item) => { await create(item); return new Promise<never>(() => {}); };
+      const began = Date.now();
+      await neo.sweepPacks();
+      const elapsedMs = Date.now() - began;
+      assert(elapsedMs >= 30_000);
+      const timedOut = await app.db.gateway.call(neoTrackerReads, 'facts');
+      assert.equal(timedOut.mirrors[0].failures, 1);
+      adapter.create = create;
+      await neo.sweepPacks();
+      const retried = await app.db.gateway.call(neoTrackerReads, 'facts');
+      assert.equal(retried.mirrors[0].ref, 'example/repo#8');
+      assert.equal(retried.mirrors[0].failures, 0);
+      writeFileSync(join(run, 'evidence/timeout.json'), JSON.stringify({ elapsedMs, failuresAfterTimeout: 1, recoveredRef: retried.mirrors[0].ref }));
       writeFileSync(join(run, 'evidence/recovery.json'), JSON.stringify({ recovered: recovered.mirrors[0], port: app.server.port, serviceSweep: true, lifecycleEffects: effects }));
     }
   } finally { await neo.dispose(); await app.cleanup(); }
@@ -123,7 +138,7 @@ esac
   assert.equal(capLogs.length, 1);
   const items = readFileSync(join(run, 'bin/gh.items'), 'utf8').trim().split('\n');
   const createCount = items.filter((marker) => marker === 'hyperneo:ask:ask').length;
-  assert.equal(items.length, 7);
+  assert.equal(items.length, 8);
   assert.equal(createCount, 1);
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ createCount, recoveryExit: exit, seedKilledBeforeBound: true, concurrentSweeps: true, capLogCount: capLogs.length, seed: JSON.parse(readFileSync(join(run, 'seed-ready.json'), 'utf8')) }));
   console.log(`PASS: service sweep recovery and lifecycle; createCount=${createCount}; recoveryExit=${exit}; totalCreateCount=${items.length}`);

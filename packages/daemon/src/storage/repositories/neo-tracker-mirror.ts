@@ -1,7 +1,10 @@
 import type { Database } from '../sqlite-compat.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
-import type { NeoTrackerMirror } from '../../lib/neo/tracker-mirror-plan.ts';
+import {
+  NEO_TRACKER_FAILURE_LIMIT,
+  type NeoTrackerMirror,
+} from '../../lib/neo/tracker-mirror-plan.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 
 export class NeoTrackerMirrorRepository {
@@ -13,8 +16,8 @@ export class NeoTrackerMirrorRepository {
     const mirrors = this.db
       .prepare(`SELECT owner_kind AS ownerKind, owner_id AS ownerId,
       tracker, home, ref, parent_ref AS parentRef, state, failures, updated_at AS updatedAt
-      FROM neo_tracker_mirrors WHERE state != 'closed'`)
-      .all() as NeoTrackerMirror[];
+      FROM neo_tracker_mirrors WHERE state != 'closed' AND failures < ?`)
+      .all(NEO_TRACKER_FAILURE_LIMIT) as NeoTrackerMirror[];
     const store = new NeoAskTodoRepository(this.db);
     const asks = [
       ...new Map(
@@ -32,14 +35,14 @@ export class NeoTrackerMirrorRepository {
       ...asks.map((ask) => ['ask', ask.id]),
       ...todos.map((todo) => ['todo', todo.id]),
     ];
-    const closed = this.db
+    const retained = this.db
       .prepare(`SELECT owner_kind AS ownerKind, owner_id AS ownerId,
       tracker, home, ref, parent_ref AS parentRef, state, failures, updated_at AS updatedAt
       FROM json_each(?) AS owner JOIN neo_tracker_mirrors AS mirror
       ON mirror.owner_kind = json_extract(owner.value, '$[0]')
-      AND mirror.owner_id = json_extract(owner.value, '$[1]') WHERE state = 'closed'`)
-      .all(JSON.stringify(owners)) as NeoTrackerMirror[];
-    return { asks, todos, mirrors: [...mirrors, ...closed] };
+      AND mirror.owner_id = json_extract(owner.value, '$[1]') WHERE state = 'closed' OR failures >= ?`)
+      .all(JSON.stringify(owners), NEO_TRACKER_FAILURE_LIMIT) as NeoTrackerMirror[];
+    return { asks, todos, mirrors: [...mirrors, ...retained] };
   }
   put(row: NeoTrackerMirror) {
     this.db

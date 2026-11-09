@@ -17,6 +17,18 @@ import {
 const log = new Logger('tracker-mirror');
 const activeSweeps = new WeakMap<Database, Promise<void>>();
 
+async function trackerCall<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('Tracker call timed out after 30 seconds')), 30_000);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function sweepNeoTrackerMirrors(
   db: Database,
   adapters: readonly NeoTrackerAdapter[]
@@ -48,15 +60,17 @@ export async function sweepNeoTrackerMirrors(
           try {
             if (action === 'create') {
               const result =
-                planNeoTrackerRecovery(row, await adapter.find(item.marker, row.home)) ??
-                (await adapter.create(item));
+                planNeoTrackerRecovery(
+                  row,
+                  await trackerCall(adapter.find(item.marker, row.home))
+                ) ?? (await trackerCall(adapter.create(item)));
               if ('reason' in result) throw new Error(result.reason);
               ref = result.ref;
             } else {
               const result =
                 action === 'link'
-                  ? await adapter.link(parent!, ref!)
-                  : await adapter.close(ref!, outcome!);
+                  ? await trackerCall(adapter.link(parent!, ref!))
+                  : await trackerCall(adapter.close(ref!, outcome!));
               if (result !== true) throw new Error(result.reason);
             }
           } catch (error) {
