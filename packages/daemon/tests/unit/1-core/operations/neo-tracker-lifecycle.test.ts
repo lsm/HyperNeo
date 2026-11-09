@@ -130,3 +130,15 @@ test('closed owners are loaded in one bounded query', () => {
     prepare.mockRestore();
   }
 });
+
+test('a dropped ask closes its parent as not_planned after its children', () => {
+  bindChild();
+  db.prepare("UPDATE neo_asks SET status = 'dropped'").run();
+  expect(plan()).toMatchObject([
+    { action: 'close', outcome: 'not_planned', row: { ownerId: 'child' } },
+  ]);
+  mirrors.put({ ...plan()[0].row, state: 'closed' });
+  expect(plan()).toMatchObject([
+    { action: 'close', outcome: 'not_planned', row: { ownerId: 'ask' } },
+  ]);
+});

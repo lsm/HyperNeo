@@ -99,7 +99,13 @@ export function planNeoTrackerMirror(
           outcome: owner.todo?.state === 'done' ? 'completed' : 'not_planned',
         });
       else if (owner.kind === 'ask' && settled && !openChildren)
-        plans.push({ row, adapter, item, action: 'close', outcome: 'completed' });
+        plans.push({
+          row,
+          adapter,
+          item,
+          action: 'close',
+          outcome: owner.ask.status === 'dropped' ? 'not_planned' : 'completed',
+        });
       else if (owner.kind === 'todo' && parent && row.parentRef !== parent)
         plans.push({ row, adapter, item, action: 'link', parent });
     }

@@ -66,10 +66,14 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       const waiting = await app.db.gateway.call(neoTrackerReads, 'facts');
       assert.equal(waiting.mirrors.find((row) => row.ownerKind === 'ask')?.state, 'bound');
       await neo.sweepPacks();
+      store.openAsk({ id: 'dropped', projectId: null, sessionId: 'synthetic', originMessageId: null, title: 'Cancelled plan', request: 'Private details', createdAt: 3 });
+      await neo.sweepPacks();
+      app.db.getDatabase().prepare("UPDATE neo_asks SET status = 'dropped' WHERE id = 'dropped'").run();
+      await neo.sweepPacks();
       const effects = readFileSync(join(run, 'bin/gh.effects'), 'utf8').trim().split('\n');
       assert.deepEqual(effects.filter((line) => line.startsWith('close ')), [
         'close example/repo#2 completed', 'close example/repo#3 not_planned',
-        'close example/repo#4 not_planned', 'close example/repo#1 completed',
+        'close example/repo#4 not_planned', 'close example/repo#1 completed', 'close example/repo#5 not_planned',
       ]);
       assert.equal((await app.db.gateway.call(neoTrackerReads, 'facts')).mirrors.length, 0);
       writeFileSync(join(run, 'evidence/recovery.json'), JSON.stringify({ recovered: recovered.mirrors[0], port: app.server.port, serviceSweep: true, lifecycleEffects: effects }));
@@ -105,7 +109,7 @@ esac
   assert.equal(exit, 0, 'Recovery daemon must exit successfully');
   const items = readFileSync(join(run, 'bin/gh.items'), 'utf8').trim().split('\n');
   const createCount = items.filter((marker) => marker === 'hyperneo:ask:ask').length;
-  assert.equal(items.length, 4);
+  assert.equal(items.length, 5);
   assert.equal(createCount, 1);
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ createCount, recoveryExit: exit, seedKilledBeforeBound: true, seed: JSON.parse(readFileSync(join(run, 'seed-ready.json'), 'utf8')) }));
   console.log(`PASS: service sweep recovery and lifecycle; createCount=${createCount}; recoveryExit=${exit}; totalCreateCount=${items.length}`);
