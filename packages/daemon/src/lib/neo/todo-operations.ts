@@ -209,7 +209,12 @@ export async function resolveNeoTodoWorker(
           : remote;
       })
     ));
-  return { value: resolved.value, workerRemotes: canonicalRemotes };
+  return {
+    value: resolved.value,
+    workerRemotes: canonicalRemotes && [
+      ...new Set([...(workerRemotes ?? []), ...canonicalRemotes]),
+    ],
+  };
 }
 
 export type ResolvedNeoTodoDraft = z.infer<typeof NeoTodoDraftSchema> & {

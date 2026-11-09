@@ -91,6 +91,7 @@ try {
   await call('work.status', { ref: refs[0] });
   assert.equal((await add({ instruction: 'Implement change', target: { verb: 'send', ref: refs[0] } })).ok, true);
   assert.equal((await add({ instruction: 'Renamed repository', target: { verb: 'send', ref: refs[3] } })).ok, true);
+  assert.equal((await add({ check: { ...check, params: { urls: ['https://github.com/example/old-name/pull/1'] } }, instruction: 'Existing repository name', target: { verb: 'send', ref: refs[3] } })).ok, true);
   refusal(await add({ instruction: 'Unreadable repository', target: { verb: 'send', ref: refs[4] }, start: true }));
   for (const ref of refs.slice(1, 3)) {
     const before = todos.listTodos('ask').length;

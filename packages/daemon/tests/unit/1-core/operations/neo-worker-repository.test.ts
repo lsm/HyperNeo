@@ -195,40 +195,53 @@ test.each([
   }
 );
 
-test.each([true, false])('canonical worker remote lookup succeeds=%s', async (succeeds) => {
-  writeFileSync(
-    join(fixture, 'gh'),
-    `#!/bin/sh
+test.each([
+  { succeeds: true, repository: 'repo', accepted: true },
+  { succeeds: false, repository: 'repo', accepted: false },
+  { succeeds: true, repository: 'old-name', accepted: true },
+])(
+  'canonical worker remote $repository lookup succeeds=$succeeds',
+  async ({ succeeds, repository, accepted }) => {
+    writeFileSync(
+      join(fixture, 'gh'),
+      `#!/bin/sh
 printf '%s\\n' "$@" > "$0.calls"
 ${succeeds ? 'printf \'%s\\n\' \'{"full_name":"example/repo"}\'' : 'exit 1'}
 `,
-    { mode: 0o700 }
-  );
-  const ref = { ...draft.target.ref, daemon: 'remote-owner' };
-  const remote = 'git@github.com:example/old-name.git';
-  const resolved = await resolveNeoTodoDraft(
-    { ...draft, target: { verb: 'send', ref }, start: false, priority: 'normal' },
-    async () => ({ value: ref, place: { remotes: [remote] } })
-  );
-  if ('reason' in resolved) throw new Error(resolved.reason.reason);
-  const refusal = policy.refuse(resolved.value, [], {
-    ask: null,
-    workerRemotes: resolved.value.workerRemotes,
-  });
-  if (succeeds) expect(refusal).toBeNull();
-  else {
-    expect(resolved.value.workerRemotes).toEqual([remote]);
-    expect(refusal).toContain('worker_repository_mismatch:');
+      { mode: 0o700 }
+    );
+    const ref = { ...draft.target.ref, daemon: 'remote-owner' };
+    const remote = 'git@github.com:example/old-name.git';
+    const resolved = await resolveNeoTodoDraft(
+      {
+        ...draft,
+        named: { repository: `example/${repository}` },
+        target: { verb: 'send', ref },
+        start: false,
+        priority: 'normal',
+      },
+      async () => ({ value: ref, place: { remotes: [remote] } })
+    );
+    if ('reason' in resolved) throw new Error(resolved.reason.reason);
+    const refusal = policy.refuse(resolved.value, [], {
+      ask: null,
+      workerRemotes: resolved.value.workerRemotes,
+    });
+    if (accepted) expect(refusal).toBeNull();
+    else {
+      expect(resolved.value.workerRemotes).toEqual([remote]);
+      expect(refusal).toContain('worker_repository_mismatch:');
+    }
+    expect(readFileSync(join(fixture, 'gh.calls'), 'utf8').trim().split('\n')).toEqual([
+      'api',
+      '--hostname',
+      'github.com',
+      '--method',
+      'GET',
+      '--cache',
+      '24h',
+      'repos/example/old-name',
+      '--include',
+    ]);
   }
-  expect(readFileSync(join(fixture, 'gh.calls'), 'utf8').trim().split('\n')).toEqual([
-    'api',
-    '--hostname',
-    'github.com',
-    '--method',
-    'GET',
-    '--cache',
-    '24h',
-    'repos/example/old-name',
-    '--include',
-  ]);
-});
+);
