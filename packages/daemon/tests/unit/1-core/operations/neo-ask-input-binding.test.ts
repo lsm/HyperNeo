@@ -107,23 +107,115 @@ function setup() {
 }
 
 describe('neo ask binding from human input', () => {
-  test('input and askId that disagree are refused, and no ask is opened', async () => {
+  test('a plain follow-up binds to an open ask and later input-only calls reuse it', async () => {
     const f = setup();
     try {
-      const input = f.human('There are two Open buttons on the card');
-      const asksBefore = f.store.listOpenAsks().length;
-      const refused = await f.ask({ input, askId: f.slow.id });
-      expect(refused).toMatchObject({
+      const input = f.human('Also check the count query');
+      const first = await f.add({ input, askId: f.slow.id });
+      expect(first.ok && first.todo?.askId).toBe(f.slow.id);
+      const repeated = await f.add({ input, title: 'Check the count result' });
+      expect(repeated.ok && repeated.todo?.askId).toBe(f.slow.id);
+      const question = await f.ask({ input });
+      expect(question.ok && question.question.askId).toBe(f.slow.id);
+      expect(f.store.listOpenAsks()).toHaveLength(1);
+      expect(
+        f.db
+          .prepare('SELECT ask_id FROM neo_ask_inputs WHERE session_id = ? AND message_id = ?')
+          .get(session, input)
+      ).toEqual({ ask_id: f.slow.id });
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test.each(['settled', 'foreign', 'unknown'] as const)(
+    'a %s target refuses binding without writing an ask or input link',
+    async (kind) => {
+      const f = setup();
+      try {
+        const input = f.human('Also check the count query');
+        if (kind === 'settled') f.store.settleAsk(f.slow, 'done', 'Finished', 2);
+        if (kind === 'foreign')
+          f.db
+            .prepare('UPDATE neo_asks SET session_id = ? WHERE id = ?')
+            .run('neo:other', f.slow.id);
+        const before = f.store.listAsks(null, 10).length;
+        const result = await f.add({ input, askId: kind === 'unknown' ? 'missing' : f.slow.id });
+        expect(result).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining(kind === 'settled' ? 'ask_settled' : 'not_owned'),
+        });
+        expect(f.store.listAsks(null, 10)).toHaveLength(before);
+        expect(f.db.prepare('SELECT COUNT(*) AS count FROM neo_ask_inputs').get()).toEqual({
+          count: 0,
+        });
+        expect(f.store.listTodos(f.slow.id)).toEqual([]);
+      } finally {
+        f.db.close();
+      }
+    }
+  );
+
+  test('competing bindings retain the winner and name it in the refusal', async () => {
+    const f = setup();
+    try {
+      const other = f.open('other', 'Other request');
+      const input = f.human('Also check the count query');
+      const results = await Promise.all([
+        f.add({ input, askId: f.slow.id }),
+        f.add({ input, askId: other.id }),
+      ]);
+      const winner = results.find((result) => result.ok);
+      const loser = results.find((result) => !result.ok);
+      expect(winner?.ok && winner.todo?.askId).toBe(f.slow.id);
+      expect(loser).toMatchObject({
         ok: false,
-        reason: expect.stringContaining('ask_mismatch'),
+        reason: expect.stringContaining(`ask_mismatch: input ${input} belongs to ask ${f.slow.id}`),
       });
-      expect(await f.add({ input, askId: f.slow.id })).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('ask_mismatch'),
+      expect(f.store.listTodos(other.id)).toEqual([]);
+      expect(f.db.prepare('SELECT ask_id FROM neo_ask_inputs').all()).toEqual([
+        { ask_id: f.slow.id },
+      ]);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test('an insert racing a stale decision preserves the other binding', () => {
+    const f = setup();
+    try {
+      const other = f.open('other', 'Other request');
+      const input = f.human('Also check the count query');
+      const getAsk = f.store.getAsk.bind(f.store);
+      let interleave = true;
+      f.store.getAsk = (id) => {
+        const ask = getAsk(id);
+        if (id === f.slow.id && interleave) {
+          interleave = false;
+          expect(
+            resolveNeoInputAsk(f.store, f.reads, owner, { input, askId: other.id }, 'Other')
+          ).toEqual({ value: { askId: other.id } });
+        }
+        return ask;
+      };
+      const result = resolveNeoInputAsk(
+        f.store,
+        f.reads,
+        owner,
+        { input, askId: f.slow.id },
+        'Slow'
+      );
+      expect(result).toMatchObject({
+        reason: {
+          ok: false,
+          reason: expect.stringContaining(
+            `ask_mismatch: input ${input} belongs to ask ${other.id}`
+          ),
+        },
       });
-      expect(f.store.listOpenAsks()).toHaveLength(asksBefore);
-      expect(f.store.listQuestions(f.slow.id)).toEqual([]);
-      expect(f.store.listTodos(f.slow.id)).toEqual([]);
+      expect(f.db.prepare('SELECT ask_id FROM neo_ask_inputs').all()).toEqual([
+        { ask_id: other.id },
+      ]);
     } finally {
       f.db.close();
     }
