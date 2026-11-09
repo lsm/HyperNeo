@@ -211,13 +211,18 @@ const runVoiceSubmitPipeline = (
 ) => Promise<VoiceSubmitFinishedCtx | VoiceSubmitHaltedCtx | VoiceSubmitSilentCtx>;
 
 export async function requestVoiceTranscription(
-  recording: VoiceRecording
+  recording: VoiceRecording,
+  transcriptionId?: string
 ): Promise<{ text?: string }> {
   const hub = connectionManager.getHubIfConnected();
   if (!hub) throw new Error('Not connected');
-  return hub.request<{ text?: string }>('voice.transcribe', recording, {
-    timeout: VOICE_SUBMIT_TRANSCRIBE_TIMEOUT_MS,
-  });
+  return hub.request<{ text?: string }>(
+    'voice.transcribe',
+    { ...recording, ...(transcriptionId ? { transcriptionId } : {}) },
+    {
+      timeout: VOICE_SUBMIT_TRANSCRIBE_TIMEOUT_MS,
+    }
+  );
 }
 
 export async function runVoiceSubmit(

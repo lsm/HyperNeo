@@ -17,6 +17,7 @@ import { VoiceStream, type VoiceStreamText } from '../voice/stream-relay.ts';
 import { createVoiceTranscribeLimiters, runVoiceTranscribe } from '../voice/transcribe-pipeline.ts';
 
 interface VoiceTranscribeRequest {
+  transcriptionId?: string;
   recordingId?: string;
   audioBase64: string;
   mimeType: 'audio/wav';
@@ -140,17 +141,55 @@ export function registerVoiceHandlers(
   const recordings = recording
     ? new VoiceRecordingTranscription(new VoiceRecordingRepository(recording.db))
     : undefined;
+  const transcriptions = new Map<
+    string,
+    { controller: AbortController; finished: Promise<void> }
+  >();
+  const transcriptionKey = (id: string, context: CallContext | undefined) =>
+    JSON.stringify([context?.clientId ?? context?.sessionId ?? 'global', id]);
   messageHub.onRequest<VoiceTranscribeRequest, VoiceTranscribeResponse>(
     'voice.transcribe',
-    (data, context) =>
-      transcribeViaPipeline(
-        settingsManager,
-        credentialManager,
-        data,
-        context,
-        recordings,
-        context?.clientId ? (recording?.deviceOf(context.clientId)?.deviceId ?? 'local') : 'local'
-      )
+    async (data, context) => {
+      if (data?.transcriptionId && data.recordingId)
+        throw new Error(
+          'Use either recordingId for durable retries or transcriptionId for cancellation'
+        );
+      const key = data?.transcriptionId ? transcriptionKey(data.transcriptionId, context) : null;
+      if (key && transcriptions.has(key))
+        throw new Error('Transcription request already in progress');
+      const controller = new AbortController();
+      let finish: () => void = () => {};
+      const finished = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      if (key) transcriptions.set(key, { controller, finished });
+      try {
+        return await transcribeViaPipeline(
+          settingsManager,
+          credentialManager,
+          data,
+          context,
+          recordings,
+          context?.clientId
+            ? (recording?.deviceOf(context.clientId)?.deviceId ?? 'local')
+            : 'local',
+          controller.signal
+        );
+      } finally {
+        if (key) transcriptions.delete(key);
+        finish();
+      }
+    }
+  );
+
+  messageHub.onRequest<{ transcriptionId: string }>(
+    'voice.transcribe.cancel',
+    async (data, context) => {
+      const active = transcriptions.get(transcriptionKey(data?.transcriptionId, context));
+      active?.controller.abort();
+      await active?.finished;
+      return { ok: true };
+    }
   );
 
   messageHub.onRequest<{ encoding?: string; sampleRate?: number; language?: string }>(
@@ -365,12 +404,14 @@ async function transcribeViaPipeline(
   data: VoiceTranscribeRequest,
   context: CallContext | undefined,
   recordings?: VoiceRecordingTranscription,
-  owner = 'local'
+  owner = 'local',
+  signal?: AbortSignal
 ): Promise<VoiceTranscribeResponse> {
   const submit = (beforeDispatch?: BeforeVoiceDispatch) =>
     runVoiceTranscribe({
       data,
       context,
+      signal,
       deps: { settingsManager, credentialManager, limiters: transcriptionLimiters, beforeDispatch },
     });
   const outcome =

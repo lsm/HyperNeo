@@ -7,7 +7,8 @@ bash .claude/skills/verify/voice-recording-retries.sh "$RUN" 9437 9438
 ```
 
 The helper launches a NODE_ENV=test CLI daemon with env -i, synthetic HOME/data
-and DB, a gh stub and a local HTTP ASR fake. It never uses keys, the real ai0,
+and DB, a gh stub and a local HTTP ASR fake. Its isolated local credential pairs
+a synthetic human client once; reconnects and daemon restarts reuse that device. It never uses keys, the real ai0,
 the live DB, port 8399 or the phone. All owned services stop on exit.
 
 It uploads a synthetic 217.9-second PCM16 WAV through public voice.transcribe
@@ -59,3 +60,11 @@ Evidence is evidence/preflight.json. Unit contracts also cover rate-window and
 credential failures plus competing handler dispatch CAS. No rows or audio are
 deleted to release preflight attempts. The default journey still proves that
 post-dispatch failures and process interruption never resubmit.
+
+Cancelable ephemeral uploads use transcriptionId instead of recordingId. Send
+voice.transcribe.cancel with that transcriptionId on the same client connection.
+The acknowledgement follows upload abort and admission release. Repeating a cancel
+for a completed or unknown upload is harmless, and another client cannot cancel
+it. A request combining recordingId and transcriptionId is refused: durable
+recording retries can join shared work, while cancellation names one live upload.
+Legacy durable retry requests retain their existing behavior.

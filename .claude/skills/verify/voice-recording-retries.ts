@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { pcm16Wav } from '../../../packages/daemon/src/lib/voice/stream-relay.ts';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const [run, port, asrPort, phase] = process.argv.slice(2);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -9,8 +10,8 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.notEqual(port, '8399');
 const asr = `http://127.0.0.1:${asrPort}`;
 const count = async () => (await (await fetch(`${asr}/stats`)).json() as { calls: number }).calls;
-async function client() {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+async function client(credential: string) {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { authorization: `Bearer ${credential}` } } as unknown as string[]);
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   socket.onmessage = (event) => {
@@ -32,8 +33,26 @@ async function client() {
     }),
   };
 }
+const credentialPath = join(run, 'synthetic-retry.credential');
+let credential: string;
+try {
+  credential = await readFile(credentialPath, 'utf8');
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  const admin = await client(await readLocalCredential());
+  try {
+    const pairing = await admin.call('operation.invoke', { name: 'device.pair.create', input: { kind: 'human' } }) as { ok: boolean; code: string };
+    assert(pairing.ok);
+    const response = await fetch(`http://127.0.0.1:${port}/pair`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: pairing.code, name: 'Synthetic recording retry client' }) });
+    assert.equal(response.status, 200);
+    const paired = await response.json() as { credential: string };
+    assert(paired.credential);
+    credential = paired.credential;
+    await writeFile(credentialPath, credential, { mode: 0o600 });
+  } finally { admin.close(); }
+}
 const opened: Awaited<ReturnType<typeof client>>[] = [];
-const connect = async () => { const connection = await client(); opened.push(connection); return connection; };
+const connect = async () => { const connection = await client(credential); opened.push(connection); return connection; };
 const requestPath = join(run, 'recording.json');
 try {
   const phone = await connect();
