@@ -248,3 +248,16 @@ test('equal update times page in the same id order as RPC', async () => {
   }
   expect(seen).toEqual(expected);
 });
+
+test('cursor replies contain the next ask page and shared counts', async () => {
+  seed(40);
+  const first = await snapshot();
+  const page = await snapshot(mcp, { cursor: first.more!.asks!.cursor });
+  expect(page.todoAsks).toHaveLength(10);
+  expect(page.projects).toEqual([]);
+  expect(page.needsYou).toBe(first.needsYou);
+  expect(page.neoUnhandled).toBe(first.neoUnhandled);
+  expect(Object.keys(page).sort()).toEqual(
+    ['ok', 'sessionId', 'projects', 'todoAsks', 'needsYou', 'neoUnhandled', 'rev'].sort()
+  );
+});

@@ -366,7 +366,19 @@ export function createNeoOperations(service: NeoService) {
     cursor?: z.infer<typeof HistoryCursor>
   ) {
     if (caller.source !== 'rpc') {
-      return buildSnapshot(caller, requested, cursor);
+      const built = await buildSnapshot(caller, requested, cursor);
+      if (!cursor) return built;
+      const { ok, sessionId, todoAsks, needsYou, neoUnhandled, omitted, more } = built;
+      return {
+        ok,
+        sessionId,
+        projects: [],
+        todoAsks,
+        needsYou,
+        neoUnhandled,
+        ...(omitted ? { omitted } : {}),
+        ...(more ? { more } : {}),
+      };
     }
     const key = requested ?? '';
     let pending = snapshots.get(key);

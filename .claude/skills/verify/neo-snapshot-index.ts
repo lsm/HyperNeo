@@ -72,6 +72,8 @@ try {
     while (page.more?.asks) {
       page = await snapshot({ cursor: page.more.asks.cursor });
       assert.equal(page.needsYou, first.needsYou);
+      assert.deepEqual(page.projects, []);
+      for (const field of ['session', 'packRows', 'sessionNoticeGroups', 'preferences', 'working', 'historyCursor']) assert(!(field in page));
       assert.equal(page.neoUnhandled, first.neoUnhandled);
       assert.deepEqual(page.omitted, first.omitted);
       seen.push(...page.todoAsks.map((entry: { ask: { id: string } }) => entry.ask.id));
@@ -79,6 +81,7 @@ try {
     assert.equal(seen.length, 40);
     assert.equal(new Set(seen).size, 40);
     console.log(`Cursor walk total asks: ${seen.length}`);
+    console.log('Cursor pages contain only ask entries and counts: true');
     const changing = await snapshot();
     raw.exec("UPDATE neo_asks SET status = 'done' WHERE id = 'ask-39'");
     raw.prepare("INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('incoming',?,'New ask','','open',1000,1000)").run(sessionId);
