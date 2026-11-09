@@ -111,6 +111,41 @@ describe('spoken replies separate from publications', () => {
     mailbox.close();
   });
 
+  test('a human input without listening carries the quick-reply note', () => {
+    const loaded = {
+      inputKind: 'human',
+      content: 'Check the synthetic task',
+      sendStatus: 'enqueued',
+    };
+    expect(speech.prepareInput(sessionId, loaded).content).toBe(
+      'Check the synthetic task\n\n[listening: no]\nBefore time-consuming work, publish one short reply first: what you will do, plus a line or two of what you already know. Answer a quick question directly instead. Then continue.'
+    );
+  });
+
+  test("a human input while listening keeps today's speech-only acknowledgment line", async () => {
+    await listen();
+    const loaded = {
+      inputKind: 'human',
+      content: 'Check the synthetic task',
+      sendStatus: 'enqueued',
+    };
+    expect(speech.prepareInput(sessionId, loaded).content).toBe(
+      'Check the synthetic task\n\n[listening: yes]\nHuman input while listening: before time-consuming work, call neo.speech.say with one short natural acknowledgment. For a quick answer, publish with spoken instead of a separate say. Then continue.'
+    );
+  });
+
+  test('non-human inputs get no note', async () => {
+    for (const listening of [false, true]) {
+      await listen(listening);
+      for (const inputKind of ['system', 'worker', undefined]) {
+        const loaded = { inputKind, content: 'Synthetic update', sendStatus: 'enqueued' };
+        expect(speech.prepareInput(sessionId, loaded).content).toBe(
+          `Synthetic update\n\n[listening: ${listening ? 'yes' : 'no'}]`
+        );
+      }
+    }
+  });
+
   test('disconnect updates the listening fact only for the winning client, without replay', async () => {
     await listen();
     await listen(true, { ...human, clientId: 'other' });
