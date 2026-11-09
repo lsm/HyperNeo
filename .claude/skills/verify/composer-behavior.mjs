@@ -3,10 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const [port, run, asrPort] = process.argv.slice(2);
+const fallbackOnly = process.argv.includes('--fallback-only');
 assert(!['8399', '8499'].includes(port));
 const base = `http://127.0.0.1:${port}`;
 const rpc = (name, input = {}) => JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', name, JSON.stringify(input)], { encoding: 'utf8' })).reply;
-const configure = mode => assert(rpc('rpc:settings.global.update', { updates: { language: 'en', voice: { enabled: true, mode, model: 'synthetic', endpoint: `http://127.0.0.1:${asrPort}/transcribe`, streamEndpoint: `ws://127.0.0.1:${asrPort}/v1/listen`, streamProtocol: 'deepgram', allowPrivateNetwork: true } } }).success);
+const configure = mode => assert(rpc('rpc:settings.global.update', { updates: { language: 'en', voice: { enabled: true, mode, model: 'synthetic', endpoint: `http://127.0.0.1:${asrPort}/transcribe`, streamEndpoint: `ws://127.0.0.1:${asrPort}/v1/listen${mode === 'auto' ? '?disconnect=1' : ''}`, streamProtocol: 'deepgram', allowPrivateNetwork: true } } }).success);
 const { chromium } = createRequire(import.meta.url)(process.env.VERIFY_PLAYWRIGHT || 'playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER, args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
 const receipts = [];
@@ -38,7 +39,7 @@ try {
     const form = page.locator('form.neo-composer-input');
     await form.getByRole('button', { name: 'Start voice input', exact: true }).click();
     await form.getByTestId('voice-timer').waitFor();
-    if (mode === 'streaming') await form.getByTestId('voice-interim-text').waitFor();
+    if (mode !== 'batch') await form.getByTestId('voice-interim-text').waitFor();
     const initial = await form.getByTestId('voice-timer').innerText();
     await page.waitForFunction(value => document.querySelector('[data-testid=voice-timer]')?.textContent !== value, initial);
     return form;
@@ -52,7 +53,7 @@ try {
     }
     assert.fail('ASR request did not start');
   };
-  for (const mode of ['streaming', 'batch']) for (const width of [390, 1280]) for (const intent of ['draft', 'send']) {
+  for (const mode of (fallbackOnly ? ['auto'] : ['streaming', 'batch'])) for (const width of [390, 1280]) for (const intent of ['draft', 'send']) {
     configure(mode);
     const theme = mode === 'streaming' ? 'light' : 'dark';
     const context = await open(theme, width);
@@ -60,9 +61,10 @@ try {
     await input.fill('Original draft.');
     const oldOrdinal = await ordinal(context);
     const form = await started(mode);
+    const beforeFinish = mode === 'auto' ? await ordinal(context) : oldOrdinal;
     await form.getByRole('button', { name: intent === 'draft' ? 'Stop recording and keep the text as a draft' : 'Stop recording and send the message', exact: true }).click();
     await form.getByTestId('voice-transcribing').waitFor();
-    const oldId = await waitForOrdinal(context, oldOrdinal);
+    const oldId = await waitForOrdinal(context, beforeFinish);
     const oldText = `Proof transcript ${oldId}.`;
     const cancel = form.getByRole('button', { name: 'Cancel recording', exact: true });
     assert.equal(await cancel.isEnabled(), true);
@@ -70,14 +72,15 @@ try {
     await cancel.click();
     await form.getByRole('button', { name: 'Start voice input', exact: true }).waitFor();
     assert.equal(await input.inputValue(), 'Original draft.');
-    if (mode === 'batch') await waitForCancellation(context, oldId);
+    if (mode !== 'streaming') await waitForCancellation(context, oldId);
     await page.getByTestId('pending-voice-audio-tray').waitFor({ state: 'hidden' });
     await page.screenshot({ path: `${run}/evidence/${mode}-${width}-${intent}-cancelled.png` });
     const priorNew = await ordinal(context);
     await started(mode);
+    const beforeNewFinish = mode === 'auto' ? await ordinal(context) : priorNew;
     await form.getByRole('button', { name: 'Stop recording and keep the text as a draft', exact: true }).click();
     await form.getByTestId('voice-transcribing').waitFor();
-    const newText = `Proof transcript ${await waitForOrdinal(context, priorNew)}.`;
+    const newText = `Proof transcript ${await waitForOrdinal(context, beforeNewFinish)}.`;
     assert.notEqual(newText, oldText);
     await form.getByRole('button', { name: 'Start voice input', exact: true }).waitFor();
     assert.equal(await input.inputValue(), `Original draft.\n${newText}`);
@@ -86,7 +89,7 @@ try {
     console.log(`PASS: cancellation ${mode}/${width}/${intent}`);
     await context.close();
   }
-  if (!process.argv.includes('--cancel-only')) {
+  if (!fallbackOnly && !process.argv.includes('--cancel-only')) {
     configure('streaming');
     const context = await open('dark', 390);
     const input = page.getByRole('textbox', { name: 'Message Neo', exact: true });

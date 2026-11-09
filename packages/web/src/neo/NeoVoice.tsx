@@ -293,22 +293,19 @@ export function NeoVoice({
     }
     if (task.cancelled || task.delivering) return;
     task.cancelled = true;
-    task.live?.close();
+    const closing = task.live?.close();
     interim.current?.('');
     try {
       await task.persisted;
       if (task.upgrade) await task.upgrade;
       await deleteVoiceRecord(task.id);
-      const hub = connectionManager.getHubIfConnected();
-      if (hub) {
-        try {
-          await hub.request('voice.transcribe.cancel', { transcriptionId: task.id });
-        } catch (error) {
-          if (mounted.current)
-            onError(
-              error instanceof Error ? error.message : 'Could not stop server transcription.'
-            );
-        }
+      try {
+        await closing;
+        const hub = connectionManager.getHubIfConnected();
+        if (hub) await hub.request('voice.transcribe.cancel', { transcriptionId: task.id });
+      } catch (error) {
+        if (mounted.current)
+          onError(error instanceof Error ? error.message : 'Could not stop server transcription.');
       }
     } finally {
       if (pending.current === task) {

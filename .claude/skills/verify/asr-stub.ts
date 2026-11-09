@@ -46,7 +46,8 @@ server.on('listening', () => {
   const address = server.address() as { port: number };
   console.log(`stub Deepgram-style ASR ready on ws://127.0.0.1:${address.port}/v1/listen`);
 });
-server.on('connection', (socket) => {
+server.on('connection', (socket, request) => {
+  const disconnect = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.has('disconnect');
   const id = ++utterances;
   let bytes = 0;
   let finalTimer: ReturnType<typeof setTimeout> | undefined;
@@ -63,6 +64,7 @@ server.on('connection', (socket) => {
     }
     bytes += data.length;
     socket.send(result(words(id, bytes), false));
+    if (disconnect) socket.close(1011, 'synthetic streaming fallback');
   });
 });
 http.listen(port, '127.0.0.1');

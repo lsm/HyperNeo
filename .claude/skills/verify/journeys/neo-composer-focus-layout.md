@@ -46,6 +46,13 @@ response and completes with its own unique text. Run the same command with
 `19346 --cancel-only` after composer-behavior.sh to verify only cancellation.
 The fixture status reader only reports synthetic utterance counters.
 
+To cover cancellation after a streaming connection fails, pass `19346 --fallback-only`
+to composer-behavior.sh instead. The ASR fixture disconnects after its first interim
+text. Four phone/desktop and Stop/Send cases then enter the real HTTP fallback
+inside `voice.stream.stop`. Cancellation must close that provider connection
+before another recording is accepted. The next recording must immediately
+complete with its own text, without an admission error or stale result.
+
 A final real-time case records for four minutes. The timer starts at zero and
 advances through three minutes while capture remains active; the recorder then
 automatically stops around 240 seconds and returns the text to the draft. The
