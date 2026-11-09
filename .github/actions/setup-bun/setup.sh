@@ -80,13 +80,19 @@ install_bun() {
     local tmpdir=$(mktemp -d)
     local zipfile="${tmpdir}/bun.zip"
 
-    echo "Downloading from: $url"
-    curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 -o "$zipfile" "$url"
-
-    mkdir -p "$BUN_BIN"
     # Git Bash does not ship unzip; fall back to 7z (preinstalled on GitHub
     # Windows runners) and then to PowerShell's Expand-Archive with native paths.
-    if command -v unzip >/dev/null 2>&1; then
+    echo "Downloading from: $url"
+    if ! curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 -o "$zipfile" "$url"; then
+        [[ "$os/$arch/$avx2/$version" == "linux/x64/true/1.4.2" ]] || return 1
+        local archive="${tmpdir}/bun.tgz"
+        local sha512="f7f13f517393a52a3762c57983e161b5377fa93a625a82aec52d7672ab6e600d6cb2ef5f440a0f4278a91601b2724ded58eeb7894771062ca0abe9042c56b09e"
+        echo "GitHub download failed; trying the pinned Bun package from npm"
+        curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 -o "$archive" \
+            "https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-${version}.tgz"
+        printf '%s  %s\n' "$sha512" "$archive" | sha512sum --check
+        tar -xzf "$archive" -C "$tmpdir" package/bin/bun
+    elif command -v unzip >/dev/null 2>&1; then
         unzip -o -q "$zipfile" -d "$tmpdir"
     elif command -v 7z >/dev/null 2>&1; then
         7z x -y -bd -o"$tmpdir" "$zipfile" >/dev/null
@@ -112,6 +118,7 @@ install_bun() {
         exit 1
     fi
 
+    mkdir -p "$BUN_BIN"
     mv "$extracted_bun" "$BUN_PATH"
     chmod +x "$BUN_PATH" || [[ "$IS_WINDOWS" == "true" ]]
 
