@@ -492,9 +492,9 @@ export class NeoAskTodoRepository {
     return gatewayFor(this.db).call(neoAskInputReads, 'owner', sessionId, messageId);
   }
 
-  async claimNeoInputAsk(input: NeoAskInputClaim): Promise<string | null> {
+  async claimNeoInputAsk(input: NeoAskInputClaim): Promise<string | { reason: string }> {
     const owner = await gatewayFor(this.db).call(neoAskInputWrites, 'claimNeoInputAsk', input);
-    if (owner) this.changed();
+    if (typeof owner === 'string') this.changed();
     return owner;
   }
 

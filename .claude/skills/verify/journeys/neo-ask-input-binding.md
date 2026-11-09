@@ -52,3 +52,8 @@ later input-only work must reuse it without an extra ask. Evidence records both
 submission orders and their receipts. The focused unit test controls claim order
 to cover both winning paths, and a forced link-insert failure checks that a newly
 opened ask rolls back with its link.
+
+The helper also changes a synthetic target after planning but before the actual
+MCP claim reaches its write transaction. Settled targets must return ask_settled;
+removed or transferred targets must return not_owned. These refusals create no
+new ask or todo. Evidence retains all three replies in claimRefusals.

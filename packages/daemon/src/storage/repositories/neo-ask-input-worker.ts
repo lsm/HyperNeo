@@ -22,15 +22,17 @@ class NeoAskInputs {
     return row?.askId ?? null;
   }
 
-  claimNeoInputAsk(input: NeoAskInputClaim): string | null {
+  claimNeoInputAsk(input: NeoAskInputClaim): string | { reason: string } {
     const store = new NeoAskTodoRepository(this.db);
     const owner =
       store.findAsk(input.sessionId, input.messageId, null)?.id ??
       this.owner(input.sessionId, input.messageId);
     if (owner) return owner;
     const target = input.askId ? store.getAsk(input.askId) : null;
-    if (input.askId && (target?.sessionId !== input.sessionId || target.status !== 'open'))
-      return null;
+    if (input.askId && target?.sessionId !== input.sessionId)
+      return { reason: 'not_owned: this ask is unknown or belongs to another session.' };
+    if (input.askId && target?.status !== 'open')
+      return { reason: 'ask_settled: this ask is no longer open. Omit askId to open a new card.' };
     const now = Date.now();
     const askId =
       input.askId ??

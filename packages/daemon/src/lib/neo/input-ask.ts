@@ -119,13 +119,9 @@ export async function resolveNeoInputAsk(
           .slice(0, 120) || title,
       request: words(human.content) || title,
     });
-    return winner && (!('bind' in plan) || winner === plan.bind)
-      ? { value: { askId: winner } }
-      : {
-          reason: {
-            ok: false,
-            reason: winner && 'bind' in plan ? mismatch(request.input, winner, plan.bind) : settled,
-          },
-        };
+    if (typeof winner !== 'string') return { reason: { ok: false, reason: winner.reason } };
+    if ('bind' in plan && winner !== plan.bind)
+      return { reason: { ok: false, reason: mismatch(request.input, winner, plan.bind) } };
+    return { value: { askId: winner } };
   }) as Promise<Binding>;
 }

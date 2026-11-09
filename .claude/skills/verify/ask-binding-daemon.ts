@@ -136,11 +136,42 @@ try {
   }
   evidence.mixed = mixed;
   console.log('PASS mixed bind/open MCP calls select one owner in both submission orders');
+  const claimRefusals = [];
+  for (const kind of ['settled', 'missing', 'foreign']) {
+    const target = await call('neo.todo.add', { input: await human(`Synthetic ${kind} target`), title: 'Check a target', check });
+    assert(target.ok && target.todo, JSON.stringify(target));
+    const askId = target.todo.askId;
+    const input = await human(`Continue the ${kind} target`);
+    const before = store.listOpenAsks().length;
+    const claim = NeoAskTodoRepository.prototype.claimNeoInputAsk;
+    NeoAskTodoRepository.prototype.claimNeoInputAsk = async function(request) {
+      if (request.askId === askId) {
+        if (kind === 'settled') store.settleAsk(store.getAsk(askId)!, 'dropped', 'Synthetic settlement', Date.now());
+        if (kind === 'missing') db.prepare('DELETE FROM neo_asks WHERE id = ?').run(askId);
+        if (kind === 'foreign') db.prepare('UPDATE neo_asks SET session_id = ? WHERE id = ?').run('neo:synthetic-other', askId);
+      }
+      return claim.call(this, request);
+    };
+    let refused;
+    try {
+      refused = await call('neo.todo.add', { input, askId, title: 'Continue the target', check });
+    } finally {
+      NeoAskTodoRepository.prototype.claimNeoInputAsk = claim;
+    }
+    assert.equal(refused.ok, false, JSON.stringify(refused));
+    assert.match(refused.reason, kind === 'settled' ? /^ask_settled:/ : /^not_owned:/);
+    assert.equal(store.findAsk(root, input, null), null);
+    assert.equal(store.listOpenAsks().length, before - Number(kind !== 'foreign'));
+    assert.equal(store.listTodos(askId).length, Number(kind !== 'missing'));
+    claimRefusals.push({ kind, refused, noNewAsk: true, noNewTodo: true });
+  }
+  evidence.claimRefusals = claimRefusals;
+  console.log('PASS claim-time settled, missing and foreign targets report their current refusal');
   restorePrepare();
   evidence.mainThreadBindingQueries = mainThreadBindingQueries;
   assert.equal(mainThreadBindingQueries, 0, 'Input bindings must use the DB gateway worker');
   evidence.links = app.db.getDatabase().prepare('SELECT session_id, message_id, ask_id FROM neo_ask_inputs').all();
-  assert.equal((evidence.links as unknown[]).length, 5);
+  assert.equal((evidence.links as unknown[]).length, 7);
   console.log(`PASS ask count=${count}; bound todo askId=${bound.todo.askId}; reused todo askId=${reused.todo.askId}`);
 } finally {
   restorePrepare();
