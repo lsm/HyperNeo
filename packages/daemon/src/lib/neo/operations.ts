@@ -463,7 +463,7 @@ export function createNeoOperations(service: NeoService) {
         : {}),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
-      packPreferences: listPackPreferences(service.db.getDatabase()),
+      ...(detailed ? { packPreferences: listPackPreferences(service.db.getDatabase()) } : {}),
       todoAsks: detailed ? entries.map(summarizeNeoAskEntry) : entries,
       ...neoWorkCounts(openWork.todos, openWork.questions, openWork.awaitingNeo),
       ...(detailed ? { historyCursor } : {}),
@@ -710,7 +710,8 @@ export function createNeoOperations(service: NeoService) {
       service.db.getDatabase(),
       service.todos,
       () => service.installedPacks(),
-      () => service.db.getGlobalSettings().language
+      () => service.db.getGlobalSettings().language,
+      () => service.refreshPackPreferences()
     ),
     createNeoPreferenceOperation(service),
     ...createPackPreferenceOperations(

@@ -3,8 +3,10 @@ import {
   NEO_ROOT_TURN_END,
   NEO_FOCUSED_DISCUSSION,
   NEO_STANDING_RULES,
+  NEO_PACK_PREFERENCES,
   fillPrompt,
 } from '@hyperneo/prompts';
+import type { NeoPackSetting } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoPackBrief } from './pack-contract.ts';
 
 function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
@@ -31,12 +33,26 @@ function neoStandingRulesPrompt(rules: readonly string[]): string {
   });
 }
 
-export function neoPrompt(packs: readonly NeoPackBrief[], rules: readonly string[] = []): string {
+function neoPackPreferencesPrompt(settings: readonly NeoPackSetting[]): string {
+  if (!settings.length) return '';
+  return fillPrompt(NEO_PACK_PREFERENCES, {
+    preferences: settings
+      .map(({ pack, scope, key, value }) => JSON.stringify({ pack, scope, key, value }))
+      .join('\n'),
+  });
+}
+
+export function neoPrompt(
+  packs: readonly NeoPackBrief[],
+  rules: readonly string[] = [],
+  settings: readonly NeoPackSetting[] = []
+): string {
   const humanWork =
     'When the daemon reports that the human worked directly in a worker, treat it as news about that matter. Update the ask’s todos and state; record new work the human started as a todo on that ask. Do not assign again work the human already directed. If the worker succeeded and nothing needs the human, stay quiet. If failed or blocked, first try to unblock it yourself or through the worker using tools and access this instance actually has. Follow the human preferences supplied by enabled packs. Tell the human only what they must know or decide, with the concrete next step you propose.';
   return [
     NEO_ROOT_PROMPT,
     neoStandingRulesPrompt(rules),
+    neoPackPreferencesPrompt(settings),
     neoPackBriefing(packs),
     NEO_FOCUSED_DISCUSSION,
     humanWork,

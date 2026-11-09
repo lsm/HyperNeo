@@ -373,7 +373,7 @@ export class NeoAskTodoRepository {
   constructor(
     private readonly db: Database,
     private readonly changed: () => void = () => {},
-    private readonly rulesChanged: () => void = () => {},
+    private readonly settingsChanged: (setting: 'rules' | 'preferences') => void = () => {},
     private readonly questionsPruned?: () => void,
     private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>,
     private readonly storage: NeoTodoStorageBoundary = neoTodoStorage(db, changes)
@@ -1061,7 +1061,7 @@ export class NeoAskTodoRepository {
     now: number,
     approval?: { sessionId: string; messageId: string }
   ): NeoQuestion | null {
-    let rulesChanged = false;
+    let settingsChanged: 'rules' | 'preferences' | undefined;
     const changed = this.db.transaction(() => {
       const answered = this.changeQuestion(
         question.id,
@@ -1077,16 +1077,17 @@ export class NeoAskTodoRepository {
           undefined
         );
         if (answer === 'yes') {
-          applyPackPreferenceAnswer(this.db, question.id);
+          const preferences = applyPackPreferenceAnswer(this.db, question.id);
+          if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
           const rules = applyNeoRuleAnswer(this.db, question.id, approval);
-          rulesChanged = rules.ok && rules.changed;
+          if (rules.ok && rules.changed) settingsChanged = 'rules';
         }
       }
       return answered;
     })();
     if (!changed) return null;
     this.touchAsk(question.askId, now);
-    if (rulesChanged) this.rulesChanged();
+    if (settingsChanged) this.settingsChanged(settingsChanged);
     return this.getQuestion(question.id);
   }
 

@@ -45,7 +45,7 @@ import { readNeoSessionSource } from './session-open-source.ts';
 import { presentNeoPublications } from './publication-presentation.ts';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { fillPrompt, NEO_PREFERENCE_CHANGED, NEO_SESSION_TRACK } from '@hyperneo/prompts';
-import type { PackPreferenceChange } from './preference-operations.ts';
+import { listPackPreferences, type PackPreferenceChange } from './preference-operations.ts';
 import type {
   GlobalSettings,
   MessageHub,
@@ -244,7 +244,11 @@ export class NeoService {
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
-    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, () => {
+    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, (setting) => {
+      if (setting === 'preferences') {
+        void this.refreshPackPreferences();
+        return;
+      }
       this.publishSettings?.(db.getGlobalSettings());
       void this.rulesChanged();
     });
@@ -876,7 +880,7 @@ export class NeoService {
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
-          ...neoPromptTools(this.packBriefs(), this.standingRules()),
+          ...neoPromptTools(this.packBriefs(), this.standingRules(), this.packPreferences()),
           autoCompactPercent: preference?.autoCompactPercent,
           ...(preference
             ? {
@@ -940,7 +944,12 @@ export class NeoService {
     .pipe((sessionId: string) => this.db.getSession(sessionId), 'sessionId', 'session')
     .pipe(
       (session: Session | null) =>
-        planNeoSessionConfig(session, this.packBriefs(), this.standingRules()),
+        planNeoSessionConfig(
+          session,
+          this.packBriefs(),
+          this.standingRules(),
+          this.packPreferences()
+        ),
       'session',
       'config'
     )
@@ -969,12 +978,22 @@ export class NeoService {
     );
   }
 
-  async preferenceChanged(change: PackPreferenceChange): Promise<void> {
+  packPreferences() {
+    return listPackPreferences(this.db.getDatabase());
+  }
+
+  async refreshPackPreferences(): Promise<void> {
     const root = this.defaultSessionId();
-    if (!root || !this.db.getSession(root)) return;
+    if (!root) return;
     await this.alignCoordinatorConfig(root).catch((error) =>
       this.log.warn('Neo prompt refresh after pack setting change failed', error)
     );
+  }
+
+  async preferenceChanged(change: PackPreferenceChange): Promise<void> {
+    const root = this.defaultSessionId();
+    if (!root || !this.db.getSession(root)) return;
+    await this.refreshPackPreferences();
     const scope =
       change.scope.kind === 'global' ? 'global' : `${change.scope.kind} ${change.scope.key}`;
     await this.deliverForward(

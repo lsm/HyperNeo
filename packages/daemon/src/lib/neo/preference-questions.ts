@@ -28,7 +28,8 @@ export function createPackPreferenceQuestions(
   db: Database,
   store: NeoAskTodoRepository,
   packs: () => readonly NeoPack[],
-  language: () => LanguageSetting | undefined
+  language: () => LanguageSetting | undefined,
+  refresh: () => Promise<void>
 ) {
   const ask = (superpipe({})('pack.preferences.ask') as PipelineAPI)
     .input(['input'])
@@ -94,7 +95,12 @@ export function createPackPreferenceQuestions(
   const apply = (superpipe({})('pack.preferences.applyAnswer') as PipelineAPI)
     .input(['input'])
     .pipe(
-      (input: z.infer<typeof Apply>) => applyPackPreferenceAnswer(db, input.questionId),
+      async (input: z.infer<typeof Apply>) => {
+        const result = applyPackPreferenceAnswer(db, input.questionId);
+        if (!result.ok) return result;
+        if (result.applied) await refresh();
+        return { ok: true as const };
+      },
       'input',
       'outcome'
     )
