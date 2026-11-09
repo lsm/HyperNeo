@@ -133,7 +133,7 @@ export function createCodingPack(deps: {
     }),
     preferences: {
       mirror_issues: {
-        label: { en: 'Mirror plans to GitHub Issues', 'zh-Hans': 'Mirror plans to GitHub Issues' },
+        label: { en: 'Mirror plans to GitHub Issues', 'zh-Hans': '把计划同步到 GitHub Issues' },
         valueLabels: {},
         scope: 'repo',
         type: { kind: 'boolean' },
