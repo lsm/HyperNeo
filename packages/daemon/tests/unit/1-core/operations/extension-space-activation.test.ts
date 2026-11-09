@@ -38,6 +38,7 @@ describe('Space extension configuration setter activation', () => {
       ).toMatchObject({
         pass: true,
         publicSpaceSetterActivated: true,
+        startupLogEvidenceDrained: true,
         mainSqlAttempts: 0,
         mainGuardSelfCheckPassed: true,
         publicCommitBeforeNotificationAndReply: true,
