@@ -1,3 +1,5 @@
+mod desktop_permissions;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -172,6 +174,7 @@ fn fail_startup<R: Runtime>(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	let app = tauri::Builder::default()
+		.invoke_handler(tauri::generate_handler![desktop_permissions::desktop_permission_status])
 		.plugin(tauri_plugin_shell::init())
 		.plugin(tauri_plugin_notification::init())
 		.plugin(tauri_plugin_global_shortcut::Builder::new().build())
