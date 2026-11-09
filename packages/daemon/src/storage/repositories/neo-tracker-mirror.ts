@@ -19,9 +19,10 @@ export class NeoTrackerMirrorRepository {
       ...new Map(
         [
           ...store.listOpenAsks(),
-          ...mirrors.flatMap((row) =>
-            row.ownerKind === 'ask' ? (store.getAsk(row.ownerId) ?? []) : []
-          ),
+          ...mirrors.flatMap((row) => {
+            const askId = row.ownerKind === 'ask' ? row.ownerId : store.getTodo(row.ownerId)?.askId;
+            return askId ? (store.getAsk(askId) ?? []) : [];
+          }),
         ].map((ask) => [ask.id, ask])
       ).values(),
     ];

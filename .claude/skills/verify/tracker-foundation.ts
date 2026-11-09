@@ -14,7 +14,7 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 const adapter: NeoTrackerAdapter = {
-  id: 'fixture', enabled: () => true, home: () => 'example/repo',
+  id: 'fixture', enabled: (owner) => owner.kind === 'todo', home: () => 'example/repo',
   create: async (item) => ({ ref: execFileSync('gh', ['create', item.marker], { encoding: 'utf8' }).trim() }),
   find: async (marker) => execFileSync('gh', ['find', marker], { encoding: 'utf8' }).trim() || null,
   link: async () => true, close: async () => true,
@@ -25,12 +25,15 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
   assert(![8399, 8499].includes(app.server.port));
   const gateway = app.db.gateway;
   if (process.argv.includes('--seed')) {
-    new NeoAskTodoRepository(app.db.getDatabase()).openAsk({ id: 'ask', projectId: null, sessionId: 'synthetic', originMessageId: null, title: 'Synthetic plan', request: 'Mirror', createdAt: 1 });
+    const todos = new NeoAskTodoRepository(app.db.getDatabase());
+    todos.openAsk({ id: 'ask', projectId: null, sessionId: 'synthetic', originMessageId: null, title: 'Synthetic plan', request: 'Mirror', createdAt: 1 });
+    todos.addTodo('todo', 'ask', { title: 'Synthetic step', instruction: null, named: null, check: null, doneWhen: 'Done' }, 2);
     const facts = await gateway.call(neoTrackerReads, 'facts');
     const op = planNeoTrackerMirror(facts.asks, facts.todos, facts.mirrors, [adapter])[0];
     await gateway.call(neoTrackerWrites, 'put', { ...op.row, updatedAt: Date.now() });
     const created = await adapter.create(op.item);
     assert('ref' in created);
+    app.db.getDatabase().prepare("UPDATE neo_asks SET status = 'done'").run();
     writeFileSync(join(run, 'seed-ready.json'), JSON.stringify({ port: app.server.port, created }));
     await new Promise(() => {});
   } else {

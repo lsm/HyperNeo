@@ -125,3 +125,18 @@ test('marker survives the tracker body', () => {
   expect(readNeoTrackerMarker(plan()[0].item.body)).toBe(marker);
   expect(readNeoTrackerMarker('No marker')).toBeNull();
 });
+
+test('a settled ask referenced only by a creating todo mirror remains recoverable', () => {
+  addTodo('child');
+  adapter.enabled = (owner) => owner.kind === 'todo';
+  const row = plan()[0].row;
+  mirrors.put(row);
+  db.prepare("UPDATE neo_asks SET status = 'done'").run();
+  expect(mirrors.facts().asks.map((ask) => ask.id)).toEqual(['ask']);
+  expect(plan()).toMatchObject([
+    { action: 'create', row: { ownerKind: 'todo', ownerId: 'child' } },
+  ]);
+  expect(planNeoTrackerRecovery(plan()[0].row, 'example/repo#1')).toEqual({
+    ref: 'example/repo#1',
+  });
+});
