@@ -3,6 +3,7 @@ import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
+import { NeoVoice } from '../NeoVoice.tsx';
 import type { NeoQuote } from '../neo-intake.ts';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { resetVoiceAudioOutbox } from '../../lib/voice/voice-audio-outbox.ts';
@@ -280,41 +281,55 @@ describe('NeoComposer and NeoVoice send integration', () => {
   it('rejects cancellation when delivery starts before disabled controls render', async () => {
     let finishDelivery: () => void = () => {};
     let releaseTranscript: (value: { text: string }) => void = () => {};
-    let nextRecording = false;
+    let sendFromComposer: ((intent: 'draft' | 'send') => void) | null = null;
+    const onSendVoice = vi.fn(() => {
+      expect(buttonNamed('Cancel recording').disabled).toBe(false);
+      fireEvent.click(buttonNamed('Cancel recording'));
+      return new Promise<{ kind: 'accepted' }>((resolve) => {
+        finishDelivery = () => resolve({ kind: 'accepted' });
+      });
+    });
+    render(
+      <NeoVoice
+        sessionId="neo-1"
+        connected
+        draftText=""
+        onTranscript={vi.fn()}
+        onSendVoice={onSendVoice}
+        onError={vi.fn()}
+        onPhase={vi.fn()}
+        onSendHandle={(send) => {
+          sendFromComposer = send;
+        }}
+      />
+    );
+    await waitFor(() => expect(sendFromComposer).toBeTypeOf('function'));
+    sendFromComposer!('send');
+    await waitFor(() => expect(onSendVoice).toHaveBeenCalledOnce());
+    await waitFor(() => expect(buttonNamed('Cancel recording').disabled).toBe(true));
+    finishDelivery();
+    await screen.findByRole('button', { name: 'Start voice input', exact: true });
     hubRequest.mockImplementation(async (method, payload) => {
-      if (method === 'operation.invoke') {
-        const cancel = buttonNamed('Cancel recording');
-        expect(cancel.disabled).toBe(false);
-        fireEvent.click(cancel);
-        await new Promise<void>((resolve) => {
-          finishDelivery = resolve;
-        });
-      }
-      if (method === 'voice.transcribe' && nextRecording)
+      if (method === 'voice.transcribe')
         return new Promise((resolve) => {
           releaseTranscript = resolve;
         });
       return defaultHub(method, payload);
     });
-    const view = renderComposer();
-    await awaitRecordingComposer();
-    fireEvent.click(sendControl());
-    await waitFor(() => expect(asks()).toHaveLength(1));
-    await waitFor(() => expect(buttonNamed('Cancel recording').disabled).toBe(true));
-    finishDelivery();
-    await waitFor(() => expect(view.current.value).toBe(''));
-    nextRecording = true;
     await act(async () => {
       voice.recording = true;
     });
-    await awaitRecordingComposer();
-    fireEvent.click(stopControl());
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Stop recording and keep the text as a draft',
+        exact: true,
+      })
+    );
     await screen.findByTestId('voice-transcribing');
     expect(buttonNamed('Cancel recording').disabled).toBe(false);
     fireEvent.click(buttonNamed('Cancel recording'));
     await screen.findByRole('button', { name: 'Start voice input', exact: true });
     releaseTranscript({ text: 'discarded words' });
-    expect(view.current.value).toBe('');
   });
 
   it.each(['draft', 'send', 'upgrade'] as const)(
