@@ -524,7 +524,6 @@ const delegationSkill = parseSkillMarkdown(
 export const NEO_PACK_CODING_INSTRUCTIONS = codingSkill.body;
 export const NEO_PACK_DELEGATION_INSTRUCTIONS = delegationSkill.body;
 
-/** Skills embedded in the binary, keyed by skill name: the frontmatter and each file's text. */
 export const NEO_PACK_SKILLS: Readonly<
   Record<string, SkillMarkdown & { files: Readonly<Record<string, string>> }>
 > = {

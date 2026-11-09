@@ -888,7 +888,6 @@ export class NeoService {
     return binding.sessionId;
   }
 
-  /** Select exactly the enabled packs' skills in the Neo session's own tool selection. */
   private async alignNeoSkills(sessionId: string): Promise<void> {
     const wanted = new Set(this.packBriefs().flatMap((pack) => (pack.skill ? [pack.skill] : [])));
     const skills = this.db.skills.findAll();
