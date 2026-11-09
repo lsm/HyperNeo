@@ -1,6 +1,6 @@
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { Logger } from '../../../../src/lib/logger.ts';
-import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, expect, jest, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -227,7 +227,9 @@ test('a child close failing 3 times stops retrying and the parent still closes',
     'example/repo#2',
     'example/repo#1',
   ]);
-  expect(mirrors.facts().mirrors.find((row) => row.ownerKind === 'todo')?.failures).toBe(3);
+  expect(
+    db.prepare("SELECT failures FROM neo_tracker_mirrors WHERE owner_kind = 'todo'").get()
+  ).toMatchObject({ failures: 3 });
 });
 
 test('success resets failures', async () => {
@@ -273,7 +275,9 @@ test('link failures stop at the same cap', async () => {
   };
   for (let sweep = 0; sweep < 5; sweep++) await sweepNeoTrackerMirrors(db, [adapter]);
   expect(attempts).toBe(3);
-  expect(mirrors.facts().mirrors.find((row) => row.ownerKind === 'todo')?.failures).toBe(3);
+  expect(
+    db.prepare("SELECT failures FROM neo_tracker_mirrors WHERE owner_kind = 'todo'").get()
+  ).toMatchObject({ failures: 3 });
 });
 
 test('an uncertain close write never restores the stale bound row', async () => {
@@ -299,3 +303,41 @@ test('an uncertain close write never restores the stale bound row', async () => 
   await sweepNeoTrackerMirrors(db, [adapter]);
   expect(closed).toEqual(['example/repo#1']);
 });
+
+for (const method of ['find', 'create', 'link', 'close'] as const) {
+  test(`a hung ${method} call times out, counts one failure, and the next sweep runs`, async () => {
+    if (method === 'link') addTodo('child');
+    if (method === 'link' || method === 'close') await sweepNeoTrackerMirrors(db, [adapter]);
+    if (method === 'close') db.prepare("UPDATE neo_asks SET status = 'done'").run();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const stalled = {
+      ...adapter,
+      [method]: async () => {
+        entered();
+        return new Promise<never>(() => {});
+      },
+    };
+    jest.useFakeTimers();
+    try {
+      let finished = false;
+      const first = sweepNeoTrackerMirrors(db, [stalled]).then(() => {
+        finished = true;
+      });
+      await started;
+      jest.advanceTimersByTime(30_000);
+      for (let step = 0; step < 50; step++) await Promise.resolve();
+      expect(finished).toBe(true);
+      await first;
+      expect(mirrors.facts().mirrors.find((row) => row.failures === 1)).toBeDefined();
+      await sweepNeoTrackerMirrors(db, [adapter]);
+      expect(
+        db.prepare('SELECT MAX(failures) AS failures FROM neo_tracker_mirrors').get()
+      ).toMatchObject({ failures: 0 });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+}

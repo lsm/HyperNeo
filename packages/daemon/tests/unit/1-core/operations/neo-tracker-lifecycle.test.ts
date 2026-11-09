@@ -124,7 +124,7 @@ test('closed owners are loaded in one bounded query', () => {
       ['child']
     );
     expect(
-      prepare.mock.calls.filter(([sql]) => sql.includes("WHERE state = 'closed'"))
+      prepare.mock.calls.filter(([sql]) => sql.includes('FROM json_each(?) AS owner'))
     ).toHaveLength(1);
   } finally {
     prepare.mockRestore();
@@ -141,4 +141,20 @@ test('a dropped ask closes its parent as not_planned after its children', () => 
   expect(plan()).toMatchObject([
     { action: 'close', outcome: 'not_planned', row: { ownerId: 'ask' } },
   ]);
+});
+
+test('a capped row of a settled ask is not loaded, and a current owner never creates a duplicate', () => {
+  bindChild();
+  const rows = mirrors.facts().mirrors;
+  const child = rows.find((row) => row.ownerId === 'child')!;
+  const parent = rows.find((row) => row.ownerId === 'ask')!;
+  mirrors.put({ ...child, failures: 3 });
+  expect(mirrors.facts().mirrors.find((row) => row.ownerId === 'child')?.failures).toBe(3);
+  expect(plan()).toEqual([]);
+  db.prepare("UPDATE neo_asks SET status = 'done'").run();
+  mirrors.put({ ...parent, state: 'closed' });
+  const facts = mirrors.facts();
+  expect(facts.asks).toEqual([]);
+  expect(facts.todos).toEqual([]);
+  expect(facts.mirrors).toEqual([]);
 });
