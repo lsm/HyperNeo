@@ -6,7 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { neoTrackerReads, neoTrackerWrites } from '../../../packages/daemon/src/storage/repositories/neo-tracker-mirror.ts';
-import { planNeoTrackerMirror, planNeoTrackerRecovery } from '../../../packages/daemon/src/lib/neo/tracker-mirror-plan.ts';
+import { planNeoTrackerMirror, planNeoTrackerRecovery, readNeoTrackerMarker } from '../../../packages/daemon/src/lib/neo/tracker-mirror-plan.ts';
 import type { NeoTrackerAdapter } from '../../../packages/daemon/src/lib/neo/pack-contract.ts';
 
 const run = resolve(process.argv.at(-1)!);
@@ -27,13 +27,14 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
   if (process.argv.includes('--seed')) {
     const todos = new NeoAskTodoRepository(app.db.getDatabase());
     todos.openAsk({ id: 'ask', projectId: null, sessionId: 'synthetic', originMessageId: null, title: 'Synthetic plan', request: 'Mirror', createdAt: 1 });
-    todos.addTodo('todo', 'ask', { title: 'Synthetic step', instruction: 'Private details', named: null, check: null, doneWhen: 'Done' }, 2);
+    todos.addTodo('todo', 'ask', { title: 'Synthetic step hyperneo:todo:other', instruction: 'Private details', named: null, check: null, doneWhen: 'Done' }, 2);
     const facts = await gateway.call(neoTrackerReads, 'facts');
     const op = planNeoTrackerMirror(facts.asks, facts.todos, facts.mirrors, [adapter])[0];
     await gateway.call(neoTrackerWrites, 'put', { ...op.row, updatedAt: Date.now() });
     const created = await adapter.create(op.item);
     assert('ref' in created);
     app.db.getDatabase().prepare("UPDATE neo_asks SET status = 'done'").run();
+    app.db.getDatabase().prepare("UPDATE neo_todos SET state = 'removed'").run();
     writeFileSync(join(run, 'seed-ready.json'), JSON.stringify({ port: app.server.port, created }));
     await new Promise(() => {});
   } else {
@@ -49,7 +50,8 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       assert.equal(bound.mirrors[0].ref, 'example/repo#1');
       assert.equal(bound.mirrors[0].state, 'bound');
       assert.equal(planNeoTrackerMirror(bound.asks, bound.todos, bound.mirrors, [adapter]).length, 0);
-      assert.equal(op.item.body, 'Synthetic step\n\n<!-- hyperneo:todo:todo -->');
+      assert.equal(op.item.body, 'Synthetic step hyperneo:todo:other\n\n<!-- hyperneo:todo:todo -->');
+      assert.equal(readNeoTrackerMarker(op.item.body), op.item.marker);
       app.db.getDatabase().prepare("UPDATE neo_asks SET status = 'open'").run();
       adapter.enabled = () => true;
       const parentFacts = await gateway.call(neoTrackerReads, 'facts');

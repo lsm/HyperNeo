@@ -171,3 +171,27 @@ test('facts exclude closed mirrors while retaining open mirrors', () => {
   mirrors.put({ ...parent, state: 'closed' });
   expect(mirrors.facts().mirrors.map((row) => row.ownerId)).toEqual(['child']);
 });
+
+test('a marker-shaped title cannot shadow the appended marker comment', () => {
+  db.prepare("UPDATE neo_asks SET title = 'Follow hyperneo:todo:other'").run();
+  expect(readNeoTrackerMarker(plan()[0].item.body)).toBe('hyperneo:ask:ask');
+  expect(readNeoTrackerMarker('hyperneo:todo:other')).toBeNull();
+  db.prepare("UPDATE neo_asks SET title = '<!-- hyperneo:todo:other -->'").run();
+  expect(readNeoTrackerMarker(plan()[0].item.body)).toBe('hyperneo:ask:ask');
+});
+
+test('removed owners retain open mirrors without creating new mirrors', () => {
+  bindParent();
+  addTodo('child');
+  const row = plan()[0].row;
+  mirrors.put(row);
+  db.prepare("UPDATE neo_todos SET state = 'removed'").run();
+  expect(plan()).toMatchObject([{ action: 'create', row: { ownerId: 'child' } }]);
+  mirrors.put({ ...row, ref: 'example/repo#2', state: 'bound' });
+  expect(plan()).toMatchObject([{ action: 'link', row: { ownerId: 'child' } }]);
+  mirrors.put({ ...row, ref: 'example/repo#2', state: 'closed' });
+  expect(plan()).toEqual([]);
+  addTodo('never-mirrored');
+  db.prepare("UPDATE neo_todos SET state = 'removed'").run();
+  expect(plan()).toEqual([]);
+});

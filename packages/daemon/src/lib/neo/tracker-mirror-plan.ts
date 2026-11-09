@@ -22,7 +22,7 @@ export type NeoTrackerPlan = {
 export const neoTrackerMarker = (owner: NeoTrackerOwner) =>
   `hyperneo:${owner.kind}:${owner.todo?.id ?? owner.ask.id}`;
 export const readNeoTrackerMarker = (body: string) =>
-  body.match(/hyperneo:(?:ask|todo):[\w-]+/)?.[0] ?? null;
+  Array.from(body.matchAll(/<!-- (hyperneo:(?:ask|todo):[\w-]+) -->/g)).at(-1)?.[1] ?? null;
 export const planNeoTrackerRecovery = (row: NeoTrackerMirror, found: string | null) =>
   row.state === 'creating' && found ? { ref: found } : null;
 
@@ -35,7 +35,7 @@ export function planNeoTrackerMirror(
   const owners = asks.flatMap((ask): NeoTrackerOwner[] => [
     { kind: 'ask', ask },
     ...todos
-      .filter((todo) => todo.askId === ask.id && todo.state !== 'removed')
+      .filter((todo) => todo.askId === ask.id)
       .map((todo): NeoTrackerOwner => ({ kind: 'todo', ask, todo })),
   ]);
   const plans: NeoTrackerPlan[] = [];
@@ -46,6 +46,7 @@ export function planNeoTrackerMirror(
       const existing = mirrors.find(
         (row) => row.ownerKind === owner.kind && row.ownerId === id && row.tracker === adapter.id
       );
+      if (owner.todo?.state === 'removed' && !existing) continue;
       const home = existing?.home ?? adapter.home(owner);
       if (!home || existing?.state === 'closed' || (!existing && owner.ask.status !== 'open'))
         continue;
