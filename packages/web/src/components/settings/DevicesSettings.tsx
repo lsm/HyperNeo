@@ -130,10 +130,14 @@ export function DevicesSettings() {
     if (!saved?.success) setError('Could not save the allowed hosts.');
   };
 
-  const reload = () =>
+  const reload = (background = false) =>
     loadView()
-      .then(setView)
-      .catch((failure: unknown) => setView({ kind: 'failed', reason: String(failure) }));
+      .then((next) => {
+        if (!background || next.kind !== 'failed') setView(next);
+      })
+      .catch((failure: unknown) => {
+        if (!background) setView({ kind: 'failed', reason: String(failure) });
+      });
   useEffect(() => {
     void reload();
   }, []);
@@ -142,7 +146,7 @@ export function DevicesSettings() {
     view.kind === 'ready' && view.pending.some((item) => item.twoWay && !item.phoneConfirmed);
   useEffect(() => {
     if (!waitingForPhone) return;
-    const timer = setInterval(() => void reload(), 1000);
+    const timer = setInterval(() => void reload(true), 1000);
     return () => clearInterval(timer);
   }, [waitingForPhone]);
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 
 const { mockRequest, connected } = vi.hoisted(() => {
   let open: () => void = () => {};
@@ -162,6 +162,53 @@ function daemon(state: {
 }
 
 describe('DevicesSettings', () => {
+  it('keeps the ready view and keeps polling after a background request fails', async () => {
+    daemon({
+      paired: true,
+      pending: [
+        {
+          id: 'scan',
+          kind: 'human',
+          name: 'Phone',
+          expiresAt: 4e12,
+          twoWay: true,
+          phoneConfirmed: false,
+        },
+      ],
+    });
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    try {
+      render(<DevicesSettings />);
+      await screen.findByText('Waiting for the phone to confirm.');
+      await waitFor(() =>
+        expect(interval.mock.calls.some(([, delay]) => delay === 1000)).toBe(true)
+      );
+      const poll = interval.mock.calls.find(([, delay]) => delay === 1000)?.[0];
+      expect(typeof poll).toBe('function');
+      const request = mockRequest.getMockImplementation()!;
+      let fail = true;
+      mockRequest.mockImplementation(async (...args) => {
+        if (fail) {
+          fail = false;
+          throw new Error('synthetic disconnected');
+        }
+        return request(...args);
+      });
+      if (typeof poll !== 'function') throw new Error('poll was not registered');
+      await act(async () => {
+        poll();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitFor(() => expect(fail).toBe(false));
+      expect(screen.getByText('Waiting for the phone to confirm.')).toBeTruthy();
+      const before = invoked('device.pair.pending').length;
+      poll();
+      await waitFor(() => expect(invoked('device.pair.pending').length).toBeGreaterThan(before));
+      expect(screen.getByRole('button', { name: 'Allow Phone' })).toBeTruthy();
+    } finally {
+      interval.mockRestore();
+    }
+  });
   it('waits for the scanned phone before enabling Allow', async () => {
     daemon({
       paired: true,
