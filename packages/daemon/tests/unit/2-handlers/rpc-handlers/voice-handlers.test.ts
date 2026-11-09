@@ -106,17 +106,19 @@ describe('voice RPC handlers', () => {
       started = resolve;
     });
     let uploads = 0;
-    globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
-      if (++uploads > 1) return Response.json({ text: 'new recording' });
-      uploadSignal = init?.signal ?? undefined;
-      return new Promise<Response>((resolve, reject) => {
-        finishOld = () => resolve(Response.json({ text: 'old recording' }));
-        uploadSignal?.addEventListener('abort', () =>
-          reject(new DOMException('cancelled', 'AbortError'))
-        );
-        started();
-      });
-    }) as typeof fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        if (++uploads > 1) return Response.json({ text: 'new recording' });
+        uploadSignal = init?.signal ?? undefined;
+        return new Promise<Response>((resolve, reject) => {
+          finishOld = () => resolve(Response.json({ text: 'old recording' }));
+          uploadSignal?.addEventListener('abort', () =>
+            reject(new DOMException('cancelled', 'AbortError'))
+          );
+          started();
+        });
+      }
+    );
     const old = handlers.get('voice.transcribe')!({
       transcriptionId: 'cancelled-upload',
       audioBase64: wavBase64(),
@@ -153,16 +155,18 @@ describe('voice RPC handlers', () => {
     const uploading = new Promise<void>((resolve) => {
       started = resolve;
     });
-    globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
-      uploadSignal = init?.signal ?? undefined;
-      return new Promise<Response>((resolve, reject) => {
-        finishOld = () => resolve(Response.json({ text: 'retained recording' }));
-        uploadSignal?.addEventListener('abort', () =>
-          reject(new DOMException('cancelled', 'AbortError'))
-        );
-        started();
-      });
-    }) as typeof fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        uploadSignal = init?.signal ?? undefined;
+        return new Promise<Response>((resolve, reject) => {
+          finishOld = () => resolve(Response.json({ text: 'retained recording' }));
+          uploadSignal?.addEventListener('abort', () =>
+            reject(new DOMException('cancelled', 'AbortError'))
+          );
+          started();
+        });
+      }
+    );
     const owner: CallContext = {
       clientId: 'owner',
       sessionId: 'session-1',
@@ -196,6 +200,19 @@ describe('voice RPC handlers', () => {
       finishOld();
       await old;
     }
+  });
+
+  it('refuses combining a cancel identity with a durable retry identity', async () => {
+    await expect(
+      handlers.get('voice.transcribe')!({
+        transcriptionId: 'cancel-upload',
+        recordingId: crypto.randomUUID(),
+        audioBase64: wavBase64(),
+        mimeType: 'audio/wav',
+      })
+    ).rejects.toThrow(
+      'Use either recordingId for durable retries or transcriptionId for cancellation'
+    );
   });
 
   it('posts wav multipart without authorization for local backends', async () => {

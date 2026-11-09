@@ -226,7 +226,8 @@ export function NeoVoice({
             try {
               const text = live ? await live.finish() : null;
               if (task.cancelled) return { text: '' };
-              const result = text === null ? await requestVoiceTranscription(recording) : { text };
+              const result =
+                text === null ? await requestVoiceTranscription(recording, id) : { text };
               return task.cancelled ? { text: '' } : result;
             } catch (error) {
               if (task.cancelled) return { text: '' };
@@ -298,6 +299,17 @@ export function NeoVoice({
       await task.persisted;
       if (task.upgrade) await task.upgrade;
       await deleteVoiceRecord(task.id);
+      const hub = connectionManager.getHubIfConnected();
+      if (hub) {
+        try {
+          await hub.request('voice.transcribe.cancel', { transcriptionId: task.id });
+        } catch (error) {
+          if (mounted.current)
+            onError(
+              error instanceof Error ? error.message : 'Could not stop server transcription.'
+            );
+        }
+      }
     } finally {
       if (pending.current === task) {
         pending.current = null;

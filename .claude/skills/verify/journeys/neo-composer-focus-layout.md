@@ -40,9 +40,10 @@ This uses fake microphone media and a delayed, numbered ASR fixture. Eight cases
 cover streaming/batch, phone/desktop and Stop/Send cancellation. Cancel restores
 the original draft without a saved recording or sent message. A second recording
 starts before the cancelled response arrives and must retain its own capture.
-Batch mode waits for that old response while capture remains active, then submits
-the new audio: the daemon admits one batch transcription per client at a time.
-The new recording must complete with its own unique text.
+Batch cancellation must close the provider upload before the UI returns to idle.
+The next recording submits immediately without waiting for the old provider
+response and completes with its own unique text. Run the same command with
+`19346 --cancel-only` after composer-behavior.sh to verify only cancellation.
 The fixture status reader only reports synthetic utterance counters.
 
 A final real-time case records for four minutes. The timer starts at zero and

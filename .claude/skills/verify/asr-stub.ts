@@ -6,25 +6,32 @@ const transcript = process.argv[3];
 const finalizeDelayMs = Number(process.argv[4] ?? 0);
 const numbered = process.argv[5] === '--numbered';
 let utterances = 0;
+const cancelled: number[] = [];
 const words = (id: number, bytes: number) =>
   numbered ? `${transcript ?? 'Transcript'} ${id}.` : (transcript ?? `heard ${bytes} bytes`);
 const http = createServer((request, response) => {
   if (request.method === 'GET' && request.url === '/fixture/status') {
     response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({ utterances }));
+    response.end(JSON.stringify({ utterances, cancelled }));
     return;
   }
   const id = ++utterances;
   let bytes = 0;
+  let finalTimer: ReturnType<typeof setTimeout> | undefined;
+  response.on('close', () => {
+    if (!response.writableEnded) cancelled.push(id);
+    clearTimeout(finalTimer);
+  });
   request.on('data', (chunk) => {
     bytes += chunk.length;
   });
   request.on('end', () => {
+    if (response.destroyed) return;
     const finish = () => {
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ text: words(id, bytes) }));
     };
-    if (finalizeDelayMs) setTimeout(finish, finalizeDelayMs);
+    if (finalizeDelayMs) finalTimer = setTimeout(finish, finalizeDelayMs);
     else finish();
   });
 });
