@@ -89,22 +89,40 @@ export function validatePackPreference(input: Input, packs: readonly NeoPack[]) 
       };
 }
 
-export function createPackPreferenceOperations(db: Database, packs: () => readonly NeoPack[]) {
+export type PackPreferenceChange = Input & { before: unknown };
+
+export function createPackPreferenceOperations(
+  db: Database,
+  packs: () => readonly NeoPack[],
+  changed?: (change: PackPreferenceChange) => Promise<void>
+) {
+  const save = db.transaction((input: Input): PackPreferenceChange | undefined => {
+    const { pack, scope, key, value } = input;
+    const saved = getNeoPackPreference(db, pack, scope, key);
+    const before =
+      saved?.scope.kind === scope.kind && saved.scope.key === scope.key ? saved.value : undefined;
+    const json = JSON.stringify(value);
+    if (JSON.stringify(before) === json) return;
+
+    db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES (?, ?, ?, ?, ?, 'human', ?) ON CONFLICT (pack, scope_kind, scope_key, key)
+      DO UPDATE SET value_json=excluded.value_json, set_by=excluded.set_by, set_at=excluded.set_at`).run(
+      pack,
+      scope.kind,
+      scope.key,
+      key,
+      json,
+      Date.now()
+    );
+    return { ...input, before };
+  }, 'immediate');
   const set = (superpipe({})('pack.preferences.set') as PipelineAPI)
     .input(['input'])
     .pipe((input: Input) => validatePackPreference(input, packs()), 'input', 'result:setting')
     .pipe(
-      (input: Input) => {
-        db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-        VALUES (?, ?, ?, ?, ?, 'human', ?) ON CONFLICT (pack, scope_kind, scope_key, key)
-        DO UPDATE SET value_json=excluded.value_json, set_by=excluded.set_by, set_at=excluded.set_at`).run(
-          input.pack,
-          input.scope.kind,
-          input.scope.key,
-          input.key,
-          JSON.stringify(input.value),
-          Date.now()
-        );
+      async (input: Input) => {
+        const change = save(input);
+        if (change) await changed?.(change);
         return { ok: true as const };
       },
       'setting',
