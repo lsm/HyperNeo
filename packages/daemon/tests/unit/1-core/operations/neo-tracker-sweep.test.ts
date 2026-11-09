@@ -190,18 +190,17 @@ test('overlapping sweeps create one external item', async () => {
   expect(creates).toEqual(['hyperneo:ask:ask']);
 });
 
-test('failed tracker effects report the error and remain retryable', async () => {
+test('failed tracker effects remain retryable below the cap', async () => {
   const warning = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+  warning.mockClear();
   try {
     adapter.find = async () => {
       throw new Error('Unavailable');
     };
     await sweepNeoTrackerMirrors(db, [adapter]);
-    expect(warning).toHaveBeenCalledWith(
-      'Tracker effect failed',
-      expect.objectContaining({ tracker: 'fixture', action: 'create' }),
-      expect.any(Error)
-    );
+    expect(
+      warning.mock.calls.filter(([message]) => message === 'Tracker retry limit reached')
+    ).toHaveLength(0);
     expect(mirrors.facts().mirrors[0].failures).toBe(1);
     adapter.find = async () => null;
     await sweepNeoTrackerMirrors(db, [adapter]);
@@ -209,4 +208,69 @@ test('failed tracker effects report the error and remain retryable', async () =>
   } finally {
     warning.mockRestore();
   }
+});
+
+test('a child close failing 3 times stops retrying and the parent still closes', async () => {
+  addTodo('child');
+  await sweepNeoTrackerMirrors(db, [adapter]);
+  db.prepare("UPDATE neo_asks SET status = 'done'").run();
+  const attempts: string[] = [];
+  adapter.close = async (ref) => {
+    attempts.push(ref);
+    return ref === 'example/repo#2' ? { reason: 'Unavailable' } : true;
+  };
+  for (let sweep = 0; sweep < 6; sweep++) await sweepNeoTrackerMirrors(db, [adapter]);
+  expect(attempts).toEqual([
+    'example/repo#2',
+    'example/repo#2',
+    'example/repo#2',
+    'example/repo#1',
+  ]);
+  expect(mirrors.facts().mirrors.find((row) => row.ownerKind === 'todo')?.failures).toBe(3);
+});
+
+test('success resets failures', async () => {
+  adapter.find = async () => {
+    throw new Error('Unavailable');
+  };
+  await sweepNeoTrackerMirrors(db, [adapter]);
+  expect(mirrors.facts().mirrors[0].failures).toBe(1);
+  adapter.find = async () => null;
+  await sweepNeoTrackerMirrors(db, [adapter]);
+  expect(mirrors.facts().mirrors[0]).toMatchObject({ failures: 0, state: 'bound' });
+});
+
+test('the cap log is written once', async () => {
+  const warning = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+  warning.mockClear();
+  try {
+    adapter.find = async () => {
+      throw new Error('Unavailable');
+    };
+    for (let sweep = 0; sweep < 5; sweep++) await sweepNeoTrackerMirrors(db, [adapter]);
+    expect(
+      warning.mock.calls.filter(([message]) => message === 'Tracker retry limit reached')
+    ).toHaveLength(1);
+    expect(warning).toHaveBeenCalledWith(
+      'Tracker retry limit reached',
+      expect.objectContaining({ tracker: 'fixture', action: 'create' }),
+      expect.any(Error)
+    );
+    expect(mirrors.facts().mirrors[0].failures).toBe(3);
+  } finally {
+    warning.mockRestore();
+  }
+});
+
+test('link failures stop at the same cap', async () => {
+  addTodo('child');
+  await sweepNeoTrackerMirrors(db, [adapter]);
+  let attempts = 0;
+  adapter.link = async () => {
+    attempts++;
+    return { reason: 'Unavailable' };
+  };
+  for (let sweep = 0; sweep < 5; sweep++) await sweepNeoTrackerMirrors(db, [adapter]);
+  expect(attempts).toBe(3);
+  expect(mirrors.facts().mirrors.find((row) => row.ownerKind === 'todo')?.failures).toBe(3);
 });

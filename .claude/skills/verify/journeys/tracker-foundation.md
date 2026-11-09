@@ -14,4 +14,5 @@ lookup. It prints createCount=1 for the recovered parent and recoveryExit=0.
 Later sweeps create a late child, persist its link, close a completed child once,
 and leave that closed mirror alone when its todo becomes active again. A settled
 ask closes active and failed children as not_planned before closing its parent.
-Retain observed.json and recovery.json. The wrapper removes its temporary data.
+A failing child stops after three closes and its parent then closes. Retain
+observed.json, recovery.json and retry-cap.json. The wrapper removes its temporary data.

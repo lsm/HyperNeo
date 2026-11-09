@@ -76,6 +76,18 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
         'close example/repo#4 not_planned', 'close example/repo#1 completed', 'close example/repo#5 not_planned',
       ]);
       assert.equal((await app.db.gateway.call(neoTrackerReads, 'facts')).mirrors.length, 0);
+      store.openAsk({ id: 'capped', projectId: null, sessionId: 'synthetic', originMessageId: null, title: 'Fail-open plan', request: 'Private details', createdAt: 4 });
+      store.addTodo('cap-child', 'capped', { title: 'Failing child', instruction: null, named: null, check: null, doneWhen: 'Done' }, 5);
+      await neo.sweepPacks();
+      const closeCalls: string[] = [];
+      adapter.close = async (ref) => { closeCalls.push(ref); return ref === 'example/repo#7' ? { reason: 'Unavailable' } : true; };
+      app.db.getDatabase().prepare("UPDATE neo_asks SET status = 'done' WHERE id = 'capped'").run();
+      for (let sweep = 0; sweep < 6; sweep++) await neo.sweepPacks();
+      assert.deepEqual(closeCalls, ['example/repo#7', 'example/repo#7', 'example/repo#7', 'example/repo#6']);
+      const capped = await app.db.gateway.call(neoTrackerReads, 'facts');
+      assert.equal(capped.mirrors.find((row) => row.ownerId === 'cap-child')?.failures, 3);
+      assert.equal(capped.mirrors.find((row) => row.ownerId === 'capped')?.state, 'closed');
+      writeFileSync(join(run, 'evidence/retry-cap.json'), JSON.stringify({ closeCalls, failures: 3, parentClosed: true }));
       writeFileSync(join(run, 'evidence/recovery.json'), JSON.stringify({ recovered: recovered.mirrors[0], port: app.server.port, serviceSweep: true, lifecycleEffects: effects }));
     }
   } finally { await neo.dispose(); await app.cleanup(); }
@@ -107,10 +119,12 @@ esac
   const exit = await recovery.exited;
   writeFileSync(join(run, 'evidence/recovery.log'), await recoveryOut + await recoveryErr);
   assert.equal(exit, 0, 'Recovery daemon must exit successfully');
+  const capLogs = readFileSync(join(run, 'evidence/recovery.log'), 'utf8').match(/Tracker retry limit reached/g) ?? [];
+  assert.equal(capLogs.length, 1);
   const items = readFileSync(join(run, 'bin/gh.items'), 'utf8').trim().split('\n');
   const createCount = items.filter((marker) => marker === 'hyperneo:ask:ask').length;
-  assert.equal(items.length, 5);
+  assert.equal(items.length, 7);
   assert.equal(createCount, 1);
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ createCount, recoveryExit: exit, seedKilledBeforeBound: true, concurrentSweeps: true, seed: JSON.parse(readFileSync(join(run, 'seed-ready.json'), 'utf8')) }));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ createCount, recoveryExit: exit, seedKilledBeforeBound: true, concurrentSweeps: true, capLogCount: capLogs.length, seed: JSON.parse(readFileSync(join(run, 'seed-ready.json'), 'utf8')) }));
   console.log(`PASS: service sweep recovery and lifecycle; createCount=${createCount}; recoveryExit=${exit}; totalCreateCount=${items.length}`);
 }

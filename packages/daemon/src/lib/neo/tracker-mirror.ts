@@ -8,6 +8,7 @@ import {
 } from '../../storage/repositories/neo-tracker-mirror.ts';
 import type { NeoTrackerAdapter } from './pack-contract.ts';
 import {
+  NEO_TRACKER_FAILURE_LIMIT,
   planNeoTrackerMirror,
   planNeoTrackerRecovery,
   type NeoTrackerPlan,
@@ -63,12 +64,14 @@ export async function sweepNeoTrackerMirrors(
               failures: 0,
             });
           } catch (error) {
-            log.warn(
-              'Tracker effect failed',
-              { ownerKind: row.ownerKind, ownerId: row.ownerId, tracker: row.tracker, action },
-              error
-            );
-            await write({ failures: row.failures + 1 });
+            const failures = row.failures + 1;
+            await write({ failures });
+            if (failures === NEO_TRACKER_FAILURE_LIMIT)
+              log.warn(
+                'Tracker retry limit reached',
+                { ownerKind: row.ownerKind, ownerId: row.ownerId, tracker: row.tracker, action },
+                error
+              );
           }
         }
       },
