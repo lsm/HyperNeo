@@ -3,14 +3,25 @@ id: NEO_PACK_CODING_INSTRUCTIONS
 ---
 Read repository code from <HyperNeo data dir>/worktrees/<lowercase owner>/<lowercase repo>/neo-read, kept current by the GitHub poller; never use or update the human's checkout.
 Dev workers are long-lived and named for the project and a number (never a task title); one dev worker carries many PRs for its project. Use work.rename if a session inherits a task title.
-For work in stages, create the epic and all stage todos up front, in order, with
-one sub-issue named by each todo as owner/repo#N; each PR says Closes owner/repo#N
-for its sub-issue. CLOSED/COMPLETED satisfies the issue check; a merged PR satisfies
-its PR check. Track any required deployment or smoke as its own checkable todo. Use {pack: "coding", kind: "issue_closed", params: {issue:
-"owner/repo#N"}}. NOT_PLANNED fails the todo; open or unreadable never completes it.
-Keep the repository's review and merge rules. For release-branch PRs, explicitly
-link the PR to the sub-issue in GitHub and close the issue as COMPLETED only after
-the permitted merge. For a PR-merge outcome, use check {pack:"coding",kind:"pr_merged",params:{urls:["https://github.com/example/project/pull/123"]}}. Existing pr_merged todos keep working.
+For multi-PR work, use one PR per todo, with all steps added up front in order.
+Each todo uses check {pack:"coding",kind:"pr_merged",params:{}} until its PR opens;
+then name that PR with neo.todo.edit {todoId,addUrls:[url]}. Do not accumulate the
+chain's PRs on one todo. Each todo after the first sets after:[previousTodoId];
+the existing queue starts it when the previous todo finishes. Give each approved
+step its own instruction, target and start:true; never manually start the next one.
+Keep one sub-issue per todo and have its PR close that issue. Track deployment or
+smoke separately. Keep the repository's review and merge rules. For a separate
+issue outcome, use {pack:"coding",kind:"issue_closed",params:{issue:"owner/repo#N"}}:
+CLOSED/COMPLETED passes, NOT_PLANNED fails, and open or unreadable stays unmet.
+For release-branch PRs, explicitly link the sub-issue and close it as COMPLETED
+only after the permitted merge.
+
+Example: for a parser PR followed by a caller PR, use the place from work.find:
+- Add "Extract parser" with coding pr_merged, instruction "Extract the parser and open one PR", target {verb:"start",adapter:"codex-desktop",place}, and start:true.
+- Add "Update callers" on that ask with coding pr_merged, after:[parserTodoId], instruction "Update callers and open one PR", the same start target, and start:true.
+- When the parser PR opens, call neo.todo.edit {todoId:parserTodoId,addUrls:["https://github.com/example/project/pull/123"]}. Its merge completes that todo and the queue starts the caller todo.
+- When the caller PR opens, call neo.todo.edit {todoId:callerTodoId,addUrls:["https://github.com/example/project/pull/124"]}.
+
 For approval before merge, use {pack:"coding",kind:"pr_approved",params:{url:"https://github.com/example/project/pull/123"}} with neo.todo.add check or neo.question.ask retireWhen. It uses the repository's saved mergePolicy on the PR's current head: review_bot needs that configured reviewBot's latest review decision on that head to be APPROVED (COMMENTED and PENDING reviews do not replace a decision); ci_only needs required CI green; human never passes automatically. A new head needs fresh approval, and failed reads leave the check unmet. Login matching ignores case; a trailing [bot] alias requires a known GitHub Bot actor across approval checks, ledger and merge gates. User accounts or unknown actor types never qualify through a suffix alias. This checks approval only; keep the separate merge and deployment gates. Read GitHub facts with
 neo.github.read; never ask the human to confirm them. Name refs as owner/repo#N.
 PR events, owner workers' reports and passing pr_merged/issue_closed checks reach

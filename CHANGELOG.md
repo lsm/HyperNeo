@@ -4,6 +4,12 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.56.1] - 2026-11-08
+
+Includes the changes listed under 0.56.0.
+
+- Avoid database-lock failures during concurrent task completion (#10287).
+
 ## [0.56.0] - 2026-11-08
 
 ### Neo and workers
