@@ -72,6 +72,17 @@ try {
     refusal(await call('neo.todo.edit', { todoId: converted.todo.id, check, instruction: 'Implement change', target: { verb: 'send', ref } }));
     assert.equal(sessions.get(converted.todo.id), null);
     assert.equal(todos.getTodo(converted.todo.id)!.check!.pack, 'core');
+    const deferredAsk = `edited-${ref.id}`;
+    todos.openAsk({ id: deferredAsk, sessionId: sender, projectId: null, originMessageId: null, title: 'Edited repository', request: 'Introduce a coding check later', createdAt: 1 });
+    const deferred = await call('neo.todo.add', { askId: deferredAsk, title: 'Unassigned coding work', check: { pack: 'core', kind: 'evidence', params: {} } });
+    assert.equal(todos.getTodo(deferred.todo.id)!.repo, null);
+    assert.equal((await call('neo.todo.edit', { todoId: deferred.todo.id, check })).ok, true);
+    assert.equal(todos.getTodo(deferred.todo.id)!.repo, null);
+    refusal(await call('neo.todo.bind', { todoId: deferred.todo.id, ref }));
+    assert.equal(sessions.readRef(deferred.todo.id), null);
+    sessions.bind(deferred.todo.id, ref, 1);
+    todos.updateTodo(todos.getTodo(deferred.todo.id)!, { state: 'doing', startedAt: 1, approvedAt: 1 }, 1);
+    refusal(await call('neo.todo.continue', { todoId: deferred.todo.id, message: 'Continue edited check' }));
     const pending = await add();
     assert.equal(pending.ok, true);
     refusal(await call('neo.todo.edit', { todoId: pending.todo.id, instruction: 'Implement change', target: { verb: 'send', ref } }));

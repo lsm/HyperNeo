@@ -62,3 +62,30 @@ describe('remote todo worker repository resolution', () => {
     }
   );
 });
+
+test.each([
+  { remotes: ['git@github.com:example/repo.git'], mismatch: false },
+  { remotes: ['https://github.com/example/other.git'], mismatch: true },
+  { remotes: [], mismatch: true },
+])(
+  'checks an edited coding check when the stored repository is missing',
+  ({ remotes, mismatch }) => {
+    const edited = {
+      ...draft,
+      named: null,
+      check: {
+        pack: 'coding',
+        kind: 'pr_merged',
+        params: { urls: ['https://github.com/example/repo/pull/1'] },
+      },
+    };
+    const reason = policy.refuse(edited, [], {
+      ask: null,
+      todo: { repo: null },
+      workerRemotes: remotes,
+    });
+    if (mismatch)
+      expect(reason).toContain('worker_repository_mismatch: todo is github.com/example/repo');
+    else expect(reason).toBeNull();
+  }
+);
