@@ -38,7 +38,7 @@ import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stag
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
   describe:
-    'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
+    'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge. Multi-PR work uses one PR per todo, chained with after; name each opened PR with neo.todo.edit addUrls.',
   guidance: NEO_PACK_CODING_INSTRUCTIONS,
 };
 
