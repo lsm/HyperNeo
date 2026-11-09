@@ -11,6 +11,8 @@ export interface NeoPackBrief {
   id: string;
   describe: string;
   guidance?: string;
+  /** Name of the built-in skill that carries this pack's guidance for the Neo session. */
+  skill?: string;
   alwaysEnabled?: boolean;
 }
 

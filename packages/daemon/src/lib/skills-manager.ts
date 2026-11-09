@@ -1,8 +1,9 @@
 import { getDataDir } from './data-dir.ts';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { access, cp, mkdir, writeFile } from 'node:fs/promises';
-import { generateUUID, isBuiltinSkillConfig } from '@hyperneo/shared';
+import { access, cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { NEO_PACK_SKILLS } from '@hyperneo/prompts';
+import { createLogger, generateUUID, isBuiltinSkillConfig } from '@hyperneo/shared';
 import type {
   AppSkill,
   AppSkillConfig,
@@ -103,6 +104,8 @@ const SKILL_FETCH_TIMEOUT_MS = 20_000;
 const SKILL_FETCH_MAX_DEPTH = 5;
 
 const SKILL_FETCH_MAX_FILES = 100;
+
+const log = createLogger('hyperneo:daemon:skills-manager');
 
 const BUILTIN_SKILL_ASSET_DIRS: Record<string, string> = {
   'space-coordination': join(
@@ -510,6 +513,20 @@ export class SkillsManager {
     commandName: string,
     skillsRoot: string
   ): Promise<void> {
+    const embedded = Object.hasOwn(NEO_PACK_SKILLS, commandName)
+      ? NEO_PACK_SKILLS[commandName].files
+      : null;
+    if (embedded) {
+      const dir = join(skillsRoot, commandName);
+      try {
+        await rm(dir, { recursive: true, force: true });
+        await mkdir(dir, { recursive: true });
+        for (const [file, text] of Object.entries(embedded)) await writeFile(join(dir, file), text);
+      } catch (err) {
+        log.warn(`Failed to write embedded skill "${commandName}"`, err);
+      }
+      return;
+    }
     const sourceDir = BUILTIN_SKILL_ASSET_DIRS[commandName];
     if (!sourceDir) return;
 

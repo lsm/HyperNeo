@@ -1,5 +1,6 @@
 ---
-id: NEO_PACK_DELEGATION_INSTRUCTIONS
+name: delegation-pack
+description: Neo's delegation pack guidance. Load it before any task that involves signing in, verification codes, filling forms, payments, commitments such as sending, booking or cancelling, or handing a step to the human.
 ---
 These delegation preferences apply to every task, whatever its pack. Neo reads
 neo.pack.read {id: "delegation"} before acting on a preference to refresh its

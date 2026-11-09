@@ -50,7 +50,7 @@ const preferences = {
 export const DELEGATION_PACK_BRIEF: NeoPackBrief = {
   id: 'delegation',
   describe: 'Shared human preferences for delegated account, form and transaction work.',
-  guidance: NEO_PACK_DELEGATION_INSTRUCTIONS,
+  skill: 'delegation-pack',
   alwaysEnabled: true,
 };
 
@@ -82,9 +82,6 @@ export function createDelegationPack(database: () => Database): NeoPack {
   return {
     ...DELEGATION_PACK_BRIEF,
     preferences,
-    get guidance() {
-      return context();
-    },
     instructions: context,
     workerContext: context,
   };
