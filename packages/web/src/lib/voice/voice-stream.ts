@@ -30,7 +30,7 @@ function isPcmOnlyDaemon(error: unknown): boolean {
 export interface VoiceLiveStream {
   push(samples: Float32Array, sampleRate: number): void;
   finish(): Promise<string | null>;
-  close(): void;
+  close(): void | Promise<void>;
 }
 
 export function openVoiceStream(
@@ -42,6 +42,7 @@ export function openVoiceStream(
   let codec: VoiceOpusEncoder | null = null;
   let live = true;
   let closed = false;
+  let closing: Promise<void> | undefined;
   let stopped = false;
   let pending: Float32Array[] = [];
   let pendingSamples = 0;
@@ -203,16 +204,20 @@ export function openVoiceStream(
       }
     },
     close() {
-      if (closed) return;
+      if (closing) return closing;
       closed = true;
       unsubscribe();
-      void ready.then(() => {
+      closing = ready.then(() => {
         codec?.close();
         if (!streamId || stopped) return;
         stopped = true;
         live = false;
-        return hub.request('voice.stream.cancel', { streamId }).catch(() => undefined);
+        return hub.request('voice.stream.cancel', { streamId }).then(
+          () => {},
+          () => {}
+        );
       });
+      return closing;
     },
   };
 }

@@ -1261,6 +1261,53 @@ describe('voice stream RPC handlers', () => {
     asrRelayDefaults.create = originalRelayFactory;
   });
 
+  it('releases admission when a stream batch fallback is cancelled', async () => {
+    resetVoiceTranscriptionLimitsForTests();
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    let started: () => void = () => {};
+    let finishOld: () => void = () => {};
+    let uploadSignal: AbortSignal | undefined;
+    const uploading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let uploads = 0;
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      if (++uploads > 1) return Response.json({ text: 'next recording' });
+      uploadSignal = init?.signal ?? undefined;
+      return new Promise<Response>((resolve, reject) => {
+        finishOld = () => resolve(Response.json({ text: 'cancelled recording' }));
+        uploadSignal?.addEventListener('abort', () =>
+          reject(new DOMException('cancelled', 'AbortError'))
+        );
+        started();
+      });
+    });
+    const { streamId } = (await handlers.get('voice.stream.start')!({
+      encoding: 'pcm16',
+      sampleRate: 16000,
+    })) as { streamId: string };
+    await handlers.get('voice.stream.chunk')!({ streamId, audioBase64: 'AAAAAA==' });
+    const old = handlers.get('voice.stream.stop')!({ streamId }).then(
+      (value) => value,
+      (error: Error) => error.message
+    );
+    await uploading;
+    try {
+      expect(await handlers.get('voice.stream.cancel')!({ streamId })).toEqual({ ok: true });
+      expect(uploadSignal?.aborted).toBe(true);
+      expect(await old).toBe('Voice stream cancelled');
+      expect(
+        await handlers.get('voice.transcribe')!({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
+      ).toEqual({ text: 'next recording' });
+    } finally {
+      finishOld();
+      await old;
+      fetch.mockRestore();
+      resetVoiceTranscriptionLimitsForTests();
+    }
+  });
+
   it('voice.stream.start rejects an unsupported sample rate', async () => {
     const { hub, handlers } = createMockMessageHub();
     registerVoiceHandlers(hub, createSettings({ voice }));

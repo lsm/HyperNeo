@@ -219,9 +219,10 @@ export function registerVoiceHandlers(
           language: data?.language === 'zh' || data?.language === 'en' ? data?.language : undefined,
           voice: () => settingsManager.getGlobalSettings().voice,
           credentialManager,
-          transcribeWav: (audioBase64) =>
+          transcribeWav: (audioBase64, signal) =>
             runVoiceTranscribe({
               data: { audioBase64, mimeType: 'audio/wav' },
+              signal,
               context,
               deps: { settingsManager, credentialManager, limiters: transcriptionLimiters },
             }),
@@ -355,7 +356,7 @@ export function registerVoiceHandlers(
         (owned.clientId === null &&
           typeof voiceStreamResume(owned, ownerOf(clientId)) !== 'string'))
     ) {
-      owned.stream.cancel();
+      await owned.stream.cancel();
       deleteVoiceStream(data.streamId);
     }
     return { ok: true };
