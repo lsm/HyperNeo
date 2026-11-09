@@ -277,6 +277,46 @@ describe('NeoComposer and NeoVoice send integration', () => {
     await waitFor(() => expect(view.current.value).toBe(''));
   });
 
+  it('rejects cancellation when delivery starts before disabled controls render', async () => {
+    let finishDelivery: () => void = () => {};
+    let releaseTranscript: (value: { text: string }) => void = () => {};
+    let nextRecording = false;
+    hubRequest.mockImplementation(async (method, payload) => {
+      if (method === 'operation.invoke') {
+        const cancel = buttonNamed('Cancel recording');
+        expect(cancel.disabled).toBe(false);
+        fireEvent.click(cancel);
+        await new Promise<void>((resolve) => {
+          finishDelivery = resolve;
+        });
+      }
+      if (method === 'voice.transcribe' && nextRecording)
+        return new Promise((resolve) => {
+          releaseTranscript = resolve;
+        });
+      return defaultHub(method, payload);
+    });
+    const view = renderComposer();
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    await waitFor(() => expect(buttonNamed('Cancel recording').disabled).toBe(true));
+    finishDelivery();
+    await waitFor(() => expect(view.current.value).toBe(''));
+    nextRecording = true;
+    await act(async () => {
+      voice.recording = true;
+    });
+    await awaitRecordingComposer();
+    fireEvent.click(stopControl());
+    await screen.findByTestId('voice-transcribing');
+    expect(buttonNamed('Cancel recording').disabled).toBe(false);
+    fireEvent.click(buttonNamed('Cancel recording'));
+    await screen.findByRole('button', { name: 'Start voice input', exact: true });
+    releaseTranscript({ text: 'discarded words' });
+    expect(view.current.value).toBe('');
+  });
+
   it.each(['draft', 'send', 'upgrade'] as const)(
     'cancels pending %s transcription without inserting or sending its late result',
     async (intent) => {
