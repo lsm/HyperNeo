@@ -92,6 +92,7 @@ export function createNeoRuleQuestions(service: NeoService) {
         if (result.ok && result.changed) {
           service.publishSettings?.(service.db.getGlobalSettings());
           service.notifyChanged();
+          void service.rulesChanged();
         }
         return result.ok ? { ok: true as const } : result;
       },

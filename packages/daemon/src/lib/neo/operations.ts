@@ -588,6 +588,7 @@ export function createNeoOperations(service: NeoService) {
     .pipe(
       (updated: GlobalSettings) => {
         service.publishSettings?.(updated);
+        void service.rulesChanged();
         return { ok: true as const, standingRules: updated.neo!.standingRules! };
       },
       'save',

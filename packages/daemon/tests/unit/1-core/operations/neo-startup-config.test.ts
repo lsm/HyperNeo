@@ -93,6 +93,16 @@ describe('Neo startup configuration', () => {
       });
       await service[method]();
       expect(updateSession).toHaveBeenCalledTimes(1);
+      db.updateGlobalSettings({
+        neo: { standingRules: ['Synthetic rule A.', 'Synthetic rule B.'] },
+      });
+      await service.rulesChanged();
+      const ruled = db.getSession(root)!.config.systemPrompt;
+      expect(ruled).toBe(
+        neoPrompt(service.packBriefs(), ['Synthetic rule A.', 'Synthetic rule B.'])
+      );
+      expect(ruled).toContain('1. Synthetic rule A.\n2. Synthetic rule B.');
+      expect(restored.config.systemPrompt).not.toContain('Standing rules the human approved');
     }
   );
 

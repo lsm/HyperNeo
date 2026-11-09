@@ -40,6 +40,7 @@ import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoSystemFocusedDiscussion from './neo/system/focused-discussion.md' with { type: 'text' };
 import mdneoSystemGoalCycle from './neo/system/goal-cycle.md' with { type: 'text' };
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
+import mdneoSystemStandingRules from './neo/system/standing-rules.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
 import mdneoPacksCodingSkill from './neo/packs/coding/SKILL.md' with { type: 'text' };
 import mdneoPacksCodingWorkerWorktreeBrief from './neo/packs/coding/worker-worktree-brief.md' with {
@@ -282,6 +283,7 @@ const registry: Record<string, string> = {
   'neo/system/goal-cycle.md': mdneoSystemGoalCycle,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
+  'neo/system/standing-rules.md': mdneoSystemStandingRules,
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
   'neo/work/goal-done-when.md': mdneoWorkGoalDoneWhen,
   'neo/packs/coding/worker-worktree-brief.md': mdneoPacksCodingWorkerWorktreeBrief,
@@ -423,6 +425,7 @@ export const {
   NEO_FOCUSED_DISCUSSION,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
+  NEO_STANDING_RULES,
   NEO_WORK_GOAL_ASKED,
   NEO_WORK_GOAL_DONE_WHEN,
   NEO_WORK_GOAL_MERGE,

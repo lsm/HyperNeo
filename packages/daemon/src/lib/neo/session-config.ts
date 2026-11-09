@@ -16,17 +16,18 @@ export function neoReadTools() {
   };
 }
 
-export function neoPromptTools(packs: readonly NeoPackBrief[]) {
-  return { systemPrompt: neoPrompt(packs), ...neoReadTools() };
+export function neoPromptTools(packs: readonly NeoPackBrief[], rules: readonly string[] = []) {
+  return { systemPrompt: neoPrompt(packs, rules), ...neoReadTools() };
 }
 
 export function planNeoSessionConfig(
   session: Session | null,
-  packs: readonly NeoPackBrief[]
+  packs: readonly NeoPackBrief[],
+  rules: readonly string[] = []
 ): SessionConfig | null {
   if (!session?.config) return null;
   const config = session.config;
-  const defaults = neoPromptTools(packs);
+  const defaults = neoPromptTools(packs, rules);
   const current = { ...config, ...defaults, sandbox: undefined };
   return JSON.stringify(config) === JSON.stringify(current) ? null : current;
 }
