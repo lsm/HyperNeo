@@ -64,6 +64,7 @@ export function NeoVoice({
 }) {
   const enabled = useNeoVoiceSettings();
   const [transcribing, setTranscribing] = useState<string | null>(null);
+  const [delivering, setDelivering] = useState(false);
   const [transcribeIntent, setTranscribeIntent] = useState<'draft' | 'send'>('draft');
   const [streamFormat, setStreamFormat] = useState<'opus' | 'pcm16' | 'batch' | null>(null);
   const running = useRef(false);
@@ -74,6 +75,9 @@ export function NeoVoice({
     intent: 'draft' | 'send';
     persisted: Promise<void>;
     upgrade?: Promise<boolean>;
+    cancelled: boolean;
+    delivering: boolean;
+    live: VoiceLiveStream | null;
   } | null>(null);
   const mounted = useRef(true);
   const recorder = useVoiceRecorder(sessionId, { autoAdopt: false });
@@ -151,7 +155,9 @@ export function NeoVoice({
     }
   }
 
-  async function deliverSendIntent(recordId: string, text: string) {
+  async function deliverSendIntent(task: { delivering: boolean }, recordId: string, text: string) {
+    task.delivering = true;
+    if (mounted.current) setDelivering(true);
     const outcome = await delivery.current.onSendVoice(text, recordId);
     if (outcome.kind === 'refused') {
       onError(outcome.reason);
@@ -167,10 +173,14 @@ export function NeoVoice({
     if (running.current || (entry && isVoiceAudioBusy(entry.id))) return;
     running.current = true;
     const id = entry?.id ?? generateUUID();
+    const live = entry ? null : takeLiveStream();
     let persisted: () => void = () => {};
     const task = {
       id,
       intent,
+      live,
+      cancelled: false,
+      delivering: false,
       persisted: new Promise<void>((resolve) => {
         persisted = resolve;
       }),
@@ -181,7 +191,6 @@ export function NeoVoice({
     setTranscribeIntent(intent);
     markVoiceAudioBusy(id);
     beginInteractiveVoiceSubmit();
-    const live = entry ? null : takeLiveStream();
     const captured: VoiceSendSnapshot =
       entry ??
       (intent === 'send'
@@ -189,7 +198,7 @@ export function NeoVoice({
         : (recordingDraft.current ?? captureDraft()));
     try {
       if (intent === 'send' && entry?.sendText) {
-        await deliverSendIntent(entry.id, entry.sendText);
+        await deliverSendIntent(task, entry.id, entry.sendText);
         return;
       }
       const result = await runVoiceSubmit(
@@ -212,28 +221,34 @@ export function NeoVoice({
             }
           },
           stopRecording: entry ? async () => recordingFromEntry(entry) : recorder.stop,
-          ...(live
-            ? {
-                transcribe: async (recording) => {
-                  const text = await live.finish();
-                  return text === null ? requestVoiceTranscription(recording) : { text };
-                },
-              }
-            : {}),
+          transcribe: async (recording) => {
+            if (task.cancelled) return { text: '' };
+            try {
+              const text = live ? await live.finish() : null;
+              if (task.cancelled) return { text: '' };
+              const result = text === null ? await requestVoiceTranscription(recording) : { text };
+              return task.cancelled ? { text: '' } : result;
+            } catch (error) {
+              if (task.cancelled) return { text: '' };
+              throw error;
+            }
+          },
           generateId: () => id,
           isMounted: () => mounted.current,
           currentSessionId: () => sessionId,
         }
       );
+      if (task.cancelled) return;
       if (result.kind === 'routed') {
         if ('transcript' in result.outcome) {
           const upgraded = task.upgrade ? await task.upgrade : true;
+          if (task.cancelled) return;
           if (!upgraded) {
             onError('Could not save the send request. Your recording is kept so you can retry.');
             return;
           }
           if (task.intent === 'send') {
-            await deliverSendIntent(result.recordId, result.outcome.transcript);
+            await deliverSendIntent(task, result.recordId, result.outcome.transcript);
           } else {
             onTranscript(result.outcome.transcript);
             await deleteVoiceRecord(result.recordId);
@@ -246,16 +261,54 @@ export function NeoVoice({
           `${result.message}${result.persisted && !result.dequeued ? ' Your recording is saved below. You can retry.' : ''}`
         );
     } catch (error) {
-      onError(error instanceof Error ? error.message : 'Could not transcribe the recording.');
+      if (!task.cancelled)
+        onError(error instanceof Error ? error.message : 'Could not transcribe the recording.');
     } finally {
       live?.close();
-      if (live) interim.current?.('');
       persisted();
-      if (pending.current === task) pending.current = null;
-      running.current = false;
+      if (!task.cancelled) {
+        if (pending.current === task) {
+          pending.current = null;
+          running.current = false;
+          if (live) interim.current?.('');
+          if (mounted.current) {
+            setTranscribing(null);
+            setDelivering(false);
+          }
+        }
+        endInteractiveVoiceSubmit();
+        unmarkVoiceAudioBusy(id);
+      }
+      void refreshPendingVoiceAudio();
+    }
+  }
+
+  async function cancel() {
+    const task = pending.current;
+    if (!task) {
+      dropLiveStream();
+      await recorder.cancel();
+      return;
+    }
+    if (task.cancelled || task.delivering) return;
+    task.cancelled = true;
+    task.live?.close();
+    interim.current?.('');
+    try {
+      await task.persisted;
+      if (task.upgrade) await task.upgrade;
+      await deleteVoiceRecord(task.id);
+    } finally {
+      if (pending.current === task) {
+        pending.current = null;
+        running.current = false;
+        if (mounted.current) {
+          setTranscribing(null);
+          setDelivering(false);
+        }
+      }
       endInteractiveVoiceSubmit();
-      unmarkVoiceAudioBusy(id);
-      if (mounted.current) setTranscribing(null);
+      unmarkVoiceAudioBusy(task.id);
       void refreshPendingVoiceAudio();
     }
   }
@@ -266,6 +319,7 @@ export function NeoVoice({
 
   finishFromComposer.current = (intent) => {
     const task = pending.current;
+    if (task?.cancelled) return;
     if (task && intent === 'send') {
       if (task.intent === 'send') return;
       task.intent = 'send';
@@ -304,16 +358,13 @@ export function NeoVoice({
           <div class="min-w-0 flex-1">
             <VoiceWaveform
               appearance="neo"
+              canCancel={!delivering}
               getLevel={recorder.getLevel}
               isRecording={recorder.isRecording}
               isStarting={recorder.isStarting}
               isTranscribing={!!transcribing}
               startedAt={recorder.recordingStartedAt}
-              onCancel={() => {
-                if (running.current) return;
-                dropLiveStream();
-                void recorder.cancel();
-              }}
+              onCancel={() => void cancel()}
             />
           </div>
           {recorder.isRecording && streamFormat && streamFormat !== 'opus' && (

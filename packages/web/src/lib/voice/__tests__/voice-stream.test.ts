@@ -47,6 +47,24 @@ function calls(request: ReturnType<typeof vi.fn>, method: string) {
 }
 
 describe('openVoiceStream', () => {
+  it('does not report a late stop error after the stream was cancelled', async () => {
+    let rejectStop: (error: Error) => void = () => {};
+    const { hub, request } = fakeHub((method) =>
+      method === 'voice.stream.stop'
+        ? new Promise((_resolve, reject) => {
+            rejectStop = reject;
+          })
+        : streaming(method)
+    );
+    const onError = vi.fn();
+    const live = openVoiceStream(hub, vi.fn(), { onError });
+    const finished = live.finish();
+    await vi.waitFor(() => expect(calls(request, 'voice.stream.stop')).toHaveLength(1));
+    live.close();
+    rejectStop(new Error('Unknown voice stream'));
+    expect(await finished).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+  });
   it.each(['auto', 'zh', 'en'] as const)(
     'sends the %s choice on every new connection',
     async (language) => {

@@ -17,7 +17,7 @@ border and the 6px/32px/12% shadow; focus and recording use the accent border.
 Token receipts cover send, send foreground, control fill and danger in both themes.
 Review all screenshots for clipping and contrast. Recording is cancelled without
 sending; both owned processes must stop. Keep composer-frame.json and screenshots.
-The matrix also checks one control row, centered status above it, horizontally scrolling attachments, hidden recording tools, flat 40×32 recording Stop, the inert realtime voice icon and growing/scrolling live words. Dictation cap/count direction, cancellation while transcribing, Stop/Send switching and question-driven expansion remain a separate behavior change.
+The matrix also checks one control row, centered status above it, horizontally scrolling attachments, hidden recording tools, flat 40×32 recording Stop, the inert realtime voice icon and growing/scrolling live words. For the four-minute cap, count-up timer, cancellable transcription, shared action slot and question layout, run the behavioral journeys in neo-composer-focus-layout.md.
 
 The same matrix also checks a 44x32 send face inside its 44x44 target, full
 opacity while empty Send is disabled, and a 32px model pill with 14px text and

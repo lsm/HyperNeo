@@ -4,7 +4,17 @@ import { createServer } from 'node:http';
 const port = Number(process.argv[2] ?? 0);
 const transcript = process.argv[3];
 const finalizeDelayMs = Number(process.argv[4] ?? 0);
+const numbered = process.argv[5] === '--numbered';
+let utterances = 0;
+const words = (id: number, bytes: number) =>
+  numbered ? `${transcript ?? 'Transcript'} ${id}.` : (transcript ?? `heard ${bytes} bytes`);
 const http = createServer((request, response) => {
+  if (request.method === 'GET' && request.url === '/fixture/status') {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ utterances }));
+    return;
+  }
+  const id = ++utterances;
   let bytes = 0;
   request.on('data', (chunk) => {
     bytes += chunk.length;
@@ -12,7 +22,7 @@ const http = createServer((request, response) => {
   request.on('end', () => {
     const finish = () => {
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ text: transcript ?? `heard ${bytes} bytes` }));
+      response.end(JSON.stringify({ text: words(id, bytes) }));
     };
     if (finalizeDelayMs) setTimeout(finish, finalizeDelayMs);
     else finish();
@@ -30,13 +40,14 @@ server.on('listening', () => {
   console.log(`stub Deepgram-style ASR ready on ws://127.0.0.1:${address.port}/v1/listen`);
 });
 server.on('connection', (socket) => {
+  const id = ++utterances;
   let bytes = 0;
   let finalTimer: ReturnType<typeof setTimeout> | undefined;
   socket.on('close', () => clearTimeout(finalTimer));
   socket.on('message', (data: Buffer, isBinary: boolean) => {
     if (!isBinary) {
       const finish = () => {
-        socket.send(result(transcript ?? `heard ${bytes} bytes`, true));
+        socket.send(result(words(id, bytes), true));
         socket.close(1000);
       };
       if (finalizeDelayMs) finalTimer = setTimeout(finish, finalizeDelayMs);
@@ -44,7 +55,7 @@ server.on('connection', (socket) => {
       return;
     }
     bytes += data.length;
-    socket.send(result(transcript ?? `heard ${bytes} bytes`, false));
+    socket.send(result(words(id, bytes), false));
   });
 });
 http.listen(port, '127.0.0.1');

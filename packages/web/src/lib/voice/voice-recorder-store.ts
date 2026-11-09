@@ -3,7 +3,7 @@ import { VOICE_MAX_AUDIO_BYTES } from '@hyperneo/shared';
 import { bytesToBase64, downsampleChunks, encodeWav } from '../wav.ts';
 
 const TARGET_SAMPLE_RATE = 16_000;
-const MAX_RECORDING_MS = 300_000;
+const MAX_RECORDING_MS = 240_000;
 
 type RecorderNode = AudioWorkletNode | ScriptProcessorNode;
 

@@ -6,6 +6,7 @@ const pending = new URL(location.href).searchParams.has('pending');
 const files = new URL(location.href).searchParams.has('files');
 const status = new URL(location.href).searchParams.get('status');
 const running = new URL(location.href).searchParams.has('running');
+const empty = new URL(location.href).searchParams.has('empty');
 const store = {
   sdkMessages: signal([]), agentState: signal(status === 'network' ? { status: 'rate_limit_cooldown', reason: 'network' } : { status: 'idle' }),
   sessionInfo: signal({ config: { model: 'synthetic' }, metadata: pending ? { pendingModelSwitch: { model: 'Sonnet 5.5', provider: 'anthropic', requestedAt: 1 } } : {} }),
@@ -13,7 +14,7 @@ const store = {
 } as unknown as SessionStore;
 if (!files) File.prototype.text = () => new Promise<string>(() => {});
 render(<main class="neo-shell p-3"><h1>Synthetic composer auxiliary rows</h1>
-  <NeoComposer store={store} sessionId="synthetic-insets" draft="Synthetic draft" onDraft={() => {}}
+  <NeoComposer store={store} sessionId="synthetic-insets" draft={empty ? '' : 'Synthetic draft'} onDraft={() => {}}
     onStop={running ? () => {} : undefined}
     onError={() => {}} onTranscript={() => {}} onSend={async () => ({ ok: false, reason: 'Synthetic fixture never sends' })}
     quote={pending ? undefined : { author: 'Neo', text: 'Synthetic quoted summary', anchor: 'synthetic' }}

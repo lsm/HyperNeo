@@ -4,7 +4,7 @@ import { t } from '../../lib/i18n/index.ts';
 
 const BAR_PITCH_WIDE = 5;
 const BAR_PITCH_NARROW = 4;
-const MAX_SECONDS = 300;
+const MAX_SECONDS = 240;
 const FLOOR = 0.03;
 const SAMPLE_MS = 1000 / 60;
 
@@ -16,6 +16,7 @@ interface VoiceWaveformProps {
   onCancel: () => void;
   startedAt?: number | null;
   appearance?: 'neo';
+  canCancel?: boolean;
 }
 
 function formatElapsed(seconds: number): string {
@@ -30,6 +31,7 @@ export function VoiceWaveform({
   onCancel,
   startedAt,
   appearance,
+  canCancel,
 }: VoiceWaveformProps) {
   const neo = appearance === 'neo';
   const [isNarrow] = useState(
@@ -143,7 +145,7 @@ export function VoiceWaveform({
       <button
         type="button"
         onClick={onCancel}
-        disabled={isTranscribing}
+        disabled={!(canCancel ?? !isTranscribing)}
         title="Discard recording"
         aria-label="Cancel recording"
         class={`grid flex-none place-items-center text-fg-muted transition hover:text-fg-soft disabled:cursor-not-allowed disabled:opacity-40 ${
@@ -203,7 +205,7 @@ export function VoiceWaveform({
           class={`flex-none tabular-nums text-fg ${isNarrow ? 'text-2xs' : 'text-xs'}`}
           data-testid="voice-timer"
         >
-          {formatElapsed(MAX_SECONDS - elapsed)}
+          {formatElapsed(neo ? elapsed : MAX_SECONDS - elapsed)}
         </span>
       )}
     </div>

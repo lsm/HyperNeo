@@ -132,9 +132,10 @@ export function NeoComposer({
   const agentState = store.agentState.value;
   const noNetwork = agentState.status === 'rate_limit_cooldown' && agentState.reason === 'network';
   const waitingLine = forSession ? null : neoWaitingLine(agentState);
-  const attention =
-    !!store.error.value || agentState.status === 'waiting_for_input' || noNetwork || !!waitingLine;
+  const attention = !!store.error.value || noNetwork || !!waitingLine;
   const collapsed = !focused && !preferencesOpen && !draft && !needsDraft && !attention;
+  const showStop =
+    !!onStop && store.isWorking.value && !voiceBusy && !draft.trim() && !hasAttachments;
   const quoteAuthor = quote?.author === 'You' ? t('chat.you') : 'Neo';
   const thought = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
@@ -483,9 +484,7 @@ export function NeoComposer({
       <span
         role="status"
         class={`neo-composer-status px-2 min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
-          !voiceBusy && attention && agentState.status !== 'waiting_for_input'
-            ? 'flex w-full'
-            : 'hidden'
+          !voiceBusy && attention ? 'flex w-full' : 'hidden'
         }`}
       >
         {voiceBusy
@@ -545,7 +544,7 @@ export function NeoComposer({
             />
             <NeoRealtimeVoice collapsed={collapsed && !voiceBusy} />
           </div>
-          {onStop && store.isWorking.value && !voiceBusy && (
+          {showStop && (
             <button
               type="button"
               aria-label={t('composer.stop')}
@@ -558,7 +557,7 @@ export function NeoComposer({
               </span>
             </button>
           )}
-          {(!collapsed || voiceBusy) && (
+          {!showStop && (!collapsed || voiceBusy) && (
             <button
               type="submit"
               disabled={noNetwork || (!voiceBusy && !draft.trim() && !hasAttachments)}
