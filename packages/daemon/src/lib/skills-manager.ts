@@ -500,7 +500,11 @@ export class SkillsManager {
     for (const skill of this.repo.findAll()) {
       if (skill.sourceType !== 'builtin') continue;
       if (!isBuiltinSkillConfig(skill.config)) continue;
-      await this.ensureBundledBuiltinSkillAssets(skill.config.commandName, skillsRoot);
+      await this.ensureBundledBuiltinSkillAssets(
+        skill.config.commandName,
+        skillsRoot,
+        skill.builtIn
+      );
       entries.push({
         commandName: skill.config.commandName,
         description: skill.description,
@@ -511,11 +515,13 @@ export class SkillsManager {
 
   private async ensureBundledBuiltinSkillAssets(
     commandName: string,
-    skillsRoot: string
+    skillsRoot: string,
+    shipped: boolean
   ): Promise<void> {
-    const embedded = Object.hasOwn(NEO_PACK_SKILLS, commandName)
-      ? NEO_PACK_SKILLS[commandName].files
-      : null;
+    const embedded =
+      shipped && Object.hasOwn(NEO_PACK_SKILLS, commandName)
+        ? NEO_PACK_SKILLS[commandName].files
+        : null;
     if (embedded) {
       const dir = join(skillsRoot, commandName);
       try {

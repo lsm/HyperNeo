@@ -919,6 +919,35 @@ describe('SkillsManager', () => {
     expect(packs.map((s) => [s.name, s.enabled])).toEqual([['coding-pack', false]]);
   });
 
+  test('ensureBuiltinPluginWrappers leaves a user-installed skill with a pack name alone', async () => {
+    const { mkdtemp, rm, mkdir, readFile, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'kai-skills-mgr-user-pack-'));
+    try {
+      const skillsRoot = join(tmpRoot, 'skills');
+      makeRepo(db).insert({
+        id: 'user-coding-pack',
+        name: 'coding-pack',
+        displayName: 'coding-pack',
+        description: 'Installed from git',
+        sourceType: 'builtin',
+        config: { type: 'builtin', commandName: 'coding-pack' },
+        enabled: true,
+        builtIn: false,
+        validationStatus: 'valid',
+        createdAt: Date.now(),
+      });
+      await mkdir(join(skillsRoot, 'coding-pack'), { recursive: true });
+      await writeFile(join(skillsRoot, 'coding-pack', 'SKILL.md'), 'user files');
+      await mgr.ensureBuiltinPluginWrappers(join(tmpRoot, 'skill-plugins'), skillsRoot);
+      expect(await readFile(join(skillsRoot, 'coding-pack', 'SKILL.md'), 'utf8')).toBe(
+        'user files'
+      );
+    } finally {
+      await rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
   test('ensureBuiltinPluginWrappers rewrites embedded pack skills on every start', async () => {
     const { mkdtemp, rm, readFile, writeFile, readlink } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');

@@ -144,6 +144,24 @@ describe('Neo startup configuration', () => {
     expect(selectedSkills(id)).toEqual(['coding-pack']);
   });
 
+  test('a user skill that shares the pack skill name is never selected for Neo', async () => {
+    db.skills.insert({
+      id: 'user-coding-pack',
+      name: 'coding-pack',
+      displayName: 'coding-pack',
+      description: 'Installed from git',
+      sourceType: 'builtin',
+      config: { type: 'builtin', commandName: 'coding-pack' },
+      enabled: true,
+      builtIn: false,
+      validationStatus: 'valid',
+      createdAt: Date.now(),
+    });
+    await new SkillsManager(db.skills, db.appMcpServers, db).initializeBuiltins();
+    const id = await service.open();
+    expect(selectedSkills(id)).not.toContain('coding-pack');
+  });
+
   test('a recovered root drops other skills and follows the enabled packs', async () => {
     await new SkillsManager(db.skills, db.appMcpServers, db).initializeBuiltins();
     const session = createTestSession(root);

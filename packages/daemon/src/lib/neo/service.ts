@@ -897,7 +897,8 @@ export class NeoService {
       .filter((skill) => skill.sourceType !== 'mcp_server')
       .map((skill) => ({
         key: `skill:${skill.id}` as const,
-        selected: skill.config.type === 'builtin' && wanted.has(skill.config.commandName),
+        selected:
+          skill.builtIn && skill.config.type === 'builtin' && wanted.has(skill.config.commandName),
       }))
       .filter((edit) => (current?.choices[edit.key]?.selected ?? false) !== edit.selected);
     if (!changes.length) return;
