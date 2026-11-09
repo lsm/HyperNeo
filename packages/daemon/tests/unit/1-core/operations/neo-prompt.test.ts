@@ -16,6 +16,15 @@ describe('root Neo system prompt', () => {
       'Add all ask steps as todos together, in order, before starting the first.'
     );
   });
+  test.each([false, true])(
+    'delivers follow-up input binding guidance with packs: %s',
+    (enabled) => {
+      const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+      expect(prompt).toContain('Human requests use input');
+      expect(prompt).toContain('plain follow-ups add their open askId');
+      expect(prompt).not.toContain('Human requests use input, never askId');
+    }
+  );
   test('tells Neo to answer a worker question itself before asking the human', () => {
     expect(NEO_ROOT_TURN_END).toContain(
       'A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.relay, so the card links the session and the answer reaches the worker.'

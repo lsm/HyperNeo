@@ -1,3 +1,8 @@
+import {
+  neoAskInputReads,
+  neoAskInputWrites,
+  type NeoAskInputClaim,
+} from './neo-ask-input-worker.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoTodoStorage } from '../../lib/neo/packs/todo-storage.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
@@ -481,6 +486,16 @@ export class NeoAskTodoRepository {
         )
         .get(sessionId, originMessageId, title, goalId) as AskRow | null) ?? null
     );
+  }
+
+  findAskInput(sessionId: string, messageId: string): Promise<string | null> {
+    return gatewayFor(this.db).call(neoAskInputReads, 'owner', sessionId, messageId);
+  }
+
+  async claimNeoInputAsk(input: NeoAskInputClaim): Promise<string | { reason: string }> {
+    const owner = await gatewayFor(this.db).call(neoAskInputWrites, 'claimNeoInputAsk', input);
+    if (typeof owner === 'string') this.changed();
+    return owner;
   }
 
   listChildAsks(parentId: string): NeoAsk[] {

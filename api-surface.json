@@ -34635,7 +34635,7 @@
                 "type": "array"
               },
               "askId": {
-                "description": "Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.",
+                "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -34667,7 +34667,7 @@
                 "type": "boolean"
               },
               "input": {
-                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.",
+                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -34864,7 +34864,7 @@
                 "type": "array"
               },
               "askId": {
-                "description": "Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.",
+                "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -34896,7 +34896,7 @@
                 "type": "boolean"
               },
               "input": {
-                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.",
+                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -35097,7 +35097,7 @@
                 "type": "array"
               },
               "askId": {
-                "description": "Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.",
+                "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -35129,7 +35129,7 @@
                 "type": "boolean"
               },
               "input": {
-                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.",
+                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -40512,7 +40512,7 @@
             "type": "array"
           },
           "askId": {
-            "description": "Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.",
+            "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
             "minLength": 1,
             "type": "string"
           },
@@ -40542,7 +40542,7 @@
             "type": "object"
           },
           "input": {
-            "description": "The [message id] of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.",
+            "description": "The [message id] of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
             "minLength": 1,
             "type": "string"
           },
