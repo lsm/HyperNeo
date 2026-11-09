@@ -240,6 +240,59 @@ describe('neo ask binding from human input', () => {
     }
   });
 
+  test('a settled binding lets input-only calls open and reuse a new ask', async () => {
+    const f = setup();
+    try {
+      const input = f.human('Also check the count query');
+      expect((await f.add({ input, askId: f.slow.id })).ok).toBe(true);
+      f.store.settleAsk(f.slow, 'done', 'Finished', 2);
+      const next = await f.add({ input, title: 'Check again' });
+      expect(next.ok && next.todo?.askId).toBeTruthy();
+      if (!next.ok || !next.todo) throw new Error('The follow-up did not open a new ask');
+      expect(next.todo.askId).not.toBe(f.slow.id);
+      const repeated = await f.add({ input, title: 'Verify again' });
+      expect(repeated.ok && repeated.todo?.askId).toBe(next.todo.askId);
+      expect(f.store.getAsk(f.slow.id)?.status).toBe('done');
+      expect(f.store.listOpenAsks()).toHaveLength(1);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test('an inactive settled binding can continue a different open ask', async () => {
+    const f = setup();
+    try {
+      const input = f.human('Also check the count query');
+      expect((await f.add({ input, askId: f.slow.id })).ok).toBe(true);
+      f.store.settleAsk(f.slow, 'done', 'Finished', 2);
+      const other = f.open('other', 'New request');
+      const rebound = await f.add({ input, askId: other.id });
+      expect(rebound.ok && rebound.todo?.askId).toBe(other.id);
+      const repeated = await f.add({ input, title: 'Check the result' });
+      expect(repeated.ok && repeated.todo?.askId).toBe(other.id);
+      expect(f.store.getAsk(f.slow.id)?.status).toBe('done');
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test('parallel input-only calls open one ask for their shared human message', async () => {
+    const f = setup();
+    try {
+      const input = f.human('Make the query faster');
+      const results = await Promise.all([
+        f.add({ input, title: 'Index the query' }),
+        f.add({ input, title: 'Check the query result' }),
+      ]);
+      const askIds = results.map((result) => result.ok && result.todo?.askId);
+      expect(askIds[0]).toBeTruthy();
+      expect(askIds[1]).toBe(askIds[0]);
+      expect(f.store.listOpenAsks()).toHaveLength(2);
+    } finally {
+      f.db.close();
+    }
+  });
+
   test('a new human request opens its own ask', async () => {
     const f = setup();
     try {
