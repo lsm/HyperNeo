@@ -13,8 +13,8 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { NeoWorkPrReader } from './work-prs.ts';
 import {
-  planCodingTurnOwner,
-  type CodingTurnOwner,
+  planCodingTurnProducer,
+  type CodingTurnProducer,
   type CodingTurn,
   type CodingTurnBind,
   type CodingTurnMentions,
@@ -55,11 +55,11 @@ type AttachmentCandidate = {
 
 function planCodingPrAttachment(
   pr: { url: string; createdAt?: number },
-  owner: CodingTurnOwner,
+  producer: CodingTurnProducer,
   candidates: readonly AttachmentCandidate[],
   named: ReadonlySet<string>
 ): string | null {
-  if (owner.state !== 'placed' || named.has(pr.url)) return null;
+  if (producer.state !== 'placed' || named.has(pr.url)) return null;
   const parsed = parsePrUrl(pr.url)!;
   const repository = neoRepositoryIdentity(`${parsed.host}/${parsed.owner}/${parsed.repo}`);
   const eligible = candidates.filter((candidate) => {
@@ -68,7 +68,7 @@ function planCodingPrAttachment(
         ? `github.com/${candidate.repo}`
         : candidate.repo;
     return (
-      codingTurnSessionKey(candidate.ref) === codingTurnSessionKey(owner.session) &&
+      codingTurnSessionKey(candidate.ref) === codingTurnSessionKey(producer.session) &&
       neoRepositoryIdentity(repo ?? undefined) === repository
     );
   });
@@ -197,15 +197,11 @@ export class CodingTurnPrRepository {
     const policy = createCodingTodoPolicy({ urls: () => [] });
     const attach = (superpipe({})('coding.attach-unclaimed-pr') as PipelineAPI)
       .input(['pr'])
+      .pipe((pr: (typeof prs)[number]) => planCodingTurnProducer(pr, mentions.turns), 'pr', 'owner')
       .pipe(
-        (pr: (typeof prs)[number]) => planCodingTurnOwner(pr, mentions.turns, mentions.todos),
-        'pr',
-        'owner'
-      )
-      .pipe(
-        (pr: (typeof prs)[number], owner: CodingTurnOwner) =>
-          planCodingPrAttachment(pr, owner, candidates, named),
-        ['pr', 'owner'],
+        (pr: (typeof prs)[number], producer: CodingTurnProducer) =>
+          planCodingPrAttachment(pr, producer, candidates, named),
+        ['pr', 'producer'],
         'todoId'
       )
       .pipe(

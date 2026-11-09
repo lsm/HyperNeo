@@ -88,6 +88,17 @@ test('the sole doing coding todo records its produced PR through addUrls', () =>
   expect(todos.getTodo('owner')!.check?.params.urls).toEqual([url]);
 });
 
+test('a completed prior binding does not hide the sole active todo', () => {
+  add('owner');
+  const prior = add('prior');
+  todos.updateTodo(prior, { state: 'done', finishedAt: 104 }, 104);
+  ledger.assignOwners();
+  expect(todos.getTodo('owner')!.check?.params.urls).toEqual([url]);
+  expect(new CodingPrEventRepository(db).route({ repo: 'example/repo', number: 1 }).owner).toEqual(
+    ref
+  );
+});
+
 test.each([
   'two doing todos',
   'another repository',

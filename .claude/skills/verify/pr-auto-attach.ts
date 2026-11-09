@@ -6,7 +6,8 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { WorkTurnRepository } from '../../../packages/daemon/src/storage/repositories/work-turn-repository.ts';
-import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
+import { CodingTurnPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/turn-prs.ts';
+import { CodingPrLedgerRepository, planCodingLedgerTurnOwner } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingPrEventRepository, deliverCodingPrEvents } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
 import { createCodingDaemonMergeSweep } from '../../../packages/daemon/src/lib/neo/packs/coding/daemon-merge-sweep.ts';
 import { initializeCodingWatches } from '../../../packages/daemon/src/lib/neo/packs/coding/watched-repos.ts';
@@ -50,6 +51,8 @@ try {
     return todos.updateTodo(todo, { state: 'doing', startedAt: at - 2000 }, at - 2000);
   };
   seed('unique', 1);
+  const previous = seed('previous-binding', 1);
+  todos.updateTodo(previous, { state: 'done', finishedAt: at - 500 }, at - 500);
   seed('ambiguous-a', 2);
   seed('ambiguous-b', 2);
   seed('other-repository', 3, 'github.com/synthetic/other');
@@ -60,6 +63,9 @@ try {
     insert.run(number, head, at, at, at);
     await turns.record(worker(number), [{ id: `turn-${number}`, startedAt: at - 1000, endedAt: at + 1000, ended: 'success', inputs: [], urls: [url(number)], finalUrls: [url(number)], complete: true, cursor: '{"seq":1}' }]);
   }
+  const beforeOwner = planCodingLedgerTurnOwner({ repo: 'synthetic/owner', number: 1, createdAt: at }, new CodingTurnPrRepository(db).mentions([url(1)]));
+  assert.equal(beforeOwner.state, 'unknown');
+  evidence.beforeOwner = beforeOwner;
   await ledger.write('assignOwners');
   assert.deepEqual(todos.getTodo('unique')!.check?.params.urls, [url(1)]);
   for (const id of ['ambiguous-a', 'ambiguous-b', 'other-repository', 'claimed-producer'])
