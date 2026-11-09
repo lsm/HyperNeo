@@ -59,6 +59,7 @@ export async function sweepNeoTrackerMirrors(
           let ref = row.ref;
           try {
             if (action === 'create') {
+              if (!row.home) throw new Error('Tracker home is unavailable');
               const result =
                 planNeoTrackerRecovery(
                   row,

@@ -51,20 +51,21 @@ export function planNeoTrackerMirror(
       );
       if (existing && existing.failures >= NEO_TRACKER_FAILURE_LIMIT) continue;
       if (owner.todo?.state === 'removed' && !existing) continue;
-      const home = existing?.home ?? adapter.home(owner);
-      if (!home || existing?.state === 'closed' || (!existing && owner.ask.status !== 'open'))
-        continue;
-      const row: NeoTrackerMirror = existing ?? {
-        ownerKind: owner.kind,
-        ownerId: id,
-        tracker: adapter.id,
-        home,
-        ref: null,
-        parentRef: null,
-        state: 'creating',
-        failures: 0,
-        updatedAt: 0,
-      };
+      const home = existing?.home || adapter.home(owner) || '';
+      if (existing?.state === 'closed' || (!existing && owner.ask.status !== 'open')) continue;
+      const row: NeoTrackerMirror = existing
+        ? { ...existing, home }
+        : {
+            ownerKind: owner.kind,
+            ownerId: id,
+            tracker: adapter.id,
+            home,
+            ref: null,
+            parentRef: null,
+            state: 'creating',
+            failures: 0,
+            updatedAt: 0,
+          };
       const marker = neoTrackerMarker(owner);
       const title = owner.todo?.title ?? owner.ask.title;
       const item = {

@@ -1,3 +1,4 @@
+import { sweepNeoTrackerMirrors } from '../../../../src/lib/neo/tracker-mirror.ts';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -12,6 +13,7 @@ let db: Database, store: NeoAskTodoRepository, sessions: NeoTodoSessionRepositor
 let mirrors: NeoTrackerMirrorRepository, gateway: DbGateway;
 let enabled: boolean, sends: string[], notes: string[];
 let runner: ReturnType<typeof createNeoTodoRunner>;
+let tracker: NeoTrackerAdapter;
 beforeEach(() => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -23,7 +25,7 @@ beforeEach(() => {
   enabled = true;
   sends = [];
   notes = [];
-  const tracker: NeoTrackerAdapter = {
+  tracker = {
     id: 'synthetic',
     enabled: () => enabled,
     home: () => 'example/repo',
@@ -142,4 +144,53 @@ test('an unbound mirror does not hide an unworked todo', () => {
   store.updateTodo(store.getTodo('todo')!, { instruction: null }, 4);
   db.prepare('DELETE FROM neo_todo_sessions WHERE todo_id=?').run('todo');
   expect(sessions.queueFacts({ todo: 'tracker_pending: waiting' }).unworked).toEqual(['todo']);
+});
+
+test('an enabled adapter without a home reaches the same retry cap', async () => {
+  tracker.home = () => null;
+  let calls = 0;
+  tracker.find = async () => {
+    calls++;
+    return null;
+  };
+  tracker.create = async () => {
+    calls++;
+    return { ref: 'unexpected' };
+  };
+  await runner.fill();
+  expect(sends).toEqual([]);
+  for (let failures = 1; failures <= 3; failures++) {
+    await sweepNeoTrackerMirrors(db, [tracker]);
+    expect(mirrors.facts().mirrors.find((row) => row.ownerId === 'todo')).toMatchObject({
+      failures,
+      home: '',
+      state: 'creating',
+    });
+    if (failures < 3) {
+      await runner.fill();
+      expect(sends).toEqual([]);
+    }
+  }
+  await runner.fill();
+  expect(sends).toEqual(['work.send']);
+  expect(notes.some((note) => note.includes('Tracker item is missing'))).toBe(true);
+  await sweepNeoTrackerMirrors(db, [tracker]);
+  expect(mirrors.facts().mirrors.find((row) => row.ownerId === 'todo')?.failures).toBe(3);
+  expect(calls).toBe(0);
+});
+
+test('a home resolved before the cap binds and persists for recovery', async () => {
+  tracker.home = () => null;
+  await sweepNeoTrackerMirrors(db, [tracker]);
+  expect(mirrors.facts().mirrors.find((row) => row.ownerId === 'todo')?.failures).toBe(1);
+  tracker.home = () => 'example/repo';
+  await sweepNeoTrackerMirrors(db, [tracker]);
+  expect(mirrors.facts().mirrors.find((row) => row.ownerId === 'todo')).toMatchObject({
+    home: 'example/repo',
+    ref: 'example/repo#1',
+    state: 'bound',
+    failures: 0,
+  });
+  await runner.fill();
+  expect(sends).toEqual(['work.send']);
 });

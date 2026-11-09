@@ -220,10 +220,41 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       await runner.fill();
       assert.equal(sends.length, 2);
       assert(notes.some((note) => note.includes('Tracker item is missing')));
+      const adapter = neo.pack('coding')!.tracker!;
+      const originalHome = adapter.home;
+      const beforeNoHome = external().issues.length;
+      adapter.home = () => null;
+      store.openAsk({
+        id: 'no-home-ask',
+        projectId: null,
+        sessionId: 'synthetic',
+        originMessageId: null,
+        title: 'No home plan',
+        request: 'Work',
+        createdAt: Date.now(),
+      });
+      add('no-home', 'example/one', 'no-home-ask');
+      prepareStart('no-home');
+      for (let failures = 1; failures <= 3; failures++) {
+        await neo.sweepPacks();
+        const facts = await app.db.gateway.call(neoTrackerReads, 'facts');
+        assert.equal(facts.mirrors.find((row) => row.ownerId === 'no-home')?.failures, failures);
+        if (failures < 3) {
+          await runner.fill();
+          assert.equal(sends.length, 2);
+        }
+      }
+      await runner.fill();
+      assert.equal(sends.length, 3);
+      assert.equal(external().issues.length, beforeNoHome);
+      adapter.home = originalHome;
       writeFileSync(
         join(run, 'evidence/observed.json'),
         JSON.stringify({
           parentCreateCount: 1,
+          noHomeFailures: 3,
+          noHomeCreateCount: 0,
+          noHomeReleasedSends: 1,
           heldSends: 0,
           boundSends: 1,
           cappedSends: 1,

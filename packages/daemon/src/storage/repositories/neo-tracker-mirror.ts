@@ -48,7 +48,7 @@ export class NeoTrackerMirrorRepository {
     this.db
       .prepare(`INSERT INTO neo_tracker_mirrors VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(owner_kind, owner_id, tracker) DO UPDATE SET
-      ref=excluded.ref, parent_ref=excluded.parent_ref, state=excluded.state, failures=excluded.failures, updated_at=excluded.updated_at`)
+      home=excluded.home, ref=excluded.ref, parent_ref=excluded.parent_ref, state=excluded.state, failures=excluded.failures, updated_at=excluded.updated_at`)
       .run(
         row.ownerKind,
         row.ownerId,
