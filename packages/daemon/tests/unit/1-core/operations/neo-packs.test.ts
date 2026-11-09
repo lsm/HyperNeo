@@ -19,7 +19,7 @@ describe('neoPackBriefs', () => {
       {
         id: 'coding',
         describe:
-          'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
+          'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge. Multi-PR work uses one PR per todo, chained with after; name each opened PR with neo.todo.edit addUrls.',
         skill: 'coding-pack',
       },
       DELEGATION_PACK_BRIEF,
