@@ -352,7 +352,10 @@ export function createCodingTodoPolicy(
         : null,
     refuse: (draft, _peers, scope) => {
       if (scope) {
-        const name = repository({ ...draft, named: draft.named ?? null }, scope);
+        const candidate = { ...draft, named: draft.named ?? null };
+        const name = scope.edit
+          ? (repo.place(scope).todo ?? repository(candidate, { ask: scope.ask }))
+          : repository(candidate, scope);
         if (draft.check?.pack === 'coding' && draft.target?.verb === 'send') {
           const expected =
             name ??

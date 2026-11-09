@@ -41,7 +41,9 @@ try {
   const root='neo:10000000-0000-4000-8000-000000009040';
   await app.db.createSession({id:root,title:'Synthetic runner build',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
-  store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Ordered work',request:'Keep full work',createdAt:1,repo:'github.com/synthetic/base'});
+  store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Ordered work',request:'Keep full work',createdAt:1});
+  db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/base', 'ask');
+  assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('ask') as { repo: string }).repo, 'github.com/synthetic/base');
   for(const id of ['state','claim']) {
     store.addTodo(id,'ask',{ approvedAt: 1,title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
     sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});

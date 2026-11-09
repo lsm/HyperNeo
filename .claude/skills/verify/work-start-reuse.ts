@@ -49,7 +49,9 @@ const settle = async (ids: string[]) => {
 const db = app.db.getDatabase();
 const store = new NeoAskTodoRepository(db);
 const todos = new NeoTodoSessionRepository(db);
-store.openAsk({ id: 'synthetic-ask', projectId: null, repo: 'github.com/synthetic/project', sessionId: 'synthetic-neo', originMessageId: null, title: 'Synthetic', request: 'Synthetic', createdAt: 1 });
+store.openAsk({ id: 'synthetic-ask', projectId: null, sessionId: 'synthetic-neo', originMessageId: null, title: 'Synthetic', request: 'Synthetic', createdAt: 1 });
+db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/project', 'synthetic-ask');
+assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('synthetic-ask') as { repo: string }).repo, 'github.com/synthetic/project');
 store.addTodo('todo-plan', 'synthetic-ask', { title: 'Plan', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 1);
 try {
   assert.notEqual(app.server.port, 8399);

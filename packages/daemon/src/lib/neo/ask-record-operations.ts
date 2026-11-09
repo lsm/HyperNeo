@@ -277,8 +277,9 @@ export function createNeoAskRecordOperations(
         recorded.push(...family(ask));
         const records: string[] = [];
         const ids: (string | undefined)[] = [];
+        const rows = drafts.map((todo) => recordedRow(todo, ask));
         for (const [index, todo] of drafts.entries()) {
-          const row = recordedRow(todo, ask);
+          const row = rows[index];
           const after = todo.after?.map((ref) =>
             typeof ref === 'number' ? (ref < index ? (ids[ref] ?? `#${ref}`) : `#${ref}`) : ref
           );

@@ -140,15 +140,10 @@ class NeoTodoMutationPlanner {
             target: input.target,
           };
           const ask = todos.getAsk(plan.todo.askId);
-          const repo =
-            plan.todo.repo ??
-            neoTodoRepository(draft, this.policies, {
-              ask,
-              peers: todos.listTodos(plan.todo.askId),
-            });
           const placeless = neoTodoPlaceRefusal(draft, this.policies, {
             ask,
-            todo: { repo },
+            todo: plan.todo,
+            edit: true,
             workerRemotes: input.workerRemotes,
           });
           return placeless

@@ -95,6 +95,47 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('ask retries keep duplicate matching stable while new sibling repositories are added', async () => {
+    const { call, store } = setup();
+    const base = { title: 'Synthetic repository work', request: 'Keep the recorded work' };
+    const opened = await call(
+      'neo.ask.open',
+      {
+        ...base,
+        todos: [
+          {
+            title: 'Repeated',
+            check: pendingTodoCheck,
+            named: { repository: 'synthetic/one' },
+          },
+        ],
+      },
+      turn('first')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    const original = opened.todos[0].id;
+    const retried = await call(
+      'neo.ask.open',
+      {
+        ...base,
+        todos: [
+          { title: 'New sibling', check: pendingTodoCheck, named: { repository: 'synthetic/two' } },
+          {
+            title: 'Repeated',
+            check: pendingTodoCheck,
+            instruction: 'Keep working',
+            target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+          },
+        ],
+      },
+      turn('retry')
+    );
+    expect(retried.ok).toBe(true);
+    const rows = store.listTodos(opened.ask.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((row) => row.title === 'Repeated').map((row) => row.id)).toEqual([original]);
+  });
+
   test('worker roles discover ask opening in the default operation list', () => {
     const { ops } = setup();
     const registry = createOperationRegistry(Object.values(ops));
