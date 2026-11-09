@@ -12,6 +12,7 @@ const workers = new Set([
   'storage/repositories/google-connections-worker.ts',
   'storage/repositories/neo-ask-input-worker.ts',
   'storage/repositories/neo-peer-repository.ts',
+  'storage/repositories/neo-tracker-mirror.ts',
   'storage/repositories/agent-memory-embed-worker.ts',
   'storage/sdk-message-body-admission-worker.ts',
   'storage/sdk-message-body-backup-worker.ts',
