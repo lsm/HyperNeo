@@ -1,3 +1,4 @@
+import { planNeoTrackerStarts } from '../../../../src/lib/neo/tracker-start-gate.ts';
 import { sweepNeoTrackerMirrors } from '../../../../src/lib/neo/tracker-mirror.ts';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -193,4 +194,61 @@ test('a home resolved before the cap binds and persists for recovery', async () 
   });
   await runner.fill();
   expect(sends).toEqual(['work.send']);
+});
+
+test('the start planner uses recorded enablement without adapter callbacks', () => {
+  const plan = planNeoTrackerStarts(mirrors.facts(), [{ todoId: 'todo', tracker: 'synthetic' }]);
+  expect(plan.holds.todo).toContain('tracker_pending:');
+  expect(plan.missing).toEqual([]);
+});
+
+test.each(['removed', 'done', 'closed_unverified', 'dropped'] as const)(
+  'a blank-home placeholder is retired without tracker calls when its owner is %s',
+  async (state) => {
+    tracker.home = () => null;
+    await sweepNeoTrackerMirrors(db, [tracker]);
+    if (state === 'dropped')
+      db.prepare("UPDATE neo_asks SET status='dropped' WHERE id='ask'").run();
+    else store.updateTodo(store.getTodo('todo')!, { state }, 5);
+    tracker.home = () => 'example/repo';
+    let calls = 0;
+    tracker.find = async (marker) => {
+      if (marker.endsWith(':todo')) calls++;
+      return null;
+    };
+    tracker.create = async (item) => {
+      if (item.marker.endsWith(':todo')) calls++;
+      return { ref: 'example/repo#1' };
+    };
+    await sweepNeoTrackerMirrors(db, [tracker]);
+    expect(
+      db
+        .prepare(
+          "SELECT state, ref FROM neo_tracker_mirrors WHERE owner_kind='todo' AND owner_id='todo'"
+        )
+        .get()
+    ).toMatchObject({ state: 'closed', ref: null });
+    expect(calls).toBe(0);
+    db.prepare("UPDATE neo_todos SET state='todo' WHERE id='todo'").run();
+    db.prepare("UPDATE neo_asks SET status='open' WHERE id='ask'").run();
+    expect(
+      planNeoTrackerStarts(mirrors.facts(), [{ todoId: 'todo', tracker: 'synthetic' }]).holds.todo
+    ).toBeNull();
+  }
+);
+
+test('a final owner with a recorded home still recovers an uncertain create', async () => {
+  row(1);
+  store.updateTodo(store.getTodo('todo')!, { state: 'removed' }, 5);
+  const found: string[] = [];
+  tracker.find = async (marker) => {
+    found.push(marker);
+    return marker.endsWith(':todo') ? 'example/repo#2' : null;
+  };
+  await sweepNeoTrackerMirrors(db, [tracker]);
+  expect(found).toContain('hyperneo:todo:todo');
+  expect(mirrors.facts().mirrors.find((row) => row.ownerId === 'todo')).toMatchObject({
+    ref: 'example/repo#2',
+    state: 'bound',
+  });
 });

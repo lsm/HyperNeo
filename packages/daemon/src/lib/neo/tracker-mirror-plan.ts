@@ -18,7 +18,7 @@ export type NeoTrackerPlan = {
   row: NeoTrackerMirror;
   adapter: NeoTrackerAdapter;
   item: NeoTrackerItem;
-  action: 'create' | 'link' | 'close';
+  action: 'create' | 'link' | 'close' | 'retire';
   parent?: string;
   outcome?: 'completed' | 'not_planned';
 };
@@ -94,7 +94,9 @@ export function planNeoTrackerMirror(
           mirror.failures < NEO_TRACKER_FAILURE_LIMIT &&
           todos.some((todo) => todo.id === mirror.ownerId && todo.askId === owner.ask.id)
       );
-      if (row.state === 'creating') plans.push({ row, adapter, item, action: 'create' });
+      if (existing && !existing.home && (final || settled))
+        plans.push({ row, adapter, item, action: 'retire' });
+      else if (row.state === 'creating') plans.push({ row, adapter, item, action: 'create' });
       else if (owner.kind === 'todo' && (final || settled))
         plans.push({
           row,

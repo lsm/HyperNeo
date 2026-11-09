@@ -524,7 +524,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const facts = (await deps.write(neoTrackerReads, { method: 'facts', args: [] })) as ReturnType<
       import('../../storage/repositories/neo-tracker-mirror.ts').NeoTrackerMirrorRepository['facts']
     >;
-    const plan = planNeoTrackerStarts(facts, adapters);
+    const enabled = facts.todos.flatMap((todo) => {
+      const ask = facts.asks.find((ask) => ask.id === todo.askId && ask.status === 'open');
+      if (!ask || todo.state !== 'todo' || todo.startedAt !== null) return [];
+      return adapters
+        .filter((adapter) => adapter.enabled({ kind: 'todo', ask, todo }))
+        .map((adapter) => ({ todoId: todo.id, tracker: adapter.id }));
+    });
+    const plan = planNeoTrackerStarts(facts, enabled);
     for (const todo of plan.missing)
       await deps.tell(
         facts.asks.find((ask) => ask.id === todo.askId)!,

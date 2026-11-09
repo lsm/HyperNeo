@@ -26,3 +26,7 @@ note. Worker dispatch is synthetic; the daemon and tracker subprocesses are real
 
 An enabled adapter with no home records one failure per sweep in its creating
 row. Three failures release the hold without creating an external item.
+
+If an owner settles before a blank-home placeholder gets a home, the sweep
+retires that placeholder without contacting the tracker. Recorded-home rows
+retain marker recovery for uncertain creates.

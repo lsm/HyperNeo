@@ -248,10 +248,38 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       assert.equal(sends.length, 3);
       assert.equal(external().issues.length, beforeNoHome);
       adapter.home = originalHome;
+      adapter.home = () => null;
+      store.openAsk({
+        id: 'retired',
+        projectId: null,
+        sessionId: 'synthetic',
+        originMessageId: null,
+        title: 'Retired plan',
+        request: 'Work',
+        createdAt: Date.now(),
+      });
+      add('retired-child', 'example/one', 'retired');
+      await neo.sweepPacks();
+      store.updateTodo(store.getTodo('retired-child')!, { state: 'removed' }, Date.now());
+      app.db.getDatabase().prepare("UPDATE neo_asks SET status='dropped' WHERE id='retired'").run();
+      adapter.home = originalHome;
+      const beforeRetire = external().issues.length;
+      await neo.sweepPacks();
+      assert.equal(external().issues.length, beforeRetire);
+      const retired = app.db
+        .getDatabase()
+        .prepare(
+          "SELECT state, ref FROM neo_tracker_mirrors WHERE owner_id IN ('retired','retired-child')"
+        )
+        .all() as { state: string; ref: string | null }[];
+      assert.equal(retired.length, 2);
+      assert(retired.every((row) => row.state === 'closed' && row.ref === null));
       writeFileSync(
         join(run, 'evidence/observed.json'),
         JSON.stringify({
           parentCreateCount: 1,
+          retiredPlaceholderCount: 2,
+          retiredExternalCreateCount: 0,
           noHomeFailures: 3,
           noHomeCreateCount: 0,
           noHomeReleasedSends: 1,
