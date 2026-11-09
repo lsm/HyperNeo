@@ -51,4 +51,45 @@ chmod +x "$fixture/bin/xcrun"
 
 refuses 'refuses a signed driver missing required entitlements' 'cua-driver entitlement missing: com.apple.security.device.screen-capture' \
     env PATH="$fixture/bin:$PATH" bash "$desktop/verify-macos-bundle.sh" "$fixture/HyperNeo.app" || failed=1
+
+cat > "$fixture/bin/security" <<'SECURITY'
+#!/bin/bash
+case "$*" in
+    'list-keychains -d user')
+        printf '    "/fixture/first keychain"\n    "/fixture/second keychain"\n'
+        ;;
+    'list-keychains -d user -s /fixture/first keychain /fixture/second keychain')
+        echo restore >> "$SIGNING_TRACE"
+        ;;
+    'list-keychains -d user -s '*)
+        [[ "$#" == 7 && "$5" == */cua-signing.keychain-db &&
+            "$6" == '/fixture/first keychain' && "$7" == '/fixture/second keychain' ]] || exit 2
+        echo prepend >> "$SIGNING_TRACE"
+        ;;
+    'find-identity -v -p codesigning '*)
+        echo '  1) 0000 "Developer ID Application: Fixture (P5R65T296V)"'
+        ;;
+    'delete-keychain '*)
+        echo delete >> "$SIGNING_TRACE"
+        ;;
+esac
+SECURITY
+cat > "$fixture/bin/codesign" <<'CODESIGN'
+#!/bin/bash
+echo sign >> "$SIGNING_TRACE"
+exit 23
+CODESIGN
+chmod +x "$fixture/bin/security" "$fixture/bin/codesign"
+
+status=0
+env PATH="$fixture/bin:$PATH" SIGNING_TRACE="$fixture/trace" \
+    APPLE_SIGNING_IDENTITY=fixture APPLE_CERTIFICATE=Zml4dHVyZQ== APPLE_CERTIFICATE_PASSWORD=fixture \
+    bash "$desktop/sign-cua-driver.sh" || status=$?
+if [[ "$status" == 23 && "$(cat "$fixture/trace")" == $'prepend\nsign\nrestore\ndelete' ]]; then
+    echo 'PASS: restores keychain search order before deletion on signing failure'
+else
+    echo 'FAIL: restores keychain search order before deletion on signing failure' >&2
+    cat "$fixture/trace" >&2
+    failed=1
+fi
 exit "$failed"

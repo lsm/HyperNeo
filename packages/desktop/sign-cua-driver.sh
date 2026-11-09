@@ -6,11 +6,23 @@ cd "$(dirname "$0")"
 identity="$APPLE_SIGNING_IDENTITY"
 keychain_args=()
 if [[ -n "${APPLE_CERTIFICATE:-}" ]]; then
+    search_list="$(security list-keychains -d user)"
+    current_keychains=()
+    while IFS= read -r entry; do
+        [[ -n "$entry" ]] && current_keychains+=("$entry")
+    done < <(sed -nE 's/^[[:space:]]*"([^"]+)"$/\1/p' <<< "$search_list")
+
     signing_dir="$(mktemp -d)"
     keychain="$signing_dir/cua-signing.keychain-db"
-    trap 'security delete-keychain "$keychain" >/dev/null 2>&1 || true; rm -rf "$signing_dir"' EXIT
+    restore_keychains() {
+        local status=$?
+        security list-keychains -d user -s ${current_keychains[@]+"${current_keychains[@]}"} || status=1
+        security delete-keychain "$keychain" || status=1
+        rm -rf "$signing_dir" || status=1
+        exit "$status"
+    }
+    trap restore_keychains EXIT
     keychain_password="$(openssl rand -hex 24)"
-    current_keychains="$(security list-keychains -d user)"
     security create-keychain -p "$keychain_password" "$keychain"
     security unlock-keychain -p "$keychain_password" "$keychain"
     base64 -D > "$signing_dir/certificate.p12" <<< "$APPLE_CERTIFICATE"
@@ -20,11 +32,7 @@ if [[ -n "${APPLE_CERTIFICATE:-}" ]]; then
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
         -k "$keychain_password" "$keychain" >/dev/null
 
-    keychains=("$keychain")
-    while IFS= read -r entry; do
-        [[ -n "$entry" ]] && keychains+=("$entry")
-    done < <(sed -nE 's/^[[:space:]]*"([^"]+)"$/\1/p' <<< "$current_keychains")
-    security list-keychains -d user -s "${keychains[@]}"
+    security list-keychains -d user -s "$keychain" ${current_keychains[@]+"${current_keychains[@]}"}
     identity="$(security find-identity -v -p codesigning "$keychain" |
         sed -nE 's/^[[:space:]]*[0-9]+\) [[:xdigit:]]+ "(Developer ID Application: .* \(P5R65T296V\))"$/\1/p' |
         sort -u)"
