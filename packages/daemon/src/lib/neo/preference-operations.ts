@@ -94,7 +94,7 @@ export type PackPreferenceChange = Input & { before: unknown };
 export function createPackPreferenceOperations(
   db: Database,
   packs: () => readonly NeoPack[],
-  changed: (change: PackPreferenceChange) => Promise<void>
+  changed?: (change: PackPreferenceChange) => Promise<void>
 ) {
   const save = db.transaction((input: Input): PackPreferenceChange | undefined => {
     const address = [input.pack, input.scope.kind, input.scope.key, input.key];
@@ -121,7 +121,7 @@ export function createPackPreferenceOperations(
     .pipe(
       async (input: Input) => {
         const change = save(input);
-        if (change) await changed(change);
+        if (change) await changed?.(change);
         return { ok: true as const };
       },
       'setting',
