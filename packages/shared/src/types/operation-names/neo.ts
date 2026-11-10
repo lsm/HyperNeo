@@ -44,6 +44,8 @@ export const NEO_OPERATION_NAMES = [
   'neo.question.answer',
   'neo.question.ask',
   'neo.question.get',
+  'neo.question.relayAnswer',
+  'neo.relaySenders.set',
   'neo.question.relay',
   'neo.question.resolve',
   'neo.question.retire',

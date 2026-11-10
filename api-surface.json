@@ -20707,6 +20707,34 @@
                               }
                             ]
                           },
+                          "answerProvenance": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "at": {
+                                "type": "number"
+                              },
+                              "via": {
+                                "type": "string"
+                              },
+                              "viaName": {
+                                "type": "string"
+                              },
+                              "when": {
+                                "type": "string"
+                              },
+                              "where": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "via",
+                              "viaName",
+                              "where",
+                              "when",
+                              "at"
+                            ],
+                            "type": "object"
+                          },
                           "answeredAt": {
                             "type": [
                               "number",
@@ -23104,6 +23132,34 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "answerProvenance": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "at": {
+                              "type": "number"
+                            },
+                            "via": {
+                              "type": "string"
+                            },
+                            "viaName": {
+                              "type": "string"
+                            },
+                            "when": {
+                              "type": "string"
+                            },
+                            "where": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "via",
+                            "viaName",
+                            "where",
+                            "when",
+                            "at"
+                          ],
+                          "type": "object"
                         },
                         "answeredAt": {
                           "type": [
@@ -30113,6 +30169,34 @@
                               }
                             ]
                           },
+                          "answerProvenance": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "at": {
+                                "type": "number"
+                              },
+                              "via": {
+                                "type": "string"
+                              },
+                              "viaName": {
+                                "type": "string"
+                              },
+                              "when": {
+                                "type": "string"
+                              },
+                              "where": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "via",
+                              "viaName",
+                              "where",
+                              "when",
+                              "at"
+                            ],
+                            "type": "object"
+                          },
                           "answeredAt": {
                             "type": [
                               "number",
@@ -34141,6 +34225,34 @@
                       }
                     ]
                   },
+                  "answerProvenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "via": {
+                        "type": "string"
+                      },
+                      "viaName": {
+                        "type": "string"
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "where": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "via",
+                      "viaName",
+                      "where",
+                      "when",
+                      "at"
+                    ],
+                    "type": "object"
+                  },
                   "answeredAt": {
                     "type": [
                       "number",
@@ -35438,6 +35550,34 @@
                       }
                     ]
                   },
+                  "answerProvenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "via": {
+                        "type": "string"
+                      },
+                      "viaName": {
+                        "type": "string"
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "where": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "via",
+                      "viaName",
+                      "where",
+                      "when",
+                      "at"
+                    ],
+                    "type": "object"
+                  },
                   "answeredAt": {
                     "type": [
                       "number",
@@ -35996,6 +36136,34 @@
                       }
                     ]
                   },
+                  "answerProvenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "via": {
+                        "type": "string"
+                      },
+                      "viaName": {
+                        "type": "string"
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "where": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "via",
+                      "viaName",
+                      "where",
+                      "when",
+                      "at"
+                    ],
+                    "type": "object"
+                  },
                   "answeredAt": {
                     "type": [
                       "number",
@@ -36362,6 +36530,34 @@
                       }
                     ]
                   },
+                  "answerProvenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "via": {
+                        "type": "string"
+                      },
+                      "viaName": {
+                        "type": "string"
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "where": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "via",
+                      "viaName",
+                      "where",
+                      "when",
+                      "at"
+                    ],
+                    "type": "object"
+                  },
                   "answeredAt": {
                     "type": [
                       "number",
@@ -36720,6 +36916,67 @@
     {
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "questionId": {
+            "default": "",
+            "type": "string"
+          },
+          "when": {
+            "default": "",
+            "type": "string"
+          },
+          "where": {
+            "default": "",
+            "type": "string"
+          },
+          "words": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "neo.question.relayAnswer",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "answer": {
             "anyOf": [
@@ -36834,6 +37091,34 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "answerProvenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "via": {
+                        "type": "string"
+                      },
+                      "viaName": {
+                        "type": "string"
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "where": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "via",
+                      "viaName",
+                      "where",
+                      "when",
+                      "at"
+                    ],
+                    "type": "object"
                   },
                   "answeredAt": {
                     "type": [
@@ -37260,6 +37545,34 @@
                       }
                     ]
                   },
+                  "answerProvenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "via": {
+                        "type": "string"
+                      },
+                      "viaName": {
+                        "type": "string"
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "where": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "via",
+                      "viaName",
+                      "where",
+                      "when",
+                      "at"
+                    ],
+                    "type": "object"
+                  },
                   "answeredAt": {
                     "type": [
                       "number",
@@ -37609,6 +37922,75 @@
             "required": [
               "ok",
               "question"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "relaySenders": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "sender": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sender",
+                "name"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "relaySenders"
+        ],
+        "type": "object"
+      },
+      "name": "neo.relaySenders.set",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
             ],
             "type": "object"
           }
@@ -39277,6 +39659,34 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "answerProvenance": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "at": {
+                                "type": "number"
+                              },
+                              "via": {
+                                "type": "string"
+                              },
+                              "viaName": {
+                                "type": "string"
+                              },
+                              "when": {
+                                "type": "string"
+                              },
+                              "where": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "via",
+                              "viaName",
+                              "where",
+                              "when",
+                              "at"
+                            ],
+                            "type": "object"
                           },
                           "answeredAt": {
                             "type": [

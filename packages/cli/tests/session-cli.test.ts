@@ -145,3 +145,23 @@ describe('hyperneo send, question and build', () => {
     expect(errors.join('\n')).toContain('not reachable');
   });
 });
+
+test('relay requires place, time and a words separator', () => {
+  expect(
+    planSessionCommand(
+      ['relay', 'q', '--where', 'here', '--when', 'Monday', '--', '  exact words  '],
+      's'
+    )
+  ).toEqual({
+    value: {
+      name: 'neo.question.relayAnswer',
+      input: { questionId: 'q', where: 'here', when: 'Monday', words: '  exact words  ' },
+    },
+  });
+  for (const args of [
+    ['relay', 'q', '--', 'yes'],
+    ['relay', 'q', '--where', 'here', '--when', 'Monday', 'yes'],
+    ['relay', 'q', '--where', 'here', '--when', 'Monday', '--'],
+  ])
+    expect(planSessionCommand(args, 's')).toHaveProperty('reason');
+});

@@ -94,7 +94,16 @@ export interface NeoQuestionSource extends WorkerIdentity {
   link: string | null;
 }
 
+export interface NeoAnswerProvenance {
+  via: string;
+  viaName: string;
+  where: string;
+  when: string;
+  at: number;
+}
+
 export interface NeoQuestion {
+  answerProvenance?: NeoAnswerProvenance;
   readonly artifacts?: readonly (ArtifactRef | PublicHandoffReference)[];
   retireWhen?: NeoTodoCheck;
   sourceSession?: NeoQuestionSource;
