@@ -13,8 +13,12 @@ import type { SettingsManager } from '../../../../src/lib/settings-manager.ts';
 import type { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
   registerVoiceHandlers,
+  expireIdleVoiceStreams,
+  voiceStreamsBusy,
   resetVoiceTranscriptionLimitsForTests,
 } from '../../../../src/lib/rpc-handlers/voice-handlers.ts';
+
+import { RestartReservation } from '../../../../src/lib/system/restart-reservation.ts';
 
 type Handler = (data: object, context: CallContext) => unknown;
 const context = (clientId: string): CallContext => ({
@@ -161,6 +165,44 @@ describe('resumable voice stream RPC', () => {
     await expect(call('voice.stream.resume', { streamId }, 'third')).rejects.toMatchObject({
       code: 'VOICE_STREAM_NOT_FOUND',
     });
+  });
+
+  it('holds restart admission until a disconnected stop settles after stream expiry', async () => {
+    let started!: () => void;
+    let complete!: (response: Response) => void;
+    const uploading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          complete = resolve;
+          started();
+        })
+    );
+    const { streamId } = await start();
+    await call('voice.stream.chunk', { streamId, audioBase64: pcm([1, 2]) });
+    const pending = call('voice.stream.stop', { streamId });
+    await uploading;
+    const reservation = new RestartReservation();
+    try {
+      disconnect('first');
+      expireIdleVoiceStreams(Date.now() + 120_000);
+      await expect(call('voice.stream.resume', { streamId }, 'second')).rejects.toMatchObject({
+        code: 'VOICE_STREAM_NOT_FOUND',
+      });
+      expect(
+        reservation.reserve(() => ({ neo: 'idle', streams: voiceStreamsBusy(), speech: false }))
+      ).toEqual({ ok: false, reason: 'voice_busy' });
+      expect(reservation.remaining()).toBe(0);
+    } finally {
+      complete(Response.json({ text: 'held final transcription' }));
+      await pending;
+    }
+    expect(voiceStreamsBusy()).toBe(false);
+    expect(
+      reservation.reserve(() => ({ neo: 'idle', streams: voiceStreamsBusy(), speech: false }))
+    ).toMatchObject({ ok: true });
   });
 
   it('gives the full disconnect grace even near the connected idle deadline', async () => {

@@ -13,6 +13,7 @@ const DOOR_OPERATIONS = new Set([
   'neo.question.get',
   'neo.question.relayAnswer',
   'system.build',
+  'system.restart.reserve',
   'device.pair.create',
   'device.pair.pending',
   'device.pair.approve',

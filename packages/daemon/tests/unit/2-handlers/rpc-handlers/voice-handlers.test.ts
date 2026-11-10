@@ -1,15 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { vi } from 'vitest';
 import type { CallContext, GlobalSettings, MessageHub } from '@hyperneo/shared';
 import {
   admitVoiceStreamStart,
   expireIdleVoiceStreams,
   registerVoiceHandlers,
+  voiceStreamsBusy,
   resetVoiceTranscriptionLimitsForTests,
 } from '../../../../src/lib/rpc-handlers/voice-handlers';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { asrRelayDefaults, createInThreadAsrRelay } from '../../../../src/lib/voice/asr-relay.ts';
+
+import {
+  RestartReservation,
+  restartReservation,
+} from '../../../../src/lib/system/restart-reservation.ts';
 
 type RequestHandler = (data: unknown, context?: CallContext) => Promise<unknown>;
 
@@ -97,6 +103,65 @@ describe('voice RPC handlers', () => {
     dnsLookupResults = [{ address: '93.184.216.34', family: 4 }];
     mock.restore();
   });
+
+  it.each(['voice.transcribe', 'voice.testConnection'])(
+    'keeps %s busy until its upload finishes',
+    async (method) => {
+      let started!: () => void;
+      let complete!: (response: Response) => void;
+      const uploading = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            complete = resolve;
+            started();
+          })
+      );
+      expect(voiceStreamsBusy()).toBe(false);
+      const pending = handlers.get(method)!({
+        audioBase64: wavBase64(),
+        mimeType: 'audio/wav',
+      });
+      await uploading;
+      try {
+        const reservation = new RestartReservation();
+        expect(
+          reservation.reserve(() => ({ neo: 'idle', streams: voiceStreamsBusy(), speech: false }))
+        ).toEqual({
+          ok: false,
+          reason: 'voice_busy',
+        });
+        expect(reservation.remaining()).toBe(0);
+        expect(voiceStreamsBusy()).toBe(true);
+      } finally {
+        complete(Response.json({ text: 'dictation' }));
+        await pending;
+      }
+      expect(voiceStreamsBusy()).toBe(false);
+    }
+  );
+
+  it.each(['voice.transcribe', 'voice.testConnection'])(
+    'a reserved restart refuses %s before upload',
+    async (method) => {
+      const held = spyOn(restartReservation, 'remaining').mockReturnValue(100);
+      const upload = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ text: '' }));
+      try {
+        await expect(
+          handlers.get(method)!({
+            audioBase64: wavBase64(),
+            mimeType: 'audio/wav',
+          })
+        ).rejects.toMatchObject({ code: 'DAEMON_UPDATING' });
+        expect(upload).not.toHaveBeenCalled();
+        expect(voiceStreamsBusy()).toBe(false);
+      } finally {
+        held.mockRestore();
+      }
+    }
+  );
 
   it('cancels a batch upload and admits the next recording before the old provider responds', async () => {
     let started: () => void = () => {};
@@ -1245,6 +1310,18 @@ describe('admitVoiceStreamStart', () => {
 });
 
 describe('voice stream RPC handlers', () => {
+  it('a reserved restart refuses voice starts before provider work', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({}));
+    const held = spyOn(restartReservation, 'remaining').mockReturnValue(100);
+    try {
+      await expect(handlers.get('voice.stream.start')!({})).rejects.toMatchObject({
+        code: 'DAEMON_UPDATING',
+      });
+    } finally {
+      held.mockRestore();
+    }
+  });
   const voice = {
     enabled: true,
     endpoint: 'https://example.com/v1/audio/transcriptions',
@@ -1427,6 +1504,63 @@ describe('voice stream RPC handlers', () => {
     expect(from).not.toHaveBeenCalled();
     from.mockRestore();
   });
+
+  it('reading restart busy facts ignores expired streams without closing them', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const { streamId } = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3 * 60_000 + 1);
+    try {
+      expect(voiceStreamsBusy()).toBe(false);
+    } finally {
+      clock.mockRestore();
+    }
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' })
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it.each(['chunk', 'stop'])(
+    'a restart lease refuses an expired stream %s before revival or transcription',
+    async (method) => {
+      resetVoiceTranscriptionLimitsForTests();
+      const { hub, handlers } = createMockMessageHub();
+      Object.assign(hub, { getRouter: () => undefined });
+      registerVoiceHandlers(hub, createSettings({ voice }));
+      const { streamId } = (await handlers.get('voice.stream.start')?.({
+        encoding: 'pcm16',
+        sampleRate: 16_000,
+      })) as { streamId: string };
+      await handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' });
+      const upload = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(Response.json({ text: 'old dictation' }));
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3 * 60_000 + 1);
+      const reservation = new RestartReservation();
+      const held = spyOn(restartReservation, 'remaining').mockImplementation(() =>
+        reservation.remaining()
+      );
+      try {
+        expect(
+          reservation.reserve(() => ({ neo: 'idle', streams: voiceStreamsBusy(), speech: false }))
+        ).toMatchObject({ ok: true });
+        expect(restartReservation.remaining()).toBeGreaterThan(0);
+        await expect(
+          handlers.get(`voice.stream.${method}`)?.({ streamId, audioBase64: 'AAA=' })
+        ).rejects.toThrow('Unknown voice stream');
+        expect(upload).not.toHaveBeenCalled();
+        expect(voiceStreamsBusy()).toBe(false);
+      } finally {
+        held.mockRestore();
+        clock.mockRestore();
+        upload.mockRestore();
+        resetVoiceTranscriptionLimitsForTests();
+      }
+    }
+  );
 
   it('an abandoned stream expires after three idle minutes', async () => {
     const { hub, handlers } = createMockMessageHub();

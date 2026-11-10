@@ -1,4 +1,6 @@
 const commands = {
+  'reserve-restart':
+    '  hyperneo reserve-restart            Reserve an idle daemon restart for 15 seconds on the paired local session socket',
   'desktop-mcp':
     '  hyperneo desktop-mcp --worker <id>   Serve bounded desktop tools over stdio MCP',
   relay:

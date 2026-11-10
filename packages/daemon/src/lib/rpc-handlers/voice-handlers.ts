@@ -16,6 +16,8 @@ import type { SettingsManager } from '../settings-manager.ts';
 import { VoiceStream, type VoiceStreamText } from '../voice/stream-relay.ts';
 import { createVoiceTranscribeLimiters, runVoiceTranscribe } from '../voice/transcribe-pipeline.ts';
 
+import { restartReservation } from '../system/restart-reservation.ts';
+
 interface VoiceTranscribeRequest {
   transcriptionId?: string;
   recordingId?: string;
@@ -39,6 +41,7 @@ interface OwnedVoiceStream {
 const voiceStreams = new Map<string, OwnedVoiceStream>();
 const voiceStreamStarts = new Map<string, number[]>();
 const startingStreams = { count: 0 };
+const activeTranscriptions = { count: 0 };
 const STREAM_STARTS_PER_MINUTE = 10;
 const MAX_VOICE_STREAMS = 8;
 const VOICE_STREAM_IDLE_MS = 3 * 60_000;
@@ -101,18 +104,29 @@ export function admitVoiceStreamStart(
   return { value: [...recent, now] };
 }
 
+function voiceStreamExpired(owned: OwnedVoiceStream, now: number): boolean {
+  return owned.disconnectedAt === undefined
+    ? now - owned.touchedAt > VOICE_STREAM_IDLE_MS
+    : now - owned.disconnectedAt >= VOICE_STREAM_DISCONNECT_MS;
+}
+
 export function expireIdleVoiceStreams(now: number): void {
   for (const [id, owned] of voiceStreams)
-    if (
-      owned.disconnectedAt === undefined
-        ? now - owned.touchedAt > VOICE_STREAM_IDLE_MS
-        : now - owned.disconnectedAt >= VOICE_STREAM_DISCONNECT_MS
-    ) {
+    if (voiceStreamExpired(owned, now)) {
       owned.stream.close(
         owned.disconnectedAt === undefined ? 'idle_timeout' : 'disconnect_timeout'
       );
       deleteVoiceStream(id);
     }
+}
+
+export function voiceStreamsBusy(): boolean {
+  const now = Date.now();
+  return (
+    startingStreams.count > 0 ||
+    activeTranscriptions.count > 0 ||
+    [...voiceStreams.values()].some((owned) => !voiceStreamExpired(owned, now))
+  );
 }
 
 export function resetVoiceTranscriptionLimitsForTests(): void {
@@ -150,6 +164,8 @@ export function registerVoiceHandlers(
   messageHub.onRequest<VoiceTranscribeRequest, VoiceTranscribeResponse>(
     'voice.transcribe',
     async (data, context) => {
+      if (restartReservation.remaining())
+        throw new MessageHubHandlerError('Daemon updating; retry shortly', 'DAEMON_UPDATING');
       if (data?.transcriptionId && data.recordingId)
         throw new Error(
           'Use either recordingId for durable retries or transcriptionId for cancellation'
@@ -163,6 +179,7 @@ export function registerVoiceHandlers(
         finish = resolve;
       });
       if (key) transcriptions.set(key, { controller, finished });
+      activeTranscriptions.count++;
       try {
         return await transcribeViaPipeline(
           settingsManager,
@@ -176,6 +193,7 @@ export function registerVoiceHandlers(
           controller.signal
         );
       } finally {
+        activeTranscriptions.count--;
         if (key) transcriptions.delete(key);
         finish();
       }
@@ -195,6 +213,8 @@ export function registerVoiceHandlers(
   messageHub.onRequest<{ encoding?: string; sampleRate?: number; language?: string }>(
     'voice.stream.start',
     async (data, context) => {
+      if (restartReservation.remaining())
+        throw new MessageHubHandlerError('Daemon updating; retry shortly', 'DAEMON_UPDATING');
       const encoding = data?.encoding ?? 'pcm16';
       if (!['pcm16', 'opus'].includes(encoding) || (data?.sampleRate ?? 16_000) !== 16_000)
         throw new Error('Voice streams take pcm16 or opus audio at 16000 Hz');
@@ -339,16 +359,23 @@ export function registerVoiceHandlers(
 
   messageHub.onRequest<{ streamId: string }>('voice.stream.stop', async (data, context) => {
     const stream = ownedStream(data?.streamId, context);
-    const result = await stream.stop();
-    const owned = voiceStreams.get(data.streamId);
-    if (owned) owned.touchedAt = Date.now();
-    if (!('error' in result) || !result.retryable) deleteVoiceStream(data.streamId);
-    if ('error' in result)
-      throw new MessageHubHandlerError(
-        result.error,
-        result.error === 'Incomplete Opus packet' ? 'VOICE_STREAM_INCOMPLETE_OPUS' : 'HANDLER_ERROR'
-      );
-    return result;
+    activeTranscriptions.count++;
+    try {
+      const result = await stream.stop();
+      const owned = voiceStreams.get(data.streamId);
+      if (owned) owned.touchedAt = Date.now();
+      if (!('error' in result) || !result.retryable) deleteVoiceStream(data.streamId);
+      if ('error' in result)
+        throw new MessageHubHandlerError(
+          result.error,
+          result.error === 'Incomplete Opus packet'
+            ? 'VOICE_STREAM_INCOMPLETE_OPUS'
+            : 'HANDLER_ERROR'
+        );
+      return result;
+    } finally {
+      activeTranscriptions.count--;
+    }
   });
 
   messageHub.onRequest<{ streamId: string }>('voice.stream.cancel', async (data, context) => {
@@ -385,21 +412,29 @@ export function registerVoiceHandlers(
       }
   });
 
-  messageHub.onRequest('voice.testConnection', async (_data, context) =>
-    transcribeViaPipeline(
-      settingsManager,
-      credentialManager,
-      createTestConnectionRequest(),
-      context
-    )
-  );
+  messageHub.onRequest('voice.testConnection', async (_data, context) => {
+    if (restartReservation.remaining())
+      throw new MessageHubHandlerError('Daemon updating; retry shortly', 'DAEMON_UPDATING');
+    const request = createTestConnectionRequest();
+    activeTranscriptions.count++;
+    try {
+      return await transcribeViaPipeline(settingsManager, credentialManager, request, context);
+    } finally {
+      activeTranscriptions.count--;
+    }
+  });
 }
 
 function ownedStream(streamId: string | undefined, context: CallContext | undefined): VoiceStream {
   const owned = streamId ? voiceStreams.get(streamId) : undefined;
-  if (!owned || owned.clientId !== (context?.clientId ?? context?.sessionId ?? 'global'))
+  const now = Date.now();
+  if (
+    !owned ||
+    owned.clientId !== (context?.clientId ?? context?.sessionId ?? 'global') ||
+    voiceStreamExpired(owned, now)
+  )
     throw new Error('Unknown voice stream');
-  owned.touchedAt = Date.now();
+  owned.touchedAt = now;
   return owned.stream;
 }
 

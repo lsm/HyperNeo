@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   MessageHub,
   MessageHubRouter,
@@ -15,6 +15,8 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 import { runDbOpOn } from '../../helpers/run-db-op.ts';
+
+import { restartReservation } from '../../../../src/lib/system/restart-reservation.ts';
 
 const sessionId = 'neo:10000000-0000-4000-8000-000000000001';
 const human: OperationCaller = {
@@ -109,6 +111,51 @@ describe('spoken replies separate from publications', () => {
     await speech.dispose();
     hub.cleanup();
     mailbox.close();
+  });
+
+  test('audio listening holds restart across capture gaps, text-only listening does not', async () => {
+    await listen();
+    expect(speech.restartBusy()).toBe(false);
+    await call('listen', { sessionId, enabled: true, audio: true });
+    expect(speech.restartBusy()).toBe(true);
+    await listen(false);
+    expect(speech.restartBusy()).toBe(false);
+  });
+
+  test('live queued speech holds restart until terminal ack and ignores old receipts', async () => {
+    await listen();
+    const saved = await say();
+    expect(speech.restartBusy()).toBe(true);
+    await call('ack', { sessionId, id: saved.id, state: 'playing' });
+    expect(speech.restartBusy()).toBe(true);
+    await call('ack', { sessionId, id: saved.id, state: 'played' });
+    expect(speech.restartBusy()).toBe(false);
+  });
+
+  test('a reserved restart refuses new listeners with a retryable updating result', async () => {
+    const held = spyOn(restartReservation, 'remaining').mockReturnValue(100);
+    try {
+      expect(await call('listen', { sessionId, enabled: true, audio: true })).toMatchObject({
+        ok: false,
+        reason: 'updating',
+        retryable: true,
+      });
+      expect(speech.restartBusy()).toBe(false);
+    } finally {
+      held.mockRestore();
+    }
+  });
+
+  test('an old disconnected receipt cannot hold a new text-only listener', async () => {
+    await listen();
+    await say();
+    writeGate = async () => {
+      throw new Error('Synthetic cancellation write failure');
+    };
+    disconnected('phone');
+    await listen();
+    writeGate = undefined;
+    expect(speech.restartBusy()).toBe(false);
   });
 
   test('a human input without listening carries the quick-reply note', () => {

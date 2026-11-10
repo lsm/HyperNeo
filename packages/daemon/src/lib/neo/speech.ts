@@ -13,12 +13,15 @@ import { neoDerivedId } from './derived-id.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
 import { isSDKResultSuccess, type SDKMessage } from '@hyperneo/shared/sdk';
 
+import { restartReservation } from '../system/restart-reservation.ts';
+
 const Result = z.object({
   ok: z.boolean(),
   id: z.string().optional(),
   state: z.enum(['queued', 'playing', 'played', 'cancelled', 'failed']).optional(),
   created: z.boolean().optional(),
   reason: z.string().optional(),
+  retryable: z.boolean().optional(),
   guidance: z.string().optional(),
 });
 const Listen = z.object({
@@ -52,6 +55,7 @@ type SpeechReceipt = {
   state?: SpeechState;
   created?: boolean;
   reason?: string;
+  retryable?: boolean;
   guidance?: string;
 };
 type Entry = { id: string; sessionId: string; clientId: string; text: string; state: SpeechState };
@@ -109,6 +113,18 @@ export class NeoSpeech {
   private readonly audio: NeoSpeechAudio;
   private readonly unsubscribe: () => void;
   private serial: Promise<unknown> = Promise.resolve();
+  private dispatching = 0;
+
+  restartBusy(): boolean {
+    return (
+      this.dispatching > 0 ||
+      [...this.listeners.values()].some(
+        (listener) =>
+          !!this.hub.getRouter()?.getClientById(listener.clientId) &&
+          (listener.audio || listener.pending.size > 0)
+      )
+    );
+  }
 
   constructor(
     private readonly hub: MessageHub,
@@ -304,10 +320,22 @@ export class NeoSpeech {
         atMs: Date.now(),
       });
     const result = this.serial.then(async () => {
-      const before = this.listeners.has(sessionId);
-      const receipt = await this.dispatch(action, sessionId, input, caller);
-      if (action === 'listen') await this.notifyListening(sessionId, before);
-      return receipt;
+      if (
+        restartReservation.remaining() &&
+        (action === 'say' ||
+          action === 'preview' ||
+          (action === 'listen' && 'enabled' in input && input.enabled))
+      )
+        return { ok: false, reason: 'updating', retryable: true };
+      this.dispatching++;
+      try {
+        const before = this.listeners.has(sessionId);
+        const receipt = await this.dispatch(action, sessionId, input, caller);
+        if (action === 'listen') await this.notifyListening(sessionId, before);
+        return receipt;
+      } finally {
+        this.dispatching--;
+      }
     });
     this.serial = result.catch(() => {});
     return result;

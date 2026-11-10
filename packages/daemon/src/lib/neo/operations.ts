@@ -87,6 +87,9 @@ import {
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.ts';
 
+import { createRestartReservationOperation } from '../system/restart-reservation.ts';
+import { voiceStreamsBusy } from '../rpc-handlers/voice-handlers.ts';
+
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
 const Project = z.object({
@@ -717,6 +720,16 @@ export function createNeoOperations(service: NeoService, identity: NeoProjectIde
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [
+    createRestartReservationOperation(() => {
+      const id = service.repo.defaultBinding()?.sessionId;
+      return {
+        neo: id
+          ? (service.sessions.getCachedSession(id)?.getProcessingState().status ?? 'unavailable')
+          : 'unavailable',
+        streams: voiceStreamsBusy(),
+        speech: service.speech.restartBusy(),
+      };
+    }),
     ...createNeoRelayOperations(service),
     ...createPeerOperations(service),
     ...service.speech.operations,

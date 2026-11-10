@@ -9,6 +9,9 @@ import { isToolUseBlock } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
+import { restartReservation } from '../system/restart-reservation.ts';
+import { sleep } from '../utils/sleep.ts';
 import { type IdleOwnerScope, isIdleWaiterAdmitted } from './idle-waiter-admission-pipeline.ts';
 import { deliveryMetrics } from './message-delivery-metrics.ts';
 import { isModelOutput } from './stream-silence-watch.ts';
@@ -299,6 +302,12 @@ export class ProcessingStateManager {
     phase: StreamingPhase = 'initializing',
     turnMessageIds?: string[]
   ): Promise<void> {
+    const admittedState = this.processingState;
+    while (restartReservation.remaining() && neoCoordinatorBinding(this.db, this.sessionId)) {
+      await sleep(restartReservation.remaining());
+      if (this.processingState !== admittedState)
+        throw Object.assign(new Error('Restart admission superseded'), { name: 'AbortError' });
+    }
     if (this.processingState.status === 'processing') {
       this.noteInitializationProgress(phase);
     }
