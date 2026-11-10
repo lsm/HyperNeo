@@ -25,7 +25,126 @@ export type TaskNotificationRequeryDecision =
   | { action: 'requery'; delayMs: number }
   | { action: 'escalate' }
   | { action: 'hold' }
-  | { action: 'reset' };
+  | { action: 'reset' }
+  | { action: 'issue' };
+
+export type TaskNotificationRequeryEpisode = NonNullable<
+  import('@hyperneo/shared').Session['metadata']['taskNotificationRequeryEpisode']
+>;
+
+export type TaskNotificationRequerySignal =
+  | { kind: 'result'; message: SDKMessage }
+  | { kind: 'attempt-issued' }
+  | { kind: 'attempt-failed' }
+  | { kind: 'delivery-failed' }
+  | { kind: 'close' };
+
+function startTaskNotificationRequeryEpisode(
+  prior: TaskNotificationRequeryEpisode | null | undefined
+): TaskNotificationRequeryEpisode {
+  return { episode: (prior?.episode ?? 0) + 1, attempts: 0, escalation: 'none', closed: false };
+}
+
+function openTaskNotificationRequeryEpisode(
+  prior: TaskNotificationRequeryEpisode | null | undefined
+): TaskNotificationRequeryEpisode {
+  if (prior && !prior.closed) return prior;
+  return startTaskNotificationRequeryEpisode(prior);
+}
+
+export function advanceTaskNotificationRequeryEpisode(
+  prior: TaskNotificationRequeryEpisode | null | undefined,
+  signal: TaskNotificationRequerySignal,
+  opts: { followUpQueued?: boolean } = {}
+): {
+  episode: TaskNotificationRequeryEpisode | null;
+  decision: TaskNotificationRequeryDecision;
+} {
+  const episode = openTaskNotificationRequeryEpisode(prior);
+  if (signal.kind === 'close') {
+    return {
+      episode: prior?.closed ? prior : { ...episode, closed: true },
+      decision: { action: 'reset' },
+    };
+  }
+  if (
+    prior?.closed &&
+    (signal.kind === 'attempt-issued' ||
+      signal.kind === 'attempt-failed' ||
+      signal.kind === 'delivery-failed')
+  ) {
+    return { episode: prior, decision: { action: 'hold' } };
+  }
+  if (signal.kind === 'delivery-failed') {
+    if (episode.escalation !== 'none') return { episode, decision: { action: 'hold' } };
+    if (episode.attempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+      return {
+        episode: { ...episode, escalation: 'pending' },
+        decision: { action: 'escalate' },
+      };
+    }
+    return {
+      episode,
+      decision: { action: 'requery', delayMs: taskNotificationRequeryDelayMs(episode.attempts) },
+    };
+  }
+  if (signal.kind === 'attempt-failed') {
+    const attempts = episode.attempts + 1;
+    const next = { ...episode, attempts };
+    if (episode.escalation !== 'none') return { episode: next, decision: { action: 'hold' } };
+    if (attempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+      return {
+        episode: { ...next, escalation: 'pending' },
+        decision: { action: 'escalate' },
+      };
+    }
+    return {
+      episode: next,
+      decision: { action: 'requery', delayMs: taskNotificationRequeryDelayMs(attempts) },
+    };
+  }
+  if (signal.kind === 'attempt-issued') {
+    if (episode.escalation !== 'none') return { episode, decision: { action: 'hold' } };
+    if (episode.attempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+      return {
+        episode: { ...episode, escalation: 'pending' },
+        decision: { action: 'escalate' },
+      };
+    }
+    const attempts = episode.attempts + 1;
+    return { episode: { ...episode, attempts }, decision: { action: 'issue' } };
+  }
+  const { message } = signal;
+  if (message.type !== 'result') return { episode, decision: { action: 'hold' } };
+  const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+    .parent_tool_use_id;
+  if (parentToolUseId !== null && parentToolUseId !== undefined) {
+    return { episode, decision: { action: 'hold' } };
+  }
+  if (!isTopLevelHollowTaskNotificationResult(message)) {
+    const isError = (message as SDKMessage & { is_error?: unknown }).is_error === true;
+    if (!isError || prior == null || prior.closed || prior.attempts <= 0) {
+      if (prior == null || prior.closed) {
+        return { episode: prior ?? null, decision: { action: 'reset' } };
+      }
+      return { episode: { ...episode, closed: true }, decision: { action: 'reset' } };
+    }
+  }
+
+  if (opts.followUpQueued || episode.escalation !== 'none') {
+    return { episode, decision: { action: 'hold' } };
+  }
+  if (episode.attempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+    return {
+      episode: { ...episode, escalation: 'pending' },
+      decision: { action: 'escalate' },
+    };
+  }
+  return {
+    episode,
+    decision: { action: 'requery', delayMs: taskNotificationRequeryDelayMs(episode.attempts) },
+  };
+}
 
 export function isTopLevelHollowTaskNotificationResult(message: SDKMessage): boolean {
   if (message.type !== 'result') return false;
@@ -42,18 +161,19 @@ export function resolveTaskNotificationRequery(args: {
   exhausted: boolean;
   followUpQueued: boolean;
 }): TaskNotificationRequeryDecision {
-  if (args.message.type !== 'result') return { action: 'hold' };
-  const parentToolUseId = (args.message as SDKMessage & { parent_tool_use_id?: string | null })
-    .parent_tool_use_id;
-  if (parentToolUseId !== null && parentToolUseId !== undefined) return { action: 'hold' };
-  if (!isTopLevelHollowTaskNotificationResult(args.message)) {
-    const isError = (args.message as SDKMessage & { is_error?: unknown }).is_error === true;
-    if (!isError || args.attempts <= 0) return { action: 'reset' };
-  }
-  if (args.followUpQueued) return { action: 'hold' };
-  if (args.exhausted) return { action: 'hold' };
-  if (args.attempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) return { action: 'escalate' };
-  return { action: 'requery', delayMs: taskNotificationRequeryDelayMs(args.attempts) };
+  const prior: TaskNotificationRequeryEpisode = {
+    episode: 1,
+    attempts: args.attempts,
+    escalation: args.exhausted ? 'done' : 'none',
+    closed: false,
+  };
+  const { decision } = advanceTaskNotificationRequeryEpisode(
+    args.attempts <= 0 && !args.exhausted ? null : prior,
+    { kind: 'result', message: args.message },
+    { followUpQueued: args.followUpQueued }
+  );
+  if (decision.action === 'issue') return { action: 'requery', delayMs: 0 };
+  return decision;
 }
 
 export function buildTaskNotificationRequeryEscalationEvent(args: {
@@ -62,6 +182,7 @@ export function buildTaskNotificationRequeryEscalationEvent(args: {
   taskId?: string | undefined;
   workflowRunId?: string | undefined;
   attempts: number;
+  episode?: number;
   timestamp: string;
 }): SpaceWorkflowRunNeedsAttentionEvent | null {
   if (!args.spaceId || !args.taskId || !args.workflowRunId) return null;
@@ -70,6 +191,7 @@ export function buildTaskNotificationRequeryEscalationEvent(args: {
     spaceId: args.spaceId,
     runId: args.workflowRunId,
     taskId: args.taskId,
+    ...(args.episode !== undefined ? { episode: args.episode } : {}),
     reason:
       `Session ended on ${args.attempts} consecutive hollow ` +
       'task-notification results without a consumed follow-up turn; immediate re-query budget ' +

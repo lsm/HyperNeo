@@ -614,7 +614,7 @@ function isStoredSubscriberRunId(workflowRunId: string): boolean {
   );
 }
 
-function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
+export function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
   event: keyof DaemonInternalEventMap;
   payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
 } | null {

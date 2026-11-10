@@ -5,7 +5,10 @@ import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
-import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
+import {
+  mapNotificationEventToInternalEvent,
+  SpaceRuntime,
+} from '../../../../../space/src/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
