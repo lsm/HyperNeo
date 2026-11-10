@@ -183,6 +183,51 @@ describe('Neo compact prefix discovery', () => {
       value: { found: true, name: 'work.send', inputSchema: { type: 'object' } },
     });
   });
+  test('approved profile exclusions retain raw APIs for non-Neo callers', async () => {
+    const names = [
+      'settings.model.get',
+      'settings.model.set',
+      'session.runtimeSettings.read',
+      'session.runtimeSettings.update',
+      'session.list',
+      'session.get',
+      'session.message.list',
+    ];
+    const registry = registryFor(
+      names.map((name) => entry(name, { safetyClass: 'read', roles: ['neo'] }))
+    );
+    expect(await list(registry)).toEqual({ prefixes: [] });
+    for (const prefix of ['session', 'settings']) {
+      expect(await list(registry, { prefix, all: true })).toEqual({
+        total: 0,
+        names: [],
+        next: null,
+      });
+    }
+    const human = (await list(registry, { all: true }, { source: 'rpc' })) as { name: string }[];
+    expect(human.map(({ name }) => name)).toEqual(expect.arrayContaining(names));
+  });
+  test('the published paging fields explain Neo-only behavior', async () => {
+    const { registry } = fixture();
+    const result = await invokeOperation(
+      registry,
+      'operations.describe',
+      { name: 'operations.list' },
+      { source: 'rpc' }
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: {
+        inputSchema: {
+          properties: {
+            prefix: { description: expect.stringContaining('Neo MCP only') },
+            cursor: { description: expect.stringContaining('Neo MCP only') },
+          },
+        },
+      },
+    });
+  });
+
   test('existing non-Neo list replies remain byte-identical', async () => {
     const { registry } = fixture();
     for (const caller of [

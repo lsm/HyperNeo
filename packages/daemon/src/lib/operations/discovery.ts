@@ -19,8 +19,13 @@ const ListInputSchema = z
     prefix: z
       .string()
       .regex(/^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)*\.?$/)
+      .describe('Neo MCP only. Other callers ignore paging and keep the legacy array response.')
       .optional(),
-    cursor: z.string().min(1).optional(),
+    cursor: z
+      .string()
+      .min(1)
+      .describe('Neo MCP only. Other callers ignore paging and keep the legacy array response.')
+      .optional(),
   })
   .default({});
 const DescriptionSchema = z.discriminatedUnion('found', [

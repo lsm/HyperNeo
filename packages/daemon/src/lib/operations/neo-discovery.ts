@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import type { OperationName } from '@hyperneo/shared/types/operation-names';
 
-const rareOperations = new Set([
+export const NEO_RARE_OPERATION_NAMES = [
   'artifact.file.get',
   'artifact.file.html',
   'artifact.file.list',
@@ -85,7 +86,9 @@ const rareOperations = new Set([
   'work.stop',
   'work.turns',
   'work.withdraw',
-]);
+] as const satisfies readonly OperationName[];
+
+const rareOperations = new Set<string>(NEO_RARE_OPERATION_NAMES);
 
 export const CompactDiscoverySchema = z.union([
   z.object({
