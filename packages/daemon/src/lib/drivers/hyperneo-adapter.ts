@@ -264,7 +264,7 @@ export function buildHyperneoGroups(
           withSessionLoad(withChatEvidence(toWork(session, machine), matched.get(session.id)))
         )
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
-        .slice(0, SESSIONS_PER_PLACE);
+        .slice(0, query.all ? undefined : SESSIONS_PER_PLACE);
       if ((query.idPrefix || !placeMatches) && work.length === 0) return [];
       return [
         {

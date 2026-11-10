@@ -272,7 +272,7 @@ export function buildCodexGroups(
           )
         )
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
-        .slice(0, THREADS_PER_PLACE);
+        .slice(0, query.all ? undefined : THREADS_PER_PLACE);
       if ((query.idPrefix || !placeMatches) && work.length === 0) return [];
       return [
         {

@@ -1,3 +1,5 @@
+import { neoUserFolder } from '../../neo/folder.ts';
+import { createWorkerNameSource } from '../../drivers/worker-names.ts';
 import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
 import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
@@ -613,6 +615,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       ...adapters.slice(1),
     ];
   };
+  const folder = neoUserFolder(context.deps.config.workspaceRoot);
+  context.workerNameSource?.(
+    createWorkerNameSource(currentAdapters, { machine, folder, name: folder })
+  );
   const health = createDriverHealthRuntime(context, currentAdapters);
   startWorkSessionSync(context.deps.db.gateway, context.deps.jobProcessor, currentAdapters);
   const deps = {

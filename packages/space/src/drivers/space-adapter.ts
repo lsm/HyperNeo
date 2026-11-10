@@ -256,7 +256,7 @@ export function buildSpaceGroups(
         )
         .map((task) => withChatEvidence(toWork(task, space, deps.machine), matched.get(task.id)))
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
-        .slice(0, TASKS_PER_SPACE);
+        .slice(0, query.all ? undefined : TASKS_PER_SPACE);
       work.unshift(
         ...agents
           .filter((agent) => agent.spaceId === space.id)

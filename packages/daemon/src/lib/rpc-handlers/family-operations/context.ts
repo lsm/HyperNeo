@@ -1,3 +1,4 @@
+import type { NeoWorkerNameSource } from '../../neo/worker-name.ts';
 import type { createClaudeInboxDriver } from '../../drivers/claude-inbox-driver.ts';
 import type { createClaudeDesktopModsDriver } from '../../drivers/claude-desktop-mods-driver.ts';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
@@ -21,6 +22,7 @@ export interface SessionSpacePort {
 }
 
 export interface FamilyOperationContext {
+  readonly workerNameSource?: (read: NeoWorkerNameSource) => void;
   readonly driverHealthNotice?: (id: string, text: string) => Promise<boolean>;
   readonly driverCleanup?: (() => Promise<void>)[];
   readonly sessionScheduler: SessionScheduler;
