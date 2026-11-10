@@ -84,7 +84,7 @@ jobs:
       - name: Build production-admission host fixture
         run: cargo build --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml
       - name: Reject unapproved workers and tolerate endpoint failures
-        run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture WorkerDrivers.test_unapproved_same_user_cannot_start_or_get_driver_socket WorkerDrivers.test_bind_failure_allows_desktop_setup_to_continue
+        run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture WorkerDrivers.test_unapproved_same_user_cannot_start_or_get_driver_socket WorkerDrivers.test_bind_failure_allows_desktop_setup_to_continue WorkerDrivers.test_missing_startup_paths_allow_desktop_setup_to_continue
       - name: Build isolated embedded-host fixture
         run: cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml --bin desktop-driver-fixture -- --cfg test
       - name: Check macOS Tauri wiring with an inert sidecar

@@ -289,6 +289,43 @@ class WorkerDrivers(unittest.TestCase):
                 process.kill()
             process.communicate(timeout=10)
 
+    def test_missing_startup_paths_allow_desktop_setup_to_continue(self):
+        for mode in ('missing-data', 'missing-binary'):
+            with self.subTest(mode=mode):
+                base = self.root / mode
+                base.mkdir()
+                process = subprocess.Popen(
+                    [str(RUNNER), str(base), str(self.binary), self.path, mode],
+                    env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test'},
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    self.assertTrue(select.select([process.stdout], [], [], 15)[0])
+                    self.assertEqual(process.stdout.readline().strip(), 'ready')
+                    process.send_signal(signal.SIGINT)
+                    _, error = process.communicate(timeout=10)
+                    self.assertEqual(process.returncode, 0)
+                    self.assertIn('Desktop control unavailable', error)
+                    self.assertFalse((base / 'desktop/control.sock').exists())
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate(timeout=10)
+
+    def test_control_recovers_after_transient_accept_failure(self):
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        self.process.stdout.close()
+        self.process.stderr.close()
+        self.process = subprocess.Popen(
+            [str(RUNNER), str(self.root), str(self.binary), self.path, 'accept-error'],
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
+        self.assertEqual(self.process.stdout.readline().strip(), 'ready')
+        self.assertTrue(self.call('status')['ok'])
+        self.assertTrue(select.select([self.process.stderr], [], [], 2)[0])
+        self.assertIn('Desktop control accept failed', self.process.stderr.readline())
+
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
 

@@ -18,12 +18,22 @@ async fn main() {
     log::set_logger(&LOGGER).unwrap();
     log::set_max_level(log::LevelFilter::Warn);
     let args: Vec<_> = std::env::args().collect();
-    let control = desktop_drivers::Control::setup(
-        args[1].clone().into(),
-        args[2].clone().into(),
-        args[3].clone(),
-    )
-    .await;
+    let mode = args.get(4).map(String::as_str);
+    let base = if mode == Some("missing-data") {
+        None
+    } else {
+        Some(args[1].clone().into())
+    };
+    let binary = if mode == Some("missing-binary") {
+        Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+    } else {
+        Ok(args[2].clone().into())
+    };
+    #[cfg(test)]
+    if mode == Some("accept-error") {
+        desktop_drivers::inject_accept_failure();
+    }
+    let control = desktop_drivers::Control::setup(base, binary, args[3].clone()).await;
     #[cfg(test)]
     if args.get(4).map(String::as_str) != Some("unapproved") {
         if let Some(control) = &control {

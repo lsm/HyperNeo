@@ -202,8 +202,8 @@ pub fn run() {
 
 			#[cfg(target_os = "macos")]
 			if let Some(control) = tauri::async_runtime::block_on(desktop_drivers::Control::setup(
-				runtime_descriptor_path().ok_or("Missing data directory")?.parent().unwrap().into(),
-				std::env::current_exe()?.with_file_name("cua-driver"),
+				runtime_descriptor_path().and_then(|path| path.parent().map(PathBuf::from)),
+				std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
 				"/usr/bin:/bin:/usr/sbin:/sbin".into(),
 			)) {
 				app.manage(control);

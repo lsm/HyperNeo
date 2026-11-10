@@ -23,6 +23,13 @@ use tokio::{
     time::timeout,
 };
 
+#[cfg(test)]
+static FAIL_NEXT_ACCEPT: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+pub(crate) fn inject_accept_failure() {
+    FAIL_NEXT_ACCEPT.store(true, Ordering::Relaxed);
+}
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 struct Worker {
     host: Arc<EmbeddedCuaDriverHost>,
@@ -49,10 +56,14 @@ pub(crate) struct Control {
 }
 impl Control {
     pub(crate) async fn setup(
-        base: PathBuf,
-        binary: PathBuf,
+        base: Option<PathBuf>,
+        binary: std::io::Result<PathBuf>,
         verification_path: String,
     ) -> Option<Self> {
+        let (Some(base), Ok(binary)) = (base, binary) else {
+            log::warn!("Desktop control unavailable: startup paths unavailable");
+            return None;
+        };
         match Self::bind(base, binary, verification_path).await {
             Ok(control) => control,
             Err(error) => {
@@ -117,7 +128,23 @@ impl Control {
         let state = drivers.clone();
         let task = tokio::spawn(async move {
             let mut requests = JoinSet::new();
-            while let Ok((stream, _)) = listener.accept().await {
+            loop {
+                #[cfg(not(test))]
+                let accepted = listener.accept().await;
+                #[cfg(test)]
+                let accepted = if FAIL_NEXT_ACCEPT.swap(false, Ordering::Relaxed) {
+                    Err(std::io::Error::from(std::io::ErrorKind::ConnectionAborted))
+                } else {
+                    listener.accept().await
+                };
+                let (stream, _) = match accepted {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        log::warn!("Desktop control accept failed: {error}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
                 if requests.len() >= 16 {
                     requests.join_next().await;
                 }
