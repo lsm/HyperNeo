@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { globalSettingsWrites } from '../../../../src/storage/repositories/global-settings-writes.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import { getSessionContextModelInfo, setModelsCache } from '../../../../src/lib/model-service.ts';
@@ -310,6 +312,88 @@ describe('neo.preferences.set', () => {
       caller
     );
   }
+
+  test('front model has a validated targeted write without changing coordinator settings', async () => {
+    const coordinator = { model: opus.id, provider: opus.provider, thinkingLevel: 'off' };
+    await invoke('neo.preferences.set', coordinator);
+    const stale = db.getGlobalSettings().neo;
+    const front = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
+    expect(await invoke('neo.front.model.set', front)).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, preferences: front },
+    });
+    expect(db.getGlobalSettings().neo).toMatchObject({
+      preferences: coordinator,
+      front: { model: front },
+    });
+    expect(db.getGlobalSettings().neo?.front?.enabled).not.toBe(true);
+    expect(switched).toEqual([]);
+    await gatewayFor(db.getDatabase()).call(globalSettingsWrites, 'apply', {
+      neo: { ...stale, front: { enabled: true } },
+    });
+    expect(db.getGlobalSettings().neo?.front).toEqual({ model: front });
+  });
+
+  test.each([
+    { model: 'missing', provider: 'deepseek', thinkingLevel: 'off' },
+    { model: flash.id, provider: 'anthropic', thinkingLevel: 'off' },
+  ])('refuses an unavailable front provider/model pair %j', async (input) => {
+    expect(await invoke('neo.front.model.set', input)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('invalid_model') },
+    });
+    expect(db.getGlobalSettings().neo?.front?.model).toBeUndefined();
+  });
+
+  test('front selection normalizes catalog aliases and refuses disabled entries', async () => {
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            { ...flash, id: 'front-exact', alias: 'front-alias' },
+            { ...opus, available: false },
+          ],
+        ],
+      ])
+    );
+    expect(
+      await invoke('neo.front.model.set', {
+        model: 'front-alias',
+        provider: flash.provider,
+        thinkingLevel: 'off',
+      })
+    ).toMatchObject({ value: { ok: true, preferences: { model: 'front-exact' } } });
+    expect(
+      await invoke('neo.front.model.set', {
+        model: opus.id,
+        provider: opus.provider,
+        thinkingLevel: 'off',
+      })
+    ).toMatchObject({ value: { ok: false } });
+    expect(db.getGlobalSettings().neo?.front?.model?.model).toBe('front-exact');
+  });
+
+  test('front model selection requires the human even for the root Neo', async () => {
+    const input = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' };
+    expect(
+      await invoke('neo.front.model.set', input, {
+        source: 'mcp',
+        role: 'neo',
+        sessionId: 'neo:root',
+      })
+    ).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    expect(db.getGlobalSettings().neo?.front?.model).toBeUndefined();
+  });
+
+  test('front model input rejects unrelated settings and fallback chains', async () => {
+    const input = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' };
+    for (const extra of [{ enabled: true }, { fallbacks: [input] }, { autoCompactPercent: 90 }]) {
+      expect(await invoke('neo.front.model.set', { ...input, ...extra })).toMatchObject({
+        kind: 'failed',
+        code: 'invalid_input',
+      });
+    }
+  });
 
   test.each([
     [1, 10],

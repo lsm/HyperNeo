@@ -747,3 +747,49 @@ test('a failed save retains a newer pushed preference instead of restoring stale
     '80'
   );
 });
+
+async function frontEditor() {
+  render(<NeoModelSettings />);
+  const section = await screen.findByRole('region', { name: 'Front model' });
+  const ui = within(section);
+  await waitFor(() =>
+    expect(ui.getByRole('button', { name: 'Choose front model' }).hasAttribute('disabled')).toBe(
+      false
+    )
+  );
+  return ui;
+}
+
+test('chooses a separate provider/model through the targeted front operation', async () => {
+  const ui = await frontEditor();
+  fireEvent.click(ui.getByRole('button', { name: 'Choose front model' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.front.model.set',
+      input: { ...glm, thinkingLevel: 'off' },
+    })
+  );
+  expect(globalSettings.value?.neo?.preferences?.model).toBe('opus');
+  expect(globalSettings.value?.neo?.front?.enabled).not.toBe(true);
+});
+
+test.each(['refused', 'failed'])(
+  'a %s front model save retains the saved selection',
+  async (mode) => {
+    (globalSettings as { value: GlobalSettings | null }).value = {
+      neo: { preferences: primary, front: { enabled: false, model: primary } },
+    } as GlobalSettings;
+    request.mockImplementation(async (method) => {
+      if (method === 'models.list') return { models };
+      if (mode === 'failed') throw new Error('Disconnected');
+      return { ok: false, reason: 'Unavailable model' };
+    });
+    const ui = await frontEditor();
+    fireEvent.click(ui.getByRole('button', { name: 'Choose front model' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
+    await within(await screen.findByRole('region', { name: 'Front model' })).findByRole('alert');
+    expect(ui.getByText(/^opus ·/)).toBeTruthy();
+    expect(globalSettings.value?.neo?.front?.enabled).toBe(false);
+  }
+);

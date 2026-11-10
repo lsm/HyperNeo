@@ -438,6 +438,81 @@ function OverrideEditorModal({
   );
 }
 
+function FrontModelSettings({
+  groupedModels,
+  providerAuthStatuses,
+  loading,
+}: Pick<ModelPickerModalProps, 'groupedModels' | 'providerAuthStatuses'> & { loading: boolean }) {
+  const preference = globalSettings.value?.neo?.front?.model;
+  const [picker, setPicker] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [error, setError] = useState('');
+  const busy = loading || saving || connectionState.value !== 'connected';
+  async function save(model: ModelInfo) {
+    if (busy || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setPicker(false);
+    setError('');
+    try {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) throw new Error('Reconnect before changing the front model.');
+      const result = await invokeOperation<{ ok: boolean; reason?: string }>(
+        hub,
+        'neo.front.model.set',
+        {
+          model: model.id,
+          provider: model.provider,
+          thinkingLevel: 'off',
+        }
+      );
+      if (!result.ok) throw new Error(result.reason ?? 'Could not save the front model.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save the front model.');
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
+  return (
+    <section
+      aria-label="Front model"
+      class="space-y-3 rounded-xl border border-line bg-surface p-4"
+    >
+      <h4 class="text-[13px] font-semibold text-fg">Front model</h4>
+      <p class="text-xs text-fg-faint">
+        Separate model for fast text and voice replies. Selecting a model keeps the fast replies
+        switch as saved.
+      </p>
+      <p class="text-sm text-fg">
+        {preference
+          ? `${preference.model} · ${getProviderLabel(preference.provider)}`
+          : 'No front model selected'}
+      </p>
+      <Button variant="secondary" size="sm" disabled={busy} onClick={() => setPicker(true)}>
+        Choose front model
+      </Button>
+      {error && (
+        <p role="alert" class="text-xs text-danger">
+          {error}
+        </p>
+      )}
+      {picker && (
+        <ModelPickerModal
+          title="Choose front model"
+          groupedModels={groupedModels}
+          providerAuthStatuses={providerAuthStatuses}
+          excludeModels={[]}
+          selectionDisabled={busy}
+          onClose={() => setPicker(false)}
+          onSelect={save}
+        />
+      )}
+    </section>
+  );
+}
+
 type SettingsModel = ModelInfo;
 type NeoModelEntry = NonNullable<NeoModelPreference['fallbacks']>[number];
 const entryKey = (entry: { provider: string; model: string }) => `${entry.provider}/${entry.model}`;
@@ -1144,6 +1219,11 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
         </p>
         <NeoModelSettings
           availableModels={availableModels}
+          groupedModels={groupedModels}
+          providerAuthStatuses={providerAuthStatuses}
+          loading={loading}
+        />
+        <FrontModelSettings
           groupedModels={groupedModels}
           providerAuthStatuses={providerAuthStatuses}
           loading={loading}

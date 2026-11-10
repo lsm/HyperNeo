@@ -85,6 +85,7 @@ import {
   PackSettingSchema,
 } from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
+import { createNeoFrontModelOperation } from './front-model-preference.ts';
 import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.ts';
 
 import { createRestartReservationOperation } from '../system/restart-reservation.ts';
@@ -785,6 +786,7 @@ export function createNeoOperations(service: NeoService, identity: NeoProjectIde
       () => service.refreshPackPreferences()
     ),
     createNeoPreferenceOperation(service),
+    createNeoFrontModelOperation(service),
     ...createPackPreferenceOperations(
       service.db.getDatabase(),
       () => service.installedPacks(),

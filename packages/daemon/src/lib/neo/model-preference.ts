@@ -13,7 +13,7 @@ type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
 type RuntimeConfig = { model?: string; provider?: string; thinkingLevel?: string };
 
-const ModelPreference = z.object({
+export const ModelPreference = z.object({
   model: z.string().trim().min(1).max(200),
   provider: z.string().trim().min(1).max(80),
   thinkingLevel: z.string().trim().min(1).max(40),

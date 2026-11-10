@@ -28319,6 +28319,98 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thinkingLevel": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "provider",
+          "thinkingLevel"
+        ],
+        "type": "object"
+      },
+      "name": "neo.front.model.set",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "preferences": {
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "provider": {
+                    "maxLength": 80,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "thinkingLevel": {
+                    "maxLength": 40,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "model",
+                  "provider",
+                  "thinkingLevel"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "ok",
+              "preferences"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
           "enabled": {
             "type": "boolean"
           }
