@@ -5,7 +5,7 @@ import {
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTrackerMirrorRepository } from '../../../../src/storage/repositories/neo-tracker-mirror.ts';
 import { decideCodingDaemonMerge } from '../../../../src/lib/neo/packs/coding/daemon-merge-gates.ts';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -416,4 +416,54 @@ test('a closing reference to a cross-repository parent admits the merge', async 
   expect(
     decideCodingDaemonMerge(await readCodingDaemonMergeFacts(db, url, spawn), mirrorPolicy)
   ).toEqual({ kind: 'merge', head });
+});
+
+test('irrelevant mirrors add zero PR ownership reads', () => {
+  mirroredTodo();
+  const store = new NeoAskTodoRepository(db);
+  const mirrors = new NeoTrackerMirrorRepository(db);
+  for (const id of ['missing', 'disabled', 'capped', 'retired']) {
+    store.openAsk({
+      id: `${id}-ask`,
+      projectId: null,
+      sessionId: 'synthetic',
+      originMessageId: null,
+      title: id,
+      request: 'Work',
+      createdAt: 1,
+    });
+    store.addTodo(
+      id,
+      `${id}-ask`,
+      {
+        title: id,
+        instruction: 'Work',
+        named: null,
+        doneWhen: 'Merged',
+        check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+      },
+      2,
+      'synthetic/merge'
+    );
+    if (id !== 'missing')
+      mirrors.put({
+        ownerKind: 'todo',
+        ownerId: id,
+        tracker: 'github-issues',
+        home: id === 'disabled' ? 'synthetic/off' : 'synthetic/merge',
+        ref: null,
+        parentRef: null,
+        state: id === 'retired' ? 'closed' : 'creating',
+        failures: id === 'capped' ? 3 : 0,
+        updatedAt: 3,
+      });
+  }
+  const repo = new CodingTodoPrRepository(db);
+  const ownership = spyOn(repo, 'linked');
+  try {
+    expect(repo.linkedIssues(url)).toHaveLength(1);
+    expect(ownership.mock.calls.map(([id]) => id)).toEqual(['todo']);
+  } finally {
+    ownership.mockRestore();
+  }
 });

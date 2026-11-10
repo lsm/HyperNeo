@@ -65,8 +65,7 @@ export class CodingTodoPrRepository {
           (!todoId || todo.id === todoId) &&
           todo.check?.pack === 'coding' &&
           !['done', 'removed', 'closed_unverified'].includes(todo.state) &&
-          facts.asks.some((ask) => ask.id === todo.askId && ask.status === 'open') &&
-          this.linked(todo.id, url)
+          facts.asks.some((ask) => ask.id === todo.askId && ask.status === 'open')
       )
       .flatMap((todo) => {
         const rows = facts.mirrors.filter(
@@ -87,9 +86,10 @@ export class CodingTodoPrRepository {
           )?.value === true;
         if (!enabled) return [];
         const refs = rows.flatMap((row) => row.ref ?? []);
-        if (refs.length) return [refs];
-        if (own.failures >= NEO_TRACKER_FAILURE_LIMIT || own.state === 'closed') return [];
-        return [[]];
+        if (!refs.length && (own.failures >= NEO_TRACKER_FAILURE_LIMIT || own.state === 'closed'))
+          return [];
+        if (!this.linked(todo.id, url)) return [];
+        return [refs];
       });
   }
 
