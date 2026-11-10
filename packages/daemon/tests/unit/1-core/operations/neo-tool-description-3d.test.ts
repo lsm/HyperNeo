@@ -187,6 +187,11 @@ test.each(moved)('$name is loaded verbatim from the prompts package', ({ file, n
   expect(NEO_TOOL_DESCRIPTIONS[name]).toBe(text);
   expect(neoToolDescription(name)).toBe(text);
   const source = readFileSync(new URL(`../../../../src/lib/neo/${file}`, import.meta.url), 'utf8');
-  expect(source).toContain(`description: neoToolDescription('${name}')`);
+  const escapedName = name.replaceAll('.', String.raw`\.`);
+  expect(source).toMatch(
+    new RegExp(
+      String.raw`name: '${escapedName}',\s+description: neoToolDescription\('${escapedName}'\)`
+    )
+  );
   expect(source).not.toContain(text);
 });
