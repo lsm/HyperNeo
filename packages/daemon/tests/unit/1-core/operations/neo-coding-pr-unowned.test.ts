@@ -1,3 +1,4 @@
+import type { CodingSweepDeps } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
 import { createNeoPackPreferencesTable } from '../../../../src/storage/schema/m426-neo-pack-preferences.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,7 +37,7 @@ const pr = (number: number, more: Record<string, unknown> = {}) => ({
   ...more,
 });
 
-function setup() {
+function setup(delivery?: CodingSweepDeps['delivery']) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -67,6 +68,7 @@ function setup() {
         },
       }),
       prSweepDeps: {
+        delivery,
         tell: async () => true,
         wake: async (key, text) => {
           wakes.push({ key, text });
@@ -573,6 +575,52 @@ describe('coding pack unowned PR persistence', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test.each(['absent', 'admitted', 'in-flight', 'unknown'] as const)(
+    'claim removal after %s preserves exactly the eligible notices',
+    async (status) => {
+      const f = setup({
+        recipient: () => 'neo',
+        status: async () => 'absent',
+        send: async () => false,
+      });
+      try {
+        f.accept(false);
+        await f.cycle([pr(1)]);
+        const events = new CodingPrEventRepository(f.db);
+        const original = events.pendingUnowned(ship + 120_000)!;
+        f.db.prepare("UPDATE pack_coding_pr_ledger SET owner=? WHERE repo='synthetic/a' AND number=1").run(
+          JSON.stringify({ adapter: 'hyperneo', id: 'claimed-worker' })
+        );
+        const attempts: string[] = [];
+        await wakeCodingUnownedPrs(events, async (_key, text) => {
+          attempts.push(text);
+          return true;
+        }, ship + 180_000, {
+          recipient: () => 'neo',
+          status: async () => status,
+          send: async (_recipient, key, text) => {
+            expect(key).toBe(original.key);
+            attempts.push(text);
+            return true;
+          },
+        });
+        const history = f.db.prepare(
+          'SELECT key FROM pack_coding_pr_unowned ORDER BY key'
+        ).all();
+        expect(history).toHaveLength(status === 'absent' ? 1 : 2);
+        expect(attempts).toHaveLength(status === 'absent' ? 1 : 0);
+        f.db.prepare('UPDATE pack_coding_pr_ledger SET owner=NULL').run();
+        if (status === 'absent') {
+          await f.cycle([pr(1)], ship + 240_000);
+          expect(f.wakes.at(-1)!.text).toContain('synthetic/a#1');
+          expect(f.wakes.at(-1)!.text).not.toContain('synthetic/b#1');
+        }
+      } finally {
+        f.db.close();
+      }
+    }
+  );
 
   test('the activation cutoff is strict and does not reset when schema is reapplied', async () => {
     const { db, wakes, cycle } = setup();
