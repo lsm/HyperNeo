@@ -176,8 +176,8 @@ describe('todos given work later', () => {
         title: 'Coding',
         request: 'Coding',
         createdAt: 1,
-        repo: 'synthetic/repo',
       });
+      db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('synthetic/repo', ask.id);
       store.addTodo(
         'repository-anchor',
         ask.id,
@@ -236,9 +236,10 @@ describe('todos given work later', () => {
           sessionId: caller.sessionId!,
           projectId: null,
           originMessageId: null,
-          repo: source === 'ask' ? 'synthetic/ask' : null,
           createdAt: 1,
         });
+        if (source === 'ask')
+          db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('synthetic/ask', ask.id);
         const todo = store.addTodo(
           'stored-step',
           ask.id,

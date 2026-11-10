@@ -1,3 +1,5 @@
+import { neoToolDescription } from '@hyperneo/prompts';
+import { requireCodingLinkedIssue } from './linked-issue.ts';
 import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
 import { homedir } from 'node:os';
 import { codingHumanSignoff } from './human-signoff.ts';
@@ -29,6 +31,7 @@ const Head = z.object({ headRefOid: z.string().regex(/^[a-f\d]{40}$/i), state: z
 const Pr = Head.extend({
   url: z.string(),
   body: z.string(),
+  closingIssuesReferences: z.array(z.object({ url: z.string().url() })).optional(),
   isDraft: z.boolean(),
   mergeable: z.string(),
   mergeStateStatus: z.string(),
@@ -55,7 +58,7 @@ type Deps = {
   review: typeof runCodingReview;
   prepareMerge: typeof prepareCodingMerge;
 };
-type Result = Awaited<ReturnType<typeof prepareCodingMerge>>;
+type Result = Awaited<ReturnType<typeof prepareCodingMerge>> & { reminder?: string };
 const refuse = (reason: string) => ({ reason: { accepted: false as const, reason } });
 
 export function createCodingMergeOperation(deps: Deps) {
@@ -84,7 +87,7 @@ export function createCodingMergeOperation(deps: Deps) {
             'view',
             input.url,
             '--json',
-            'url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels',
+            'url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels,closingIssuesReferences',
           ]),
           gh([
             'api',
@@ -184,7 +187,10 @@ export function createCodingMergeOperation(deps: Deps) {
             pr.changedFiles === pr.files.length ? pr.files.map((file) => file.path) : null,
             pr.labels.map((label) => label.name)
           ) !== false;
-        return deps.prepareMerge(
+        const issueReason = requireCodingLinkedIssue(pr, state.issueMirrors);
+        if (issueReason && state.policy.mergeBy === 'daemon')
+          return { accepted: false, reason: issueReason };
+        const result = await deps.prepareMerge(
           deps.todos.deliveryFacts,
           input.todoId,
           {
@@ -236,6 +242,7 @@ export function createCodingMergeOperation(deps: Deps) {
           },
           { input: { ...input, head: pr.headRefOid }, state }
         );
+        return result.accepted && issueReason ? { ...result, reminder: issueReason } : result;
       },
       ['input', 'result'],
       'result'
@@ -243,11 +250,15 @@ export function createCodingMergeOperation(deps: Deps) {
     .endAsync('result') as (input: Input) => Promise<Result>;
   return defineOperation({
     name: 'neo.coding.merge.prepare',
-    description:
-      'Admit a linked coding PR for manual merge using persisted Review/Verify assignments, actual exact-head review, required CI, resolved findings and repository human sign-off. Re-reads the head, records gates and returns a SHA-pinned command; never merges or enables auto-merge.',
+    description: neoToolDescription('neo.coding.merge.prepare'),
     inputSchema: Input,
     resultSchema: z.union([
-      z.object({ accepted: z.literal(true), head: z.string(), command: z.array(z.string()) }),
+      z.object({
+        accepted: z.literal(true),
+        head: z.string(),
+        command: z.array(z.string()),
+        reminder: z.string().optional(),
+      }),
       z.object({ accepted: z.literal(false), reason: z.string() }),
     ]),
     policy: { safetyClass: 'mutate', roles: ['neo'] },

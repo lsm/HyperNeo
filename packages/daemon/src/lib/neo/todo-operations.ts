@@ -1,3 +1,8 @@
+import { neoToolDescription } from '@hyperneo/prompts';
+import { homedir } from 'node:os';
+import { runGhJson } from '../github/gh-lookup-helpers.ts';
+import { spawnProcess } from '../runtime-spawn/index.ts';
+import { neoRepositoryIdentity } from './project-mirror.ts';
 import {
   NEO_TODO_CANCELLED_DEPENDENCY,
   neoTodoAfterRefusal,
@@ -16,7 +21,8 @@ import type {
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
-import { type WorkRef, WorkRefSchema } from '../drivers/types.ts';
+import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
+import { type Place, type WorkRef, WorkRefSchema } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { todoEvidenceFile } from '../work-locations.ts';
@@ -64,7 +70,9 @@ type Ran = Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
 export interface NeoTodoControls {
   userFolder?: string;
-  resolveTarget(ref: WorkRef): Promise<Gate<WorkRef>>;
+  resolveTarget(
+    ref: WorkRef
+  ): Promise<Gate<WorkRef> & { place?: Pick<Place, 'folder' | 'remotes'> }>;
   refreshIdentity?(todoId: string): Promise<void>;
   start(todoId: string): Ran;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
@@ -109,10 +117,10 @@ export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
 
 const Add = TodoDraft.extend({
   askId: Text.optional().describe(
-    'Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.'
+    'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.'
   ),
   input: Text.optional().describe(
-    'The [message id] of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.'
+    'The [message id] of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
   ),
   after: z
     .array(Text)
@@ -160,15 +168,75 @@ export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'
   };
 }
 
+export async function resolveNeoTodoWorker(
+  ref: WorkRef,
+  resolveTarget: NeoTodoControls['resolveTarget']
+): Promise<Gate<WorkRef> & { workerRemotes?: readonly string[] }> {
+  const resolved = await resolveTarget(ref);
+  if ('reason' in resolved) return resolved;
+  const workerRemotes =
+    !resolved.value.daemon && resolved.place?.folder
+      ? (await readWorkspaceIdentity(resolved.place.folder)).remotes
+      : resolved.place?.remotes;
+  const canonicalRemotes =
+    workerRemotes &&
+    (await Promise.all(
+      workerRemotes.map(async (remote) => {
+        const repo = neoRepositoryIdentity(remote)?.match(
+          /^repository:github\.com\/([\w.-]+\/[\w.-]+)$/
+        )?.[1];
+        if (!repo) return remote;
+        const result = await runGhJson(
+          [
+            'gh',
+            'api',
+            '--hostname',
+            'github.com',
+            '--method',
+            'GET',
+            '--cache',
+            '24h',
+            `repos/${repo}`,
+          ],
+          homedir(),
+          spawnProcess,
+          { stripGHRepo: true }
+        );
+        const fullName = result.ok
+          ? (result.data as { full_name?: unknown } | null)?.full_name
+          : null;
+        return typeof fullName === 'string' && /^[\w.-]+\/[\w.-]+$/.test(fullName)
+          ? `https://github.com/${fullName}`
+          : remote;
+      })
+    ));
+  return {
+    value: resolved.value,
+    workerRemotes: canonicalRemotes && [
+      ...new Set([...(workerRemotes ?? []), ...canonicalRemotes]),
+    ],
+  };
+}
+
+export type ResolvedNeoTodoDraft = z.infer<typeof NeoTodoDraftSchema> & {
+  workerRemotes?: readonly string[];
+};
+
 export async function resolveNeoTodoDraft(
   input: z.infer<typeof NeoTodoDraftSchema>,
   resolveTarget: NeoTodoControls['resolveTarget']
-): Promise<Gate<z.infer<typeof NeoTodoDraftSchema>>> {
+): Promise<Gate<ResolvedNeoTodoDraft>> {
   if (!input.target || input.target.verb === 'start') return { value: input };
-  const resolved = await resolveTarget(input.target.ref);
+  const resolved = await resolveNeoTodoWorker(input.target.ref, resolveTarget);
   return 'reason' in resolved
     ? resolved
-    : { value: { ...input, target: { ...input.target, ref: resolved.value } } };
+    : {
+        value: {
+          ...input,
+          target: { ...input.target, ref: resolved.value },
+          workerRemotes: resolved.workerRemotes,
+        },
+      };
 }
 
 export function neoTodoPlaceRefusal(
@@ -189,7 +257,7 @@ export async function addNeoTodo(
   sessions: NeoTodoSessionRepository,
   controls: Pick<NeoTodoControls, 'start' | 'resolveTarget' | 'userFolder'>,
   ask: NeoAsk,
-  input: z.infer<typeof NeoTodoDraftSchema>,
+  input: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
   const resolved = await resolveNeoTodoDraft(input, controls.resolveTarget);
@@ -204,7 +272,7 @@ export async function recordNeoTodo(
   sessions: NeoTodoSessionRepository,
   controls: Pick<NeoTodoControls, 'start' | 'userFolder'>,
   ask: NeoAsk,
-  input: z.infer<typeof NeoTodoDraftSchema>,
+  input: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
   const id = crypto.randomUUID();
@@ -213,8 +281,9 @@ export async function recordNeoTodo(
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
   const peers = todos.listTodos(ask.id);
-  const repo = neoTodoRepository(draft, packs, { ask, peers });
-  const placeless = neoTodoPlaceRefusal(draft, packs, { ask, peers });
+  const scope = { ask, workerRemotes: input.workerRemotes };
+  const repo = neoTodoRepository(draft, packs, scope);
+  const placeless = neoTodoPlaceRefusal(draft, packs, scope);
   if (placeless) return { ok: false, reason: placeless };
   const misplaced = neoEvidenceRefusal(check, repo, controls.userFolder ?? neoUserFolder());
   if (misplaced) return { ok: false, reason: misplaced };
@@ -376,7 +445,6 @@ export const NeoTodoSchema = z.object({
   check: TodoCheck.nullable(),
   instruction: z.string().nullable(),
   named: z.record(z.string(), z.unknown()).nullable(),
-  repo: z.string().nullable(),
   state: z.enum(['todo', 'doing', 'blocked', 'done', 'closed_unverified', 'failed', 'removed']),
   reason: z.string().nullable(),
   blockedReason: z.string().nullable(),
@@ -710,7 +778,7 @@ export function createNeoTodoOperations(
       'binding'
     )
     .pipe(
-      (binding: ReturnType<typeof resolveNeoInputAsk>) =>
+      (binding: Awaited<ReturnType<typeof resolveNeoInputAsk>>) =>
         'reason' in binding ? binding : admit(todos.getAsk(binding.value.askId)),
       'binding',
       'result:outcome'
@@ -729,11 +797,21 @@ export function createNeoTodoOperations(
   const bind = owned(superpipe({})('neo.todo.bind') as PipelineAPI)
     .pipe(
       async (todo: NeoTodo, input: z.infer<typeof Bind>) => {
-        const resolved = await controls.resolveTarget(input.ref);
+        const resolved = await resolveNeoTodoWorker(input.ref, controls.resolveTarget);
         if ('reason' in resolved) return resolved.reason;
         const latest = todos.getTodo(todo.id);
         const current = requireNeoOpenTodo(latest, latest ? todos.getAsk(latest.askId) : null);
         if ('reason' in current) return current.reason;
+        const refused = neoTodoPlaceRefusal(
+          { ...current.value, target: { verb: 'send', ref: resolved.value } },
+          packs(),
+          {
+            ask: todos.getAsk(current.value.askId),
+            todo: current.value,
+            workerRemotes: resolved.workerRemotes,
+          }
+        );
+        if (refused) return { ok: false as const, reason: refused };
         const previous = sessions.readRef(todo.id);
         const result = bindNeoTodo(todos, sessions, current.value, resolved.value);
         const ref = resolved.value;
@@ -787,6 +865,26 @@ export function createNeoTodoOperations(
 
   const proceed = owned(superpipe({})('neo.todo.continue') as PipelineAPI)
     .pipe(
+      async (todo: NeoTodo): Promise<Gate<NeoTodo>> => {
+        const ref = todo.startedAt === null ? null : sessions.readRef(todo.id);
+        if (!ref) return { value: todo };
+        const resolved = await resolveNeoTodoWorker(ref, controls.resolveTarget);
+        const reason = neoTodoPlaceRefusal(
+          { ...todo, target: { verb: 'send', ref: 'value' in resolved ? resolved.value : ref } },
+          packs(),
+          {
+            ask: todos.getAsk(todo.askId),
+            todo,
+            workerRemotes: 'value' in resolved ? resolved.workerRemotes : undefined,
+          }
+        );
+        if (!reason) return { value: todo };
+        return 'reason' in resolved ? resolved : fail(reason);
+      },
+      'outcome',
+      'result:outcome'
+    )
+    .pipe(
       (todo: NeoTodo, input: z.infer<typeof Continue>) =>
         controls.proceed(todo.id, input.message).then(ran),
       ['outcome', 'input'],
@@ -832,8 +930,7 @@ export function createNeoTodoOperations(
   return [
     defineOperation({
       name: 'neo.todo.add',
-      description:
-        'Add a todo to an open ask you own. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; passing both when they differ is refused with ask_mismatch. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {} (preferred: the daemon assigns the path and gives it to the worker; {path: absolute file path} only for a result the human should see), or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them for the matter, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}). Spell out the task: every step that needs work done gets its instruction and target when you add it; leave both out only for a step that just waits on its check, such as a merge or a deploy, since nothing runs a step without them. non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place. To give a running worker this task use target {verb: send, ref}; to attach work that is already doing it, add the todo without instruction or target and call neo.todo.bind {todoId, ref}, with after: [] when it runs in parallel, since bind waits for unfinished prerequisites; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true records that the human approved it: it starts once what it waits for is finished, so put it on every step of an approved plan. Otherwise the daemon lists it, ticked, in the start question of the ask, and one answer approves everything ticked. priority (urgent, high, normal, low; default normal) orders waiting work, urgent first: set it from how urgent the human made it; it can change later with neo.todo.edit. Steps the human approved start themselves in order as worker slots free; do not start them yourself. A step added after the ask started still waits for its own start answer.',
+      description: neoToolDescription('neo.todo.add'),
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -841,8 +938,7 @@ export function createNeoTodoOperations(
     }),
     defineOperation({
       name: 'neo.todo.bind',
-      description:
-        'Bind an unfinished todo on an open ask to an existing running worker, without sending or starting anything. Use this to repair a failed backfill instead of retrying its instruction. Records worker and doing, clears failure and old delivery evidence; does not stop the existing worker. A step with unfinished prerequisites is refused, so add independent running work with after: [].',
+      description: neoToolDescription('neo.todo.bind'),
       inputSchema: Bind,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -850,8 +946,7 @@ export function createNeoTodoOperations(
     }),
     defineOperation({
       name: 'neo.todo.edit',
-      description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; give a working document or evidence file as its absolute path on the owning daemon with one sentence of evidence, not the pasted document. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. The artifacts field remains for existing saved attachments and fixed-head Git references. A todo with an unanswered card is refused until the human answers it. Worker final-line blockers are recorded automatically: needs_human first wakes Neo: answer the worker and continue if you can; otherwise ask the human with neo.question.ask (yesno or choice with options) linked to the todo. A blocker you leave alone is never shown to the human: you get one reminder after 60 minutes. Handle environment blockers by retrying or escalating their cause. To hold or release a todo use neo.todo.hold. after is refused while a prerequisite is cancelled: neo.todo.proceed clears it. priority changes where waiting work starts in the queue. A check-only todo queued without instruction or target reminds Neo daily after 24 hours: provide both, or hold/remove it. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
+      description: neoToolDescription('neo.todo.edit'),
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -859,8 +954,7 @@ export function createNeoTodoOperations(
     }),
     defineOperation({
       name: 'neo.todo.hold',
-      description:
-        'Hold a todo that has not started so nothing starts it: reason says why. reason null releases a held todo. Hold only what the human said must wait.',
+      description: neoToolDescription('neo.todo.hold'),
       inputSchema: Hold,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -869,8 +963,7 @@ export function createNeoTodoOperations(
     }),
     defineOperation({
       name: 'neo.todo.remove',
-      description:
-        'Remove a todo from an open ask you own, with the reason: this is how to cancel or replace one, started or not; neo.todo.close is only for work really done. Its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. Unstarted dependents wait and you are told once: neo.todo.proceed continues one, neo.todo.remove stops it. replacedBy names the todo that replaces it; a dependent you continue waits for it instead. A removed todo stays listed, struck through.',
+      description: neoToolDescription('neo.todo.remove'),
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -878,8 +971,7 @@ export function createNeoTodoOperations(
     }),
     defineOperation({
       name: 'neo.todo.continue',
-      description:
-        "Send a started todo's session its next step. The todo goes back to doing until the session reports again, and a card it was waiting on closes with it. An unstarted todo or settled ask returns a record without dispatching or approving a start.",
+      description: neoToolDescription('neo.todo.continue'),
       inputSchema: Continue,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -887,8 +979,7 @@ export function createNeoTodoOperations(
     }),
     defineOperation({
       name: 'neo.todo.proceed',
-      description:
-        'Continue an unstarted todo whose prerequisite was cancelled. It drops the cancelled prerequisite, or waits for its replacement, and keeps its other prerequisites. A step the human has not approved is refused: it stays on its Start card. Nothing else clears this wait, so a cancelled prerequisite never starts the next step by itself.',
+      description: neoToolDescription('neo.todo.proceed'),
       inputSchema: Proceed,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -896,8 +987,7 @@ export function createNeoTodoOperations(
     }),
     defineOperation({
       name: 'neo.todo.retry',
-      description:
-        'Retry a failed todo in place with a new attempt, keeping its todoId. A nonretryable todo or settled ask returns a record without dispatching. If it has a worker, send the original instruction to that worker; otherwise start its recorded target again. Do not remove and replace it. Choose the delivery channel or adapter for reaching the same worker session yourself; never ask the human to choose it. Ask the human before changing which worker or target does the work.',
+      description: neoToolDescription('neo.todo.retry'),
       inputSchema: Retry,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -905,8 +995,7 @@ export function createNeoTodoOperations(
     }),
     defineOperation({
       name: 'neo.todo.close',
-      description:
-        'Close a todo whose work is really done, with your reason; to cancel or replace it use neo.todo.remove. A todo that never started is refused, unchanged, unless its outcome check passes. A started todo is done only when its outcome check passes; otherwise it stays open, blocked by its check with the unmet reason, and finishes by itself once the check passes; if the check is wrong, fix it with neo.todo.edit check. Its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
+      description: neoToolDescription('neo.todo.close'),
       inputSchema: Close,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

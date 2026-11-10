@@ -1,6 +1,6 @@
 {
   "name": "@hyperneo/prompts",
-  "version": "0.55.2",
+  "version": "0.56.2",
   "type": "module",
   "license": "Apache-2.0",
   "main": "src/mod.ts",

@@ -10,8 +10,8 @@ import {
 } from '../../lib/artifact-preview-client.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { t } from '../../lib/i18n/index.ts';
-import { copyToClipboard } from '../../lib/utils.ts';
 import { connectionState } from '../../lib/state.ts';
+import { copyToClipboard } from '../../lib/utils.ts';
 import MarkdownRenderer, { clearArtifactRenderCache } from '../chat/MarkdownRenderer.tsx';
 import { ArtifactDownload } from './ArtifactDownload.tsx';
 import { ArtifactHtmlDocument } from './ArtifactHtmlDocument.tsx';
@@ -27,6 +27,7 @@ export const KIND_LABELS = {
   json: 'JSON',
   log: 'Log',
   text: 'Text',
+  video: 'Video',
 };
 
 export const formatBytes = (bytes: number) =>

@@ -171,6 +171,21 @@ describe('MessageInput — recording UI', () => {
     });
   });
 
+  it('reports the four-minute capture limit when recording stops', async () => {
+    voiceStop.mockResolvedValueOnce({
+      audioBase64: 'aGk=',
+      mimeType: 'audio/wav',
+      hitDurationLimit: true,
+    });
+    render(<MessageInput sessionId="s1" onSend={vi.fn(async () => true)} />);
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(
+        'Voice recording stopped at 4 minutes — transcribing…'
+      )
+    );
+  });
+
   afterEach(async () => {
     cleanup();
     await new Promise((resolve) => setTimeout(resolve, 0));

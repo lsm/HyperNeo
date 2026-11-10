@@ -1574,6 +1574,7 @@ export class AgentSession
 
   async cancelRateLimitRetry(): Promise<void> {
     this.networkPause.stop();
+    const owner = this.stateManager.getCurrentIdleOwner();
     await runRateLimitManualCancel({
       db: this.db,
       sessionId: this.session.id,
@@ -1581,8 +1582,13 @@ export class AgentSession
       getPersistedArmMessageUuid: () =>
         this.rateLimitWatchdog.getPersistedEpisodeMessageUuid?.() ?? undefined,
       cancelWatchdog: () => this.rateLimitWatchdog.cancel(false),
-      isInMemoryCooldown: () => this.stateManager.getState().status === 'rate_limit_cooldown',
-      clearCooldown: () => this.stateManager.setIdle(),
+      isInMemoryCooldown: () =>
+        this.rateLimitWatchdog.isRecoveryPending() ||
+        this.stateManager.getState().status === 'rate_limit_cooldown',
+      clearCooldown: () =>
+        this.stateManager.getState().status === 'waiting_for_input'
+          ? undefined
+          : this.stateManager.setIdle({ owner }),
       publishStatusesFailed: async (messageIds) => {
         await this.internalEventBus
           .publish('messages.statusChanged', {

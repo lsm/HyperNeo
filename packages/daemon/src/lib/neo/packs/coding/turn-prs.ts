@@ -1,3 +1,12 @@
+import type { ReactiveDatabase } from '../../../../storage/reactive-database.ts';
+import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
+import { neoRepositoryIdentity } from '../../project-mirror.ts';
+import { codingPrKey } from './pr-key.ts';
+import {
+  CodingTodoPrRepository,
+  codingTodoRepository,
+  createCodingTodoPolicy,
+} from './todo-prs.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../../../drivers/types.ts';
@@ -9,6 +18,8 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { NeoWorkPrReader } from './work-prs.ts';
 import {
+  planCodingTurnProducer,
+  type CodingTurnProducer,
   type CodingTurn,
   type CodingTurnBind,
   type CodingTurnMentions,
@@ -40,11 +51,49 @@ function deliveryKeys({ outcome }: Delivery): string[] {
 
 const deliveryRef = ({ outcome }: Delivery) => (outcome as { ref?: WorkRef } | null)?.ref ?? null;
 
+type AttachmentCandidate = {
+  id: string;
+  ref: WorkRef;
+  repo: string | null;
+  startedAt: number | null;
+};
+
+function planCodingPrAttachment(
+  pr: { url: string; createdAt?: number },
+  producer: CodingTurnProducer,
+  candidates: readonly AttachmentCandidate[],
+  named: ReadonlySet<string>
+): string | null {
+  if (producer.state !== 'placed' || named.has(pr.url)) return null;
+  if (!producer.turns.some((turn) => turn.finalUrls.some((url) => codingPrKey(url) === pr.url)))
+    return null;
+  const parsed = parsePrUrl(pr.url)!;
+  const repository = neoRepositoryIdentity(`${parsed.host}/${parsed.owner}/${parsed.repo}`);
+  const eligible = candidates.filter((candidate) => {
+    const repo =
+      candidate.repo && /^[^/]+\/[^/]+$/.test(candidate.repo)
+        ? `github.com/${candidate.repo}`
+        : candidate.repo;
+    return (
+      codingTurnSessionKey(candidate.ref) === codingTurnSessionKey(producer.session) &&
+      neoRepositoryIdentity(repo ?? undefined) === repository
+    );
+  });
+  return eligible.length === 1 &&
+    eligible[0].startedAt !== null &&
+    eligible[0].startedAt <= (pr.createdAt ?? 0)
+    ? eligible[0].id
+    : null;
+}
+
 export class CodingTurnPrRepository {
   private readonly turns: WorkTurnRepository;
   private readonly deliveries: WorkDeliveryInputRepository;
 
-  constructor(private readonly db: Database) {
+  constructor(
+    private readonly db: Database,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
+  ) {
     this.turns = new WorkTurnRepository(db);
     this.deliveries = new WorkDeliveryInputRepository(db);
   }
@@ -119,6 +168,83 @@ export class CodingTurnPrRepository {
         [...refs.values()].map((ref) => [codingTurnSessionKey(ref), this.todosOf(ref)])
       ),
     };
+  }
+
+  attachUnclaimed(
+    rows: readonly { repo: string; number: number; createdAt: number | null }[],
+    mentions: CodingTurnMentions
+  ): void {
+    const store = new NeoAskTodoRepository(
+      this.db,
+      () => {
+        this.changes?.notifyChange('neo_todos');
+        this.changes?.notifyChange('neo_asks');
+      },
+      undefined,
+      undefined,
+      this.changes
+    );
+    const active = this.db
+      .prepare(`SELECT t.id, s.ref FROM neo_todos t
+      JOIN neo_asks a ON a.id = t.ask_id
+      JOIN neo_todo_sessions s ON s.todo_id = t.id
+      WHERE a.status = 'open' AND t.state = 'doing'
+        AND json_extract(t.check_json, '$.pack') = 'coding' AND s.ref IS NOT NULL`)
+      .all() as { id: string; ref: string }[];
+    const policy = createCodingTodoPolicy(new CodingTodoPrRepository(this.db));
+    const candidates = active.map((row) => {
+      const todo = store.getTodo(row.id)!;
+      return {
+        id: row.id,
+        ref: JSON.parse(row.ref) as WorkRef,
+        startedAt: todo.startedAt,
+        repo: policy.repository(todo, { ask: null, todo }) ?? codingTodoRepository(todo),
+      };
+    });
+    const claims = this.db
+      .prepare(`WITH active AS (
+      SELECT t.check_json FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
+      WHERE a.status = 'open' AND t.state IN ('todo', 'doing', 'blocked'))
+      SELECT urls.value AS url FROM active, json_each(active.check_json, '$.params.urls') urls
+      UNION SELECT json_extract(check_json, '$.params.url') AS url FROM active
+      WHERE json_extract(check_json, '$.params.url') IS NOT NULL`)
+      .all() as { url: string }[];
+    const named = new Set(claims.flatMap((row) => codingPrKey(row.url) ?? []));
+    const prs = rows.map((row) => ({
+      url: `https://github.com/${row.repo.toLowerCase()}/pull/${row.number}`,
+      createdAt: row.createdAt ?? undefined,
+    }));
+    const attach = (superpipe({})('coding.attach-unclaimed-pr') as PipelineAPI)
+      .input(['pr'])
+      .pipe(
+        (pr: (typeof prs)[number]) => planCodingTurnProducer(pr, mentions.turns),
+        'pr',
+        'producer'
+      )
+      .pipe(
+        (pr: (typeof prs)[number], producer: CodingTurnProducer) =>
+          planCodingPrAttachment(pr, producer, candidates, named),
+        ['pr', 'producer'],
+        'todoId'
+      )
+      .pipe(
+        (todoId: string | null, pr: (typeof prs)[number]) => {
+          if (!todoId) return;
+          const todo = store.getTodo(todoId)!;
+          const check = policy.addUrls(todo, [pr.url]);
+          if (!check) return;
+          store.updateTodo(
+            todo,
+            { check, doneWhen: policy.doneWhen(check) ?? todo.doneWhen },
+            Date.now()
+          );
+          named.add(pr.url);
+        },
+        ['todoId', 'pr'],
+        'attached'
+      )
+      .end('attached') as (pr: (typeof prs)[number]) => void;
+    for (const pr of prs) attach(pr);
   }
 
   lastTurnEndsOfRunningWorkers(): (number | null)[] {

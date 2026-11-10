@@ -26,7 +26,7 @@ import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-reposito
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 
 type Input =
-  | ({ kind: 'edit' } & Parameters<typeof planNeoTodoEdit>[1])
+  | ({ kind: 'edit'; workerRemotes?: readonly string[] } & Parameters<typeof planNeoTodoEdit>[1])
   | ({ kind: 'close' } & Parameters<typeof planNeoTodoClose>[1])
   | ({ kind: 'remove' } & Parameters<typeof planNeoTodoRemove>[2]);
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -132,12 +132,19 @@ class NeoTodoMutationPlanner {
       .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
       .pipe(
         (plan: Plan, input: Input) => {
-          const placeless =
-            input.kind === 'edit' &&
-            neoTodoPlaceRefusal({ ...plan.todo, target: input.target }, this.policies, {
-              ask: todos.getAsk(plan.todo.askId),
-              todo: plan.todo,
-            });
+          if (input.kind !== 'edit') return { value: plan };
+          const draft = {
+            ...plan.todo,
+            check: input.check ?? plan.todo.check,
+            target: input.target,
+          };
+          const ask = todos.getAsk(plan.todo.askId);
+          const placeless = neoTodoPlaceRefusal(draft, this.policies, {
+            ask,
+            todo: plan.todo,
+            edit: true,
+            workerRemotes: input.workerRemotes,
+          });
           return placeless
             ? { reason: { ok: false as const, reason: placeless } }
             : { value: plan };

@@ -6,6 +6,7 @@ import {
   type NeoTodoStorageBoundary,
 } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -21,7 +22,6 @@ beforeEach(() => {
   db.exec('PRAGMA foreign_keys=ON');
   gateway = new DbGateway(':memory:', db);
   const legacy: NeoTodoStorageBoundary = {
-    project: (todo) => todo,
     insert: (commit, [id, askId, draft, now]) => commit(id, askId, draft, now),
   };
   core = new NeoAskTodoRepository(db, undefined, undefined, undefined, undefined, legacy);
@@ -32,19 +32,20 @@ beforeEach(() => {
     sessionId: 'neo',
     projectId: null,
     originMessageId: null,
-    repo: 'github.com/synthetic/legacy',
     createdAt: 1,
   });
+  db.prepare('UPDATE neo_asks SET repo=? WHERE id=?').run('github.com/synthetic/legacy', 'ask');
 });
 afterEach(async () => {
   await gateway.close();
   db.close();
 });
-const invoke = (mode: 'Reads' | 'Writes', method: string, args: unknown[] = []) => {
+const invoke = (mode: 'Writes', method: string, args: unknown[] = []) => {
   const op = DB_OPS.get(`coding.todoStorage${mode}`);
   expect(op, 'registered data-only storage command').toBeDefined();
   return gateway.run(op!, { method, args });
 };
+const askRepo = () => db.prepare('SELECT repo FROM neo_asks WHERE id=?').get('ask');
 const rows = () => db.prepare('SELECT todo_id,repo FROM pack_coding_todos ORDER BY todo_id').all();
 const create = (id: string, repo: string | null) =>
   invoke('Writes', 'create', [{ id, askId: 'ask', draft, now: 10, repo }]);
@@ -69,18 +70,16 @@ test('explicit preparation is idempotent and keeps recorded facts', async () => 
   await invoke('Writes', 'prepare');
   expect(rows()).toEqual([{ todo_id: 'old', repo: null }]);
   expect(core.listTodos('ask')).toEqual(before);
-  expect(core.getAsk('ask')?.repo).toBe('github.com/synthetic/legacy');
+  expect(askRepo()).toEqual({ repo: 'github.com/synthetic/legacy' });
 });
 
-test('creation writes one pack fact and leaves the legacy column null', async () => {
+test('creation writes one pack fact and leaves the ask association alone', async () => {
   await invoke('Writes', 'prepare');
-  expect(await create('new', 'github.com/synthetic/new')).toMatchObject({
-    id: 'new',
-    repo: 'github.com/synthetic/new',
-  });
+  const created = await create('new', 'github.com/synthetic/new');
+  expect(created).toMatchObject({ id: 'new' });
+  expect(created).not.toHaveProperty('repo');
   expect(rows()).toEqual([{ todo_id: 'new', repo: 'github.com/synthetic/new' }]);
-  expect(core.getTodo('new')?.repo).toBeNull();
-  expect(core.getAsk('ask')?.repo).toBe('github.com/synthetic/legacy');
+  expect(askRepo()).toEqual({ repo: 'github.com/synthetic/legacy' });
 });
 
 test('a late pack write failure rolls back core creation and ask timestamps', async () => {
@@ -95,16 +94,6 @@ test('a late pack write failure rolls back core creation and ask timestamps', as
   expect(rows()).toEqual([]);
 });
 
-test('projection reads a recorded null without writing', async () => {
-  const old = core.addTodo('old', 'ask', draft, 2);
-  await invoke('Writes', 'prepare');
-  await invoke('Writes', 'record', ['old', null]);
-  const before = rows();
-  expect(await invoke('Reads', 'project', [old])).toMatchObject({ id: 'old', repo: null });
-  expect(rows()).toEqual(before);
-  expect(core.getTodo('old')).toEqual(old);
-});
-
 test.each([0, 4])(
   'historical fallback facts survive with %i sibling repositories',
   async (peers) => {
@@ -114,12 +103,15 @@ test.each([0, 4])(
       await invoke('Writes', 'record', [`peer-${i}`, `github.com/synthetic/peer-${i}`]);
     }
     await invoke('Writes', 'prepare');
-    expect(await invoke('Reads', 'facts', ['ask'])).toEqual({
-      legacy: 'github.com/synthetic/legacy',
-      repositories: Array.from({ length: peers }, (_, i) => `github.com/synthetic/peer-${i}`),
+    expect(
+      new CodingTodoPrRepository(db).place({ ask: { id: 'ask' }, todo: { id: 'historical' } })
+    ).toEqual({
+      ask: 'github.com/synthetic/legacy',
+      peers: Array.from({ length: peers }, (_, i) => `github.com/synthetic/peer-${i}`),
+      todo: null,
+      start: undefined,
     });
     expect(rows()).toHaveLength(peers);
-    expect(core.getTodo('historical')?.repo).toBeNull();
   }
 );
 
@@ -130,10 +122,11 @@ test('candidate repository rows follow core foreign-key deletion', async () => {
   expect(rows()).toEqual([]);
 });
 
-test('a missing candidate row projects no repository', async () => {
+test('a missing candidate row reads as no recorded place', async () => {
   await invoke('Writes', 'prepare');
-  const legacy = core.addTodo('late', 'ask', draft, 2);
-  expect(legacy.repo).toBeNull();
-  expect(await invoke('Reads', 'project', [legacy])).toEqual(legacy);
+  core.addTodo('late', 'ask', draft, 2);
+  expect(
+    new CodingTodoPrRepository(db).place({ ask: { id: 'ask' }, todo: { id: 'late' } }).todo
+  ).toBeNull();
   expect(rows()).toEqual([]);
 });

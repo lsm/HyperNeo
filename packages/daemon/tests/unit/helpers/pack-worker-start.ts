@@ -1,3 +1,4 @@
+import type { NeoWorkerNameSource } from '../../../src/lib/neo/worker-name.ts';
 import { createCodingPackTables } from '../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { Database } from '../../../src/storage/sqlite-compat.ts';
@@ -16,6 +17,8 @@ export function packWorkerStartFixture(
   db: Database,
   options: {
     hook?: boolean;
+    beforeStart?: (todo: NeoTodo) => void;
+    workerNames?: NeoWorkerNameSource;
     invoke?: (name: string, input: Record<string, unknown>) => Promise<OperationOutcome>;
   } = {}
 ) {
@@ -39,6 +42,7 @@ export function packWorkerStartFixture(
     Object.assign(fixture, {
       workerStartExclusions: async (todo: NeoTodo) => {
         checked.push(todo.id);
+        options.beforeStart?.(todo);
         const ids = (todo.check?.params.excludeTodoIds ?? []) as string[];
         const refs = ids.map((id) => sessions.readRef(id));
         return refs.some((ref) => !ref)
@@ -52,6 +56,7 @@ export function packWorkerStartFixture(
     store,
     sessions,
     packs,
+    workerNames: () => options.workerNames,
     write: gateway.run.bind(gateway),
     limits: () => ({ running: 99, perGroup: 99 }),
     tell: async () => {},

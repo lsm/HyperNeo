@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { MessageHub } from '@hyperneo/shared';
+import type { MessageHub, Session } from '@hyperneo/shared';
 import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -15,6 +15,7 @@ import type { SessionManager } from '../../../../src/lib/session/session-manager
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: ReturnType<typeof createNeoService>;
+let promptUpdated: (() => void) | undefined;
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
 const values = [
@@ -39,10 +40,16 @@ const values = [
 ];
 beforeEach(async () => {
   db = await createTestDb();
+  promptUpdated = undefined;
   await db.createSession(createTestSession('neo:root'));
   service = createNeoService(
     db,
-    {} as SessionManager,
+    {
+      updateSession: async (id: string, updates: Partial<Session>) => {
+        await db.updateSession(id, updates);
+        promptUpdated?.();
+      },
+    } as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,
     new InternalEventBus<DaemonInternalEventMap>()
   );
@@ -169,6 +176,8 @@ describe('immutable human settings proposals', () => {
     expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
       value: { ok: false },
     });
+    const updated = Promise.withResolvers<void>();
+    promptUpdated = updated.resolve;
     expect(await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)).toMatchObject(
       { value: { ok: true } }
     );
@@ -181,6 +190,10 @@ describe('immutable human settings proposals', () => {
         })),
       },
     });
+    await updated.promise;
+    expect(db.getSession('neo:root')?.config.systemPrompt).toContain(
+      '"scope":{"kind":"repo","key":"synthetic/one"},"key":"reviewBot","value":"synthetic-bot"'
+    );
     await invoke('pack.preferences.set', { ...values[0], value: 'human' }, human);
     expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
       value: { ok: true },

@@ -5,24 +5,29 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../helpers/neo-service.ts';
+import { createNeoOperations, createNeoService } from '../../helpers/neo-service.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import { SkillsManager } from '../../../../src/lib/skills-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:synthetic-startup';
-const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
+const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash', 'Skill'];
 const allowed = [...tools, 'mcp__hyperneo-operations__invoke', 'mcp__fetch-mcp'];
 
 describe('Neo startup configuration', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: ReturnType<typeof createNeoService>;
   const updateSession = vi.fn();
+  let live: Session | undefined;
 
   beforeEach(async () => {
     db = await createTestDb();
     updateSession.mockReset();
+    live = undefined;
     updateSession.mockImplementation(async (id: string, updates: Partial<Session>) => {
       await db.updateSession(id, updates);
     });
@@ -30,6 +35,8 @@ describe('Neo startup configuration', () => {
       db,
       {
         updateSession,
+        getCachedSession: (id: string) =>
+          live?.id === id ? { getSessionData: () => live! } : undefined,
         createSession: async (params: CreateSessionParams) => {
           await db.createSession({
             ...createTestSession(params.sessionId!),
@@ -68,7 +75,9 @@ describe('Neo startup configuration', () => {
       service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
       await service[method]();
       const restored = db.getSession(root)!;
-      expect(restored.config.systemPrompt).toBe(neoPrompt(service.packBriefs()));
+      expect(restored.config.systemPrompt).toBe(
+        neoPrompt(service.packBriefs(), [], service.packPreferences())
+      );
       expect(restored.config.systemPrompt).toContain('the human sees none of your assistant text');
       expect(restored.config.sdkToolsPreset).toEqual(tools);
       expect(restored.config.allowedTools).toEqual(allowed);
@@ -88,6 +97,20 @@ describe('Neo startup configuration', () => {
       });
       await service[method]();
       expect(updateSession).toHaveBeenCalledTimes(1);
+      db.updateGlobalSettings({
+        neo: { standingRules: ['Synthetic rule A.', 'Synthetic rule B.'] },
+      });
+      await service.rulesChanged();
+      const ruled = db.getSession(root)!.config.systemPrompt;
+      expect(ruled).toBe(
+        neoPrompt(
+          service.packBriefs(),
+          ['Synthetic rule A.', 'Synthetic rule B.'],
+          service.packPreferences()
+        )
+      );
+      expect(ruled).toContain('1. Synthetic rule A.\n2. Synthetic rule B.');
+      expect(restored.config.systemPrompt).not.toContain('Standing rules the human approved');
     }
   );
 
@@ -109,10 +132,30 @@ describe('Neo startup configuration', () => {
   test('new roots start with current prompt and native tools', async () => {
     const id = await service.open();
     expect(db.getSession(id)?.config).toMatchObject({
-      systemPrompt: neoPrompt(service.packBriefs()),
+      systemPrompt: neoPrompt(service.packBriefs(), [], service.packPreferences()),
       sdkToolsPreset: tools,
       allowedTools: allowed,
     });
+  });
+
+  test("a saved preference appears in Neo's system prompt", async () => {
+    const saved = await invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      'pack.preferences.set',
+      {
+        pack: 'coding',
+        scope: { kind: 'repo', key: 'synthetic/prompt' },
+        key: 'reviewBot',
+        value: 'synthetic-prompt-bot',
+      },
+      { source: 'rpc', principal: 'local' }
+    );
+    expect(saved).toMatchObject({ value: { ok: true } });
+    const id = await service.open();
+    const prompt = db.getSession(id)?.config.systemPrompt;
+    expect(prompt).toContain('Saved pack preferences');
+    expect(prompt).toContain('"scope":{"kind":"repo","key":"synthetic/prompt"}');
+    expect(prompt).toContain('"key":"reviewBot","value":"synthetic-prompt-bot"');
   });
 
   test('a later startup refreshes changed pack guidance', async () => {
@@ -120,8 +163,58 @@ describe('Neo startup configuration', () => {
     const packs = [{ id: 'synthetic', describe: 'Test domain', guidance: 'New pack instruction' }];
     vi.spyOn(service, 'packBriefs').mockReturnValue(packs);
     await service.recover();
-    expect(db.getSession(id)?.config.systemPrompt).toBe(neoPrompt(packs));
+    expect(db.getSession(id)?.config.systemPrompt).toBe(
+      neoPrompt(packs, [], service.packPreferences())
+    );
     expect(updateSession).toHaveBeenCalledTimes(1);
+  });
+
+  const selectedSkills = (id: string) => {
+    const choices = db.getSession(id)!.config.toolSelection!.choices;
+    return db.skills
+      .findAll()
+      .filter((skill) => choices[`skill:${skill.id}`]?.selected)
+      .map((skill) => skill.name)
+      .sort();
+  };
+
+  test('a new root selects exactly the enabled pack skills', async () => {
+    await new SkillsManager(db.skills, db.appMcpServers, db).initializeBuiltins();
+    const id = await service.open();
+    expect(selectedSkills(id)).toEqual(['coding-pack']);
+  });
+
+  test('a user skill that shares the pack skill name is never selected for Neo', async () => {
+    db.skills.insert({
+      id: 'user-coding-pack',
+      name: 'coding-pack',
+      displayName: 'coding-pack',
+      description: 'Installed from git',
+      sourceType: 'builtin',
+      config: { type: 'builtin', commandName: 'coding-pack' },
+      enabled: true,
+      builtIn: false,
+      validationStatus: 'valid',
+      createdAt: Date.now(),
+    });
+    await new SkillsManager(db.skills, db.appMcpServers, db).initializeBuiltins();
+    const id = await service.open();
+    expect(selectedSkills(id)).not.toContain('coding-pack');
+  });
+
+  test('a recovered root drops other skills and follows the enabled packs', async () => {
+    await new SkillsManager(db.skills, db.appMcpServers, db).initializeBuiltins();
+    const session = createTestSession(root);
+    await db.createSession(session);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    expect(selectedSkills(root)).toEqual(['playwright', 'playwright-interactive']);
+    live = structuredClone(db.getSession(root)!);
+    await service.recover();
+    expect(selectedSkills(root)).toEqual(['coding-pack']);
+    expect(live.config.toolSelection).toEqual(db.getSession(root)!.config.toolSelection);
+    vi.spyOn(service, 'packBriefs').mockReturnValue([]);
+    await service.recover();
+    expect(selectedSkills(root)).toEqual([]);
   });
 
   test('recovery without a root does not create one', async () => {

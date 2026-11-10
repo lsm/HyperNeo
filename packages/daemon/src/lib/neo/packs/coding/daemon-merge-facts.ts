@@ -1,3 +1,6 @@
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { codingTodoPrReads } from './todo-prs.ts';
+import { requireCodingLinkedIssue } from './linked-issue.ts';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -92,7 +95,7 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
     'view',
     url,
     '--json',
-    'url,body,state,headRefOid,baseRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels,mergeCommit',
+    'url,body,state,headRefOid,baseRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels,mergeCommit,closingIssuesReferences',
   ]);
   const responses = await Promise.all([
     pull,
@@ -185,6 +188,7 @@ const project = ([
   return {
     ok: true,
     head: pr.headRefOid,
+    closingIssuesReferences: pr.closingIssuesReferences,
     state: pr.state,
     draft: pr.isDraft,
     mergeable: pr.mergeable,
@@ -250,6 +254,16 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
     'result:observed'
   )
   .pipe(project, 'observed', 'observed')
+  .pipe(
+    async (facts: ReturnType<typeof project>, db: Database, url: string) => {
+      const mirrors = await gatewayFor(db).call(codingTodoPrReads, 'linkedIssues', url);
+      return facts.ok
+        ? { ...facts, linkedIssueReason: requireCodingLinkedIssue(facts, mirrors) }
+        : facts;
+    },
+    ['observed', 'db', 'url'],
+    'observed'
+  )
   .endAsync('observed') as (
   db: Database,
   url: string,

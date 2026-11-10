@@ -32,7 +32,7 @@ export interface VoiceStreamDeps {
   language?: 'zh' | 'en';
   voice: () => VoiceSettings | undefined;
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>;
-  transcribeWav: (wavBase64: string) => Promise<VoiceTranscribeOutcome>;
+  transcribeWav: (wavBase64: string, signal?: AbortSignal) => Promise<VoiceTranscribeOutcome>;
   push: (text: VoiceStreamText) => void;
   createRelay?: AsrRelayFactory;
 }
@@ -218,6 +218,7 @@ export class VoiceStream {
   private fallbackReason: string | undefined;
   private chunks: Uint8Array[] = [];
   private cancelled = false;
+  private readonly fallbackAbort = new AbortController();
   private bytes = 0;
   private codec: OpusInput | null = null;
   private encodedBytes = 0;
@@ -429,6 +430,7 @@ export class VoiceStream {
   private async finish(): Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > {
+    if (this.cancelled) return { error: 'Voice stream cancelled' };
     const relay = this.relay;
     const wasAlive = this.relayAlive;
     if (relay && wasAlive) {
@@ -453,7 +455,10 @@ export class VoiceStream {
       pcm.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    const outcome = await this.deps.transcribeWav(Buffer.from(pcm16Wav(pcm)).toString('base64'));
+    const outcome = await this.deps.transcribeWav(
+      Buffer.from(pcm16Wav(pcm)).toString('base64'),
+      this.fallbackAbort.signal
+    );
     if (this.cancelled) return { error: 'Voice stream cancelled' };
     if (outcome.action !== 'transcribed')
       return {
@@ -478,11 +483,21 @@ export class VoiceStream {
     return null;
   }
 
-  cancel(): void {
+  cancel(): Promise<void> {
     this.cancelled = true;
+    this.fallbackAbort.abort();
+    const waiter = this.finishedWaiter;
+    this.finishedWaiter = null;
+    waiter?.({ ok: false, text: '' });
     this.chunks = [];
     this.bytes = 0;
     this.close('client_disconnected');
+    return this.stopping
+      ? this.stopping.then(
+          () => {},
+          () => {}
+        )
+      : Promise.resolve();
   }
 
   close(reason = 'closed'): void {

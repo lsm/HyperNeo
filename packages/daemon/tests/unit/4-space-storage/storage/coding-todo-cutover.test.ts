@@ -2,16 +2,14 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
-import {
-  NeoAskTodoRepository,
-  neoTodoWrites,
-} from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { codingTodoRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { GitHubWatchInventory } from '../../../../src/lib/external-events/github/github-watch-inventory.ts';
 import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
 import { neoTodoRepository } from '../../../../src/lib/neo/pack-contract.ts';
+import { neoTodoPolicies } from '../../../../src/lib/neo/packs/todo-policies.ts';
 
 let db: Database;
 let gateway: DbGateway;
@@ -19,6 +17,12 @@ let store: NeoAskTodoRepository;
 const draft = { title: 'Work', doneWhen: 'Observed', check: null, instruction: null, named: null };
 const command = (name: string, method: string, args: unknown[]) =>
   gateway.run(DB_OPS.get(name)!, { method, args });
+const recorded = (todoId: string) =>
+  db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get(todoId) as {
+    repo: string | null;
+  } | null;
+const stored = (todoId: string) =>
+  neoTodoRepository(draft, neoTodoPolicies(db), { ask: { id: 'ask' }, todo: { id: todoId } });
 beforeEach(async () => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -32,9 +36,9 @@ beforeEach(async () => {
     sessionId: 'neo',
     projectId: null,
     originMessageId: null,
-    repo: 'github.com/synthetic/history',
     createdAt: 1,
   });
+  db.prepare('UPDATE neo_asks SET repo=? WHERE id=?').run('github.com/synthetic/history', 'ask');
   store.addTodo('stored', 'ask', draft, 2, 'github.com/synthetic/legacy');
   await command('coding.todoStorageWrites', 'prepare', []);
   await command('coding.todoStorageWrites', 'record', ['stored', 'github.com/synthetic/canonical']);
@@ -44,20 +48,14 @@ afterEach(async () => {
   db.close();
 });
 
-test('startup prepares the pack table before a default reader needs it', () => {
+test('startup prepares the pack table before a default writer needs it', () => {
   db.exec('DROP TABLE pack_coding_todos');
   createTables(db);
-  expect(store.getTodo('stored')?.repo).toBeNull();
+  store.addTodo('after', 'ask', draft, 3, 'github.com/synthetic/after');
+  expect(recorded('after')).toEqual({ repo: 'github.com/synthetic/after' });
   expect(
     (db.prepare('PRAGMA table_info(neo_todos)').all() as { name: string }[]).map((c) => c.name)
   ).not.toContain('repo');
-});
-
-test('default core and the write-op repository read the pack fact', () => {
-  expect(store.getTodo('stored')?.repo).toBe('github.com/synthetic/canonical');
-  expect(new neoTodoWrites.Repository(db).getTodo('stored')?.repo).toBe(
-    'github.com/synthetic/canonical'
-  );
 });
 
 test.each([
@@ -69,68 +67,48 @@ test.each([
     (r: unknown) => (r as { todos: NeoTodo[] }).todos[0],
   ],
   [
-    'neo.todoMutationReads',
-    'plan',
-    [{ kind: 'edit', todoId: 'stored', title: 'Updated' }, 3, []],
-    (r: unknown) => (r as { todo: NeoTodo }).todo,
-  ],
-  [
     'neo.todoSessionReads',
     'stopContext',
     ['stored'],
     (r: unknown) => (r as { todo: NeoTodo }).todo,
   ],
 ] as const)(
-  'gateway %s creates canonical readers independently',
+  'gateway %s returns core todos without a repository',
   async (name, method, args, result) => {
-    expect(result(await command(name, method, [...args])).repo).toBe(
-      'github.com/synthetic/canonical'
-    );
+    const todo = result(await command(name, method, [...args]));
+    expect(todo.id).toBe('stored');
+    expect(todo).not.toHaveProperty('repo');
   }
 );
 
-test('runner state receipts also use the canonical repository', async () => {
-  const result = (await command('neo.todoRunnerWrites', 'recompute', [
-    'stored',
-    null,
-    {},
-    3,
-    { state: 'no_opinion' },
-  ])) as { todo: NeoTodo };
-  expect(result.todo.repo).toBe('github.com/synthetic/canonical');
-});
-
-test('mutation commit receipts do not recreate an unprojected repository', async () => {
-  const result = (await gateway.run(DB_OPS.get('neo.todoMutations')!, {
-    input: { kind: 'edit', todoId: 'stored', title: 'Updated' },
-    now: 3,
-  })) as { todo: NeoTodo };
-  expect(result.todo.repo).toBe('github.com/synthetic/canonical');
+test('the coding pack decides a stored place from its recorded fact', () => {
+  expect(stored('stored')).toBe('github.com/synthetic/canonical');
 });
 
 test('new default writes commit one pack fact and leave the ask association unchanged', () => {
   const created = store.addTodo('new', 'ask', draft, 3, 'github.com/synthetic/new');
-  expect(created.repo).toBe('github.com/synthetic/new');
-  expect(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('new')).toEqual({
-    repo: 'github.com/synthetic/new',
+  expect(created).not.toHaveProperty('repo');
+  expect(recorded('new')).toEqual({ repo: 'github.com/synthetic/new' });
+  expect(db.prepare('SELECT repo FROM neo_asks WHERE id=?').get('ask')).toEqual({
+    repo: 'github.com/synthetic/history',
   });
-  expect(store.getAsk('ask')?.repo).toBe('github.com/synthetic/history');
 });
 
 test('canonical null survives repeated preparation', async () => {
   await command('coding.todoStorageWrites', 'record', ['stored', null]);
   await command('coding.todoStorageWrites', 'prepare', []);
-  expect(((await command('neo.todoReads', 'getTodo', ['stored'])) as NeoTodo).repo).toBeNull();
+  expect(recorded('stored')).toEqual({ repo: null });
+  expect(stored('stored')).toBe('github.com/synthetic/history');
 });
 
 test.each([{ repos: [] }, { repos: ['one'] }, { repos: ['one', 'two'] }])(
   'new draft inheritance uses recorded sibling repositories %j',
   ({ repos }) => {
-    const scope = {
-      ask: { repo: 'github.com/synthetic/history' },
-      peers: repos.map((repo) => ({ repo: `github.com/synthetic/${repo}` })),
+    const facts = {
+      ask: 'github.com/synthetic/history',
+      peers: repos.map((repo) => `github.com/synthetic/${repo}`),
     };
-    expect(codingTodoRepository({ check: null, named: null }, [], scope)).toBe(
+    expect(codingTodoRepository({ check: null, named: null }, [], facts)).toBe(
       repos.length === 1 ? 'github.com/synthetic/one' : null
     );
     expect(
@@ -145,7 +123,7 @@ test.each([{ repos: [] }, { repos: ['one'] }, { repos: ['one', 'two'] }])(
           },
         },
         [],
-        scope
+        facts
       )
     ).toBeNull();
   }
@@ -164,17 +142,11 @@ test('empty pack answers do not hide a later repository', () => {
   ).toBe('github.com/synthetic/canonical');
 });
 
-test('historical ask-only association stays readable without invented pack rows', async () => {
+test('historical ask-only association stays readable without invented pack rows', () => {
   store.addTodo('historical', 'ask', draft, 3);
   db.prepare('DELETE FROM pack_coding_todos WHERE todo_id=?').run('historical');
-  await command('coding.todoStorageWrites', 'prepare', []);
-  const todo = (await command('neo.todoReads', 'getTodo', ['historical'])) as NeoTodo;
-  expect(codingTodoRepository(todo, [], { ask: store.getAsk('ask'), todo })).toBe(
-    'github.com/synthetic/history'
-  );
-  expect(
-    db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get('historical')
-  ).toBeNull();
+  expect(stored('historical')).toBe('github.com/synthetic/history');
+  expect(recorded('historical')).toBeNull();
 });
 
 test('watch inventory follows the pack fact', () => {
@@ -219,7 +191,7 @@ test('the add writer publishes the pack fact notification after committing', asy
     now: 5,
   })) as { ok: boolean; todo: NeoTodo };
   expect(result.ok).toBe(true);
-  expect(result.todo.repo).toBe('github.com/synthetic/new');
+  expect(recorded('announced')).toEqual({ repo: 'github.com/synthetic/new' });
   expect(tables).toContain('pack_coding_todos');
   expect(tables).toContain('neo_todos');
 });

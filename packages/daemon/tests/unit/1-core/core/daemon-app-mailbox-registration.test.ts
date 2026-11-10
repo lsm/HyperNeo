@@ -228,7 +228,7 @@ describe('Daemon app mailbox registration', () => {
     expect(delivered).toContain('before time-consuming work');
   });
 
-  test('listening case 5: live request then leaving voice has no speak-first instruction', async () => {
+  test('listening case 5: live request then leaving voice uses a text acknowledgment', async () => {
     await recipient(true);
     await listening(true);
     const message = neoIntakeMessage({
@@ -242,7 +242,8 @@ describe('Daemon app mailbox registration', () => {
     const delivered = await modelInput(message.message.content);
     expect(delivered).toContain('[input: live_voice]');
     expect(delivered).toContain('[listening: no]');
-    expect(delivered).not.toContain('before time-consuming work');
+    expect(delivered).toContain('Before time-consuming work, publish one short reply first:');
+    expect(delivered).not.toContain('call neo.speech.say');
   });
 
   test.each(['worker report', 'scheduled wake'])(

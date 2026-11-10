@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -119,8 +120,7 @@ export function createNeoPublicationReadOperation(
 ) {
   return defineOperation({
     name: 'neo.publication.read',
-    description:
-      'Read one bounded ascending page of authored Neo replies and full details for the current public conversation. Use nextAfter for the next page or later updates, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence; this never reads SDK transcripts or starts a query.',
+    description: neoToolDescription('neo.publication.read'),
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationPageInput,
     resultSchema: z.union([

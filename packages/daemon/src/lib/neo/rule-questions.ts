@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { NEO_STANDING_RULE_MAX_CHARS, neoStandingRules } from '@hyperneo/shared/types/settings';
@@ -92,6 +93,7 @@ export function createNeoRuleQuestions(service: NeoService) {
         if (result.ok && result.changed) {
           service.publishSettings?.(service.db.getGlobalSettings());
           service.notifyChanged();
+          void service.rulesChanged();
         }
         return result.ok ? { ok: true as const } : result;
       },
@@ -102,8 +104,7 @@ export function createNeoRuleQuestions(service: NeoService) {
   return [
     defineOperation({
       name: 'neo.rule.ask',
-      description:
-        'Default path for standing-rule edits in any Neo turn: ask human yes to the exact add/remove arrays. Removal uses exact saved text. No rule changes before human yes. Pending retries reuse requestId; question_closed needs a new requestId.',
+      description: neoToolDescription('neo.rule.ask'),
       inputSchema: Ask,
       resultSchema: Result,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -111,8 +112,7 @@ export function createNeoRuleQuestions(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.rule.applyAnswer',
-      description:
-        'Apply only the immutable rule edit bound to questionId after recorded human yes, in any turn. Accepts no replacement values. Check this result after human yes: changed current rules can prevent application; a refusal leaves them unchanged. Repeated application never overwrites later changes.',
+      description: neoToolDescription('neo.rule.applyAnswer'),
       inputSchema: Apply,
       resultSchema: Result,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

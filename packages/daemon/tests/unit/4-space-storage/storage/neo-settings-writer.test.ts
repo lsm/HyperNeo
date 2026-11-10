@@ -68,7 +68,7 @@ describe('Neo settings writer ownership', () => {
     expect(settings.getGlobalSettings().neo?.preferences?.fallbacks).toEqual([]);
   });
 
-  it('refuses missing removals and retains every rule beyond twenty', async () => {
+  it('refuses missing removals and a twenty-first rule, but allows a replacement', async () => {
     await gateway.call(globalSettingsWrites, 'neoRules', {
       add: Array.from({ length: 20 }, (_, i) => `Rule ${i}`),
     });
@@ -76,14 +76,10 @@ describe('Neo settings writer ownership', () => {
     expect(
       await gateway.call(globalSettingsWrites, 'neoRules', { remove: ['missing'] })
     ).toMatchObject({ reason: { ok: false } });
-    expect(settings.getGlobalSettings()).toEqual(before);
     expect(
       await gateway.call(globalSettingsWrites, 'neoRules', { add: ['Another rule'] })
-    ).toHaveProperty('value');
-    expect(settings.getGlobalSettings().neo?.standingRules).toEqual([
-      ...before.neo!.standingRules!,
-      'Another rule',
-    ]);
+    ).toMatchObject({ reason: { ok: false, reason: expect.stringContaining('At most 20') } });
+    expect(settings.getGlobalSettings()).toEqual(before);
     expect(
       await gateway.call(globalSettingsWrites, 'neoRules', {
         remove: ['Rule 0'],
@@ -92,7 +88,6 @@ describe('Neo settings writer ownership', () => {
     ).toHaveProperty('value');
     expect(settings.getGlobalSettings().neo?.standingRules).toEqual([
       ...before.neo!.standingRules!.slice(1),
-      'Another rule',
       'Replacement',
     ]);
   });

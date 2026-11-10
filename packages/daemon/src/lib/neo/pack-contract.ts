@@ -11,6 +11,7 @@ export interface NeoPackBrief {
   id: string;
   describe: string;
   guidance?: string;
+  skill?: string;
   alwaysEnabled?: boolean;
 }
 
@@ -37,9 +38,10 @@ export type NeoTodoRepositoryDraft = Pick<NeoTodo, 'check' | 'named'> & {
   target?: NeoDriverTarget | NeoTodoTarget | null;
 };
 export type NeoTodoPolicyScope = {
-  ask: Pick<NeoAsk, 'repo'> | null;
-  todo?: Pick<NeoTodo, 'repo'> | null;
-  peers?: readonly Pick<NeoTodo, 'repo'>[];
+  workerRemotes?: readonly string[];
+  edit?: true;
+  ask: Pick<NeoAsk, 'id'> | null;
+  todo?: Pick<NeoTodo, 'id'> | null;
   start?: true;
 };
 
@@ -91,11 +93,24 @@ export interface NeoPackPreferenceDeclaration {
   askWhen?: { key: string; equals: unknown };
 }
 
+export type NeoTrackerOwner = { kind: 'ask' | 'todo'; ask: NeoAsk; todo?: NeoTodo };
+export type NeoTrackerItem = { home: string; title: string; body: string; marker: string };
+export interface NeoTrackerAdapter {
+  id: string;
+  enabled(owner: NeoTrackerOwner): boolean;
+  home(owner: NeoTrackerOwner): string | null;
+  create(item: NeoTrackerItem): Promise<{ ref: string } | { reason: string }>;
+  find(marker: string, home: string): Promise<string | null>;
+  link(parent: string, child: string): Promise<true | { reason: string }>;
+  close(ref: string, outcome: 'completed' | 'not_planned'): Promise<true | { reason: string }>;
+}
+
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   forgetRepositories?(repos: readonly string[]): void;
   operations?: readonly OperationDefinition[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
+  tracker?: NeoTrackerAdapter;
   sweep?(now: number): Promise<void>;
   stats?(now: number): Record<string, number> | Promise<Record<string, number>>;
   snapshotRows?(

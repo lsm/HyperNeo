@@ -23,9 +23,9 @@ beforeEach(() => {
     sessionId: 'neo',
     projectId: null,
     originMessageId: null,
-    repo: 'github.com/synthetic/ask',
     createdAt: 1,
   });
+  db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/ask', 'ask');
   store.addTodo(
     'todo',
     'ask',

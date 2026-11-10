@@ -29,6 +29,8 @@ for (const phase of ['initial', 'reopen']) {
   try {
     runMigrations(db, () => {}); createTables(db);
     const store = new NeoAskTodoRepository(db), sessions = new NeoTodoSessionRepository(db);
+    const packRepo = (id: string) => (db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(id) as { repo: string | null } | null)?.repo ?? null;
+    const askRepo = (id: string) => (db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get(id) as { repo: string | null }).repo;
     const unexpected = async (): Promise<never> => { throw new Error('No worker dispatch or answer is permitted'); };
     const packs = createTodoCheckPacks(db);
     const controls: NeoTodoControls = {
@@ -77,7 +79,9 @@ for (const phase of ['initial', 'reopen']) {
       assert(mixed.todos.every((todo: { askId: string }) => todo.askId === mixed.ask.id));
       assert.deepEqual(store.listChildAsks(mixed.ask.id), []);
       const ask = store.openAsk({ id: 'ask', projectId: null, sessionId: 'neo', originMessageId: null, title: 'Synthetic ask', request: 'Close unverified work visibly', createdAt: 1 });
-      const repoAsk = store.openAsk({ ...ask, id: 'repository', title: 'Repository work', repo: 'github.com/synthetic/root' });
+      const repoAsk = store.openAsk({ ...ask, id: 'repository', title: 'Repository work' });
+      db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/root', repoAsk.id);
+      const context = store.addTodo('repository-context', repoAsk.id, { title: 'Known repository', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1, 'github.com/synthetic/root');
       const draft = {
         title: 'Local work',
         check: pendingTodoCheck,
@@ -87,7 +91,7 @@ for (const phase of ['initial', 'reopen']) {
       };
       const refused = await call('neo.todo.add', { askId: repoAsk.id, ...draft }, false);
       assert(refused.reason.startsWith('place_required:'));
-      assert.deepEqual(store.listTodos(repoAsk.id), []);
+      assert.deepEqual(store.listTodos(repoAsk.id), [context]);
       const placed = await call('neo.todo.add', {
         askId: repoAsk.id, ...draft,
         target: {
@@ -98,9 +102,9 @@ for (const phase of ['initial', 'reopen']) {
           },
         },
       });
-      assert.equal(placed.todo.repo, null);
+      assert.equal(packRepo(placed.todo.id), null);
       assert.equal(placed.todo.askId, repoAsk.id);
-      assert.equal(store.getAsk(repoAsk.id)?.repo, repoAsk.repo);
+      assert.equal(askRepo(repoAsk.id), 'github.com/synthetic/root');
       const unfinished = store.addTodo('unfinished', ask.id, { title: 'Unverified delivery', doneWhen: 'Build served and observed', instruction: null, check: null, named: null }, 1);
       const ref = { adapter: 'hyperneo', id: 'synthetic-worker' };
       sessions.create(unfinished.id, { verb: 'send', ref }); sessions.recordRef(unfinished.id, ref, 2);
@@ -124,7 +128,8 @@ for (const phase of ['initial', 'reopen']) {
       await call('neo.todo.remove', { todoId: failed.id, reason: 'The human abandoned this failed step. check_failed: build exited 7' });
       const settled = await call('neo.ask.settle', { askId: ask.id, status: 'done', outcome: 'Ended after explicit per-todo decisions' });
       assert.equal(settled.ask.status, 'done');
-      store.openAsk({ id: 'child', parentId: ask.id, repo: 'github.com/synthetic/child', projectId: null, sessionId: ask.sessionId, originMessageId: null, title: 'Child card', request: 'Filed work', createdAt: 1 });
+      store.openAsk({ id: 'child', parentId: ask.id, projectId: null, sessionId: ask.sessionId, originMessageId: null, title: 'Child card', request: 'Filed work', createdAt: 1 });
+      db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/child', 'child');
       store.addTodo('legacy-child-todo', 'child', { title: 'Existing child work', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1, 'github.com/synthetic/child');
       const retry = await call('neo.ask.open', { title: ask.title, request: 'Follow-up', todos: [{ title: 'New follow-up', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } }] });
       assert.equal(retry.ask.id, ask.id); assert.equal(retry.todos.length, 4);
@@ -139,14 +144,15 @@ for (const phase of ['initial', 'reopen']) {
     const child = await call('neo.ask.read', { askId: 'child' });
     assert.equal(child.entry.ask.parentId, 'ask');
     assert.equal(child.entry.ask.status, 'open');
-    assert.equal(child.entry.ask.repo, 'github.com/synthetic/child');
+    assert(!('repo' in child.entry.ask));
+    assert.equal(askRepo('child'), 'github.com/synthetic/child');
     assert.equal(child.entry.todos[0].id, 'legacy-child-todo');
-    assert.equal(child.entry.todos[0].repo, 'github.com/synthetic/child');
+    assert.equal(packRepo('legacy-child-todo'), 'github.com/synthetic/child');
     const byTodo = await call('neo.ask.read', { todoId: 'legacy-child-todo' });
     assert.equal(byTodo.entry.ask.id, 'child');
     const local = await call('neo.ask.read', { askId: 'repository' });
-    assert.equal(local.entry.todos[0].repo, null);
-    assert.equal(local.entry.ask.repo, 'github.com/synthetic/root');
+    assert.equal(packRepo(local.entry.todos.find((todo: { title: string }) => todo.title === 'Local work').id), null);
+    assert.equal(askRepo('repository'), 'github.com/synthetic/root');
     for (const [id, state] of [['unfinished', 'removed'], ['closed', 'closed_unverified'], ['failed', 'removed']])
       assert.equal(read.entry.todos.find((todo: { id: string }) => todo.id === id)?.state, state);
     assert.equal(read.entry.doneCount, 0);

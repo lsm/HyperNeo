@@ -1451,12 +1451,13 @@ describe('neo todo runner', () => {
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
     const started = await runner.start(todo.id);
     expect(started.ok && started.todo).toMatchObject({
+      title: 'Rows',
       state: 'doing',
       startedAt: expect.any(Number),
     });
     expect(calls[0]).toMatchObject({
       name: 'work.start',
-      input: { adapter: 'hyperneo', title: 'Rows' },
+      input: { adapter: 'hyperneo', title: 'HyperNeo repo 1' },
     });
     expect(String(calls[0].input.message)).toContain('Build the rows.');
     expect(sessions.readRef(todo.id)).toEqual(ref);

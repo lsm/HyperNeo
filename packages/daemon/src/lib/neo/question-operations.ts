@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { coreTodoPolicy } from './core-todo-checks.ts';
 import { planNeoTodoDraft, type NeoTodoPolicy } from './todo-operations.ts';
 import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
@@ -287,10 +288,10 @@ const Asked = {
     'The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.'
   ),
   askId: Text.optional().describe(
-    'Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.'
+    'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.'
   ),
   input: Text.optional().describe(
-    'The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.'
+    'The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
   ),
   text: Text,
   replyTo: z.array(z.uuid()).max(100).optional(),
@@ -669,7 +670,7 @@ export function createNeoQuestionOperations(
       'binding'
     )
     .pipe(
-      (binding: ReturnType<typeof resolveNeoInputAsk>) =>
+      (binding: Awaited<ReturnType<typeof resolveNeoInputAsk>>) =>
         'reason' in binding ? binding : { value: null },
       'binding',
       'result:outcome'
@@ -1055,8 +1056,7 @@ export function createNeoQuestionOperations(
   return [
     defineOperation({
       name: 'neo.question.resolve',
-      description:
-        'Resolve an open worker card from a cited saved standing rule or earlier human answer owned by this Neo. Retires the card, stores the answer and citation, and uses its existing worker delivery/hold path. Neo or the local user on its behalf may call this. This is agent resolution, never human approval; start and confirmation cards are refused. source is {kind:"rule",text} with the exact saved text or {kind:"answer",questionId} for a human-answered card. Leave the card open when neither source applies.',
+      description: neoToolDescription('neo.question.resolve'),
       inputSchema: Resolve,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1064,8 +1064,7 @@ export function createNeoQuestionOperations(
     }),
     defineOperation({
       name: 'neo.question.ask',
-      description:
-        'Ask the human one question on an open ask you own. Refused unless a reply card asks something, no other card is open on the ask (pass replaces to change it), text fits 400 characters (the rest goes in document), it has no internal ids, and it is in the language set for the human. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; passing both when they differ is refused with ask_mismatch. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. For a working document, put its absolute path on the owning daemon in text or document with one sentence about it; attach worker handoffs using publicReference and never expose private work or evidence paths. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. Optional artifacts retains up to 16 saved or fixed-head Git references, or verified local Markdown/HTML handoff publicReference values, unchanged. Keep the question short instead of pasting the document. retireWhen is a pack check {pack,kind,params}, evaluated each sweep through the same pack check used by todos. Passing retires the card with its evidence, releases its holds and tells Neo; unreadable or unmet facts leave it open. Default: the linked todo check. Without a linked todo check, retireWhen is required (including legacy todos with no check). Its pack, kind and params must pass the same validation as a todo check; unsupported or malformed checks are refused before opening a card. Read returned records for pack warnings (for example missing PR URLs) and correct the condition before leaving a question waiting. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, closed unverified, removed or gone. If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed, supply explicit retireWhen to open the question on the ask without linking that todo; otherwise it is refused. A successful unlinked card includes a todo_closed record. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are omitted. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step; a closed question id is ignored and the new question opens on its own. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
+      description: neoToolDescription('neo.question.ask'),
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1073,8 +1072,7 @@ export function createNeoQuestionOperations(
     }),
     defineOperation({
       name: 'neo.question.retire',
-      description:
-        'Retire an open question on an ask you own when it no longer needs an answer, with the reason in one short sentence. It leaves the open questions and shows in Details as no longer needed. A card its todo is blocked on is refused until that todo is settled, so the work and the card end together. An already closed question comes back unchanged.',
+      description: neoToolDescription('neo.question.retire'),
       inputSchema: Retire,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1082,8 +1080,7 @@ export function createNeoQuestionOperations(
     }),
     defineOperation({
       name: 'neo.question.relay',
-      description:
-        "Put a worker's question in front of the human, written in your own plain words as title and 2-6 options. Use it only when you cannot answer the worker yourself. The human's answer goes back to that worker. For a session with no todo, pass session (its notice key); the daemon opens an ask following that session. Refused while another card is open on the ask, so relay once it is answered, and by the same card rules as neo.question.ask.",
+      description: neoToolDescription('neo.question.relay'),
       inputSchema: Relay,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1091,8 +1088,7 @@ export function createNeoQuestionOperations(
     }),
     defineOperation({
       name: 'neo.question.get',
-      description:
-        "Read one of Neo's questions to the human by id: its text, state, answer and optional home path/hash binding. Its document field, when present, returns the full text separately from the short card text. answeredByHuman is true only when the human answered it, by button or in their own chat; use it to check a decision another session reports. resolvedByAgent marks a cited Neo resolution, whose durable citation is in retiredReason; it is never human approval.",
+      description: neoToolDescription('neo.question.get'),
       inputSchema: Get,
       resultSchema: QuestionReadResult,
       policy: { safetyClass: 'read' },
@@ -1105,8 +1101,7 @@ export function createNeoQuestionOperations(
     }),
     defineOperation({
       name: 'neo.question.answer',
-      description:
-        "The human's answer to an open question: no or yes, the chosen options, their words, or the todos to start. The answer goes to the ask's Neo session.",
+      description: neoToolDescription('neo.question.answer'),
       inputSchema: Answer,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'human_only' },

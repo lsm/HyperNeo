@@ -30,7 +30,7 @@ export function NeoFileChip({
         <span class="block max-w-36 truncate text-xs" title={name}>
           {name}
         </span>
-        <span class="text-[10px] text-fg-faint">{formatFileSize(size)}</span>
+        <span class="text-3xs text-fg-faint">{formatFileSize(size)}</span>
       </span>
     </>
   );
@@ -69,12 +69,12 @@ export function NeoAttachments({
   onRemove: (ids: string[]) => void;
 }) {
   return (
-    <ul aria-label="Attachments" class="mb-3 flex max-h-32 flex-wrap gap-2 overflow-y-auto">
+    <ul aria-label="Attachments" class="mb-3 flex gap-2 overflow-x-auto">
       {files.map((file) => (
         <li
           key={file.id}
           data-attachment={file.id}
-          class="flex max-w-full items-center gap-2 rounded-xl border border-line bg-surface px-2 py-2"
+          class="flex max-w-full shrink-0 items-center gap-2 rounded-xl border border-line bg-surface px-2 py-2"
         >
           <NeoFileChip
             name={file.name}

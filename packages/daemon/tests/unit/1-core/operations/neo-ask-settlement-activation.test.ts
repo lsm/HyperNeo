@@ -139,7 +139,6 @@ describe('activated ask settlement', () => {
     store.openAsk({
       id: 'child',
       parentId: 'ask',
-      repo: 'github.com/fixture/child',
       title: 'Child',
       request: 'Child work',
       projectId: null,

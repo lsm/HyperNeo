@@ -220,8 +220,8 @@ function ThinkingSlider({
           aria-label="Thinking"
           aria-valuetext={options[shown].label}
           onInput={(event) => setPreview(Number((event.target as HTMLInputElement).value))}
-          onChange={(event) => pick(Number((event.target as HTMLInputElement).value))}
-          class="w-full accent-accent disabled:opacity-50"
+          onChangeCapture={(event) => pick(Number((event.target as HTMLInputElement).value))}
+          class="w-full cursor-pointer accent-accent disabled:cursor-not-allowed disabled:opacity-50"
         />
         <div aria-hidden="true" class="mt-0.5 flex justify-between px-[7px]">
           {options.map((option, index) => (

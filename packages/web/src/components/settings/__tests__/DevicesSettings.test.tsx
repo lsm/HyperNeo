@@ -63,12 +63,24 @@ function invoked(name: string): Invocation[] {
     .filter((call): call is Invocation => call?.name === name);
 }
 
-function daemon(state: { paired: boolean; pending?: unknown[] }) {
+function daemon(state: {
+  paired: boolean;
+  pending?: unknown[];
+  terminalApproval?: boolean;
+  currentId?: string;
+}) {
   const devices = [
     phone,
     relay,
-    { ...phone, id: 'desk-1', name: 'Desk browser', lastSeenHost: '127.0.0.1:9283', current: true },
+    {
+      ...phone,
+      id: state.currentId ?? 'desk-1',
+      name: 'Desk browser',
+      lastSeenHost: '127.0.0.1:9283',
+      current: true,
+    },
   ];
+  let terminalApproval = state.terminalApproval ?? true;
   let pending = state.pending ?? [];
   mockRequest.mockImplementation(async (method: string, params?: Invocation) => {
     if (!params) throw new Error(`unexpected call ${method}`);
@@ -125,6 +137,17 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
       const index = devices.findIndex((device) => device.id === input.deviceId);
       devices[index] = { ...devices[index], revokedAt: Date.now() };
       return { ok: true };
+    }
+    if (name === 'device.pair.terminal_approval.get')
+      return { ok: true, enabled: terminalApproval };
+    if (name === 'device.pair.terminal_approval.set') {
+      if (input.enabled && state.currentId?.startsWith('local-rpc:'))
+        return {
+          ok: false,
+          reason: 'not_paired: only a paired phone or browser can turn it back on.',
+        };
+      terminalApproval = input.enabled as boolean;
+      return { ok: true, enabled: terminalApproval };
     }
     if (name === 'device.pair.create')
       return {
@@ -318,5 +341,42 @@ describe('DevicesSettings', () => {
     expect(invoked('device.pair.create')).toEqual([
       { name: 'device.pair.create', input: { kind: 'relay', name: 'iMac relay' } },
     ]);
+  });
+
+  it('turns terminal approval off and back on from this paired browser', async () => {
+    daemon({ paired: true });
+    render(<DevicesSettings />);
+    const toggle = await waitFor(() =>
+      screen.getByRole('switch', { name: 'Allow from the terminal' })
+    );
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('switch', { name: 'Allow from the terminal' }).getAttribute('aria-checked')
+      ).toBe('false')
+    );
+    fireEvent.click(screen.getByRole('switch', { name: 'Allow from the terminal' }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('switch', { name: 'Allow from the terminal' }).getAttribute('aria-checked')
+      ).toBe('true')
+    );
+    expect(invoked('device.pair.terminal_approval.set').map((call) => call.input)).toEqual([
+      { enabled: false },
+      { enabled: true },
+    ]);
+  });
+
+  it('cannot turn terminal approval back on from local tools and says why', async () => {
+    daemon({ paired: true, terminalApproval: false, currentId: 'local-rpc:tools' });
+    render(<DevicesSettings />);
+    const toggle = await waitFor(() =>
+      screen.getByRole('switch', { name: 'Allow from the terminal' })
+    );
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect((toggle as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Turn this back on from a paired phone or browser.')).toBeTruthy();
+    expect(invoked('device.pair.terminal_approval.set')).toEqual([]);
   });
 });

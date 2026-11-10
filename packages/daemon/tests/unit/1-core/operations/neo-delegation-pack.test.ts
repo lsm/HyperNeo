@@ -6,6 +6,7 @@ import { neoPacks, neoPackBriefs } from '../../../../src/lib/neo/pack-selection.
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   createPackPreferenceOperations,
+  listPackPreferences,
   validatePackPreference,
 } from '../../../../src/lib/neo/preference-operations.ts';
 
@@ -55,7 +56,7 @@ describe('shared delegation preferences', () => {
     expect(neoPackBriefs(enabled, [pack])).toEqual([pack]);
   });
 
-  test('Neo sees the current values after a human setting changes', async () => {
+  test("a saved delegation preference appears exactly once in Neo's system prompt, and worker context still carries it", async () => {
     const pack = createDelegationPack(() => db);
     const set = createPackPreferenceOperations(db, () => [pack]).find(
       (op) => op.name === 'pack.preferences.set'
@@ -70,8 +71,10 @@ describe('shared delegation preferences', () => {
       { source: 'rpc', principal: 'local' }
     );
     expect(facts(pack).humanStep).toEqual({ value: 'phoneOnly', configured: true });
-    const prompt = neoPrompt([pack]);
-    expect(prompt).toContain('"humanStep":{"value":"phoneOnly","configured":true}');
+    const prompt = neoPrompt([pack], [], listPackPreferences(db));
+    expect(prompt).toContain('"key":"humanStep","value":"phoneOnly"');
+    expect(prompt.match(/"phoneOnly"/g)).toHaveLength(1);
+    expect(pack.workerContext?.()).toContain('"humanStep":{"value":"phoneOnly","configured":true}');
     expect(prompt).not.toContain('For an expired sign-in, use available browser');
     expect(pack.instructions()).toContain('the saved password manager or browser autofill');
     expect(pack.instructions()).toContain('CAPTCHAs always belong to the human');

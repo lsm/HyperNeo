@@ -66,10 +66,11 @@ export interface VoiceTranscribeInput {
   data: { audioBase64: string; mimeType: string };
   context?: { clientId?: string; sessionId?: string };
   deps: VoiceTranscribeDeps;
+  signal?: AbortSignal;
 }
 
 interface VoiceTranscribeCtx extends VoiceTranscribeInput {
-  controller: AbortController;
+  signal: AbortSignal;
   admission: VoiceTranscribeAdmission;
   clientKey: string;
   endpoint?: URL;
@@ -298,9 +299,9 @@ async function acquireTranscriptionCredentials(
       ),
       CREDENTIAL_LOOKUP_TIMEOUT_MS,
       'Voice transcription credential lookup timed out',
-      ctx.controller.signal
+      ctx.signal
     );
-  }, ctx.controller.signal);
+  }, ctx.signal);
   return {
     ...ctx,
     apiKey: key,
@@ -336,7 +337,7 @@ async function fetchTranscription(ctx: VoiceTranscribeCtx): Promise<VoiceTranscr
     ctx.form!,
     ctx.allowPrivateNetwork!,
     ctx.allowInsecureTls!,
-    ctx.controller.signal,
+    ctx.signal,
     ctx.tlsCaPem,
     ctx.deps.beforeDispatch
   );
@@ -391,21 +392,29 @@ export async function runVoiceTranscribe(
   input: VoiceTranscribeInput
 ): Promise<VoiceTranscribeOutcome> {
   const controller = new AbortController();
+  const signal = input.signal
+    ? AbortSignal.any([controller.signal, input.signal])
+    : controller.signal;
   const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_TIMEOUT_MS);
   const admission: VoiceTranscribeAdmission = {};
   try {
+    signal.throwIfAborted();
     const ctx = await runVoiceTranscribePipeline({
       data: input.data,
       context: input.context,
       clientKey: input.context?.clientId ?? input.context?.sessionId ?? 'global',
       deps: input.deps,
-      controller,
+      signal,
       admission,
     });
     return ctx.outcome ?? failed('Voice transcription produced no outcome');
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      return failed('Voice transcription timed out after 120 seconds');
+      return failed(
+        input.signal?.aborted
+          ? 'Voice transcription cancelled'
+          : 'Voice transcription timed out after 120 seconds'
+      );
     }
     return failed(error instanceof Error ? error.message : String(error));
   } finally {

@@ -4206,7 +4206,8 @@
                           "image",
                           "json",
                           "log",
-                          "text"
+                          "text",
+                          "video"
                         ],
                         "type": "string"
                       },
@@ -4554,7 +4555,8 @@
                         "image",
                         "json",
                         "log",
-                        "text"
+                        "text",
+                        "video"
                       ],
                       "type": "string"
                     },
@@ -4967,7 +4969,8 @@
                       "image",
                       "json",
                       "log",
-                      "text"
+                      "text",
+                      "video"
                     ],
                     "type": "string"
                   },
@@ -20166,7 +20169,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -20347,12 +20351,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -20458,7 +20456,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -20633,12 +20630,6 @@
                             "null"
                           ]
                         },
-                        "repo": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
                         "request": {
                           "type": "string"
                         },
@@ -20675,7 +20666,6 @@
                       "required": [
                         "id",
                         "projectId",
-                        "repo",
                         "parentId",
                         "sessionId",
                         "originMessageId",
@@ -20764,7 +20754,8 @@
                                         "image",
                                         "json",
                                         "log",
-                                        "text"
+                                        "text",
+                                        "video"
                                       ],
                                       "type": "string"
                                     },
@@ -21184,7 +21175,8 @@
                                     "image",
                                     "json",
                                     "log",
-                                    "text"
+                                    "text",
+                                    "video"
                                   ],
                                   "type": "string"
                                 },
@@ -21365,12 +21357,6 @@
                               "null"
                             ]
                           },
-                          "repo": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
                           "report": {
                             "type": [
                               "string",
@@ -21476,7 +21462,6 @@
                           "check",
                           "instruction",
                           "named",
-                          "repo",
                           "state",
                           "reason",
                           "blockedReason",
@@ -21732,6 +21717,11 @@
                           "minLength": 1,
                           "type": "string"
                         },
+                        "name": {
+                          "maxLength": 80,
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "place": {
                           "properties": {
                             "codeIdentity": {
@@ -21981,12 +21971,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "request": {
                     "type": "string"
                   },
@@ -22023,7 +22007,6 @@
                 "required": [
                   "id",
                   "projectId",
-                  "repo",
                   "parentId",
                   "sessionId",
                   "originMessageId",
@@ -22092,7 +22075,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -22261,12 +22245,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -22369,7 +22347,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -22527,12 +22504,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "request": {
                     "type": "string"
                   },
@@ -22569,7 +22540,6 @@
                 "required": [
                   "id",
                   "projectId",
-                  "repo",
                   "parentId",
                   "sessionId",
                   "originMessageId",
@@ -22638,7 +22608,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -22807,12 +22778,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -22915,7 +22880,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -23075,12 +23039,6 @@
                           "null"
                         ]
                       },
-                      "repo": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
                       "request": {
                         "type": "string"
                       },
@@ -23117,7 +23075,6 @@
                     "required": [
                       "id",
                       "projectId",
-                      "repo",
                       "parentId",
                       "sessionId",
                       "originMessageId",
@@ -23206,7 +23163,8 @@
                                       "image",
                                       "json",
                                       "log",
-                                      "text"
+                                      "text",
+                                      "video"
                                     ],
                                     "type": "string"
                                   },
@@ -23626,7 +23584,8 @@
                                   "image",
                                   "json",
                                   "log",
-                                  "text"
+                                  "text",
+                                  "video"
                                 ],
                                 "type": "string"
                               },
@@ -23807,12 +23766,6 @@
                             "null"
                           ]
                         },
-                        "repo": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
                         "report": {
                           "type": [
                             "string",
@@ -23918,7 +23871,6 @@
                         "check",
                         "instruction",
                         "named",
-                        "repo",
                         "state",
                         "reason",
                         "blockedReason",
@@ -24216,12 +24168,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "request": {
                     "type": "string"
                   },
@@ -24258,7 +24204,6 @@
                 "required": [
                   "id",
                   "projectId",
-                  "repo",
                   "parentId",
                   "sessionId",
                   "originMessageId",
@@ -24327,7 +24272,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -24496,12 +24442,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -24604,7 +24544,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -24762,12 +24701,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "request": {
                     "type": "string"
                   },
@@ -24804,7 +24737,6 @@
                 "required": [
                   "id",
                   "projectId",
-                  "repo",
                   "parentId",
                   "sessionId",
                   "originMessageId",
@@ -24873,7 +24805,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -25042,12 +24975,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -25150,7 +25077,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -25559,6 +25485,9 @@
               },
               "head": {
                 "type": "string"
+              },
+              "reminder": {
+                "type": "string"
               }
             },
             "required": [
@@ -25781,7 +25710,8 @@
                       "image",
                       "json",
                       "log",
-                      "text"
+                      "text",
+                      "video"
                     ],
                     "type": "string"
                   },
@@ -27422,7 +27352,8 @@
                                           "image",
                                           "json",
                                           "log",
-                                          "text"
+                                          "text",
+                                          "video"
                                         ],
                                         "type": "string"
                                       },
@@ -29237,6 +29168,58 @@
                   }
                 ]
               },
+              "more": {
+                "additionalProperties": false,
+                "properties": {
+                  "asks": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cursor": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "updatedAt",
+                          "id"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "cursor"
+                    ],
+                    "type": "object"
+                  },
+                  "working": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "count"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
               "mutedSessions": {
                 "items": {
                   "type": "string"
@@ -30064,12 +30047,6 @@
                             "null"
                           ]
                         },
-                        "repo": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
                         "request": {
                           "type": "string"
                         },
@@ -30106,7 +30083,6 @@
                       "required": [
                         "id",
                         "projectId",
-                        "repo",
                         "parentId",
                         "sessionId",
                         "originMessageId",
@@ -30195,7 +30171,8 @@
                                         "image",
                                         "json",
                                         "log",
-                                        "text"
+                                        "text",
+                                        "video"
                                       ],
                                       "type": "string"
                                     },
@@ -30615,7 +30592,8 @@
                                     "image",
                                     "json",
                                     "log",
-                                    "text"
+                                    "text",
+                                    "video"
                                   ],
                                   "type": "string"
                                 },
@@ -30796,12 +30774,6 @@
                               "null"
                             ]
                           },
-                          "repo": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
                           "report": {
                             "type": [
                               "string",
@@ -30907,7 +30879,6 @@
                           "check",
                           "instruction",
                           "named",
-                          "repo",
                           "state",
                           "reason",
                           "blockedReason",
@@ -30944,9 +30915,6 @@
                   "type": "object"
                 },
                 "type": "array"
-              },
-              "trimmed": {
-                "type": "string"
               },
               "wakes": {
                 "items": {
@@ -32249,7 +32217,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -32730,7 +32699,8 @@
                         "image",
                         "json",
                         "log",
-                        "text"
+                        "text",
+                        "video"
                       ],
                       "type": "string"
                     },
@@ -33052,7 +33022,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -33637,7 +33608,8 @@
                                   "image",
                                   "json",
                                   "log",
-                                  "text"
+                                  "text",
+                                  "video"
                                 ],
                                 "type": "string"
                               },
@@ -34227,7 +34199,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -34567,7 +34540,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -34641,7 +34615,7 @@
                 "type": "array"
               },
               "askId": {
-                "description": "Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.",
+                "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -34673,7 +34647,7 @@
                 "type": "boolean"
               },
               "input": {
-                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.",
+                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -34796,7 +34770,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -34870,7 +34845,7 @@
                 "type": "array"
               },
               "askId": {
-                "description": "Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.",
+                "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -34902,7 +34877,7 @@
                 "type": "boolean"
               },
               "input": {
-                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.",
+                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -35029,7 +35004,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -35103,7 +35079,7 @@
                 "type": "array"
               },
               "askId": {
-                "description": "Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.",
+                "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -35135,7 +35111,7 @@
                 "type": "boolean"
               },
               "input": {
-                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.",
+                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -35248,7 +35224,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -35519,7 +35496,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -36062,7 +36040,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -36441,7 +36420,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -36913,7 +36893,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -37337,7 +37318,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -38243,6 +38225,22 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "default": {},
         "properties": {
+          "cursor": {
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "updatedAt",
+              "id"
+            ],
+            "type": "object"
+          },
           "projectId": {
             "minLength": 1,
             "type": "string"
@@ -38334,6 +38332,58 @@
                     "type": "null"
                   }
                 ]
+              },
+              "more": {
+                "additionalProperties": false,
+                "properties": {
+                  "asks": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cursor": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "updatedAt",
+                          "id"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "cursor"
+                    ],
+                    "type": "object"
+                  },
+                  "working": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "count"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
               },
               "mutedSessions": {
                 "items": {
@@ -39162,12 +39212,6 @@
                             "null"
                           ]
                         },
-                        "repo": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
                         "request": {
                           "type": "string"
                         },
@@ -39204,7 +39248,6 @@
                       "required": [
                         "id",
                         "projectId",
-                        "repo",
                         "parentId",
                         "sessionId",
                         "originMessageId",
@@ -39293,7 +39336,8 @@
                                         "image",
                                         "json",
                                         "log",
-                                        "text"
+                                        "text",
+                                        "video"
                                       ],
                                       "type": "string"
                                     },
@@ -39713,7 +39757,8 @@
                                     "image",
                                     "json",
                                     "log",
-                                    "text"
+                                    "text",
+                                    "video"
                                   ],
                                   "type": "string"
                                 },
@@ -39894,12 +39939,6 @@
                               "null"
                             ]
                           },
-                          "repo": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
                           "report": {
                             "type": [
                               "string",
@@ -40005,7 +40044,6 @@
                           "check",
                           "instruction",
                           "named",
-                          "repo",
                           "state",
                           "reason",
                           "blockedReason",
@@ -40042,9 +40080,6 @@
                   "type": "object"
                 },
                 "type": "array"
-              },
-              "trimmed": {
-                "type": "string"
               },
               "wakes": {
                 "items": {
@@ -40518,7 +40553,7 @@
             "type": "array"
           },
           "askId": {
-            "description": "Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.",
+            "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
             "minLength": 1,
             "type": "string"
           },
@@ -40548,7 +40583,7 @@
             "type": "object"
           },
           "input": {
-            "description": "The [message id] of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.",
+            "description": "The [message id] of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
             "minLength": 1,
             "type": "string"
           },
@@ -40612,6 +40647,11 @@
                   },
                   "model": {
                     "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 80,
                     "minLength": 1,
                     "type": "string"
                   },
@@ -40822,7 +40862,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -40991,12 +41032,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -41074,7 +41109,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -41139,7 +41173,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -41308,12 +41343,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -41391,7 +41420,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -41537,7 +41565,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -41706,12 +41735,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -41789,7 +41812,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -41854,7 +41876,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -42023,12 +42046,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -42106,7 +42123,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -42235,7 +42251,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -42404,12 +42421,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -42487,7 +42498,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -42552,7 +42562,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -42721,12 +42732,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -42804,7 +42809,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -42933,7 +42937,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -43102,12 +43107,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -43185,7 +43184,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -43250,7 +43248,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -43419,12 +43418,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -43502,7 +43495,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -43614,7 +43606,8 @@
                     "image",
                     "json",
                     "log",
-                    "text"
+                    "text",
+                    "video"
                   ],
                   "type": "string"
                 },
@@ -43712,6 +43705,11 @@
                   },
                   "model": {
                     "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 80,
                     "minLength": 1,
                     "type": "string"
                   },
@@ -43925,7 +43923,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -44094,12 +44093,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -44177,7 +44170,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -44242,7 +44234,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -44411,12 +44404,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -44494,7 +44481,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -44631,7 +44617,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -44800,12 +44787,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -44883,7 +44864,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -44948,7 +44928,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -45117,12 +45098,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -45200,7 +45175,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -45324,7 +45298,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -45493,12 +45468,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -45576,7 +45545,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -45641,7 +45609,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -45810,12 +45779,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -45893,7 +45856,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -46026,7 +45988,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -46195,12 +46158,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -46278,7 +46235,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -46343,7 +46299,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -46512,12 +46469,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -46595,7 +46546,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -46719,7 +46669,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -46888,12 +46839,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -46971,7 +46916,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -47036,7 +46980,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -47205,12 +47150,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -47288,7 +47227,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",

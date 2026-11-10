@@ -1,3 +1,6 @@
+import { createWorkerNameSource } from '../drivers/worker-names.ts';
+import type { NeoWorkerNameSource } from './worker-name.ts';
+import { sweepNeoTrackerMirrors } from './tracker-mirror.ts';
 import { createQuestionRetirement } from './question-retirement.ts';
 import { neoStallReminderWrite } from '../../storage/repositories/neo-stall-reminder-write.ts';
 import { NeoSpeech } from './speech.ts';
@@ -43,7 +46,8 @@ import { z } from 'zod';
 import { readNeoSessionSource } from './session-open-source.ts';
 import { presentNeoPublications } from './publication-presentation.ts';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
+import { fillPrompt, NEO_PREFERENCE_CHANGED, NEO_SESSION_TRACK } from '@hyperneo/prompts';
+import { listPackPreferences, type PackPreferenceChange } from './preference-operations.ts';
 import type {
   GlobalSettings,
   MessageHub,
@@ -54,7 +58,11 @@ import type {
 import type { NeoQuestion, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
-import { type NeoModelPreference, neoTodoLimits } from '@hyperneo/shared/types/settings';
+import {
+  type NeoModelPreference,
+  neoStandingRules,
+  neoTodoLimits,
+} from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -95,6 +103,7 @@ import {
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
+import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import {
   neoSessionQuestionNote,
@@ -137,6 +146,8 @@ export class NeoService {
       ...this.sessionWatcher.sessionNotices,
     ];
   }
+
+  workerNames?: NeoWorkerNameSource;
 
   readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;
@@ -237,14 +248,25 @@ export class NeoService {
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
-    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, () =>
-      this.publishSettings?.(db.getGlobalSettings())
-    );
+    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, (setting) => {
+      if (setting === 'preferences') {
+        void this.refreshPackPreferences();
+        return;
+      }
+      this.publishSettings?.(db.getGlobalSettings());
+      void this.rulesChanged();
+    });
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
+    const fallbackWorkerNames = createWorkerNameSource(() => [], {
+      machine: '',
+      folder: this.userFolder,
+      name: this.userFolder,
+    });
     this.todoRunner = createNeoTodoRunner({
       write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
       store: this.todos,
       sessions: this.todoSessions,
+      workerNames: () => this.workerNames ?? fallbackWorkerNames,
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
@@ -868,7 +890,7 @@ export class NeoService {
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
-          ...neoPromptTools(this.packBriefs()),
+          ...neoPromptTools(this.packBriefs(), this.standingRules(), this.packPreferences()),
           autoCompactPercent: preference?.autoCompactPercent,
           ...(preference
             ? {
@@ -882,15 +904,62 @@ export class NeoService {
     } else {
       await this.alignCoordinatorConfig(binding.sessionId);
     }
+    await this.alignNeoSkills(binding.sessionId);
 
     return binding.sessionId;
+  }
+
+  private async alignNeoSkills(sessionId: string): Promise<void> {
+    const wanted = new Set(this.packBriefs().flatMap((pack) => (pack.skill ? [pack.skill] : [])));
+    const skills = this.db.skills.findAll();
+    if (!skills.length) return;
+    const current = this.db.getSession(sessionId)?.config.toolSelection;
+    const changes = skills
+      .filter((skill) => skill.sourceType !== 'mcp_server')
+      .map((skill) => ({
+        key: `skill:${skill.id}` as const,
+        selected:
+          skill.builtIn && skill.config.type === 'builtin' && wanted.has(skill.config.commandName),
+      }))
+      .filter((edit) => (current?.choices[edit.key]?.selected ?? false) !== edit.selected);
+    if (!changes.length) return;
+    const result = await changeSessionToolChoice(
+      { sessionId, changes },
+      {
+        capture: (id) => this.db.captureSessionRuntimeSettings(id),
+        commit: (snapshot, patch) => this.db.casSessionRuntimeSettings(snapshot, patch),
+        catalog: () => ({
+          skills,
+          registry: this.db.appMcpServers.list(),
+          overrides: this.db.mcpEnablement.listAll(),
+        }),
+        pinnedSlotVetoes: () => [],
+      }
+    );
+    if (!result.ok) {
+      this.log.warn(`Neo pack skills not selected: ${result.reason}`);
+      return;
+    }
+    const live = this.sessions.getCachedSession(sessionId)?.getSessionData();
+    if (live) live.config = { ...live.config, toolSelection: result.selection };
+    await this.events.publish('session.updated', {
+      sessionId,
+      source: 'tool-preferences',
+      session: { config: this.db.getSession(sessionId)?.config },
+    });
   }
 
   private readonly alignCoordinatorConfig = (superpipe({})('neo-session-config') as PipelineAPI)
     .input(['sessionId'])
     .pipe((sessionId: string) => this.db.getSession(sessionId), 'sessionId', 'session')
     .pipe(
-      (session: Session | null) => planNeoSessionConfig(session, this.packBriefs()),
+      (session: Session | null) =>
+        planNeoSessionConfig(
+          session,
+          this.packBriefs(),
+          this.standingRules(),
+          this.packPreferences()
+        ),
       'session',
       'config'
     )
@@ -907,6 +976,51 @@ export class NeoService {
     return this.repo.defaultBinding()?.sessionId;
   }
 
+  standingRules(): string[] {
+    return neoStandingRules(this.db.getGlobalSettings().neo);
+  }
+
+  async rulesChanged(): Promise<void> {
+    const root = this.defaultSessionId();
+    if (!root) return;
+    await this.alignCoordinatorConfig(root).catch((error) =>
+      this.log.warn('Neo prompt refresh after a standing rule change failed', error)
+    );
+  }
+
+  packPreferences() {
+    return listPackPreferences(this.db.getDatabase());
+  }
+
+  async refreshPackPreferences(): Promise<void> {
+    const root = this.defaultSessionId();
+    if (!root) return;
+    await this.alignCoordinatorConfig(root).catch((error) =>
+      this.log.warn('Neo prompt refresh after pack setting change failed', error)
+    );
+  }
+
+  async preferenceChanged(change: PackPreferenceChange): Promise<void> {
+    const root = this.defaultSessionId();
+    if (!root || !this.db.getSession(root)) return;
+    await this.refreshPackPreferences();
+    const scope =
+      change.scope.kind === 'global' ? 'global' : `${change.scope.kind} ${change.scope.key}`;
+    await this.deliverForward(
+      root,
+      `neo-preference:${crypto.randomUUID()}`,
+      fillPrompt(NEO_PREFERENCE_CHANGED, {
+        pack: change.pack,
+        key: change.key,
+        scope,
+        value: JSON.stringify(change.value),
+        before: change.before === undefined ? 'unset (default)' : JSON.stringify(change.before),
+      }),
+      root,
+      'event'
+    ).catch((error) => this.log.warn('Neo pack setting notice delivery failed', error));
+  }
+
   async openDefault(): Promise<string> {
     return openNeoDefaultSession(this.repo, () => this.open());
   }
@@ -915,6 +1029,7 @@ export class NeoService {
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
     if (id) await this.alignCoordinatorConfig(id);
+    if (id && this.db.getSession(id)) await this.alignNeoSkills(id);
     const session = id ? this.db.getSession(id) : null;
     const metadata = session?.metadata as
       | (NonNullable<typeof session>['metadata'] & { neoAutoCompactPercent?: number })
@@ -960,6 +1075,10 @@ export class NeoService {
   }
 
   async sweepPacks(): Promise<void> {
+    await sweepNeoTrackerMirrors(
+      this.db.getDatabase(),
+      this.packs().flatMap((pack) => pack.tracker ?? [])
+    ).catch((error) => this.log.warn('Tracker mirror pending', error));
     await this.catchUpOpenTodoTurns().catch((error) =>
       this.log.warn('Worker turns pending', error)
     );

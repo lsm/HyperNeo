@@ -220,7 +220,7 @@ export function buildCopilotGroups(
     const work: WorkSummary[] = inFolder
       .filter((session) => placeMatches || session.title.toLowerCase().includes(text ?? ''))
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, SESSIONS_PER_PLACE)
+      .slice(0, query.all ? undefined : SESSIONS_PER_PLACE)
       .map((session) => ({
         ref: { adapter: COPILOT_CLIENT.id, id: session.sessionId },
         title: session.title,

@@ -23,11 +23,7 @@ import {
 } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import {
-  fitNeoSnapshotBudget,
-  neoSnapshotOmitted,
-} from '../../../../src/lib/neo/snapshot-compact.ts';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+
 import { NEO_TODO_STALLED_CARD_TAIL } from '../../../../src/lib/neo/todo-state.ts';
 import { todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
 
@@ -493,77 +489,6 @@ describe('projectNeoAskEntries todo order and done todos', () => {
   });
 });
 
-describe('fitNeoSnapshotBudget with todoAsks', () => {
-  test('drops settled asks and trims todo text instead of dropping the field', () => {
-    const entry = (id: string, status: NeoAsk['status']) => ({
-      ask: {
-        id,
-        projectId: null,
-        sessionId: 'neo',
-        originMessageId: null,
-        title: id,
-        request: 'r'.repeat(2000),
-        status,
-        outcome: null,
-        createdAt: 1,
-        updatedAt: 1,
-        settledAt: null,
-      },
-      state: 'doing' as const,
-      todos: [
-        {
-          ...todo({ id: `${id}-t`, state: 'doing' }),
-          askId: id,
-          position: 0,
-          doneWhen: 'Merged',
-          check: null,
-          instruction: 'i'.repeat(4000),
-          named: null,
-          replacedBy: null,
-          addedAfterStart: false,
-          createdAt: 1,
-          updatedAt: 1,
-          startedAt: 1,
-          finishedAt: null,
-          status: '在做',
-          link: null,
-          remoteLink: null,
-        },
-      ],
-      doneCount: 0,
-      questions: [],
-    });
-    const snapshot: NeoSnapshot = {
-      ok: true,
-      sessionId: 'neo',
-      projects: [],
-      todoAsks: [
-        ...Array.from({ length: 20 }, (_, index) => entry(`open-${index}`, 'open')),
-        entry('settled', 'done'),
-      ],
-    };
-    const fitted = fitNeoSnapshotBudget(snapshot, 40_000);
-    expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(40_000);
-    expect(fitted.todoAsks?.length).toBeGreaterThan(0);
-    expect(fitted.todoAsks?.some((item) => item.ask.id === 'settled')).toBe(false);
-    expect(fitted.todoAsks?.[0].todos[0].instruction?.length).toBeLessThanOrEqual(300);
-    const dropped = 21 - (fitted.todoAsks?.length ?? 0);
-    expect(neoSnapshotOmitted(fitted, snapshot).omitted).toEqual({ asks: dropped });
-    if (dropped > 1) expect(fitted.trimmed).toContain('this is not every open ask');
-  });
-
-  test('omitted also counts the asks the listing left out', () => {
-    const listed: NeoSnapshot = {
-      ok: true,
-      sessionId: 'neo',
-      projects: [],
-      todoAsks: [],
-      omitted: { asks: 4 },
-    };
-    expect(neoSnapshotOmitted(listed, listed).omitted).toEqual({ asks: 4 });
-  });
-});
-
 describe('neoSafeSessionLink', () => {
   test('keeps app and same-origin links and refuses scripts and other hosts', () => {
     expect(neoSafeSessionLink('/session/w', false)).toBe('/session/w');
@@ -647,78 +572,6 @@ describe('NeoTodoSessionRepository.readLinks', () => {
     });
     sessions.recordLive('t', 'running', undefined, 'claude://other');
     expect(sessions.readLinks('t').remoteLink).toBeNull();
-  });
-});
-
-describe('fitNeoSnapshotBudget with packRows', () => {
-  test('halves pack rows to fit instead of dropping the asks', () => {
-    const snapshot: NeoSnapshot = {
-      ok: true,
-      sessionId: 'neo',
-      projects: [],
-      packRows: [
-        {
-          pack: 'coding',
-          rows: Array.from({ length: 100 }, (_, index) => ({
-            pr: `lsm/hyperneo#${index}`,
-            title: 't'.repeat(400),
-            state: 'waiting_review',
-          })),
-        },
-      ],
-    };
-    snapshot.packRows?.push({ ...snapshot.packRows[0], pack: 'other' });
-    const fitted = fitNeoSnapshotBudget(snapshot, 20_000);
-    expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(20_000);
-    expect(fitted.packRows?.[1].rows.length).toBe(fitted.packRows?.[0].rows.length);
-    expect(fitted.packRows?.[0].rows.length).toBeGreaterThan(0);
-    expect(fitted.packRows?.[0].rows.length).toBeLessThan(100);
-    expect(fitted.packRows?.[0].rows[0].pr).toBe('lsm/hyperneo#0');
-  });
-
-  test('keeps every open ask and its linked pack rows when step details are omitted', () => {
-    const rows = (count: number, todoId?: string) =>
-      Array.from({ length: count }, (_, index) => ({
-        pr: `lsm/hyperneo#${todoId ? 1000 + index : index}`,
-        title: 't'.repeat(80),
-        state: 'waiting_review',
-        ...(todoId ? { todoId } : {}),
-      }));
-    const ask = (n: number) =>
-      ({
-        ask: { id: `ask-${n}`, title: 'Ship', request: 'r'.repeat(5_000), status: 'open' },
-        state: 'doing',
-        todos: Array.from({ length: 20 }, (_, index) => ({
-          id: `todo-${n}-${index}`,
-          title: 'Fix',
-          doneWhen: 'Merged',
-          status: 's'.repeat(2_000),
-        })),
-        questions: [],
-      }) as unknown as NeoAskEntry;
-    const snapshot: NeoSnapshot = {
-      ok: true,
-      sessionId: 'neo',
-      projects: [],
-      todoAsks: Array.from({ length: 40 }, (_, n) => ask(n)),
-      packRows: [{ pack: 'coding', rows: [...rows(3, 'todo-0-0'), ...rows(100)] }],
-    };
-    const halved = fitNeoSnapshotBudget({ ...snapshot, todoAsks: [ask(0)] }, 20_000);
-    expect(halved.packRows?.[0].rows.filter((row) => row.todoId).length).toBe(3);
-    expect(halved.packRows?.[0].rows.length).toBeLessThan(103);
-    const trimmed = fitNeoSnapshotBudget(snapshot, 20_000);
-    expect(trimmed.todoAsks?.map((entry) => entry.ask.id)).toEqual(
-      snapshot.todoAsks?.map((entry) => entry.ask.id)
-    );
-    const retained = trimmed.todoAsks?.reduce((count, entry) => count + entry.todos.length, 0);
-    expect(retained).toBeGreaterThan(0);
-    expect(retained).toBeLessThan(800);
-    expect(Buffer.byteLength(JSON.stringify(trimmed), 'utf8')).toBeLessThanOrEqual(20_000);
-    expect(trimmed.packRows?.[0].rows.filter((row) => row.todoId).map((row) => row.pr)).toEqual([
-      'lsm/hyperneo#1000',
-      'lsm/hyperneo#1001',
-      'lsm/hyperneo#1002',
-    ]);
   });
 });
 

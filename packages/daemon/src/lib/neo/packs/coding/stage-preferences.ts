@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { CodingAssignmentsRepository } from './assignments.ts';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -140,8 +141,7 @@ export const planCodingStageTarget = (superpipe({})('coding.stage-target') as Pi
 export function createCodingWritePlanOperation(database: () => Database) {
   return defineOperation({
     name: 'neo.coding.write.plan',
-    description:
-      'Choose a Write target from available adapter/place/model/effort configurations (first candidate is the default). Applies the same repository prefer settings used by Review and Verify; reports unavailable preferences without saving defaults. Use the returned target with the existing coding todo start. This read does not start work or change assignments.',
+    description: neoToolDescription('neo.coding.write.plan'),
     inputSchema: Plan.omit({ stage: true, body: true }),
     resultSchema: z.union([
       z.object({ ok: z.literal(true), target: CodingStageTarget, fallback: z.array(z.string()) }),

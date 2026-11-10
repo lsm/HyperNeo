@@ -374,7 +374,6 @@ describe('Neo artifact taps', () => {
       ask: {
         id: 'ask',
         projectId: null,
-        repo: null,
         parentId: null,
         sessionId: 'neo',
         originMessageId: null,
@@ -458,7 +457,6 @@ describe('Neo artifact taps', () => {
       check: null,
       instruction: '',
       named: null,
-      repo: null,
       state: 'done',
       reason: null,
       blockedReason: null,
@@ -483,7 +481,6 @@ describe('Neo artifact taps', () => {
       ask: {
         id: 'ask',
         projectId: null,
-        repo: null,
         parentId: null,
         sessionId: 'neo',
         originMessageId: null,

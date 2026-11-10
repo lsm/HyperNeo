@@ -26,6 +26,7 @@ describe('Space extension configuration setter activation', () => {
             HOME: join(root, 'home'),
             TMPDIR: root,
             NODE_ENV: 'test',
+            HYPERNEO_SPACE: 'on',
             HYPERNEO_DATA_DIR: join(root, 'data'),
             LOG_LEVEL: 'warn',
           },
@@ -38,6 +39,7 @@ describe('Space extension configuration setter activation', () => {
       ).toMatchObject({
         pass: true,
         publicSpaceSetterActivated: true,
+        startupLogEvidenceDrained: true,
         mainSqlAttempts: 0,
         mainGuardSelfCheckPassed: true,
         publicCommitBeforeNotificationAndReply: true,

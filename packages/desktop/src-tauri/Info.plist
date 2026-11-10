@@ -4,5 +4,7 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>HyperNeo uses the microphone only when you click the voice input button to record audio for transcription.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>HyperNeo uses Apple Events for desktop control that you enable.</string>
 </dict>
 </plist>

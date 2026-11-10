@@ -106,6 +106,31 @@ describe('codex-desktop adapter against a Codex state database', () => {
     });
   }
 
+  test('the naming inventory includes threads beyond the normal history display limit', async () => {
+    const db = new Database(statePath);
+    const insert = db.prepare(
+      'INSERT INTO threads (id,name,cwd,source,archived,updated_at_ms) VALUES (?,?,?,?,?,?)'
+    );
+    for (let i = 0; i < 25; i++)
+      insert.run(`named-${i}`, `Codex dolmen ${i + 1}`, '/focus/dolmen', 'exec', 0, NOW - i);
+    db.close();
+    const normal = await adapter().find({
+      folder: '/focus/dolmen',
+      includeClosed: false,
+      limit: 50,
+    });
+    const all = await adapter().find({
+      folder: '/focus/dolmen',
+      includeClosed: false,
+      limit: 50,
+      all: true,
+    });
+    expect(normal.flatMap((group) => group.work)).toHaveLength(20);
+    expect(
+      all.flatMap((group) => group.work).filter((work) => work.ref.id.startsWith('named-'))
+    ).toHaveLength(25);
+  });
+
   test('prefix discovery finds older matching threads before history limits', async () => {
     const db = new Database(statePath);
     try {

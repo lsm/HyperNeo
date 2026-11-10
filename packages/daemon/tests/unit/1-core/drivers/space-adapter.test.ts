@@ -1,3 +1,5 @@
+import { createWorkerNameSource } from '../../../../src/lib/drivers/worker-names.ts';
+import { planNeoWorkerName } from '../../../../src/lib/neo/worker-name.ts';
 import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -139,6 +141,28 @@ describe('space adapter against the space tables', () => {
       ('t2', 'sp1', 2, 'finished', 'done', 30), ('t3', 'sp1', 3, 'old', 'archived', 1)`);
   });
   afterEach(() => db.close());
+
+  test('Space naming compares task names without their display numbers', async () => {
+    db.prepare('UPDATE space_tasks SET title = ? WHERE id = ?').run('HyperNeo dev-neokai 1', 't1');
+    const adapter = createSpaceAdapter({
+      readTurnEnds: async () => [],
+      db: () => db,
+      machine: 'imac',
+      searchChats: async () => [],
+      tasks: {
+        create: async () => ({ reason: 'unused' }),
+        cancel: async () => ({ reason: 'unused' }),
+        message: async () => ({ reason: 'unused' }),
+        messageAgent: async () => ({ reason: 'unused' }),
+      },
+    });
+    const [group] = await adapter.find({ includeClosed: false, limit: 20 });
+    expect(group!.work[0]!.title).toBe('#1 HyperNeo dev-neokai 1');
+    const source = createWorkerNameSource(() => [adapter], group!.place);
+    const naming = await source('space', group!.place);
+    expect(naming.taken).toContain('HyperNeo dev-neokai 1');
+    expect(planNeoWorkerName('space', naming.place, naming.taken)).toBe('HyperNeo dev-neokai 2');
+  });
 
   test('keeps every open task when closed tasks are added', async () => {
     const insert = db.prepare(`INSERT INTO space_tasks VALUES (?, 'sp1', ?, 'closed', 'done', ?)`);

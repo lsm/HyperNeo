@@ -1,3 +1,6 @@
+import { createCodingIssueTracker, planCodingIssueHome } from './issue-tracker.ts';
+import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
+import { listPackPreferences } from '../../preference-operations.ts';
 import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
 import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
 import { createCodingRetryMergeOperation } from './retry-merge-operation.ts';
@@ -38,8 +41,8 @@ import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stag
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
   describe:
-    'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
-  guidance: NEO_PACK_CODING_INSTRUCTIONS,
+    'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge. Multi-PR work uses one PR per todo, chained with after; name each opened PR with neo.todo.edit addUrls.',
+  skill: 'coding-pack',
 };
 
 export function createCodingPack(deps: {
@@ -90,6 +93,7 @@ export function createCodingPack(deps: {
     deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),
     (url) => checkCodingPrApproved(url, (repo) => deps.prLedger.policy(repo))
   );
+  const trackerOwners = () => new NeoAskTodoRepository(deps.database());
   return {
     ...CODING_PACK_BRIEF,
     readMergeFacts: readCodingDaemonMergeFacts,
@@ -109,7 +113,33 @@ export function createCodingPack(deps: {
           (async (args) => ({ data: await listNeoGithub(args), at: new Date().toISOString() })),
       }),
     ],
+    tracker: createCodingIssueTracker({
+      repositories: (askId, todoId) => deps.todoPrs.trackerRepositories(askId, todoId),
+      createdAt: (marker) => {
+        const [, kind, id] = marker.split(':');
+        if (!id) return null;
+        return (
+          (kind === 'ask' ? trackerOwners().getAsk(id) : trackerOwners().getTodo(id))?.createdAt ??
+          null
+        );
+      },
+      enabled: (repo) =>
+        listPackPreferences(deps.database(), 'coding').find(
+          (preference) =>
+            preference.key === 'mirror_issues' &&
+            preference.scope.kind === 'repo' &&
+            planCodingIssueHome([{ repo: preference.scope.key }]) === repo
+        )?.value === true,
+    }),
     preferences: {
+      mirror_issues: {
+        label: { en: 'Mirror plans to GitHub Issues', 'zh-Hans': '把计划同步到 GitHub Issues' },
+        valueLabels: {},
+        scope: 'repo',
+        type: { kind: 'boolean' },
+        default: false,
+        ask: 'Mirror plans and their todos to GitHub Issues in this private repository?',
+      },
       watchedRepos: {
         label: { en: 'Watched repositories', 'zh-Hans': '关注的仓库' },
         valueLabels: {},

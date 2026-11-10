@@ -1,3 +1,4 @@
+import { planNeoWorkerName } from './worker-name.ts';
 import {
   fillPrompt,
   NEO_WORK_BLOCKER,
@@ -12,6 +13,7 @@ import { z } from 'zod';
 import { workStartConfiguration } from '../drivers/start-configuration.ts';
 import {
   PlaceSchema,
+  type Place,
   type WorkDelivery,
   WorkDeliverySchema,
   type WorkExchangeEntry,
@@ -45,6 +47,7 @@ const NeoStartWorkTarget = z.object({
       'For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.'
     ),
   adapter: z.string().min(1).max(80),
+  name: z.string().trim().min(1).max(80).optional(),
   place: PlaceSchema.optional(),
   createFolder: z.boolean().optional(),
   preparationParameters: z
@@ -117,7 +120,8 @@ export function driverWorkCall(
   target: Exclude<NeoDriverTarget, { verb: 'read' }>,
   work: Pick<NeoWork, 'title' | 'instruction'>,
   goal: NeoWorkGoal | null = null,
-  formatGoal: (instruction: string, goal: NeoWorkGoal | null) => string = withWorkGoal
+  formatGoal: (instruction: string, goal: NeoWorkGoal | null) => string = withWorkGoal,
+  naming?: { place: Place; taken: readonly string[] }
 ): { name: 'work.start' | 'work.send'; input: Record<string, unknown> } {
   const message = formatGoal(work.instruction, goal);
   return target.verb === 'start'
@@ -126,7 +130,15 @@ export function driverWorkCall(
         input: {
           adapter: target.adapter,
           place: target.place,
-          title: work.title,
+          title:
+            target.name ??
+            (target.place?.daemon
+              ? work.title
+              : planNeoWorkerName(
+                  target.adapter,
+                  target.place ?? naming?.place,
+                  naming?.taken ?? []
+                )),
           ...(target.sessionTitle ? { sessionTitle: target.sessionTitle } : {}),
           message,
           ...(target.createFolder ? { createFolder: true } : {}),

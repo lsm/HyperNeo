@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../../../operations/registry.ts';
@@ -36,8 +37,7 @@ export function createCodingSmokeOperation(
     .endAsync('result') as (input: Input) => Promise<Result>;
   return defineOperation({
     name: 'neo.coding.smoke',
-    description:
-      'Record the assigned independent QA actor’s post-deploy smoke or explicit inapplicability. Reads actual merged-head and running-build containment facts; a failure is recorded for follow-up without changing the todo’s declared completion check. Does not merge, deploy or restart anything.',
+    description: neoToolDescription('neo.coding.smoke'),
     inputSchema: Input,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true) }),

@@ -4,6 +4,43 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.56.2] - 2026-11-09
+
+- Refresh Neo's prompt and notify it when a pack setting changes (#10295).
+- CI: fall back to the pinned Bun package when the GitHub download fails (#10309).
+- Keep coding todo sends in their worker repository, including renamed GitHub repositories (#10283, #10301).
+- Guide multi-PR work through dependent todos and attach unclaimed worker PRs to their sole coding todo (#10285, #10297).
+- Ship coding guidance as an SDK skill and finish composer interaction behavior (#10292, #10291).
+- Release transcription slots and fallback upload resources when requests are cancelled (#10299, #10303).
+
+## [0.56.1] - 2026-11-08
+
+Includes the changes listed under 0.56.0.
+
+- Avoid database-lock failures during concurrent task completion (#10287).
+
+## [0.56.0] - 2026-11-08
+
+### Neo and workers
+
+- Keep open plans through context compaction and refuse completion while todos remain unfinished (#10100, #10103, #10108, #10153).
+- Recover unavailable Codex threads with saved context and archive them through the owned app-server (#10206, #10256).
+- Add opt-in OAP session transport with owned hub processes, tool events and recovery handling (#10128, #10134, #10136, #10169).
+- Attach verified worker handoffs to cards and preview their artifacts (#10207, #10212).
+
+### Web and voice
+
+- Consolidate settings into Preferences, Connections & Services, and Sessions & Harness; expose model-specific thinking and delegation preferences (#10050, #10066, #10070, #10078, #10085).
+- Show card topics and filter cards by topic (#10218, #10223, #10227).
+- Preserve quotes, attachment placement and scroll position while messages update (#10058, #10059, #10075, #10079).
+- Use Opus for web voice uploads and retry busy speech backends within the deadline (#10140, #10221).
+
+### Pairing and security
+
+- Add pairing QR codes, two-way human confirmation and terminal approval controls (#10234, #10242, #10248).
+- Distinguish denied, expired and already-used pairing codes, and wait for pending approval (#10225, #10230, #10244, #10246, #10264).
+- Keep the daemon data directory private to its owner (#10238).
+
 ## [0.55.2] - 2026-11-06
 
 The v0.55.1 tag was never published: its desktop build failed on a wrong lockfile entry. This release carries the same changes.

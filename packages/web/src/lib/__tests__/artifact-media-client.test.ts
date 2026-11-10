@@ -28,6 +28,11 @@ async function fixture(kind = 'json', data = bytes) {
   return { hub: { request } as unknown as MessageHub, metadata, request };
 }
 describe('artifact media previews and downloads', () => {
+  it('shows unsupported video without reading its bytes before player support lands', async () => {
+    const { hub, request } = await fixture('video');
+    expect((await readArtifactPreview(hub, 'a')).state).toBe('unsupported');
+    expect(request).toHaveBeenCalledTimes(1);
+  });
   it('formats bounded JSON for the reader without interpreting HTML', async () => {
     const { hub } = await fixture();
     const result = await readArtifactPreview(hub, 'a');

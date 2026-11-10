@@ -82,9 +82,6 @@ export function createDelegationPack(database: () => Database): NeoPack {
   return {
     ...DELEGATION_PACK_BRIEF,
     preferences,
-    get guidance() {
-      return context();
-    },
     instructions: context,
     workerContext: context,
   };

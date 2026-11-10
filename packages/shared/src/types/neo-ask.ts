@@ -8,7 +8,6 @@ export interface NeoAsk {
   id: string;
   goalId?: string | null;
   projectId: string | null;
-  repo: string | null;
   parentId: string | null;
   sessionId: string;
   originMessageId: string | null;
@@ -59,7 +58,6 @@ export interface NeoTodo extends ArtifactProjection {
   check: NeoTodoCheck | null;
   instruction: string | null;
   named: Record<string, unknown> | null;
-  repo: string | null;
   state: NeoTodoState;
   reason: string | null;
   blockedReason: string | null;

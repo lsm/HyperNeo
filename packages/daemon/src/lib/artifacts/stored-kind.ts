@@ -1,5 +1,10 @@
 import { readSync } from 'node:fs';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
+import {
+  matchingVideoType,
+  VIDEO_HEADER_BYTES,
+  videoExtension,
+} from '@hyperneo/shared/types/video-container';
 import { withStoredArtifactDescriptor } from '../runtime-artifact-open.ts';
 
 const textKinds = new Map<string, ArtifactRef['kind']>([
@@ -15,10 +20,11 @@ const textKinds = new Map<string, ArtifactRef['kind']>([
 
 export function storedKind(root: string, hash: string, path: string) {
   return withStoredArtifactDescriptor(root, hash, (fd) => {
-    const head = Buffer.alloc(1024);
+    const head = Buffer.alloc(VIDEO_HEADER_BYTES);
     const count = readSync(fd, head, 0, head.length, 0);
     const bytes = head.subarray(0, count);
     const extension = path.split('.').at(-1)?.toLowerCase();
+    if (videoExtension(path)) return matchingVideoType(bytes, path) ? ('video' as const) : null;
     if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension ?? '')) {
       const magic = bytes.toString('hex');
       return (extension === 'png' && magic.startsWith('89504e470d0a1a0a')) ||

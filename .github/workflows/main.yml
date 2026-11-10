@@ -101,6 +101,9 @@ jobs:
       - name: Test main-thread DB ratchet CLI
         run: bun run test:db-main-thread
 
+      - name: Test test-type ratchet CLI
+        run: bun run test:test-types
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:

@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { neoTodoAfterRefusal } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { todoEvidenceFile } from '../work-locations.ts';
@@ -23,7 +24,7 @@ import {
   requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
-import type { NeoPack } from './pack-contract.ts';
+import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
@@ -177,6 +178,7 @@ export function createNeoAskRecordOperations(
         input: z.infer<typeof Open>,
         _caller: OperationCaller
       ): Promise<AskReceipt | Rejection> => {
+        const policies = packs();
         const origin = null;
         const priorAsk = store.findAsk(sessionId, origin, input.title, goalId);
         const family = (ask: NeoAsk | null) =>
@@ -187,20 +189,29 @@ export function createNeoAskRecordOperations(
               ]
             : [];
         const recorded = family(priorAsk);
+        const readScope: NeoTodoPolicyScope = { ask: priorAsk };
+        const storedScopes = new Map<string, NeoTodoPolicyScope>();
         const recordedRow = (
           todo: (typeof input.todos)[number],
-          scope: Pick<NeoAsk, 'id' | 'repo'> | null = priorAsk
+          scope: NeoTodoPolicyScope = readScope
         ) => {
-          const peers = recorded.filter((item) => item.askId === scope?.id);
-          const repo = neoTodoRepository(todo, packs(), { ask: scope, peers });
+          const repo = neoTodoRepository(todo, policies, scope);
+          const stored = (item: NeoTodo) => {
+            let itemScope = storedScopes.get(item.id);
+            if (!itemScope) {
+              itemScope = { ask: null, todo: item };
+              storedScopes.set(item.id, itemScope);
+            }
+            return neoTodoRepository(item, policies, itemScope);
+          };
           const filed = (item: NeoTodo) =>
             neoTodoRepository(
               { check: item.check, named: item.named, target: sessions.get(item.id) },
-              packs(),
-              { ask: scope, peers }
+              policies,
+              scope
             );
           return recorded.find(
-            (item) => item.title === todo.title && (item.repo === repo || filed(item) === repo)
+            (item) => item.title === todo.title && (stored(item) === repo || filed(item) === repo)
           );
         };
         const homeless =
@@ -220,15 +231,12 @@ export function createNeoAskRecordOperations(
             const check = withAssignedEvidence(todo.check, todoEvidenceFile('pending'));
             const reason = neoEvidenceRefusal(
               check,
-              neoTodoRepository(todo, packs(), {
-                ask: priorAsk,
-                peers: recorded.filter((item) => item.askId === priorAsk?.id),
-              }),
+              neoTodoRepository(todo, policies, readScope),
               controls.userFolder ?? neoUserFolder()
             );
             return reason
               ? { reason: { ok: false as const, reason } }
-              : planNeoTodoDraft({ ...todo, check }, packs());
+              : planNeoTodoDraft({ ...todo, check }, policies);
           })
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
@@ -249,7 +257,7 @@ export function createNeoAskRecordOperations(
           })
           .find(Boolean);
         if (badAfter) return { ok: false as const, reason: badAfter };
-        const drafts: typeof input.todos = [];
+        const drafts: ((typeof input.todos)[number] & { workerRemotes?: readonly string[] })[] = [];
         for (const todo of input.todos) {
           if (recordedRow(todo) || (priorAsk && priorAsk.status !== 'open')) {
             drafts.push(todo);
@@ -279,8 +287,10 @@ export function createNeoAskRecordOperations(
         recorded.push(...family(ask));
         const records: string[] = [];
         const ids: (string | undefined)[] = [];
+        const currentScope = priorAsk?.id === ask.id ? readScope : { ask };
+        const rows = drafts.map((todo) => recordedRow(todo, currentScope));
         for (const [index, todo] of drafts.entries()) {
-          const row = recordedRow(todo, ask);
+          const row = rows[index];
           const after = todo.after?.map((ref) =>
             typeof ref === 'number' ? (ref < index ? (ids[ref] ?? `#${ref}`) : `#${ref}`) : ref
           );
@@ -291,7 +301,7 @@ export function createNeoAskRecordOperations(
                 controls,
                 store.getAsk(ask.id)!,
                 { ...todo, ...(after ? { after } : {}) },
-                packs()
+                policies
               )
             : todo.start && isNeoTodoStartable(row)
               ? await startNeoTodoWhenFree(store, controls, store.approveTodo(row, Date.now()))
@@ -473,8 +483,7 @@ export function createNeoAskRecordOperations(
   return [
     defineOperation({
       name: 'neo.ask.open',
-      description:
-        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add; give every step that needs work an instruction and target). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another. topic is the matter's short name in the human's language, 2-6 characters (家长控制, OAP, 大学申请, 邮件); reuse a topic already on an open ask and never coin a near-synonym; use 其他 when the ask belongs to no matter.",
+      description: neoToolDescription('neo.ask.open'),
       inputSchema: Open,
       resultSchema: AskResult,
       policy: {
@@ -485,8 +494,7 @@ export function createNeoAskRecordOperations(
     }),
     defineOperation({
       name: 'neo.ask.outcome',
-      description:
-        'Record the settled focused discussion outcome on an open ask owned by this Neo. Use only an explicit report from ask.focusedSession after the human says the discussion is settled, naming this ask and its decision, documents and PRs. outcome is concise Markdown with document/PR references, not inferred approval from a relayed turn. This keeps the ask and its todos open, preserves its session link and does not stop or dispatch work. Track agreed execution using existing todos and pack checks; neo.ask.settle refuses done while todos are unfinished.',
+      description: neoToolDescription('neo.ask.outcome'),
       inputSchema: Outcome,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -494,8 +502,7 @@ export function createNeoAskRecordOperations(
     }),
     defineOperation({
       name: 'neo.ask.topic',
-      description:
-        "Set or change the topic on an open ask: a short label naming the matter it belongs to. topic is the matter's short name in the human's language, 2-6 characters (家长控制, OAP, 大学申请, 邮件); reuse a topic already on an open ask and never coin a near-synonym; use 其他 when the ask belongs to no matter. Settled asks keep their topic.",
+      description: neoToolDescription('neo.ask.topic'),
       inputSchema: TopicInput,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -503,8 +510,7 @@ export function createNeoAskRecordOperations(
     }),
     defineOperation({
       name: 'neo.ask.settle',
-      description:
-        'End an ask: done when its todos are done or explicitly closed unverified, dropped when the human drops it. Unverified todos keep that label and never count as done. Done is refused while todos are unfinished. Finish them, remove them with reasons, or use dropped when abandoning the request. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
+      description: neoToolDescription('neo.ask.settle'),
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

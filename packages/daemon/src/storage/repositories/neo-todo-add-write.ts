@@ -61,7 +61,7 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       const planned = planNeoTodoDraft(input.draft, policies);
       if ('reason' in planned) return planned;
       const peers = store.listTodos(ask.id);
-      const repo = neoTodoRepository(input.draft, policies, { ask, peers });
+      const repo = neoTodoRepository(input.draft, policies, { ask });
       const accepted = planNeoTodoDraft(input.draft, policies, peers);
       return 'reason' in accepted ? accepted : { value: { ask, repo, draft: accepted.value } };
     },

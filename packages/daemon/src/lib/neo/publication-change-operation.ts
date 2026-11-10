@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoPublication,
@@ -153,8 +154,7 @@ export function createNeoPublicationChangeOperations(runtime: NeoPublicationChan
   return [
     defineOperation({
       name: 'neo.publication.edit',
-      description:
-        'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. A verbatim reply stays verbatim: editing it with shortText is rejected as invalid_publication. Use a new requestId per revision and reuse it only when retrying that operation.',
+      description: neoToolDescription('neo.publication.edit'),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: NeoPublicationResultSchema,

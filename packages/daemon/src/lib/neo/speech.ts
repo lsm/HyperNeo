@@ -1,4 +1,5 @@
 import { createEventMessage, type MessageHub } from '@hyperneo/shared';
+import { NEO_QUICK_ACK, NEO_QUICK_ACK_LISTENING, neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
@@ -74,14 +75,16 @@ function spokenReply(text: string): string {
   return characters.length > 240 ? characters.slice(0, 239).join('') + '…' : sentences;
 }
 
+function neoHumanInputNote(listening: boolean): string {
+  return listening ? NEO_QUICK_ACK_LISTENING : NEO_QUICK_ACK;
+}
+
 const listeningInput = (superpipe({})('neo.input.listening') as PipelineAPI)
   .input(['loaded', 'listening'])
   .pipe(
     (loaded: DeliveryLoadResult, listening: boolean) =>
       `[listening: ${listening ? 'yes' : 'no'}]${
-        listening && loaded.inputKind === 'human'
-          ? '\nHuman input while listening: before time-consuming work, call neo.speech.say with one short natural acknowledgment. For a quick answer, publish with spoken instead of a separate say. Then continue.'
-          : ''
+        loaded.inputKind === 'human' ? `\n${neoHumanInputNote(listening)}` : ''
       }`,
     ['loaded', 'listening'],
     'fact'
@@ -183,8 +186,7 @@ export class NeoSpeech {
     this.operations = [
       defineOperation({
         name: 'neo.speech.listen',
-        description:
-          'Enable live spoken replies on this connected human client. No history replay.',
+        description: neoToolDescription('neo.speech.listen'),
         inputSchema: Listen,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
@@ -192,8 +194,7 @@ export class NeoSpeech {
       }),
       defineOperation({
         name: 'neo.speech.say',
-        description:
-          'Speak a short natural utterance independently of chat publications when the human enabled voice replies. Reuse requestId on retries. Acceptance is delivery, not proof of playback. No listener means no speech.',
+        description: neoToolDescription('neo.speech.say'),
         inputSchema: Say,
         resultSchema: Result,
         policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -201,7 +202,7 @@ export class NeoSpeech {
       }),
       defineOperation({
         name: 'neo.speech.preview',
-        description: 'Preview the selected voice through this server.',
+        description: neoToolDescription('neo.speech.preview'),
         inputSchema: Preview,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
@@ -209,7 +210,7 @@ export class NeoSpeech {
       }),
       defineOperation({
         name: 'neo.speech.catalog',
-        description: 'List the voices available through this server.',
+        description: neoToolDescription('neo.speech.catalog'),
         inputSchema: z.object({}),
         resultSchema: z.object({
           ok: z.boolean(),
@@ -223,7 +224,7 @@ export class NeoSpeech {
       }),
       defineOperation({
         name: 'neo.speech.ack',
-        description: 'Record playback state for speech delivered to this exact client.',
+        description: neoToolDescription('neo.speech.ack'),
         inputSchema: Ack,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },

@@ -104,7 +104,7 @@ describe('neo.todo operations', () => {
     expect(changes()).toBeGreaterThan(0);
   });
 
-  test('worker naming guidance in the add description is domain-neutral', () => {
+  test('worker naming guidance uses the project and a number', () => {
     const add = createNeoTodoOperations(
       {} as NeoAskTodoRepository,
       {} as NeoTodoSessionRepository,
@@ -112,7 +112,7 @@ describe('neo.todo operations', () => {
       () => [],
       () => null
     ).find((op) => op.name === 'neo.todo.add')!;
-    expect(add.description).not.toContain('project and a number');
+    expect(add.description).toContain('project and a number');
     expect(add.description).not.toContain('neo-ios dev 1');
     expect(add.description).toContain('never a task title');
   });
