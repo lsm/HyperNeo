@@ -13392,7 +13392,8 @@
                   "text",
                   "markdown",
                   "html",
-                  "image"
+                  "image",
+                  "video"
                 ],
                 "type": "string"
               },
@@ -13422,7 +13423,9 @@
                   "image/png",
                   "image/jpeg",
                   "image/gif",
-                  "image/webp"
+                  "image/webp",
+                  "video/mp4",
+                  "video/quicktime"
                 ],
                 "type": "string"
               },

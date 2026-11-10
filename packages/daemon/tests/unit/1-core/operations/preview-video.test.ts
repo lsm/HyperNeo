@@ -19,11 +19,11 @@ function container(brand: string, compatible = brand) {
 }
 
 describe('registered video classification', () => {
-  test('advertises registered video while live video awaits its reader', () => {
+  test('advertises registered video while clickable live video awaits its player', () => {
     expect([...ARTIFACT_KINDS]).toContain('video');
     for (const extension of ['mp4', 'mov']) {
       expect(PREVIEWABLE_FILE_EXTENSIONS.has(extension)).toBe(false);
-      expect(liveFileByteLimit(extension)).toBeNull();
+      expect(liveFileByteLimit(extension)).toBe(16 * 1024 * 1024);
     }
   });
   test('accepts matching MP4 and modern QuickTime headers only', () => {
