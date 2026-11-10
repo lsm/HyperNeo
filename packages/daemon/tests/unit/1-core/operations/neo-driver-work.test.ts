@@ -88,6 +88,13 @@ const driverWorkCall = (
 ) => buildDriverWorkCall(target, work, goal, withWorkGoal);
 
 describe('driverWorkCall', () => {
+  test('a started worker is named after the project with the next free number', () => {
+    const result = buildDriverWorkCall(startTarget, work, null, withWorkGoal, {
+      place,
+      taken: ['Codex dolmen 1', 'Codex dolmen 3'],
+    });
+    expect(result.input.title).toBe('Codex dolmen 2');
+  });
   test('a todo title never becomes a worker title', () => {
     const result = driverWorkCall(startTarget, work);
     expect(result.input.title).toBe('Codex dolmen 1');
@@ -95,6 +102,7 @@ describe('driverWorkCall', () => {
   });
   test('target.name is used as given after trimming', () => {
     const target = NeoDriverTargetSchema.parse({ ...startTarget, name: '  Codex dolmen 7  ' });
+    if (target.verb !== 'start') throw new Error('Expected a start target');
     expect(driverWorkCall(target, work).input.title).toBe('Codex dolmen 7');
   });
 
@@ -112,7 +120,7 @@ describe('driverWorkCall', () => {
       input: {
         adapter: 'codex-desktop',
         place,
-        title: 'Bigger font',
+        title: 'Codex dolmen 1',
         message: `Raise the body font to 16px.\n\n${NEO_WORK_BLOCKER}`,
       },
     });
@@ -121,7 +129,7 @@ describe('driverWorkCall', () => {
       input: {
         adapter: 'codex-desktop',
         place,
-        title: 'Bigger font',
+        title: 'Codex dolmen 1',
         message: `Raise the body font to 16px.\n\n${NEO_WORK_BLOCKER}`,
         createFolder: true,
       },

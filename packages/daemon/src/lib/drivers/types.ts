@@ -302,6 +302,7 @@ export type WorkWithdrawal = {
 export type ArchiveAdmission = () => Rejected | null;
 
 export interface FindQuery {
+  all?: true;
   idPrefix?: string;
   text?: string;
   folder?: string;

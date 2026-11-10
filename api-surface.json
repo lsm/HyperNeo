@@ -21711,6 +21711,11 @@
                           "minLength": 1,
                           "type": "string"
                         },
+                        "name": {
+                          "maxLength": 80,
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "place": {
                           "properties": {
                             "codeIdentity": {
@@ -40607,6 +40612,11 @@
                     "minLength": 1,
                     "type": "string"
                   },
+                  "name": {
+                    "maxLength": 80,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "place": {
                     "properties": {
                       "codeIdentity": {
@@ -43642,6 +43652,11 @@
                   },
                   "model": {
                     "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 80,
                     "minLength": 1,
                     "type": "string"
                   },

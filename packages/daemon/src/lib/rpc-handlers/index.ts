@@ -449,6 +449,9 @@ export async function setupRPCHandlers<SpaceServices = never>(
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
   const boundFamilyContext: FamilyOperationContext = {
     ...familyContext,
+    workerNameSource: (read) => {
+      neoService.workerNames = read;
+    },
     driverHealthNotice: async (id, text) => {
       const root = neoService.repo.defaultBinding()?.sessionId;
       if (!root) return false;

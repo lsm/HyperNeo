@@ -1,3 +1,4 @@
+import type { NeoWorkerNameSource } from './worker-name.ts';
 import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
 import { planNeoTrackerStarts } from './tracker-start-gate.ts';
@@ -77,6 +78,7 @@ const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, 
 
 export interface NeoTodoRunnerDeps {
   write: RunDbOp;
+  workerNames?: NeoWorkerNameSource;
   store: NeoAskTodoRepository;
   sessions: NeoTodoSessionRepository;
   invoke(
@@ -453,7 +455,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         doneWhen: todo.doneWhen,
         checkKind: todo.check?.kind ?? null,
       },
-      formatGoal
+      formatGoal,
+      target.verb === 'start' && !target.name
+        ? await deps.workerNames?.(target.adapter, target.place)
+        : undefined
     );
     if (target.verb === 'start' && prepare?.workerStartBrief)
       call.input.message = prepare.workerStartBrief(

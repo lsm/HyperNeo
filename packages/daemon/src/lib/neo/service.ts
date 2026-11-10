@@ -1,3 +1,4 @@
+import type { NeoWorkerNameSource } from './worker-name.ts';
 import { sweepNeoTrackerMirrors } from './tracker-mirror.ts';
 import { createQuestionRetirement } from './question-retirement.ts';
 import { neoStallReminderWrite } from '../../storage/repositories/neo-stall-reminder-write.ts';
@@ -145,6 +146,8 @@ export class NeoService {
     ];
   }
 
+  workerNames?: NeoWorkerNameSource;
+
   readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;
   private disposed = false;
@@ -257,6 +260,12 @@ export class NeoService {
       write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
       store: this.todos,
       sessions: this.todoSessions,
+      workerNames: (adapter, place) =>
+        this.workerNames?.(adapter, place) ??
+        Promise.resolve({
+          place: place ?? { machine: '', folder: this.userFolder, name: this.userFolder },
+          taken: [],
+        }),
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
