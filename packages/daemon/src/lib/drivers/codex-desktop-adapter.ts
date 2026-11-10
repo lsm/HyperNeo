@@ -1171,18 +1171,20 @@ async function genericCodexSessionTitle(
     deps,
     true
   );
+  const prefix = `Codex ${basename(projectFolder)} `;
+  const candidates = snapshot.threads.filter(
+    (thread) =>
+      !thread.archived && (requested ? thread.title === requested : thread.title.startsWith(prefix))
+  );
   const folders = new Map<string, string>();
-  for (const folder of new Set(
-    snapshot.threads.filter((thread) => !thread.archived).map((thread) => thread.folder)
-  )) {
+  for (const folder of new Set(candidates.map((thread) => thread.folder))) {
     folders.set(
       folder,
       folder === projectFolder ? folder : ((await deps.gitCheckout(folder))?.repo ?? folder)
     );
   }
-  const prefix = `Codex ${basename(projectFolder)} `;
   const names = new Set(
-    snapshot.threads
+    candidates
       .filter(
         (thread) =>
           !thread.archived && (folders.get(thread.folder) ?? thread.folder) === projectFolder

@@ -28,7 +28,9 @@ CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
 const rollout = join(run, 'rollout.jsonl');
 writeFileSync(rollout, '');
 db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('synthetic', 'Codex project 1', '', '', folder, 'desktop', 0, 1, rollout);
+db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('unrelated', 'Codex other 1', '', '', join(run, 'unrelated'), 'desktop', 0, 1, rollout);
 db.close();
+const checkoutFolders: string[] = [];
 const calls: unknown[] = [];
 let closed = 0;
 let opened = 0;
@@ -44,7 +46,7 @@ mock.module('../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts',
   createCodexDesktopAdapter: (deps: Parameters<typeof create>[0]) => create({
     ...deps,
     prepareExecution: undefined,
-    gitCheckout: async path => path === linkedFolder ? { repo: folder, linked: true } : null,
+    gitCheckout: async path => { checkoutFolders.push(path); return path === linkedFolder ? { repo: folder, linked: true } : null; },
     appServer: async () => { throw new Error('Desktop is closed'); },
     bootstrapServer: async () => { opened++; let released = false; return ({
       call: async (method, params) => {
@@ -120,9 +122,10 @@ try {
   const duplicate = await invokeOperation(registry, unnamed.name, { ...longInput, sessionTitle: longTitle }, caller);
   assert.equal((duplicate as {value:{ok:boolean}}).value.ok, false);
   assert.match((duplicate as {value:{detail:string}}).value.detail, /already in use/);
+  assert(!checkoutFolders.includes(join(run, 'unrelated')));
   assert.equal(closed, opened);
   assert(opened >= 2);
-  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, concurrent, renamed, linked, longName, duplicate, calls, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
+  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, concurrent, renamed, linked, longName, duplicate, calls, checkoutFolders, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
 } finally {
   await app.cleanup();
 }

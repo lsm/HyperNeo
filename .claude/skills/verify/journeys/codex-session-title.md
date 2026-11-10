@@ -43,3 +43,8 @@ number plus explicit duplicate refusal. It also seeds a user-linked worktree
 whose recorded Git root is the main project, and verifies that its occupied
 number is counted. The Git mapping and Codex servers are synthetic boundaries;
 actual state-file reads and the daemon operation path run in the proof.
+
+The naming inventory filters title candidates before resolving Git checkouts.
+An unrelated project title must cause no checkout lookup in the real operation
+proof. Focused tests count one lookup per distinct candidate folder, or zero
+when no stored title matches an explicitly supplied name.
