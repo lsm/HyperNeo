@@ -65,7 +65,7 @@ describe('SessionConfigHandler', () => {
       internalEventBus: mockInternalEventBus,
       settingsManager: mockSettingsManager,
       getProcessingState: () => ({ status: 'idle' }),
-      restartQuery: mock(async () => {}),
+      restartQuery: mock(async () => ({ blocked: false })),
     };
 
     handler = new SessionConfigHandler(ctx);
@@ -76,7 +76,7 @@ describe('SessionConfigHandler', () => {
     async (id) => {
       mockSession.id = id;
       let status = 'processing';
-      const restart = mock(async () => {});
+      const restart = mock(async () => ({ blocked: false }));
       const shared = new SessionConfigHandler({
         session: mockSession,
         db: mockDb,
