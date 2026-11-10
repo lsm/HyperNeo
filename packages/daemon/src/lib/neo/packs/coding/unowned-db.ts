@@ -5,8 +5,12 @@ import { CodingPrEventRepository } from './pr-events.ts';
 class CodingUnownedCommands {
   constructor(private readonly db: Database) {}
 
-  pending(now: number) {
-    return new CodingPrEventRepository(this.db).pendingUnowned(now);
+  delivery() {
+    return new CodingPrEventRepository(this.db).pendingDelivery();
+  }
+
+  pending(...args: Parameters<CodingPrEventRepository['pendingUnowned']>) {
+    return new CodingPrEventRepository(this.db).pendingUnowned(...args);
   }
 
   acknowledge(key: string) {
@@ -18,5 +22,5 @@ export const codingUnownedWrites = defineRepositoryOp(
   'coding.unowned.commands',
   'write',
   CodingUnownedCommands,
-  ['pending', 'acknowledge']
+  ['pending', 'acknowledge', 'delivery']
 );

@@ -433,6 +433,7 @@ describe('Neo MVP', () => {
       'neo.open',
       'neo.rule.save',
       'neo.session.link',
+      'neo.front.set',
       'neo.session.mute',
       'neo.coding.merge.human',
       'neo.coding.merge.retry',

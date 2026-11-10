@@ -47,6 +47,11 @@ export function createMailboxTestDb(): MailboxTestDb {
   const db = new Database(':memory:');
   createNeoContextTables(db);
   db.exec(`
+    CREATE TABLE global_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      settings TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE direct_task_session_provenance (session_id TEXT PRIMARY KEY);
     CREATE TABLE job_queue (
       id TEXT PRIMARY KEY,

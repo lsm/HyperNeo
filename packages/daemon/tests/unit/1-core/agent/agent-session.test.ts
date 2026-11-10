@@ -6548,6 +6548,70 @@ describe('AgentSession', () => {
       }
     });
 
+    it('lets Codex reach harness startup while the same daemon holds SDK delivery without a provider', async () => {
+      const db = await createTestDb();
+      const registry = initializeProviders();
+      await waitForOptionalProviderRegistration(registry);
+      const availability = registry
+        .getAll()
+        .map((provider) => spyOn(provider, 'isAvailable').mockImplementation(async () => false));
+      const anthropic = registry.get('anthropic');
+      markBuiltInProviderDisabled('anthropic');
+      registry.unregister('anthropic');
+      try {
+        const bus = await createTestInternalEventBus();
+        for (const harness of ['codex', 'sdk'] as const) {
+          const session = createTestSession(`provider-gate-${harness}`);
+          session.config = {
+            ...session.config,
+            ...(harness === 'codex' ? { harness } : {}),
+            model: 'model-no-provider-owns',
+          };
+          await db.createSession(session);
+          const uuid = `provider-gate-message-${harness}`;
+          db.getSDKMessageRepo().saveUserMessage(
+            session.id,
+            { type: 'user', uuid, message: { role: 'user', content: 'hello' } } as SDKMessage,
+            'enqueued'
+          );
+          const agent = new AgentSession(
+            session,
+            db,
+            { event: mock(async () => {}) } as unknown as MessageHub,
+            bus,
+            mock(async () => null),
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            { autoReplayPendingMessages: false }
+          );
+          const startup = mock(async () => {
+            throw new Error('harness startup reached');
+          });
+          (agent as unknown as { lifecycleManager: unknown }).lifecycleManager = {
+            ensureQueryStarted: startup,
+          };
+          const drive = agent.driveDeliveryTurn(uuid, 'hello', null, false, () => true);
+          if (harness === 'codex') {
+            await expect(drive).rejects.toThrow('harness startup reached');
+            expect(startup).toHaveBeenCalledTimes(1);
+          } else {
+            expect(await drive).toMatchObject({ outcome: 'blocked', reason: 'no_provider' });
+            expect(startup).not.toHaveBeenCalled();
+          }
+          expect(db.getSDKMessageRepo().getDeliveryContent(session.id, uuid)?.sendStatus).toBe(
+            'enqueued'
+          );
+        }
+      } finally {
+        for (const spy of availability) spy.mockRestore();
+        markBuiltInProviderEnabled('anthropic');
+        if (anthropic) registry.register(anthropic);
+        db.close();
+      }
+    });
+
     it('aborts when the session is cleaning up', async () => {
       const db = await createTestDb();
       try {

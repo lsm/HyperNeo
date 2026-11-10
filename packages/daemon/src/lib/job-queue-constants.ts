@@ -1,4 +1,5 @@
 export const MESSAGE_DELIVERY = 'message_delivery';
+export const NEO_FRONT_INFERENCE = 'neo.front';
 
 export const SESSION_TITLE_GENERATION = 'session.title_generation';
 export const GITHUB_POLL = 'github.poll';

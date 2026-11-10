@@ -1,3 +1,4 @@
+import { runMigration496 } from './m496-neo-front-inputs.ts';
 import { runMigration494 } from './m494-tracker-mirrors.ts';
 import { runMigration415 } from './m415-neo-home-path.ts';
 import { runMigration370 } from './m370-neo-project-merges.ts';
@@ -29,6 +30,7 @@ export function createNeoContextTables(db: Database): void {
 
 export function createNeoTables(db: Database): void {
   createNeoContextTables(db);
+  runMigration496(db);
   runMigration494(db);
   runMigration389(db);
   runMigration368(db);

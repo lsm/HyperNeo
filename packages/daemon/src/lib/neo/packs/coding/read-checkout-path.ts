@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { getDataDir } from '../data-dir.ts';
+import { getDataDir } from '../../../data-dir.ts';
 
 export function getNeoReadCheckoutPath(
   owner: string,

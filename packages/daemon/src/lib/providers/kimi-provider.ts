@@ -14,11 +14,7 @@ import type {
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 import { buildModelListUrl, fetchRemoteModelList } from './shared/model-list.js';
-import {
-  mergeDiscoveredModels,
-  ProviderDiscoveryCache,
-  providerDiscoveryFingerprint,
-} from './shared/discovery-cache.js';
+import { ProviderDiscoveryCache, providerDiscoveryFingerprint } from './shared/discovery-cache.js';
 import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 function normalizeBaseUrl(url: string): string {
@@ -185,18 +181,6 @@ export class KimiProvider implements Provider {
     ...KimiProvider.MODELS,
     ...KimiProvider.K31_MODELS,
   ];
-
-  private static isK31FamilyModelId(modelId: string): boolean {
-    const id = KimiProvider.normalizeKimiModelId(modelId);
-    return (
-      id === 'k3.1' ||
-      id === 'kimi-k3.1' ||
-      id === 'moonshot-k3.1' ||
-      id.startsWith('k3.1-') ||
-      id.startsWith('kimi-k3.1-') ||
-      id.startsWith('moonshot-k3.1-')
-    );
-  }
 
   private readonly env: NodeJS.ProcessEnv;
   private credentials: ProviderCredentials | null = null;
@@ -423,17 +407,6 @@ export class KimiProvider implements Provider {
     await result;
   }
 
-  private static baseModelsForRegion(region: KimiRegion): ModelInfo[] {
-    return region === 'global'
-      ? [...KimiProvider.MODELS, ...KimiProvider.K31_MODELS]
-      : [...KimiProvider.MODELS];
-  }
-
-  private static gateK31ModelsForRegion(models: ModelInfo[], region: KimiRegion): ModelInfo[] {
-    if (region === 'global') return models;
-    return models.filter((model) => !KimiProvider.isK31FamilyModelId(model.id));
-  }
-
   private resolveEffectiveRegion(): KimiRegion {
     const explicitRegion = this.env.KIMI_REGION;
     if (explicitRegion) return resolveKimiRegion(explicitRegion);
@@ -468,11 +441,11 @@ export class KimiProvider implements Provider {
     let models: ModelInfo[];
     try {
       const discovered = await this.listRemoteModels({ discoveryOnly: true });
-      models = mergeDiscoveredModels(KimiProvider.baseModelsForRegion(region), discovered);
+      models = discovered.length ? discovered : this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
     } catch {
-      models = KimiProvider.baseModelsForRegion(region);
+      models = this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
     }
-    return KimiProvider.gateK31ModelsForRegion(this.mergeCuratedModels(models), region);
+    return models;
   }
 
   setCuratedModels(models: CuratedModel[] | undefined): void {
@@ -480,17 +453,15 @@ export class KimiProvider implements Provider {
   }
 
   isCuratedModelVisible(modelId: string): boolean {
-    if (this.resolveEffectiveRegion() === 'global') return true;
-    return !KimiProvider.isK31FamilyModelId(modelId);
+    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
+    return !discovered?.length || discovered.some((model) => model.id === modelId);
   }
 
   getCachedModels(): ModelInfo[] | null {
+    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
+    if (discovered?.length) return discovered;
     if (!this.curatedModels?.length) return null;
-    const region = this.resolveEffectiveRegion();
-    return KimiProvider.gateK31ModelsForRegion(
-      this.mergeCuratedModels(KimiProvider.baseModelsForRegion(region)),
-      region
-    );
+    return this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
   }
 
   private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
@@ -558,11 +529,8 @@ export class KimiProvider implements Provider {
     discovered: ModelInfo[],
     options: ListRemoteModelsOptions
   ): ModelInfo[] {
-    if (options.discoveryOnly) return discovered;
-    return KimiProvider.gateK31ModelsForRegion(
-      this.mergeCuratedModels(discovered),
-      this.resolveEffectiveRegion()
-    );
+    if (options.discoveryOnly || discovered.length) return discovered;
+    return this.mergeCuratedModels(discovered);
   }
 
   ownsModel(modelId: string): boolean {

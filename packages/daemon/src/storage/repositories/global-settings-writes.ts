@@ -43,6 +43,13 @@ class GlobalSettingsWriter extends SettingsRepository {
     });
   }
 
+  neoFront(enabled: boolean): GlobalSettings {
+    const neo = this.getGlobalSettings().neo;
+    return super.updateGlobalSettings({
+      neo: { ...neo, front: { ...neo?.front, enabled } },
+    });
+  }
+
   neoMute(key: string, muted: boolean): GlobalSettings {
     const neo = this.getGlobalSettings().neo;
     return super.updateGlobalSettings({
@@ -116,6 +123,7 @@ export const globalSettingsWrites = defineRepositoryOp(
     'rollback',
     'neoPreferences',
     'neoMute',
+    'neoFront',
     'neoRules',
     'driverHealth',
     'readDriverHealth',
