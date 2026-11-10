@@ -105,6 +105,8 @@ describe('KimiProvider', () => {
         'k3-256k',
         'kimi-k2.7-code-highspeed',
         'kimi-for-coding',
+        'kimi-k3.1-pro',
+        'kimi-k3.1-pro-highspeed',
       ]);
       expect(models.every((m) => m.provider === 'kimi')).toBe(true);
     });
@@ -115,13 +117,37 @@ describe('KimiProvider', () => {
       expect(models).toEqual([]);
     });
 
-    it('gates static K3.1 entries to the global region', async () => {
+    it('uses nonempty china discovery instead of static or curated K3.1 entries', async () => {
+      const fetchImpl = mock(
+        async (input: unknown) =>
+          new Response(
+            JSON.stringify(
+              String(input).endsWith('/models') ? { data: [{ id: 'kimi-for-coding' }] } : {}
+            ),
+            { status: 200 }
+          )
+      ) as unknown as typeof fetch;
+      provider = new KimiProvider(
+        { KIMI_BASE_URL: KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl },
+        undefined,
+        fetchImpl
+      );
+      provider.setCredentials({ type: 'api_key', apiKey: 'test-key' });
+      provider.setCuratedModels([{ id: 'kimi-k3.1-pro' }]);
+
+      expect((await provider.getModels()).map((model) => model.id)).toEqual(['kimi-for-coding']);
+      expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['kimi-for-coding']);
+      expect(provider.isCuratedModelVisible('kimi-k3.1-pro')).toBe(false);
+      expect(provider.isCuratedModelVisible('kimi-for-coding')).toBe(true);
+    });
+
+    it('offers the same static K3.1 catalogue in both regions when discovery is unavailable', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       provider = makeProbeOkProvider();
 
       const chinaModels = await provider.getModels();
-      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
-      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro-highspeed');
+      expect(chinaModels.map((m) => m.id)).toContain('kimi-k3.1-pro');
+      expect(chinaModels.map((m) => m.id)).toContain('kimi-k3.1-pro-highspeed');
 
       provider.setDefaultRegion('global');
       const globalModels = await provider.getModels();
@@ -129,7 +155,7 @@ describe('KimiProvider', () => {
       expect(globalModels.map((m) => m.id)).toContain('kimi-k3.1-pro-highspeed');
     });
 
-    it('never offers K3.1 in the china region, even when the endpoint lists it', async () => {
+    it('offers K3.1 in the china region when the endpoint lists it', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       const fetchImpl = mock(async (input: unknown) => {
         if (String(input).endsWith('/v1/models')) {
@@ -149,13 +175,13 @@ describe('KimiProvider', () => {
       provider = new KimiProvider(process.env, undefined, fetchImpl);
 
       const chinaModels = await provider.getModels();
-      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
-      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro-highspeed');
-      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-flash');
+      expect(chinaModels.map((m) => m.id)).toContain('kimi-k3.1-pro');
+      expect(chinaModels.map((m) => m.id)).toContain('kimi-k3.1-pro-highspeed');
+      expect(chinaModels.map((m) => m.id)).toContain('kimi-k3.1-flash');
 
       const chinaRemote = await provider.listRemoteModels({ force: true });
-      expect(chinaRemote.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
-      expect(chinaRemote.map((m) => m.id)).not.toContain('kimi-k3.1-flash');
+      expect(chinaRemote.map((m) => m.id)).toContain('kimi-k3.1-pro');
+      expect(chinaRemote.map((m) => m.id)).toContain('kimi-k3.1-flash');
 
       provider.setDefaultRegion('global');
       const globalModels = await provider.getModels();
@@ -167,13 +193,13 @@ describe('KimiProvider', () => {
       expect(highspeed?.thinkingModes).toBe('granular');
     });
 
-    it('hides curated K3.1 entries in the china region', async () => {
+    it('offers curated K3.1 entries in both regions without discovery', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       provider = makeProbeOkProvider();
       provider.setCuratedModels([{ id: 'kimi-k3.1-pro' }, { id: 'kimi-for-coding' }]);
 
       const chinaModels = await provider.getModels();
-      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
+      expect(chinaModels.map((m) => m.id)).toContain('kimi-k3.1-pro');
       expect(chinaModels.map((m) => m.id)).toContain('kimi-for-coding');
 
       provider.setDefaultRegion('global');
@@ -181,13 +207,13 @@ describe('KimiProvider', () => {
       expect(globalModels.map((m) => m.id)).toContain('kimi-k3.1-pro');
     });
 
-    it('marks curated K3.1 ids invisible to generic synthesis only in the china region', () => {
+    it('allows curated models in both regions without discovery', () => {
       provider = new KimiProvider();
 
-      expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro')).toBe(false);
-      expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro-highspeed')).toBe(false);
-      expect(provider.isCuratedModelVisible?.('k3.1-pro')).toBe(false);
-      expect(provider.isCuratedModelVisible?.('kimi-k3.1-flash')).toBe(false);
+      expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro')).toBe(true);
+      expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro-highspeed')).toBe(true);
+      expect(provider.isCuratedModelVisible?.('k3.1-pro')).toBe(true);
+      expect(provider.isCuratedModelVisible?.('kimi-k3.1-flash')).toBe(true);
       expect(provider.isCuratedModelVisible?.('kimi-for-coding')).toBe(true);
       expect(provider.isCuratedModelVisible?.('kimi-k3[1m]')).toBe(true);
 
@@ -197,12 +223,12 @@ describe('KimiProvider', () => {
       expect(provider.isCuratedModelVisible?.('kimi-k3.1-flash')).toBe(true);
     });
 
-    it('gates cached curated K3.1 entries by region', async () => {
+    it('offers cached curated K3.1 entries in both regions', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       provider = makeProbeOkProvider();
       provider.setCuratedModels([{ id: 'kimi-k3.1-pro' }, { id: 'kimi-for-coding' }]);
 
-      expect(provider.getCachedModels()?.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
+      expect(provider.getCachedModels()?.map((m) => m.id)).toContain('kimi-k3.1-pro');
 
       provider.setDefaultRegion('global');
       expect(provider.getCachedModels()?.map((m) => m.id)).toContain('kimi-k3.1-pro');
@@ -225,6 +251,8 @@ describe('KimiProvider', () => {
         'k3-256k',
         'kimi-k2.7-code-highspeed',
         'kimi-for-coding',
+        'kimi-k3.1-pro',
+        'kimi-k3.1-pro-highspeed',
         'kimi-k4',
       ]);
       const synthesized = models.find((m) => m.id === 'kimi-k4');
@@ -241,7 +269,10 @@ describe('KimiProvider', () => {
 
       provider.setCuratedModels(undefined);
       expect(provider.getCachedModels()).toBeNull();
-      expect(await provider.getModels()).toEqual(KimiProvider.MODELS);
+      expect(await provider.getModels()).toEqual([
+        ...KimiProvider.MODELS,
+        ...KimiProvider.K31_MODELS,
+      ]);
     });
 
     it('probes the upstream Anthropic-compatible endpoint with the API key', async () => {
@@ -422,7 +453,7 @@ describe('KimiProvider', () => {
       return { fetchMock, calls };
     }
 
-    it('gates curated K3.1 entries by region on the non-discoveryOnly return', async () => {
+    it('keeps nonempty discovery authoritative over curated K3.1 in both regions', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       installModelListFetch([
         { data: [{ id: 'kimi-for-coding', object: 'model' }] },
@@ -437,7 +468,7 @@ describe('KimiProvider', () => {
 
       provider.setDefaultRegion('global');
       const globalModels = await provider.listRemoteModels({ force: true });
-      expect(globalModels.map((m) => m.id)).toContain('kimi-k3.1-pro');
+      expect(globalModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
     });
 
     it('uses the China OpenAI endpoint instead of the Anthropic probe endpoint by default', async () => {
@@ -662,7 +693,7 @@ describe('KimiProvider', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps curated synthesis across forced discovery refreshes', async () => {
+    it('keeps nonempty forced discovery authoritative over curated synthesis', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       const { fetchMock } = installModelListFetch([
         { data: [{ id: 'kimi-for-coding', object: 'model' }] },
@@ -674,7 +705,7 @@ describe('KimiProvider', () => {
       await provider.listRemoteModels();
       const forced = await provider.listRemoteModels({ force: true });
 
-      expect(forced.map((m) => m.id)).toEqual(['kimi-for-coding', 'kimi-k4']);
+      expect(forced.map((m) => m.id)).toEqual(['kimi-for-coding']);
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
@@ -770,7 +801,7 @@ describe('KimiProvider', () => {
       expect(models[0]?.id).toBe('kimi-k3[1m]');
     });
 
-    it('getModels merges the cached discovered list without an extra list fetch', async () => {
+    it('getModels uses only the cached discovered list without an extra list fetch', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       const { fetchMock } = installModelListFetch([
         { data: [{ id: 'kimi-for-coding', object: 'model' }] },
@@ -781,7 +812,7 @@ describe('KimiProvider', () => {
       await provider.listRemoteModels();
       const models = await provider.getModels();
 
-      expect(models).toEqual(KimiProvider.MODELS);
+      expect(models.map((model) => model.id)).toEqual(['kimi-for-coding']);
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
   });
