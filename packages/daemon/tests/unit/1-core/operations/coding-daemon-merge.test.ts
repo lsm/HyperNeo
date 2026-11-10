@@ -100,3 +100,19 @@ describe('decideCodingDaemonMerge', () => {
     expect(decideCodingDaemonMerge({ ...facts, head: '' }, policy).kind).toBe('read_failure');
   });
 });
+
+test.each(['policy', 'label'])(
+  'linked issue holds preserve the human-signoff cue (%s)',
+  (scope) => {
+    expect(
+      decideCodingDaemonMerge(
+        { ...facts, labels: ['human-merge'], linkedIssueReason: 'linked_issue_required: missing' },
+        {
+          ...policy,
+          mergePolicy: scope === 'policy' ? 'human' : 'review_bot',
+          humanSignoff: ['label:human-merge'],
+        }
+      ).kind
+    ).toBe('needs_human_signoff');
+  }
+);

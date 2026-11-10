@@ -221,3 +221,15 @@ its own fresh validation and notice, while explicit repo opt-in still resumes
 daemon merging. A known handoff holds until a new head or relevant policy change;
 its cached fact never authorizes an automatic merge. Unit coverage also holds
 new acquisitions while reconcile is failed, cooling down or below its quota floor.
+
+Run the `linked-issue` case with the wrapper to exercise the tracker merge gate.
+An opted-in repository with no closing reference or a foreign issue reference
+must execute zero merges. Closing the mirror early must leave the coding todo
+doing. A closing reference to the parent permits one SHA-pinned merge.
+
+The `linked-issue-no-row` case pins fail-open admission for an opted-in PR
+whose todo has no stored repository and cannot acquire a mirror row.
+
+The `linked-issue-cross-repo` case keeps the bound mirror in an opted-in
+repository while its PR is in a repository with mirroring disabled. The stored
+mirror home still controls the closing-reference gate.

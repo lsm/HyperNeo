@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import {
+  createCodingTodoPack,
+  CodingTodoPrRepository,
+} from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTrackerMirrorRepository } from '../../../../src/storage/repositories/neo-tracker-mirror.ts';
+import { decideCodingDaemonMerge } from '../../../../src/lib/neo/packs/coding/daemon-merge-gates.ts';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -15,6 +22,7 @@ let completeFiles: string[] | undefined;
 let finalBase: string;
 let pageBase: string;
 let calls: string[][], state: string, mergeCommit: { oid: string } | null;
+let closingIssues: { url: string }[];
 let checksReply: { stdout: string; stderr: string; exit: number } | undefined;
 const spawn: SpawnFn = (args) => {
   calls.push(args);
@@ -57,6 +65,7 @@ const spawn: SpawnFn = (args) => {
     value = {
       url,
       body: '',
+      closingIssuesReferences: closingIssues,
       state,
       headRefOid: args.at(-1)!.startsWith('headRefOid,state') ? finalHead : head,
       baseRefOid: args.at(-1)!.startsWith('headRefOid,state') ? finalBase : base,
@@ -85,6 +94,7 @@ beforeEach(() => {
   createTables(db);
   createCodingPackTables(db);
   fail = '';
+  closingIssues = [];
   checksReply = undefined;
   state = 'OPEN';
   mergeCommit = null;
@@ -305,4 +315,155 @@ test('daemon merge receipts preserve executor/head/time and acknowledge only com
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);
   await ledger.write('daemonMerge', { kind: 'notified', url, head, at: 6 });
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+});
+
+function mirroredTodo() {
+  const store = new NeoAskTodoRepository(db);
+  store.openAsk({
+    id: 'ask',
+    projectId: null,
+    sessionId: 'synthetic',
+    originMessageId: null,
+    title: 'Plan',
+    request: 'Work',
+    createdAt: 1,
+  });
+  store.addTodo(
+    'todo',
+    'ask',
+    {
+      title: 'Step',
+      instruction: 'Work',
+      named: null,
+      doneWhen: 'Merged',
+      check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+    },
+    2,
+    'synthetic/merge'
+  );
+  db.prepare(
+    "INSERT INTO neo_pack_preferences VALUES ('coding','repo','synthetic/merge','mirror_issues','true','human',1)"
+  ).run();
+  const mirrors = new NeoTrackerMirrorRepository(db);
+  for (const ownerKind of ['ask', 'todo'] as const)
+    mirrors.put({
+      ownerKind,
+      ownerId: ownerKind,
+      tracker: 'github-issues',
+      home: 'synthetic/merge',
+      ref: `synthetic/merge#${ownerKind === 'ask' ? 20 : 21}`,
+      parentRef: null,
+      state: 'bound',
+      failures: 0,
+      updatedAt: 3,
+    });
+  labels = [[]];
+}
+const mirrorPolicy = {
+  mergeBy: 'daemon',
+  mergePolicy: 'review_bot',
+  reviewBot: 'bot',
+} as const;
+
+test('no closing reference to the todo issue refuses the merge', async () => {
+  mirroredTodo();
+  const facts = await readCodingDaemonMergeFacts(db, url, spawn);
+  expect(decideCodingDaemonMerge(facts, mirrorPolicy)).toMatchObject({
+    kind: 'skip',
+    reason: expect.stringContaining('linked_issue_required:'),
+  });
+});
+
+test.each([20, 21])(
+  'a closing reference to child or parent issue %s admits the merge',
+  async (number) => {
+    mirroredTodo();
+    closingIssues = [{ url: `https://github.com/Synthetic/Merge/issues/${number}` }];
+    expect(
+      decideCodingDaemonMerge(await readCodingDaemonMergeFacts(db, url, spawn), mirrorPolicy)
+    ).toEqual({ kind: 'merge', head });
+  }
+);
+
+test('a closing reference to the same issue number in another repository refuses the merge', async () => {
+  mirroredTodo();
+  closingIssues = [{ url: 'https://github.com/other/repo/issues/21' }];
+  expect(
+    decideCodingDaemonMerge(await readCodingDaemonMergeFacts(db, url, spawn), mirrorPolicy).kind
+  ).toBe('skip');
+});
+
+test('an early closed mirror issue finishes nothing', async () => {
+  mirroredTodo();
+  const store = new NeoAskTodoRepository(db);
+  db.prepare("UPDATE neo_todos SET state='doing' WHERE id='todo'").run();
+  const mirrors = new NeoTrackerMirrorRepository(db);
+  const row = mirrors.facts().mirrors.find((row) => row.ownerId === 'todo')!;
+  mirrors.put({ ...row, state: 'closed' });
+  const pack = createCodingTodoPack(new CodingTodoPrRepository(db), async () => [
+    { url, state: 'OPEN', checks: 'passing', review: 'approved', head },
+  ]);
+  expect(await pack.check(store.getTodo('todo')!)).toMatchObject({ done: false });
+  expect(store.getTodo('todo')?.state).toBe('doing');
+});
+
+test('a closing reference to a cross-repository parent admits the merge', async () => {
+  mirroredTodo();
+  const mirrors = new NeoTrackerMirrorRepository(db);
+  const parent = mirrors.facts().mirrors.find((row) => row.ownerKind === 'ask')!;
+  mirrors.put({ ...parent, home: 'other/plan', ref: 'other/plan#20' });
+  closingIssues = [{ url: 'https://github.com/other/plan/issues/20' }];
+  expect(
+    decideCodingDaemonMerge(await readCodingDaemonMergeFacts(db, url, spawn), mirrorPolicy)
+  ).toEqual({ kind: 'merge', head });
+});
+
+test('irrelevant mirrors add zero PR ownership reads', () => {
+  mirroredTodo();
+  const store = new NeoAskTodoRepository(db);
+  const mirrors = new NeoTrackerMirrorRepository(db);
+  for (const id of ['missing', 'disabled', 'capped', 'retired']) {
+    store.openAsk({
+      id: `${id}-ask`,
+      projectId: null,
+      sessionId: 'synthetic',
+      originMessageId: null,
+      title: id,
+      request: 'Work',
+      createdAt: 1,
+    });
+    store.addTodo(
+      id,
+      `${id}-ask`,
+      {
+        title: id,
+        instruction: 'Work',
+        named: null,
+        doneWhen: 'Merged',
+        check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+      },
+      2,
+      'synthetic/merge'
+    );
+    if (id !== 'missing')
+      mirrors.put({
+        ownerKind: 'todo',
+        ownerId: id,
+        tracker: 'github-issues',
+        home: id === 'disabled' ? 'synthetic/off' : 'synthetic/merge',
+        ref: null,
+        parentRef: null,
+        state: id === 'retired' ? 'closed' : 'creating',
+        failures: id === 'capped' ? 3 : 0,
+        updatedAt: 3,
+      });
+  }
+  const repo = new CodingTodoPrRepository(db);
+  const ownership = spyOn(repo, 'linked');
+  try {
+    expect(repo.linkedIssues(url)).toHaveLength(1);
+    expect(ownership.mock.calls.map(([id]) => id)).toEqual(['todo']);
+  } finally {
+    ownership.mockRestore();
+  }
 });

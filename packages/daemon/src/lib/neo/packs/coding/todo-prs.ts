@@ -1,3 +1,6 @@
+import { NeoTrackerMirrorRepository } from '../../../../storage/repositories/neo-tracker-mirror.ts';
+import { NEO_TRACKER_FAILURE_LIMIT } from '../../tracker-mirror-plan.ts';
+import { listPackPreferences } from '../../preference-operations.ts';
 import { codingApprovalUrl } from './pr-approved.ts';
 import { CodingStageFactsRepository } from './stage-facts.ts';
 import { CodingDeliveryFactsRepository } from './delivery-facts.ts';
@@ -40,6 +43,54 @@ export class CodingTodoPrRepository {
 
   linked(todoId: string, url: string) {
     return this.urls(todoId).includes(codingPrKey(url) ?? url);
+  }
+
+  linkedIssues(url: string, todoId?: string): string[][] {
+    const pr = parsePrUrl(url)!;
+    if (pr.host !== 'github.com') return [];
+    const preferences = listPackPreferences(this.db, 'coding');
+    if (
+      !preferences.some(
+        (preference) =>
+          preference.key === 'mirror_issues' &&
+          preference.scope.kind === 'repo' &&
+          preference.value === true
+      )
+    )
+      return [];
+    const facts = new NeoTrackerMirrorRepository(this.db).facts();
+    return facts.todos
+      .filter(
+        (todo) =>
+          (!todoId || todo.id === todoId) &&
+          todo.check?.pack === 'coding' &&
+          !['done', 'removed', 'closed_unverified'].includes(todo.state) &&
+          facts.asks.some((ask) => ask.id === todo.askId && ask.status === 'open')
+      )
+      .flatMap((todo) => {
+        const rows = facts.mirrors.filter(
+          (row) =>
+            row.tracker === 'github-issues' &&
+            (row.ownerKind === 'todo' ? row.ownerId === todo.id : row.ownerId === todo.askId)
+        );
+        const own = rows.find((row) => row.ownerKind === 'todo');
+        if (!own) return [];
+        const enabled =
+          preferences.find(
+            (preference) =>
+              preference.key === 'mirror_issues' &&
+              preference.scope.kind === 'repo' &&
+              neoRepositoryIdentity(preference.scope.key)
+                ?.slice('repository:'.length)
+                .replace(/^github\.com\//, '') === own.home.toLowerCase()
+          )?.value === true;
+        if (!enabled) return [];
+        const refs = rows.flatMap((row) => row.ref ?? []);
+        if (!refs.length && (own.failures >= NEO_TRACKER_FAILURE_LIMIT || own.state === 'closed'))
+          return [];
+        if (!this.linked(todo.id, url)) return [];
+        return [refs];
+      });
   }
 
   prs(todoId: string): NeoWorkPr[] {
@@ -444,5 +495,5 @@ export const codingTodoPrReads = defineRepositoryOp(
   'coding.todoPrReads',
   'read',
   CodingTodoPrRepository,
-  ['isWaiting', 'holder']
+  ['isWaiting', 'holder', 'linkedIssues']
 );
