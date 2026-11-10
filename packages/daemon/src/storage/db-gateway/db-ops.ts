@@ -1,3 +1,4 @@
+import { neoFrontReads } from '../repositories/neo-front-read-worker.ts';
 import { neoFrontInputWrites } from '../repositories/neo-front-input-worker.ts';
 import { neoAskInputReads, neoAskInputWrites } from '../repositories/neo-ask-input-worker.ts';
 import { neoTrackerReads, neoTrackerWrites } from '../repositories/neo-tracker-mirror.ts';
@@ -211,6 +212,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     turnVectorWrites,
     neoPublicationWrites,
     neoFrontInputWrites,
+    neoFrontReads,
     neoAskSettlementReads,
     neoAskSettlementWrites,
     neoTodoMutationReads,
