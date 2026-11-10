@@ -1,10 +1,18 @@
+import { readCodingTodoWorker } from '../../../../src/lib/neo/packs/coding/worker-read.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveNeoTodoTarget } from '../../../../src/lib/neo/todo-target.ts';
-import { resolveNeoTodoDraft } from '../../../../src/lib/neo/todo-operations.ts';
+import { resolveNeoTodoDraft as resolveCoreTodoDraft } from '../../../../src/lib/neo/todo-operations.ts';
 import { createCodingTodoPolicy } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+
+function resolveNeoTodoDraft(
+  input: Parameters<typeof resolveCoreTodoDraft>[0],
+  read: Parameters<typeof resolveCoreTodoDraft>[1]
+) {
+  return resolveCoreTodoDraft(input, (ref) => readCodingTodoWorker(ref, read));
+}
 
 let fixture: string;
 let originalPath: string | undefined;
