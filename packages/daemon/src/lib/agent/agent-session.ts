@@ -2310,7 +2310,7 @@ export class AgentSession
     if (parentToolUseId !== null && parentToolUseId !== undefined) return;
     this.taskNotificationRequeryContinueMessageId = null;
     const { decision } = this.advanceTaskNotificationRequery({ kind: 'result', message });
-    if (decision.action === 'reset' || decision.action === 'issue') {
+    if (decision.action === 'reset') {
       this.resetTaskNotificationRequery();
       return;
     }
@@ -2333,6 +2333,7 @@ export class AgentSession
       void this.escalateTaskNotificationRequeryExhaustion();
       return;
     }
+    if (decision.action !== 'requery') return;
     if (
       this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration() ||
       this.taskNotificationRequeryBusyInterruptGeneration === this.getQueryGeneration()
