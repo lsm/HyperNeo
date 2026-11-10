@@ -1497,18 +1497,26 @@ describe('neo todo runner', () => {
     'new-card',
     'meaningful',
     'failed',
+    'environment-covered',
+    'environment-uncovered',
+    'restart',
   ] as const)(
     'structured blocker repeats require a successful same-state receipt and live card: %s',
     async (scenario) => {
       const h = setup(false);
       try {
         const todo = h.add();
+        const kind = scenario.startsWith('environment') ? 'environment' : 'needs_human';
         h.store.updateTodo(
           todo,
-          { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Approval required' },
+          {
+            state: 'blocked',
+            blockedBy: kind === 'environment' ? 'environment' : 'needs-human',
+            blockedReason: 'Approval required',
+          },
           2
         );
-        const question = scenario === 'uncovered' ? null : askForWorker(h, todo.id);
+        const question = scenario.endsWith('uncovered') ? null : askForWorker(h, todo.id);
         const ask = h.store.getAsk('ask')!;
         let attempts = 0;
         const delivered: string[] = [];
@@ -1538,11 +1546,13 @@ describe('neo todo runner', () => {
             { status: 'done' },
             { id, at: Date.now() + attempts + 10, message },
             tell,
-            h.sessions.turnReports,
+            scenario === 'restart' && id === 'second-block'
+              ? new NeoTodoSessionRepository(h.db).turnReports
+              : h.sessions.turnReports,
             facts
           );
         };
-        const first = send('first-block', 'Blocked (needs_human): Approval required');
+        const first = send('first-block', `Blocked (${kind}): Approval required`);
         if (scenario === 'failed')
           await expect(first).rejects.toThrow('Synthetic delivery failure');
         else await first;
@@ -1556,12 +1566,14 @@ describe('neo todo runner', () => {
           h.store.updateTodo(h.store.getTodo(todo.id)!, { blockedReason: 'Another decision' }, 3);
         const message =
           scenario === 'changed'
-            ? 'Blocked (needs_human): Another decision\r\n'
+            ? `Blocked (${kind}): Another decision\r\n`
             : scenario === 'meaningful'
-              ? 'New evidence.\nBlocked (needs_human): Approval required\r\n'
-              : 'Blocked (needs_human): Approval required\r\n';
+              ? `New evidence.\nBlocked (${kind}): Approval required\r\n`
+              : `Blocked (${kind}): Approval required\r\n`;
         await send('second-block', message);
-        expect(delivered).toHaveLength(['covered', 'failed'].includes(scenario) ? 1 : 2);
+        expect(delivered).toHaveLength(
+          ['covered', 'failed', 'environment-covered', 'restart'].includes(scenario) ? 1 : 2
+        );
       } finally {
         h.db.close();
       }

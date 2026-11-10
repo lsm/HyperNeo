@@ -347,7 +347,16 @@ test('environment blockers remind Neo with the reason while needs-human cards st
   expect(JSON.stringify(notes()[0])).toContain('retry or escalate');
 });
 
-test.each(['covered', 'unrelated', 'closed', 'changed', 'failed'] as const)(
+test.each([
+  'covered',
+  'start-covered',
+  'other-start',
+  'ask-wide',
+  'unrelated',
+  'closed',
+  'changed',
+  'failed',
+] as const)(
   'only a delivered same-state reminder with its open card is quiet: %s',
   async (scenario) => {
     add('covered');
@@ -356,13 +365,20 @@ test.each(['covered', 'unrelated', 'closed', 'changed', 'failed'] as const)(
       'ask',
       {
         text: 'Choose the next action',
-        kind: 'reply',
+        kind: scenario.includes('start') ? 'start' : 'reply',
         options: null,
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
-        todoId: scenario === 'unrelated' ? 'busy' : 'covered',
+        startTodos: scenario.includes('start')
+          ? [scenario === 'other-start' ? 'busy' : 'covered']
+          : null,
+        todoId:
+          scenario === 'ask-wide' || scenario.includes('start')
+            ? null
+            : scenario === 'unrelated'
+              ? 'busy'
+              : 'covered',
       },
       clock
     );
@@ -379,7 +395,7 @@ test.each(['covered', 'unrelated', 'closed', 'changed', 'failed'] as const)(
     }
     clock += 2 * hour;
     await service.refreshDriverWork();
-    expect(notes()).toHaveLength(scenario === 'covered' ? 1 : 2);
+    expect(notes()).toHaveLength(['covered', 'start-covered'].includes(scenario) ? 1 : 2);
     expect(service.todos.getTodo('covered')?.state).toBe('blocked');
   }
 );
