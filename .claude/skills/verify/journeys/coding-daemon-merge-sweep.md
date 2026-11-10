@@ -233,3 +233,21 @@ whose todo has no stored repository and cannot acquire a mirror row.
 The `linked-issue-cross-repo` case keeps the bound mirror in an opted-in
 repository while its PR is in a repository with mirroring disabled. The stored
 mirror home still controls the closing-reference gate.
+
+Use `assigned-review` or `bot-review-repro` for the actual public bot-then-independent
+review path. The public assign operation records bot approval separately. A real
+work.send to a synthetic manual-mode session provides an accepted receipt, which
+neo.coding.assign records as a pending independent handoff. Two sweeps then emit
+no additional sign-off wake. An open human question restores the wake while the
+handoff is pending. Resolving it restores coverage; recording the review return
+retires coverage and wakes again. Use `bot-review-cancel` for cancellation instead
+of return. No held case merges or changes preferences.
+
+The proof rejects the coverage query on the main connection. The registered
+SQLite worker owns its SQL. Focused tests preserve missing/stale/unreadable
+coverage, unaccepted or uncertain receipts, completed reviews, file sign-off and
+explicit human merge policy. Retired handoffs cannot be revived by stale retries.
+
+The independent-review modes then advance the PR head after retirement. Reusing
+the earlier receipt must be refused and the next sweep must wake Neo. A fresh
+accepted work.send receipt for the new head restores coverage without a merge.

@@ -69,6 +69,10 @@ import { workSessionWrites } from '../repositories/work-session-repository.ts';
 import { claudeDesktopOutboxWrites } from '../repositories/claude-desktop-outbox-repository.ts';
 import { codingLedgerReads, codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
 import { codingAssignmentWrites } from '../../lib/neo/packs/coding/assignments.ts';
+import {
+  codingAssignmentReads,
+  codingHandoffWrites,
+} from '../../lib/neo/packs/coding/review-merge-hold-worker.ts';
 import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
 import { codingTurnPrReads } from '../../lib/neo/packs/coding/turn-prs.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
@@ -270,6 +274,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     editStandaloneTaskWithDependencies,
     codingLedgerReads,
     codingLedgerWrites,
+    codingAssignmentReads,
+    codingHandoffWrites,
     codingAssignmentWrites,
     codingTodoPrWrites,
     codingTodoStorageWrites,

@@ -1,3 +1,6 @@
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { CodingStageFactsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/stage-facts.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTrackerMirrorRepository } from '../../../packages/daemon/src/storage/repositories/neo-tracker-mirror.ts';
 import { seedPrOwner } from './seed-pr-owner.ts';
@@ -20,6 +23,9 @@ import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
+const cancelReview = process.argv.includes('bot-review-cancel');
+const botReviewRepro = process.argv.includes('bot-review-repro') || cancelReview;
+const assignedReview = process.argv.includes('assigned-review') || botReviewRepro;
 const linkedCrossRepo = process.argv.includes('linked-issue-cross-repo');
 const linkedNoRow = process.argv.includes('linked-issue-no-row');
 const linkedIssue = process.argv.includes('linked-issue') || linkedNoRow || linkedCrossRepo;
@@ -70,7 +76,7 @@ try{
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'global',key:''},key:'watchedRepos',value:['synthetic/merge']})).ok);
  const db=app.db.getDatabase(),ledger=new CodingPrLedgerRepository(db);
  const conversation='20000000-0000-4000-8000-000000009601',root=`neo:${conversation}`;
- if(humanDefault||ciRetry){
+ if(humanDefault||ciRetry||assignedReview){
  db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,type,config,metadata) VALUES (?,'Synthetic Neo',?,'2026-11-03','2026-11-03','active','worker','{}','{}')").run(root,run);
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  }
@@ -87,15 +93,117 @@ try{
  const humanNotices:string[]=[],ownerMessages:string[]=[];
  const notices:string[]=[];let deliver=true,rejectSignoff=true;
  const snapshot=()=>JSON.parse(readFileSync(join(run,'fixture.json'),'utf8'));
- const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>linkedIssue?[{url,state:'OPEN',checks:'passing',review:'approved',head}]:[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(stoppedReady){ownerMessages.push(text);return true;}if(external&&deliver){notices.push(text);return true;}return false;},wake:async(key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return ciRetry&&deliver?neo!.wakeNeo(key,text):deliver;}},readLedgerRepo:async()=>{
- const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:snapshot().pr.headRefOid,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:largeFiles?allPaths.slice(0,100).map(path=>({path})):[{path:'src/app.ts'}],pageInfo:{hasNextPage:largeFiles}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:head},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:((pendingLedger&&!snapshot().ciReady)||humanWaiting)?{statusCheckRollup:ciStartup?{state:'PENDING'}:null,checkSuites:{totalCount:1}}:humanSibling?{statusCheckRollup:null,checkSuites:{totalCount:0}}:{statusCheckRollup:{state:'SUCCESS'}}}]}};
+ const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>linkedIssue||assignedReview?[{url,state:'OPEN',checks:'passing',review:'approved',head:snapshot().pr.headRefOid}]:[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(stoppedReady){ownerMessages.push(text);return true;}if(external&&deliver){notices.push(text);return true;}return false;},wake:async(key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return ciRetry&&deliver?neo!.wakeNeo(key,text):deliver;}},readLedgerRepo:async()=>{
+ const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:snapshot().pr.headRefOid,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:largeFiles?allPaths.slice(0,100).map(path=>({path})):[{path:'src/app.ts'}],pageInfo:{hasNextPage:largeFiles}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:snapshot().pr.headRefOid},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:((pendingLedger&&!snapshot().ciReady)||humanWaiting)?{statusCheckRollup:ciStartup?{state:'PENDING'}:null,checkSuites:{totalCount:1}}:humanSibling?{statusCheckRollup:null,checkSuites:{totalCount:0}}:{statusCheckRollup:{state:'SUCCESS'}}}]}};
  return {data:{rateLimit:{remaining:5000},repository:{nameWithOwner:'synthetic/merge',open:{pageInfo:{hasNextPage:false},nodes:terminal?[]:humanSibling?[node,{...node,number:8,isDraft:true,commits:{nodes:[{commit:{statusCheckRollup:{state:'SUCCESS'}}}]}}]:isolated?[node,{...node,number:8}]:[node]},done:{nodes:terminal?[node]:[]}}}};
  }});
  const pack=makePack();let preferences=await rpc('pack.preferences.list',{});let tick=Date.now();
  const runSweep=()=>pack.sweep!(tick+=61_000);
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
  const seedStoppedBudget=async()=>{for(let i=0;i<3;i++){const[receipt]=await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:coding-sweep',at:tick+i});assert(receipt);await ledger.write('daemonMerge',{...receipt,kind:'failed',error:'The base branch policy prohibits the merge.',at:receipt.startedAt});await ledger.write('daemonMerge',{...receipt,kind:'void',at:receipt.startedAt});}};
- if (linkedIssue) {
+ if (assignedReview) {
+   assert(![8399, 8499].includes(app.server.port));
+   const prepare = db.prepare.bind(db);
+   db.prepare = ((sql: string) => {
+     assert(!sql.includes('SELECT f.value_json AS assignment'), 'Review holds must be read off the daemon main thread');
+     return prepare(sql);
+   }) as typeof db.prepare;
+   rejectSignoff = false;
+   const store = new NeoAskTodoRepository(db);
+   store.openAsk({ id: 'review-ask', sessionId: root, projectId: null,
+     originMessageId: null, title: 'Synthetic review', request: 'Review', createdAt: 1 });
+   const todo = store.addTodo('review-todo', 'review-ask', { title: 'Synthetic change',
+     instruction: 'Build', named: null, doneWhen: 'Merged',
+     check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } } }, 2);
+   store.updateTodo(todo, { state: 'doing' }, 3);
+   const stages = new CodingStageFactsRepository(db);
+   stages.observeHead(url, head, tick);
+   const actor = { kind: 'agent' as const, id: 'synthetic-reviewer', harness: 'hyperneo', model: 'review-model' };
+   const ref = { adapter: 'hyperneo', id: actor.id };
+   pr.body = 'Agent: gpt-6.1-sol (effort: medium) via Codex';
+   publish();
+   new NeoTodoSessionRepository(db).bind(todo.id, { adapter: 'hyperneo', id: 'synthetic-writer' }, tick);
+   const assignReview = async (handoff?: unknown) => {
+     const outcome = await invokeOperation(app!.sessionManager.getOperationRegistry(), 'neo.coding.assign', {
+       todoId: todo.id, url, head: pr.headRefOid, stage: 'review', acceptanceContract: 'contract', candidates: [],
+       ...(handoff ? { handoff } : {}),
+     }, { source: 'rpc', principal: 'local', role: 'neo' });
+     assert.equal(outcome.kind, 'completed');
+     return (outcome as { value: { ok: boolean; assignment: { bot?: string; actor?: unknown; ref?: unknown } } }).value;
+   };
+   const result = await assignReview();
+   evidence.publicAssignment = result;
+   assert(result.ok, JSON.stringify(result));
+   assert.equal(result.assignment.bot, 'fixture-bot');
+   assert.equal(result.assignment.actor, undefined);
+   assert.equal(result.assignment.ref, undefined);
+   const held = () => notices.filter((text) => text.includes('requires human sign-off'));
+   await runSweep();
+   assert.equal(held().length, 1, 'Bot approval alone does not cover independent review');
+   evidence.botOnlyWakes = held().length;
+   await app.db.createSession({ id: ref.id, title: 'Synthetic reviewer', workspacePath: run,
+     createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active',
+     config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0,
+       outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+   const delivered = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.send', {
+     todoId: todo.id, ref, from: root, message: 'Review the synthetic change',
+   }, { source: 'internal', role: 'neo', sessionId: root });
+   evidence.handoffDelivery = delivered;
+   assert.equal(delivered.kind, 'completed');
+   const delivery = (delivered as { value: { ok: boolean; value: { delivered: boolean; receipt: unknown } } }).value;
+   assert(delivery.ok && delivery.value.delivered, JSON.stringify(delivered));
+   assert((await assignReview({ state: 'pending', ref, receipt: delivery.value.receipt })).ok);
+   const beforeCovered = held().length;
+   await runSweep();
+   await runSweep();
+   evidence.observedHoldWakes = held().length - beforeCovered;
+   assert.equal(held().length, beforeCovered);
+   assert.equal(mergeCalls().length, 0);
+   evidence.coveredHoldWakes = held().length - beforeCovered;
+   evidence.reviewReadOffMainThread = true;
+   store.askQuestion('review-decision', 'review-ask', { todoId: todo.id,
+     text: 'Choose next step', kind: 'reply', options: null, multiple: false,
+     noLabel: null, yesLabel: null, startTodos: null }, tick);
+   await runSweep();
+   assert.equal(held().length, beforeCovered + 1);
+   evidence.humanDecisionWakes = 1;
+   store.retireQuestion(store.listQuestions('review-ask')[0], 'Synthetic decision resolved', null, tick);
+   await runSweep();
+   assert.equal(held().length, beforeCovered + 1);
+   const terminalState = cancelReview ? 'cancelled' : 'returned';
+   assert((await assignReview({ state: terminalState, ref })).ok);
+   await runSweep();
+   assert.equal(held().length, beforeCovered + 2);
+   evidence.retiredReviewState = terminalState;
+   evidence.finishedReviewWakes = 1;
+   pr.headRefOid = 'b'.repeat(40);
+   review.commit_id = pr.headRefOid;
+   publish();
+   stages.observeHead(url, pr.headRefOid, tick);
+   assert((await assignReview()).ok);
+   assert(!(await assignReview({ state: 'pending', ref, receipt: delivery.value.receipt })).ok);
+   const beforeNewHead = held().length;
+   await runSweep();
+   assert.equal(held().length, beforeNewHead + 1, 'An old receipt must not silence a new head');
+   evidence.newHeadWithOldReceiptWakes = 1;
+   const freshDelivery = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.send', {
+     todoId: todo.id, ref, from: root, message: 'Review the revised synthetic change',
+   }, { source: 'internal', role: 'neo', sessionId: root });
+   assert.equal(freshDelivery.kind, 'completed');
+   const fresh = (freshDelivery as { value: { ok: boolean; value: { delivered: boolean; receipt: unknown } } }).value;
+   assert(fresh.ok && fresh.value.delivered, JSON.stringify(freshDelivery));
+   assert((await assignReview({ state: 'pending', ref, receipt: fresh.value.receipt })).ok);
+   await runSweep();
+   assert.equal(held().length, beforeNewHead + 1, 'A fresh accepted handoff covers only the new head');
+   evidence.newHeadWithFreshReceiptWakes = 0;
+   assert.equal(mergeCalls().length, 0);
+   assert.equal(store.getTodo(todo.id)?.state, 'doing');
+   assert.equal(store.listQuestions('review-ask')[0].state, 'retired');
+   assert.deepEqual(await rpc('pack.preferences.list', {}), preferences);
+   evidence.mergeCommands = mergeCalls();
+   evidence.savedPreferencesUnchanged = true;
+   evidence.verified = true;
+ } else if (linkedIssue) {
    const mirrorHome = linkedCrossRepo ? 'synthetic/mirror-a' : 'synthetic/merge';
    const store = new NeoAskTodoRepository(db);
    store.openAsk({ id: 'mirror-ask', projectId: null, sessionId: 'synthetic', originMessageId: null,

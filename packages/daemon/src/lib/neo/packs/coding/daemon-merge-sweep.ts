@@ -1,3 +1,5 @@
+import { CodingAssignmentsRepository } from './assignments.ts';
+import { codingReviewCoversMergeHold } from './review-merge-hold.ts';
 import {
   CODING_DAEMON_MERGE_MAX_ATTEMPTS,
   planCodingMergeAttempt,
@@ -283,7 +285,17 @@ export function createCodingDaemonMergeSweep(
         !['attempted', 'read_failure', 'already_attempted'].includes(outcome)
       )
         log.warn('Daemon merge held', { url: candidate.url, reason: outcome });
-      if (outcome === 'needs_human_signoff')
+      if (
+        outcome === 'needs_human_signoff' &&
+        !codingReviewCoversMergeHold(
+          current,
+          candidate.policy,
+          candidate.head,
+          await new CodingAssignmentsRepository(database())
+            .reviewHoldsCurrent(candidate.url, candidate.head)
+            .catch(() => [])
+        )
+      )
         await delivery
           .wake(
             `coding-daemon-signoff:${candidate.url}:${candidate.head}`,

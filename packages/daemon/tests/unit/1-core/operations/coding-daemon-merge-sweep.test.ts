@@ -1,3 +1,6 @@
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { CodingAssignmentsRepository } from '../../../../src/lib/neo/packs/coding/assignments.ts';
+import { CodingStageFactsRepository } from '../../../../src/lib/neo/packs/coding/stage-facts.ts';
 import {
   CodingPrSweepRepository,
   sweepCodingPrs,
@@ -109,12 +112,17 @@ const spawn: SpawnFn = (args) => {
       labels: [],
       mergeCommit: state === 'MERGED' ? { oid: 'c'.repeat(40) } : null,
     };
+  const candidateUrl = args.some(
+    (arg) => arg === url.replace('/1', '/2') || arg.includes('/pulls/2/') || arg === 'number=2'
+  )
+    ? url.replace('/1', '/2')
+    : url;
   const broken =
     (fail && args.some((a) => a.includes(fail))) ||
     (hideOutcome && state === 'MERGED' && args[2] !== 'merge') ||
     (mergeFailed && args[2] === 'merge');
   return {
-    stdout: new Response(JSON.stringify(data ?? {})).body,
+    stdout: new Response(JSON.stringify(data ?? {}).replaceAll(url, candidateUrl)).body,
     stderr: new Response(mergeFailed && args[2] === 'merge' ? 'Required check still settling' : '')
       .body,
     exited: Promise.resolve(broken ? 1 : 0),
@@ -194,6 +202,130 @@ afterEach(() => {
   db.close();
 });
 describe('daemon merge sweep behavior', () => {
+  test.each([
+    'covered',
+    'no-assignment',
+    'old-head',
+    'finished-review',
+    'human-question',
+    'closed-todo',
+    'file-signoff',
+    'human-policy',
+    'bot-assignment',
+  ])('a human-merge hold preserves the actionable counterpart: %s', async (scenario) => {
+    labels = ['human-merge'];
+    const store = new NeoAskTodoRepository(db);
+    store.openAsk({
+      id: 'review-ask',
+      sessionId: 'neo',
+      projectId: null,
+      originMessageId: null,
+      title: 'Review',
+      request: 'Review this work',
+      createdAt: 1,
+    });
+    const todo = store.addTodo(
+      'review-todo',
+      'review-ask',
+      {
+        title: 'Change',
+        instruction: 'Build',
+        doneWhen: 'Merged',
+        named: null,
+        check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+      },
+      2
+    );
+    store.updateTodo(todo, { state: scenario === 'closed-todo' ? 'done' : 'doing' }, 3);
+    const assignedHead = scenario === 'old-head' ? 'b'.repeat(40) : head;
+    const stages = new CodingStageFactsRepository(db);
+    stages.observeHead(url, assignedHead, 4);
+    const actor = {
+      kind: 'agent' as const,
+      id: 'reviewer',
+      harness: 'hyperneo',
+      model: 'review-model',
+    };
+    const ref = { adapter: 'hyperneo', id: 'reviewer' };
+    if (scenario !== 'no-assignment')
+      expect(
+        new CodingAssignmentsRepository(db).record(todo.id, 'review', {
+          url,
+          head: assignedHead,
+          acceptanceContract: 'contract',
+          newDispatch: true,
+          write: { adapter: 'hyperneo', id: 'writer' },
+          ...(scenario === 'bot-assignment' ? { bot: 'bot' } : { actor, ref }),
+        })
+      ).toBe(true);
+    if (!['no-assignment', 'bot-assignment'].includes(scenario))
+      db.prepare("INSERT INTO pack_facts(todo_id,pack,key,value_json) VALUES(?,'coding',?,?)").run(
+        todo.id,
+        `review-handoff:${url}:${assignedHead}`,
+        JSON.stringify({
+          state: scenario === 'finished-review' ? 'returned' : 'pending',
+          ref,
+          receipt: { executionId: ref.id, inputId: 'review' },
+        })
+      );
+    if (scenario === 'finished-review')
+      stages.record({
+        url,
+        head,
+        stage: 'review',
+        actor,
+        ref,
+        verdict: 'pass',
+        acceptanceContract: 'contract',
+        evidence: ['Reviewed'],
+      });
+    if (scenario === 'human-question')
+      store.askQuestion(
+        'decision',
+        'review-ask',
+        {
+          todoId: todo.id,
+          kind: 'reply',
+          text: 'Choose the next step',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+        },
+        5
+      );
+    if (scenario === 'file-signoff') files = ['docs/design/change.md'];
+    if (scenario === 'human-policy') policy('mergePolicy', 'human');
+    await sweep()(10);
+    expect(merges()).toEqual([]);
+    expect(notices).toHaveLength(scenario === 'covered' ? 0 : 1);
+  });
+
+  test('an unavailable review lookup preserves this hold notice and the next candidate', async () => {
+    labels = ['human-merge'];
+    const second = 'https://github.com/synthetic/merge/pull/2';
+    await ledger.write(
+      'replace',
+      'synthetic/merge',
+      [...ledger.list(), { ...ledger.list()[0], number: 2 }],
+      2
+    );
+    const lookup = spyOn(CodingAssignmentsRepository.prototype, 'reviewHoldsCurrent')
+      .mockResolvedValue([])
+      .mockRejectedValueOnce(new Error('Read queue full'));
+    try {
+      await expect(sweep()(10)).resolves.toBeUndefined();
+      expect(notices).toEqual([
+        expect.stringContaining(url + ' requires human sign-off'),
+        expect.stringContaining(second + ' requires human sign-off'),
+      ]);
+      expect(merges()).toEqual([]);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   test('accepting a stopped budget preserves failures and still caps the next budget', async () => {
     for (let episode = 0; episode < 2; episode++) {
       for (let i = 0; i < 3; i++) {
