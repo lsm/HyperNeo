@@ -1,3 +1,4 @@
+import { WorkDeliveryInputRepository } from '../../../../src/storage/repositories/work-delivery-input-repository';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
 import { afterEach, describe, test, expect } from 'bun:test';
@@ -175,6 +176,57 @@ describe('coding actor assignments', () => {
       }
     }
   );
+  test.each(['unaccepted', 'uncertain', 'pending', 'returned', 'cancelled'] as const)(
+    'records independent review handoff lifecycle after bot assignment: %s',
+    async (state) => {
+      const f = fixture();
+      f.set('reviewBot', 'fixture-bot');
+      expect(await f.assign()).toMatchObject({ ok: true, assignment: { bot: 'fixture-bot' } });
+      const ref = { adapter: 'hyperneo', id: 'independent-reviewer' };
+      const receipt = { executionId: ref.id, inputId: 'accepted-review' };
+      if (state !== 'unaccepted') {
+        const inputs = new WorkDeliveryInputRepository(f.db);
+        const dispatch = await inputs.accept(
+          'todo',
+          'neo-fixture',
+          { verb: 'send', ref },
+          'Review',
+          2
+        );
+        await inputs.recordOutcome(
+          dispatch,
+          {
+            ref,
+            receipt,
+            delivery: {
+              delivered: true,
+              receipt,
+              ...(state === 'uncertain' ? { unconfirmed: true } : {}),
+            },
+          },
+          3
+        );
+      }
+      const pending = { state: 'pending', ref, receipt };
+      const result = await f.assign({ candidates: [], handoff: pending });
+      if (state === 'unaccepted' || state === 'uncertain') {
+        expect(result).toMatchObject({ ok: false });
+        return;
+      }
+      expect(result).toMatchObject({ ok: true, reviewHandoff: { state: 'pending', ref } });
+      expect(await f.assign({ candidates: [], handoff: pending })).toMatchObject({ ok: true });
+      if (state !== 'pending') {
+        expect(await f.assign({ candidates: [], handoff: { state, ref } })).toMatchObject({
+          ok: true,
+          reviewHandoff: { state, ref },
+        });
+        expect(await f.assign({ candidates: [], handoff: pending })).toMatchObject({ ok: false });
+      }
+      expect(f.assignments.read('todo', url, head).review).toMatchObject({ bot: 'fixture-bot' });
+      expect(f.starts).toHaveLength(0);
+    }
+  );
+
   test('configured bot suppresses all reviewer starts, including explicit human/preferences, but permits independent Verify', async () => {
     const f = fixture();
     f.set('reviewBot', 'fixture-bot');
