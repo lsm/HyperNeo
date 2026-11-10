@@ -2440,7 +2440,7 @@ export class AgentSession
     const advanced = advanceTaskNotificationRequeryEpisode(prior, signal, {
       followUpQueued: signal.kind === 'result' ? this.hasQueuedFollowUpDelivery() : false,
     });
-    if (advanced.decision.action !== 'reset' || (prior !== null && !prior.closed)) {
+    if (advanced.episode !== prior) {
       void this.persistTaskNotificationRequeryEpisode(advanced.episode);
     }
     return advanced;
@@ -2645,7 +2645,7 @@ export class AgentSession
       if (this.taskNotificationRequeryContinueMessageId === continueMessageId) {
         this.taskNotificationRequeryContinueMessageId = null;
       }
-      this.handleTaskNotificationRequeryFailure();
+      this.handleTaskNotificationRequeryFailure('delivery-failed');
     }
   }
 
@@ -2668,9 +2668,11 @@ export class AgentSession
     this.flushPendingTaskNotificationRequery();
   }
 
-  private handleTaskNotificationRequeryFailure(): void {
+  private handleTaskNotificationRequeryFailure(
+    signal: 'attempt-failed' | 'delivery-failed' = 'attempt-failed'
+  ): void {
     if (this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()) return;
-    const { decision } = this.advanceTaskNotificationRequery({ kind: 'attempt-failed' });
+    const { decision } = this.advanceTaskNotificationRequery({ kind: signal });
     if (decision.action === 'escalate') {
       this.taskNotificationRequeryExhausted = true;
       void this.escalateTaskNotificationRequeryExhaustion();
@@ -2720,7 +2722,6 @@ export class AgentSession
         handledBySpaceService: false,
       } as typeof event & import('../internal-event-bus.ts').InternalEventPayload;
       await this.internalEventBus.publish('space.workflowRun.needsAttention', payload);
-      if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
       if (!payload.handledBySpaceService) {
         this.logger.warn(
           `task-notification requery: needs-attention escalation had no handler for space ` +
@@ -2730,7 +2731,6 @@ export class AgentSession
       }
       this.finishTaskNotificationRequeryEscalation(episode);
     } catch (error) {
-      if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
       if (payload?.handledBySpaceService) {
         this.logger.warn(
           `task-notification requery: needs-attention escalation was delivered to space ` +
@@ -2750,12 +2750,14 @@ export class AgentSession
   }
 
   private finishTaskNotificationRequeryEscalation(episode: TaskNotificationRequeryEpisode): void {
+    const current = this.taskNotificationRequeryEpisode;
     if (
-      this.taskNotificationRequeryEpisode === episode &&
-      episode.escalation === 'pending' &&
-      !episode.closed
+      current &&
+      !current.closed &&
+      current.episode === episode.episode &&
+      current.escalation === 'pending'
     ) {
-      void this.persistTaskNotificationRequeryEpisode({ ...episode, escalation: 'done' });
+      void this.persistTaskNotificationRequeryEpisode({ ...current, escalation: 'done' });
     }
   }
 

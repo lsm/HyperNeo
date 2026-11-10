@@ -264,7 +264,7 @@ describe('task-notification requery policy', () => {
       expect(advanced.decision.action).toBe('requery');
     });
 
-    it.each(['attempt-issued', 'attempt-failed'] as const)(
+    it.each(['attempt-issued', 'attempt-failed', 'delivery-failed'] as const)(
       'holds a stale %s signal on a closed episode instead of reopening it',
       (kind) => {
         const closed = { ...openRequeryEpisode(1), closed: true };
@@ -273,6 +273,26 @@ describe('task-notification requery policy', () => {
         expect(advanced.decision).toEqual({ action: 'hold' });
       }
     );
+
+    it('retries a failed delivery without counting the attempt twice', () => {
+      const advanced = advanceTaskNotificationRequeryEpisode(openRequeryEpisode(1), {
+        kind: 'delivery-failed',
+      });
+      expect(advanced.episode.attempts).toBe(1);
+      expect(advanced.decision.action).toBe('requery');
+    });
+
+    it('escalates when the last counted attempt fails to deliver', () => {
+      const advanced = advanceTaskNotificationRequeryEpisode(
+        openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS),
+        { kind: 'delivery-failed' }
+      );
+      expect(advanced.episode).toMatchObject({
+        attempts: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+        escalation: 'pending',
+      });
+      expect(advanced.decision).toEqual({ action: 'escalate' });
+    });
   });
 
   describe('taskNotificationRequeryDelayMs', () => {
@@ -1761,6 +1781,81 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(publishSpy.mock.calls.find(([event]: [string]) => event === 'session.error')).toBe(
       undefined
     );
+  });
+
+  it('marks the escalation done when the token moves during the publish', async () => {
+    publishSpy.mockImplementation(async (event?: unknown, payload?: Record<string, unknown>) => {
+      if (event === 'space.workflowRun.needsAttention') {
+        (
+          agentSession as unknown as { taskNotificationRequeryEpisodeToken: number }
+        ).taskNotificationRequeryEpisodeToken += 1;
+        if (payload) payload.handledBySpaceService = true;
+      }
+      return { delivered: 1, failures: [] };
+    });
+    (
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(agentSession.getSessionData().metadata.taskNotificationRequeryEpisode).toMatchObject({
+      escalation: 'done',
+    });
+  });
+
+  it('counts one attempt when a counted continuation fails to deliver', async () => {
+    let enqueueCalls = 0;
+    enqueueSpy = mock(async () => {
+      enqueueCalls += 1;
+      if (enqueueCalls === 1) throw new Error('enqueue boom');
+    });
+    (agentSession.messageQueue as unknown as { enqueueWithId: typeof enqueueSpy }).enqueueWithId =
+      enqueueSpy;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(continueCalls()).toBe(2);
+    expect(
+      (
+        agentSession as unknown as {
+          taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+        }
+      ).taskNotificationRequeryEpisode?.attempts
+    ).toBe(2);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('does not rewrite identical episode metadata on a held result', async () => {
+    (
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(
+      TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+      'done'
+    );
+    const updateSessionSpy = (
+      agentSession as unknown as { db: { updateSession: ReturnType<typeof mock> } }
+    ).db.updateSession;
+    const episodeWrites = () =>
+      updateSessionSpy.mock.calls.filter(
+        (call: unknown[]) =>
+          (call[1] as { metadata?: Record<string, unknown> } | undefined)?.metadata?.[
+            'taskNotificationRequeryEpisode'
+          ] !== undefined
+      ).length;
+    const writesBefore = episodeWrites();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+
+    expect(episodeWrites()).toBe(writesBefore);
+    expect(needsAttentionPublishes()).toBe(0);
   });
 
   it('invalidates the episode during cleanup instead of escalating from teardown', async () => {

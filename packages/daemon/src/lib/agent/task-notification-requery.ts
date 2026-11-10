@@ -36,6 +36,7 @@ export type TaskNotificationRequerySignal =
   | { kind: 'result'; message: SDKMessage }
   | { kind: 'attempt-issued' }
   | { kind: 'attempt-failed' }
+  | { kind: 'delivery-failed' }
   | { kind: 'close' };
 
 function startTaskNotificationRequeryEpisode(
@@ -63,8 +64,26 @@ export function advanceTaskNotificationRequeryEpisode(
       decision: { action: 'reset' },
     };
   }
-  if (prior?.closed && (signal.kind === 'attempt-issued' || signal.kind === 'attempt-failed')) {
+  if (
+    prior?.closed &&
+    (signal.kind === 'attempt-issued' ||
+      signal.kind === 'attempt-failed' ||
+      signal.kind === 'delivery-failed')
+  ) {
     return { episode: prior, decision: { action: 'hold' } };
+  }
+  if (signal.kind === 'delivery-failed') {
+    if (episode.escalation !== 'none') return { episode, decision: { action: 'hold' } };
+    if (episode.attempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+      return {
+        episode: { ...episode, escalation: 'pending' },
+        decision: { action: 'escalate' },
+      };
+    }
+    return {
+      episode,
+      decision: { action: 'requery', delayMs: taskNotificationRequeryDelayMs(episode.attempts) },
+    };
   }
   if (signal.kind === 'attempt-failed') {
     const attempts = episode.attempts + 1;
