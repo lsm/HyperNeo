@@ -268,6 +268,8 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
   autoCompactPercent?: number;
 
+  autoCompactWindow?: number;
+
   queryMode?: 'immediate' | 'manual';
 
   tools?: ToolsConfig;
