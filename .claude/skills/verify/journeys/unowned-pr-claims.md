@@ -13,8 +13,11 @@ PR, and the public neo.todo.edit addUrls operation links a second PR to an
 unassigned todo. The next attempted notice must contain only the third PR.
 Its original delivery ID survives trimming and daemon restart; its accepted
 retry reaches Neo's mailbox once. A second batch is admitted, then loses its
-separate acknowledgement write. After restart and a new claim, its remaining
-PR must appear in the mailbox only once. A later fully claimed batch retires.
+separate acknowledgement write. After restart and a new claim, its durable admission reconciles without a
+second send. A later fully claimed batch retires only after proven non-admission.
+Removing those claims must notify the never-admitted PRs, while removing a claim
+from the admitted batch must preserve its once-only history. Receipt lookup uses
+the recorded original recipient and stable batch ID.
 
 Main-thread SQL guards cover pending-notice state and the claim lookup. Keep
 unowned-pr-claims.json and proof.log with exit status and resourcesClosed=true.

@@ -1212,6 +1212,24 @@ export class NeoService {
     return true;
   }
 
+  deliveryStatus(sessionId: string, messageId: string) {
+    try {
+      if (
+        this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId) ||
+        this.db.getJobQueueRepo().getLatestByPayload('mailbox', {
+          'to.sessionId': sessionId,
+          messageUuid: messageId,
+        })
+      )
+        return 'admitted' as const;
+      return this.deliveries.has(`${sessionId}:${messageId}`)
+        ? ('in-flight' as const)
+        : ('absent' as const);
+    } catch {
+      return 'unknown' as const;
+    }
+  }
+
   hasDelivery(sessionId: string, messageId: string): boolean {
     return (
       this.deliveries.has(`${sessionId}:${messageId}`) ||

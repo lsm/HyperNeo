@@ -1,4 +1,8 @@
-import { readCodingUnownedClaims } from './unowned-claims-worker.ts';
+import {
+  readCodingPendingDelivery,
+  releaseCodingClaimedHistory,
+  readCodingUnownedClaims,
+} from './unowned-claims-worker.ts';
 import { codingPrEventReads } from './pr-event-routing-db.ts';
 import { codingRepoWatched } from './watched-repos.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
@@ -107,24 +111,62 @@ export class CodingPrEventRepository {
     }
   }
 
-  pendingUnowned(now: number): CodingUnownedNotice | null {
+  pendingDelivery() {
+    return readCodingPendingDelivery(this.db);
+  }
+
+  pendingDeliveryLater() {
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingUnownedWrites, 'delivery'),
+      'coding.unowned.db'
+    );
+  }
+
+  pendingUnowned(
+    now: number,
+    receipt?: {
+      key: string | null;
+      status: 'admitted' | 'absent' | 'in-flight' | 'unknown';
+      recipient: string | null;
+    }
+  ): CodingUnownedNotice | null {
     return this.db.transaction(() => {
       const pending = this.db
         .prepare(
           'SELECT pending_key AS key, pending_text AS text, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1'
         )
         .get() as CodingUnownedNotice & { rows: string | null };
+      if (receipt && pending.key !== receipt.key) return null;
       if (pending.key && pending.rows) {
-        const unclaimed = this.unclaimed(JSON.parse(pending.rows) as CodingUnownedPr[]);
+        const saved = JSON.parse(pending.rows);
+        const original: CodingUnownedPr[] = Array.isArray(saved) ? saved : saved.rows;
+        if (receipt?.status === 'admitted') {
+          this.unownedDelivered(pending.key);
+          return null;
+        }
+        if (receipt && receipt.status !== 'absent') return null;
+        const unclaimed = this.unclaimed(original);
+        if (receipt) releaseCodingClaimedHistory(this.db, original, unclaimed);
         const remaining = unclaimed.filter((row) => codingRepoWatched(this.db, row.repo));
         const notice = planCodingUnownedNotice(remaining, pending.key);
         const retained = notice ?? planCodingUnownedNotice(unclaimed, pending.key);
         if (retained) {
           this.db
             .prepare(
-              'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1'
+              'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1 AND pending_key = ?'
             )
-            .run(retained.key, retained.text, JSON.stringify(notice ? remaining : unclaimed));
+            .run(
+              retained.key,
+              retained.text,
+              JSON.stringify(
+                saved.recipient
+                  ? { recipient: saved.recipient, rows: notice ? remaining : unclaimed }
+                  : notice
+                    ? remaining
+                    : unclaimed
+              ),
+              pending.key
+            );
           if (notice) return notice;
         } else this.unownedDelivered(pending.key);
       }
@@ -158,14 +200,23 @@ export class CodingPrEventRepository {
         .prepare(
           'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1'
         )
-        .run(notice.key, notice.text, JSON.stringify(watchedRows));
+        .run(
+          notice.key,
+          notice.text,
+          JSON.stringify(
+            receipt?.recipient ? { recipient: receipt.recipient, rows: watchedRows } : watchedRows
+          )
+        );
       return notice;
     })();
   }
 
-  pendingUnownedLater(now: number): Promise<CodingUnownedNotice | null> {
+  pendingUnownedLater(
+    now: number,
+    receipt?: Parameters<CodingPrEventRepository['pendingUnowned']>[1]
+  ): Promise<CodingUnownedNotice | null> {
     return callCodingBranchDb(
-      () => gatewayFor(this.db).call(codingUnownedWrites, 'pending', now),
+      () => gatewayFor(this.db).call(codingUnownedWrites, 'pending', now, receipt),
       'coding.unowned.db'
     );
   }

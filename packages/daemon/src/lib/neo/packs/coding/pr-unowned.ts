@@ -38,30 +38,66 @@ export function planCodingUnownedNotice(
   };
 }
 
-export const wakeCodingUnownedPrs = (superpipe({})('coding-unowned-pr-wake') as PipelineAPI)
-  .input(['repo', 'wake', 'now'])
+const wakeUnowned = (superpipe({})('coding-unowned-pr-wake') as PipelineAPI)
+  .input(['repo', 'wake', 'now', 'delivery'])
   .pipe(
-    async (repo: CodingPrEventRepository, now: number) => {
-      const notice = await repo.pendingUnownedLater(now);
-      return notice ? { value: notice } : { reason: 'no_unowned_prs' };
+    async (repo: CodingPrEventRepository, now: number, delivery: CodingSweepDeps['delivery']) => {
+      const pending = delivery ? await repo.pendingDeliveryLater().catch(() => null) : null;
+      if (delivery && !pending) return { reason: 'receipt_unavailable' };
+      const recipient = pending?.recipient ?? delivery?.recipient() ?? null;
+      if (delivery && !recipient) return { reason: 'no_recipient' };
+      const status = pending?.key
+        ? pending.recipient
+          ? await delivery!.status(pending.recipient, pending.key).catch(() => 'unknown' as const)
+          : ('unknown' as const)
+        : ('absent' as const);
+      const notice = await repo.pendingUnownedLater(
+        now,
+        delivery ? { key: pending!.key, recipient, status } : undefined
+      );
+      return notice ? { value: { notice, recipient } } : { reason: 'no_unowned_prs' };
     },
-    ['repo', 'now'],
-    'result:notice'
+    ['repo', 'now', 'delivery'],
+    'result:prepared'
   )
   .pipe(
-    (notice: CodingUnownedNotice, wake: CodingSweepDeps['wake']) =>
-      wake(notice.key, notice.text).catch(() => false),
-    ['notice', 'wake'],
+    (
+      prepared: { notice: CodingUnownedNotice; recipient: string | null },
+      wake: CodingSweepDeps['wake'],
+      delivery: CodingSweepDeps['delivery']
+    ) => {
+      const { notice, recipient } = prepared;
+      return (
+        delivery && recipient
+          ? delivery.send(recipient, notice.key, notice.text)
+          : wake(notice.key, notice.text)
+      ).catch(() => false);
+    },
+    ['prepared', 'wake', 'delivery'],
     'accepted'
   )
   .pipe(
-    async (repo: CodingPrEventRepository, notice: CodingUnownedNotice, accepted: boolean) => {
-      if (accepted) await repo.unownedDeliveredLater(notice.key);
+    async (
+      repo: CodingPrEventRepository,
+      prepared: { notice: CodingUnownedNotice },
+      accepted: boolean
+    ) => {
+      if (accepted) await repo.unownedDeliveredLater(prepared.notice.key);
     },
-    ['repo', 'notice', 'accepted']
+    ['repo', 'prepared', 'accepted']
   )
   .endAsync() as (
   repo: CodingPrEventRepository,
   wake: CodingSweepDeps['wake'],
-  now: number
+  now: number,
+  delivery: CodingSweepDeps['delivery']
 ) => Promise<void>;
+
+export function wakeCodingUnownedPrs(
+  repo: CodingPrEventRepository,
+  wake: CodingSweepDeps['wake'],
+  now: number,
+  delivery?: CodingSweepDeps['delivery']
+) {
+  return repo.exclusive(() => wakeUnowned(repo, wake, now, delivery));
+}

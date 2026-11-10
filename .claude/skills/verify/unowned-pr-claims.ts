@@ -81,7 +81,18 @@ const open = async () => {
           headRefOid: 'a'.repeat(40), state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE',
           reviewDecision: null, closedAt: null, createdAt: new Date(cutoff.at + 1).toISOString(),
           author: { login: 'synthetic', __typename: 'User' } })) }, done: { nodes: [] } } } }),
-    prSweepDeps: { tell: async () => true, wake: async (key, text) => {
+    prSweepDeps: { tell: async () => true, delivery: {
+      recipient: () => root,
+      status: async (recipient, key) => service!.deliveryStatus(recipient, key),
+      send: async (recipient, key, text) => {
+        assert.equal(recipient, root);
+        assert.equal(state().key, key);
+        attempts.push({ key, text });
+        if (!accept) return false;
+        await service!.deliverForward(recipient, key, text, recipient, 'event');
+        return true;
+      },
+    }, wake: async (key, text) => {
       assert.equal(state().key, key, 'Reservation must commit before delivery');
       attempts.push({ key, text });
       if (!accept) return false;
@@ -180,26 +191,31 @@ try {
   app!.db.getDatabase().prepare('UPDATE pack_coding_pr_ledger SET owner=? WHERE repo=? AND number=4')
     .run(JSON.stringify(ref), repo);
   await sweep();
-  assert.equal(attempts.length, 5);
-  assert(attempts[4].text.includes(`${repo}#5`));
-  assert(!attempts[4].text.includes(`${repo}#4`));
+  assert.equal(attempts.length, 4, 'Durable admission reconciles without another send');
   assert.equal(mailbox().length, 2, 'Lost acknowledgement must not admit the remaining PR twice');
-  assert.equal(attempts[4].key, admittedKey);
   assert.equal(mailbox().filter((entry) => entry.message.message.content.includes(`${repo}#5`)).length, 1);
   assert.equal(state().key, null);
   evidence.admittedCrash = { key: admittedKey, remainingPrInputs: 1, mailboxEntries: mailbox().length };
   numbers = [1, 2, 3, 4, 5, 6, 7];
   accept = false;
   await sweep();
-  assert.equal(attempts.length, 6);
+  assert.equal(attempts.length, 5);
   app!.db.getDatabase().prepare('UPDATE pack_coding_pr_ledger SET owner=? WHERE repo=? AND number IN (6,7)')
     .run(JSON.stringify(ref), repo);
   accept = true;
   await sweep();
-  assert.equal(attempts.length, 6);
+  assert.equal(attempts.length, 5);
   assert.equal(state().key, null);
   assert.equal(mailbox().length, 2);
   assert.equal(attempts[1].key, attempts[0].key);
+  app!.db.getDatabase().prepare('UPDATE pack_coding_pr_ledger SET owner=NULL WHERE repo=? AND number IN (4,6,7)').run(repo);
+  await sweep();
+  assert.equal(attempts.length, 6);
+  assert(!attempts[5].text.includes(`${repo}#4`), 'Admitted history survives claim removal');
+  assert(attempts[5].text.includes(`${repo}#6`));
+  assert(attempts[5].text.includes(`${repo}#7`));
+  assert.equal(mailbox().length, 3);
+  evidence.claimRemoval = { neverAdmittedNotified: [6, 7], admittedStillOnce: 4 };
   evidence.publicAddUrls = edited;
   evidence.verified = true;
   console.log('PASS: rejected and admitted retries keep their delivery ID across trimming and restart; claimed batches retire');

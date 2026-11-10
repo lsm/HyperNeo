@@ -589,38 +589,102 @@ describe('coding pack unowned PR persistence', () => {
         await f.cycle([pr(1)]);
         const events = new CodingPrEventRepository(f.db);
         const original = events.pendingUnowned(ship + 120_000)!;
-        f.db.prepare("UPDATE pack_coding_pr_ledger SET owner=? WHERE repo='synthetic/a' AND number=1").run(
-          JSON.stringify({ adapter: 'hyperneo', id: 'claimed-worker' })
-        );
+        f.db
+          .prepare("UPDATE pack_coding_pr_ledger SET owner=? WHERE repo='synthetic/a' AND number=1")
+          .run(JSON.stringify({ adapter: 'hyperneo', id: 'claimed-worker' }));
         const attempts: string[] = [];
-        await wakeCodingUnownedPrs(events, async (_key, text) => {
-          attempts.push(text);
-          return true;
-        }, ship + 180_000, {
-          recipient: () => 'neo',
-          status: async () => status,
-          send: async (_recipient, key, text) => {
-            expect(key).toBe(original.key);
+        await wakeCodingUnownedPrs(
+          events,
+          async (_key, text) => {
             attempts.push(text);
             return true;
           },
-        });
-        const history = f.db.prepare(
-          'SELECT key FROM pack_coding_pr_unowned ORDER BY key'
-        ).all();
+          ship + 180_000,
+          {
+            recipient: () => 'replacement-neo',
+            status: async (recipient, key) => {
+              expect(recipient).toBe('neo');
+              expect(key).toBe(original.key);
+              return status;
+            },
+            send: async (recipient, key, text) => {
+              expect(recipient).toBe('neo');
+              expect(key).toBe(original.key);
+              attempts.push(text);
+              return true;
+            },
+          }
+        );
+        const history = f.db.prepare('SELECT key FROM pack_coding_pr_unowned ORDER BY key').all();
         expect(history).toHaveLength(status === 'absent' ? 1 : 2);
         expect(attempts).toHaveLength(status === 'absent' ? 1 : 0);
+        if (status === 'absent' || status === 'admitted')
+          expect(events.pendingDelivery().recipient).toBeUndefined();
         f.db.prepare('UPDATE pack_coding_pr_ledger SET owner=NULL').run();
         if (status === 'absent') {
-          await f.cycle([pr(1)], ship + 240_000);
-          expect(f.wakes.at(-1)!.text).toContain('synthetic/a#1');
-          expect(f.wakes.at(-1)!.text).not.toContain('synthetic/b#1');
+          const renewed = events.pendingUnowned(ship + 120_000)!;
+          expect(renewed.text).toContain('synthetic/a#1');
+          expect(renewed.text).not.toContain('synthetic/b#1');
         }
       } finally {
         f.db.close();
       }
     }
   );
+
+  test('a changed pending key refuses a stale receipt and overlapping producers serialize', async () => {
+    const f = setup();
+    try {
+      f.accept(false);
+      await f.cycle([pr(1)]);
+      const events = new CodingPrEventRepository(f.db);
+      const original = events.pendingDelivery();
+      f.db.prepare('UPDATE pack_coding_pr_unowned_state SET pending_key=?').run('replacement');
+      expect(
+        events.pendingUnowned(ship + 120_000, {
+          key: original.key,
+          recipient: 'neo',
+          status: 'admitted',
+        })
+      ).toBeNull();
+      expect(events.pendingDelivery().key).toBe('replacement');
+      const attempts: string[] = [];
+      let release!: () => void;
+      const held = new Promise<void>((done) => {
+        release = done;
+      });
+      let started!: () => void;
+      const entered = new Promise<void>((done) => {
+        started = done;
+      });
+      const first = wakeCodingUnownedPrs(
+        events,
+        async (key) => {
+          attempts.push(key);
+          started();
+          await held;
+          return true;
+        },
+        ship + 120_000
+      );
+      await entered;
+      const second = wakeCodingUnownedPrs(
+        events,
+        async (key) => {
+          attempts.push(key);
+          return true;
+        },
+        ship + 120_000
+      );
+      await Promise.resolve();
+      expect(attempts).toEqual(['replacement']);
+      release();
+      await Promise.all([first, second]);
+      expect(attempts).toEqual(['replacement']);
+    } finally {
+      f.db.close();
+    }
+  });
 
   test('the activation cutoff is strict and does not reset when schema is reapplied', async () => {
     const { db, wakes, cycle } = setup();

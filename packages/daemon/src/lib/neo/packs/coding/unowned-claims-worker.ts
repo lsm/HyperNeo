@@ -1,6 +1,6 @@
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { codingPrKey } from './pr-key.ts';
-import type { CodingUnownedPr } from './pr-unowned.ts';
+import { codingUnownedPrKey, type CodingUnownedPr } from './pr-unowned.ts';
 
 export function readCodingUnownedClaims(db: Database, rows: readonly CodingUnownedPr[]) {
   if (!rows.length) return new Set<string>();
@@ -21,4 +21,28 @@ export function readCodingUnownedClaims(db: Database, rows: readonly CodingUnown
     WHERE json_type(check_json, '$.params.url') = 'text'`)
     .all() as { url: string }[];
   return new Set([...owned, ...linked].flatMap(({ url }) => codingPrKey(url) ?? []));
+}
+
+export function readCodingPendingDelivery(db: Database) {
+  const pending = db
+    .prepare(
+      'SELECT pending_key AS key, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1'
+    )
+    .get() as { key: string | null; rows: string | null };
+  const saved = pending.rows ? JSON.parse(pending.rows) : null;
+  return {
+    key: pending.key,
+    recipient: pending.key ? (saved?.recipient as string | undefined) : undefined,
+  };
+}
+
+export function releaseCodingClaimedHistory(
+  db: Database,
+  original: readonly CodingUnownedPr[],
+  unclaimed: readonly CodingUnownedPr[]
+) {
+  const retained = new Set(unclaimed.map(codingUnownedPrKey));
+  const remove = db.prepare('DELETE FROM pack_coding_pr_unowned WHERE key = ?');
+  for (const row of original)
+    if (!retained.has(codingUnownedPrKey(row))) remove.run(codingUnownedPrKey(row));
 }
