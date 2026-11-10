@@ -1,3 +1,4 @@
+import { createFakeNeoFrontHandler } from './lib/neo/front-job.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
 import {
@@ -544,6 +545,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
+    const frontProcessor = new JobQueueProcessor(jobQueue, { db: db.gateway, maxConcurrent: 2 });
+    frontProcessor.register('neo.front', createFakeNeoFrontHandler(db.gateway));
     const mailboxExpireProcessor = new JobQueueProcessor(jobQueue, {
       db: db.gateway,
       pollIntervalMs: 1000,
@@ -563,6 +566,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
     jobProcessor.setChangeNotifier(() => {});
     mailboxExpireProcessor.setChangeNotifier(() => {});
+    frontProcessor.setChangeNotifier(() => {});
     messageDeliveryProcessor.setChangeNotifier((table, scope) => {
       reactiveDb.notifyChange(table, scope);
     });
@@ -1246,12 +1250,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => processWatchdog.stop(),
         () => jobProcessor.stopPolling(),
         () => mailboxExpireProcessor.stopPolling(),
+        () => frontProcessor.stopPolling(),
         () => messageDeliveryProcessor.stopPolling(),
         () => unsubscribeProviderFailureChanges?.(),
         () => oauthRefreshScheduler.stop(),
         () => googleRefresh.stop(),
         () => jobProcessor.stop(),
         () => mailboxExpireProcessor.stop(),
+        () => frontProcessor.stop(),
         () => taskAgentManager?.cleanupAll(),
         () => sessionManager?.cleanup(),
         () => messageDeliveryProcessor.stop(),
@@ -1583,6 +1589,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     jobProcessor.start();
     logInfo('[Daemon] Job queue processor started');
     mailboxExpireProcessor.start();
+    frontProcessor.start();
     logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
@@ -1664,6 +1671,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         messageDeliveryProcessor.stopPolling();
         logInfo('[Daemon] Message-delivery job polling stopped');
         mailboxExpireProcessor.stopPolling();
+        frontProcessor.stopPolling();
         logInfo('[Daemon] Mailbox expiration job polling stopped');
         jobProcessor.stopPolling();
         logInfo('[Daemon] Job queue polling stopped');
@@ -1681,6 +1689,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
         await mailboxExpireProcessor.stop();
+        await frontProcessor.stop();
         logInfo('[Daemon] Mailbox expiration job processor stopped');
         await taskAgentManager?.cleanupAll();
         const scratchChildrenAtExit = [

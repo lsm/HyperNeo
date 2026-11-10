@@ -1,3 +1,5 @@
+import { NeoFrontInputRepository } from './neo-front-input-worker.ts';
+import { SettingsRepository } from './settings-repository.ts';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { NeoWakeQueueRepository } from './neo-wake-queue-repository.ts';
@@ -144,6 +146,18 @@ export function persistNeoIntakeTransaction(
         .length === 0
     )
       return { ...stored, created: false };
+    if (stored.created) {
+      const eligible = new SettingsRepository(db).getGlobalSettings().neo?.front?.enabled === true;
+      new NeoFrontInputRepository(db).accept(ask.conversationId, ask.requestId, eligible);
+      if (eligible)
+        jobQueue.enqueue({
+          queue: 'neo.front',
+          payload: {
+            conversationId: ask.conversationId,
+            messageId: ask.requestId,
+          },
+        });
+    }
     if (stored.created)
       new NeoWakeQueueRepository(db).release(ask.askOrigin.sessionId, {
         at: Date.parse(stored.ask.createdAt) - 1,
