@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoPublication,
@@ -33,6 +34,7 @@ export interface NeoPublicationChangeRuntime {
   getRootBinding(): NeoBinding | null;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent' | 'reviseCurrent'>;
   notify(conversationId: string): void;
+  present?(items: NeoPublication[]): Promise<NeoPublication[]>;
 }
 
 export function requireConversationPublication(
@@ -152,15 +154,16 @@ export function createNeoPublicationChangeOperations(runtime: NeoPublicationChan
   return [
     defineOperation({
       name: 'neo.publication.edit',
-      description:
-        'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. A verbatim reply stays verbatim: editing it with shortText is rejected as invalid_publication. Use a new requestId per revision and reuse it only when retrying that operation.',
+      description: neoToolDescription('neo.publication.edit'),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: NeoPublicationResultSchema,
       execute: async (input, caller) => {
         const result = await runtime.publications.reviseCurrent(input, caller);
         if (result.accepted) runtime.notify(result.publication.conversationId);
-        return result;
+        return result.accepted && runtime.present
+          ? { ...result, publication: (await runtime.present([result.publication]))[0] }
+          : result;
       },
     }),
   ];

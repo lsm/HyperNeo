@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -364,7 +364,7 @@ test.each([3, 4, 20, 21])(
     expect(
       mcp.todoAsks.every((entry) => entry.todos.length === (doneCount <= 3 ? doneCount : 0))
     ).toBe(true);
-    expect(mcp.trimmed).toBeUndefined();
+    expect(mcp).not.toHaveProperty('trimmed');
     expect(mcp.omitted).toBeUndefined();
     expect(Buffer.byteLength(JSON.stringify(mcp), 'utf8')).toBeLessThan(40_000);
     expect(rpc.todoAsks).toHaveLength(10);
@@ -375,18 +375,28 @@ test.each([3, 4, 20, 21])(
   }
 );
 
-test('worker identity follows the adapter and current record, including notices after rename', async () => {
+test('worker identity reads the synced record, including notices after rename, with no live read', async () => {
   const ref = { adapter: 'codex-desktop', id: 'thread-1' };
   let title = 'Claude something';
-  let found = true;
+  let reads = 0;
   const status = defineOperation({
     name: 'work.status',
     inputSchema: z.object({ ref: z.unknown() }),
     resultSchema: z.unknown(),
     policy: { safetyClass: 'read' },
-    execute: async () =>
-      found ? { ok: true, value: { ref, title } } : { ok: false, reason: 'not_found' },
+    execute: async () => {
+      reads += 1;
+      return { ok: false, reason: 'not_found' };
+    },
   });
+  const sync = () =>
+    service.db
+      .getDatabase()
+      .prepare(
+        `INSERT OR REPLACE INTO work_sessions (adapter, id, name, status, updated_at)
+         VALUES (?, ?, ?, 'done', 0)`
+      )
+      .run(ref.adapter, ref.id, title);
   registry = createOperationRegistry([...createNeoOperations(service), status]);
   service.todoSessions.create('todo-230', { verb: 'send', ref });
   service.todoSessions.recordRef('todo-230', ref);
@@ -396,6 +406,7 @@ test('worker identity follows the adapter and current record, including notices 
   service.sessionWatcher.sessionNoticeGroups = [
     { id: 'group', at: 1, line: 'Historical line', notices: service.sessionNotices },
   ];
+  sync();
   const first = read(await snapshot());
   const worker = { ...ref, name: title, label: 'Codex · Claude something' };
   expect(
@@ -404,19 +415,18 @@ test('worker identity follows the adapter and current record, including notices 
   expect(first.sessionNotices?.[0]).toMatchObject({ worker, title });
   expect(first.sessionNoticeGroups?.[0].line).toContain('Codex · Claude something');
   title = 'fullstack-renamed';
+  sync();
   const next = read(await snapshot({ sinceRev: first.rev }));
   expect(next).not.toHaveProperty('unchanged');
   expect(
     next.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'todo-230')
   ).toMatchObject({ worker: { ...ref, name: title, label: 'Codex · fullstack-renamed' } });
   expect(next.sessionNotices?.[0]).toMatchObject({ title });
-  found = false;
-  const removed = read(await snapshot());
-  expect(removed.sessionNotices?.[0]).toMatchObject({
-    title: ref.id,
-    worker: { ...ref, name: null, label: 'Codex · thread-1' },
-  });
-  expect(
-    removed.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'todo-230')
-  ).toMatchObject({ worker: { ...ref, name: null, label: 'Codex · thread-1' } });
+  service.db.getDatabase().prepare('DELETE FROM work_sessions').run();
+  const unsynced = read(await snapshot());
+  const todo = unsynced.todoAsks
+    .flatMap((entry) => entry.todos)
+    .find((item) => item.id === 'todo-230');
+  expect(todo?.worker?.name).toBe(todo?.title);
+  expect(reads).toBe(0);
 });

@@ -1,0 +1,6 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "readerFailure": "Error: Unknown read DB op: pairing.humanReset.read",
+  "mainSqlAttempts": 0,
+  "timings": []
+}

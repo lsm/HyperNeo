@@ -1,5 +1,6 @@
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
 import { Logger } from '../logger.ts';
+import { isAgentReadRequest } from './read-page.ts';
 import {
   recordUnpaired,
   touchDevice,
@@ -30,6 +31,7 @@ export interface UpgradeIdentity {
 }
 
 export interface UpgradeAuthDeps {
+  readonly agentRead?: boolean;
   readonly db: () => DbGateway;
   readonly now: () => number;
 }
@@ -55,7 +57,7 @@ async function lookUpDevice(db: DbGateway, credential: string, host: string | nu
   }
 }
 
-export function createUpgradeAuthenticator({ db, now }: UpgradeAuthDeps) {
+export function createUpgradeAuthenticator({ db, now, agentRead = false }: UpgradeAuthDeps) {
   let loggedFailureAt = -Infinity;
   const noteFailure = (error: unknown) => {
     const at = now();
@@ -69,7 +71,8 @@ export function createUpgradeAuthenticator({ db, now }: UpgradeAuthDeps) {
       const host = req.headers.get('host');
       const at = now();
       const device = credential ? await lookUpDevice(db(), credential, host, at) : null;
-      if (device) return { deviceId: device.id, kind: device.kind };
+      if (device && (device.kind !== 'agent' || (agentRead && isAgentReadRequest(req))))
+        return { deviceId: device.id, kind: device.kind };
       const origin = req.headers.get('origin');
       void db()
         .run(recordUnpaired, {

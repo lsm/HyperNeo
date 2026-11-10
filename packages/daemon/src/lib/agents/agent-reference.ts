@@ -2,13 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { defineOperation } from '../operations/registry.ts';
-
-export const AgentReferenceSchema = z.object({
-  space: z.string().trim().min(1).describe('Space id, slug or name'),
-  agent: z.string().trim().min(1).describe('Agent id, @handle or display name'),
-});
-
-export type AgentReference = z.infer<typeof AgentReferenceSchema>;
+import { AgentReferenceSchema, type AgentReference } from '../messaging/agent-reference-schema.ts';
 
 export interface ReferenceSpace {
   id: string;

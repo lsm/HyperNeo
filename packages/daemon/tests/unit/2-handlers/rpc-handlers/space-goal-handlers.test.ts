@@ -10,16 +10,16 @@ import {
   type DaemonInternalEventMap,
   type InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../src/lib/goals/owner-change-outcome-redelivery.ts';
-import type { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { setupSpaceGoalHandlers } from '../../../../src/lib/rpc-handlers/space-goal-handlers.ts';
-import { createCreateGoalOperation } from '../../../../src/lib/goals/create-goal-operation.ts';
-import { createGetGoalOperation } from '../../../../src/lib/goals/get-goal-operation.ts';
-import { createGetGoalOwnerOperation } from '../../../../src/lib/goals/get-goal-owner-operation.ts';
-import { createTriggerGoalTaskOperation } from '../../../../src/lib/goals/goal-state-operations.ts';
-import { createListGoalEventsOperation } from '../../../../src/lib/goals/list-goal-events-operation.ts';
-import { createUpdateGoalOperation } from '../../../../src/lib/goals/update-goal-operation.ts';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../../space/src/goals/owner-change-outcome-redelivery.ts';
+import type { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
+import { setupSpaceGoalHandlers } from '../../../../../space/src/rpc/space-goal-handlers.ts';
+import { createCreateGoalOperation } from '../../../../../space/src/goals/create-goal-operation.ts';
+import { createGetGoalOperation } from '../../../../../space/src/goals/get-goal-operation.ts';
+import { createGetGoalOwnerOperation } from '../../../../../space/src/goals/get-goal-owner-operation.ts';
+import { createTriggerGoalTaskOperation } from '../../../../../space/src/goals/goal-state-operations.ts';
+import { createListGoalEventsOperation } from '../../../../../space/src/goals/list-goal-events-operation.ts';
+import { createUpdateGoalOperation } from '../../../../../space/src/goals/update-goal-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { createSetGoalOwnerOperation } from '../../../../src/lib/agents/assign-agent-operation.ts';
 

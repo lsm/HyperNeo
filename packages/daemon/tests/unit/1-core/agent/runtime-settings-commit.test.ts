@@ -239,15 +239,6 @@ describe('runtime settings commit admission', () => {
     expect(storedConfig()).toMatchObject({ ...expected, maxTokens: 4096 });
   });
 
-  test('a provider-only change off acp clears both acp identities in the same commit', async () => {
-    const { handler, session } = fixture({ provider: 'acp' });
-    const result = await handler.switchModel('old-model', 'anthropic', true, commit());
-    expect(result.success).toBe(true);
-    expect(session.acpSessionId).toBeUndefined();
-    expect(stored().acp_session_id).toBeNull();
-    expect(stored().metadata).not.toMatch(/acpContextUsageEstimate|acpSessionCommand/);
-  });
-
   test.each(['pair drift', 'archivedAt', 'wrong id'])(
     '%s refuses before any async model validation',
     async (mode) => {
@@ -309,15 +300,6 @@ describe('runtime settings commit admission', () => {
   test('gateCommitTurn admits only a matching known generation', () => {
     expect(gateCommitTurn(4, 4)).toEqual({ value: true });
     expect([gateCommitTurn(4, 5), gateCommitTurn(undefined, 5)]).toEqual([TURN, TURN]);
-  });
-
-  test('a provider-only change into acp clears both sdk identity columns', async () => {
-    const { handler, session } = fixture({ sdkIdentity: true });
-    const result = await handler.switchModel('old-model', 'acp', true, commit());
-    expect(result.success).toBe(true);
-    expect([session.sdkSessionId, session.sdkOriginPath]).toEqual([undefined, undefined]);
-    expect(stored().sdk_session_id).toBeNull();
-    expect(stored().sdk_origin_path).toBeNull();
   });
 
   const POSTCOMMIT: ReadonlyArray<readonly [string, Parked, string, string]> = [

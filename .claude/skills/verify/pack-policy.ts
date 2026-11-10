@@ -1,3 +1,5 @@
+import { seedPrOwner } from './seed-pr-owner.ts';
+process.env.HYPERNEO_SPACE ??= 'on';
 import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -34,15 +36,14 @@ try {
   const db = app.db.getDatabase(); const ledger = new CodingPrLedgerRepository(db);
   let approved = false;
   const pack = createCodingPack({ database: () => db, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: ledger,
-    prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => ['synthetic/qlark-replay'], readClaudeOwners: async () => [],
-    prSweepDeps: { tell: async (_ref, _key, text) => { output.push({ minute, text }); return true; }, wake: async (_key, text) => { output.push({ minute, text }); return true; } },
+    prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => ['synthetic/qlark-replay'], prSweepDeps: { tell: async (_ref, _key, text) => { output.push({ minute, text }); return true; }, wake: async (_key, text) => { output.push({ minute, text }); return true; } },
     readLedgerRepo: async () => ({ data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: 'synthetic/qlark-replay', done: { nodes: [] }, open: { pageInfo: { hasNextPage: false }, nodes: [{
       number: 19, title: 'Synthetic design awaiting human', headRefName: 'design', headRefOid: 'synthetic-head', state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', closedAt: null,
       reviewDecision: approved ? 'APPROVED' : 'REVIEW_REQUIRED', reviews: { nodes: approved ? [{ state: 'APPROVED', commit: { oid: 'synthetic-head' }, author: { login: 'hyperneo-ai-test' } }] : [] },
       files: { nodes: [{ path: 'docs/design/synthetic.md' }], pageInfo: { hasNextPage: false } }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
     }] } } } }),
   });
-  pack.observeSessions!([{ ref: { adapter: 'codex', id: 'synthetic-worker' }, status: { state: 'running' } as never, lastActivityAt: 0, remotes: ['git@github.com:synthetic/qlark-replay.git'], branches: ['design'], openedPrs: [] }], Date.parse('2026-10-20T16:45:51Z'));
+  seedPrOwner(db, 'synthetic/qlark-replay', { adapter: 'codex', id: 'synthetic-worker' });
   for (const at of [0, 1, 21, 41, 61]) {
     minute = at; approved = at > 0;
     await pack.sweep!(Date.parse('2026-10-20T16:45:51Z') + at * 60000);

@@ -3,7 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ListTasksInput, TaskListPage } from '../../storage/tasks/list-tasks.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import {
   admitSpaceTaskCaller,
   resolveSpaceTaskOwner,

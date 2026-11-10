@@ -4,8 +4,8 @@ import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/sch
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github/github-event-extension';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 function collector(db: Database) {
   createCodingPackTables(db);
@@ -19,7 +19,7 @@ describe('GitHub polling fairness', () => {
       const db = new Database(':memory:');
       createTables(db);
       runMigrations(db, () => {});
-      const config = new ExternalEventExtensionConfigStore(db);
+      const config = createExternalEventConfigStore(db);
       await config.setGlobalConfig('github', {
         source: 'github',
         globallyEnabled: true,
@@ -112,7 +112,7 @@ describe('GitHub polling fairness', () => {
     const db = new Database(':memory:');
     createTables(db);
     runMigrations(db, () => {});
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,
@@ -189,7 +189,7 @@ describe('GitHub polling fairness', () => {
     const db = new Database(':memory:');
     createTables(db);
     runMigrations(db, () => {});
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,
@@ -259,7 +259,7 @@ describe('GitHub polling fairness', () => {
     const db = new Database(':memory:');
     createTables(db);
     runMigrations(db, () => {});
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,

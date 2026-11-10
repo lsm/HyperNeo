@@ -7,9 +7,9 @@ const [run, port, phase, evidence] = process.argv.slice(2);
 assert.notEqual(port, '8399');
 assert(['before', 'after'].includes(phase));
 mkdirSync(evidence, { recursive: true });
-const reply = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'artifact.file.register', JSON.stringify({
+const reply = JSON.parse(execFileSync('bun', ['.claude/skills/verify/legacy-attachment-fixture.ts', run, JSON.stringify({
   requestId: crypto.randomUUID(), context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Synthetic CJK Markdown',
-})], { env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8' })).reply;
+})], { env: { HOME: `${run}/home`, NODE_ENV: 'test', HYPERNEO_DATA_DIR: `${run}/data`, TMPDIR: run, PATH: process.env.PATH }, encoding: 'utf8' }));
 const value = reply.value ?? reply;
 assert(value.accepted, JSON.stringify(reply));
 const { chromium } = createRequire(import.meta.url)('playwright');

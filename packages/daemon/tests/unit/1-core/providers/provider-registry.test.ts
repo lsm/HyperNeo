@@ -420,7 +420,7 @@ describe('ProviderRegistry', () => {
   });
 
   describe('initializeProviders — all built-in providers registered', () => {
-    it('should register exactly twelve built-in providers', async () => {
+    it('should register exactly eleven built-in providers', async () => {
       const reg = initializeProviders();
       await waitForOptionalProviderRegistration();
 
@@ -430,7 +430,6 @@ describe('ProviderRegistry', () => {
         .sort();
       expect(ids).toEqual(
         [
-          'acp',
           'anthropic',
           'anthropic-codex',
           'anthropic-copilot',
@@ -488,30 +487,19 @@ describe('ProviderRegistry', () => {
       expect(reg.has('anthropic-copilot')).toBe(true);
     });
 
-    it('should include acp provider', () => {
-      const reg = initializeProviders();
-      expect(reg.has('acp')).toBe(true);
-      expect(reg.detectProviderForModel('acp-default', 'acp')?.id).toBe('acp');
-    });
-
-    it('should infer acp provider from acp model IDs', () => {
-      expect(inferProviderForModel('acp')).toBe('acp');
-      expect(inferProviderForModel('acp-default')).toBe('acp');
-    });
-
     it('should return the same singleton registry on repeated calls without reset', async () => {
       const reg1 = initializeProviders();
       await waitForOptionalProviderRegistration();
       const reg2 = initializeProviders();
       expect(reg1).toBe(reg2);
-      expect(reg2.size).toBe(12);
+      expect(reg2.size).toBe(11);
     });
 
     it('should use the global registry singleton', async () => {
       initializeProviders();
       await waitForOptionalProviderRegistration();
       const globalReg = getProviderRegistry();
-      expect(globalReg.size).toBe(12);
+      expect(globalReg.size).toBe(11);
     });
 
     it('should restore all providers after the registry is reset without factory reset', async () => {
@@ -529,7 +517,6 @@ describe('ProviderRegistry', () => {
         .sort();
       expect(ids).toEqual(
         [
-          'acp',
           'anthropic',
           'anthropic-codex',
           'anthropic-copilot',
@@ -688,26 +675,6 @@ describe('inferProviderForModel', () => {
     }
   });
 
-  it('maps ACP model IDs before registry fallback providers', () => {
-    try {
-      getProviderRegistry().register(
-        new (class extends MockProvider {
-          readonly id = 'anthropic' as const;
-          readonly displayName = 'Anthropic';
-          ownsModel(): boolean {
-            return true;
-          }
-        })()
-      );
-
-      expect(inferProviderForModel('acp')).toBe('acp');
-      expect(inferProviderForModel('acp-default')).toBe('acp');
-      expect(inferProviderForModel('ACP-custom')).toBe('acp');
-    } finally {
-      resetProviderRegistry();
-    }
-  });
-
   it('maps bare ollama/openrouter shorthands before registry fallback providers', () => {
     try {
       getProviderRegistry().register(
@@ -836,7 +803,6 @@ describe('inferPersistableProviderForModel', () => {
     expect(await inferPersistableProviderForModel('glm-4')).toBe('glm');
     expect(await inferPersistableProviderForModel('minimax')).toBe('minimax');
     expect(await inferPersistableProviderForModel('minimax-m2.5')).toBe('minimax');
-    expect(await inferPersistableProviderForModel('acp-default')).toBe('acp');
     expect(await inferPersistableProviderForModel('gpt-oss:20b')).toBe('ollama');
     expect(await inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
   });

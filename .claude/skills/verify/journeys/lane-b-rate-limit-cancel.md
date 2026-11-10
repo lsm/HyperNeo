@@ -1,10 +1,10 @@
 # Rate-limit cancellation commits before its RPC returns
 
-Run `lane-b-rate-limit-cancel.ts` with Bun or Deno in a fresh synthetic run under
-`env -i`, with NODE_ENV=test, HOME=<run>/home and HYPERNEO_DATA_DIR=<run>/data.
-The helper creates its own ephemeral daemon and manual session through real RPC;
-no provider, model, HTTP mock or GUI is required. It stops its own job processor,
-seeds two future delivery jobs and enqueued inputs, and persists an owning cooldown.
+Run `lane-b-rate-limit-cancel.ts` with Bun in a fresh synthetic run under `env -i`, with
+NODE_ENV=test, HOME=<run>/home and HYPERNEO_DATA_DIR=<run>/data. The helper creates its
+own ephemeral daemon and manual session through real RPC; no provider, model, HTTP mock or
+GUI is required. It stops its own job processor, seeds two future delivery jobs and
+enqueued inputs, and persists an owning cooldown.
 
 The real session.cancelRateLimitRetry RPC must delete the owning delivery, mark
 its message failed, release the next delivery without spending a retry, and clear
@@ -22,3 +22,13 @@ publication and cooldown clearing to check their ordering outside the transactio
 
 This journey does not exercise a provider turn, other cancellation paths, reclaim,
 manual retry, shutdown recovery, or performance and contention targets.
+
+The same RPC proof seeds each in-memory recovery hold on the real session's
+watchdog: fallback pending, billing pause, startup exhaustion and retry callback
+in flight. Each begins in processing rather than rate_limit_cooldown. Manual
+cancellation must return with the session idle. This simulates recovery flags;
+no provider failure or live stuck session is reproduced.
+
+A retry callback with a pending user question must retain waiting_for_input and
+the pendingQuestion after cancellation. Unit coverage also raises the question
+during asynchronous delivery settlement to ensure the final clear respects it.

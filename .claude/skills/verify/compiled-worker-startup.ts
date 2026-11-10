@@ -1,5 +1,8 @@
+import { checkWindowsCredential } from '../../../packages/daemon/src/lib/pairing/local-credential-permissions.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { join, resolve } from 'node:path';
 
 const [binaryPath, directory] = process.argv.slice(2);
@@ -10,6 +13,19 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data/daemon.db')));
 for (const part of ['bin', 'data', 'workspace', 'evidence', 'tmp']) mkdirSync(join(run, part), { recursive: true });
+if (process.platform === 'win32') {
+  const probe = join(run, 'tmp/acl-probe');
+  writeFileSync(probe, '');
+  const phases: string[] = [];
+  try {
+    execFileSync(join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { env: { SystemRoot: process.env.SystemRoot, USERPROFILE: join(run, 'home'), TEMP: join(run, 'tmp') }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000, windowsHide: true });
+    phases.push('powershell-started');
+    checkWindowsCredential(probe, true);
+    phases.push('acl-without-open-handle');
+  } finally {
+    writeFileSync(join(run, 'evidence/acl-startup.json'), JSON.stringify(phases));
+  }
+}
 for (const command of ['security', 'gh', 'open', 'ps'])
   writeFileSync(join(run, 'bin', command), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 writeFileSync(join(run, 'bin/security'), "#!/bin/sh\nprintf \"unexpected-discovery\\n\" >> \"$HYPERNEO_DATA_DIR/security-attempts\"\nexit 1\n", { mode: 0o700 });
@@ -35,7 +51,15 @@ try {
     await new Promise((done) => setTimeout(done, 100));
   }
   assert(ready, `Compiled binary failed to start; exit=${child.exitCode}`);
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  if (process.platform === 'win32') {
+    const unsafe = join(run, 'data/local-rpc.credential');
+    readLocalCredential(unsafe);
+    readLocalCredential(unsafe);
+    execFileSync(join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [unsafe, '/grant', '*S-1-1-0:(R)'], { stdio: 'pipe' });
+    assert.throws(() => readLocalCredential(unsafe));
+    checkWindowsCredential(unsafe, true);
+  }
+  ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`, join(run, 'data/local-rpc.credential'));
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WS unavailable')); });
   const id = crypto.randomUUID();
   const build = await new Promise<Record<string, unknown>>((done, fail) => {
@@ -58,7 +82,7 @@ try {
     const commands: Record<string, unknown> = { help: { exit: help.exit, listsPair: help.out.includes('hyperneo pair'), listsDevices: help.out.includes('hyperneo devices') }, devices: { exit: empty.exit, error: empty.err }, pair: { exit: pair.exit, error: pair.err } };
     writeFileSync(join(run, 'evidence/commands.json'), JSON.stringify(commands, null, 2));
     assert.equal(help.exit, 0); assert(help.out.includes('hyperneo pair') && help.out.includes('hyperneo devices'), 'Compiled --help must list device commands');
-    assert.equal(empty.exit, 0, empty.err); assert.deepEqual(JSON.parse(empty.out).devices, []);
+    assert.equal(empty.exit, 0, empty.err); assert.deepEqual(JSON.parse(empty.out).devices.map((d: {name:string})=>d.name), ['Local tools', 'Local agent reader']);
     assert.equal(pair.exit, 0, pair.err);
     const code = JSON.parse(pair.out);
     assert.equal(code.ok, true); assert.equal(code.approval, 'approved'); assert.equal(typeof code.code, 'string');
@@ -68,10 +92,10 @@ try {
     assert.equal(paired.kind, 'human');
     const listed = await cli(['devices']); assert.equal(listed.exit, 0, listed.err);
     const devices = JSON.parse(listed.out).devices as { id: string; name: string; kind: string }[];
-    assert.deepEqual(devices.map(({ id, name, kind }) => ({ id, name, kind })), [{ id: paired.deviceId, name: 'Synthetic phone', kind: 'human' }]);
+    assert.deepEqual(devices.filter(d=>!d.id.startsWith('local-rpc:') && !d.id.startsWith('agent-read:')).map(({ id, name, kind }) => ({ id, name, kind })), [{ id: paired.deviceId, name: 'Synthetic phone', kind: 'human' }]);
     assert(!listed.out.includes(paired.credential));
     const revoked = await cli(['devices', 'revoke', paired.deviceId]); assert.equal(revoked.exit, 0, revoked.err); assert.equal(JSON.parse(revoked.out).ok, true);
-    const final = await cli(['devices']); assert.equal(final.exit, 0, final.err); assert.equal(typeof JSON.parse(final.out).devices[0].revokedAt, 'number');
+    const final = await cli(['devices']); assert.equal(final.exit, 0, final.err); assert.equal(typeof JSON.parse(final.out).devices.find((d:{id:string})=>d.id===paired.deviceId).revokedAt, 'number');
     commands.paired = { count: devices.length, name: 'Synthetic phone', kind: paired.kind, credentialDisclosed: false, revoked: true };
     commands.verified = true;
     writeFileSync(join(run, 'evidence/commands.json'), JSON.stringify(commands, null, 2));

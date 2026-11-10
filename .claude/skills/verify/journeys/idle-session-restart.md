@@ -9,6 +9,9 @@ MCP servers through RPC so internet-dependent tools cannot block SDK startup.
 Neo and an ordinary session consume kickoff and become idle. The fixture queues
 five new inputs in its own DB, restarts the daemon exactly once, and requires
 all markers in actual model requests and consumed rows without another send.
+The native SDK initialization before and after restart must retain one SDK
+session id, and the resumed model request must contain the previous visible
+reply. The fixture recognizes main turns by their tools and synthetic input.
 This differs from the earlier interrupted-turn/replayed-input journey.
 
 The large-history case seeds 30,000 synthetic archived result rows with complete

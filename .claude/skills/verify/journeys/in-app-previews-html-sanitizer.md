@@ -1,5 +1,11 @@
 # In-app previews: HTML sanitizer and CSP wrapper (slice 15)
 
+C3 update: local registration is retired. These helpers seed synthetic historical
+attachment rows/blobs directly via legacy-attachment-fixture.ts; any registration
+wording below describes the historical data, not a currently available API.
+New working files use source-bound live reads. No production snapshots are created.
+
+
 `artifact.file.html {artifactId}` returns a registered HTML snapshot (at most
 2 MiB, same authority as `artifact.file.read`) as an inert preview document, so
 web and iOS can render the same bytes. The daemon parses the page

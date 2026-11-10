@@ -139,6 +139,7 @@ function fixture() {
         id,
         'ask',
         {
+          approvedAt: 1,
           title: id,
           doneWhen: 'Issue completed',
           check: {
@@ -201,7 +202,6 @@ function fixture() {
     pending() {
       pending = true;
     },
-    linked: () => new CodingTodoPrRepository(db).prs('first'),
   };
 }
 
@@ -224,17 +224,23 @@ test.each(['Could not start: needs_you', 'Failed twice: unavailable'])(
   }
 );
 
-test.each(['worker', 'check'] as const)(
-  'a stale %s block clears without a current blocker',
-  async (blockedBy) => {
-    const f = fixture();
-    const todo = f.add('first', true);
-    f.store.updateTodo(todo, { state: 'blocked', blockedBy }, 100_000);
-    f.issue('OPEN');
-    await f.at(2);
-    expect(f.store.getTodo('first')).toMatchObject({ state: 'doing', blockedBy: null });
-  }
-);
+test('a stale worker block clears without a current blocker', async () => {
+  const f = fixture();
+  const todo = f.add('first', true);
+  f.store.updateTodo(todo, { state: 'blocked', blockedBy: 'worker' }, 100_000);
+  f.issue('OPEN');
+  await f.at(2);
+  expect(f.store.getTodo('first')).toMatchObject({ state: 'doing', blockedBy: null });
+});
+
+test('a check block stays while its issue is open', async () => {
+  const f = fixture();
+  const todo = f.add('first', true);
+  f.store.updateTodo(todo, { state: 'blocked', blockedBy: 'check' }, 100_000);
+  f.issue('OPEN');
+  await f.at(2);
+  expect(f.store.getTodo('first')).toMatchObject({ state: 'blocked', blockedBy: 'check' });
+});
 
 test('a COMPLETED issue advances its next todo before a stopped worker can be nudged', async () => {
   const f = fixture();
@@ -267,13 +273,11 @@ test.each(['NOT_PLANNED', 'OPEN', null] as const)(
   }
 );
 
-test('GitHub closing links supply PR membership, not worker claims or PR merge alone', async () => {
+test('an open issue keeps its todo doing, whatever its closing PRs show', async () => {
   const f = fixture();
-  const todo = f.add('first', true);
+  f.add('first', true);
   f.issue('OPEN');
-  await f.pack.todos!.openedPrs!(todo, ['https://github.com/synthetic/plan/pull/99']);
   await f.at(1);
-  expect(f.linked().map((row) => row.url)).toEqual([pr]);
   expect(f.store.getTodo('first')?.state).toBe('doing');
 });
 

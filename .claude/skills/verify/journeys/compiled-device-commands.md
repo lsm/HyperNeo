@@ -14,12 +14,12 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data"
 The actual compiled binary starts its own test daemon on an ephemeral non-8399
 port, with fresh HOME, DB and data directory, blocked discovery commands and no
 provider keys. The same binary's `--help` must list `pair` and `devices`;
-`devices` initially lists none; `pair` produces an approved first code. The helper
+`devices` initially lists Local tools and Local agent reader; `pair` produces an approved first code. The helper
 claims that code through the daemon's real `/pair` endpoint, verifies the phone
 appears in compiled `devices`, and revokes it through compiled `devices revoke`.
 Codes and generated credentials stay in memory and are not written to evidence.
 
-Inspect `evidence/commands.json` (all exits zero, one human device, credential not
+Inspect `evidence/commands.json` (all exits zero, one paired phone plus the two local devices, credential not
 disclosed, revoked), `build.json`, `daemon.log` and `cleanup.json`. On the broken
 entrypoint, both device commands report Unknown option instead of operation results, and help omits them. The helper
 records these results before asserting, then stops the daemon in finally.

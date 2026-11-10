@@ -222,6 +222,90 @@ function binding(name: string, hash: string) {
 }
 
 describe('Neo live preview binding', () => {
+  it('asks about a current file using ordinary draft text that survives reload', async () => {
+    const original = seams.request.getMockImplementation()!;
+    const path = '/workspace/worker/Current report.md';
+    seams.request.mockImplementation(async (method, input) => {
+      if (method !== 'operation.invoke' || input.name !== 'file.reference.read')
+        return original(method, input);
+      const text = '# Live question source';
+      return {
+        accepted: true,
+        path,
+        kind: 'markdown',
+        data: btoa(text),
+        version: 'a'.repeat(64),
+        byteLength: text.length,
+        nextOffset: text.length,
+        complete: true,
+      };
+    });
+    const first = mount();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message Neo' })).toBeTruthy());
+    act(() =>
+      openArtifactPreview({
+        kind: 'reference',
+        source: { kind: 'question', id: 'worker-question' },
+        reference: 'Current report.md',
+      })
+    );
+    await screen.findByRole('heading', { name: 'Live question source' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask Neo about this file' }));
+    await waitFor(() => expect(value()).toContain(path));
+    type(`${value()}\nExplain this file.`);
+    const exact = value();
+    expect(capturedDraft().previewContext).toBeNull();
+    first.unmount();
+    const second = mount();
+    await waitFor(() => expect(value()).toBe(exact));
+    fireEvent.submit(screen.getByRole('textbox', { name: 'Message Neo' }).closest('form')!);
+    await waitFor(() => expect(second.model.value.send).toHaveBeenCalled());
+    const sent = second.model.value.send.mock.calls[0][0];
+    expect(sent.text).toBe(exact);
+    expect(sent).not.toHaveProperty('previewContext');
+    expect(first.model.value.send).not.toHaveBeenCalled();
+  });
+
+  it('retains an existing exact snapshot draft when adding a current-file question', async () => {
+    previewRoute();
+    const previous = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method !== 'operation.invoke' || input.name !== 'file.reference.read')
+        return previous(method, input);
+      const text = '# Current comparison';
+      return {
+        accepted: true,
+        path: '/workspace/current.md',
+        kind: 'markdown',
+        data: btoa(text),
+        version: 'b'.repeat(64),
+        byteLength: text.length,
+        nextOffset: text.length,
+        complete: true,
+      };
+    });
+    const view = mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a.md', 'aaaaaaaa')).toBeTruthy());
+    type('Compare this exact saved version.');
+    const original = capturedDraft().previewContext;
+    act(() =>
+      openArtifactPreview({
+        kind: 'reference',
+        source: { kind: 'question', id: 'current-question' },
+        reference: '/workspace/current.md',
+      })
+    );
+    await screen.findByRole('heading', { name: 'Current comparison' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask Neo about this file' }));
+    await waitFor(() => expect(value()).toContain('/workspace/current.md'));
+    expect(value().startsWith('Compare this exact saved version.')).toBe(true);
+    expect(capturedDraft().previewContext).toEqual(original);
+    fireEvent.submit(screen.getByRole('textbox', { name: 'Message Neo' }).closest('form')!);
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalled());
+    expect(view.model.value.send.mock.calls[0][0].previewContext).toEqual(original);
+  });
+
   it('recovery: binds only after the delayed empty draft load settles', async () => {
     let release!: (value: unknown) => void;
     slowLoad = new Promise((resolve) => {
@@ -577,7 +661,7 @@ describe('Neo real composer draft recovery', () => {
         view.model.value = { ...view.model.value };
       });
       const stop = await screen.findByRole('button', {
-        name: 'Stop recording and add it to your draft',
+        name: 'Stop recording and keep the text as a draft',
       });
       voice.recording = false;
       fireEvent.click(stop);
@@ -684,7 +768,7 @@ describe('Neo real composer draft recovery', () => {
           outcome: { kind: 'insert', transcript: 'Voice addition', autoSend: false },
         });
         const stop = await screen.findByRole('button', {
-          name: 'Stop recording and add it to your draft',
+          name: 'Stop recording and keep the text as a draft',
         });
         voice.recording = false;
         fireEvent.click(stop);

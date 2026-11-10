@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VoiceWaveform } from '../voice/VoiceWaveform.tsx';
+import { applyLanguage } from '../../lib/i18n/index.ts';
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -11,6 +12,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  applyLanguage('en');
   vi.unstubAllGlobals();
   vi.useRealTimers();
   delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
@@ -24,7 +26,54 @@ function stubClientWidth(px: number) {
 }
 
 describe('VoiceWaveform', () => {
-  it('renders the elapsed timer at 0:00 while recording', () => {
+  it.each([undefined, 'neo'] as const)(
+    'allows cancellation during transcription only in the Neo appearance (%s)',
+    (appearance) => {
+      const onCancel = vi.fn();
+      render(
+        <VoiceWaveform
+          appearance={appearance}
+          canCancel={appearance === 'neo'}
+          getLevel={() => 0}
+          isRecording={false}
+          isTranscribing={true}
+          onCancel={onCancel}
+        />
+      );
+      const cancel = screen.getByRole('button', { name: 'Cancel recording' }) as HTMLButtonElement;
+      expect(cancel.disabled).toBe(appearance !== 'neo');
+      fireEvent.click(cancel);
+      expect(onCancel).toHaveBeenCalledTimes(appearance === 'neo' ? 1 : 0);
+    }
+  );
+  it('keeps waveform bars and inline progress in the classic composer', () => {
+    render(
+      <VoiceWaveform
+        getLevel={() => 0}
+        isRecording={false}
+        isTranscribing={true}
+        onCancel={() => {}}
+      />
+    );
+    expect(screen.getByTestId('voice-bars')).toBeTruthy();
+    expect(screen.getByTestId('voice-transcribing').querySelector('.animate-spin')).toBeTruthy();
+  });
+
+  it.each([undefined, 'neo'] as const)('localizes Chinese transcription for %s', (appearance) => {
+    applyLanguage('zh-Hans');
+    render(
+      <VoiceWaveform
+        appearance={appearance}
+        getLevel={() => 0}
+        isRecording={false}
+        isTranscribing={true}
+        onCancel={() => {}}
+      />
+    );
+    expect(screen.getByTestId('voice-transcribing').textContent).toBe('正在转写…');
+  });
+
+  it('counts down the four-minute limit in the classic composer', () => {
     render(
       <VoiceWaveform
         getLevel={() => 0}
@@ -34,12 +83,33 @@ describe('VoiceWaveform', () => {
       />
     );
     expect(screen.getByTestId('voice-recording-panel')).toBeTruthy();
-    expect(screen.getByTestId('voice-timer').textContent).toBe('5:00');
+    expect(screen.getByTestId('voice-timer').textContent).toBe('4:00');
+  });
+
+  it('counts Neo dictation up from zero using elapsed time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    render(
+      <VoiceWaveform
+        appearance="neo"
+        getLevel={() => 0}
+        isRecording={true}
+        isTranscribing={false}
+        startedAt={Date.now()}
+        onCancel={() => {}}
+      />
+    );
+    expect(screen.getByTestId('voice-timer').textContent).toBe('0:00');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(75_000);
+    });
+    expect(screen.getByTestId('voice-timer').textContent).toBe('1:15');
   });
 
   it('shows the transcribing state instead of the timer while transcribing', () => {
     render(
       <VoiceWaveform
+        appearance="neo"
         getLevel={() => 0}
         isRecording={false}
         isTranscribing={true}
@@ -47,6 +117,9 @@ describe('VoiceWaveform', () => {
       />
     );
     expect(screen.getByTestId('voice-transcribing')).toBeTruthy();
+    expect(screen.getByTestId('voice-transcribing').textContent).toBe('Transcribing…');
+    expect(screen.queryByTestId('voice-bars')).toBeNull();
+    expect(document.querySelector('.animate-spin')).toBeNull();
     expect(screen.queryByTestId('voice-timer')).toBeNull();
   });
 

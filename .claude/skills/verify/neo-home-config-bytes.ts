@@ -6,7 +6,7 @@ import { spawnHomeCommand } from '../../../packages/daemon/src/lib/neo/home/git-
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
 
 const run = process.argv.at(-1)!;
-const evidence = { runtime: Reflect.get(globalThis, 'Deno')?.version?.deno ?? process.versions.bun, cases: [] as unknown[] };
+const evidence = { runtime: process.versions.bun, cases: [] as unknown[] };
 await mkdir(join(run, 'evidence'), { recursive: true });
 for (const scope of ['global', 'system', 'local', 'command', 'command-file']) {
   const fixture = join(run, scope);

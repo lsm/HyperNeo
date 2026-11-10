@@ -9,29 +9,77 @@ import {
 } from '../work-queue/dependency-plan.ts';
 
 export function neoTodoDependencyNodes(todos: readonly NeoTodo[]): DependencyNode[] {
-  const live = todos.filter((todo) => todo.state !== 'removed');
-  return live.map((todo) => {
+  return todos.map((todo) => {
     if (todo.dependsOn) return { id: todo.id, dependsOn: todo.dependsOn };
-    const previous = live
+    const previous = todos
       .filter((other) => other.askId === todo.askId && other.position < todo.position)
       .sort((a, b) => b.position - a.position)[0];
     return { id: todo.id, dependsOn: previous ? [previous.id] : [] };
   });
 }
 
+export const neoTodoFinished = (todo: NeoTodo | undefined) =>
+  todo?.state === 'done' || (todo?.state === 'closed_unverified' && todo.startedAt !== null);
+
+const dependencies = (todos: readonly NeoTodo[], todoId: string) =>
+  neoTodoDependencyNodes(todos).find((item) => item.id === todoId)?.dependsOn ?? [];
+
 export function neoTodoReady(todos: readonly NeoTodo[], todoId: string): boolean {
-  const states = new Map(todos.map((todo) => [todo.id, todo.state]));
-  const node = neoTodoDependencyNodes(todos).find((item) => item.id === todoId);
-  return (node?.dependsOn ?? []).every((id) =>
-    ['done', 'closed_unverified', 'removed'].includes(states.get(id) ?? '')
+  return dependencies(todos, todoId).every((id) =>
+    neoTodoFinished(todos.find((todo) => todo.id === id))
   );
+}
+
+export function neoTodoCancelledDependencies(todos: readonly NeoTodo[], todoId: string): NeoTodo[] {
+  const ids = dependencies(todos, todoId);
+  return todos.filter(
+    (todo) =>
+      ids.includes(todo.id) &&
+      (todo.state === 'removed' || (todo.state === 'closed_unverified' && todo.startedAt === null))
+  );
+}
+
+export function neoTodoDependenciesAfterApproval(
+  todos: readonly NeoTodo[],
+  todoId: string
+): string[] {
+  const cancelled = neoTodoCancelledDependencies(todos, todoId);
+  const replacement = (todo: NeoTodo, seen = new Set<string>()): string[] => {
+    const next = todos.find((item) => item.id === todo.replacedBy);
+    if (!next || seen.has(next.id)) return [];
+    if (next.state === 'removed') return replacement(next, seen.add(next.id));
+    return typeof planNeoTodoDependencies(todos, todoId, [next.id]) === 'string' ? [] : [next.id];
+  };
+  return [
+    ...new Set(
+      dependencies(todos, todoId).flatMap((id) => {
+        const gone = cancelled.find((todo) => todo.id === id);
+        return gone ? replacement(gone) : [id];
+      })
+    ),
+  ];
+}
+
+function liveDependencyNodes(
+  todos: readonly NeoTodo[],
+  available: readonly NeoTodo[]
+): DependencyNode[] {
+  const live = new Set(available.map((todo) => todo.id));
+  return neoTodoDependencyNodes(todos)
+    .filter((node) => live.has(node.id))
+    .map((node) => ({ ...node, dependsOn: node.dependsOn?.filter((id) => live.has(id)) }));
 }
 
 export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencies') as PipelineAPI)
   .input(['todos', 'todoId', 'after'])
-  .pipe(neoTodoDependencyNodes, 'todos', 'nodes')
   .pipe(requireDistinctDependencies, ['todoId', 'after'], 'result:dependencies')
-  .pipe(requireExistingDependencies, ['nodes', 'after'], 'result:dependencies')
+  .pipe(
+    (todos: readonly NeoTodo[]) => todos.filter((todo) => todo.state !== 'removed'),
+    'todos',
+    'available'
+  )
+  .pipe(requireExistingDependencies, ['available', 'after'], 'result:dependencies')
+  .pipe(liveDependencyNodes, ['todos', 'available'], 'nodes')
   .pipe(requireAcyclicDependencies, ['nodes', 'todoId', 'after'], 'result:dependencies')
   .pipe((after: readonly string[]) => [...after], 'after', 'dependencies')
   .end('dependencies') as (
@@ -40,30 +88,27 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
   after: readonly string[]
 ) => string[] | DependencyRejection;
 
+export const NEO_TODO_CANCELLED_DEPENDENCY =
+  'cancelled_dependency: a prerequisite of this step was cancelled; continue it with neo.todo.proceed or stop it with neo.todo.remove.';
+
 export const NEO_TODO_NOT_READY =
   'not_ready: this step waits for unfinished steps; add it without start and the daemon starts it once they are done.';
+
+export const NEO_TODO_PREREQUISITE_UNFINISHED =
+  'not_ready: this step waits for unfinished steps; nothing was sent, try again once they are done.';
 
 export function neoTodoAfterRefusal(
   existing: readonly NeoTodo[],
   index: number | null,
-  after: readonly (string | number)[] | undefined,
-  start: boolean
+  after: readonly (string | number)[] | undefined
 ): string | null {
   if (!after) return null;
-  const live = new Map(
-    existing.filter((todo) => todo.state !== 'removed').map((todo) => [todo.id, todo.state])
-  );
+  const live = new Set(existing.filter((todo) => todo.state !== 'removed').map((todo) => todo.id));
   if (new Set(after).size !== after.length) return neoTodoDependencyRefusal('duplicate_dependency');
-  if (
-    after.some((ref) => (typeof ref === 'number' ? index === null || ref >= index : !live.has(ref)))
+  return after.some((ref) =>
+    typeof ref === 'number' ? index === null || ref >= index : !live.has(ref)
   )
-    return neoTodoDependencyRefusal('dependency_not_found');
-  return start &&
-    after.some(
-      (ref) =>
-        typeof ref === 'number' || !['done', 'closed_unverified'].includes(live.get(ref) ?? '')
-    )
-    ? NEO_TODO_NOT_READY
+    ? neoTodoDependencyRefusal('dependency_not_found')
     : null;
 }
 

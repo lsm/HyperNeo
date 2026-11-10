@@ -5,6 +5,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
+import { createTaskCatalogOperations } from '../../../../src/lib/tasks/catalog-operations.ts';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
@@ -28,15 +29,17 @@ beforeEach(() => {
 });
 
 function catalog(withNumbers: boolean) {
+  const database = { getDatabase: () => db, notifyChange: () => {} } as never;
   return createDatabaseOperationCatalog(
-    { getDatabase: () => db, notifyChange: () => {} } as never,
+    database,
     new JobQueueRepository(db),
-    {
+    {},
+    createTaskCatalogOperations(database, {
       readTask: (taskId) => taskRepo.getTask(taskId) ?? readTaskCore(db, taskId),
       readTaskByNumber: withNumbers
         ? (sid, number) => taskRepo.getTaskByNumber(sid, number)
         : undefined,
-    }
+    })
   );
 }
 

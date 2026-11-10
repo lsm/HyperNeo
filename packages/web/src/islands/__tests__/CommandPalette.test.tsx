@@ -6,6 +6,9 @@ import { CommandPalette } from '../CommandPalette.tsx';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { commandRegistry } from '../../lib/command-registry.ts';
 import { commandPaletteModeSignal, commandPaletteOpenSignal } from '../../lib/signals.ts';
+import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions.ts';
+import { spaceNav } from '../../components/space/space-nav';
+import type { SpaceWebExtension } from '../../lib/web-extensions';
 
 describe('CommandPalette', () => {
   beforeEach(() => {
@@ -20,6 +23,128 @@ describe('CommandPalette', () => {
     commandPaletteOpenSignal.value = false;
     commandPaletteModeSignal.value = 'commands';
     vi.restoreAllMocks();
+  });
+
+  it('omits Space commands when the daemon does not provide Space', async () => {
+    declareExtensionNav(spaceNav);
+    registerWebExtension('space', null);
+    commandRegistry.register({
+      id: 'nav.chats',
+      label: 'Go to chats',
+      category: 'navigation',
+      run: () => {},
+    });
+    commandRegistry.register({
+      id: 'nav.spaces',
+      extension: 'space',
+      label: 'Go to spaces',
+      category: 'navigation',
+      run: () => {},
+    });
+    commandRegistry.register({
+      id: 'space.overview',
+      extension: 'space',
+      label: 'Space: Overview',
+      category: 'Spaces',
+      run: () => {},
+    });
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+    expect(await screen.findByText('Go to chats')).toBeTruthy();
+    expect(screen.queryByText('Go to spaces')).toBeNull();
+    expect(screen.queryByText('Space: Overview')).toBeNull();
+  });
+
+  it('shows one header for a category registered in two runs', async () => {
+    const command = (id: string, category: 'navigation' | 'settings') => ({
+      id,
+      label: id,
+      category,
+      run: () => {},
+    });
+    commandRegistry.registerAll([
+      command('nav.first', 'navigation'),
+      command('settings.one', 'settings'),
+      command('nav.second', 'navigation'),
+    ]);
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+
+    expect(await screen.findByText('nav.second')).toBeTruthy();
+    expect(screen.getAllByText('Navigation')).toHaveLength(1);
+  });
+
+  it('ranks extension items only when their inputs change', async () => {
+    const paletteItems = vi.spyOn(spaceNav, 'paletteItems');
+    declareExtensionNav(spaceNav);
+    registerWebExtension('space', {
+      store: { initGlobalList: async () => {}, spacesWithTasks: { value: [] } },
+    } as unknown as SpaceWebExtension);
+    commandRegistry.register({
+      id: 'nav.chats',
+      label: 'Go to chats',
+      category: 'navigation',
+      run: () => {},
+    });
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+    await screen.findByText('Go to chats');
+    const calls = paletteItems.mock.calls.length;
+
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'ArrowDown' });
+
+    expect(paletteItems).toHaveBeenCalledTimes(calls);
+    registerWebExtension('space', null);
+  });
+
+  it('runs the command shown at the selected row when a category is merged', async () => {
+    const run = vi.fn();
+    const command = (id: string, category: 'navigation' | 'settings') => ({
+      id,
+      label: id,
+      category,
+      run: () => run(id),
+    });
+    commandRegistry.registerAll([
+      command('nav.first', 'navigation'),
+      command('settings.one', 'settings'),
+      command('nav.second', 'navigation'),
+    ]);
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+    await screen.findByText('nav.second');
+    const input = screen.getByTestId('command-palette-input');
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(run).toHaveBeenCalledWith('nav.second');
+  });
+
+  it('keeps commands of an extension whose id only contains a loaded one hidden', async () => {
+    declareExtensionNav(spaceNav);
+    registerWebExtension('space', {
+      store: { initGlobalList: async () => {}, spacesWithTasks: { value: [] } },
+    } as unknown as SpaceWebExtension);
+    commandRegistry.register({
+      id: 'other.command',
+      label: 'Other command',
+      category: 'navigation',
+      extension: 'spa',
+      run: () => {},
+    });
+    commandRegistry.register({
+      id: 'nav.chats',
+      label: 'Go to chats',
+      category: 'navigation',
+      run: () => {},
+    });
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+
+    expect(await screen.findByText('Go to chats')).toBeTruthy();
+    expect(screen.queryByText('Other command')).toBeNull();
+    registerWebExtension('space', null);
   });
 
   it('renders nothing visible when closed', () => {

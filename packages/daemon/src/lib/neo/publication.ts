@@ -1,6 +1,8 @@
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { z } from 'zod';
 import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
+import { PublicHandoffReference } from '../handoffs/outbox.ts';
+import { WorkerOpenSourceSchema } from '../drivers/worker-identity-schema.ts';
 
 const text = (max: number) =>
   z
@@ -34,6 +36,7 @@ export const NeoPublicationObject = z
       )
       .optional(),
     fullText: text(16000).describe('The details of the topic(s) shortText names.'),
+    session: text(500).optional(),
     links: z
       .array(
         z
@@ -46,7 +49,10 @@ export const NeoPublicationObject = z
       )
       .max(16)
       .default([]),
-    artifacts: z.array(ArtifactRefSchema).max(16).optional(),
+    artifacts: z
+      .array(z.union([ArtifactRefSchema, PublicHandoffReference]))
+      .max(16)
+      .optional(),
     triggerId: text(200).optional(),
     replyTo: z.array(z.uuid()).max(100).optional(),
     askSummary: text(300).optional(),
@@ -65,6 +71,7 @@ export const NeoPublicationObject = z
             revisionId: z.uuid(),
             shortText: text(2000).optional(),
             fullText: text(16000),
+            session: text(500).optional(),
             createdAt: z.string().datetime(),
             producerInput: origin.optional(),
             askOrigin: origin.optional(),
@@ -75,6 +82,9 @@ export const NeoPublicationObject = z
       .optional(),
   })
   .strict();
+
+export const workerSession = (session?: string | null) =>
+  session && !session.startsWith('neo:') ? session : undefined;
 
 export function publicationTextRule(
   value: { verbatim?: true; shortText?: string; cardReply?: unknown },
@@ -93,12 +103,21 @@ export function publicationTextRule(
 
 export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);
 
+export const NeoPublicationOutputObject = NeoPublicationObject.extend({
+  sessionSource: WorkerOpenSourceSchema.nullable().optional(),
+  revisions: NeoPublicationObject.shape.revisions
+    .unwrap()
+    .element.extend({ sessionSource: WorkerOpenSourceSchema.nullable().optional() })
+    .array()
+    .optional(),
+});
+
 export const NeoPublicationResultSchema = z.union([
   z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
   z.object({
     accepted: z.literal(true),
     created: z.boolean(),
-    publication: NeoPublicationObject.extend({
+    publication: NeoPublicationOutputObject.extend({
       sequence: z.number().int().positive(),
       createdAt: z.string(),
     }).superRefine(publicationTextRule),

@@ -396,6 +396,18 @@ export class JobQueueRepository {
     return this.getJob(jobId);
   }
 
+  wakeParkedDeliveries(sessionId: string, now: number): number {
+    return withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue SET run_at = ?
+            WHERE queue = 'message_delivery' AND status = 'pending' AND run_at > ?
+              AND json_extract(payload, '$.sessionId') = ?`
+        )
+        .run(now, now, sessionId)
+    ).changes;
+  }
+
   requeueWaiting(jobId: string, runAt: number, claimToken: string): Job | null {
     const res = withBusyRetry(() =>
       this.db
@@ -1217,6 +1229,7 @@ export const jobQueueWrites = defineRepositoryOp('jobs.write', 'write', JobQueue
   'requeue',
   'requeueParked',
   'requeueWaiting',
+  'wakeParkedDeliveries',
 ]);
 
 export const jobQueueReads = defineRepositoryOp('jobs.read', 'read', JobQueueRepository, [

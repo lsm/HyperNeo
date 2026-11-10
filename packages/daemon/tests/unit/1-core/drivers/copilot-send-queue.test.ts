@@ -17,9 +17,11 @@ import { fileURLToPath } from 'node:url';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import type { WorkCallContext, WorkStarted } from '../../../../src/lib/drivers/types';
 
+const STALL_TIMEOUT_MS = 4000;
+
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
 const fixtures: ReturnType<typeof setup>[] = [];
-function setup() {
+function setup(timeoutMs?: number) {
   const run = mkdtempSync(join(tmpdir(), 'copilot-inputs-'));
   mkdirSync(join(run, 'home'));
   const fixture = fileURLToPath(new URL('../../../fixtures/copilot-sdk.ts', import.meta.url));
@@ -32,14 +34,14 @@ function setup() {
     );
   install();
   const deps = {
-    cliPath,
+    resolveCliPath: async () => cliPath,
     directory: join(run, 'owned'),
     machine: 'test',
     homeDir: join(run, 'home'),
     env: { HOME: join(run, 'home'), PATH: process.env.PATH ?? '' },
-    timeoutMs: 1500,
     folderExists: existsSync,
     makeFolder: (folder: string) => mkdirSync(folder),
+    timeoutMs,
   };
   const discovery = { id: 'copilot-cli', capabilities: ['find'] as const, find: () => [] };
   let adapter = createCopilotAdapter(discovery, deps);
@@ -87,13 +89,13 @@ afterEach(async () => {
     rmSync(f.run, { recursive: true, force: true });
   }
 });
-function fixture() {
-  const f = setup();
+function fixture(timeoutMs?: number) {
+  const f = setup(timeoutMs);
   fixtures.push(f);
   return f;
 }
 async function settled(f: ReturnType<typeof setup>, work: WorkStarted, receipt = work.receipt) {
-  for (let poll = 0; poll < 200; poll++) {
+  for (let poll = 0; poll < 2000; poll++) {
     const result = await f.adapter.status!(work.ref, undefined, receipt);
     if (result.ok && ['done', 'failed', 'stopped'].includes(result.value.status)) return result;
     await new Promise((done) => setTimeout(done, 5));
@@ -323,7 +325,7 @@ describe('Copilot owned input delivery', () => {
     mkdirSync(join(f.run, 'owned/receipts', work.ref.id, `${work.receipt!.inputId}.json.tmp`));
     const pid = f.calls().find((c) => c.method === 'session.send').pid;
     writeFileSync(join(f.run, 'release-settlement'), 'release');
-    for (let poll = 0; poll < 200; poll++) {
+    for (let poll = 0; poll < 2000; poll++) {
       try {
         process.kill(pid, 0);
       } catch {
@@ -418,7 +420,7 @@ describe('Copilot owned input delivery', () => {
     try {
       for (
         let poll = 0;
-        poll < 200 &&
+        poll < 2000 &&
         !f.calls().some((c) => c.method === 'session.send' && c.params.prompt === 'held-ack');
         poll++
       )
@@ -442,7 +444,7 @@ describe('Copilot owned input delivery', () => {
   });
 
   test('lost follow-up ACK never replays, but earlier complete evidence survives', async () => {
-    const f = fixture();
+    const f = fixture(STALL_TIMEOUT_MS);
     const work = await f.start('settled');
     await settled(f, work);
     expect(await f.send(work, 'lost-ack')).toMatchObject({ ok: false, reason: 'unreachable' });

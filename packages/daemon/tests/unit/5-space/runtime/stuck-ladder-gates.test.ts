@@ -2,8 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   MAX_AGENT_STUCK_NAGS,
   MAX_AGENT_STUCK_RESTARTS,
-} from '../../../../src/lib/space/runtime/constants';
-import {
   createAgentStuckRecoveryState,
   decideStuckLadderAction,
   observeExecutionProgress,

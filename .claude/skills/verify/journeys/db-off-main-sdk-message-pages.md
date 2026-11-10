@@ -27,16 +27,13 @@ The wire cap is unchanged; stored tools/bodies are never trimmed. Complete logic
 body SHA/count/bytes must match after all reads and cancellation. Seed/hash/index
 flush/test-GC are excluded from hot-read timing and disclosed, not hidden costs.
 
-An independent Bun process holds a synthetic WAL counter write for 20 ms and
-probes actual health RPC latency. `evidence/observed.json` records each affected
-RPC, max main loop lag, independent health replies/max, measured main SQL, worker
-queue/transaction/SQL summaries/fingerprints, argument/reply sizes and time, RSS
-peak and WAL bytes. RSS is interval-sampled and may miss brief peaks, especially
-when baseline main is blocked; it is not an OS high-water mark. Native iteration
-timing excludes JS projection; whole read transaction/request timing includes it,
-so report both. Report every miss against
-250 ms SQL/RPC and 1 s lag; lower main lag is not a full target pass. Oversized
-ordinary messages beyond the unchanged transport limit are not proved here.
+An independent Bun process holds a synthetic WAL counter write for 20 ms and probes actual
+health RPC latency. RSS is interval-sampled and may miss brief peaks, especially when
+baseline main is blocked; it is not an OS high-water mark. Native iteration timing
+excludes JS projection; whole read transaction/request timing includes it, so report both.
+Report every miss against 250 ms SQL/RPC and 1 s lag; lower main lag is not a full target
+pass. Oversized ordinary messages beyond the unchanged transport limit are not proved
+here.
 
 The final repeated latest read is essential: an early break from a Bun cached
 bound statement iterator caused SQLITE_MISUSE on reuse. The pre-fix fixed-source
@@ -57,16 +54,14 @@ failed/inconclusive runs with the final result. Repeat the unchanged step-1
 `db-off-main-sdk-status-reader.md` journey to measure whether the shared reader's
 per-row text projection actually reduces its earlier RSS/latency misses.
 
-All sockets, probe, reader and daemon close in finally. CI's Deno smoke sends a
-status request then an empty page through the real shared worker; nonempty native
-Bun RPC and Node-host IPC tests cover data/cursors. Deno is unavailable locally;
-its runtime acceptance remains CI-only. Run `sdk-status-reader-memory.ts` with
-`verify` or `bridge` using the same isolated setup to check actual public status
-and repeated page RPCs on memory DB or the real native Bun IPC worker bridge.
-The helper asserts full ordinary content and stored SHA retention. Unit suites,
-including mixed status/page FIFO/error contracts, remain CI-only. Post-deploy measurement belongs to the perf lane, grouped
-by deployed commit/PID, read-only; `workerOperation=sdk-page` identifies page SQL
-while the existing shared `workerKind=sdk-status` label remains compatible.
+All sockets, probe, reader and daemon close in finally. Run `sdk-status-reader-memory.ts`
+with `verify` or `bridge` using the same isolated setup to check actual public status and
+repeated page RPCs on memory DB or the real native Bun IPC worker bridge. The helper
+asserts full ordinary content and stored SHA retention. Unit suites, including mixed
+status/page FIFO/error contracts, remain CI-only. Post-deploy measurement belongs to the
+perf lane, grouped by deployed commit/PID, read-only; `workerOperation=sdk-page`
+identifies page SQL while the existing shared `workerKind=sdk-status` label remains
+compatible.
 
 
 For summary attribution, run the same isolated `sdk-status-reader-memory.ts bridge`

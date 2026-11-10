@@ -1,7 +1,16 @@
+import { neoUserFolder } from '../../neo/folder.ts';
+import { createWorkerNameSource } from '../../drivers/worker-names.ts';
+import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
+import { findExecutable } from '../../drivers/find-executable.ts';
+import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
+import { resolveNewSessionModel } from '../../session/new-session-model.ts';
+import { workerWorktreeHasSubmodules } from '../../drivers/work-placement.ts';
 import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
 import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
 import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
+import { createDriverHealthRuntime } from '../../drivers/driver-health-runtime.ts';
+import { startCuChecker } from '../../drivers/codex-cu-reaper.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
 import { dirname, resolve } from 'node:path';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
@@ -16,21 +25,28 @@ import {
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
+import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
+import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { codexStatePath } from '../../../storage/codex-desktop-read.ts';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
-import { recordStartedWork, type StartedWork } from '../../../storage/work-started-sessions.ts';
 import {
-  ACP_AGENTS,
-  createAcpAgentAdapter,
-  findAcpAgentBinary,
-  gitWorktreeProject,
-  listAcpAgentSessions,
-  reuseAcpSessionList,
-} from '../../drivers/acp-agent-adapter.ts';
+  markWorkUnusable,
+  readReusableWorkers,
+  recordStartedWork,
+  type StartedWork,
+} from '../../../storage/work-started-sessions.ts';
+import { resolveCopilotRuntime } from '../../providers/anthropic-copilot/copilot-cli-resolver.ts';
+import {
+  COPILOT_CLIENT,
+  createCopilotDiscovery,
+  listCopilotSessions,
+  reuseCopilotSessionList,
+} from '../../drivers/copilot-discovery.ts';
 import {
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
@@ -40,6 +56,7 @@ import {
 } from '../../drivers/claude-desktop-adapter.ts';
 import { readHyperneoSdkSessions } from '../../drivers/claude-feed.ts';
 import { createClaudeCodeAdapter } from '../../drivers/claude-code-adapter.ts';
+import { startWorkSessionSync } from '../../drivers/work-session-sync.ts';
 import { withClaudeRemoteControl } from '../../drivers/claude-remote-control.ts';
 import {
   connectCodexAppServer,
@@ -56,16 +73,11 @@ import {
   createHyperneoAdapter,
   type HyperneoSessionControl,
 } from '../../drivers/hyperneo-adapter.ts';
-import {
-  createSpaceAdapter,
-  type SpaceTaskControl,
-  spaceTaskCaller,
-  taskOperationRejection,
-} from '../../drivers/space-adapter.ts';
 import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
 import {
   createWorkVerbOperations,
   type WorkSendUncertainty,
+  type WorkVerbDeps,
 } from '../../drivers/work-operations.ts';
 import { sessionSender } from '../../messaging/message-send.ts';
 import { renderAddress } from '../../mailbox/address.ts';
@@ -76,6 +88,8 @@ import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
 import { neoFolder } from '../../neo/folder.ts';
 import { neoStartPlace } from '../../neo/start-place.ts';
+import { neoTodoRepository } from '../../neo/pack-contract.ts';
+import { neoTodoPolicies } from '../../neo/packs/todo-policies.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { WorktreeManager } from '../../worktree-manager.ts';
@@ -214,13 +228,14 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       if (session.worktree) {
         const manager = sessionManager.getWorktreeManager();
         const commits = await manager.getCommitsAhead(session.worktree);
-        const git = await simpleGit(
-          session.worktree.worktreePath ?? session.workspacePath!
-        ).status();
+        const directory = session.worktree.worktreePath ?? session.workspacePath!;
+        if (await workerWorktreeHasSubmodules(directory))
+          return reject('unsupported', 'Submodule worktrees require manual verification; kept.');
+        const git = await simpleGit(directory).status(['--ignore-submodules=none']);
         if (commits.hasCommitsAhead || !git.isClean())
           return reject(
             'unsupported',
-            'The worktree has changes or cannot be verified; archive it in the session UI.'
+            'The worktree has changes, unpushed commits or cannot be verified; kept. Manage its archive in the session UI.'
           );
       }
       const refused = admit();
@@ -248,11 +263,25 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         prepared
       ),
     resolveModel: async (model) => resolveDriverModel(await readAvailableModels(), model),
+    resolveDefaultModel: async () => {
+      const { decision } = await resolveNewSessionModel(
+        undefined,
+        undefined,
+        db.getGlobalSettings(),
+        context.deps.config.defaultModel
+      );
+      return decision.kind === 'model' && decision.provider
+        ? { id: decision.id, provider: decision.provider }
+        : decision.kind === 'unavailable'
+          ? newestAvailableModel(await readAvailableModels())
+          : null;
+    },
     effort: (sessionId) =>
       THINKING_OPTIONS.find(
         (entry) => entry.value === sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel
       )?.label.toLowerCase() ?? null,
     model: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.model ?? null,
+    provider: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.provider ?? null,
     chooseWorktree: async (sessionId) => {
       await sessionManager.getSessionLifecycle().completeWorktreeChoice(sessionId, 'worktree');
     },
@@ -300,13 +329,18 @@ export async function ownClaudeSessions(
 function claudeCodeAdapters(
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   ownedSessions: () => ReadonlySet<string>,
-  inbox: FamilyOperationContext['claudeInbox']
+  inbox: FamilyOperationContext['claudeInbox'],
+  desktop: WorkAdapter | undefined
 ): WorkAdapter[] {
-  if (!existsSync(join(homedir(), '.claude', 'projects'))) return [];
   const cache: ClaudeRecordCache = new Map();
   return [
     createClaudeCodeAdapter({
       sendInbox: inbox?.send,
+      desktopSend: desktop?.send,
+      desktopRecords: async () =>
+        existsSync(CLAUDE_DESKTOP_SESSIONS)
+          ? readClaudeDesktopRecords(CLAUDE_DESKTOP_SESSIONS, cache)
+          : [],
       projectsDir: join(homedir(), '.claude', 'projects'),
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
       ownedSessions,
@@ -328,13 +362,16 @@ function claudeDesktopAdapters(
   prepareExecution: WorkExecutionPreparer,
   inbox: FamilyOperationContext['claudeInbox'],
   mods: FamilyOperationContext['claudeDesktopMods'],
-  permissionMode: () => string
+  permissionMode: () => string,
+  readInput: NonNullable<ClaudeDesktopAdapterDeps['readInput']>,
+  readRecords: NonNullable<ClaudeDesktopAdapterDeps['readRecords']>
 ): WorkAdapter[] {
   const sessionsDir = CLAUDE_DESKTOP_SESSIONS;
-  if (!existsSync(sessionsDir)) return [];
   const deps: ClaudeDesktopAdapterDeps = {
+    readInput,
     mods: mods?.ready,
     sessionsDir,
+    readRecords,
     sendInbox: inbox?.send,
     admitInbox: inbox?.admit,
     prepareExecution,
@@ -355,45 +392,43 @@ function claudeDesktopAdapters(
   return [withClaudeRemoteControl(createClaudeDesktopAdapter(deps), deps)];
 }
 
-function acpAgentAdapters(
+function copilotAdapters(
   ownSessions: () => ReadonlySet<string>,
   context: FamilyOperationContext
 ): WorkAdapter[] {
-  return ACP_AGENTS.flatMap((agent) => {
-    const command = findAcpAgentBinary(agent.bin);
-    if (!command) return [];
-    const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
-    const adapters = [
-      createAcpAgentAdapter({
-        agent,
-        machine: hostname(),
-        now: Date.now,
-        listSessions: reuseAcpSessionList(() => listAcpAgentSessions(command, agent), Date.now),
-        ownSessions: () => {
-          const ids = ownSessions();
-          return {
-            has: (id: string) =>
-              ids.has(id) || (agent.id === 'copilot-cli' && copilotOwnsSession(directory, id)),
-          };
-        },
-        projectFolder: gitWorktreeProject,
-        ...(agent.app && existsSync(agent.app.path) ? { link: agent.app.link } : {}),
-      }),
-    ];
-    if (agent.id !== 'copilot-cli') return adapters;
-    const adapter = createCopilotAdapter(adapters[0], {
-      cliPath: command,
-      directory,
-      projectFolder: gitWorktreeProject,
-      machine: hostname(),
-      env: process.env,
-      homeDir: homedir(),
-      folderExists: existsSync,
-      makeFolder: (folder) => mkdirSync(folder),
-    });
-    context.driverCleanup?.push(() => adapter.close());
-    return [adapter];
+  if (!findExecutable(COPILOT_CLIENT.bin)) return [];
+  const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
+  const resolveCliPath = async (waitMs?: number) =>
+    (await resolveCopilotRuntime(process.env, waitMs)).path;
+  const discovery = createCopilotDiscovery({
+    machine: hostname(),
+    now: Date.now,
+    listSessions: reuseCopilotSessionList(
+      async () => listCopilotSessions(await resolveCliPath(PACKAGE_DOWNLOAD_WAIT_MS)),
+      Date.now
+    ),
+    ownSessions: () => {
+      const ids = ownSessions();
+      return { has: (id: string) => ids.has(id) || copilotOwnsSession(directory, id) };
+    },
+    projectFolder: gitWorktreeProject,
+    ...(existsSync(COPILOT_CLIENT.app.path) ? { link: COPILOT_CLIENT.app.link } : {}),
   });
+  const adapter = createCopilotAdapter(discovery, {
+    resolveCliPath,
+    directory,
+    projectFolder: gitWorktreeProject,
+    gitCheckout: readGitCheckout,
+    spawn: spawnProcess,
+    worktreesDir: join(directory, 'worktrees'),
+    machine: hostname(),
+    env: process.env,
+    homeDir: homedir(),
+    folderExists: existsSync,
+    makeFolder: (folder) => mkdirSync(folder),
+  });
+  context.driverCleanup?.push(() => adapter.close());
+  return [adapter];
 }
 
 function codexDesktopAdapters(
@@ -432,91 +467,6 @@ function codexDesktopAdapters(
       searchChats: (text) => searchChats(text, ['codex']),
     }),
   ];
-}
-
-export function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
-  const invoke = async (name: string, input: unknown, caller: OperationCaller) => {
-    const outcome = await invokeOperation(
-      context.deps.sessionManager.getOperationRegistry(),
-      name,
-      input,
-      spaceTaskCaller(caller)
-    );
-    return outcome.kind === 'completed' ? outcome.value : outcome.message;
-  };
-  return {
-    rename: async (target, title, caller) => {
-      const result = await invoke(
-        target.agentId ? 'agent.update' : 'task.update',
-        target.agentId
-          ? { spaceId: target.spaceId, agentId: target.agentId, name: title }
-          : { taskId: target.taskId, title },
-        caller
-      );
-      const reason = taskOperationRejection(result);
-      return reason
-        ? reject('not_delivered', reason)
-        : { ok: true, value: { renamed: true, title } };
-    },
-    create: async (spaceId, title, description, caller) => {
-      const created = await invoke('task.create', { spaceId, title, description }, caller);
-      const reason = taskOperationRejection(created);
-      return reason === null ? { taskId: (created as { id: string }).id } : { reason };
-    },
-    messageAgent: async (agent, message, { from, caller }) => {
-      const sent = (await invoke(
-        'message.send',
-        {
-          agent: { space: agent.spaceId, agent: agent.id },
-          message: {
-            type: 'user',
-            message: { role: 'user', content: message },
-            parent_tool_use_id: null,
-            ...(from === 'chat' ? {} : { inputKind: 'task' }),
-          },
-          from,
-        },
-        caller
-      )) as { kind?: unknown; reason?: unknown } | string;
-      if (typeof sent === 'object' && sent?.kind === 'accepted') return { accepted: true };
-      return {
-        reason:
-          typeof sent === 'string' ? sent : String(sent?.reason ?? 'message.send refused it.'),
-      };
-    },
-    message: async (taskId, node, message, fromHuman) => {
-      try {
-        const ensured = await context.spaceRuntimeService.ensureToolTargetSession({
-          kind: 'worker',
-          taskId,
-          agentName: node.agentName,
-          workflowNodeId: node.workflowNodeId,
-          waitCapMs: 0,
-        });
-        const sessionId = ensured.kind === 'resolved' ? ensured.sessionId : node.agentSessionId;
-        if (!sessionId)
-          return { reason: 'reason' in ensured ? ensured.reason : 'No worker session.' };
-        const messageId = await context.taskAgentManager.injectSubSessionMessage(
-          sessionId,
-          message,
-          !fromHuman
-        );
-        const sent = context.deps.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId);
-        return {
-          delivered: sent?.sendStatus !== 'deferred',
-          ...(sent && messageId ? { receipt: { executionId: sessionId, inputId: messageId } } : {}),
-        };
-      } catch (error) {
-        return { reason: error instanceof Error ? error.message : String(error) };
-      }
-    },
-    cancel: async (taskId, caller) => {
-      const reason = taskOperationRejection(
-        await invoke('task.transition', { taskId, status: 'cancelled' }, caller)
-      );
-      return reason === null ? { cancelled: true } : { reason };
-    },
-  };
 }
 
 export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
@@ -580,16 +530,41 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     }).chats;
   };
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
+  const desktop = claudeDesktopAdapters(
+    searchChats,
+    prepareExecution,
+    context.claudeInbox,
+    context.claudeDesktopMods,
+    () => neoWorkerPermissionMode(context.deps.db.getGlobalSettings().neo),
+    (sessionId, marker) =>
+      context.deps.db.gateway.call(readWorkInput, 'find', sessionId, {
+        adapter: 'claude-code',
+        marker,
+      }),
+    (sessionsDir) => context.deps.db.readClaudeRecordsAsync(sessionsDir)
+  );
+  context.driverCleanup?.push(
+    startCuChecker(() => context.deps.db.getGlobalSettings().codexCuAutoReap !== false)
+  );
+  const codex = () =>
+    codexDesktopAdapters(
+      (statePath, includeClosed, idPrefix) =>
+        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix),
+      searchChats,
+      prepareExecution
+    );
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
         context.deps.db.readHyperneoTurnEndsAsync(sessionId, since),
+      readTurnFacts: (sessionId, cursor, limit) =>
+        context.deps.db.readHyperneoTurnFactsAsync(sessionId, cursor, limit),
       prepareExecution,
       projects: () => context.deps.db.workspaceHistory.projects(),
       db,
       machine,
       searchChats: ownChats,
-      handoff: (sessionId, message, from, messageUuid, deliveryMode) =>
+      handoff: (sessionId, message, from, messageUuid, deliveryMode, once) =>
         handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
           message: {
@@ -600,6 +575,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           origin: from,
           messageUuid,
           deliveryMode,
+          once,
           jobQueue: context.deps.jobQueue,
         }),
       sessions: hyperneoSessionControl(context),
@@ -608,49 +584,95 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       makeFolder: (folder: string) => mkdirSync(folder),
       homeDir: homedir(),
     }),
-    createSpaceAdapter({
-      readTurnEnds: (sessionId, since) =>
-        context.deps.db.readHyperneoTurnEndsAsync(sessionId, since),
-      db,
-      machine,
-      searchChats: ownChats,
-      tasks: spaceTaskControl(context),
-    }),
-    ...codexDesktopAdapters(
-      (statePath, includeClosed, idPrefix) =>
-        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix),
+    ...codex(),
+    ...desktop,
+    ...claudeCodeAdapters(
       searchChats,
-      prepareExecution
-    ),
-    ...claudeDesktopAdapters(
-      searchChats,
-      prepareExecution,
+      () => readHyperneoSdkSessions(db()),
       context.claudeInbox,
-      context.claudeDesktopMods,
-      () => neoWorkerPermissionMode(context.deps.db.getGlobalSettings().neo)
+      desktop[0]
     ),
-    ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db()), context.claudeInbox),
-    ...acpAgentAdapters(
+    ...copilotAdapters(
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
       context
     ),
   ];
+  let selectedCodex = adapters.some((adapter) => adapter.id === 'codex-desktop')
+    ? codexStatePath(homedir())
+    : null;
+  const currentAdapters = () => {
+    const path = codexStatePath(homedir());
+    const selected = existsSync(path) ? path : null;
+    if (selected !== selectedCodex) {
+      selectedCodex = selected;
+      const index = adapters.findIndex((adapter) => adapter.id === 'codex-desktop');
+      if (index >= 0) adapters.splice(index, 1);
+      if (selected) adapters.push(...codex());
+    }
+    return [
+      adapters[0],
+      ...(context.extensionAdapters?.({ searchChats: ownChats }) ?? []),
+      ...adapters.slice(1),
+    ];
+  };
+  const folder = neoUserFolder(context.deps.config.workspaceRoot);
+  context.workerNameSource?.(
+    createWorkerNameSource(currentAdapters, { machine, folder, name: folder })
+  );
+  const health = createDriverHealthRuntime(context, currentAdapters);
+  startWorkSessionSync(context.deps.db.gateway, context.deps.jobProcessor, currentAdapters);
   const deps = {
-    adapters: () => adapters,
+    adapters: currentAdapters,
+    health: health.read,
     remote: remoteDaemons,
     daemonName: machine,
     startPlace: neoStartPlace({
       db: db(),
       machine,
       workspaceRoot: context.deps.config.workspaceRoot,
+      repository: (todo, ask) =>
+        neoTodoRepository(todo ?? { check: null, named: null }, neoTodoPolicies(db()), {
+          ask,
+          todo,
+          start: true,
+        }),
     }),
     isOpenTodo: (todoId: string, sessionId: string) => {
       const store = new NeoAskTodoRepository(db());
       const todo = store.getTodo(todoId);
       const ask = todo ? store.getAsk(todo.askId) : null;
-      return ask?.status === 'open' && ask.sessionId === sessionId;
+      return (
+        !!todo &&
+        ['todo', 'doing', 'blocked'].includes(todo.state) &&
+        ask?.status === 'open' &&
+        ask.sessionId === sessionId
+      );
     },
+    todoWorker: {
+      on: (todoId, ref) => new NeoTodoSessionRepository(db()).sendsNow(todoId, ref),
+      wait: (todoId, ref, message) =>
+        new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message),
+    } satisfies WorkVerbDeps['todoWorker'],
+    workInputs: {
+      accept: (todoId, from, target, message) =>
+        new WorkDeliveryInputRepository(db()).accept(todoId, from, target, message, Date.now()),
+      recordOutcome: (id, target, outcome) =>
+        new WorkDeliveryInputRepository(db()).recordOutcome(
+          id,
+          readDriverOutcome(target, { kind: 'completed', value: outcome }),
+          Date.now()
+        ),
+      recordFailure: (id, error) =>
+        new WorkDeliveryInputRepository(db()).recordOutcome(
+          id,
+          { failure: String(error) },
+          Date.now()
+        ),
+    } satisfies WorkVerbDeps['workInputs'],
     recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
+    freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
+      readReusableWorkers(db(), adapter, todoId, sessionId),
+    markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
       if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');
@@ -719,12 +741,20 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   };
   return [
     createFindWorkOperation(deps),
+    health.operation,
     ...createWorkVerbOperations(deps),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
     createReadWorkOperation({
       readTurns,
-      readInput: (sessionId, input) =>
-        context.deps.db.gateway.call(readWorkInput, 'find', sessionId, input),
+      readInput: async (sessionId, input) =>
+        input.adapter === 'codex-desktop' || input.adapter === 'claude-code'
+          ? context.deps.db.gateway.call(readWorkInput, 'find', sessionId, {
+              adapter: input.adapter,
+              marker: input.marker,
+            })
+          : (adapters
+              .find((adapter) => adapter.id === input.adapter)
+              ?.readInput?.(sessionId, input.marker) ?? null),
       remote: remoteDaemons,
       daemonName: machine,
     }),

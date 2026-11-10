@@ -1,20 +1,21 @@
-import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
-import { parkDeliveryJob } from '../../../../src/storage/repositories/job-delivery-parking';
-import type { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
 import { describe, expect, it, mock } from 'bun:test';
 import type {
   DeliveryOutcome,
   MessageDeliverySession,
 } from '../../../../src/lib/agent/message-delivery';
+import { MessageDeliveryTerminalTurnError } from '../../../../src/lib/agent/message-delivery';
 import type { DeliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics';
 import {
   createMessageDeliveryHandler,
   type MessageDeliveryHandlerDeps,
 } from '../../../../src/lib/job-handlers/message-delivery.handler';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { parkDeliveryJob } from '../../../../src/storage/repositories/job-delivery-parking';
 import type {
   Job,
   JobQueueRepository,
 } from '../../../../src/storage/repositories/job-queue-repository';
+import type { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
 
 import { createTestDb, createTestSession } from '../../../helpers/database';
 
@@ -33,7 +34,7 @@ const LEGACY_PAYLOAD: Record<string, unknown> = {
 };
 
 function makeJob(payload: Record<string, unknown>): Job {
-  return { id: 'job-1', claimToken: 'claim-1', payload } as unknown as Job;
+  return { id: 'job-1', claimToken: 'claim-1', payload: { ...payload } } as unknown as Job;
 }
 
 class MockSession implements MessageDeliverySession {
@@ -77,9 +78,13 @@ function makeHarness(
     requeueParked: mock(
       (_id: string, _runAt: number, _token: string | null) => ({ id: _id }) as Job
     ),
+    requeueWaiting: mock(
+      (_id: string, _runAt: number, _token: string | null) => ({ id: _id }) as Job
+    ),
   };
   bindGateway(jobQueue.db, {
     call: async (_op: unknown, method: string, ...args: [string, number, string | null]) => {
+      if (method === 'requeueWaiting') return jobQueue.requeueWaiting(...args);
       if (method !== 'park') throw new Error(`Unexpected parking command: ${method}`);
       return jobQueue.requeueParked(...args) !== null;
     },
@@ -290,14 +295,67 @@ describe('createMessageDeliveryHandler', () => {
 
     it('parks the job until a restored cooldown expires instead of driving the turn', async () => {
       const retryAt = Date.now() + 60_000;
-      const { handler, session, jobQueue, getMessageContent, job } = makeHarness({
+      const { handler, session, jobQueue, job } = makeHarness({
         getSessionCooldownRetryAt: () => retryAt,
       });
       const result = await handler(job, {});
       expect(result).toEqual({ parked: 'rate_limit_cooldown', retryAt });
       expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', retryAt, 'claim-1');
       expect(session.driveCalls).toBe(0);
-      expect(getMessageContent).not.toHaveBeenCalled();
+    });
+
+    it('a human message skips the cooldown park and is watched once delivered', async () => {
+      const watched: string[] = [];
+      const prepared: string[] = [];
+      const { handler, session, jobQueue, job } = makeHarness({
+        getSessionCooldownRetryAt: () => Date.now() + 60_000,
+        getMessageContent: () => ({ content: 'hi', sendStatus: 'enqueued', inputKind: 'human' }),
+        prepareHumanSend: async (sessionId) => {
+          prepared.push(sessionId);
+          return 'recovered';
+        },
+        watchHumanSend: (_sessionId, uuid) => watched.push(uuid),
+      });
+      expect(await handler(job, {})).toEqual({ outcome: 'completed' });
+      expect(prepared).toEqual(['sess-1']);
+      expect(session.driveCalls).toBe(1);
+      expect(watched).toEqual(['uuid-1']);
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('a human message waits without spending the park budget when there is no network', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({
+        getMessageContent: () => ({ content: 'hi', sendStatus: 'enqueued', inputKind: 'human' }),
+        prepareHumanSend: async () => 'wait',
+      });
+      expect(await handler(job, {})).toMatchObject({ parked: 'no_network' });
+      expect(session.driveCalls).toBe(0);
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('watches a human message a retried job finds consumed', async () => {
+      const watched: string[] = [];
+      const { handler, session, job } = makeHarness({
+        getMessageContent: () => ({ content: 'hi', sendStatus: 'consumed', inputKind: 'human' }),
+        watchHumanSend: (_sessionId, uuid) => watched.push(uuid),
+      });
+      expect(await handler(job, {})).toEqual({ outcome: 'completed' });
+      expect(watched).toEqual(['uuid-1']);
+      expect(session.driveCalls).toBe(0);
+    });
+
+    it('a system message keeps its gates and never starts recovery', async () => {
+      const prepared: string[] = [];
+      const { handler, session, job } = makeHarness({
+        getSessionCooldownRetryAt: () => Date.now() + 60_000,
+        prepareHumanSend: async (sessionId) => {
+          prepared.push(sessionId);
+          return 'deliver';
+        },
+      });
+      expect(await handler(job, {})).toMatchObject({ parked: 'rate_limit_cooldown' });
+      expect(prepared).toEqual([]);
+      expect(session.driveCalls).toBe(0);
     });
 
     it('returns stale_attempt when the claim expires before parking for a cooldown', async () => {
@@ -440,6 +498,75 @@ describe('createMessageDeliveryHandler', () => {
       expect(result).toEqual({ outcome: 'completed' });
       expect(jobQueue.requeueParked).not.toHaveBeenCalled();
       expect(session.settleCalls).toEqual([]);
+    });
+  });
+
+  describe('park budget', () => {
+    const EXHAUSTED_PARKS = 360;
+
+    it('keeps a message with no provider waiting past the park budget', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      const retryAt = Date.now() + 30_000;
+      session.driveResult = { outcome: 'blocked', retryAt, reason: 'no_provider' };
+      job.payload.__parkCount = EXHAUSTED_PARKS;
+
+      expect(await handler(job, {})).toEqual({ parked: 'no_provider', retryAt });
+      expect(jobQueue.requeueWaiting).toHaveBeenCalledWith('job-1', retryAt, 'claim-1');
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('dead-letters a blocked requeue once the park count is exhausted', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + 5000 };
+      job.payload.__parkCount = EXHAUSTED_PARKS;
+      await expect(handler(job, { signal: new AbortController().signal })).rejects.toThrow(
+        MessageDeliveryTerminalTurnError
+      );
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('dead-letters a blocked requeue once the parked window is exhausted', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + 5000 };
+      job.payload.__parkCount = 1;
+      job.payload.__parkedSince = Date.now() - 31 * 60_000;
+      await expect(handler(job, { signal: new AbortController().signal })).rejects.toThrow(
+        MessageDeliveryTerminalTurnError
+      );
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('dead-letters an interrupted delivery once the park budget is exhausted', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveDeliveryTurn = async () => {
+        throw new Error('Interrupted by user');
+      };
+      job.payload.__parkCount = EXHAUSTED_PARKS;
+      await expect(handler(job, { signal: new AbortController().signal })).rejects.toThrow(
+        MessageDeliveryTerminalTurnError
+      );
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('dead-letters a cooldown hold once the park budget is exhausted', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({
+        getSessionCooldownRetryAt: () => Date.now() + 60_000,
+      });
+      job.payload.__parkCount = EXHAUSTED_PARKS;
+      await expect(handler(job, { signal: new AbortController().signal })).rejects.toThrow(
+        MessageDeliveryTerminalTurnError
+      );
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+      expect(session.driveCalls).toBe(0);
+    });
+
+    it('still parks while the budget has room', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'blocked', retryAt: 4321 };
+      job.payload.__parkCount = EXHAUSTED_PARKS - 1;
+      const result = await handler(job, { signal: new AbortController().signal });
+      expect(result).toEqual({ parked: 'sdk_resume_choice', retryAt: 4321 });
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', 4321, 'claim-1');
     });
   });
 });

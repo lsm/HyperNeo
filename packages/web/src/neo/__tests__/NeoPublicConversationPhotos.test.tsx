@@ -2,9 +2,9 @@ import type {
   NeoConversationAskPageItem,
   NeoConversationImageRef,
 } from '@hyperneo/shared/types/neo-conversation-ask';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NeoPublicConversation } from '../NeoPublicConversation.tsx';
+import { NeoPublicConversation, PendingAsk } from '../NeoPublicConversation.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 
 const request = vi.hoisted(() => vi.fn());
@@ -48,6 +48,93 @@ const view = (content: NeoConversationAskPageItem['content']) => {
 const full = { ok: true, imageId: '1:0', mediaType: 'image/png', data: 'ZnVsbA==' };
 
 describe('public ask photo references', () => {
+  it('puts sent photos before a right-aligned words bubble and opens them full size', () => {
+    const { container } = render(
+      <NeoPublicConversation
+        conversation={view([
+          { type: 'text', text: 'The lamp flickers' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aW4=' } },
+        ])}
+      />
+    );
+    const photo = screen.getByRole('img', { name: 'Attached photo 1' });
+    const bubble = container.querySelector('.neo-message-bubble')!;
+    expect(bubble.contains(photo)).toBe(false);
+    expect(photo.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(photo.closest('.justify-end')).toBeTruthy();
+    fireEvent.click(photo);
+    expect(screen.getByRole('dialog', { name: 'Attached photo 1' })).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('omits the photo-only bubble, dummy words and reply action', () => {
+    const { container } = render(
+      <NeoPublicConversation
+        conversation={view([{ type: 'text', text: 'Attached files' }, ref()])}
+        onQuote={vi.fn()}
+      />
+    );
+    expect(container.querySelector('.neo-message-bubble')).toBeNull();
+    expect(screen.queryByText('Attached files')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy your message' }).hasAttribute('disabled')).toBe(
+      true
+    );
+    expect(screen.queryByRole('button', { name: 'Reply to your message' })).toBeNull();
+    fireEvent.contextMenu(container.querySelector('article')!);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('keeps retry and edit on a failed photo-only send and keeps a quoted bubble', () => {
+    const onRetry = vi.fn();
+    const onEdit = vi.fn();
+    const ask = {
+      requestId: 'pending-photo',
+      sessionId: root,
+      text: 'Attached files',
+      images: [{ media_type: 'image/png' as const, data: 'aW4=' }],
+      createdAt: '2026-09-30T12:00:00Z',
+      state: 'failed' as const,
+    };
+    const result = render(<PendingAsk ask={ask} onRetry={onRetry} onEdit={onEdit} />);
+    expect(result.container.querySelector('.neo-message-bubble')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(onRetry).toHaveBeenCalledWith(ask.requestId);
+    expect(onEdit).toHaveBeenCalledWith(ask.requestId);
+    result.rerender(
+      <PendingAsk
+        ask={{
+          ...ask,
+          quote: {
+            author: 'Neo',
+            text: 'Which lamp?',
+            anchor: 'lamp',
+            replyTo: { kind: 'message', id: 'lamp' },
+          },
+        }}
+      />
+    );
+    expect(result.container.querySelector('.neo-message-bubble')).toBeTruthy();
+    expect(screen.getByText('Which lamp?')).toBeTruthy();
+    expect(screen.queryByText('Attached files')).toBeNull();
+    result.rerender(
+      <PendingAsk
+        ask={{
+          ...ask,
+          previewContext: {
+            artifactId: 'photo-report',
+            snapshot: 'a'.repeat(64),
+            displayName: 'Lamp report',
+            state: 'available',
+          },
+        }}
+      />
+    );
+    expect(result.container.querySelector('.neo-message-bubble')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Preview.*Lamp report/ })).toBeTruthy();
+  });
+
   it('shows a thumbnail sized from the photo, then the full photo once opened', async () => {
     const photo = ref();
     request.mockResolvedValue({ ...full, imageId: photo.imageId });
@@ -60,7 +147,7 @@ describe('public ask photo references', () => {
     );
     fireEvent.click(open);
     await waitFor(() =>
-      expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
+      expect(screen.getAllByRole('img', { name: 'Attached photo 1' })[0].getAttribute('src')).toBe(
         'data:image/png;base64,ZnVsbA=='
       )
     );
@@ -68,7 +155,14 @@ describe('public ask photo references', () => {
       name: 'neo.conversation.image.read',
       input: { conversationId, imageId: photo.imageId },
     });
-    expect(screen.queryByRole('button', { name: 'Open attached photo 1' })).toBeNull();
+    const dialog = await screen.findByRole('dialog', { name: 'Attached photo 1' });
+    expect(within(dialog).getByRole('img').getAttribute('src')).toBe(
+      'data:image/png;base64,ZnVsbA=='
+    );
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Open attached photo 1' })).toBe(
+      document.activeElement
+    );
   });
 
   it('shows a placeholder for a photo without a thumbnail', () => {
@@ -99,7 +193,7 @@ describe('public ask photo references', () => {
     request.mockResolvedValueOnce({ ...full, imageId: '3:0' });
     fireEvent.click(retry);
     await waitFor(() =>
-      expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
+      expect(screen.getAllByRole('img', { name: 'Attached photo 1' })[0].getAttribute('src')).toBe(
         'data:image/png;base64,ZnVsbA=='
       )
     );
@@ -129,7 +223,7 @@ describe('public ask photo references', () => {
     expect(request).not.toHaveBeenCalled();
     seen[0]();
     await waitFor(() =>
-      expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
+      expect(screen.getAllByRole('img', { name: 'Attached photo 1' })[0].getAttribute('src')).toBe(
         'data:image/png;base64,ZnVsbA=='
       )
     );

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseCore } from '../../../packages/daemon/src/storage/database-core.ts';
 import { SDKMessageRepository } from '../../../packages/daemon/src/storage/repositories/sdk-message-repository.ts';
 import { SDK_MESSAGE_COLUMN_TYPES, deriveSdkMessageColumns } from '../../../packages/daemon/src/storage/sdk-message-columns.ts';
-import { readSpaceStartReceipt } from '../../../packages/daemon/src/lib/drivers/space-adapter.ts';
+import { readSpaceStartReceipt } from '../../../packages/space/src/drivers/space-adapter.ts';
 import { readSessionInputEvidence } from '../../../packages/daemon/src/lib/drivers/space-input-evidence.ts';
 import { readHyperneoInputs, readHyperneoLastResult, readHyperneoExchange } from '../../../packages/daemon/src/lib/drivers/hyperneo-adapter.ts';
 

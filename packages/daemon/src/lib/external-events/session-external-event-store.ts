@@ -125,6 +125,13 @@ export class SessionExternalEventStore {
     return row ? toRecord(row) : null;
   }
 
+  listRecent(limit: number): ExternalEventRecord[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM session_external_events ORDER BY rowid DESC LIMIT ?`)
+      .all(limit) as SessionEventRow[];
+    return rows.map(toRecord);
+  }
+
   getById(eventId: string): ExternalEventRecord | null {
     const row = this.db
       .prepare(`SELECT * FROM session_external_events WHERE id = ?`)

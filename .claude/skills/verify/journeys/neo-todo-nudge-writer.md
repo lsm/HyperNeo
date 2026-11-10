@@ -35,5 +35,4 @@ The wrapper saves JSON and logs before deleting each run's temporary daemon data
 The failing runner reproductions show duplicate reminders during a pending send
 and loss of newer activity when an old delivery completes.
 
-Run the runner, todo-gateway and settlement tests, source types and repository
-checks. Deno smoke verifies the actual worker admission and completion path.
+Run the runner, todo-gateway and settlement tests, source types and repository checks.

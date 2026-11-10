@@ -8,15 +8,15 @@ import {
   type ImportExecuteResult,
   type ImportPreviewResult,
   setupSpaceExportImportHandlers,
-} from '../../../../src/lib/rpc-handlers/space-export-import-handlers';
-import { exportBundle, validateExportBundle } from '../../../../src/lib/space/export-format';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+} from '../../../../../space/src/rpc/space-export-import-handlers';
+import { exportBundle, validateExportBundle } from '../../../../../space/src/export-format';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import {
   createSpaceAgentLookup,
   type SpaceAgentLookup,
   SpaceWorkflowManager,
 } from '../../../../src/lib/workflows/workflow-manager';
-import { slugifyWithinLimit } from '../../../../src/lib/space/slug';
+import { slugifyWithinLimit } from '../../../../src/lib/agents/slug';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';

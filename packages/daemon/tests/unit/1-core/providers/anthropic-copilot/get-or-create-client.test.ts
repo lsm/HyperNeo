@@ -62,12 +62,16 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
 
     const clientPromise = getOrCreate('gho_test_token');
 
-    expect(startCalls).toHaveLength(1);
+    await vi.waitFor(() => expect(startCalls).toHaveLength(1));
 
     startCalls[0].resolve();
     const client = await clientPromise;
 
     expect(client).toBeDefined();
+    expect(constructOpts[0].connection).toMatchObject({
+      kind: 'stdio',
+      path: expect.stringMatching(/copilot-runtime(\.exe)?$/),
+    });
   });
 
   it('caches the client after a successful start() so subsequent calls skip start()', async () => {
@@ -78,12 +82,12 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     ).getOrCreateClient.bind(provider);
 
     const p1 = getOrCreate();
-    expect(startCalls).toHaveLength(1);
+    await vi.waitFor(() => expect(startCalls).toHaveLength(1));
     startCalls[0].resolve();
     const client1 = await p1;
 
     const client2 = await getOrCreate();
-    expect(startCalls).toHaveLength(1);
+    await vi.waitFor(() => expect(startCalls).toHaveLength(1));
     expect(client2).toBe(client1);
   });
 
@@ -95,7 +99,7 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     ).getOrCreateClient.bind(provider);
 
     const p1 = getOrCreate();
-    expect(startCalls).toHaveLength(1);
+    await vi.waitFor(() => expect(startCalls).toHaveLength(1));
     startCalls[0].reject(new Error('CLI not found'));
     await expect(p1).rejects.toThrow('CLI not found');
 
@@ -103,7 +107,7 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
 
     startCalls.length = 0;
     const p2 = getOrCreate();
-    expect(startCalls).toHaveLength(1);
+    await vi.waitFor(() => expect(startCalls).toHaveLength(1));
     startCalls[0].resolve();
     await expect(p2).resolves.toBeDefined();
   });
@@ -117,7 +121,7 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     const state = provider as unknown as Record<string, unknown>;
 
     const clientPromise = getOrCreate('gho_test_token');
-    expect(startCalls).toHaveLength(1);
+    await vi.waitFor(() => expect(startCalls).toHaveLength(1));
 
     state['shuttingDown'] = true;
     startCalls[0].resolve();
@@ -137,7 +141,7 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     const version = state['credentialsVersion'] as number;
 
     const clientPromise = getOrCreate('gho_test_token');
-    expect(startCalls).toHaveLength(1);
+    await vi.waitFor(() => expect(startCalls).toHaveLength(1));
 
     state['loggedOut'] = true;
     startCalls[0].resolve();
@@ -171,7 +175,7 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
         }
       ).getOrCreateClient.bind(p);
       const clientPromise = getOrCreate('gho_test_token');
-      expect(startCalls).toHaveLength(1);
+      await vi.waitFor(() => expect(startCalls).toHaveLength(1));
 
       await logoutPromise;
       startCalls[0].resolve();
@@ -191,8 +195,7 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     };
 
     const p = provider.ensureServerStarted();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(startCalls.length).toBeGreaterThan(0));
     if (startCalls.length > 0) {
       startCalls[0].reject(new Error('daemon start failed'));
     }
@@ -224,7 +227,7 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     ).getOrCreateClient.bind(provider);
 
     const p = getOrCreate('gho_test_token');
-    expect(startCalls).toHaveLength(1);
+    await vi.waitFor(() => expect(startCalls).toHaveLength(1));
     startCalls[0].reject(new Error('CLI server exited with code 1'));
 
     await expect(p).rejects.toThrow('Failed to start GitHub Copilot client: CLI server exited');

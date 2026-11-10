@@ -42,7 +42,10 @@ and omit the `migration_markers` table (the runner creates it) and FTS shadow
 tables (SQLite creates them). Serialize one complete SQL statement per JSON
 array element, preserving its original whitespace. The baseline test checks
 this exact catalogue against the fixture and compares the full schema at the
-first post-baseline migration, before migration 239 runs. There are 230 schema
+first post-baseline migration, before migration 239 runs. There are 208 schema
 statements; no user rows or migration-marker inserts are embedded in the asset.
+The catalogue omits what migrations 472 and 473 remove (eight room-era tables and
+`inbox_items`, with their indexes); the test applies those migrations to the
+fixture before comparing. The fixture itself stays frozen.
 The baseline initializer separately preserves the fresh GitHub extension default;
 other singleton defaults are still supplied by `createTables` as before.

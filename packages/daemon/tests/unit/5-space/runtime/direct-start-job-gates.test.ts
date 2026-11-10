@@ -10,7 +10,7 @@ import {
   requireStartNotFinished,
 } from '../../../../src/lib/tasks/direct-start-jobs';
 import { directTaskStartIdentity } from '../../../../src/lib/tasks/start-direct-task';
-import { DIRECT_TASK_PARK_BUDGET } from '../../../../src/lib/tasks/park-budget';
+import { DIRECT_TASK_PARK_BUDGET } from '../../../../src/lib/job-handlers/park-budget';
 
 const input = { taskId: 't1', requestKey: 'k' };
 const attemptId = directTaskStartIdentity(input).attemptId;

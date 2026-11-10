@@ -1,3 +1,4 @@
+import { secureDataRoot } from '@hyperneo/daemon/lib/data-root-private';
 import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
@@ -13,6 +14,7 @@ import {
   createJsonErrorResponse,
   shouldHaveImmutableCache,
   isHtmlFile,
+  printServerUrls,
 } from './cli-utils.ts';
 import { embeddedAssets, embeddedBuiltinSkills } from './embedded-assets';
 
@@ -20,6 +22,7 @@ const log = createLogger('hyperneo:cli:prod-server');
 
 export async function startProdServer(config: Config) {
   log.info('Starting production server...');
+  secureDataRoot(getDataDir(), { log: (line) => log.info(line) });
 
   let isShuttingDown = false;
   let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
@@ -133,7 +136,7 @@ export async function startProdServer(config: Config) {
 
     async fetch(req, upgrade, client) {
       const url = new URL(req.url);
-      const refused = daemonContext.guardRequest(req);
+      const refused = await daemonContext.guardRequest(req);
       if (refused) return refused;
 
       if (req.method === 'OPTIONS') {
@@ -143,9 +146,17 @@ export async function startProdServer(config: Config) {
       if (url.pathname === '/pair' && req.method === 'POST') return daemonContext.handlePair(req);
 
       if (isWebSocketPath(url.pathname)) {
+        const device = await daemonContext.authenticateUpgrade(req, client?.remoteAddress ?? null);
+        if (!device)
+          return new Response('Device pairing required', {
+            status: 401,
+            headers: { 'Cache-Control': 'no-store' },
+          });
+        if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket')
+          return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
         const upgradeResponse = upgrade(req, {
           connectionSessionId: 'global',
-          device: await daemonContext.authenticateUpgrade(req, client?.remoteAddress ?? null),
+          device,
         });
 
         if (upgradeResponse) {
@@ -154,6 +165,11 @@ export async function startProdServer(config: Config) {
 
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
+
+      const markdown = await daemonContext.handleAskMarkdown(req, client?.remoteAddress ?? null);
+      if (markdown) return markdown;
+      const image = await daemonContext.handleMessageImage(req, client?.remoteAddress ?? null);
+      if (image) return image;
 
       const entry = resolveNeoEntry(url);
       if (entry?.kind === 'redirect') {
@@ -201,7 +217,6 @@ export async function startProdServer(config: Config) {
   sdkWarmupTimer = setTimeout(warmupSDKCliBinary, 0);
 
   log.info(`\nProduction server running!`);
-  log.info(`   UI: http://localhost:${config.port}`);
-  log.info(`   WebSocket: ws://localhost:${config.port}/ws`);
+  printServerUrls(config.port, config.host);
   log.info(`\nPress Ctrl+C to stop\n`);
 }

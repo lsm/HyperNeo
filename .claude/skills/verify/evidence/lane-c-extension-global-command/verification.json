@@ -1,0 +1,29 @@
+{
+  "redCommit": "e742f6bd5571d260257ca116998694e70784f131",
+  "before": {
+    "legacyHelperPassed": 1,
+    "missingCommandContractsFailed": 4,
+    "nativeWorkerError": "Unknown write DB op: extension.global.config.write"
+  },
+  "focused": {
+    "files": 4,
+    "tests": 20,
+    "passed": true
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "New command module and both new unit test files plus imported dependencies"
+  },
+  "verificationSchedulingDeviation": "The repository check was started before the strict type check reported completion, briefly overlapping two jobs. Strict check completed successfully; no further heavy job was started while repository check ran. Preflight free memory was 57% or higher.",
+  "limits": [
+    "Public global setter remains unchanged; command is constructed only",
+    "Main target UPSERTs absent for command; public read/startup DDL ownership unchanged",
+    "Intentional 1.3-second held write is outside 250 ms affected-latency target",
+    "No full transitive framework/plugin audit or deployment smoke claim",
+    "Local Bun 1.4.3; pinned Bun 1.4.2 is CI-owned"
+  ],
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  }
+}

@@ -14,11 +14,10 @@ requests must fail without altering the schedule or its job.
 An injected SQL failure during the pause must roll back its paired job deletion
 and return an RPC error while the original active schedule stays intact.
 
-The main connection must prepare neither the pause UPDATE nor its paired job
-DELETE. Commit the baseline reproduction before fixing the RPC: all behavior
-checks pass, then the SQL assertion fails. Repeat with
-`VERIFY_PROOF_RUNTIME=deno` and supported Deno on PATH. The wrapper preserves
-RPC replies and captured SQL and cleans up the isolated daemon data.
+The main connection must prepare neither the pause UPDATE nor its paired job DELETE.
+Commit the baseline reproduction before fixing the RPC: all behavior checks pass, then the
+SQL assertion fails. The wrapper preserves RPC replies and captured SQL and cleans up the
+isolated daemon data.
 
 Run schedule-service and task-schedule-handler unit suites for lifecycle and
 pending-job compare-and-swap behavior. This proof covers the taskSchedule.pause

@@ -2,7 +2,7 @@ import { ChevronDownGlyph, ChevronUpGlyph } from '../icons/common-glyphs.tsx';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
-import { SpaceTaskThreadMessageActions } from '../space/thread/SpaceTaskThreadMessageActions.tsx';
+import { ThreadMessageActions } from './ThreadMessageActions.tsx';
 import { DeliveryStateBadge, type DeliveryBadgeState } from '../ui/DeliveryStateBadge.tsx';
 
 import { getInvokedOperationName } from './tools/tool-utils.ts';
@@ -274,7 +274,7 @@ export function SyntheticMessageBlock({
       <div class={`${widthClass} w-auto`}>
         {card}
 
-        <SpaceTaskThreadMessageActions
+        <ThreadMessageActions
           timestamp={timestamp ?? Date.now()}
           copyText={copyText}
           align="right"

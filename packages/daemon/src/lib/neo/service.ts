@@ -1,16 +1,33 @@
+import { createWorkerNameSource } from '../drivers/worker-names.ts';
+import type { NeoWorkerNameSource } from './worker-name.ts';
+import { sweepNeoTrackerMirrors } from './tracker-mirror.ts';
+import { createQuestionRetirement } from './question-retirement.ts';
+import { neoStallReminderWrite } from '../../storage/repositories/neo-stall-reminder-write.ts';
+import { NeoSpeech } from './speech.ts';
+import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-track-write.ts';
+import { neoAskSettlementWrites } from '../../storage/repositories/neo-ask-settlement.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
-import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
+import {
+  NeoSessionMessageRepository,
+  WORKER_BATCH_SENDER,
+} from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
 import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
 import { decodeUlidTimestamp } from '../mailbox/ulid.ts';
-import { createNeoWorkerQuestionWriter } from './question-operations.ts';
+import { requireHumanCard } from './human-card.ts';
+import {
+  createNeoWorkerQuestionWriter,
+  expectedReportLanguage,
+  stageNeoWorkerQuestion,
+} from './question-operations.ts';
 import {
   sessionSender,
   type SessionReportHandler,
@@ -23,10 +40,14 @@ import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
-import { workerIdentity, workerEngine } from '@hyperneo/shared/types/worker-identity';
+import { parseProcessingState } from '../session/space-session-reads.ts';
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { z } from 'zod';
-import { WorkSummarySchema } from '../drivers/types.ts';
-import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
+import { readNeoSessionSource } from './session-open-source.ts';
+import { presentNeoPublications } from './publication-presentation.ts';
+import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { fillPrompt, NEO_PREFERENCE_CHANGED, NEO_SESSION_TRACK } from '@hyperneo/prompts';
+import { listPackPreferences, type PackPreferenceChange } from './preference-operations.ts';
 import type {
   GlobalSettings,
   MessageHub,
@@ -37,7 +58,11 @@ import type {
 import type { NeoQuestion, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
-import { type NeoModelPreference, neoTodoLimits } from '@hyperneo/shared/types/settings';
+import {
+  type NeoModelPreference,
+  neoStandingRules,
+  neoTodoLimits,
+} from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -50,12 +75,12 @@ import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
   NeoTodoSessionRepository,
-  neoSafeSessionLink,
+  neoTodoSessionReads,
 } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
-import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
-import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
+import { sessionWorkerRef } from './worker-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
+import { WorkTurnRepository } from '../../storage/repositories/work-turn-repository.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
@@ -66,7 +91,9 @@ import { invokeOperation } from '../operations/invoke.ts';
 import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { driverWorkCaller } from './driver-work.ts';
-import { neoFolderPath } from './folder.ts';
+import { WorkDeliveryInputRepository } from '../../storage/repositories/work-delivery-input-repository.ts';
+import { catchUpWorkerTurns, planTurnCatchUp, recordWorkerTurns } from './turn-recording.ts';
+import { neoFolderPath, neoUserFolder } from './folder.ts';
 import { openNeoDefaultSession } from './inbox.ts';
 import {
   effectiveNeoPreference,
@@ -76,9 +103,15 @@ import {
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
+import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
 import { createNeoPublisher } from './publication-operation.ts';
-import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
+import {
+  neoSessionQuestionNote,
+  type NeoSessionNotice,
+  type NeoSessionNoticeGroup,
+} from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
+import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 
@@ -91,6 +124,7 @@ const MODEL_CHANGE_SOURCES = new Set([
 
 export class NeoService {
   readonly repo: NeoRepository;
+  readonly speech: NeoSpeech;
   readonly publications: NeoPublicationRepository;
   readonly asks: NeoConversationAskRepository;
   readonly publish: ReturnType<typeof createNeoPublisher>;
@@ -113,11 +147,15 @@ export class NeoService {
     ];
   }
 
+  workerNames?: NeoWorkerNameSource;
+
   readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;
   private disposed = false;
+  private catchingUpTurns = false;
+  private readonly turnsSeen = new Map<string, number>();
   filePacks: readonly NeoPack[] = [];
-  private readonly builtinPacks: NeoPack[];
+  readonly builtinPacks: NeoPack[];
   private readonly defaultPacks: readonly string[];
   readonly packOperations: NeoPackRuntime['operations'];
   readonly notifyChanged: () => void;
@@ -137,7 +175,8 @@ export class NeoService {
     readonly sessions: SessionManager,
     hub: MessageHub,
     readonly events: InternalEventBus<DaemonInternalEventMap>,
-    readonly publishSettings?: (settings: GlobalSettings) => void
+    readonly publishSettings?: (settings: GlobalSettings) => void,
+    readonly userFolder = neoUserFolder()
   ) {
     this.runDbOp = gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase()));
     this.notifyChanged = () => {
@@ -153,34 +192,85 @@ export class NeoService {
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
       seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
+      tellSessionQuestion: (root, notice) =>
+        this.deliverForward(
+          root,
+          `neo-session-question:${notice.key}:${notice.at}`,
+          neoSessionQuestionNote(notice),
+          root,
+          'event'
+        ),
       log: this.log,
       registry: () => this.sessions.getOperationRegistry(),
       followedCardRefs: (now) => this.followedCardRefs(now),
+      recordTurns: (ref) => recordWorkerTurns(ref, this.turnRecording()),
       mutedSessions: () => this.db.getGlobalSettings?.().neo?.mutedSessions,
-      sessionBranchPrs: async (ref) =>
-        (
-          await Promise.all(this.installedPacks().map((pack) => pack.sessionLinks?.(ref) ?? []))
-        ).flat(),
-      readRemotes: async (folder) => (await readWorkspaceIdentity(folder)).remotes ?? [],
-      observeSessions: async (sessions) => {
-        for (const pack of this.packs()) await pack.observeSessions?.(sessions, Date.now());
-      },
       notifyChanged: () => this.notifyChanged(),
     });
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
+    this.speech = new NeoSpeech(
+      hub,
+      this.runDbOp,
+      (id) => this.repo.getBindingBySession(id)?.kind === 'neo',
+      undefined,
+      undefined,
+      async (id, listening) => {
+        if (this.sessions.getCachedSession(id)?.getProcessingState().status === 'processing')
+          await ensurePrompt({
+            db: this.db.getDatabase(),
+            sdkMessageRepo: this.db.getSDKMessageRepo(),
+            jobQueue: this.db.getJobQueueRepo(),
+            sessionId: id,
+            message: {
+              type: 'user',
+              uuid: crypto.randomUUID() as UUID,
+              session_id: id,
+              parent_tool_use_id: null,
+              inputKind: 'system',
+              isSynthetic: true,
+              message: {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: listening
+                      ? 'The human is now listening.'
+                      : 'The human stopped listening.',
+                  },
+                ],
+              },
+            } as SDKUserMessage,
+            origin: 'system',
+            delivery: { origin: 'space_inject', injectedMidTurn: true },
+          });
+      },
+      (id) => !!this.db.getSession(id)
+    );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
-    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, () =>
-      this.publishSettings?.(db.getGlobalSettings())
-    );
+    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, (setting) => {
+      if (setting === 'preferences') {
+        void this.refreshPackPreferences();
+        return;
+      }
+      this.publishSettings?.(db.getGlobalSettings());
+      void this.rulesChanged();
+    });
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
+    const fallbackWorkerNames = createWorkerNameSource(() => [], {
+      machine: '',
+      folder: this.userFolder,
+      name: this.userFolder,
+    });
     this.todoRunner = createNeoTodoRunner({
       write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
       store: this.todos,
       sessions: this.todoSessions,
+      workerNames: () => this.workerNames ?? fallbackWorkerNames,
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
+      enabledPacks: () => this.packs(),
       tell: (ask, todo, note, key, kind) => {
         return this.deliverForward(
           ask.sessionId,
@@ -197,7 +287,6 @@ export class NeoService {
     this.builtinPacks = runtime.packs;
     this.defaultPacks = runtime.defaults;
     this.packOperations = runtime.operations;
-    for (const pack of this.builtinPacks) pack.todos?.schema(db.getDatabase());
     const notifyPublication = () => {
       try {
         void hub.event('neo.changed', {});
@@ -216,13 +305,43 @@ export class NeoService {
     };
     this.publish = createNeoPublisher({
       receivedHumanInput: (sessionId, id) => !!receivedNeoHumanInput(this, sessionId, id),
+      currentHumanInputs: (sessionId) => this.currentInputIds(sessionId),
+      sourceSession: (sessionId) => {
+        const conversation = this.repo.conversationId();
+        if (!conversation) return undefined;
+        const messages = new NeoSessionMessageRepository(this.db.getDatabase());
+        const sources = this.currentInputIds(sessionId).map((id) => {
+          const message = messages.get(conversation, id);
+          return message?.toSession === sessionId &&
+            message.fromSession !== sessionId &&
+            message.fromSession !== WORKER_BATCH_SENDER
+            ? message.fromSession
+            : undefined;
+        });
+        return sources.length && sources.every((source) => source === sources[0])
+          ? sources[0]
+          : undefined;
+      },
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
+      publication: (conversation, id) => this.publications.get(conversation, id),
+      lookupSession: async (id) => (await this.resolveSessionSource(id)).status,
       append: (input) => this.db.gateway.call(neoPublicationWrites, 'append', input),
+      speech: (sessionId, version, text) => this.speech.publish(sessionId, version, text),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
     });
+    const offSpeech = events.subscribe(
+      'sdk.message',
+      ({ sessionId, message }) =>
+        sessionId
+          ? this.speech
+              .complete(sessionId, message as SDKMessage)
+              .catch((error) => this.log.warn('Session speech delivery failed', error))
+          : undefined,
+      { subscriberName: 'session-spoken-replies' }
+    );
     const offUpdated = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState, session }) => {
@@ -272,6 +391,7 @@ export class NeoService {
     );
     const offHumanReset = onHumanDevicesReset(this.notifyPublicationsChanged);
     this.unsubscribe = () => {
+      offSpeech();
       offHumanReset();
       offQueryFailure();
       offUpdated();
@@ -306,6 +426,14 @@ export class NeoService {
       this.notifyChanged();
     }
   };
+
+  private currentInputIds(sessionId: string): string[] {
+    const state = parseProcessingState(this.db.getSession(sessionId)?.processingState);
+    if (state.status !== 'processing') return [];
+    if (Array.isArray(state.messageIds))
+      return state.messageIds.filter((id): id is string => typeof id === 'string');
+    return typeof state.messageId === 'string' ? [state.messageId] : [];
+  }
 
   private appendPublication(input: NeoPublicationInput) {
     return this.publications.append(input);
@@ -415,40 +543,33 @@ export class NeoService {
     this.triggerDeliveryRetryAt.clear();
     if (this.watching) await this.watching;
     await this.sessionWatcher.flushSessionNoticeGroup();
+    await this.speech.dispose();
   }
 
-  readWorker(ref: WorkRef) {
+  async readWorker(ref: WorkRef) {
     if (ref.adapter === 'hyperneo' && !ref.daemon)
-      return Promise.resolve(workerIdentity(ref, this.db.getSession(ref.id)?.title ?? null));
-    return readWorkerIdentity(ref, (ref) =>
-      invokeOperation(
-        this.sessions.getOperationRegistry(),
-        'work.status',
-        { ref },
-        { source: 'internal' }
-      )
+      return workerIdentity(ref, this.db.getSession(ref.id)?.title ?? null);
+    return workerIdentity(ref, await this.db.gateway.call(neoTodoSessionReads, 'workerName', ref));
+  }
+
+  resolveSessionSource(session: string | WorkRef) {
+    return readNeoSessionSource(
+      session,
+      (id) => this.db.getSession(id),
+      (name, input) =>
+        invokeOperation(this.sessions.getOperationRegistry(), name, input, { source: 'internal' })
     );
   }
 
   async readQuestionSource(ref: WorkRef): Promise<NeoQuestionSource | null> {
-    const result = await invokeOperation(
-      this.sessions.getOperationRegistry(),
-      'work.status',
-      { ref },
-      { source: 'internal' }
+    return (await this.resolveSessionSource(ref)).source;
+  }
+
+  presentPublications(items: NeoPublication[]) {
+    return presentNeoPublications(
+      items,
+      async (id) => (await this.resolveSessionSource(id)).source
     );
-    const current = z
-      .object({ ok: z.literal(true), value: WorkSummarySchema })
-      .safeParse(result.kind === 'completed' ? result.value : null);
-    if (!current.success) return null;
-    const local = ref.adapter === 'hyperneo' && !ref.daemon ? this.db.getSession(ref.id) : null;
-    return {
-      ...workerIdentity(ref, current.data.value.title),
-      provider: local?.config.provider ?? workerEngine(ref.adapter),
-      link:
-        neoSafeSessionLink(current.data.value.link, !!ref.daemon) ??
-        neoSafeSessionLink(current.data.value.remoteLink, true),
-    };
   }
 
   storeWorkerQuestion(ref: WorkRef, report: unknown, stored?: (question: NeoQuestion) => void) {
@@ -460,6 +581,123 @@ export class NeoService {
       stored
     )(ref, report);
   }
+
+  async relayWorkerQuestion(
+    input: { todoId: string; title: string; options: string[] },
+    sessionId: string | undefined
+  ) {
+    const todo = this.todos.getTodo(input.todoId);
+    const staged = this.todoSessions.readNudge(input.todoId)?.workerQuestion;
+    const ref = this.todoSessions.readRef(input.todoId);
+    if (!todo || !staged || !ref || this.todos.getAsk(todo.askId)?.sessionId !== sessionId)
+      return {
+        ok: false,
+        reason: 'no_worker_question: this todo has no worker question to relay.',
+      };
+    const setting = this.db.getGlobalSettings().language;
+    const card = requireHumanCard(
+      { text: input.title, kind: 'choice' },
+      this.todos.listQuestions(todo.askId),
+      null,
+      setting
+    );
+    if ('reason' in card) return card.reason;
+    const language = expectedReportLanguage(setting);
+    const result = await this.storeWorkerQuestion(ref, { ...staged, ...input, language });
+    const current = this.todoSessions.readNudge(input.todoId);
+    if (result.ok && current && JSON.stringify(current.workerQuestion) === JSON.stringify(staged))
+      this.todoSessions.recordNudge(input.todoId, { ...current, workerQuestion: undefined });
+    return result;
+  }
+
+  readonly relaySessionQuestion = (superpipe({})('neo.question.relaySession') as PipelineAPI)
+    .input(['input', 'sessionId', 'now'])
+    .pipe(
+      (input: { session?: string }) =>
+        findNeoSessionNotice(this.trackableNotices, input.session ?? ''),
+      'input',
+      'result:relayed'
+    )
+    .pipe(
+      (notice: NeoSessionNotice, input: { title: string }, sessionId: string | undefined) => {
+        const card = requireHumanCard(
+          { text: input.title, kind: 'choice' },
+          [],
+          null,
+          this.db.getGlobalSettings().language
+        );
+        if ('reason' in card) return card;
+        return notice.question && sessionId === this.defaultSessionId()
+          ? { value: notice }
+          : {
+              reason: {
+                ok: false,
+                reason: 'no_worker_question: this session has no question to relay.',
+              },
+            };
+      },
+      ['relayed', 'input', 'sessionId'],
+      'result:relayed'
+    )
+    .pipe((notice: NeoSessionNotice) => notice, 'relayed', 'notice')
+    .pipe(
+      async (notice: NeoSessionNotice, now: number) => {
+        const tracked = await this.runDbOp(neoSessionTrackWrites, {
+          askId: crypto.randomUUID(),
+          todoId: crypto.randomUUID(),
+          notice,
+          now,
+        });
+        return tracked.ok ? { value: tracked } : { reason: tracked };
+      },
+      ['relayed', 'now'],
+      'result:relayed'
+    )
+    .pipe(
+      async (
+        tracked: { ask: { id: string }; todo: NeoTodo; root: string },
+        notice: NeoSessionNotice,
+        input: { title: string; options: string[] },
+        now: number
+      ) => {
+        let relayed: { ok: boolean } | undefined;
+        try {
+          await this.todoSessions.write(
+            'stageTurnQuestion',
+            tracked.todo.id,
+            notice.question!,
+            now
+          );
+          this.notifyChanged();
+          relayed = await this.relayWorkerQuestion(
+            { todoId: tracked.todo.id, title: input.title, options: input.options },
+            tracked.root
+          );
+          return relayed;
+        } finally {
+          if (!relayed?.ok) {
+            await gatewayFor(this.db.getDatabase()).call(
+              neoAskSettlementWrites,
+              'settle',
+              {
+                askId: tracked.ask.id,
+                status: 'dropped',
+                outcome: 'The question card could not open.',
+              },
+              now
+            );
+            this.notifyChanged();
+          }
+        }
+      },
+      ['relayed', 'notice', 'input', 'now'],
+      'relayed'
+    )
+    .endAsync('relayed') as (
+    input: { session?: string; title: string; options: string[] },
+    sessionId: string | undefined,
+    now: number
+  ) => Promise<unknown>;
 
   readonly handleWorkerQuestion = (superpipe({})('neo.workerQuestionReport') as PipelineAPI)
     .input(['input', 'origin', 'retry'])
@@ -565,13 +803,16 @@ export class NeoService {
             kind: 'rejected',
             reason: 'report_assignment: choose a todo owned by the receiving Neo.',
           };
-        const result = await this.storeWorkerQuestion(
+        const result = stageNeoWorkerQuestion(
+          this.todos,
+          this.todoSessions,
           sessionWorkerRef(sender, !!this.db.getSession(sender)),
           { ...input.question, kind: input.kind, report: text },
-          (question) =>
+          this.db.getGlobalSettings().language,
+          (staged, question, reportId) =>
             wake(
-              question.id,
-              `Worker needs a human decision. Read card ${question.id}: ${question.text}`
+              reportId,
+              `Worker question on todo ${staged.id}: ${question.title}\nOptions: ${question.options.join(' | ')}\nAnswer the worker and continue if you can. If only the human can decide, call neo.question.relay with your own plain words.`
             )
         );
         return result.ok ? receipt : { kind: 'rejected', reason: result.reason };
@@ -649,7 +890,7 @@ export class NeoService {
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
-          ...neoPromptTools(this.packBriefs()),
+          ...neoPromptTools(this.packBriefs(), this.standingRules(), this.packPreferences()),
           autoCompactPercent: preference?.autoCompactPercent,
           ...(preference
             ? {
@@ -663,15 +904,62 @@ export class NeoService {
     } else {
       await this.alignCoordinatorConfig(binding.sessionId);
     }
+    await this.alignNeoSkills(binding.sessionId);
 
     return binding.sessionId;
+  }
+
+  private async alignNeoSkills(sessionId: string): Promise<void> {
+    const wanted = new Set(this.packBriefs().flatMap((pack) => (pack.skill ? [pack.skill] : [])));
+    const skills = this.db.skills.findAll();
+    if (!skills.length) return;
+    const current = this.db.getSession(sessionId)?.config.toolSelection;
+    const changes = skills
+      .filter((skill) => skill.sourceType !== 'mcp_server')
+      .map((skill) => ({
+        key: `skill:${skill.id}` as const,
+        selected:
+          skill.builtIn && skill.config.type === 'builtin' && wanted.has(skill.config.commandName),
+      }))
+      .filter((edit) => (current?.choices[edit.key]?.selected ?? false) !== edit.selected);
+    if (!changes.length) return;
+    const result = await changeSessionToolChoice(
+      { sessionId, changes },
+      {
+        capture: (id) => this.db.captureSessionRuntimeSettings(id),
+        commit: (snapshot, patch) => this.db.casSessionRuntimeSettings(snapshot, patch),
+        catalog: () => ({
+          skills,
+          registry: this.db.appMcpServers.list(),
+          overrides: this.db.mcpEnablement.listAll(),
+        }),
+        pinnedSlotVetoes: () => [],
+      }
+    );
+    if (!result.ok) {
+      this.log.warn(`Neo pack skills not selected: ${result.reason}`);
+      return;
+    }
+    const live = this.sessions.getCachedSession(sessionId)?.getSessionData();
+    if (live) live.config = { ...live.config, toolSelection: result.selection };
+    await this.events.publish('session.updated', {
+      sessionId,
+      source: 'tool-preferences',
+      session: { config: this.db.getSession(sessionId)?.config },
+    });
   }
 
   private readonly alignCoordinatorConfig = (superpipe({})('neo-session-config') as PipelineAPI)
     .input(['sessionId'])
     .pipe((sessionId: string) => this.db.getSession(sessionId), 'sessionId', 'session')
     .pipe(
-      (session: Session | null) => planNeoSessionConfig(session, this.packBriefs()),
+      (session: Session | null) =>
+        planNeoSessionConfig(
+          session,
+          this.packBriefs(),
+          this.standingRules(),
+          this.packPreferences()
+        ),
       'session',
       'config'
     )
@@ -688,6 +976,51 @@ export class NeoService {
     return this.repo.defaultBinding()?.sessionId;
   }
 
+  standingRules(): string[] {
+    return neoStandingRules(this.db.getGlobalSettings().neo);
+  }
+
+  async rulesChanged(): Promise<void> {
+    const root = this.defaultSessionId();
+    if (!root) return;
+    await this.alignCoordinatorConfig(root).catch((error) =>
+      this.log.warn('Neo prompt refresh after a standing rule change failed', error)
+    );
+  }
+
+  packPreferences() {
+    return listPackPreferences(this.db.getDatabase());
+  }
+
+  async refreshPackPreferences(): Promise<void> {
+    const root = this.defaultSessionId();
+    if (!root) return;
+    await this.alignCoordinatorConfig(root).catch((error) =>
+      this.log.warn('Neo prompt refresh after pack setting change failed', error)
+    );
+  }
+
+  async preferenceChanged(change: PackPreferenceChange): Promise<void> {
+    const root = this.defaultSessionId();
+    if (!root || !this.db.getSession(root)) return;
+    await this.refreshPackPreferences();
+    const scope =
+      change.scope.kind === 'global' ? 'global' : `${change.scope.kind} ${change.scope.key}`;
+    await this.deliverForward(
+      root,
+      `neo-preference:${crypto.randomUUID()}`,
+      fillPrompt(NEO_PREFERENCE_CHANGED, {
+        pack: change.pack,
+        key: change.key,
+        scope,
+        value: JSON.stringify(change.value),
+        before: change.before === undefined ? 'unset (default)' : JSON.stringify(change.before),
+      }),
+      root,
+      'event'
+    ).catch((error) => this.log.warn('Neo pack setting notice delivery failed', error));
+  }
+
   async openDefault(): Promise<string> {
     return openNeoDefaultSession(this.repo, () => this.open());
   }
@@ -696,6 +1029,7 @@ export class NeoService {
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
     if (id) await this.alignCoordinatorConfig(id);
+    if (id && this.db.getSession(id)) await this.alignNeoSkills(id);
     const session = id ? this.db.getSession(id) : null;
     const metadata = session?.metadata as
       | (NonNullable<typeof session>['metadata'] & { neoAutoCompactPercent?: number })
@@ -709,11 +1043,54 @@ export class NeoService {
     }
   }
 
+  private turnRecording() {
+    return {
+      turns: new WorkTurnRepository(this.db.getDatabase()),
+      read: (work: WorkRef, cursor: string | null, limit?: number) =>
+        invokeOperation(
+          this.sessions.getOperationRegistry(),
+          'work.turns',
+          { ref: work, ...(cursor ? { cursor } : {}), ...(limit ? { limit } : {}) },
+          { source: 'internal', role: 'neo' }
+        ),
+    };
+  }
+
+  private async catchUpOpenTodoTurns(): Promise<void> {
+    if (this.catchingUpTurns) return;
+    const workers = new WorkDeliveryInputRepository(this.db.getDatabase()).openWorkerRefs();
+    this.catchingUpTurns = true;
+    try {
+      for (const { ref, lastActivityAt } of planTurnCatchUp(workers, this.turnsSeen)) {
+        const caughtUp = await catchUpWorkerTurns(ref, this.turnRecording()).catch((error) => {
+          this.log.warn('Worker turns pending', error);
+          return false;
+        });
+        if (caughtUp && lastActivityAt !== null)
+          this.turnsSeen.set(JSON.stringify(ref), lastActivityAt);
+      }
+    } finally {
+      this.catchingUpTurns = false;
+    }
+  }
+
   async sweepPacks(): Promise<void> {
+    await sweepNeoTrackerMirrors(
+      this.db.getDatabase(),
+      this.packs().flatMap((pack) => pack.tracker ?? [])
+    ).catch((error) => this.log.warn('Tracker mirror pending', error));
+    await this.catchUpOpenTodoTurns().catch((error) =>
+      this.log.warn('Worker turns pending', error)
+    );
     for (const pack of this.packs())
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    const retire = createQuestionRetirement(this.todos, () => this.installedPacks());
+    for (const { question, todo } of await this.todos.read('openQuestionChecks'))
+      await retire(question, todo, Date.now()).catch((error) =>
+        this.log.warn('Question check pending', error)
+      );
     await publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
     this.notifyChanged();
   }
@@ -743,6 +1120,9 @@ export class NeoService {
     );
     if (this.watching || this.disposed) return;
     this.watching = runLagPhase('neo:driver:session_watch', async () => {
+      await this.runDbOp(neoStallReminderWrite, { now: Date.now() }).catch((error) =>
+        this.log.warn('Stalled todo reminders pending', error)
+      );
       await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
         this.log.warn('Stalled ask wake pending', error)
       );
@@ -813,17 +1193,13 @@ export class NeoService {
     );
   }
 
-  async sendToRef(ref: WorkRef, key: string, text: string): Promise<boolean> {
+  async sendToRef(ref: WorkRef, key: string, text: string, todoId?: string): Promise<boolean> {
     const root = this.defaultSessionId();
     if (!root) return false;
-    if (ref.adapter === 'hyperneo' && !ref.daemon && this.db.getSession(ref.id)) {
-      await this.deliver(ref.id, key, text, root);
-      return true;
-    }
     const sent = await invokeOperation(
       this.sessions.getOperationRegistry(),
       'work.send',
-      { ref, message: text },
+      { ref, message: text, idempotencyKey: key, ...(todoId ? { todoId } : { notice: true }) },
       driverWorkCaller({ originSessionId: root })
     );
     return sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true;

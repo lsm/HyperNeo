@@ -5,7 +5,7 @@ import { cn } from '../lib/utils.ts';
 import { isCoarsePointer } from '../neo/useCoarsePointer.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
 import ReferenceAutocomplete from './ReferenceAutocomplete.tsx';
-import MentionAutocomplete from './space/MentionAutocomplete.tsx';
+import MentionAutocomplete from './MentionAutocomplete.tsx';
 import type { ReferenceSearchResult } from '@hyperneo/shared';
 import { REFERENCE_PATTERN } from '@hyperneo/shared';
 import { VoiceDraftPreview } from './voice/VoiceDraftPreview.tsx';

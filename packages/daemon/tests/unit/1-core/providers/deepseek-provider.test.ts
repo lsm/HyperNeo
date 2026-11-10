@@ -30,7 +30,167 @@ describe('DeepSeekProvider', () => {
     ]);
     expect(DeepSeekProvider.MODELS.every((model) => model.contextWindow === 1_000_000)).toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.deepseek.com/anthropic/v1/messages');
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.deepseek.com/models');
+  });
+
+  it('uses nonempty discovery as the live and cached catalog', async () => {
+    const fetchImpl = mock(
+      async (url: string | URL | Request) =>
+        new Response(
+          JSON.stringify(
+            String(url).endsWith('/models')
+              ? {
+                  data: [
+                    { id: 'deepseek-v4-pro', name: 'Updated Pro', context_window: 262144 },
+                    { id: 'deepseek-next', name: 'Next Flash', context_length: 524288 },
+                  ],
+                }
+              : {}
+          )
+        )
+    ) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    provider.setCuratedModels([{ id: 'deepseek-flash' }]);
+    const models = await provider.getModels();
+    expect(models.filter((model) => model.id === 'deepseek-v4-pro')).toHaveLength(1);
+    expect(models.find((model) => model.id === 'deepseek-v4-pro')).toMatchObject({
+      name: 'Updated Pro',
+      contextWindow: 262144,
+    });
+    expect(models.find((model) => model.id === 'deepseek-next')).toMatchObject({
+      name: 'Next Flash',
+      contextWindow: 524288,
+    });
+    expect(models.some((model) => model.id === 'deepseek-v4-flash')).toBe(false);
+    expect(provider.getCachedModels()?.some((model) => model.id === 'deepseek-v4-flash')).toBe(
+      false
+    );
+    expect(
+      provider.getCachedModels()?.find((model) => model.id === 'deepseek-v4-pro')
+    ).toMatchObject({
+      name: 'Updated Pro',
+      contextWindow: 262144,
+    });
+    expect(provider.buildSdkConfig('deepseek-v4-pro').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+      '262144'
+    );
+    expect(provider.capabilities.vision).toBe(false);
+  });
+
+  it('excludes missing static IDs from cached discovery even when curated', async () => {
+    const fetchImpl = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'deepseek-v4-pro' }],
+          })
+        )
+    ) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    provider.setCuratedModels([{ id: 'deepseek-flash' }]);
+    await provider.listRemoteModels({ discoveryOnly: true });
+    expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['deepseek-v4-pro']);
+  });
+
+  it.each([false, true])(
+    'preserves canonical metadata when alias ordering is reversed=%s',
+    async (reverse) => {
+      const models = [
+        { id: 'deepseek-pro', name: 'Alias Pro' },
+        { id: 'deepseek-v4-pro', name: 'Canonical Pro', context_window: 262144 },
+      ];
+      if (reverse) models.reverse();
+      const fetchImpl = mock(
+        async () => new Response(JSON.stringify({ data: models }))
+      ) as unknown as typeof fetch;
+      const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+      expect((await provider.listRemoteModels()).map((model) => model.id)).toEqual([
+        'deepseek-v4-pro',
+      ]);
+      expect((await provider.getModels()).map((model) => model.id)).toEqual(['deepseek-v4-pro']);
+      expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['deepseek-v4-pro']);
+      expect(provider.getCachedModels()?.[0].name).toBe('Canonical Pro');
+      expect(
+        provider.buildSdkConfig('deepseek-v4-pro').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      ).toBe('262144');
+    }
+  );
+
+  it('probes a discovered model instead of requiring a retired fallback', async () => {
+    const probes: string[] = [];
+    const fetchImpl = mock(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'deepseek-current-pro' }] }));
+      }
+      const model = JSON.parse(String(init?.body)).model as string;
+      probes.push(model);
+      return new Response('{}', { status: model === 'deepseek-current-pro' ? 200 : 404 });
+    }) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    expect((await provider.getModels()).some((model) => model.id === 'deepseek-current-pro')).toBe(
+      true
+    );
+    expect(probes).toEqual(['deepseek-current-pro']);
+  });
+
+  it('uses fallback models when remote discovery fails', async () => {
+    const fetchImpl = mock(
+      async (url: string | URL | Request) =>
+        new Response('{}', { status: String(url).endsWith('/models') ? 503 : 200 })
+    ) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    expect(await provider.getModels()).toEqual(DeepSeekProvider.MODELS);
+    provider.setCuratedModels([{ id: 'deepseek-pro' }]);
+    expect(provider.getCachedModels()).toEqual(DeepSeekProvider.MODELS);
+    expect(provider.getModelForTier('opus')).toBe('deepseek-v4-pro');
+    expect(provider.getModelForTier('haiku')).toBe('deepseek-v4-flash');
+  });
+
+  it('uses static fallback entries after empty discovery in live and cached catalogs', async () => {
+    const fetchImpl = mock(async () => new Response('{"data":[]}')) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    expect(await provider.getModels()).toEqual(DeepSeekProvider.MODELS);
+    provider.setCuratedModels([{ id: 'deepseek-pro' }]);
+    expect(provider.getCachedModels()).toEqual(DeepSeekProvider.MODELS);
+  });
+
+  it('selects tiers from discovery by ID or name without selecting fallback entries', async () => {
+    let models = [
+      { id: 'deepseek-general', name: 'General' },
+      { id: 'deepseek-fast', name: 'New FLASH' },
+      { id: 'deepseek-premium', name: 'New PRO' },
+    ];
+    const fetchImpl = mock(
+      async () => new Response(JSON.stringify({ data: models }))
+    ) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    await provider.listRemoteModels();
+    expect(provider.getModelForTier('opus')).toBe('deepseek-premium');
+    expect(provider.getModelForTier('sonnet')).toBe('deepseek-fast');
+    expect(provider.getModelForTier('haiku')).toBe('deepseek-fast');
+    models = [
+      { id: 'deepseek-new-flash', name: 'Fast' },
+      { id: 'deepseek-new-pro', name: 'Premium' },
+    ];
+    await provider.listRemoteModels({ force: true });
+    expect(provider.getModelForTier('opus')).toBe('deepseek-new-pro');
+    expect(provider.getModelForTier('sonnet')).toBe('deepseek-new-flash');
+    models = [
+      { id: 'deepseek-general', name: 'General' },
+      { id: 'deepseek-fast', name: 'Flash' },
+    ];
+    await provider.listRemoteModels({ force: true });
+    expect(provider.getModelForTier('opus')).toBe('deepseek-fast');
+    models = [{ id: 'deepseek-general', name: 'General' }];
+    await provider.listRemoteModels({ force: true });
+    expect(provider.getModelForTier('opus')).toBe('deepseek-general');
+    expect(provider.getModelForTier('haiku')).toBe('deepseek-general');
+    provider.setCredentials({ type: 'api_key', apiKey: 'replacement' });
+    expect(provider.getModelForTier('opus')).toBe('deepseek-v4-pro');
+    expect(provider.ownsModel('deepseek-v4-flash')).toBe(true);
+    expect(
+      provider.buildSdkConfig('deepseek-v4-flash').envVars.ANTHROPIC_DEFAULT_SONNET_MODEL
+    ).toBe('deepseek-v4-flash');
   });
 
   it('builds Claude Agent SDK routing through the Anthropic endpoint', () => {
@@ -54,7 +214,7 @@ describe('DeepSeekProvider', () => {
   it('supports stored credentials and rejects missing credentials', async () => {
     const provider = new DeepSeekProvider({});
     expect(provider.isAvailable()).toBe(false);
-    expect(await provider.getModels()).toEqual([]);
+    expect(await provider.getModels()).toEqual(DeepSeekProvider.MODELS);
     expect(() => provider.buildSdkConfig('deepseek-v4-pro')).toThrow(
       'DeepSeek API key not configured'
     );
@@ -200,19 +360,19 @@ describe('DeepSeekProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps curated synthesis across forced discovery refreshes', async () => {
+    it('keeps nonempty forced discovery authoritative over curated fallback IDs', async () => {
       process.env.DEEPSEEK_API_KEY = 'test-key';
       const fetchImpl = installModelListFetch(
         async () =>
           new Response(JSON.stringify({ data: [{ id: 'deepseek-v4-pro' }] }), { status: 200 })
       );
       const provider = new DeepSeekProvider(process.env);
-      provider.setCuratedModels([{ id: 'deepseek-v5', name: 'DeepSeek V5' }]);
+      provider.setCuratedModels([{ id: 'deepseek-flash' }]);
 
       await provider.listRemoteModels();
       const forced = await provider.listRemoteModels({ force: true });
 
-      expect(forced.map((m) => m.id)).toEqual(['deepseek-v4-pro', 'deepseek-v5']);
+      expect(forced.map((m) => m.id)).toEqual(['deepseek-v4-pro']);
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 

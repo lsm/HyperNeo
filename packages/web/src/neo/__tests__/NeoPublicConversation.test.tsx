@@ -11,6 +11,7 @@ import {
 } from '../../lib/artifact-preview-store.ts';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
 import { NeoConversation } from '../NeoConversation.tsx';
 import { NeoPublicConversation, PendingAsk, publicAskText } from '../NeoPublicConversation.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
@@ -78,6 +79,32 @@ const conversation = (asks = [ask()], publications = [publication()]) =>
     }
   );
 
+it('does not invent a path by parsing Markdown across short and full fields', () => {
+  const text = '_~/report.md';
+  render(
+    <NeoPublicConversation
+      conversation={conversation([], [publication({ shortText: text, fullText: text, links: [] })])}
+    />
+  );
+  expect(screen.queryByRole('button', { name: 'Open current file: report.md' })).toBeNull();
+});
+
+it('does not auto-link bare or relative PR filenames in a public reply', async () => {
+  const text = 'Review `CLAUDE.md` and `docs/guide.md`. The report is `/reports/review.md`.';
+  render(
+    <NeoPublicConversation
+      conversation={conversation([], [publication({ shortText: text, fullText: text, links: [] })])}
+    />
+  );
+  expect(await screen.findByText('CLAUDE.md')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Open preview: CLAUDE.md' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Open current file: CLAUDE.md' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Open preview: docs/guide.md' })).toBeNull();
+  expect(
+    await screen.findByRole('link', { name: 'Open preview: /reports/review.md' })
+  ).toBeTruthy();
+});
+
 afterEach(() => {
   cleanup();
   closeArtifactPreview();
@@ -140,6 +167,93 @@ describe('message preview references', () => {
   });
 });
 
+describe('publication session Open', () => {
+  it.each([
+    ['worker', 'hyperneo', '/session/worker'],
+    ['codex-desktop:thread', 'codex-desktop', 'codex://threads/thread'],
+    ['claude-desktop:session', 'claude-desktop', 'claude://claude.ai/epitaxy/session'],
+  ])('opens exactly the named session %s using its card link', async (session, adapter, link) => {
+    const request = vi.fn(async () => ({
+      id: session,
+      adapter,
+      name: 'Named worker',
+      label: 'Named worker',
+      provider: adapter,
+      link,
+    }));
+    const read = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    try {
+      const onOpen = vi.fn();
+      const { container } = render(
+        <NeoPublicConversation
+          conversation={conversation([], [publication({ session, links: [] })])}
+          onOpenSession={onOpen}
+        />
+      );
+      const button = await screen.findByRole('button', { name: 'Open session: Named worker' });
+      expect(button.textContent).toBe('Open');
+      expect(button.querySelector('svg')).toBeTruthy();
+      expect(button.closest('[data-public-entry]')).toBeTruthy();
+      expect(
+        container.querySelectorAll('[data-public-entry] button[aria-label^="Open session:"]')
+      ).toHaveLength(1);
+      expect(request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.session.link',
+        input: { session },
+      });
+      fireEvent.click(button);
+      expect(onOpen).toHaveBeenCalledExactlyOnceWith(link, 'Named worker');
+    } finally {
+      read.mockRestore();
+    }
+  });
+  it('does not infer a session from origins or work links', () => {
+    const read = vi.spyOn(connectionManager, 'getHub');
+    try {
+      render(<NeoPublicConversation conversation={conversation()} onOpenSession={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: /^Open session:/ })).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+  it.each([
+    null,
+    { ok: false, reason: 'session_unavailable' },
+    {
+      id: 'missing',
+      adapter: 'codex-desktop',
+      name: null,
+      label: 'Named worker',
+      provider: 'Codex',
+      link: null,
+    },
+  ])(
+    'leaves an unavailable session visible without inventing another target: %s',
+    async (result) => {
+      const read = vi
+        .spyOn(connectionManager, 'getHub')
+        .mockResolvedValue({ request: async () => result } as never);
+      try {
+        const onOpen = vi.fn();
+        render(
+          <NeoPublicConversation
+            conversation={conversation([], [publication({ session: 'missing', links: [] })])}
+            onOpenSession={onOpen}
+          />
+        );
+        const button = await screen.findByRole('button', { name: 'Open session: missing' });
+        await waitFor(() => expect(button.getAttribute('title')).toBe('This chat didn’t open.'));
+        expect(button.hasAttribute('disabled')).toBe(true);
+        fireEvent.click(button);
+        expect(onOpen).not.toHaveBeenCalled();
+      } finally {
+        read.mockRestore();
+      }
+    }
+  );
+});
+
 describe('durable public conversation presentation', () => {
   it('renders authored Markdown, attachment photos, timestamps and acceptance without SDK messages', async () => {
     const value = ask({
@@ -161,7 +275,13 @@ describe('durable public conversation presentation', () => {
       'does not mean work is complete'
     );
     expect(article.querySelector('strong')?.textContent).toBe('fictional sources');
-    expect(article.querySelector('pre code')?.textContent).toContain('Unchanged attached text');
+    expect(article.querySelector('pre code')).toBeNull();
+    const card = within(article).getByRole('button', { name: 'Open file: notes.txt' });
+    expect(card.closest('.neo-message-bubble')).toBeNull();
+    fireEvent.click(card);
+    const reader = await screen.findByRole('dialog', { name: 'notes.txt' });
+    expect(reader.querySelector('pre')?.textContent).toBe('Unchanged attached text');
+    fireEvent.click(within(reader).getByRole('button', { name: 'Close modal' }));
     expect(article.querySelector('time')?.dateTime).toBe(new Date(value.createdAt).toISOString());
     expect(article.querySelector('time')?.closest('.neo-message-bubble')).toBeNull();
     expect(within(article).getByText('You').closest('.neo-message-bubble')).toBeNull();
@@ -792,6 +912,59 @@ describe('durable public conversation presentation', () => {
     ).toBe('First\n\nSecond');
     expect(publicAskText([photo])).toBe('');
   });
+});
+
+it('reveals a durable replacement without replaying arrival, while history still arrives', () => {
+  const store = {
+    agentState: signal({ status: 'idle' }),
+    error: signal(null),
+  } as unknown as SessionStore;
+  const view = render(
+    <NeoConversation
+      store={store}
+      sessionId={root}
+      publicConversation={conversation([], [])}
+      pendingAsks={[
+        {
+          requestId: 'new-send',
+          sessionId: root,
+          text: 'A new thought',
+          images: [],
+          state: 'sending',
+          createdAt: '2026-11-06T12:00:00Z',
+        },
+      ]}
+    />
+  );
+  view.rerender(
+    <NeoConversation
+      store={store}
+      sessionId={root}
+      pendingAsks={[]}
+      publicConversation={conversation(
+        [
+          ask({
+            requestId: 'new-send',
+            askOrigin: { sessionId: root, messageId: 'new-send' },
+            content: 'A new thought',
+          }),
+          ask({
+            requestId: 'history',
+            askOrigin: { sessionId: root, messageId: 'history' },
+            sequence: 2,
+            content: 'An older message',
+          }),
+        ],
+        []
+      )}
+    />
+  );
+  expect(
+    view.container.querySelector('[data-message-ref="new-send"]')?.classList.contains('neo-arrive')
+  ).toBe(false);
+  expect(
+    view.container.querySelector('[data-message-ref="history"]')?.classList.contains('neo-arrive')
+  ).toBe(true);
 });
 
 describe('PendingAsk', () => {

@@ -1,7 +1,7 @@
 import type { SpaceLongHorizonAgentReminder } from '@hyperneo/shared';
 import { LONG_HORIZON_AGENT_REMINDER_FIRE } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
-import { getNextRunAt } from '../schedule/cron-utils.ts';
+import { getNextRunAt } from '../scheduler/cron-utils.ts';
 import {
   claimReminderDelivery,
   isReminderDeliveryInFlight,

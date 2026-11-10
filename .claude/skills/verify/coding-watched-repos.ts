@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -6,8 +7,7 @@ import { promisify } from 'node:util';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
-import type { NeoSessionFacts } from '../../../packages/daemon/src/lib/neo/pack-contract.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 
 const run = resolve(process.argv[2]), execFile = promisify(execFileCallback);
 assert(run.startsWith('/private/tmp/'));
@@ -47,26 +47,20 @@ const call = async (name: string, input: unknown) => {
 };
 const watched = async () => (await call('pack.preferences.get', { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'watchedRepos' })).preference.value;
 const save = async (value: string[]) => assert.deepEqual(await call('pack.preferences.set', { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'watchedRepos', value }), { ok: true });
-const facts = (repo: string): NeoSessionFacts => ({ ref: { adapter: 'codex-desktop', id: repo.replace('/', '-') }, status: 'done', lastActivityAt: Date.now(), remotes: [`https://github.com/${repo}.git`], branches: ['synthetic'], openedPrs: [`https://github.com/${repo}/pull/1`] });
 const gh = () => existsSync(join(run, 'evidence/gh.log')) ? readFileSync(join(run, 'evidence/gh.log'), 'utf8') : '';
 try {
   await open();
   assert.deepEqual(await watched(), []);
-  await service!.pack('coding')!.observeSessions!([facts('foreign/repo')], Date.now());
   await service!.pack('coding')!.sweep!(Date.now());
   assert.equal(gh(), '');
-  assert.deepEqual(app!.db.getDatabase().prepare('SELECT ref FROM pack_coding_session_facts').all(), []);
-  evidence.fresh = { watchList: [], githubCalls: 0, foreignFacts: 0 };
+  evidence.fresh = { watchList: [], githubCalls: 0 };
   await save(['chosen/repo']);
-  await service!.pack('coding')!.observeSessions!([facts('foreign/repo'), facts('chosen/repo')], Date.now());
   await service!.pack('coding')!.sweep!(Date.now());
   assert.equal((gh().match(/^CALL /gm) ?? []).length, 3);
   assert(gh().includes('CALL api user --include'));
   assert(gh().includes('repos/chosen/repo/pulls?'));
   assert(!gh().includes('foreign/repo'));
-  const rows = app!.db.getDatabase().prepare('SELECT repos FROM pack_coding_session_facts').all();
-  assert.deepEqual(rows, [{ repos: '["chosen/repo"]' }]);
-  evidence.chosen = { watchList: await watched(), githubCalls: 3, facts: rows };
+  evidence.chosen = { watchList: await watched(), githubCalls: 3 };
   await close(); await open();
   assert.deepEqual(await watched(), ['chosen/repo']);
   await save([]); const before = gh();
@@ -86,8 +80,9 @@ try {
       VALUES ('foreign/repo', 1, 'Old PR', 'work', 'old', 'unreviewed', 1, 1);
       INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at)
       VALUES ('old-ask', 'old-session', 'Old work', 'Old work', 1, 1);
-      INSERT INTO neo_todos (id, ask_id, position, title, done_when, repo, created_at, updated_at)
-      VALUES ('old-todo', 'old-ask', 0, 'Old work', 'Done', 'other/repo', 1, 1);
+      INSERT INTO neo_todos (id, ask_id, position, title, done_when, created_at, updated_at)
+      VALUES ('old-todo', 'old-ask', 0, 'Old work', 'Done', 1, 1);
+      INSERT INTO pack_coding_todos (todo_id, repo) VALUES ('old-todo', 'other/repo');
       INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at)
       VALUES ('old-todo', '["https://github.com/other/repo/pull/2"]', 1);`);
     legacy.prepare("INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('legacy','Synthetic legacy project','','',1,1,1)").run();

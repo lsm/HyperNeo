@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import {
   prepareWorkerSandbox,
   releaseWorkerSandbox,
@@ -251,65 +252,109 @@ describe('hyperneoSessionControl archive', () => {
     }
   );
 
-  test.each(['worktree', 'base', 'fallback'])('checks the session checkout (%s)', async (dirty) => {
-    const dir = mkdtempSync(join(tmpdir(), 'archive-worktree-'));
-    const repo = join(dir, 'repo');
-    const worktree = join(dir, 'worktree');
-    mkdirSync(repo);
-    const { simpleGit } = await import('simple-git');
-    try {
-      const git = simpleGit(repo);
-      await git.init();
-      await git.raw([
-        '-c',
-        'user.name=Test',
-        '-c',
-        'user.email=test@example.com',
-        'commit',
-        '--allow-empty',
-        '--no-gpg-sign',
-        '-m',
-        'base',
-      ]);
-      await git.raw(['worktree', 'add', '-b', 'work', worktree]);
-      const dirtyPath = dirty === 'base' ? repo : worktree;
-      writeFileSync(join(dirtyPath, 'keep.txt'), 'unsaved work');
-      const archived: string[] = [];
-      const controls = hyperneoSessionControl({
-        deps: {
-          db: { listChildSessions: () => [] },
-          sessionManager: {
-            getSessionFromDB: () => ({
-              id: 'session',
-              status: 'active',
-              workspacePath: dirty === 'fallback' ? worktree : repo,
-              worktree: {
-                branch: 'work',
-                worktreePath: dirty === 'fallback' ? undefined : worktree,
+  test.each(['worktree', 'base', 'fallback', 'submodule'])(
+    'checks the session checkout (%s)',
+    async (dirty) => {
+      const dir = mkdtempSync(join(tmpdir(), 'archive-worktree-'));
+      const repo = join(dir, 'repo');
+      const worktree = join(dir, 'worktree');
+      mkdirSync(repo);
+      const { simpleGit } = await import('simple-git');
+      try {
+        const git = simpleGit(repo);
+        await git.init();
+        await git.raw([
+          '-c',
+          'user.name=Test',
+          '-c',
+          'user.email=test@example.com',
+          'commit',
+          '--allow-empty',
+          '--no-gpg-sign',
+          '-m',
+          'base',
+        ]);
+        if (dirty === 'submodule') {
+          const child = join(dir, 'child');
+          mkdirSync(child);
+          const moduleGit = simpleGit(child);
+          await moduleGit.init();
+          await moduleGit.raw([
+            '-c',
+            'user.name=Test',
+            '-c',
+            'user.email=test@example.com',
+            'commit',
+            '--allow-empty',
+            '--no-gpg-sign',
+            '-m',
+            'module',
+          ]);
+          execFileSync(
+            'git',
+            ['-c', 'protocol.file.allow=always', 'submodule', 'add', child, 'component'],
+            { cwd: repo }
+          );
+          await git.raw([
+            '-c',
+            'user.name=Test',
+            '-c',
+            'user.email=test@example.com',
+            'commit',
+            '--no-gpg-sign',
+            '-am',
+            'register module',
+          ]);
+        }
+        await git.raw(['worktree', 'add', '-b', 'work', worktree]);
+        if (dirty === 'submodule') {
+          execFileSync(
+            'git',
+            ['-c', 'protocol.file.allow=always', 'submodule', 'update', '--init'],
+            { cwd: worktree }
+          );
+          await git.raw(['config', 'submodule.component.ignore', 'all']);
+        }
+        const dirtyPath =
+          dirty === 'base' ? repo : dirty === 'submodule' ? join(worktree, 'component') : worktree;
+        writeFileSync(join(dirtyPath, 'keep.txt'), 'unsaved work');
+        const archived: string[] = [];
+        const controls = hyperneoSessionControl({
+          deps: {
+            db: { listChildSessions: () => [] },
+            sessionManager: {
+              getSessionFromDB: () => ({
+                id: 'session',
+                status: 'active',
+                workspacePath: dirty === 'fallback' ? worktree : repo,
+                worktree: {
+                  branch: 'work',
+                  worktreePath: dirty === 'fallback' ? undefined : worktree,
+                },
+              }),
+              getWorktreeManager: () => ({
+                getCommitsAhead: async () => ({ hasCommitsAhead: false }),
+              }),
+              getCachedSession: () => undefined,
+              archiveSessionResources: async (id: string) => {
+                archived.push(id);
               },
-            }),
-            getWorktreeManager: () => ({
-              getCommitsAhead: async () => ({ hasCommitsAhead: false }),
-            }),
-            getCachedSession: () => undefined,
-            archiveSessionResources: async (id: string) => {
-              archived.push(id);
             },
           },
-        },
-      } as never);
-      const result = await controls.archive!({ adapter: 'hyperneo', id: 'session' }, () => null);
-      expect(result).toMatchObject(
-        dirty === 'base'
-          ? { ok: true, value: { archived: true } }
-          : { ok: false, reason: 'unsupported' }
-      );
-      expect(archived).toEqual(dirty === 'base' ? ['session'] : []);
-      expect(await simpleGit(dirtyPath).status()).toMatchObject({ not_added: ['keep.txt'] });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+        } as never);
+        const result = await controls.archive!({ adapter: 'hyperneo', id: 'session' }, () => null);
+        expect(result).toMatchObject(
+          dirty === 'base'
+            ? { ok: true, value: { archived: true } }
+            : { ok: false, reason: 'unsupported' }
+        );
+        expect(archived).toEqual(dirty === 'base' ? ['session'] : []);
+        expect(await simpleGit(dirtyPath).status()).toMatchObject({ not_added: ['keep.txt'] });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
-  });
+  );
 });
 
 function sessionManager(

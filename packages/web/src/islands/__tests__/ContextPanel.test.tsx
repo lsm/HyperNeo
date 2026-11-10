@@ -1,7 +1,7 @@
 import type { Space } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { type Signal, signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -35,7 +35,18 @@ let mockCurrentSpaceTasksFilterTabSignal!: Signal<
 >;
 let mockCurrentSpaceViewModeSignal!: Signal<'overview' | 'goals' | 'tasks' | 'configure'>;
 let mockSettingsSectionSignal!: Signal<
-  'general' | 'providers' | 'app-mcp-servers' | 'skills' | 'models' | 'usage' | 'about'
+  | 'preferences'
+  | 'providers'
+  | 'connections'
+  | 'devices'
+  | 'remote-daemons'
+  | 'exa'
+  | 'app-mcp-servers'
+  | 'skills'
+  | 'coding-pack'
+  | 'models'
+  | 'usage'
+  | 'about'
 >;
 let mockConnectionStateSignal!: Signal<'connecting' | 'connected'>;
 let mockSpacesWithTasksSignal!: Signal<Array<Space & { tasks: unknown[]; sessions: unknown[] }>>;
@@ -68,7 +79,7 @@ function initSignals() {
   mockCurrentSpaceSessionIdSignal = signal(null);
   mockCurrentSpaceTasksFilterTabSignal = signal('active');
   mockCurrentSpaceViewModeSignal = signal('overview');
-  mockSettingsSectionSignal = signal('general');
+  mockSettingsSectionSignal = signal('preferences');
   mockConnectionStateSignal = signal('connected');
   mockSpacesWithTasksSignal = signal([
     { ...makeSpace('space-1', { name: 'Alpha' }), tasks: [], sessions: [] },
@@ -84,7 +95,7 @@ vi.mock('../SessionList.tsx', () => ({
   SessionList: () => <div data-testid="session-list" />,
 }));
 
-vi.mock('../SpaceDetailPanel.tsx', () => ({
+vi.mock('../../components/space/SpaceDetailPanel.tsx', () => ({
   SpaceDetailPanel: () => <div data-testid="space-detail-panel" />,
 }));
 
@@ -125,6 +136,10 @@ vi.mock('../../components/ui/NavIconButton.tsx', () => ({
   ),
 }));
 
+vi.mock('../../lib/space-router.ts', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../lib/router.ts')),
+}));
 vi.mock('../../lib/router.ts', () => ({
   navigateToSession: mockNavigateToSession,
   navigateToSessions: mockNavigateToSessions,
@@ -137,6 +152,27 @@ vi.mock('../../lib/router.ts', () => ({
   navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));
 
+vi.mock('../../lib/space-signals.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/space-signals.ts')>();
+  return {
+    ...actual,
+    get currentSpaceIdSignal() {
+      return mockCurrentSpaceIdSignal;
+    },
+    get currentSpaceSessionIdSignal() {
+      return mockCurrentSpaceSessionIdSignal;
+    },
+    get currentSpaceTaskIdSignal() {
+      return mockCurrentSpaceSessionIdSignal;
+    },
+    get currentSpaceTasksFilterTabSignal() {
+      return mockCurrentSpaceTasksFilterTabSignal;
+    },
+    get currentSpaceViewModeSignal() {
+      return mockCurrentSpaceViewModeSignal;
+    },
+  };
+});
 vi.mock('../../lib/signals.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/signals.ts')>();
   return {
@@ -146,18 +182,6 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     },
     get contextPanelOpenSignal() {
       return mockContextPanelOpenSignal;
-    },
-    get currentSpaceIdSignal() {
-      return mockCurrentSpaceIdSignal;
-    },
-    get currentSpaceSessionIdSignal() {
-      return mockCurrentSpaceSessionIdSignal;
-    },
-    get currentSpaceTasksFilterTabSignal() {
-      return mockCurrentSpaceTasksFilterTabSignal;
-    },
-    get currentSpaceViewModeSignal() {
-      return mockCurrentSpaceViewModeSignal;
     },
     get settingsSectionSignal() {
       return mockSettingsSectionSignal;
@@ -175,6 +199,7 @@ vi.mock('../../lib/state.ts', () => ({
 vi.mock('../../lib/space-store.ts', () => ({
   get spaceStore() {
     return {
+      tasks: { value: [] },
       spacesWithTasks: mockSpacesWithTasksSignal,
       space: mockSpaceSignal,
       initGlobalList: mockInitGlobalList,
@@ -194,12 +219,20 @@ vi.mock('../../lib/toast.ts', () => ({
 }));
 
 import { ContextPanel } from '../ContextPanel';
+import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
+import { spaceNav } from '../../components/space/space-nav';
+
+declareExtensionNav(spaceNav);
 
 describe('ContextPanel', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     cleanup();
     vi.clearAllMocks();
     initSignals();
+
+    const { spaceWebExtension } = await import('../../lib/space-web-extension');
+    const { spaceStore } = await import('../../lib/space-store');
+    registerWebExtension('space', { ...spaceWebExtension, store: spaceStore });
   });
 
   afterEach(() => {
@@ -227,7 +260,7 @@ describe('ContextPanel', () => {
   );
 
   it('preserves the current configure tab when switching spaces from configure', async () => {
-    const { currentSpaceSettingsTabSignal } = await import('../../lib/signals.ts');
+    const { currentSpaceSettingsTabSignal } = await import('../../lib/space-signals.ts');
     currentSpaceSettingsTabSignal.value = 'workflow-templates';
     try {
       mockCurrentSpaceViewModeSignal.value = 'configure';
@@ -290,6 +323,50 @@ describe('ContextPanel', () => {
     expect(mockNavigateToSessions).toHaveBeenCalledTimes(1);
     expect(mockNavigateToSettings).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['providers', 'connections', 'devices', 'remote-daemons', 'exa'] as const)(
+    'lists one Connections & Services entry, active on %s',
+    (section) => {
+      mockNavSectionSignal.value = 'settings';
+      mockSettingsSectionSignal.value = section;
+      render(<ContextPanel />);
+
+      const nav = within(screen.getByRole('navigation', { name: 'Settings sections' }));
+      const entry = nav.getByRole('button', { name: 'Connections & Services' });
+      expect(entry.className).toContain('bg-fill text-fg');
+      for (const name of ['Providers', 'Connections', 'Devices', 'Remote Daemons', 'Exa Search'])
+        expect(nav.queryByRole('button', { name })).toBeNull();
+
+      fireEvent.click(entry);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('providers');
+    }
+  );
+
+  it.each(['skills', 'app-mcp-servers', 'coding-pack'] as const)(
+    'shows the six main entries and highlights Capabilities for %s',
+    (section) => {
+      mockNavSectionSignal.value = 'settings';
+      mockSettingsSectionSignal.value = section;
+      render(<ContextPanel />);
+      const nav = within(screen.getByRole('navigation', { name: 'Settings sections' }));
+      expect(nav.getAllByRole('button').map((button) => button.textContent)).toEqual([
+        'Preferences',
+        'Neo',
+        'Sessions & Harness',
+        'Connections & Services',
+        'Capabilities',
+        'Voice',
+        'Usage',
+        'Shortcuts',
+        'About',
+      ]);
+      expect(nav.getByRole('button', { name: 'Capabilities' }).className).toContain(
+        'bg-fill text-fg'
+      );
+      fireEvent.click(nav.getByRole('button', { name: 'Capabilities' }));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('skills');
+    }
+  );
 
   it('opens the create space dialog directly from the mobile switcher', () => {
     mockCurrentSpaceIdSignal.value = null;

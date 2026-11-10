@@ -197,28 +197,6 @@ describe('Database Facade', () => {
     });
   });
 
-  describe('Inbox item operations', () => {
-    it('creates and lists inbox items', async () => {
-      const item = {
-        source: 'github_issue' as const,
-        repository: 'owner/repo',
-        issueNumber: 42,
-        title: 'Test Issue',
-        body: 'Test body',
-        author: 'testuser',
-        labels: [],
-        securityCheck: { injectionRisk: 'none' as const },
-        rawEvent: { test: true },
-      };
-
-      const created = db.createInboxItem(item);
-
-      expect(created).toBeDefined();
-      expect(created.repository).toBe('owner/repo');
-      expect(created.title).toBe('Test Issue');
-    });
-  });
-
   describe('message search indexing (deferred)', () => {
     it('indexes saved messages via the startup flush after a restart', async () => {
       db.close();

@@ -30,6 +30,7 @@ export interface SystemState {
   maxSessions: number;
   storageLocation: string;
   workspaceRoot?: string;
+  homeDirectory?: string;
 
   auth: AuthStatus;
 
@@ -95,6 +96,8 @@ export interface ResolvedQuestion {
   cancelReason?: QuestionCancelReason;
 }
 
+export type ProcessingWaiting = 'model' | 'reconnecting';
+
 export type AgentProcessingState =
   | { status: 'idle' }
   | { status: 'queued'; messageId: string }
@@ -104,6 +107,8 @@ export type AgentProcessingState =
       phase: 'initializing' | 'thinking' | 'streaming' | 'finalizing';
       streamingStartedAt?: number;
       isCompacting?: boolean;
+      messageIds?: string[];
+      waiting?: ProcessingWaiting;
     }
   | { status: 'waiting_for_input'; pendingQuestion: PendingUserQuestion }
   | {

@@ -134,6 +134,27 @@ export interface ExternalEventExtension {
   stop(): Promise<void>;
 }
 
+export interface ExternalEventWrites {
+  store(event: ExternalEvent): StoreResult;
+  getById(eventId: string): ExternalEventRecord | null;
+}
+
+export interface ExternalEventReads {
+  getByDedupe(spaceId: string, source: string, dedupeKey: string): ExternalEventRecord | null;
+  listDeliveryLog(filters: ExternalEventDeliveryLogFilters): ExternalEventDeliveryLogRecord[];
+  countDeliveryLog(filters: {
+    spaceId: string;
+    status?: string;
+    source?: string;
+    updatedSince?: number;
+  }): number;
+  listEventCountsByTopic(filters: {
+    spaceId: string;
+    source?: string;
+    since?: number;
+  }): Array<{ topic: string; count: number; lastAt: number }>;
+}
+
 export interface Route {
   readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   readonly path: string;

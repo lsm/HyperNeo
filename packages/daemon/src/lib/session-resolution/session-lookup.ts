@@ -3,7 +3,7 @@ import {
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
-import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
 
 export const sessionUnavailable = (status: string): boolean =>
   status === 'ended' || status === 'archived';
@@ -11,7 +11,7 @@ export const sessionUnavailable = (status: string): boolean =>
 export async function resolveLiveSession(
   sessionId: string,
   sessionManager: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync'>,
-  taskAgentManager?: Pick<TaskAgentManager, 'getSubSession'>
+  taskAgentManager?: { getSubSession(sessionId: string): AgentSession | undefined }
 ): Promise<unknown | null> {
   const indexed = taskAgentManager?.getSubSession(sessionId);
   if (indexed !== undefined && sessionManager.getCachedSession(sessionId) === indexed) {

@@ -15,7 +15,12 @@ vi.mock('../../lib/space-store', () => ({
   },
 }));
 
+vi.mock('../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../lib/router')),
+}));
 vi.mock('../../lib/router', () => ({
+  navigateToSessions: vi.fn(),
   navigateToSpace: vi.fn(),
   navigateToSpaceTask: vi.fn(),
   navigateToSpaceSession: vi.fn(),
@@ -44,12 +49,11 @@ vi.mock('../../hooks/useVoiceRecorder', () => ({
 }));
 
 import MainContent from '../MainContent';
-import {
-  currentSessionIdSignal,
-  currentSpaceCanonicalIdSignal,
-  currentSpaceIdSignal,
-  navSectionSignal,
-} from '../../lib/signals';
+import { currentSessionIdSignal, navSectionSignal } from '../../lib/signals';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/space-signals';
+import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
+import { spaceNav } from '../../components/space/space-nav';
+import { navigateToSessions } from '../../lib/router';
 
 function makeTask(id: string, status: SpaceTask['status'], title = `Task ${id}`): SpaceTask {
   return {
@@ -82,13 +86,19 @@ function makeSpace(tasks: SpaceTask[]) {
   };
 }
 
+declareExtensionNav(spaceNav);
+
 describe('SpacesHome running list', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     navSectionSignal.value = 'spaces';
     currentSessionIdSignal.value = null;
     currentSpaceIdSignal.value = null;
     currentSpaceCanonicalIdSignal.value = null;
     mockSpacesWithTasks.value = [];
+
+    const { spaceWebExtension } = await import('../../lib/space-web-extension');
+    const { spaceStore } = await import('../../lib/space-store');
+    registerWebExtension('space', { ...spaceWebExtension, store: spaceStore });
   });
 
   afterEach(() => {
@@ -119,5 +129,20 @@ describe('SpacesHome running list', () => {
     expect(screen.getByText(/All quiet — no active work across your spaces/)).toBeTruthy();
     expect(screen.queryAllByText('In Progress').length).toBe(0);
     expect(screen.queryByText('Task t1')).toBeNull();
+  });
+});
+
+describe('MainContent without Space', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('sends Space routes to chats when the daemon does not provide Space', () => {
+    registerWebExtension('space', null);
+    navSectionSignal.value = 'spaces';
+    currentSessionIdSignal.value = null;
+    currentSpaceIdSignal.value = 'space-1';
+    render(<MainContent />);
+    expect(navigateToSessions).toHaveBeenCalledWith(true);
   });
 });

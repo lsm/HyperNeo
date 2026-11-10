@@ -11,7 +11,7 @@ import {
   type CreateTaskRejection,
 } from './create-operation.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import {
   resolveCreatedBy,
   resolveCreateTaskTarget,

@@ -1,6 +1,5 @@
 import type { ArtifactRefusal } from '@hyperneo/shared/types/artifact-file';
 import { posix } from 'node:path';
-import superpipe, { type PipelineAPI } from 'superpipe';
 import { isLocalUser } from '../operations/caller.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { secretName } from '../secret-file-name.ts';
@@ -28,8 +27,8 @@ export interface ArtifactPolicyDependencies {
   ) => ArtifactContextBinding | null | Promise<ArtifactContextBinding | null>;
 }
 
-interface OpenPlan {
-  readonly context: ArtifactContext;
+interface OpenPlan<Context = ArtifactContext> {
+  readonly context: Context;
   readonly root: string;
   readonly relativePath: string;
 }
@@ -125,11 +124,13 @@ function within(root: string, path: string): boolean {
   return relative !== '..' && !relative.startsWith('../') && !posix.isAbsolute(relative);
 }
 
-export function resolveArtifactSource(
-  binding: ArtifactContextBinding,
+export function resolveArtifactSource<
+  Binding extends { workspacePath: string | null; context?: ArtifactContext },
+>(
+  binding: Binding,
   source: string,
-  deps: ArtifactPolicyDependencies
-): Gate<OpenPlan> {
+  deps: Pick<ArtifactPolicyDependencies, 'home'> & Partial<ArtifactPolicyDependencies>
+): Gate<OpenPlan<Binding['context']>> {
   if (typeof source !== 'string' || unsafePath(source)) return refused('unsafe_path');
   if (sensitivePath(source)) return refused('sensitive_path');
   if (
@@ -156,16 +157,3 @@ export function resolveArtifactSource(
     },
   };
 }
-
-export const admitArtifactCapture = (superpipe({})('artifact-capture-policy') as PipelineAPI)
-  .input(['context', 'source', 'caller', 'deps'])
-  .pipe(admitArtifactContext, 'context', 'result:policy')
-  .pipe(loadArtifactContextBinding, ['policy', 'deps', 'caller'], 'result:policy')
-  .pipe(authorizeArtifactCaller, ['policy', 'caller'], 'result:policy')
-  .pipe(resolveArtifactSource, ['policy', 'source', 'deps'], 'result:policy')
-  .endAsync('policy') as (
-  context: ArtifactContext,
-  source: string,
-  caller: OperationCaller,
-  deps: ArtifactPolicyDependencies
-) => Promise<OpenPlan | ArtifactRefusal>;

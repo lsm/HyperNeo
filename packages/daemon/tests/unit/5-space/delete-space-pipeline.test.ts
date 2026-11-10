@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import {
   type DeleteSpaceIo,
   runSpaceDeletion,
-} from '../../../src/lib/space/managers/delete-space-pipeline.ts';
+} from '../../../../space/src/managers/delete-space-pipeline.ts';
 
 function io(overrides: Partial<DeleteSpaceIo> = {}): DeleteSpaceIo {
   return {

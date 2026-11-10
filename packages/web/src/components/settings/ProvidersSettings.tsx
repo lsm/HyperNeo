@@ -5,6 +5,7 @@ import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
 import type { ProviderAuthStatus, CuratedModel } from '@hyperneo/shared/provider';
 import {
+  updateGlobalSettings,
   listProviders,
   deleteProvider,
   updateProvider,
@@ -18,9 +19,10 @@ import {
   listProviderRemoteModels,
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
+import { navigateToSettings } from '../../lib/router.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from '../../lib/errors.ts';
-import { connectionState, credentialStoreStatus } from '../../lib/state.ts';
+import { connectionState, credentialStoreStatus, globalSettings } from '../../lib/state.ts';
 import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 import { AddProviderModal } from './AddProviderModal.tsx';
@@ -34,7 +36,6 @@ import {
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 import { useFetchModels } from './useFetchModels.ts';
-import { AcpEditorModal, type AcpConfiguredModel } from './AcpEditorModal.tsx';
 
 interface EnrichedProvider extends ProviderRecord {
   available: boolean;
@@ -67,16 +68,6 @@ function mergeProviderConfig(
     }
   }
   return JSON.stringify({ ...base, ...patch });
-}
-
-function readAcpCommand(provider: EnrichedProvider): string {
-  if (!provider.configJson) return '';
-  try {
-    const parsed = JSON.parse(provider.configJson) as { command?: unknown };
-    return typeof parsed.command === 'string' ? parsed.command : '';
-  } catch {
-    return '';
-  }
 }
 
 function readCuratedModels(provider: EnrichedProvider): CuratedModel[] | undefined {
@@ -122,7 +113,6 @@ const EMPTY_VISIBLE_MODELS_PANEL: VisibleModelsPanelState = {
 function getVisibleModelsFingerprint(provider: EnrichedProvider): string {
   const tokens: Array<string | undefined> = [
     provider.providerId,
-    readAcpCommand(provider),
     provider.baseUrl,
     provider.configJson,
     String(provider.available),
@@ -164,7 +154,46 @@ function getDefaultVisibleCheckedIds(
   );
 }
 
+function parseAllowlist(text: string): string[] {
+  return [
+    ...new Set(
+      text
+        .split(/[\n,]/)
+        .map((id) => id.trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function sharedModels(allowlist: string[], curated: CuratedModel[]): string[] {
+  const visible = new Set(curated.map((model) => model.id));
+  return allowlist.filter((id) => visible.has(id));
+}
+
 export function ProvidersSettings() {
+  const [allowlistText, setAllowlistText] = useState(
+    (globalSettings.value?.providerModelAllowlists?.openrouter ?? []).join('\n')
+  );
+  const [savingAllowlist, setSavingAllowlist] = useState(false);
+  useSignalEffect(() => {
+    setAllowlistText((globalSettings.value?.providerModelAllowlists?.openrouter ?? []).join('\n'));
+  });
+  const saveAllowlist = async () => {
+    const openrouter = parseAllowlist(allowlistText);
+    const lists = { ...globalSettings.value?.providerModelAllowlists };
+    if (openrouter.length) lists.openrouter = openrouter;
+    else delete lists.openrouter;
+    setSavingAllowlist(true);
+    try {
+      await updateGlobalSettings({ providerModelAllowlists: lists });
+      setAllowlistText(openrouter.join('\n'));
+      toast.success('OpenRouter model allowlist updated');
+    } catch {
+      toast.error('Failed to update OpenRouter model allowlist');
+    } finally {
+      setSavingAllowlist(false);
+    }
+  };
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -182,14 +211,6 @@ export function ProvidersSettings() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [oauthFlow, setOauthFlow] = useState<OAuthFlowState | null>(null);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
-  const [acpEditor, setAcpEditor] = useState<{
-    providerId: string;
-    providerName: string;
-    command: string;
-    models?: AcpConfiguredModel[];
-    envBacked?: boolean;
-    configJson?: string;
-  } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
   const lastSyncedKimiRegions = useRef<Record<string, 'china' | 'global'>>({});
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
@@ -622,12 +643,7 @@ export function ProvidersSettings() {
       ...prev,
       [provider.id]: { ...EMPTY_VISIBLE_MODELS_PANEL, fetching: true },
     }));
-    const options =
-      provider.providerId === 'acp'
-        ? { command: readAcpCommand(provider) }
-        : provider.baseUrl
-          ? { baseUrl: provider.baseUrl }
-          : undefined;
+    const options = provider.baseUrl ? { baseUrl: provider.baseUrl } : undefined;
     const remote = await listProviderRemoteModels(provider.id, { ...options, force: true }).catch(
       (err) => ({ models: [], error: err })
     );
@@ -894,6 +910,18 @@ export function ProvidersSettings() {
             </div>
           ) : null}
 
+          <p class="text-xs text-fg-faint">
+            The star sets the default provider. The default model for new sessions is set in{' '}
+            <button
+              type="button"
+              class="text-accent hover:underline"
+              onClick={() => navigateToSettings('harness')}
+            >
+              Sessions &amp; Harness
+            </button>
+            .
+          </p>
+
           {providers.length > 0 && (
             <SettingsGroup>
               {providers.map((provider) => {
@@ -979,7 +1007,14 @@ export function ProvidersSettings() {
                           class={`p-1 rounded transition-colors ${
                             provider.isDefault ? 'text-warning' : 'text-fg-faint hover:text-warning'
                           }`}
-                          title={provider.isDefault ? 'Default provider' : 'Set as default'}
+                          title={
+                            provider.isDefault ? 'Default provider' : 'Set as default provider'
+                          }
+                          aria-label={
+                            provider.isDefault
+                              ? 'Default provider'
+                              : `Set ${provider.displayName} as default provider`
+                          }
                         >
                           <svg
                             class="w-4 h-4"
@@ -1152,53 +1187,37 @@ export function ProvidersSettings() {
                           </div>
                         )}
 
-                        {provider.providerId === 'acp' && !isCustom && (
-                          <div>
-                            <div class="flex items-center justify-between gap-2">
-                              <div class="min-w-0">
-                                <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-1">
-                                  Configuration
-                                </h5>
-                                <div class="text-xs text-fg-faint font-mono truncate">
-                                  {readAcpCommand(provider) ||
-                                    (provider.available
-                                      ? 'Using HYPERNEO_ACP_COMMAND'
-                                      : 'No command set')}
-                                </div>
-                                {(readCuratedModels(provider)?.length ?? 0) > 0 && (
-                                  <div class="mt-1 flex flex-wrap gap-1">
-                                    {readCuratedModels(provider)?.map((model) => (
-                                      <span
-                                        key={model.id}
-                                        class="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised text-fg-soft"
-                                      >
-                                        {model.name ?? model.id}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() =>
-                                  setAcpEditor({
-                                    providerId: provider.id,
-                                    providerName: provider.displayName,
-                                    command: readAcpCommand(provider),
-                                    models: readCuratedModels(provider),
-                                    envBacked: !readAcpCommand(provider),
-                                    configJson: provider.configJson,
-                                  })
-                                }
-                                disabled={isPending}
-                              >
-                                Edit
-                              </Button>
-                            </div>
+                        {provider.providerId === 'openrouter' && !isCustom && (
+                          <div class="space-y-2">
+                            <label
+                              class="block text-xs font-semibold text-fg-muted"
+                              for="openrouter-allowlist"
+                            >
+                              OpenRouter Model Allowlist
+                            </label>
+                            <p class="text-xs text-fg-faint">
+                              OpenRouter does not expose dashboard-enabled account models through
+                              its public API. Enter model IDs to limit pickers and runtime
+                              validation.
+                            </p>
+                            <textarea
+                              id="openrouter-allowlist"
+                              aria-label="OpenRouter allowlist"
+                              value={allowlistText}
+                              onInput={(e) => setAllowlistText(e.currentTarget.value)}
+                              class="w-full h-28 bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg font-mono"
+                            />
+                            <Button
+                              size="xs"
+                              variant="primary"
+                              onClick={saveAllowlist}
+                              disabled={savingAllowlist}
+                              loading={savingAllowlist}
+                            >
+                              Save OpenRouter allowlist
+                            </Button>
                           </div>
                         )}
-
                         {!isCustom && (
                           <div data-testid="visible-models-panel">
                             <div class="flex items-center justify-between gap-2">
@@ -1226,6 +1245,20 @@ export function ProvidersSettings() {
                                 Fetch models
                               </Button>
                             </div>
+                            {provider.providerId === 'openrouter' && (
+                              <p class="text-xs text-fg-faint mt-2">
+                                {(() => {
+                                  const saved =
+                                    globalSettings.value?.providerModelAllowlists?.openrouter ?? [];
+                                  if (!saved.length)
+                                    return 'No allowlist restriction; visible models follow curation.';
+                                  if (curatedList === undefined)
+                                    return 'No visible-model curation; the allowlist limits models.';
+                                  const both = sharedModels(saved, curatedList);
+                                  return `Saved models on both lists (${both.length}): ${both.join(', ') || 'none'}`;
+                                })()}
+                              </p>
+                            )}
                             {visiblePanel.error && (
                               <p class="text-xs text-danger mt-2">{visiblePanel.error}</p>
                             )}
@@ -1397,22 +1430,6 @@ export function ProvidersSettings() {
           fetchedModels={fetchedModels}
           fetchModelsError={fetchModelsError}
           fetchedAt={fetchedAt}
-        />
-      )}
-
-      {acpEditor && (
-        <AcpEditorModal
-          providerId={acpEditor.providerId}
-          providerName={acpEditor.providerName}
-          command={acpEditor.command}
-          models={acpEditor.models}
-          envBacked={acpEditor.envBacked}
-          configJson={acpEditor.configJson}
-          onClose={() => setAcpEditor(null)}
-          onSaved={() => {
-            setAcpEditor(null);
-            loadProviders();
-          }}
         />
       )}
     </>

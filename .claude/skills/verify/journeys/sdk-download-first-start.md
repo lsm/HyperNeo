@@ -21,5 +21,11 @@ Pass: the binary is downloaded, the log has no `Event loop blocked for` line,
 and the session sent during the download gets an `assistant` row once the
 binary is ready. The old synchronous download fails with an ~8 s block and
 cannot take the message until the download ends. Evidence in `$RUN/evidence/`:
-`daemon.log`, `session-messages.txt`, the RPC replies. A failed download giving
+`daemon.log`, `session-messages.json`, the RPC replies. A failed download giving
 one clear session error is covered by the resolver unit tests, not this journey.
+
+The downloaded SDK must match the daemon package's exact dependency pin, even
+when the compiled server has no readable package manifests. The message evidence
+is read through `message.sdkMessages` into `session-messages.json`, including the
+real native SDK initialization. Its `claude_code_version` must equal the
+installed SDK package's `claudeCodeVersion` metadata.

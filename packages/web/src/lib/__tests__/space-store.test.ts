@@ -433,6 +433,10 @@ vi.mock('../connection-manager.ts', () => ({
   },
 }));
 
+vi.mock('../space-signals.ts', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../signals.ts')),
+}));
 vi.mock('../signals.ts', () => ({
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,

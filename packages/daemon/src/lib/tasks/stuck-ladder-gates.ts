@@ -1,4 +1,6 @@
-import { MAX_AGENT_STUCK_NAGS, MAX_AGENT_STUCK_RESTARTS } from '../space/runtime/constants.ts';
+export const MAX_AGENT_STUCK_NAGS = 1;
+
+export const MAX_AGENT_STUCK_RESTARTS = 1;
 
 export interface AgentStuckRecoveryState {
   nagCount: number;

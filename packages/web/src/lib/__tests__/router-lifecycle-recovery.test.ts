@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { createSessionPath, getSessionIdFromPath } from '../router';
 import {
-  createSessionPath,
   createSpacePath,
   createSpaceSessionPath,
   createSpaceTaskPath,
-  getSessionIdFromPath,
   getSpaceIdFromPath,
   getSpaceSessionIdFromPath,
   getSpaceTaskIdFromPath,
-} from '../router';
+} from '../space-router';
 
 const UUID = '04062505-780f-4881-a3be-9cb9062790fb';
 const COORDINATOR_SESSION_ID = 'space:chat:b90171e4-1111-2222-3333-444444444444';

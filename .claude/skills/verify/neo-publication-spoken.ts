@@ -1,0 +1,123 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+
+const run = resolve(process.argv.at(-1)!);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+mkdirSync(join(run, 'evidence'), { recursive: true });
+writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
+const app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
+const conversationId = '10000000-0000-4000-8000-000000000001';
+const sessionId = `neo:${conversationId}`;
+const clients: { hub: MessageHub; transport: WebSocketClientTransport; index: number }[] = [];
+const events: { client: number; kind: string; text?: string; id?: string }[] = [];
+const receipts: unknown[] = [];
+const observed: Record<string, unknown> = { daemonPort: app.server.port, nativePlaybackVerified: false, modelWordingVerified: false };
+let capture = false;
+const wait = async (label: string, ready: () => boolean) => {
+  const deadline = Date.now() + 10000;
+  while (!ready() && Date.now() < deadline) await Bun.sleep(10);
+  assert(ready(), label);
+};
+try {
+  assert.notEqual(app.server.port, 8399);
+  await app.spaceRuntimeService.ready();
+  await app.jobProcessor.stop();
+  const db = app.db.getDatabase();
+  db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,type,config,metadata) VALUES (?,'Synthetic Neo',?,'2026-11-02','2026-11-02','active','worker','{}','{}')").run(sessionId, run);
+  new NeoRepository(db).reserveBinding({ sessionId, kind: 'neo', projectId: null });
+  const mcp = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId, role: 'neo' }));
+  const publish = async (input: unknown) => {
+    const response = await mcp({ name: 'neo.publication.publish', input });
+    assert(!response.isError, JSON.stringify(response));
+    const result = JSON.parse(response.content[0].text);
+    receipts.push(result);
+    return result;
+  };
+  for (let index = 0; index < 2; index++) {
+    const hub = new MessageHub({ defaultSessionId: 'global' });
+    const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+    hub.registerTransport(transport);
+    hub.onEvent('neo.speech', (data: { type: string; id?: string; text?: string }) => {
+      if (!capture || data.type !== 'say') return;
+      const saved = db.prepare('SELECT payload_json FROM neo_publications WHERE conversation_id=?').all(conversationId);
+      assert(saved.length > 0, 'speech must never precede durable publication');
+      events.push({ client: index, kind: 'speech', id: data.id, text: data.text });
+    });
+    hub.onEvent('neo.changed', () => { if (capture) events.push({ client: index, kind: 'publication' }); });
+    await transport.initialize();
+    clients.push({ hub, transport, index });
+  }
+  const listen = (enabled: boolean, index = 0) => clients[index].hub.request('operation.invoke', { name: 'neo.speech.listen', input: { sessionId, enabled } });
+  const history = () => clients[0].hub.request<{ ok: boolean; items: { publicationId: string; fullText: string }[] }>('operation.invoke', { name: 'neo.publication.read', input: { conversationId } });
+  const draft = { requestId: 'spoken-result', shortText: 'Ready', fullText: 'The synthetic result is ready.', spoken: 'Here is the synthetic result.' };
+  await listen(true);
+  capture = true;
+  const first = await publish(draft);
+  assert.equal(first.accepted, true);
+  assert.equal(first.listening, 'yes');
+  assert.equal(first.spokenDelivered, true);
+  await wait('speech then publication notifications', () => events.filter(e => e.client === 0).length >= 2);
+  assert.deepEqual(events.filter(e => e.client === 0).map(e => e.kind), ['speech', 'publication']);
+  assert.equal(events[0].text, draft.spoken);
+  const initial = await history();
+  assert(initial.ok);
+  assert.equal(initial.items[0].fullText, draft.fullText);
+  assert(!JSON.stringify(initial).includes(draft.spoken));
+  const spoken = () => events.filter(e => e.kind === 'speech');
+  await listen(false);
+  await listen(true);
+  assert.equal((await publish(draft)).spokenDelivered, false);
+  assert.equal(spoken().length, 1);
+  await history();
+  const beforeConflict = events.length;
+  assert.equal((await publish({ ...draft, fullText: 'Unpublished conflicting content.' })).accepted, false);
+  await history();
+  assert.equal(events.length, beforeConflict);
+  await listen(false);
+  const offline = { ...draft, requestId: 'offline' };
+  assert.equal((await publish(offline)).listening, 'no');
+  await listen(true);
+  assert.equal((await publish(offline)).spokenDelivered, false);
+  assert.equal(spoken().length, 1);
+  const fallback = await publish({ ...draft, requestId: 'race', spoken: undefined });
+  assert.equal(fallback.listening, 'yes');
+  assert.equal(fallback.spokenDelivered, false);
+  assert(fallback.guidance.includes('neo.speech.say'));
+  assert(fallback.guidance.includes('never re-publish'));
+  const requestId = /requestId "([^"]+)"/.exec(fallback.guidance)![1];
+  const say = async () => {
+    const response = await mcp({ name: 'neo.speech.say', input: { requestId, text: 'The fallback result.' } });
+    assert(!response.isError, JSON.stringify(response));
+    return JSON.parse(response.content[0].text);
+  };
+  assert.equal((await say()).created, true);
+  assert.equal((await say()).created, false);
+  assert(!(await publish({ ...draft, requestId: 'race', spoken: undefined })).guidance.includes('neo.speech.say'));
+  await listen(true, 1);
+  await listen(false, 0);
+  const last = await publish({ ...draft, requestId: 'last-client' });
+  assert.equal(last.spokenDelivered, true);
+  await wait('last listener speech delivered', () => spoken().some(e => e.client === 1));
+  assert.equal(spoken().filter(e => e.client === 1).length, 1);
+  const final = await history();
+  assert.equal(final.items.length, 4);
+  assert.equal(final.items.filter(p => p.publicationId === first.publication.publicationId).length, 1);
+  assert(!JSON.stringify(final).includes(draft.spoken));
+  const audit = db.prepare("SELECT reason FROM operation_refusals WHERE operation='neo.speech'").all();
+  assert(audit.length >= 3);
+  Object.assign(observed, { passed: true, cases: [1, 2, 3, 7, 8, 9, 11], durableBeforeSpeech: true, speechBeforeTextNotification: true, noHistorySpeech: true, noReplayAfterReconnect: true, offlineSpeechDropped: true, oneFallbackWithoutRepublish: true, lastListenerWins: true, auditRows: audit.length, finalHistory: final });
+} finally {
+  for (const client of clients) { await client.transport.close(); client.hub.cleanup(); }
+  await app.cleanup();
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ ...observed, events, receipts, cleaned: true }, null, 2));
+}
+console.log(JSON.stringify(observed));

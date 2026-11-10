@@ -4936,16 +4936,12 @@ describe('SDKMessageHandler', () => {
   });
 
   describe('repeated tool error recovery enqueue fencing', () => {
-    let recoveryTaskRepo: { getTaskBySessionId: () => unknown; getTask: () => null };
-
     beforeEach(() => {
-      recoveryTaskRepo = {
-        getTaskBySessionId: () => ({ id: 'task-1', evolutionScopeId: 'scope-1' }),
-        getTask: () => null,
-      };
       mockContext.db = {
         ...mockDb,
-        getSpaceTaskRepo: () => recoveryTaskRepo,
+        spaceSessions: {
+          taskForSession: () => ({ id: 'task-1', evolutionScopeId: 'scope-1' }),
+        },
       } as unknown as Database;
     });
 
@@ -5471,23 +5467,6 @@ describe('SDKMessageHandler', () => {
           durable: true,
           prepend: true,
         });
-      });
-
-      it('never enqueues the SDK /compact command for ACP sessions', async () => {
-        const { getContextUsageSpy, h } = budgetCase({
-          provider: 'acp',
-          model: 'acp-agent-model',
-          window: 200_000,
-          totalUsed: 190_000,
-          isAutoCompactEnabled: false,
-        });
-
-        await h.handleMessage(turnEndResult());
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
       it('drops the compaction decision when the session model changes during usage sampling', async () => {
@@ -6371,98 +6350,6 @@ describe('SDKMessageHandler', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(lifecycleStopSpy).toHaveBeenCalled();
-    });
-  });
-
-  describe('markMessageAccepted (ACP signal guard)', () => {
-    it('does NOT signal delivery waiters when the row is failed (acceptance did not take)', async () => {
-      getMessageByStatusAndUuidSpy.mockImplementation(() => null);
-      const waiter = waitForDeliveryConsumption(mockSession.id, 'msg-failed');
-      handler.markMessageAccepted('msg-failed');
-      const winner = await Promise.race([
-        waiter.promise.then(() => 'signaled' as const),
-        new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 50)),
-      ]);
-      expect(winner).toBe('timeout');
-      waiter.cancel();
-    });
-
-    it('flips a submitted ACP kickoff to consumed at acceptance even while a delivery job owns it', async () => {
-      (mockSession as { config: { provider?: string } }).config.provider = 'acp';
-      let consumed = false;
-      getMessageByStatusAndUuidSpy.mockImplementation(
-        (_sessionId: string, status: string, uuid: string) =>
-          uuid !== 'msg-acp'
-            ? null
-            : status === (consumed ? 'consumed' : 'submitted')
-              ? {
-                  dbId: 'db-acp',
-                  uuid: 'msg-acp',
-                  type: 'user',
-                  timestamp: 1,
-                  message: { role: 'user', content: [{ type: 'text', text: 'acp' }] },
-                }
-              : null
-      );
-      updateMessageStatusSpy.mockImplementation((ids: string[], status: string) => {
-        if (status === 'consumed') consumed = true;
-      });
-      mockDb.getJobQueueRepo = mock(() => ({
-        hasActiveDeliveryJob: () => true,
-      })) as never;
-      const waiter = waitForDeliveryConsumption(mockSession.id, 'msg-acp');
-      handler.markMessageAccepted('msg-acp');
-      await expect(waiter.promise).resolves.toBeUndefined();
-      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-acp'], 'consumed');
-      waiter.cancel();
-      delete (mockSession as { config: { provider?: string } }).config.provider;
-    });
-
-    it('signals delivery waiters when a consumed ACP kickoff is accepted', async () => {
-      getMessageByStatusAndUuidSpy.mockImplementation(
-        (_sessionId: string, status: string, uuid: string) =>
-          status === 'consumed' && uuid === 'msg-accepted'
-            ? {
-                dbId: 'db-consumed',
-                uuid: 'msg-accepted',
-                type: 'user',
-                timestamp: 1,
-                message: { role: 'user', content: [{ type: 'text', text: 'acp' }] },
-              }
-            : null
-      );
-      const waiter = waitForDeliveryConsumption(mockSession.id, 'msg-accepted');
-      handler.markMessageAccepted('msg-accepted');
-      await expect(waiter.promise).resolves.toBeUndefined();
-      waiter.cancel();
-    });
-  });
-
-  describe('markMessageSubmitted (ACP delivery kickoff)', () => {
-    it('is idempotent: transitions enqueued then accepts an already-submitted row', async () => {
-      let persisted = false;
-      getMessageByStatusAndUuidSpy.mockImplementation(
-        (_sessionId: string, status: string, uuid: string) => {
-          if (uuid !== 'msg-submitted' || status !== (persisted ? 'submitted' : 'enqueued')) {
-            return null;
-          }
-          return {
-            dbId: 'db-submitted',
-            uuid: 'msg-submitted',
-            type: 'user',
-            timestamp: 1,
-            message: { role: 'user', content: [{ type: 'text', text: 'acp' }] },
-          };
-        }
-      );
-      expect(await handler.markMessageSubmitted('msg-submitted')).toBe(true);
-      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-submitted'], 'submitted');
-
-      persisted = true;
-      updateMessageStatusSpy.mockClear();
-
-      expect(await handler.markMessageSubmitted('msg-submitted')).toBe(true);
-      expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
   });
 

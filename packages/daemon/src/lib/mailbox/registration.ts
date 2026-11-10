@@ -1,4 +1,3 @@
-import { captureDirectMailboxAdmission } from '../tasks/direct-mailbox-admission.ts';
 import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -35,6 +34,7 @@ interface MailboxRegistrationDeps {
   isSessionHeldByTaskLimit: (sessionId: string) => boolean;
   getSession: MailboxDeliveryDeps['getSession'];
   isSessionArchived: MailboxDeliveryDeps['isSessionArchived'];
+  captureAdmission?: MailboxDeliveryDeps['captureAdmission'];
   logError: (message: string) => void;
 }
 
@@ -109,7 +109,7 @@ function registerDelivery(
             })
           : entry,
       getSession: deps.getSession,
-      captureAdmission: (entry) => captureDirectMailboxAdmission(deps.db.getDatabase(), entry),
+      captureAdmission: deps.captureAdmission,
       isSessionArchived: deps.isSessionArchived,
       publishStatusChanged: (sessionId, dbId, status) => {
         void deps.internalEventBus

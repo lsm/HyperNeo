@@ -1,6 +1,9 @@
 import { batch, signal } from '@preact/signals';
+import type { PublicHandoffReference } from '@hyperneo/shared/types/artifact-file';
+import { isLiveReference } from './live-file-client.ts';
 import {
   previewWorkspace,
+  previewFileKey,
   type PreviewWorkspaceEvent,
   type PreviewWorkspaceFile,
 } from './artifact-preview-workspace.ts';
@@ -9,7 +12,7 @@ import {
 export { previewWorkspace } from './artifact-preview-workspace.ts';
 
 export type ArtifactPreviewSource = {
-  kind: 'message' | 'publication' | 'todo';
+  kind: 'message' | 'publication' | 'todo' | 'question';
   id: string;
   revisionId?: string;
 };
@@ -18,10 +21,12 @@ export type ArtifactPreviewContext = { kind: 'todo' | 'ask'; id: string };
 
 export type ArtifactPreviewTarget =
   | { kind: 'artifact'; artifactId: string }
+  | { kind: 'session'; sessionId: string }
   | {
       kind: 'reference';
       source: ArtifactPreviewSource;
       reference: string;
+      handoff?: PublicHandoffReference;
       file?: { path: string; headSha: string };
       context?: ArtifactPreviewContext;
     };
@@ -41,8 +46,29 @@ function writePreviewStack(stack: readonly ArtifactPreviewTarget[], title?: stri
         kind: 'open',
         file: { artifactId: top.artifactId, title: title ?? known?.title ?? '' },
       });
+    } else if (top.kind === 'session') {
+      const known = workspaceState.value.files.find((file) => file.sessionId === top.sessionId);
+      workspaceState.value = previewWorkspace.step(workspaceState.value, {
+        kind: 'open',
+        file: { sessionId: top.sessionId, title: title ?? known?.title ?? '' },
+      });
+    } else if (isLiveReference(top)) {
+      workspaceState.value = previewWorkspace.step(workspaceState.value, {
+        kind: 'open',
+        file: {
+          reference: top,
+          title: title ?? (top.reference.split(/[\\/]/).at(-1) || top.reference),
+        },
+      });
     }
   });
+}
+
+function fileTarget(file: PreviewWorkspaceFile): ArtifactPreviewTarget {
+  if (file.reference) return file.reference;
+  return file.sessionId !== undefined
+    ? { kind: 'session', sessionId: file.sessionId }
+    : { kind: 'artifact', artifactId: file.artifactId };
 }
 
 function navigateWorkspace(event: PreviewWorkspaceEvent & { kind: 'select' | 'close' | 'update' }) {
@@ -55,15 +81,8 @@ function navigateWorkspace(event: PreviewWorkspaceEvent & { kind: 'select' | 'cl
       event.kind === 'select' ||
       (event.kind === 'close' && before.selectedId !== after.selectedId)
     ) {
-      const file = after.files.find((item) => item.artifactId === after.selectedId);
-      artifactPreviewStack.value = file
-        ? [
-            {
-              kind: 'artifact',
-              artifactId: file.artifactId,
-            },
-          ]
-        : [];
+      const file = after.files.find((item) => previewFileKey(item) === after.selectedId);
+      artifactPreviewStack.value = file ? [fileTarget(file)] : [];
     }
   });
 }
@@ -71,8 +90,8 @@ function navigateWorkspace(event: PreviewWorkspaceEvent & { kind: 'select' | 'cl
 /** @public */
 export const artifactPreviewWorkspace = {
   state: workspaceState,
-  select: (artifactId: string | null) => navigateWorkspace({ kind: 'select', artifactId }),
-  close: (artifactId: string) => navigateWorkspace({ kind: 'close', artifactId }),
+  select: (key: string | null) => navigateWorkspace({ kind: 'select', key }),
+  close: (key: string) => navigateWorkspace({ kind: 'close', key }),
   update: (file: PreviewWorkspaceFile) => navigateWorkspace({ kind: 'update', file }),
 };
 

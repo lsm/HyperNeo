@@ -8,12 +8,15 @@ export interface MessageDeliveryDeadLetterSettlement {
   resetStuckProcessingState?(sessionId: string, messageUuid: string): Promise<unknown> | void;
 }
 
-export const DEAD_LETTER_SESSION_ERROR =
-  'Task-agent kickoff delivery failed and was dead-lettered.';
+export const DEAD_LETTER_SESSION_ERROR = 'Message delivery failed and was dead-lettered.';
+
+export const deadLetterSessionError = (error: string | null | undefined) =>
+  error ? `Message delivery failed: ${error}` : DEAD_LETTER_SESSION_ERROR;
 
 export async function settleMessageDeliveryDeadLetter(
   payload: MessageDeliveryPayload,
-  settlement: MessageDeliveryDeadLetterSettlement
+  settlement: MessageDeliveryDeadLetterSettlement,
+  error?: string | null
 ): Promise<void> {
   const flipped = await settlement.markDeliveryFailedByUuid(payload.sessionId, payload.messageUuid);
   if (flipped) {
@@ -21,7 +24,7 @@ export async function settleMessageDeliveryDeadLetter(
   }
   if (payload.origin === 'space_inject' && payload.injectedMidTurn !== true) {
     try {
-      await settlement.publishSessionError(payload.sessionId, DEAD_LETTER_SESSION_ERROR);
+      await settlement.publishSessionError(payload.sessionId, deadLetterSessionError(error));
     } catch {}
   }
   if (settlement.resetStuckProcessingState) {

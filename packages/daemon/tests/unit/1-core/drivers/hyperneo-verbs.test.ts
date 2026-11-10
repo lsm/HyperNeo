@@ -1,3 +1,6 @@
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import {
   chmodSync,
@@ -9,7 +12,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { vi } from 'vitest';
+import { workerWorkLocations } from '../../../../src/lib/work-locations';
 import { execFileSync } from 'node:child_process';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { sessionReplyCall } from '../../../../src/lib/messaging/session-reply';
@@ -26,11 +31,19 @@ import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff'
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
-function control(db: Database, events: string[], withdraw?: HyperneoSessionControl['withdraw']) {
+function control(
+  db: Database,
+  events: string[],
+  withdraw?: HyperneoSessionControl['withdraw'],
+  provider?: HyperneoSessionControl['provider'],
+  resolveDefaultModel?: HyperneoSessionControl['resolveDefaultModel']
+) {
   let selectedModel = 'gpt-6-luna';
   return {
     sessions: {
       ...(withdraw ? { withdraw } : {}),
+      ...(provider ? { provider } : {}),
+      ...(resolveDefaultModel ? { resolveDefaultModel } : {}),
       resolveModel: async (model: string) =>
         model === 'GLM 5.3'
           ? { id: 'glm-5.3', provider: 'glm' }
@@ -84,6 +97,7 @@ describe('hyperneo adapter send and status', () => {
     from: string;
     messageUuid: string;
     deliveryMode?: string;
+    once?: boolean;
   }>;
   let outcome: MailboxHandoffOutcome;
   let events: string[];
@@ -91,6 +105,7 @@ describe('hyperneo adapter send and status', () => {
   beforeEach(() => {
     configureWorkerSandbox(() => 'always');
     source = mkdtempSync(join(tmpdir(), 'hn-prepared-source-'));
+    vi.stubEnv('HYPERNEO_DATA_DIR', join(source, 'data'));
     execFileSync('git', ['init', source]);
     projectBase = join(source, 'project-storage');
     handed = [];
@@ -100,7 +115,7 @@ describe('hyperneo adapter send and status', () => {
     db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT, metadata TEXT,
       status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT,
       worktree_branch TEXT, git_branch TEXT, worktree_path TEXT)`);
-    db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
+    db.exec(`CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, message_type TEXT, sdk_message TEXT,
       timestamp TEXT, parent_tool_use_id TEXT, send_status TEXT)`);
     const session =
       db.prepare(`INSERT INTO sessions (id, title, workspace_path, status, last_active_at,
@@ -141,6 +156,7 @@ describe('hyperneo adapter send and status', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     configureWorkerSandbox(() => 'off');
     db.close();
     rmSync(source, { recursive: true, force: true });
@@ -148,29 +164,90 @@ describe('hyperneo adapter send and status', () => {
 
   function adapter(
     prepareExecution?: WorkExecutionPreparer,
-    withdraw?: HyperneoSessionControl['withdraw']
+    withdraw?: HyperneoSessionControl['withdraw'],
+    provider?: HyperneoSessionControl['provider'],
+    resolveDefaultModel?: HyperneoSessionControl['resolveDefaultModel']
   ) {
     fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
+      readTurnFacts: async () => [],
       readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       prepareExecution,
       worktreeBaseDir: () => projectBase,
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
-      handoff: async (sessionId, message, from, messageUuid, deliveryMode) => {
+      handoff: async (sessionId, message, from, messageUuid, deliveryMode, once) => {
         handed.push({
           sessionId,
           message,
           from,
           messageUuid,
           ...(deliveryMode ? { deliveryMode } : {}),
+          ...(once ? { once } : {}),
         });
         return outcome;
       },
-      ...control(db, events, withdraw),
+      ...control(db, events, withdraw, provider, resolveDefaultModel),
     });
   }
+
+  test('status preserves the session provider through operation result validation', async () => {
+    const driver = adapter(undefined, undefined, () => 'selected-provider');
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [driver],
+        remote: { list: () => [], invoke: async () => ({}) },
+        daemonName: 'imac',
+      })
+    );
+    const result = await invokeOperation(
+      registry,
+      'work.status',
+      { ref: { adapter: 'hyperneo', id: 'idle' } },
+      { source: 'rpc' }
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, value: { provider: 'selected-provider' } },
+    });
+  });
+
+  test('effort-only reuse resolves the same effective default model and provider as a new start', async () => {
+    const driver = adapter(undefined, undefined, undefined, async () => ({
+      id: 'glm-5.3',
+      provider: 'glm',
+    }));
+    const request = {
+      place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+      title: 'fixture',
+      message: 'fixture',
+      effort: ' HIGH ',
+    };
+    expect(await driver.resolveStartConfiguration!(request)).toMatchObject({
+      ok: true,
+      value: { model: 'glm-5.3', provider: 'glm', effort: 'high' },
+    });
+    expect(await adapter().resolveStartConfiguration!(request)).toBeNull();
+    expect(events).toEqual([]);
+    expect(handed).toEqual([]);
+  });
+
+  test('reuse resolves model aliases and effort through the start resolver without creating work', async () => {
+    const result = await adapter().resolveStartConfiguration!({
+      place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+      title: 'fixture',
+      message: 'fixture',
+      model: 'GLM 5.3',
+      effort: 'high',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      value: { model: 'glm-5.3', provider: 'glm', effort: 'high' },
+    });
+    expect(events).toEqual([]);
+    expect(handed).toEqual([]);
+  });
 
   test('prefix discovery finds older sessions before history limits', async () => {
     db.exec('CREATE TABLE workspace_history (path TEXT, last_used_at INTEGER)');
@@ -259,6 +336,19 @@ describe('hyperneo adapter send and status', () => {
     }
   );
 
+  test('send uses the idempotency key as the input id and asks for one delivery', async () => {
+    const sent = await adapter().send!(ref('idle'), 'Once', {
+      from: 'session:neo',
+      caller: { source: 'internal', role: 'neo' },
+      idempotencyKey: 'answer-key',
+    });
+    expect(sent).toMatchObject({
+      ok: true,
+      value: { receipt: { executionId: 'idle', inputId: 'answer-key' } },
+    });
+    expect(handed.at(-1)).toMatchObject({ messageUuid: 'answer-key', once: true });
+  });
+
   test('queue does not return a submission receipt when mailbox admission fails', async () => {
     outcome = { kind: 'rejected', reason: 'mailbox unavailable' };
     expect(
@@ -302,6 +392,16 @@ describe('hyperneo adapter send and status', () => {
         JSON.parse(readFileSync(join(directory, '.claude/settings.local.json'), 'utf8')).sandbox
           .enabled
       ).toBe(true);
+      const ownership = join(
+        source,
+        'data/work/scratch-owners',
+        `${basename(workerWorkLocations(directory).scratch)}.json`
+      );
+      expect(JSON.parse(readFileSync(ownership, 'utf8'))).toMatchObject({
+        kind: 'hyperneo-daemon-scratch-v1',
+        pid: process.pid,
+        root: directory,
+      });
       expect(existsSync(projectBase)).toBe(false);
       expect(handed).toHaveLength(1);
       expect(released).toBe(false);
@@ -727,6 +827,7 @@ describe('hyperneo adapter start and stop', () => {
   function adapter(overrides: Partial<HyperneoSessionControl> = {}) {
     const controls = control(db, events);
     return createHyperneoAdapter({
+      readTurnFacts: async () => [],
       readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
@@ -781,6 +882,21 @@ describe('hyperneo adapter start and stop', () => {
     expect(handed).toEqual([
       `new: write it\n\nReport milestones with ${sessionReplyCall('neo:root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
     ]);
+  });
+
+  test('injects actual identity before the first input without a requested effort', async () => {
+    const result = await adapter({ effort: () => 'medium' }).start!(
+      {
+        place: place('/focus/notes'),
+        title: 'task',
+        message: 'write it',
+        provenance: true,
+      } as never,
+      from
+    );
+    expect(result).toMatchObject({ ok: true, value: { effort: 'medium' } });
+    expect(handed.at(-1)).toContain('(effort: medium) via HyperNeo');
+    expect(handed.at(-1)).toContain('write it');
   });
 
   test('starts HyperNeo work with the requested effort applied before delivery', async () => {

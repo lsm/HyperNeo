@@ -1,0 +1,42 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "admissionFailureNeverCapturesOrFallsBack": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "healthWhileWriterHeldMs": 2.0499589999999444,
+  "deliberatelyHeldInitializationMs": 1297.9191250000001,
+  "concurrentCaptureLaneShared": true,
+  "publicReceiptRetainsCommittedIdentity": true,
+  "concurrentInitializationShared": true,
+  "pathRefusalsPreserved": true,
+  "currentOwnershipRechecked": true,
+  "immutableRevisionAndRetryPreserved": true,
+  "rowPublicationStillMainSide": true,
+  "mainRowSaves": 2,
+  "publicSnapshotBytesRetained": true,
+  "existingReadOnlyIdentitySelectsOutsideRegistration": 2,
+  "successfulCaptureAndSnapshotReadVerified": true,
+  "maxLoopLagMs": 5.706749999999943,
+  "rssBytes": 185320552,
+  "walBytes": 61832,
+  "commandPosts": 3,
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "pass": true,
+  "registrationMainIdentitySqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 4.793125000000032,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.006583999999975276
+    },
+    {
+      "roundTripMs": 1211.6952909999998,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.02250000000003638
+    }
+  ],
+  "runtime": "Bun 1.4.3",
+  "scope": "Successful capture/receipts/bytes plus identity activation",
+  "temporaryDaemonDataRemoved": true
+}

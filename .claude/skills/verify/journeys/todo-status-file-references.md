@@ -19,9 +19,10 @@ that reproduction. After the committed fix, repeat into a fresh after directory.
 The helper seeds only its own migrated database, native workspace/session binding
 and ordinary files inside its synthetic HOME. Each distinct reference appears in
 exactly one todo field. It owns an ephemeral non-8399 daemon and calls the same
-artifact.reference.resolve operation over WebSocket that clients use for taps.
-After the fix, both status-only references must resolve; artifact.file.read must
-return their exact unique bytes and retrying the same tap must retain its receipt.
+file.reference.read operation over WebSocket that clients use for taps.
+After the fix, both status-only references must resolve; its response must
+return their exact unique bytes and retrying unchanged content retains its version,
+without an artifact row or snapshot.
 An existing but unmentioned file must still refuse. The normal title-source
 control has null status fields and must continue resolving.
 

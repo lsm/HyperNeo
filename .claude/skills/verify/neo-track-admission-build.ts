@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -33,7 +35,7 @@ SQLite.prototype.prepare=function(...args){
 SQLite.prototype.exec=function(sql:string){if(record&&targetSql.test(sql)){mainSql++;throw new Error('Track SQL executed on daemon main');}return Reflect.apply(sqliteExec,this,[sql]);};
 const path=join(run,'data/daemon.db');
 const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',dbPath:path}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db),repo=new NeoRepository(db);
 type Receipt={ok:false;reason:string}|{ok:true;root:string;messageId:string;ask:NeoAsk;todo:NeoTodo;ref:{adapter:string;id:string};link:string|null;timings:{workerStartedAt:number;workerPreparedAt:number}};
 const op={name:'neo.sessionTrackWrites',mode:'write',run:()=>{throw new Error('Track command must execute in the writer worker');}} as DbOp<ReturnType<typeof input>,Receipt>;

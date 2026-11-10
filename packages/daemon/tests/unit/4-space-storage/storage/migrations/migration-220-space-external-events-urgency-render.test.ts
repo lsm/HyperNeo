@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../../src/storage/sqlite-compat';
-import { ExternalEventStore } from '../../../../../src/lib/external-events/external-event-store';
+import { ExternalEventStore } from '../../../../../../space/src/external-events/external-event-store';
 import type { ExternalEvent } from '../../../../../src/lib/external-events/types';
 import { createTables, runMigrations } from '../../../../../src/storage/schema';
 import { runMigration220 } from '../../../../../src/storage/schema/m220-space-external-events-urgency-render';

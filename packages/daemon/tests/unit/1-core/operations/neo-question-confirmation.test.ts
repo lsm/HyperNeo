@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
@@ -45,6 +46,7 @@ const call = async (name: string, input: unknown, caller = owner) => {
 };
 const ask = (input: Record<string, unknown> = {}) =>
   call('neo.question.ask', {
+    retireWhen: pendingTodoCheck,
     askId: 'ask-proof',
     kind: 'yesno',
     text,

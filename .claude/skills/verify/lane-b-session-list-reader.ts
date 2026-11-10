@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -89,7 +90,7 @@ try {
   assert.deepEqual(expected[4].sessions.map((row) => row.id), ['archived-list']);
   assert.equal(app.sessionManager.getCachedSessions().length, 0);
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
   hub.registerTransport(transport);
   await transport.initialize();
   const prepare = raw.prepare;

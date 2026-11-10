@@ -2,18 +2,10 @@ import { commandRegistry, type CommandDescriptor } from './command-registry.ts';
 import {
   commandPaletteModeSignal,
   commandPaletteOpenSignal,
-  currentSpaceIdSignal,
   navSectionSignal,
   settingsSectionSignal,
 } from './signals.ts';
-import {
-  navigateToSessions,
-  navigateToSettings,
-  navigateToSpace,
-  navigateToSpaceConfigure,
-  navigateToSpaceTasks,
-  navigateToSpacesPage,
-} from './router.ts';
+import { navigateToSessions, navigateToSettings } from './router.ts';
 import { createSession } from './api-helpers.ts';
 import { toast } from './toast.ts';
 import { connectionState } from './state.ts';
@@ -51,17 +43,6 @@ async function runCreateSession() {
   }
 }
 
-function requireSpace(action: (spaceId: string) => void) {
-  return () => {
-    const spaceId = currentSpaceIdSignal.value;
-    if (!spaceId) {
-      toast.error('Open a space first');
-      return;
-    }
-    action(spaceId);
-  };
-}
-
 export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
   {
     id: 'palette.open',
@@ -78,7 +59,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
     id: 'quickOpen.open',
     label: 'Open quick open',
     category: 'navigation',
-    description: 'Jump to chats, messages, tasks, and spaces',
+    description: 'Jump to chats, messages, and tasks',
     keywords: ['spotlight', 'search', 'jump', 'go'],
     shortcut: { code: 'KeyP', mod: true },
     run: () => {
@@ -109,17 +90,6 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
     },
   },
   {
-    id: 'nav.spaces',
-    label: 'Go to spaces',
-    category: 'navigation',
-    keywords: ['workspace'],
-    run: () => {
-      closePalette();
-      navSectionSignal.value = 'spaces';
-      navigateToSpacesPage();
-    },
-  },
-  {
     id: 'nav.settings',
     label: 'Open settings',
     category: 'settings',
@@ -145,14 +115,14 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
   },
   {
     id: 'settings.models',
-    label: 'Settings: Models',
+    label: 'Settings: Sessions & Harness',
     category: 'settings',
     keywords: ['model', 'switch'],
     run: () => {
       closePalette();
       navSectionSignal.value = 'settings';
-      settingsSectionSignal.value = 'models';
-      navigateToSettings('models');
+      settingsSectionSignal.value = 'harness';
+      navigateToSettings('harness');
     },
   },
   {
@@ -178,35 +148,6 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
       settingsSectionSignal.value = 'shortcuts';
       navigateToSettings('shortcuts');
     },
-  },
-  {
-    id: 'space.tasks',
-    label: 'Space: View tasks',
-    category: 'space',
-    keywords: ['mission'],
-    run: requireSpace((spaceId) => {
-      closePalette();
-      navigateToSpaceTasks(spaceId);
-    }),
-  },
-  {
-    id: 'space.configure',
-    label: 'Space: Configure',
-    category: 'space',
-    keywords: ['agents', 'workflows'],
-    run: requireSpace((spaceId) => {
-      closePalette();
-      navigateToSpaceConfigure(spaceId);
-    }),
-  },
-  {
-    id: 'space.overview',
-    label: 'Space: Overview',
-    category: 'space',
-    run: requireSpace((spaceId) => {
-      closePalette();
-      navigateToSpace(spaceId);
-    }),
   },
 ];
 

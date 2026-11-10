@@ -5,9 +5,12 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorktreeRepository } from '../../storage/repositories/space-worktree-repository.ts';
 import type { Logger } from '../logger.ts';
-import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../space/runtime/constants.ts';
-import { retryWithBackoff } from '../utils/retry-utils.ts';
-import { worktreeSlug } from '../space/worktree-slug.ts';
+import {
+  MAX_NETWORK_RETRIES,
+  NETWORK_RETRY_DELAYS_MS,
+  retryWithBackoff,
+} from '../utils/retry-utils.ts';
+import { worktreeSlug } from './worktree-slug.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
 import { nodeWorkspaceValidationIo } from './validation-pipeline.ts';
 import {

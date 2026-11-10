@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 
 const { mockRequest, connected } = vi.hoisted(() => {
   let open: () => void = () => {};
@@ -63,12 +63,24 @@ function invoked(name: string): Invocation[] {
     .filter((call): call is Invocation => call?.name === name);
 }
 
-function daemon(state: { paired: boolean; pending?: unknown[] }) {
+function daemon(state: {
+  paired: boolean;
+  pending?: unknown[];
+  terminalApproval?: boolean;
+  currentId?: string;
+}) {
   const devices = [
     phone,
     relay,
-    { ...phone, id: 'desk-1', name: 'Desk browser', lastSeenHost: '127.0.0.1:9283', current: true },
+    {
+      ...phone,
+      id: state.currentId ?? 'desk-1',
+      name: 'Desk browser',
+      lastSeenHost: '127.0.0.1:9283',
+      current: true,
+    },
   ];
+  let terminalApproval = state.terminalApproval ?? true;
   let pending = state.pending ?? [];
   mockRequest.mockImplementation(async (method: string, params?: Invocation) => {
     if (!params) throw new Error(`unexpected call ${method}`);
@@ -117,10 +129,25 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
       pending = [];
       return { ok: true };
     }
+    if (name === 'device.pair.deny') {
+      pending = [];
+      return { ok: true };
+    }
     if (name === 'device.revoke') {
       const index = devices.findIndex((device) => device.id === input.deviceId);
       devices[index] = { ...devices[index], revokedAt: Date.now() };
       return { ok: true };
+    }
+    if (name === 'device.pair.terminal_approval.get')
+      return { ok: true, enabled: terminalApproval };
+    if (name === 'device.pair.terminal_approval.set') {
+      if (input.enabled && state.currentId?.startsWith('local-rpc:'))
+        return {
+          ok: false,
+          reason: 'not_paired: only a paired phone or browser can turn it back on.',
+        };
+      terminalApproval = input.enabled as boolean;
+      return { ok: true, enabled: terminalApproval };
     }
     if (name === 'device.pair.create')
       return {
@@ -135,6 +162,107 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
 }
 
 describe('DevicesSettings', () => {
+  it('keeps the ready view and keeps polling after a background request fails', async () => {
+    daemon({
+      paired: true,
+      pending: [
+        {
+          id: 'scan',
+          kind: 'human',
+          name: 'Phone',
+          expiresAt: 4e12,
+          twoWay: true,
+          phoneConfirmed: false,
+        },
+      ],
+    });
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    try {
+      render(<DevicesSettings />);
+      await screen.findByText('Waiting for the phone to confirm.');
+      await waitFor(() =>
+        expect(interval.mock.calls.some(([, delay]) => delay === 1000)).toBe(true)
+      );
+      const poll = interval.mock.calls.find(([, delay]) => delay === 1000)?.[0];
+      expect(typeof poll).toBe('function');
+      const request = mockRequest.getMockImplementation()!;
+      let fail = true;
+      mockRequest.mockImplementation(async (...args) => {
+        if (fail) {
+          fail = false;
+          throw new Error('synthetic disconnected');
+        }
+        return request(...args);
+      });
+      if (typeof poll !== 'function') throw new Error('poll was not registered');
+      await act(async () => {
+        poll();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitFor(() => expect(fail).toBe(false));
+      expect(screen.getByText('Waiting for the phone to confirm.')).toBeTruthy();
+      const before = invoked('device.pair.pending').length;
+      poll();
+      await waitFor(() => expect(invoked('device.pair.pending').length).toBeGreaterThan(before));
+      expect(screen.getByRole('button', { name: 'Allow Phone' })).toBeTruthy();
+    } finally {
+      interval.mockRestore();
+    }
+  });
+  it('waits for the scanned phone before enabling Allow', async () => {
+    daemon({
+      paired: true,
+      pending: [
+        {
+          id: 'scan',
+          kind: 'human',
+          name: 'Phone',
+          expiresAt: 4e12,
+          twoWay: true,
+          phoneConfirmed: false,
+        },
+      ],
+    });
+    render(<DevicesSettings />);
+    expect(await screen.findByText('Waiting for the phone to confirm.')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: 'Allow Phone' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect((screen.getByRole('button', { name: 'Deny Phone' }) as HTMLButtonElement).disabled).toBe(
+      false
+    );
+  });
+  it('asks for the phone code before allowing a confirmed two-way request', async () => {
+    daemon({
+      paired: true,
+      pending: [
+        {
+          id: 'scan',
+          kind: 'human',
+          name: 'Phone',
+          expiresAt: 4e12,
+          twoWay: true,
+          phoneConfirmed: true,
+        },
+      ],
+    });
+    render(<DevicesSettings />);
+    const input = await screen.findByRole('textbox', { name: 'Code shown on Phone' });
+    const allow = screen.getByRole('button', { name: 'Allow Phone' });
+    expect((allow as HTMLButtonElement).disabled).toBe(true);
+    for (const invalid of ['12345678', 'ABCDEFGH']) {
+      fireEvent.input(input, { target: { value: invalid } });
+      expect((allow as HTMLButtonElement).disabled).toBe(true);
+    }
+    fireEvent.input(input, { target: { value: 'mrnv-jhmh' } });
+    fireEvent.click(allow);
+    await waitFor(() =>
+      expect(invoked('device.pair.approve')).toEqual([
+        { name: 'device.pair.approve', input: { codeId: 'scan', confirmCode: 'mrnv-jhmh' } },
+      ])
+    );
+  });
+
   beforeEach(() => {
     mockRequest.mockReset();
     mockUpdate.mockReset();
@@ -179,6 +307,44 @@ describe('DevicesSettings', () => {
     expect(invoked('device.pair.approve')).toEqual([
       { name: 'device.pair.approve', input: { codeId: 'code-1' } },
     ]);
+  });
+
+  it('shows the submitted label as text and falls back to the code label', async () => {
+    daemon({
+      paired: true,
+      pending: [
+        {
+          id: 'new',
+          kind: 'human',
+          name: 'Code label',
+          requestedName: '<Browser label>',
+          expiresAt: Date.now() + 300_000,
+        },
+        { id: 'old', kind: 'human', name: 'Old label', expiresAt: Date.now() + 300_000 },
+      ],
+    });
+    const view = render(<DevicesSettings />);
+    expect(await screen.findByText('<Browser label>')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Allow <Browser label>' })).toBeTruthy();
+    expect(screen.getByText('Old label')).toBeTruthy();
+    expect(view.container.querySelector('browser')).toBeNull();
+  });
+
+  it('denies a pending code from a button left of Allow', async () => {
+    daemon({
+      paired: true,
+      pending: [{ id: 'code-1', kind: 'human', name: 'Laptop', expiresAt: Date.now() + 300_000 }],
+    });
+    render(<DevicesSettings />);
+    const deny = await screen.findByRole('button', { name: 'Deny Laptop' });
+    const allow = screen.getByRole('button', { name: 'Allow Laptop' });
+    expect(deny.compareDocumentPosition(allow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(deny);
+    await waitFor(() => screen.getByText('No codes are waiting for Allow.'));
+    expect(invoked('device.pair.deny')).toEqual([
+      { name: 'device.pair.deny', input: { codeId: 'code-1' } },
+    ]);
+    expect(invoked('device.pair.approve')).toEqual([]);
   });
 
   it('shows requests the Origin/Host checks would refuse, and edits the allowed hosts', async () => {
@@ -276,5 +442,42 @@ describe('DevicesSettings', () => {
     expect(invoked('device.pair.create')).toEqual([
       { name: 'device.pair.create', input: { kind: 'relay', name: 'iMac relay' } },
     ]);
+  });
+
+  it('turns terminal approval off and back on from this paired browser', async () => {
+    daemon({ paired: true });
+    render(<DevicesSettings />);
+    const toggle = await waitFor(() =>
+      screen.getByRole('switch', { name: 'Allow from the terminal' })
+    );
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('switch', { name: 'Allow from the terminal' }).getAttribute('aria-checked')
+      ).toBe('false')
+    );
+    fireEvent.click(screen.getByRole('switch', { name: 'Allow from the terminal' }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('switch', { name: 'Allow from the terminal' }).getAttribute('aria-checked')
+      ).toBe('true')
+    );
+    expect(invoked('device.pair.terminal_approval.set').map((call) => call.input)).toEqual([
+      { enabled: false },
+      { enabled: true },
+    ]);
+  });
+
+  it('cannot turn terminal approval back on from local tools and says why', async () => {
+    daemon({ paired: true, terminalApproval: false, currentId: 'local-rpc:tools' });
+    render(<DevicesSettings />);
+    const toggle = await waitFor(() =>
+      screen.getByRole('switch', { name: 'Allow from the terminal' })
+    );
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect((toggle as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Turn this back on from a paired phone or browser.')).toBeTruthy();
+    expect(invoked('device.pair.terminal_approval.set')).toEqual([]);
   });
 });

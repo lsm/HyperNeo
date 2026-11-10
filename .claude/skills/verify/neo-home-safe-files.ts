@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { replaceFileWithinWorkspace } from '../../../packages/daemon/src/lib/acp/acp-safe-fs-backend.ts';
+import { replaceFileWithinWorkspace } from '../../../packages/daemon/src/lib/safe-fs-backend.ts';
 
 const run = process.argv.at(-1)!;
 mkdirSync(join(run, 'evidence'), { recursive: true });
@@ -12,7 +12,7 @@ mkdirSync(root);
 mkdirSync(outside);
 writeFileSync(join(outside, 'doc'), 'Outside sentinel.');
 const binary = Buffer.from([0xff, 0xc3, 0x28, 0, 0x42]);
-const evidence: Record<string, unknown> = { runtime: Reflect.get(globalThis, 'Deno')?.version?.deno ?? process.versions.bun };
+const evidence: Record<string, unknown> = { runtime: process.versions.bun };
 try {
   await replaceFileWithinWorkspace(root, ['nested', 'binary'], binary);
   assert.deepEqual(readFileSync(join(root, 'nested', 'binary')), binary);

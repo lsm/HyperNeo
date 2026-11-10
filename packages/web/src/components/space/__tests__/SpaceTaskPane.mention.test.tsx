@@ -11,6 +11,10 @@ import type {
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
 
+vi.mock('../../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/router')),
+}));
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceAgent: vi.fn(),
 }));
@@ -25,6 +29,10 @@ const { mockSpaceOverlaySessionIdSignal, mockSpaceOverlayAgentNameSignal, mockTh
       toLabel?: string;
     }>,
   }));
+vi.mock('../../../lib/space-signals', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/signals')),
+}));
 vi.mock('../../../lib/signals', async (importOriginal) => {
   const actual = await importOriginal();
   return {

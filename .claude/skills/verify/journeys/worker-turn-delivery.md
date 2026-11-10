@@ -1,7 +1,8 @@
 # One Neo input per worker turn
 
 Use SKILL.md's shared isolation and metadata-only proof wrapper. No provider,
-HTTP model mock, GUI or live GitHub access is needed. Check memory pressure
+HTTP model mock, GUI or live GitHub access is needed. The RPC socket uses only
+the credential in its own disposable data directory. Check memory pressure
 first (at least 25% free); the wrapper checks at least 25 GiB disk space.
 
 ```bash

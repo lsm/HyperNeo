@@ -137,11 +137,10 @@ try {
     body: JSON.stringify({ code: bootstrap.code, name: 'Synthetic approver' }),
   });
   const paired = (await response.json()) as any;
-  const approve = await connect({ Authorization: `Bearer ${paired.credential}` }),
-    unpaired = await connect();
+  const approve = await connect({ Authorization: `Bearer ${paired.credential}` });
+  await assert.rejects(connect(), /socket unavailable/);
   const next = await cli('pair', '--name', 'Synthetic waiting browser');
-  const pending = await unpaired('device.pair.pending');
-  evidence.unpairedPendingRefused = !pending.ok;
+  evidence.unpairedUpgradeRefused = true;
   page = await import(pathToFileURL(join(run, 'pair-page.mjs')).href);
   mount(next.code);
   button('Pair this browser')!.click();
@@ -157,7 +156,7 @@ try {
       'REPRODUCED: actual PairPage stops after 403; approval elsewhere does not complete pairing.'
     );
   } else {
-    assert.equal(pending.ok, false);
+    assert.equal(evidence.unpairedUpgradeRefused, true);
     await wait(() => win.document.body.textContent.includes('This browser is paired.'));
     assert.equal(statuses.at(-1), 200);
     assert(statuses.slice(0, -1).every((status) => status === 403));

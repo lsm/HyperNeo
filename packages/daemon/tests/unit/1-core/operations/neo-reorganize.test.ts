@@ -16,7 +16,7 @@ import {
   requireNeoAskProject,
 } from '../../../../src/lib/neo/reorganize-operation.ts';
 import type { NeoRouted } from '../../../../src/lib/neo/reorganize-operation.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

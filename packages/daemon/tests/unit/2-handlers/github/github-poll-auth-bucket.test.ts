@@ -9,8 +9,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github/github-event-extension';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 const owned: string[] = [];
 afterEach(() => {
@@ -53,7 +53,7 @@ for (const status of [404, 403]) {
       const db = new Database(':memory:');
       createTables(db);
       runMigrations(db, () => {});
-      const config = new ExternalEventExtensionConfigStore(db);
+      const config = createExternalEventConfigStore(db);
       await config.setGlobalConfig('github', {
         source: 'github',
         globallyEnabled: true,
@@ -296,7 +296,7 @@ describe('authenticated GitHub polling transport', () => {
     const db = new Database(':memory:');
     createTables(db);
     runMigrations(db, () => {});
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,
@@ -346,7 +346,7 @@ test('a failed configured credential read does not switch to anonymous or anothe
   const db = new Database(':memory:');
   createTables(db);
   runMigrations(db, () => {});
-  const config = new ExternalEventExtensionConfigStore(db);
+  const config = createExternalEventConfigStore(db);
   await config.setGlobalConfig('github', {
     source: 'github',
     globallyEnabled: true,

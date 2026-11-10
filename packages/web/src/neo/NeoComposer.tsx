@@ -1,26 +1,30 @@
+import type { NeoFlightOrigin } from './neo-send-flight.ts';
 import './neo-composer.css';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { Button } from '../components/ui/Button.tsx';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
+import { Spinner } from '../components/ui/Spinner.tsx';
 import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import {
   combineVoiceSubmission,
-  queuePendingVoiceSend,
   submitVoiceSendIntent,
   type VoiceSendOutcome,
 } from '../lib/voice/voice-audio-outbox.ts';
 import { getVoiceRecord, type VoiceRecordEntry } from '../lib/voice/voice-audio-store.ts';
 import { NeoAttachments } from './NeoAttachments.tsx';
+import { neoWaitingLine } from './NeoBusyRow.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
 import { NeoQuoteBar } from './NeoQuoteBar.tsx';
+import { NeoRealtimeVoice } from './NeoRealtimeVoice.tsx';
 import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
 import {
   attachmentDocuments,
   attachmentMessage,
   NEO_FILE_ACCEPT,
+  type NeoAttachment,
   useNeoAttachments,
 } from './neo-attachments.ts';
 import { type createNeoIntakeClient, type NeoQuote, neoQuoteExcerpt } from './neo-intake.ts';
@@ -35,6 +39,37 @@ export function neoEnterSends(
   const modifierSend = keyboard.metaKey || keyboard.ctrlKey;
   return coarsePointer ? modifierSend : !keyboard.shiftKey || modifierSend;
 }
+
+const snapshotVoiceSend = (superpipe({})('neo.voice-send-snapshot') as PipelineAPI)
+  .input(['draft', 'files', 'quote', 'preview'])
+  .pipe(
+    (
+      draft: string,
+      files: NeoAttachment[],
+      quote: NeoQuote | undefined,
+      preview: NeoPreviewReference | undefined
+    ) => {
+      const captured = structuredClone(files);
+      return {
+        sendDraft: draft,
+        sendContext: {
+          suffix: attachmentDocuments(captured).join('\n\n'),
+          images: captured.flatMap((file) => (file.kind === 'image' ? [file.image] : [])),
+          attachmentIds: captured.map((file) => file.id),
+          ...(quote ? { quote: structuredClone(quote) } : {}),
+        },
+        previewContext: preview ? { ...preview } : undefined,
+      };
+    },
+    ['draft', 'files', 'quote', 'preview'],
+    'snapshot'
+  )
+  .end('snapshot') as (
+  draft: string,
+  files: NeoAttachment[],
+  quote: NeoQuote | undefined,
+  preview: NeoPreviewReference | undefined
+) => Pick<VoiceRecordEntry, 'sendDraft' | 'sendContext' | 'previewContext'>;
 
 export function NeoComposer({
   store,
@@ -73,11 +108,15 @@ export function NeoComposer({
   onDraft: (value: string) => void;
   onError: (message: string) => void;
   onTranscript: (text: string) => void;
-  onSend: ReturnType<typeof createNeoIntakeClient>['send'];
+  onSend: (
+    input: Parameters<ReturnType<typeof createNeoIntakeClient>['send']>[0],
+    from?: NeoFlightOrigin
+  ) => ReturnType<ReturnType<typeof createNeoIntakeClient>['send']>;
 }) {
   const idSuffix = forSession ? '-session' : '';
   const [sending, setSending] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const coarsePointer = useCoarsePointer();
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
   const [interim, setInterim] = useState('');
@@ -90,24 +129,13 @@ export function NeoComposer({
   const currentPreview = useRef(boundPreview);
   currentPreview.current = boundPreview;
   const needsDraft = hasAttachments || !!quote || !!boundPreview;
-  const attention = !!store.error.value || store.agentState.value.status === 'waiting_for_input';
-  const collapsed = !focused && !draft && !needsDraft && !attention;
-  const draftContext = t(
-    boundPreview
-      ? 'composer.previewContext'
-      : quote
-        ? 'composer.quoteContext'
-        : 'composer.attachmentsContext'
-  );
-  const voiceStatus = recordingVoice
-    ? needsDraft
-      ? t('composer.recordingDraft', { context: draftContext })
-      : t(coarsePointer ? 'composer.recordingTap' : 'composer.recordingClick')
-    : voicePhase === 'drafting'
-      ? t('composer.transcribing')
-      : voicePhase === 'sending' && draft.trim()
-        ? t('composer.sendingDraft')
-        : null;
+  const agentState = store.agentState.value;
+  const noNetwork = agentState.status === 'rate_limit_cooldown' && agentState.reason === 'network';
+  const waitingLine = forSession ? null : neoWaitingLine(agentState);
+  const attention = !!store.error.value || noNetwork || !!waitingLine;
+  const collapsed = !focused && !preferencesOpen && !draft && !needsDraft && !attention;
+  const showStop =
+    !!onStop && store.isWorking.value && !voiceBusy && !draft.trim() && !hasAttachments;
   const quoteAuthor = quote?.author === 'You' ? t('chat.you') : 'Neo';
   const thought = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
@@ -121,10 +149,7 @@ export function NeoComposer({
       const line = Number.parseFloat(getComputedStyle(el).lineHeight) || 26;
       el.style.height = 'auto';
       const full = el.scrollHeight;
-      const height = Math.min(
-        Math.max(full, line * (collapsed ? 1 : 2)),
-        line * (collapsed ? 1 : 8)
-      );
+      const height = Math.min(Math.max(full, line), line * (collapsed ? 1 : 8));
       el.style.height = `${height}px`;
       el.style.overflowY = !collapsed && full > line * 8 ? 'auto' : 'hidden';
       idleHeight.current = height;
@@ -142,6 +167,7 @@ export function NeoComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
   const sendingText = useRef<string | null>(null);
+  const sendingQuote = useRef<NeoQuote | undefined>(undefined);
   const alive = useRef(true);
   const currentSession = useRef(sessionId);
   currentSession.current = sessionId;
@@ -157,18 +183,7 @@ export function NeoComposer({
   );
   const connected = connectionState.value === 'connected';
   async function send() {
-    if (recordingVoice) {
-      if (!needsDraft) {
-        finishVoice.current?.('send');
-        return;
-      }
-      finishVoice.current?.('draft');
-      onError(
-        t(coarsePointer ? 'composer.addedTap' : 'composer.addedClick', { context: draftContext })
-      );
-      return;
-    }
-    if (voicePhase === 'drafting') {
+    if (recordingVoice || voicePhase === 'drafting') {
       if (attachments.reading) {
         onError(t('composer.stillReading'));
         return;
@@ -179,7 +194,7 @@ export function NeoComposer({
     const submitted = draft;
     const files = attachments.files;
     if (!submitted.trim() && !files.length) return;
-    if (voiceBusy) return;
+    if (voiceBusy || noNetwork) return;
     if (!connected) {
       onError(t('composer.reconnecting'));
       return;
@@ -190,6 +205,7 @@ export function NeoComposer({
     }
     if (sendingText.current === submitted) return;
     sendingText.current = submitted;
+    sendingQuote.current = quote;
     inFlight.current = true;
     setSending(true);
     onError('');
@@ -197,17 +213,44 @@ export function NeoComposer({
     try {
       const images = files.flatMap((file) => (file.kind === 'image' ? [file.image] : []));
       const content = attachmentMessage(submitted, files);
+      const box = thought.current?.getBoundingClientRect();
+      const top = quote
+        ? thought.current?.form?.querySelector('[data-quote-bar]')?.getBoundingClientRect().y
+        : box?.y;
+      const media = files.flatMap((file, index) => {
+        const chip = thought.current?.form?.querySelector(
+          `[data-attachment="${CSS.escape(file.id)}"]`
+        );
+        const source = file.kind === 'image' ? chip?.querySelector('img') : chip;
+        const bounds = source?.getBoundingClientRect();
+        const order = files.slice(0, index).filter((item) => item.kind === file.kind).length;
+        return bounds?.width && bounds.height
+          ? [{ from: bounds, file, target: `${file.kind === 'image' ? 'photo' : 'file'}-${order}` }]
+          : [];
+      });
+      const from =
+        !forSession && box?.width && box.height
+          ? {
+              x: box.x,
+              y: top ?? box.y,
+              width: box.width,
+              height: box.bottom - (top ?? box.y),
+              ...(media.length ? { media } : {}),
+            }
+          : undefined;
       attachments.remove(files.map((file) => file.id));
-      await onSend({
+      const input = {
         sessionId,
         text: content,
         images,
         ...(quote ? { quote } : {}),
         ...(boundPreview ? { previewContext: boundPreview } : {}),
-      }).catch(() => undefined);
+      };
+      await (from ? onSend(input, from) : onSend(input)).catch(() => undefined);
     } finally {
       if (sendingText.current === submitted) {
         sendingText.current = null;
+        sendingQuote.current = undefined;
         inFlight.current = false;
         if (current()) setSending(false);
       }
@@ -226,7 +269,7 @@ export function NeoComposer({
     const composed =
       record.sendText ??
       combineVoiceSubmission(record.sendDraft ?? draft, transcript, record.sendContext?.suffix);
-    if (!composed.trim() || inFlight.current || sending || !connected)
+    if (!composed.trim() || inFlight.current || sending || !connected || noNetwork)
       return { kind: 'unconfirmed' };
     inFlight.current = true;
     setSending(true);
@@ -275,6 +318,11 @@ export function NeoComposer({
       if (alive.current) setSending(false);
     }
   }
+  const showQuote = quote && (!sending || quote !== sendingQuote.current);
+  const frame =
+    collapsed && !voiceBusy
+      ? 'border-line-strong shadow-xl'
+      : `${voiceBusy ? 'border-accent/60' : 'border-transparent'} shadow-composer`;
   return (
     <form
       onSubmit={(event) => {
@@ -288,10 +336,10 @@ export function NeoComposer({
       onFocusOut={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
       }}
-      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60`}
+      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border bg-surface-raised/95 px-2 ${collapsed ? 'py-1.5' : 'pt-4 pb-1.5'} backdrop-blur-xl transition-colors focus-within:border-accent/60`}
     >
       {boundPreview && (
-        <div class="mb-2 flex min-w-0 items-center gap-2 text-xs text-fg-muted">
+        <div class="mb-2 flex min-w-0 items-center gap-2 px-2 text-xs text-fg-muted">
           <span role="status" class="min-w-0 flex-1 break-words">
             {t(
               boundPreview.state === 'available'
@@ -316,15 +364,16 @@ export function NeoComposer({
           previewCandidate.snapshot !== boundPreview?.snapshot) && (
           <button
             type="button"
-            class="mb-2 text-xs text-accent hover:underline"
+            class="mb-2 px-2 text-xs text-accent hover:underline"
             onClick={onRebindPreview}
           >
             {t('composer.usePreview')}
           </button>
         )}
-      {quote && (
+      {showQuote && (
         <div
           role="region"
+          class="px-2"
           aria-label={t('composer.replyingToExcerpt', {
             author: quoteAuthor,
             excerpt: neoQuoteExcerpt(quote.text),
@@ -351,10 +400,12 @@ export function NeoComposer({
         </div>
       )}
       {attachments.files.length > 0 && (
-        <NeoAttachments files={attachments.files} onRemove={attachments.remove} />
+        <div class="px-2">
+          <NeoAttachments files={attachments.files} onRemove={attachments.remove} />
+        </div>
       )}
       {attachments.reading > 0 && (
-        <p role="status" class="mb-2 text-xs text-fg-muted">
+        <p role="status" class="mb-2 px-2 text-xs text-fg-muted">
           {t('composer.reading')}
         </p>
       )}
@@ -380,15 +431,15 @@ export function NeoComposer({
           interim={interim}
           newLine
           hint={listening ? t('composer.listening') : undefined}
-          heightPx={idleHeight.current || undefined}
-          class="neo-composer-draft text-base leading-relaxed text-fg-muted"
+          minHeightPx={idleHeight.current || undefined}
+          class="neo-composer-draft max-h-composer-draft px-2 text-base leading-relaxed text-fg"
         />
       ) : (
         <textarea
           ref={thought}
           id={`neo-thought${idSuffix}`}
           aria-label={forSession ? t('session.message') : t('composer.message')}
-          aria-describedby={quote ? `neo-quote-label${idSuffix}` : undefined}
+          aria-describedby={showQuote ? `neo-quote-label${idSuffix}` : undefined}
           value={draft}
           onInput={(event) => onDraft(event.currentTarget.value)}
           onPaste={(event) => {
@@ -416,7 +467,7 @@ export function NeoComposer({
             }
           }}
           onFocus={() => setFocused(true)}
-          rows={collapsed ? 1 : 2}
+          rows={1}
           maxLength={16000}
           placeholder={t(
             collapsed
@@ -427,11 +478,25 @@ export function NeoComposer({
                 ? 'composer.placeholderTouch'
                 : 'composer.placeholderKeys'
           )}
-          class="w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
+          class={`w-full ${collapsed ? '' : 'px-2'} resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none`}
         />
       )}
-      <div class="neo-composer-toolbar mt-2 flex flex-wrap items-center justify-between gap-2">
-        <div class="neo-composer-tools min-w-0 items-center gap-1 flex">
+      <span
+        role="status"
+        class={`neo-composer-status px-2 min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
+          !voiceBusy && attention ? 'flex w-full' : 'hidden'
+        }`}
+      >
+        {voiceBusy
+          ? null
+          : noNetwork
+            ? t('composer.noNetwork')
+            : store.error.value
+              ? t('chat.notice.needs_you')
+              : waitingLine}
+      </span>
+      <div class="neo-composer-toolbar mt-2 flex flex-nowrap items-center justify-between gap-2">
+        <div class="neo-composer-tools flex flex-1 min-w-0 items-center gap-1">
           <button
             type="button"
             aria-label={t('composer.attach')}
@@ -442,103 +507,73 @@ export function NeoComposer({
           >
             <NeoIcon name="plus" />
           </button>
-          <div class="neo-composer-preferences">
+          <div class="neo-composer-preferences min-w-0">
             <NeoPreferences
               sessionId={sessionId}
               store={store}
               onError={onError}
               preference={preference}
               onSaved={onPreferenceSaved}
+              onMenuOpenChange={setPreferencesOpen}
               forSession={forSession}
             />
           </div>
         </div>
-        <span
-          role="status"
-          class={`neo-composer-status min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
-            voiceBusy
-              ? voiceStatus
-                ? 'order-last flex w-full'
-                : 'hidden'
-              : store.error.value || store.agentState.value.status === 'waiting_for_input'
-                ? 'order-last flex w-full sm:order-none sm:w-auto sm:flex-1'
-                : 'hidden'
-          }`}
+        <div
+          class={`neo-composer-actions flex min-w-0 items-center ml-auto ${voiceBusy ? 'flex-1 gap-2.5' : 'shrink-0 gap-4'}`}
         >
-          {voiceBusy
-            ? voiceStatus
-            : store.error.value
-              ? t('chat.notice.needs_you')
-              : store.agentState.value.status === 'waiting_for_input'
-                ? t('composer.question')
-                : null}
-        </span>
-        <div class="neo-composer-actions flex min-w-0 items-center gap-4 ml-auto">
-          <NeoVoice
-            door={forSession ? 'session' : undefined}
-            previewContext={boundPreview}
-            onPreviewCapture={onPreviewCapture}
-            sessionId={sessionId}
-            connected={connected}
-            draftText={draft}
-            onTranscript={onTranscript}
-            onInterim={setInterim}
-            onPrepareSend={(recordId) => {
-              const files = structuredClone(attachments.files);
-              const snapshot = {
-                sendDraft: draft,
-                sendContext: {
-                  suffix: attachmentDocuments(files).join('\n\n'),
-                  images: files.flatMap((file) => (file.kind === 'image' ? [file.image] : [])),
-                  attachmentIds: files.map((file) => file.id),
-                  ...(quote ? { quote: structuredClone(quote) } : {}),
-                },
-                previewContext: boundPreview ? { ...boundPreview } : undefined,
-              };
-              return queuePendingVoiceSend(recordId, snapshot);
-            }}
-            onSendVoice={async (text, recordId) => {
-              const record = await getVoiceRecord(recordId);
-              if (!record) return { kind: 'unconfirmed' } as const;
-              return sendVoice(record, text);
-            }}
-            onSendHandle={registerFinishVoice}
-            onError={onError}
-            onPhase={setVoicePhase}
-          />
-          {onStop && store.isWorking.value && !voiceBusy && (
+          <div class={`flex min-w-0 items-center ${voiceBusy ? 'flex-1 gap-2.5' : ''}`}>
+            <NeoVoice
+              door={forSession ? 'session' : undefined}
+              previewContext={boundPreview}
+              onPreviewCapture={onPreviewCapture}
+              sessionId={sessionId}
+              connected={connected}
+              draftText={draft}
+              onTranscript={onTranscript}
+              onInterim={setInterim}
+              onPrepareSend={() => snapshotVoiceSend(draft, attachments.files, quote, boundPreview)}
+              onSendVoice={async (text, recordId) => {
+                const record = await getVoiceRecord(recordId);
+                if (!record) return { kind: 'unconfirmed' } as const;
+                return sendVoice(record, text);
+              }}
+              onSendHandle={registerFinishVoice}
+              onError={onError}
+              onPhase={setVoicePhase}
+            />
+            <NeoRealtimeVoice collapsed={collapsed && !voiceBusy} />
+          </div>
+          {showStop && (
             <button
               type="button"
               aria-label={t('composer.stop')}
               title={t('composer.stop')}
               onClick={onStop}
-              class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-line text-fg-muted hover:border-accent/40 hover:text-fg"
+              class="neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none"
             >
-              <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
+              <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 shadow-sm transition group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
+                <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
+              </span>
             </button>
           )}
-          {(!collapsed || voiceBusy) && (
-            <Button
+          {!showStop && (!collapsed || voiceBusy) && (
+            <button
               type="submit"
-              size="sm"
-              class="h-11 min-w-11 shrink-0"
-              aria-label={t(
-                recordingVoice && needsDraft
-                  ? 'composer.stopDraft'
-                  : recordingVoice
-                    ? 'composer.stopSend'
-                    : 'composer.send'
-              )}
-              title={
-                recordingVoice && needsDraft
-                  ? t('composer.stopDraftTitle', { context: draftContext })
-                  : recordingVoice
-                    ? t('composer.stopSendTitle')
-                    : undefined
-              }
+              disabled={noNetwork || (!voiceBusy && !draft.trim() && !hasAttachments)}
+              class="neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none disabled:cursor-not-allowed"
+              aria-label={t(recordingVoice ? 'composer.stopSend' : 'composer.send')}
+              aria-busy={voicePhase === 'sending'}
+              title={recordingVoice ? t('composer.stopSendTitle') : undefined}
             >
-              <NeoIcon name="up" />
-            </Button>
+              <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 shadow-sm transition group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
+                {voicePhase === 'sending' ? (
+                  <Spinner size="sm" color="border-current" />
+                ) : (
+                  <NeoIcon name="up" class="!size-4.5" />
+                )}
+              </span>
+            </button>
           )}
         </div>
       </div>

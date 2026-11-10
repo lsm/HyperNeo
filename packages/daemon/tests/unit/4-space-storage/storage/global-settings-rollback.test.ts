@@ -21,6 +21,31 @@ describe('Global settings compensation ownership', () => {
     db.close();
   });
 
+  it('client patches and compensation cannot replace daemon-owned health', async () => {
+    const health = {
+      status: 'ok' as const,
+      reason: 'Readable.',
+      clientVersions: { cli: '1.0.0' },
+      checkedAt: 1,
+      unverifiedVersion: true,
+    };
+    await gateway.call(globalSettingsWrites, 'driverHealth', 'claude-code', health);
+    const receipt = await gateway.call(globalSettingsWrites, 'apply', {
+      autoScroll: false,
+      driverHealth: {},
+    });
+    expect(settings.getGlobalSettings()).toMatchObject({
+      autoScroll: false,
+      driverHealth: { 'claude-code': health },
+    });
+    expect(receipt.after).not.toHaveProperty('driverHealth');
+    await gateway.call(globalSettingsWrites, 'rollback', {
+      before: { driverHealth: {} },
+      after: { driverHealth: { 'claude-code': health } },
+    });
+    expect(settings.getGlobalSettings().driverHealth).toEqual({ 'claude-code': health });
+  });
+
   it('restores only request-owned fields and retains unrelated commits', async () => {
     settings.updateGlobalSettings({ showArchived: true, autoScroll: true });
     const receipt = await gateway.call(globalSettingsWrites, 'apply', { showArchived: false });

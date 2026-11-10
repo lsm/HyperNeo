@@ -1,8 +1,7 @@
 # Subscribed session rows and counters share a reader snapshot
 
-Run `lane-b-session-list-live-reader.ts` through `proof-run.sh` in a fresh
-synthetic daemon. The native Deno smoke runs the same helper under an isolated
-HOME/data/TMPDIR. No provider, model turn or external HTTP is used.
+Run `lane-b-session-list-live-reader.ts` through `proof-run.sh` in a fresh synthetic
+daemon. No provider, model turn or external HTTP is used.
 
 The helper seeds full human/archived/excluded session rows and captures the
 existing wire projection as its reference. A main-thread statement proxy,

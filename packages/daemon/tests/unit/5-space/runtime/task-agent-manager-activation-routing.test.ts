@@ -1,6 +1,6 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 
 const SPACE_ID = 'space-activation-routing';
 const RUN_ID = 'run-activation-routing';

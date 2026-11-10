@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -28,7 +30,7 @@ try {
   const agents = new SpaceAgentRepository(raw);
   const agent = agents.create({ spaceId: space.id, handle: 'reminder-owner', status: 'paused' });
   const other = agents.create({ spaceId: space.id, handle: 'control-owner', status: 'paused' });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const rpc = <T>(method: string, data: unknown) => new Promise<T>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => { ws!.removeEventListener('message', listener); fail(new Error(`RPC timeout: ${method}`)); }, 15000);

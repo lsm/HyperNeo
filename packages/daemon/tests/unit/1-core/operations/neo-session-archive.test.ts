@@ -70,6 +70,17 @@ describe('neo.session.archive', () => {
   });
   afterEach(() => db.close());
 
+  test('preserves the retained worktree receipt through operation validation', async () => {
+    const worktree = {
+      directory: '/owned/worktrees/worker',
+      removed: false,
+      reason: 'Unpushed commits; kept.',
+    };
+    const result = { ok: true as const, value: { archived: true, worktree } };
+    archive.mockImplementationOnce(async (_ref, admit) => admit() ?? result);
+    expect(await invoke()).toMatchObject({ kind: 'completed', value: result });
+  });
+
   test.each(['human', 'neo'] as const)(
     'refuses a doing todo for %s until it is done',
     async (kind) => {

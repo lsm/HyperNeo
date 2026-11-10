@@ -1,3 +1,4 @@
+import '../../../packages/daemon/tests/unit/helpers/register-space-schema.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';

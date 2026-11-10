@@ -1,12 +1,38 @@
-import type { NodeExecution, Space, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
-import type { Result } from 'superpipe';
 import type {
-  AdmitSpawnExecutionOutcome,
-  ExecutorMeta,
-  RunTickContext,
-  SpawnPendingExecutionsOutcome,
-} from '../space/runtime/space-runtime.ts';
-import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
+  NodeExecution,
+  Space,
+  SpaceTask,
+  SpaceWorkflow,
+  SpaceWorkflowRun,
+} from '@hyperneo/shared';
+import type { Result } from 'superpipe';
+import type { SpawnAdmissionDecision } from './run-spawn-decisions.ts';
+
+export interface ExecutorMeta {
+  workflow: SpaceWorkflow;
+  spaceId: string;
+  workspacePath: string;
+}
+
+export interface RunTickContext {
+  meta: ExecutorMeta;
+  runTaskCount: number;
+  canonicalTask: SpaceTask;
+  loadNodeExecutions: () => NodeExecution[];
+  resolveRunIsComplete: () => boolean;
+}
+
+export interface AdmitSpawnExecutionOutcome {
+  canonicalTask: SpaceTask;
+  pendingExecutions: NodeExecution[];
+  spawnAdmission: SpawnAdmissionDecision;
+}
+
+export interface SpawnPendingExecutionsOutcome {
+  spawned?: boolean;
+  blockedByCrash: boolean;
+  permanentSpawnFailureReason: string | null;
+}
 
 export type TickSkipReason =
   | 'missing_run'
@@ -31,7 +57,6 @@ export type StrandedExecutionRecoveryResult =
   | { action: 'halted' }
   | {
       action: 'continue';
-      tam: TaskAgentManager;
       blockedByCrash: boolean;
       preTickPendingIds: Set<string>;
     };
@@ -75,8 +100,7 @@ export interface SpaceWorkflowRunTickDeps {
   ): Promise<'halted' | 'continue'>;
   promotePendingExecutionsWithLiveSessions(
     runId: string,
-    preTickPendingIds: Set<string>,
-    tam: TaskAgentManager
+    preTickPendingIds: Set<string>
   ): NodeExecution[];
   admitSpawnExecution(
     runId: string,
@@ -92,7 +116,6 @@ export interface SpaceWorkflowRunTickDeps {
     meta: ExecutorMeta,
     run: SpaceWorkflowRun,
     pendingExecutions: NodeExecution[],
-    tam: TaskAgentManager,
     blockedByCrash: boolean
   ): Promise<SpawnPendingExecutionsOutcome>;
   blockRunForSpawnFailure(
@@ -118,7 +141,6 @@ export interface RunTickCtx {
   runIsComplete?: boolean;
   space?: Space | null;
   recovery?: {
-    tam: TaskAgentManager;
     blockedByCrash: boolean;
     preTickPendingIds: Set<string>;
   };

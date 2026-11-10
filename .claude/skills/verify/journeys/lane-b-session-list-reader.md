@@ -1,9 +1,8 @@
 # Full session list RPC uses the read lane
 
-Run `lane-b-session-list-reader.ts` through `proof-run.sh` in a fresh synthetic
-daemon. It takes the wrapper's run directory as its sole argument. The native
-Deno smoke runs the same helper under a disposable HOME/data/TMPDIR. No model,
-provider key, external HTTP, real DB copy or live daemon access is required.
+Run `lane-b-session-list-reader.ts` through `proof-run.sh` in a fresh synthetic daemon. It
+takes the wrapper's run directory as its sole argument. No model, provider key, external
+HTTP, real DB copy or live daemon access is required.
 
 Seed active, paused, ended, archived and ordinary child sessions with full config,
 metadata, worktree, SDK/ACP references, commands and processing state. Add excluded

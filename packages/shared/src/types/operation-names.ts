@@ -6,6 +6,7 @@ import { DEVICE_OPERATION_NAMES } from './operation-names/device.ts';
 import { EXTERNAL_EVENT_OPERATION_NAMES } from './operation-names/external-event.ts';
 import { EVOLUTION_OPERATION_NAMES } from './operation-names/evolution.ts';
 import { GOAL_OPERATION_NAMES } from './operation-names/goal.ts';
+import { GOOGLE_OPERATION_NAMES } from './operation-names/google.ts';
 import { INACTIVITY_OPERATION_NAMES } from './operation-names/inactivity.ts';
 import { MESSAGING_OPERATION_NAMES } from './operation-names/messaging.ts';
 import { NEO_OPERATION_NAMES } from './operation-names/neo.ts';
@@ -26,6 +27,7 @@ export const OPERATION_NAME_FAMILIES = {
   event: EXTERNAL_EVENT_OPERATION_NAMES,
   evolution: EVOLUTION_OPERATION_NAMES,
   goal: GOAL_OPERATION_NAMES,
+  google: GOOGLE_OPERATION_NAMES,
   inactivity: INACTIVITY_OPERATION_NAMES,
   messaging: MESSAGING_OPERATION_NAMES,
   neo: NEO_OPERATION_NAMES,
@@ -47,6 +49,7 @@ export const OPERATION_NAMES = [
   ...EXTERNAL_EVENT_OPERATION_NAMES,
   ...EVOLUTION_OPERATION_NAMES,
   ...GOAL_OPERATION_NAMES,
+  ...GOOGLE_OPERATION_NAMES,
   ...INACTIVITY_OPERATION_NAMES,
   ...MESSAGING_OPERATION_NAMES,
   ...NEO_OPERATION_NAMES,

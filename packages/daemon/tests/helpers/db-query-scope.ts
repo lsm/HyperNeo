@@ -1,6 +1,9 @@
 import { type DbScopeType, getScopeConfig } from '../../src/lib/db-query/scope-config.ts';
 
 export const EXCLUDED_TABLE_NAMES: string[] = [
+  'pack_coding_todos',
+  'neo_peers',
+  'google_connections',
   'artifact_file_identity',
   'artifact_files',
   'claude_inbox_routes',
@@ -27,7 +30,9 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_work_supersessions',
   'legacy_neo_asks',
   'neo_asks',
+  'neo_ask_inputs',
   'neo_todos',
+  'neo_tracker_mirrors',
   'paired_devices',
   'human_device_resets',
   'unpaired_connections',
@@ -35,11 +40,15 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'remote_daemon_secrets',
   'voice_recordings',
   'pairing_codes',
+  'pairing_policy',
   'goal_journal',
   'neo_goals',
   'neo_session_messages',
   'neo_todo_sessions',
   'work_delivery_inputs',
+  'work_turns',
+  'work_turn_urls',
+  'work_sessions',
   'work_started_sessions',
   'neo_questions',
   'neo_pack_preferences',
@@ -156,7 +165,7 @@ export function getAccessibleTableNames(scopeType: DbScopeType): string[] {
 }
 
 export function getBlacklistedColumns(tableName: string): string[] {
-  for (const scopeType of ['global', 'room', 'space'] as const) {
+  for (const scopeType of ['global', 'space'] as const) {
     const table = getScopeConfig(scopeType).find((cfg) => cfg.tableName === tableName);
     if (table) return table.blacklistedColumns;
   }

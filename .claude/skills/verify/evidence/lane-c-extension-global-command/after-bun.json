@@ -1,0 +1,47 @@
+{
+  "publicSetterActivated": false,
+  "mainGuardSelfCheckPassed": true,
+  "firstCommandMs": 0.19133399999998346,
+  "committedConfigVisibleThroughPublicList": true,
+  "creationTimeAndSuppliedUpdateTimePreserved": true,
+  "postStatementFailureRollsBack": true,
+  "healthWhileWriterHeldMs": 1.5991249999999582,
+  "deliberatelyHeldWriterMs": 1300.1465000000003,
+  "ackWaitsForCommit": true,
+  "admissionFailureDoesNotWriteOrReplay": true,
+  "actualCommittedReplyLossDoesNotReplay": true,
+  "maxLoopLagMs": 1.892582999999945,
+  "rssBytes": 160793680,
+  "walBytes": 0,
+  "commandPosts": 6,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "metrics": [
+    {
+      "roundTripMs": 0.14008300000000418,
+      "requestBytes": 231,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.0673340000000735,
+      "requestBytes": 240,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 1299.4131659999998,
+      "requestBytes": 231,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 4.636791999999787,
+      "requestBytes": 240,
+      "replyBytes": 22
+    }
+  ],
+  "runtime": "Bun 1.4.3 macOS arm64",
+  "wrapper": {
+    "exitCode": 0
+  },
+  "temporaryDaemonDataRemoved": true,
+  "heldWriterMeets250msTarget": false
+}

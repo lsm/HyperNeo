@@ -3,7 +3,7 @@ import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shar
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
-import { messageTime } from '../NeoMessage.tsx';
+import { neoRelativeTime } from '../neo-time.ts';
 import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
 import * as clipboard from '../../lib/utils.ts';
@@ -29,7 +29,6 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   check: null,
   instruction: 'Do it',
   named: null,
-  repo: null,
   state: 'todo',
   reason: null,
   blockedReason: null,
@@ -37,6 +36,8 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   blockedBy: null,
   replacedBy: null,
   addedAfterStart: false,
+  approvedAt: null,
+  approvalQuestionId: null,
   report: null,
   evidence: null,
   createdAt: 1,
@@ -73,10 +74,10 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
   ask: {
     id: 'ask',
     projectId: null,
-    repo: null,
     parentId: null,
     sessionId: 'neo',
     originMessageId: null,
+    topic: null,
     title: 'iOS 卡片照网页第二版改',
     request: 'x',
     status: 'open',
@@ -102,6 +103,70 @@ const toggleAll = (app: ReturnType<typeof render>) => {
 };
 
 describe('NeoAskTodos', () => {
+  it('uses creation facts, hides row times, and shows lifecycle time only in expanded details', () => {
+    const at = Date.now() - 120_000;
+    const value = entry({
+      todos: [todo('timed', { createdAt: at, startedAt: at + 30_000, finishedAt: at + 60_000 })],
+      questions: [question('timed', { createdAt: at })],
+    });
+    value.ask.createdAt = at;
+    value.ask.updatedAt = Date.now();
+    const app = render(<NeoAskTodos entry={value} onAnswer={vi.fn()} />);
+    expect(
+      app.container
+        .querySelector('[data-ask-status]')
+        ?.parentElement?.querySelector('time')
+        ?.getAttribute('datetime')
+    ).toBe(new Date(at).toISOString());
+    expect(app.container.querySelector('[data-ask-question] time')?.getAttribute('datetime')).toBe(
+      new Date(at).toISOString()
+    );
+    const row = app.container.querySelector('[data-ask-todo]')!;
+    expect(row.querySelector('time')).toBeNull();
+    fireEvent.click(
+      within(row as HTMLElement).getByRole('button', { name: /显示详情|Show details/ })
+    );
+    expect(row.querySelector('[data-todo-details] time')?.getAttribute('datetime')).toBe(
+      new Date(at + 60_000).toISOString()
+    );
+    expect(row.textContent).toContain('完成于');
+  });
+
+  it.each([
+    { finishedAt: null, startedAt: 2_000, createdAt: 1_000, expected: 2_000 },
+    { finishedAt: NaN, startedAt: 0, createdAt: 1_000, expected: 1_000 },
+    { finishedAt: null, startedAt: null, createdAt: 0, expected: null },
+  ])('uses the next valid lifecycle fact in expanded details %o', (dates) => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('dates', { ...dates, updatedAt: Date.now() })] })}
+        onAnswer={vi.fn()}
+      />
+    );
+    const row = app.container.querySelector('[data-ask-todo]')!;
+    fireEvent.click(
+      within(row as HTMLElement).getByRole('button', { name: /显示详情|Show details/ })
+    );
+    expect(row.querySelector('time')?.getAttribute('datetime') ?? null).toBe(
+      dates.expected ? new Date(dates.expected).toISOString() : null
+    );
+  });
+
+  it('omits the completion line when a start todo has an empty completion string', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [todo('internal', { doneWhen: '' })],
+          questions: [question('start', { kind: 'start', startTodos: ['internal'] })],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.getAllByText('Todo internal').length).toBeGreaterThan(0);
+    expect(app.queryByText(/^Done when:/)).toBeNull();
+    expect(app.queryByRole('button', { name: /Open current file/ })).toBeNull();
+  });
   it('loads todo bodies only after opening a summary without open questions', async () => {
     locale.value = 'en';
     const summary = entry({
@@ -212,6 +277,57 @@ describe('NeoAskTodos', () => {
     expect(app.container.querySelector('[data-ask-details]')).toBeNull();
   });
 
+  it.each([
+    ['en', 'Ask actions', 'Copy link', 'open', 'https://cards.example.test'],
+    ['zh-Hans', '更多操作', '复制链接', 'done', 'http://127.0.0.1:43210'],
+    ['en', 'Ask actions', 'Copy link', 'dropped', 'https://other.example.test:9443'],
+  ] as const)(
+    'copies the card link (%s, %s, %s, %s, %s)',
+    async (language, menu, label, status, origin) => {
+      vi.stubGlobal('location', new URL(`${origin}/neo?key=synthetic#card`));
+      locale.value = language;
+      const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
+      const data = entry({});
+      data.ask.status = status;
+      data.ask.title = 'Review [iOS] \\ API\nnext step';
+      const url = location.href;
+      const answer = vi.fn();
+      const app = render(<NeoAskTodos entry={data} onAnswer={answer} disabled />);
+      try {
+        fireEvent.click(app.getByRole('button', { name: menu }));
+        fireEvent.click(app.getByRole('menuitem', { name: label }));
+        await waitFor(() =>
+          expect(copy).toHaveBeenCalledWith(
+            `[Review \\[iOS\\] \\\\ API next step](${origin}/ask/ask.md)`
+          )
+        );
+        await waitFor(() => expect(app.queryByRole('menuitem', { name: label })).toBeNull());
+        expect(location.href).toBe(url);
+        expect(answer).not.toHaveBeenCalled();
+      } finally {
+        copy.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    }
+  );
+
+  it('copies a plain Unicode card title verbatim', async () => {
+    const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
+    const data = entry({});
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    try {
+      fireEvent.click(app.getByRole('button', { name: '更多操作' }));
+      fireEvent.click(app.getByRole('menuitem', { name: '复制链接' }));
+      await waitFor(() =>
+        expect(copy).toHaveBeenCalledWith(
+          `[${data.ask.title}](${location.origin}/ask/${data.ask.id}.md)`
+        )
+      );
+    } finally {
+      copy.mockRestore();
+    }
+  });
+
   it('copies a quote after expanding and reopening a collapsed card', async () => {
     locale.value = 'en';
     const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
@@ -249,6 +365,40 @@ describe('NeoAskTodos', () => {
     fireEvent.click(app.getByRole('menuitem', { name: 'Reply', exact: true }));
     expect(reply).toHaveBeenCalledOnce();
     expect(settle).not.toHaveBeenCalled();
+  });
+
+  it('shows the topic at left and filters by it when tapped', () => {
+    const data = entry({ state: 'waiting' });
+    data.ask.topic = '家长控制';
+    const onTopic = vi.fn();
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} onTopic={onTopic} />);
+    const topic = app.getByRole('button', { name: '家长控制' });
+    expect((topic.querySelector('[data-topic-swatch]') as HTMLElement).style.backgroundColor).toBe(
+      'var(--neo-teal)'
+    );
+    fireEvent.click(topic);
+    expect(onTopic).toHaveBeenCalledWith('家长控制');
+  });
+
+  it('shows no topic when the ask has none', () => {
+    const app = render(<NeoAskTodos entry={entry({})} onAnswer={vi.fn()} onTopic={vi.fn()} />);
+    expect(app.container.querySelector('[data-topic-swatch]')).toBeNull();
+  });
+
+  it.each([
+    ['waiting', '等你', 'text-warning', true],
+    ['doing', '在做', 'text-[var(--neo-teal)]', false],
+    ['todo', '没开始', 'text-fg-faint', false],
+    ['done', '做完', 'text-success', false],
+    ['dropped', '放弃了', 'text-fg-faint', false],
+  ] as const)('shows the %s state as a dot and a word, not a pill', (state, word, tone, bold) => {
+    const app = render(<NeoAskTodos entry={entry({ state })} onAnswer={vi.fn()} />);
+    const label = app.getByText(word);
+    const status = label.closest('[data-ask-status]') as HTMLElement;
+    expect(status.className).toContain(tone);
+    expect(status.className).not.toContain('rounded-full');
+    expect(status.querySelector('[data-status-dot]')).toBeTruthy();
+    expect(label.className.includes('font-semibold')).toBe(bold);
   });
 
   it('disables ask Reply while the card is unavailable', () => {
@@ -536,18 +686,18 @@ describe('NeoAskTodos', () => {
       ),
     });
 
-  it('expands a todo by tapping its text and turns its left hint', () => {
+  it('expands a todo using its toggle and turns its left hint', () => {
     locale.value = 'en';
     const data = detailed();
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
     const header = app.getByRole('button', { name: 'Show details: Todo a' });
     const hint = header.querySelector('[data-todo-hint]')!;
     expect(hint.getAttribute('class')).not.toContain('rotate-90');
-    fireEvent.click(app.getByText('Todo a'));
+    fireEvent.click(header);
     expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
     expect(header.getAttribute('aria-expanded')).toBe('true');
     expect(hint.getAttribute('class')).toContain('rotate-90');
-    fireEvent.click(app.getByText('Todo a'));
+    fireEvent.click(header);
     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
   });
 
@@ -721,7 +871,7 @@ describe('NeoAskTodos', () => {
     }
   );
 
-  it('dates an answer from an earlier day and shows only the time for today', () => {
+  it('shows the creation time and a separate answered time for each answered question', () => {
     const earlier = new Date(2026, 0, 2, 9, 5).getTime();
     const today = Date.now();
     const app = render(
@@ -737,10 +887,22 @@ describe('NeoAskTodos', () => {
     );
     fireEvent.click(app.container.querySelector('[data-ask-details-toggle]')!);
     const line = (id: string) =>
-      app.baseElement.querySelector(`#neo-ref-question-${id} > p`)?.textContent ?? '';
-    expect(line('old')).toContain(messageTime(earlier)!.label);
+      app.baseElement.querySelector(`#neo-ref-question-${id}`)?.textContent ?? '';
+    expect(line('old')).toContain(neoRelativeTime(earlier, Date.now(), 'zh-Hans')!.label);
     expect(line('old')).toMatch(/1月|Jan/);
-    expect(line('new')).toContain(messageTime(today)!.label);
+    expect(line('new')).toContain(neoRelativeTime(today, Date.now(), 'zh-Hans')!.label);
+    expect(line('new')).toContain('已回答');
+    const header = app.baseElement.querySelector('#neo-ref-question-new > .neo-question-time')!;
+    expect(header.textContent).toContain('已回答');
+    expect(header.querySelector('time')?.getAttribute('datetime')).toBe(new Date(1).toISOString());
+    expect(
+      app.baseElement
+        .querySelector('#neo-ref-question-new > .neo-time-line:last-child time')
+        ?.getAttribute('datetime')
+    ).toBe(new Date(today).toISOString());
+    expect(
+      app.baseElement.querySelector('#neo-ref-question-new time')?.getAttribute('datetime')
+    ).toBe(new Date(1).toISOString());
   });
 
   it('lists the todos of a start question with ticks and starts only the ticked ones', () => {
@@ -953,7 +1115,7 @@ describe('NeoAskTodos', () => {
               state: 'blocked',
               blockedReason: 'CI 一直红',
               nextAction: '修好测试再推',
-              blockedBy: 'check',
+              blockedBy: 'failure',
               status: '卡住了：CI 一直红',
             }),
             todo('b', { state: 'blocked', blockedReason: '等人', status: '卡住了：等人' }),
@@ -971,6 +1133,30 @@ describe('NeoAskTodos', () => {
     const rowB = app.container.querySelector('[data-ask-todo="b"]')!;
     expect(rowB.querySelector('[data-todo-next-action]')).toBeNull();
     expect(app.getByText('卡住了：等人').className).toContain('text-warning');
+  });
+
+  it('shows no next action for a todo waiting on its check', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          state: 'doing',
+          todos: [
+            todo('a', {
+              state: 'blocked',
+              blockedBy: 'check',
+              status: 'Waiting for its result',
+              statusCodes: [{ code: 'todo.waitingResult', params: {} }],
+              nextAction: 'fix a wrong check with neo.todo.edit',
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    const row = app.container.querySelector('[data-ask-todo="a"]')!;
+    expect(row.querySelector('[data-todo-next-action]')).toBeNull();
+    expect(row.textContent).toContain('等结果');
+    expect(row.textContent).not.toContain('neo.todo.edit');
   });
 
   it('keeps a non-blocked status muted and shows no next action', () => {
@@ -1009,9 +1195,11 @@ describe('NeoAskTodos', () => {
   );
 
   it('marks an open ask done or drops it from its menu', () => {
+    const dropLabel = '放弃这件事';
     const onSettle = vi.fn();
     const app = render(<NeoAskTodos entry={entry({})} onAnswer={() => {}} onSettle={onSettle} />);
     fireEvent.click(app.getByRole('button', { name: '更多操作' }));
+    expect(app.getByRole('menuitem', { name: dropLabel })).toBeTruthy();
     fireEvent.click(app.getByRole('menuitem', { name: '标记做完' }));
     expect(onSettle).toHaveBeenCalledWith('done');
     cleanup();
@@ -1022,7 +1210,10 @@ describe('NeoAskTodos', () => {
         onSettle={onSettle}
       />
     );
-    expect(settled.queryByRole('button', { name: '更多操作' })).toBeNull();
+    fireEvent.click(settled.getByRole('button', { name: '更多操作' }));
+    expect(settled.getByRole('menuitem', { name: '复制链接' })).toBeTruthy();
+    expect(settled.queryByRole('menuitem', { name: '标记做完' })).toBeNull();
+    expect(settled.queryByRole('menuitem', { name: dropLabel })).toBeNull();
   });
 
   it('moves removed todos into Details, one line each with what replaced them', () => {
@@ -1154,15 +1345,15 @@ describe('neoQuestionAnswerLabel', () => {
 
 describe('neoAskEntryGroup', () => {
   it('puts waiting asks first and finished ones last', () => {
-    expect(neoAskEntryGroup({ state: 'waiting', todos: [] })).toBe('attention');
-    expect(neoAskEntryGroup({ state: 'doing', todos: [] })).toBe('running');
-    expect(neoAskEntryGroup({ state: 'dropped', todos: [] })).toBe('outcomes');
+    expect(neoAskEntryGroup({ state: 'waiting' })).toBe('attention');
+    expect(neoAskEntryGroup({ state: 'doing' })).toBe('running');
+    expect(neoAskEntryGroup({ state: 'dropped' })).toBe('outcomes');
   });
 
   it('keeps waiting cards above blocked work', () => {
     const blocked = entry({ state: 'doing', todos: [todo('b', { state: 'blocked' })] });
     const waiting = entry({ state: 'waiting' });
-    expect(neoAskEntryGroup(blocked)).toBe('attention');
+    expect(neoAskEntryGroup(blocked)).toBe('running');
     expect(neoAskEntryGroup({ ...blocked, state: 'done' })).toBe('outcomes');
     expect(neoAskEntryGroup({ ...blocked, state: 'dropped' })).toBe('outcomes');
     expect(neoAskEntriesInOrder([waiting, blocked, entry({ state: 'doing' })])).toEqual([
@@ -1467,7 +1658,7 @@ describe('Settled question previews', () => {
       const row = view.baseElement.querySelector('#neo-ref-question-long')!;
       await waitFor(() => expect(row.textContent).toContain('A settled decision'));
       expect(row.textContent).not.toContain('Final detail');
-      expect(row.textContent!.length).toBeLessThan(450);
+      expect(row.querySelector('.neo-markdown')!.textContent!.length).toBeLessThan(350);
       expect(row.textContent).toContain(
         state === 'answered' ? 'Keep the decision' : 'No longer needed'
       );
@@ -1504,6 +1695,68 @@ describe('Settled question previews', () => {
 });
 
 describe('Question full-version document', () => {
+  it.each(['en', 'zh-Hans'] as const)(
+    'distinguishes full reports from home versions in %s',
+    async (language) => {
+      locale.value = language;
+      const reportLabel = language === 'en' ? 'View full report' : '查看完整内容';
+      const versionsLabel = language === 'en' ? 'View full versions' : '查看完整版本';
+      for (const state of ['open', 'answered', 'retired'] as const) {
+        for (const home of [false, true]) {
+          const document = 'Literal report <script>unsafe()</script>';
+          const view = render(
+            <NeoAskTodos
+              entry={entry({
+                questions: [
+                  question('label', {
+                    text: 'Synthetic question',
+                    state,
+                    document,
+                    confirm: home ? { path: 'direction.md', sha256: 'a'.repeat(64) } : null,
+                  }),
+                ],
+              })}
+              onAnswer={() => {}}
+            />
+          );
+          if (state !== 'open')
+            fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
+          const label = home ? versionsLabel : reportLabel;
+          expect(
+            view.queryByRole('button', { name: home ? reportLabel : versionsLabel, exact: true })
+          ).toBeNull();
+          fireEvent.click(view.getByRole('button', { name: label, exact: true }));
+          const dialog = (await view.findAllByRole('dialog')).at(-1)!;
+          expect(dialog.textContent).toContain(label);
+          expect(dialog.querySelector('pre')?.textContent).toBe(document);
+          expect(dialog.querySelector('script')).toBeNull();
+          cleanup();
+        }
+      }
+    }
+  );
+
+  it('labels unbound home conflict versions as a full report', () => {
+    locale.value = 'en';
+    const view = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('conflict', {
+              text: 'Home sync conflict: direction.md',
+              kind: 'choice',
+              options: ['Keep local', 'Use remote'],
+              document: 'Local version\nLocal full text\nRemote version\nRemote full text',
+              confirm: null,
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    expect(view.getByRole('button', { name: 'View full report', exact: true })).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'View full versions', exact: true })).toBeNull();
+  });
   it.each(['open', 'answered', 'retired'] as const)(
     'keeps the %s card short and opens literal full text',
     async (state) => {
@@ -1518,6 +1771,7 @@ describe('Question full-version document', () => {
             questions: [
               question('document', {
                 text: 'direction.md: compact diff',
+                confirm: { path: 'direction.md', sha256: 'a'.repeat(64) },
                 state,
                 document,
               } as Partial<NeoQuestionEntry>),
@@ -1567,4 +1821,38 @@ it('shows adapter-based worker identity and the next record name after rename', 
   );
   expect(app.getByText('Codex · renamed')).toBeTruthy();
   expect(app.queryByText('Codex · Claude something')).toBeNull();
+});
+
+it.each([
+  { language: 'en' as const, label: 'Relayed by Synthetic relay' },
+  { language: 'zh-Hans' as const, label: '经 Synthetic relay 转达' },
+])('shows relay words and provenance under the answer in $language', ({ language, label }) => {
+  locale.value = language;
+  const words = '  pick B  ';
+  const value = entry({
+    questions: [
+      question('relayed', {
+        kind: 'choice',
+        options: ['Alpha', 'Beta'],
+        state: 'answered',
+        answer: ['Beta'],
+        answeredBy: 'chat',
+        answerProvenance: {
+          words,
+          via: 'synthetic-sender',
+          viaName: 'Synthetic relay',
+          where: 'A local discussion',
+          when: 'Monday evening ET',
+          at: 1,
+        },
+      }),
+    ],
+  });
+  const app = render(<NeoAskTodos entry={value} onAnswer={vi.fn()} />);
+  toggleAll(app);
+  expect(app.getByText(label)).toBeTruthy();
+  expect(app.getByText('A local discussion')).toBeTruthy();
+  expect(app.getByText('Monday evening ET')).toBeTruthy();
+  expect(app.getByText('pick B').textContent).toBe(words);
+  expect(app.getByText(/Beta/)).toBeTruthy();
 });

@@ -12,7 +12,10 @@ import { projectNeoPublicConversation } from '../public-conversation.ts';
 
 vi.mock('../NeoPreferences.tsx', () => ({ NeoPreferences: () => null }));
 vi.mock('../NeoVoice.tsx', () => ({ NeoVoice: () => null }));
-vi.mock('../../lib/state.ts', () => ({ connectionState: { value: 'connected' } }));
+vi.mock('../../lib/state.ts', () => ({
+  connectionState: { value: 'connected' },
+  systemState: { value: null },
+}));
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const sessionId = `neo:${conversationId}`;

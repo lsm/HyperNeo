@@ -9,7 +9,7 @@ const run = resolve(process.argv[2]);
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.NODE_ENV, 'test');
-assert.equal(process.env.HYPERNEO_USE_DEV_PROXY, '1');
+process.env.HYPERNEO_USE_DEV_PROXY = '1';
 for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY'])
   assert(!process.env[key], key);
 mkdirSync(join(run, 'evidence'), { recursive: true });
@@ -17,9 +17,15 @@ mkdirSync(join(run, 'bin'), { recursive: true });
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
 const markers = ['WORKER_REPORT_AFTER_INTERRUPT', 'TODO_NOTICE_AFTER_INTERRUPT', 'LOCAL_TIME_AFTER_INTERRUPT'];
-const requests: string[] = [];
-const evidence: Record<string, unknown> = { run, requests };
-const mock = await createMockApiServer({ port: 8001 });
+const requests: Array<{ active: boolean; markers: string[] }> = [];
+const probes = Array.from({ length: 2 }, () => Bun.serve({
+  hostname: '127.0.0.1', port: 0, fetch: () => new Response(),
+}));
+const [mockPort, proxyPort] = probes.map((probe) => probe.port);
+for (const probe of probes) probe.stop(true);
+process.env.VERIFY_MOCK_PORT = String(proxyPort);
+const evidence: Record<string, unknown> = { run, requests, mockPort, proxyPort };
+const mock = await createMockApiServer({ port: mockPort });
 await mock.start();
 let holding = false;
 const proxy = createServer(async (req, res) => {
@@ -28,8 +34,9 @@ const proxy = createServer(async (req, res) => {
   const body = Buffer.concat(chunks).toString();
   const modelRequest = req.url?.includes('/messages') && !req.url.includes('count_tokens');
   if (modelRequest) {
-    requests.push(JSON.stringify({ markers: ['INTERRUPT_CURRENT_TURN', ...markers].filter((marker) => body.includes(marker)) }));
-    if (!holding && body.includes('INTERRUPT_CURRENT_TURN')) {
+    const active = JSON.parse(body).tools?.some((tool: { name: string }) => tool.name === 'Read') === true;
+    requests.push({ active, markers: ['INTERRUPT_CURRENT_TURN', ...markers].filter((marker) => body.includes(marker)) });
+    if (active && !holding && body.includes('INTERRUPT_CURRENT_TURN')) {
       holding = true;
       res.setHeader('content-type', 'text/event-stream');
       res.flushHeaders();
@@ -48,7 +55,7 @@ const proxy = createServer(async (req, res) => {
     res.destroy();
   }
 });
-await new Promise<void>((done) => proxy.listen(8000, '127.0.0.1', done));
+await new Promise<void>((done) => proxy.listen(proxyPort, '127.0.0.1', done));
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const app = await createDaemonApp({
@@ -67,6 +74,9 @@ async function until(check: () => boolean, label: string) {
 }
 try {
   await transport.initialize();
+  const { servers } = await hub.request<{ servers: Array<{ id: string }> }>('mcp.registry.list', {});
+  for (const server of servers)
+    await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
   await hub.request('providers.create', {
     params: { providerId: 'anthropic', displayName: 'Isolated mock', kind: 'built_in',
       authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 },
@@ -101,7 +111,7 @@ try {
   assert.equal(rows().filter((row) => row.send_status === 'failed').length, 0, 'interrupt failed queued input');
   assert(rows().some((row) => row.sdk_uuid === current.messageId && row.send_status === 'consumed'), 'current input was replayed or lost');
   await until(() => rows().every((row) => row.send_status === 'consumed') &&
-    markers.every((marker) => requests.slice(1).some((body) => body.includes(marker))), 'queued inputs did not reach next model turn');
+    markers.every((marker) => requests.some((request) => request.active && request.markers.includes(marker))), 'queued inputs did not reach next model turn');
   evidence.afterDelivery = rows();
   evidence.pass = true;
   console.log(`PASS: interrupted turn ended; all three queued inputs reached the next turn. ${run}/evidence/interrupt.json`);

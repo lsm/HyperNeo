@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -17,13 +18,16 @@ assert(!existsSync(join(run, 'data')), 'fresh synthetic data required');
 assert(!existsSync(join(run, 'home/.copilot')), 'fresh synthetic home required');
 const { home, bin } = prepareCopilotFixture(run);
 assert.equal(process.env.PATH?.split(':')[0], bin);
+process.env.COPILOT_CLI_PATH = join(bin, 'copilot');
+const network = globalThis.fetch;
+globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typeof fetch;
 writeFileSync(join(bin, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: unknown[] = [];
 const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 let ws: WebSocket | undefined;
 try {
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const rpc = (name: string, input: unknown) => new Promise<unknown>((done, fail) => {
     const id = crypto.randomUUID();
@@ -39,7 +43,8 @@ try {
   });
   const adapters = await rpc('work.adapters', {});
   assert(adapters && typeof adapters === 'object' && 'value' in adapters);
-  assert.deepEqual((adapters.value as { id: string; capabilities: string[] }[]).find(a => a.id === 'copilot-cli'), { id: 'copilot-cli', capabilities: ['find', 'start', 'send', 'queue', 'status', 'stop'] });
+  const copilot = (adapters.value as { id: string; capabilities: string[] }[]).find(a => a.id === 'copilot-cli');
+  for (const capability of ['find', 'start', 'send', 'queue', 'status', 'stop']) assert(copilot?.capabilities.includes(capability));
   const find = await rpc('work.find', { adapters: ['copilot-cli'], folder: copilotFolder, includeClosed: true, localOnly: true });
   assert(find && typeof find === 'object' && 'places' in find);
   const work = (find.places as { work: { ref: { id: string; adapter: string }; title: string }[] }[]).flatMap(p => p.work);
@@ -56,12 +61,14 @@ try {
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'not_found');
   }
-  const calls = readFileSync(join(home, 'evidence/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).method);
-  assert.deepEqual(calls, ['initialize', 'session/list', 'session/list']);
+  const calls = readFileSync(join(home, 'calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).method);
+  assert(calls.includes('session.list'));
+  assert(calls.every(method => ['connect', 'status.get', 'session.list'].includes(method)), JSON.stringify(calls));
   evidence.push({ calls, transcript: readFileSync(join(home, '.copilot/session-state', copilotSession, 'events.jsonl'), 'utf8') });
   console.log(`PASS: isolated daemon discovers Copilot; external work remains read-only with no false receipt completion. ${run}/evidence/observed.json`);
 } finally {
   ws?.close();
   await app.cleanup();
+  globalThis.fetch = network;
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
 }

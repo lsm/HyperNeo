@@ -3,12 +3,13 @@ import { signal } from '@preact/signals';
 import { cleanup, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MainContent from '../MainContent.tsx';
-import {
-  currentSessionIdSignal,
-  currentSpaceCanonicalIdSignal,
-  currentSpaceIdSignal,
-  navSectionSignal,
-} from '../../lib/signals.ts';
+import { currentSessionIdSignal, navSectionSignal } from '../../lib/signals.ts';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/space-signals.ts';
+import { spaceWebExtension } from '../../lib/space-web-extension';
+import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
+import { spaceNav } from '../../components/space/space-nav';
+
+registerWebExtension('space', spaceWebExtension);
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -25,7 +26,9 @@ vi.mock('../ChatContainer.tsx', () => ({
     </main>
   ),
 }));
-vi.mock('../SpaceIsland.tsx', () => ({ default: () => <main>Space chat</main> }));
+vi.mock('../../components/space/SpaceIsland.tsx', () => ({
+  default: () => <main>Space chat</main>,
+}));
 vi.mock('../../components/space/SpaceCreateDialog', () => ({ SpaceCreateDialog: () => null }));
 vi.mock('../BottomTabBar', () => ({ BottomTabBar: () => null }));
 vi.mock('../../components/voice/VoiceRecordingIndicator', () => ({
@@ -43,6 +46,8 @@ beforeEach(() => {
   request.mockReset().mockResolvedValue({ ok: true, schedules: [] });
 });
 afterEach(cleanup);
+declareExtensionNav(spaceNav);
+
 describe('session page schedule placement', () => {
   it('owns the session strip and its scoped list read', async () => {
     render(<MainContent />);

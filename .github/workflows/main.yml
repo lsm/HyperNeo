@@ -1,8 +1,7 @@
 # CI - Build, test, and quality checks
 #
 # A full automatic run schedules 9 unit legs (shared + 8 balanced daemon),
-# 11 online legs and 1 web leg, plus quality checks, path filtering and Deno
-# boot smoke. The balance report follows the tests. This can exceed the
+# 11 online legs and 1 web leg, plus quality checks, path filtering. The balance report follows the tests. This can exceed the
 # account's 20 shared concurrent runners; jobs may queue, especially when PRs
 # overlap, so a PR's new head cancels its old run and the path filter skips
 # legs a PR cannot affect. Smaller unit buckets shorten the longest leg, not
@@ -30,14 +29,12 @@
 #
 # NOTE: Real-API daemon shards are manual-only in real-api-tests.yml.
 #
-# NOTE: The Deno boot smoke job runs on every trigger regardless of the
-# daemon/web path filters (docs-only PRs included) — it guards the Bun/Deno
-# dual-support migration and is non-blocking until flipped to required.
-#
 # NOTE: Daemon test jobs install bubblewrap for OS-confined worker runtime
 # cleanup. SDK turns in online jobs still use HYPERNEO_TEST_DISABLE_SANDBOX=1;
 # actual worker sandbox sessions remain in the manual real-API workflow.
 # Web/build jobs do not need these sandbox packages.
+#
+# Desktop runtime-path fixtures run for Desktop/workflow PR changes and all non-PR CI events.
 #
 # Release is handled separately in release.yml (triggered by version tags).
 
@@ -64,6 +61,49 @@ permissions:
   contents: read
 
 jobs:
+  desktop-runtime-paths:
+    name: Desktop runtime paths
+    runs-on: macos-latest
+    needs: [changes]
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.desktop == 'true')
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.2
+      - name: Compare native process identity with the macOS SDK and ps
+        working-directory: packages/desktop
+        run: bun test tests/runtime-process-identity.test.ts
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Desktop Cargo dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/desktop/tests/driver-host/target
+          key: desktop-driver-${{ runner.os }}-${{ hashFiles('packages/desktop/tests/driver-host/Cargo.lock', 'packages/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: desktop-driver-${{ runner.os }}-
+      - name: Test synthetic Mach-O bundles
+        run: python3 packages/desktop/tests/macos-rpaths.py
+      - name: Build production-admission host fixture
+        run: cargo build --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml
+      - name: Reject unapproved workers and tolerate endpoint failures
+        run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture WorkerDrivers.test_unapproved_same_user_cannot_start_or_get_driver_socket WorkerDrivers.test_bind_failure_allows_desktop_setup_to_continue WorkerDrivers.test_missing_startup_paths_allow_desktop_setup_to_continue
+      - name: Build isolated embedded-host fixture
+        run: cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml --bin desktop-driver-fixture -- --cfg test
+      - name: Check macOS Tauri wiring with an inert sidecar
+        run: |
+          sidecar_target="$(rustc -vV | sed -n 's/^host: //p')"
+          mkdir -p packages/desktop/src-tauri/binaries
+          printf '#!/bin/sh\nexit 0\n' > "packages/desktop/src-tauri/binaries/hyperneo-$sidecar_target"
+          chmod +x "packages/desktop/src-tauri/binaries/hyperneo-$sidecar_target"
+          CARGO_TARGET_DIR="$PWD/packages/desktop/tests/driver-host/target" \
+            cargo check --locked --manifest-path packages/desktop/src-tauri/Cargo.toml
+      - name: Exercise worker drivers with a fake binary
+        run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture
+
   # ============================================
   # CODE QUALITY CHECKS
   # Run on: PR to dev, push to dev
@@ -106,6 +146,9 @@ jobs:
       - name: Test main-thread DB ratchet CLI
         run: bun run test:db-main-thread
 
+      - name: Test test-type ratchet CLI
+        run: bun run test:test-types
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -121,6 +164,9 @@ jobs:
 
       - name: Test pre-commit temporary file isolation
         run: bun run test:pre-commit
+
+      - name: Test type-check command failure propagation
+        run: bun run test:typecheck
 
       - name: Test strip-comments argument handling
         run: bun run test:strip-comments
@@ -139,6 +185,18 @@ jobs:
 
       - name: Test npm packaging script
         run: bun run test:package-npm
+
+      - name: Test API surface snapshot tooling
+        run: bun run test:api-surface
+
+      - name: Test phone event contracts
+        run: bun run test:api-events
+
+      - name: Test API compatibility tooling
+        run: bun run test:api-diff
+
+      - name: Test CI gate script
+        run: bun run test:ci-gate
 
       # Folded in from the former test-cli job: ~2s of tests that used to occupy
       # a whole runner. Gated to the same events test-cli ran on (push to dev
@@ -171,45 +229,6 @@ jobs:
           fi
 
   # ============================================
-  # DENO BOOT SMOKE (dual-runtime support, task #1409)
-  # Boots the daemon under pinned Deno 2.9.4 via scripts/deno-smoke.sh and
-  # verifies HTTP 200 on /, the /ws WebSocket handshake, >80 sqlite tables
-  # from migrations, and graceful SIGTERM teardown. This is the guardrail
-  # that keeps later Bun/Deno dual-runtime PRs safe to land incrementally;
-  # it runs on every trigger regardless of the daemon/web path filters.
-  # REQUIRED since 2026-08-29 (green continuously since it landed 2026-08-24):
-  # failures gate all-tests-pass, which is the one check the dev ruleset
-  # requires — no ruleset change was needed for the flip.
-  # Run on: PR to dev, push to dev, workflow_dispatch
-  # ============================================
-
-  deno-boot-smoke:
-    name: Deno Boot Smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.4.2
-
-      - name: Setup Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: 2.9.4
-
-      # Deno resolves workspace npm deps from the bun-installed node_modules
-      # (BYONM), so this install is what lets the daemon boot with no network.
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Run Deno boot smoke
-        run: python3 .claude/skills/verify/deno-smoke-fixture-isolation.py
-
-  # ============================================
   # PATH FILTERS
   # PR-only. Tree-diffs the PR merge commit against the dev tip and emits three
   # booleans (daemon unit, online, web) so daemon-only PRs skip web tests,
@@ -230,13 +249,14 @@ jobs:
       daemon: ${{ steps.filter.outputs.daemon }}
       online: ${{ steps.filter.outputs.online }}
       web: ${{ steps.filter.outputs.web }}
+      desktop: ${{ steps.filter.outputs.desktop }}
 
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - name: Compute daemon/online/web path filters
+      - name: Compute daemon/online/web/desktop path filters
         id: filter
         run: |
           set -euo pipefail
@@ -254,11 +274,13 @@ jobs:
             echo "daemon=true" >> "$GITHUB_OUTPUT"
             echo "online=true" >> "$GITHUB_OUTPUT"
             echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           daemon=false
           online=false
           web=false
+          desktop=false
           while IFS= read -r f; do
             # Inert docs: docs/ trees and TOP-LEVEL *.md only. Bash case globs
             # match across '/', so a bare *.md would also swallow nested
@@ -271,6 +293,9 @@ jobs:
               *.md) case "$f" in */*) ;; *) doc=true ;; esac ;;
             esac
             if [ "$doc" = true ]; then continue; fi
+            case "$f" in
+              packages/desktop/*|packages/daemon/src/lib/runtime-process-identity.ts|.github/workflows/main.yml|.github/workflows/release.yml) desktop=true ;;
+            esac
             # daemon unit shards unless the file is web-only
             case "$f" in
               packages/web/*) ;;
@@ -287,13 +312,14 @@ jobs:
             # tooling count as web-relevant — they feed the web build; the web
             # never imports packages/prompts)
             case "$f" in
-              packages/daemon/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/prompts/*) ;;
+              packages/daemon/*|packages/space/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/prompts/*) ;;
               *) web=true ;;
             esac
           done <<< "$files"
           echo "daemon=$daemon" >> "$GITHUB_OUTPUT"
           echo "online=$online" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
 
   # ============================================
   # DAEMON ONLINE TESTS (Mocked credentials only)
@@ -604,7 +630,7 @@ jobs:
       contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.test-web.result)
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6
@@ -635,6 +661,9 @@ jobs:
         run: bun run scripts/smoke-test.ts ./dist/bin/hyperneo-linux-x64
         env:
           GLM_API_KEY: smoke-test
+
+      - name: Start Claude and Copilot from a folder with no node_modules
+        run: bun scripts/sdk-runtime-check.ts dist/bin/hyperneo-linux-x64 --network
 
       - name: Compiled CLI device commands
         run: |
@@ -710,12 +739,16 @@ jobs:
   # which is skipped on PRs) — no serialized tail after
   # the last test. Path-filtered suites report "skipped" and pass. The
   # balance report intentionally lags outside this gate.
+  # Every need must report 'success' or 'skipped': needs.<job>.result can
+  # also be 'cancelled' (superseding push or timeout) — a cancelled leg
+  # must fail the gate, not pass it. Logic lives in scripts/ci-gate.sh so
+  # it is unit-testable (scripts/ci-gate.test.ts).
   # ============================================
 
   all-tests-pass:
     name: All Tests Pass
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 2
     if: always()
     needs:
       - check
@@ -724,72 +757,20 @@ jobs:
       - test-daemon-shared-unit
       - test-web
       - build
-      - deno-boot-smoke
       - windows-compiled-smoke
+      - desktop-runtime-paths
 
     steps:
+      - uses: actions/checkout@v6
+
       - name: Check all jobs passed
-        run: |
-          FAILED=0
-
-          # Check job: PR to dev, push to dev
-          if [[ "${{ needs.check.result }}" == "failure" ]]; then
-            echo "❌ check failed"
-            FAILED=1
-          fi
-
-          # changes: PR only — a failed path filter means the daemon/web
-          # booleans are unknown, so the suites were skipped unsafely.
-          if [[ "${{ needs.changes.result }}" == "failure" ]]; then
-            echo "❌ changes (path filter) failed"
-            FAILED=1
-          fi
-
-          # test-daemon-online: PR to dev (online paths), push to dev
-          if [[ "${{ needs.test-daemon-online.result }}" == "failure" ]]; then
-            echo "❌ test-daemon-online failed"
-            FAILED=1
-          fi
-
-          # test-daemon-shared-unit: PR to dev (daemon paths), push to dev
-          if [[ "${{ needs.test-daemon-shared-unit.result }}" == "failure" ]]; then
-            echo "❌ test-daemon-shared-unit failed"
-            FAILED=1
-          fi
-
-          # test-web: PR to dev (web paths), push to dev
-          if [[ "${{ needs.test-web.result }}" == "failure" ]]; then
-            echo "❌ test-web failed"
-            FAILED=1
-          fi
-
-          # build: push to dev, workflow_dispatch
-          if [[ "${{ needs.build.result }}" == "failure" ]]; then
-            echo "❌ build failed"
-            FAILED=1
-          fi
-
-          # deno-boot-smoke: PR to dev, push to dev, workflow_dispatch
-          if [[ "${{ needs.deno-boot-smoke.result }}" == "failure" ]]; then
-            echo "❌ deno-boot-smoke failed"
-            FAILED=1
-          fi
-
-          if [[ "${{ needs.windows-compiled-smoke.result }}" != "success" && "${{ needs.windows-compiled-smoke.result }}" != "skipped" ]]; then
-            echo "Windows compiled worker smoke did not pass"
-            FAILED=1
-          fi
-
-          if [ $FAILED -eq 1 ]; then
-            echo ""
-            echo "One or more required jobs failed:"
-            echo "  check: ${{ needs.check.result }}"
-            echo "  changes: ${{ needs.changes.result }}"
-            echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
-            echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
-            echo "  test-web: ${{ needs.test-web.result }}"
-            echo "  build: ${{ needs.build.result }}"
-            echo "  deno-boot-smoke: ${{ needs.deno-boot-smoke.result }}"
-            exit 1
-          fi
-          echo "All tests passed!"
+        env:
+          CI_GATE_RESULT_DESKTOP_RUNTIME_PATHS: ${{ needs.desktop-runtime-paths.result }}
+          CI_GATE_RESULT_CHECK: ${{ needs.check.result }}
+          CI_GATE_RESULT_CHANGES: ${{ needs.changes.result }}
+          CI_GATE_RESULT_TEST_DAEMON_ONLINE: ${{ needs.test-daemon-online.result }}
+          CI_GATE_RESULT_TEST_DAEMON_SHARED_UNIT: ${{ needs.test-daemon-shared-unit.result }}
+          CI_GATE_RESULT_TEST_WEB: ${{ needs.test-web.result }}
+          CI_GATE_RESULT_BUILD: ${{ needs.build.result }}
+          CI_GATE_RESULT_WINDOWS_COMPILED_SMOKE: ${{ needs.windows-compiled-smoke.result }}
+        run: bash scripts/ci-gate.sh

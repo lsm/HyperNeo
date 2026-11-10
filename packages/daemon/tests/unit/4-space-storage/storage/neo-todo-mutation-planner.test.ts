@@ -241,6 +241,7 @@ describe('Read-only todo mutation plans', () => {
       ok: true,
       patch: { state: 'done' },
     });
+    store.updateTodo(store.getTodo('peer')!, { dependsOn: [] }, 1);
     expect(
       await plan({ kind: 'remove', todoId: 'first', reason: 'Replaced', replacedBy: 'peer' })
     ).toMatchObject({ ok: true, patch: { state: 'removed', replacedBy: 'peer' } });

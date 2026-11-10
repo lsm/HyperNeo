@@ -21,7 +21,10 @@ import { createSendMessageOperation } from '../../../../src/lib/messaging/messag
 import { createRemoteSendForwarder } from '../../../../src/lib/remote-daemons/forward-send.ts';
 import type { RemoteDaemonRegistry } from '../../../../src/lib/remote-daemons/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 describe('simple message.send worker handoff', () => {
@@ -329,5 +332,69 @@ describe('simple message.send worker handoff', () => {
       kind: 'completed',
       value: { kind: 'rejected', reason: expect.stringContaining('idempotency') },
     });
+  });
+});
+
+describe('Neo message.send stays in its project', () => {
+  let mailbox: MailboxTestDb;
+  beforeEach(() => {
+    mailbox = createMailboxTestDb();
+  });
+  afterEach(() => mailbox.close());
+  const send = (to: string, caller: OperationCaller, forwarded: string[] = []) =>
+    invokeOperation(
+      createOperationRegistry([
+        createSendMessageOperation(
+          mailbox.jobQueue,
+          () => 'active',
+          async (target) => {
+            forwarded.push(target.sessionId);
+            return { kind: 'accepted', mailboxId: 'remote', messageId: 'remote' };
+          },
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          (id) => id === 'neo-project-session'
+        ),
+      ]),
+      'message.send',
+      { to, text: 'Note' },
+      caller
+    );
+  const neo = { source: 'mcp', role: 'neo', sessionId: 'neo' } as const;
+
+  test('Neo reaches a session in its project', async () => {
+    expect(await send('neo-project-session', neo)).toMatchObject({
+      value: { kind: 'accepted' },
+    });
+  });
+
+  test('Neo is told to use work.send for any other local session', async () => {
+    expect(await send('worker', neo)).toMatchObject({
+      value: { kind: 'rejected', reason: expect.stringContaining('work.send') },
+    });
+    expect(mailbox.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': 'worker' })).toEqual(
+      []
+    );
+  });
+
+  test('the Space driver delivers a Neo work.send through message.send', async () => {
+    expect(await send('space-agent', { ...neo, source: 'internal' })).toMatchObject({
+      value: { kind: 'accepted' },
+    });
+  });
+
+  test('a worker still reports to any session', async () => {
+    expect(await send('other-worker', { source: 'mcp', sessionId: 'worker' })).toMatchObject({
+      value: { kind: 'accepted' },
+    });
+  });
+
+  test('a remote target is left alone', async () => {
+    const forwarded: string[] = [];
+    await send('daemon:other::session:remote', neo, forwarded);
+    expect(forwarded).toEqual(['remote']);
   });
 });

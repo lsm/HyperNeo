@@ -3,13 +3,13 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github/github-event-extension.ts';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events';
 import {
   GitHubWatchInventory,
   reportGitHubWatchHealth,
 } from '../../../../src/lib/external-events/github/github-watch-inventory.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 describe('GitHub watch reconciliation', () => {
   test('startup and cycles restore subscriptions and todo-only watches', async () => {
@@ -25,7 +25,8 @@ describe('GitHub watch reconciliation', () => {
       topic: 'github/fixture/subscribed/pull_request/162.*',
     });
     db.exec(`INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('ask','owner','Ask','Request','open',1,1);
-      INSERT INTO neo_todos (id,ask_id,position,title,done_when,repo,check_json,state,created_at,updated_at) VALUES ('todo','ask',0,'Todo','Done','fixture/todo','{"pack":"coding","kind":"pr","params":{}}','doing',1,1)`);
+      INSERT INTO neo_todos (id,ask_id,position,title,done_when,check_json,state,created_at,updated_at) VALUES ('todo','ask',0,'Todo','Done','{"pack":"coding","kind":"pr","params":{}}','doing',1,1);
+      INSERT INTO pack_coding_todos (todo_id,repo) VALUES ('todo','fixture/todo')`);
     const inventory = new GitHubWatchInventory(db, subscriptions);
     const extension = new GitHubEventExtension(db, undefined, {
       pollIntervalMs: 0,
@@ -33,7 +34,7 @@ describe('GitHub watch reconciliation', () => {
       sessionRepoReferenced: (owner, repo) => inventory.references(owner, repo),
       fetchImpl: (async () => Response.json([])) as typeof fetch,
     });
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,
@@ -79,9 +80,16 @@ describe('GitHub watch reconciliation', () => {
       sessionId: 'archived',
       topic: 'github/fixture/archived/pull_request/1.*',
     });
-    const insert = db.prepare(
-      `INSERT INTO neo_todos (id,ask_id,position,title,done_when,repo,check_json,state,created_at,updated_at) VALUES (?,'ask',0,'Todo','Done',?,? ,?,1,1)`
+    const todo = db.prepare(
+      `INSERT INTO neo_todos (id,ask_id,position,title,done_when,check_json,state,created_at,updated_at) VALUES (?,'ask',0,'Todo','Done',?,?,1,1)`
     );
+    const fact = db.prepare('INSERT INTO pack_coding_todos (todo_id,repo) VALUES (?,?)');
+    const insert = {
+      run: (id: string, repo: string | null, check: string, state: string) => {
+        todo.run(id, check, state);
+        if (repo) fact.run(id, repo);
+      },
+    };
     insert.run('fallback', null, '{"pack":"coding"}', 'blocked');
     insert.run('done', 'fixture/done', '{"pack":"coding"}', 'done');
     insert.run('other', 'fixture/other', '{"pack":"lifeAdmin"}', 'todo');
@@ -121,7 +129,7 @@ describe('GitHub watch reconciliation', () => {
       repo: 'finished',
       pollingEnabled: true,
     });
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,
@@ -141,7 +149,8 @@ describe('GitHub watch reconciliation', () => {
     try {
       await waitFor(() => extension.repo.listPollingRepos().length === 0);
       db.exec(
-        `INSERT INTO neo_todos (id,ask_id,position,title,done_when,repo,check_json,state,created_at,updated_at) VALUES ('new','ask',0,'Todo','Done','fixture/later','{"pack":"coding"}','todo',1,1)`
+        `INSERT INTO neo_todos (id,ask_id,position,title,done_when,check_json,state,created_at,updated_at) VALUES ('new','ask',0,'Todo','Done','{"pack":"coding"}','todo',1,1);
+        INSERT INTO pack_coding_todos (todo_id,repo) VALUES ('new','fixture/later')`
       );
       await waitFor(
         () => extension.repo.getWatchedRepo('sessions', 'fixture', 'later')?.lastPollAt != null

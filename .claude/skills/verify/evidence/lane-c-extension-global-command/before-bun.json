@@ -1,0 +1,15 @@
+{
+  "publicSetterActivated": false,
+  "mainGuardSelfCheckPassed": true,
+  "commandFailure": "Error: Unknown write DB op: extension.global.config.write",
+  "mainSqlAttempts": 0,
+  "metrics": [],
+  "runtime": "Bun 1.4.3 macOS arm64",
+  "exitCode": 1,
+  "expectedFailure": "Native worker rejects unregistered extension.global.config.write",
+  "unitContracts": {
+    "legacyHelperPassed": 1,
+    "missingCommandFailed": 4
+  },
+  "temporaryDaemonDataRemoved": true
+}

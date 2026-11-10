@@ -19,15 +19,12 @@ shaping is the reference; neither stored body nor tool result is trimmed.
 Initial snapshots must arrive before subscribe acknowledgments and equal the
 reference exactly. Body SHA/count/bytes must remain identical after all reads.
 
-`evidence/observed.json` retains affected RPC latency, independent health latency,
-max main event-loop lag, main SQL, worker queue/transaction/SQL events, argument
-post timing/reply bytes, sampled RSS, WAL bytes and complete-body hash. RSS is
-interval-sampled, not an OS high-water mark; baseline blocking can hide peaks.
-Reference construction, seed, hashing, search flush and test GC are outside the
-hot-read measurement. A worker terminated during a read must reject at the real
-reader deadline while health still works; a new subscription must recover.
-Retain failed/inconclusive runs and disclose every miss against 1 s lag and
-250 ms SQL/RPC goals. Moving the work does not establish the query is faster.
+RSS is interval-sampled, not an OS high-water mark; baseline blocking can hide peaks.
+Reference construction, seed, hashing, search flush and test GC are outside the hot-read
+measurement. A worker terminated during a read must reject at the real reader deadline
+while health still works; a new subscription must recover. Retain failed/inconclusive runs
+and disclose every miss against 1 s lag and 250 ms SQL/RPC goals. Moving the work does not
+establish the query is faster.
 
 The helper closes its probe, sockets, reader and daemon in finally. CI contracts
 also pin initial readiness, invalidation during a read, stale/disposed replies,
@@ -44,11 +41,10 @@ only when it changes. The full proof also changes delivery status through the
 production writer and checks complete returned text and monotone delta versions.
 
 Use the same shared isolated setup with `VERIFY_LIVE_FEED=1` and
-`sdk-status-reader-memory.ts verify "$RUN"` or `bridge "$RUN"` to observe initial
-snapshot and status delta on the explicit no-disk path or the real Bun IPC host.
-The worker hash rows are portable tuples on the wire, then local Maps on main;
-the JSON IPC bridge must retain them. Deno Boot Smoke covers an empty live
-subscription on its actual runtime; Deno is CI-only when unavailable locally.
+`sdk-status-reader-memory.ts verify "$RUN"` or `bridge "$RUN"` to observe initial snapshot
+and status delta on the explicit no-disk path or the real Bun IPC host. The worker hash
+rows are portable tuples on the wire, then local Maps on main; the JSON IPC bridge must
+retain them.
 
 
 After initial-read termination/deadline recovery, the helper injects a native

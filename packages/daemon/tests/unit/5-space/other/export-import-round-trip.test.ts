@@ -7,8 +7,8 @@ import {
   exportWorkflow,
   exportBundle,
   validateExportBundle,
-} from '../../../../src/lib/space/export-format.ts';
-import { buildWorkflowCreateParams } from '../../../../src/lib/rpc-handlers/space-export-import-handlers.ts';
+} from '../../../../../space/src/export-format.ts';
+import { buildWorkflowCreateParams } from '../../../../../space/src/rpc/space-export-import-handlers.ts';
 import type { SpaceLongHorizonAgent, SpaceWorkflow, ExportedSpaceWorkflow } from '@hyperneo/shared';
 
 function makeDb(): BunDatabase {

@@ -48,6 +48,7 @@ if (phase === 'seed') {
 }
 
 assert.equal(phase, 'web');
+const historical = (input) => JSON.parse(execFileSync('bun', [join(verify, 'legacy-attachment-fixture.ts'), run, JSON.stringify(input)], { env: { HOME: join(run, 'home'), NODE_ENV: 'test', HYPERNEO_DATA_DIR: join(run, 'data'), TMPDIR: run, PATH: process.env.PATH }, encoding: 'utf8' }));
 const rpc = (name, input) => {
   const out = execFileSync('bun', [join(verify, 'rpc.ts'), name, JSON.stringify(input)], {
     env: { ...process.env, VERIFY_PORT: port },
@@ -58,7 +59,7 @@ const rpc = (name, input) => {
   return reply.value ?? reply;
 };
 const register = (path, title) => {
-  const result = rpc('artifact.file.register', {
+  const result = historical({
     requestId: crypto.randomUUID(),
     context: { kind: 'todo', id: 'todo' },
     path,

@@ -41,42 +41,20 @@ retry/restart and explicit caller-context contract. Its injected identity alone
 does not prove this real-turn fallback. No web/iOS rendering or post-deploy phone
 retry is claimed by either daemon-only journey.
 
-For the ACP coordinator path, use another fresh run from the worktree root:
-
-```sh
-RUN=$(mktemp -d /private/tmp/hn-card-reply-acp-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
-  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
-  bun .claude/skills/verify/card-reply-acp.ts "$RUN"
-```
-
-No HTTP model mock or credentials are needed. A synthetic stdio ACP agent uses
-the daemon's shipped MCP proxy command to call `neo.question.ask` without replyTo
-twice after actual human chat intake is consumed. The publication page must have
-one notice linked to that human UUID and the question must not duplicate. Its
-next structured question report creates a background question without borrowing the human
-association. The first assertion fails with zero notices before ACP wiring.
-Evidence is `evidence/card-reply-acp.json` and `evidence/acp-protocol.jsonl` in
-the synthetic run. The same ACP proof runs in the online regression file above.
-The helper closes its owned daemon, ACP client and MCP proxy in finally; no real
-provider, live DB, credential file, fixed TCP port or GUI is used.
-The ACP helper owns a temporary directory inside its fresh run, including when
-the online regression starts it with a scrubbed child environment.
-
 ## Structured background reports
 
 With the #8647 wake gate, a free-form teammate report waits in the durable
 queue. A fixture that requires immediate background work must send an explicit
 question report through message.send, including when it steers the active human
-turn. The ACP and SDK fixtures must retain their original publication assertions:
+turn. The SDK fixtures must retain their original publication assertions:
 one notice linked to the human, no duplicate question, and no human association
 borrowed by a later background-only question.
 
 The pre-update fixtures reproduce CI run 40182192213: the SDK fixture waits for
-an untyped teammate input to be consumed, and the ACP fixture times out waiting
-for its untyped BACKGROUND_CARD turn. In the ACP evidence, the human notice is
-present, no background prompt was sent, and one neo_notes row remains pending.
+an untyped teammate input to be consumed, and its untyped background input stays pending.
 This is the requested queue behavior, so update the fixture's structured input
 rather than making untyped worker chatter wake Neo again. Keep the neo-wake-queue
 journey as the independent twenty-message quiet-burst contract.
+
+The scripted model path supply an explicit core evidence `retireWhen` for
+unlinked cards. Its synthetic file stays absent throughout the notice proof.

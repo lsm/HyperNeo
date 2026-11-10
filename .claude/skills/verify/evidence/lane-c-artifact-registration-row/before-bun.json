@@ -1,0 +1,8 @@
+{
+  "sqlScope": "Registration row INSERT only; existing read-only authorization/receipt SQL, native FS and Git publication not included",
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "mainGuardSelfCheckPassed": true,
+  "registrationMainInsertRuns": 2,
+  "rowCommandPosts": 0,
+  "workerMetrics": []
+}

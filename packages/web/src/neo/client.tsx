@@ -30,4 +30,10 @@ function NeoPage() {
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Root element not found');
-render(<NeoPage />, root);
+if (new URLSearchParams(location.search).has('examples')) render(<NeoPage />, root);
+else
+  void fetch('/ws', { credentials: 'same-origin', cache: 'no-store' })
+    .then((response) =>
+      response.status === 401 ? location.assign('/pair') : render(<NeoPage />, root)
+    )
+    .catch(() => render(<NeoPage />, root));

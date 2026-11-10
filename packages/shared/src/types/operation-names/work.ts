@@ -1,6 +1,7 @@
 export const WORK_OPERATION_NAMES = [
   'work.adapters',
   'work.find',
+  'work.health',
   'work.project.addFolder',
   'work.queue',
   'work.read',
@@ -9,5 +10,6 @@ export const WORK_OPERATION_NAMES = [
   'work.start',
   'work.status',
   'work.stop',
+  'work.turns',
   'work.withdraw',
 ] as const;

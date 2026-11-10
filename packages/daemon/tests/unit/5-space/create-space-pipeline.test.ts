@@ -11,7 +11,7 @@ import {
   seedWorkflows,
   validateParams,
   warnIfWorkspaceNotGit,
-} from '../../../src/lib/space/create-space-pipeline.ts';
+} from '../../../../space/src/create-space-pipeline.ts';
 
 const params: CreateSpaceParams = { workspacePath: '/workspace', name: 'Test Space' };
 const space: Space = {

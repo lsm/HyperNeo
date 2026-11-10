@@ -44,10 +44,9 @@ import {
   hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
+import type { Space } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
-import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
 
 const log = new Logger('session-handlers');
@@ -101,6 +100,10 @@ export async function detectStrandedProviders(
   return stranded;
 }
 
+export interface SessionSpaceMembership {
+  removeSession(spaceId: string, sessionId: string): Promise<Space>;
+}
+
 export interface SessionHandlerDeps {
   writeToolPreferences?: SessionToolPreferenceWriter;
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
@@ -126,12 +129,12 @@ function agentPrimarySessionRefusal(
 
 export function createCloneLifecycleEffects(
   sessionManager: Pick<SessionManager, 'archiveSessionResources' | 'deleteSessionResources'>,
-  spaceManager: Pick<SpaceManager, 'removeSession'>,
+  spaceManager: SessionSpaceMembership | undefined,
   internalEventBus: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>,
   getSession: (sessionId: string) => Session | null
 ): Pick<CloneCascadeDependencies, 'archiveChild' | 'deleteChild'> {
   const evict = async (sessionId: string, spaceId: string | undefined) => {
-    if (!spaceId) return;
+    if (!spaceId || !spaceManager) return;
     try {
       const space = await spaceManager.removeSession(spaceId, sessionId);
       await internalEventBus.publish('space.updated', { sessionId: 'global', spaceId, space });
@@ -155,8 +158,8 @@ export function setupSessionHandlers(
   messageHub: MessageHub,
   sessionManager: SessionManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  spaceManager: SpaceManager,
-  spaceRuntimeService?: SpaceRuntimeService,
+  spaceManager?: SessionSpaceMembership,
+  _unused?: unknown,
   deps?: SessionHandlerDeps
 ): void {
   messageHub.onRequest('session.create', async (data) => {
@@ -340,21 +343,21 @@ export function setupSessionHandlers(
 
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
 
+    const existingConfig = updates.config
+      ? (agentSessionForUpdate?.getSessionData().config ??
+        sessionManager.getSessionFromDB(targetSessionId)?.config)
+      : undefined;
     const currentSelection =
-      updates.config?.toolSelection === undefined
-        ? undefined
-        : (
-            agentSessionForUpdate?.getSessionData().config ??
-            sessionManager.getSessionFromDB(targetSessionId)?.config
-          )?.toolSelection;
-    const configUpdate = admitUpdateSessionConfig(updates.config, currentSelection);
+      updates.config?.toolSelection === undefined ? undefined : existingConfig?.toolSelection;
+    const configUpdate = admitUpdateSessionConfig(
+      updates.config,
+      currentSelection,
+      existingConfig?.harness
+    );
     if (configUpdate) {
       updates.config = configUpdate;
     }
     if (configUpdate && (configUpdate.model !== undefined || configUpdate.provider !== undefined)) {
-      const existingConfig =
-        agentSessionForUpdate?.getSessionData().config ??
-        sessionManager.getSessionFromDB(targetSessionId)?.config;
       const currentModel = existingConfig?.model;
       const currentProvider =
         existingConfig?.provider ??
@@ -476,7 +479,7 @@ export function setupSessionHandlers(
 
     await sessionManager.deleteSessionResources(targetSessionId, 'ui_session_delete');
 
-    if (spaceIdForDelete) {
+    if (spaceIdForDelete && spaceManager) {
       try {
         const updatedSpace = await spaceManager.removeSession(spaceIdForDelete, targetSessionId);
         internalEventBus
@@ -552,7 +555,7 @@ export function setupSessionHandlers(
       );
     }
 
-    if (spaceIdForArchive) {
+    if (spaceIdForArchive && spaceManager) {
       try {
         const updatedSpace = await spaceManager.removeSession(spaceIdForArchive, targetSessionId);
         internalEventBus
@@ -884,6 +887,7 @@ export function setupSessionHandlers(
           context_window: m.contextWindow,
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
+          effortLevels: m.effortLevels,
           available: m.available !== false && !unavailable.has(m.provider ?? ''),
           type: 'model' as const,
         })),

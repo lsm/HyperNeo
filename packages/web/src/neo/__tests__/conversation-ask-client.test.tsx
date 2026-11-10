@@ -124,6 +124,16 @@ describe('durable conversation ask client', () => {
     });
   });
 
+  it('preserves an ask-card quote and its saved text through the history parser', () => {
+    const quoted = {
+      ...ask(),
+      replyTo: { kind: 'ask', id: 'work-card', author: 'neo', excerpt: 'Original work title' },
+    };
+    expect(presentConversationAskPage(response([quoted]), page)).toEqual({
+      value: { state: 'ready', items: [quoted], nextAfter: 1 },
+    });
+  });
+
   it('keeps the quoted message author and excerpt and drops malformed ones', () => {
     const quoted = {
       ...ask(),

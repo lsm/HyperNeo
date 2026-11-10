@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { CallContext } from '@hyperneo/shared';
 import { MessageHub, type Session } from '@hyperneo/shared';
 import { z } from 'zod';
-import { convertMcpServersForAcp } from '../../../../src/lib/acp/acp-query-runner';
-import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
   createOperationRegistry,
@@ -23,6 +21,10 @@ import {
   createTestSession,
 } from '../../../helpers/database';
 import { operationInvoke, operationInvokeTool } from '../../../helpers/operation-mcp';
+import { contributeDefaultOperations } from '../../../../src/lib/operations/database-catalog';
+import { createSpaceDefaultOperations } from '../../../../src/lib/tasks/catalog-operations';
+
+contributeDefaultOperations('space', createSpaceDefaultOperations);
 
 describe('session operation MCP attachment', () => {
   let db: Database;
@@ -191,7 +193,11 @@ describe('session operation MCP attachment', () => {
       ).not.toBe(true);
       expect(existing.getOperationMcpServer()).toBe(cachedServer);
       expect(await operationInvoke(cachedServer)({ name: 'first' }, {})).toMatchObject({
-        content: [{ text: JSON.stringify({ sessionId: 'existing', source: 'mcp' }) }],
+        content: [
+          {
+            text: JSON.stringify({ sessionId: 'existing', role: 'universal_read', source: 'mcp' }),
+          },
+        ],
       });
       await db.createSession(createTestSession('resumed'));
       const resumed = manager.getSession('resumed')!;
@@ -433,31 +439,6 @@ describe('session operation MCP attachment', () => {
       expect(db.getSession(source.id)?.config.mcpServers).toBeUndefined();
     }
   );
-
-  test('reserves the operations name and proxies operations for ACP sessions', async () => {
-    const source = createTestSession('acp-sender');
-    source.config.provider = 'acp';
-    source.config.mcpServers = {
-      'hyperneo-operations': { command: 'user-server' },
-      'hyperneo-operations-2': { command: 'another-user-server' },
-    };
-    await db.createSession(source);
-    const session = await restore(source.id);
-    session.mergeRuntimeMcpServers(source.config.mcpServers);
-    const effective = session.optionsBuilder.getEffectiveMcpServers();
-    expect(effective?.['hyperneo-operations']).toBe(session.getOperationMcpServer());
-    expect(effective?.['hyperneo-operations-2']).toEqual({ command: 'another-user-server' });
-    expect(effective?.['hyperneo-operations-3']).toEqual({ command: 'user-server' });
-    const bridge = new AcpMcpProxyBridge(effective as never);
-    expect(bridge.getToolsForServer('hyperneo-operations').map(({ name }) => name)).toEqual([
-      'invoke',
-    ]);
-    expect(convertMcpServersForAcp(effective, () => {}, bridge)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: 'hyperneo-operations', type: 'stdio' }),
-      ])
-    );
-  });
 
   test('rejects MCP attempts to claim human input provenance before persistence', async () => {
     await db.createSession(createTestSession('sender'));

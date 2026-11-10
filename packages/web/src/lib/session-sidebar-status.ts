@@ -1,11 +1,10 @@
-import type { AgentProcessingState, SessionStatus, SpaceTask } from '@hyperneo/shared';
+import type { AgentProcessingState, SessionStatus } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { getSessionLifecycleStatusConfig } from './session-lifecycle-status.ts';
 import {
   getAgentProcessingStateConfig,
   type SessionProcessingTone,
 } from './session-processing-phase.ts';
-import { getTaskStatusConfig } from './task-status.ts';
 
 export interface SidebarSessionStatus {
   tone: SessionProcessingTone;
@@ -14,7 +13,7 @@ export interface SidebarSessionStatus {
   kind?: string;
 }
 
-interface SessionActivitySource {
+export interface SessionActivitySource {
   status?: string;
   processingState?: unknown;
 }
@@ -65,54 +64,6 @@ export const getSessionSidebarStatus = (superpipe({})('session-sidebar-status') 
   .pipe(parseState, 'session', 'state')
   .pipe(resolveStatus, ['session', 'state'], 'status')
   .end('status') as (session: SessionActivitySource | null | undefined) => SidebarSessionStatus;
-
-const ACTIVITY_PRIORITY: Record<string, number> = {
-  waiting_for_input: 6,
-  pending_worktree_choice: 6,
-  interrupted: 2,
-  rate_limit_cooldown: 5,
-  processing: 4,
-  queued: 3,
-};
-
-function selectTaskActivity(
-  task: Pick<SpaceTask, 'status'>,
-  statuses: SidebarSessionStatus[]
-): SidebarSessionStatus {
-  const fallback = { ...getTaskStatusConfig(task.status), pulse: false, kind: task.status };
-  if (
-    [
-      'draft',
-      'review',
-      'done',
-      'cancelled',
-      'archived',
-      'stopped',
-      'blocked',
-      'rate_limited',
-      'usage_limited',
-    ].includes(task.status)
-  ) {
-    return fallback;
-  }
-  return statuses.reduce<SidebarSessionStatus>((selected, status) => {
-    const priority = ACTIVITY_PRIORITY[status.kind ?? ''] ?? 0;
-    return priority > (ACTIVITY_PRIORITY[selected.kind ?? ''] ?? 0) ? status : selected;
-  }, fallback);
-}
-
-export const getTaskSidebarStatus = (superpipe({})('task-sidebar-status') as PipelineAPI)
-  .input(['task', 'sessions'])
-  .pipe(
-    (sessions: SessionActivitySource[]) => sessions.map(getSessionSidebarStatus),
-    'sessions',
-    'statuses'
-  )
-  .pipe(selectTaskActivity, ['task', 'statuses'], 'status')
-  .end('status') as (
-  task: Pick<SpaceTask, 'status'>,
-  sessions: SessionActivitySource[]
-) => SidebarSessionStatus;
 
 export function conversationTitle(title: string, isClone: boolean): string {
   return (

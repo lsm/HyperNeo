@@ -3,7 +3,7 @@ import { MessageHub } from '@hyperneo/shared';
 import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { createHyperneoAdapter } from '../../../../src/lib/drivers/hyperneo-adapter.ts';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -42,6 +42,7 @@ async function persist(value: typeof episode | null) {
 
 function adapter() {
   return createHyperneoAdapter({
+    readTurnFacts: async () => [],
     readTurnEnds: async (id, since) => readHyperneoTurnEnds(db.getDatabase(), id, since),
     db: () => db.getDatabase(),
     machine: 'synthetic',

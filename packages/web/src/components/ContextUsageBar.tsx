@@ -85,6 +85,10 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
         ? maxContextTokens
         : 0;
   const contextPercentage = contextUsage?.percentUsed || 0;
+  const preciseContextPercentage =
+    contextCapacity > 0
+      ? Math.min(100, Math.max(0, (totalTokens / contextCapacity) * 100))
+      : contextPercentage;
   const hasContextData = totalTokens > 0;
 
   const autoCompactThreshold = contextUsage?.autoCompactThreshold ?? 0;
@@ -284,7 +288,7 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                     <div class="flex justify-between items-center mb-1.5">
                       <span class="text-xs text-fg-muted">Context Window</span>
                       <span class={`text-xs font-semibold ${getContextColor()}`}>
-                        {contextPercentage.toFixed(1)}%
+                        {preciseContextPercentage.toFixed(1)}%
                       </span>
                     </div>
                     <div class="relative w-full h-2.5 bg-line-strong rounded-full overflow-hidden">
@@ -341,7 +345,10 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                               <div key={category} class="flex items-center gap-2 text-xs">
                                 <div class={`w-3 h-3 rounded ${bg} flex-shrink-0`} />
                                 <span class="text-fg-muted flex-1 min-w-0 truncate">
-                                  {category}
+                                  {showAutoCompactBuffer &&
+                                  category.toLowerCase().includes('free space')
+                                    ? 'Until auto-compact'
+                                    : category}
                                 </span>
                                 <span class={`${text} font-medium`}>{percentage.toFixed(1)}%</span>
                                 <span class="text-fg-soft font-mono text-xs">

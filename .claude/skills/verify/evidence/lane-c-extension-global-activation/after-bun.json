@@ -1,0 +1,109 @@
+{
+  "publicSetterActivated": true,
+  "mainGuardSelfCheckPassed": true,
+  "firstRpcMs": 1.0586250000000064,
+  "publicEnableDisableListPreserved": true,
+  "concurrentEnablesStartOnce": true,
+  "failedStartRestoresKnownCommittedConfig": true,
+  "failedWriterRollsBackBeforeCallback": true,
+  "healthWhileWriterHeldMs": 2.429499999999962,
+  "deliberatelyHeldWriterMs": 1213.52625,
+  "callbackAndReplyWaitForCommit": true,
+  "preAdmissionTimestampRetained": true,
+  "rejectedAdmissionHasNoFallbackStartOrReplay": true,
+  "actualLostCommittedReplyNeverStartsOrReplays": true,
+  "maxLoopLagMs": 1.958332999999925,
+  "commandPosts": 12,
+  "callbackObservations": [
+    {
+      "kind": "start",
+      "enabled": true
+    },
+    {
+      "kind": "stop",
+      "enabled": true
+    },
+    {
+      "kind": "start",
+      "enabled": true
+    },
+    {
+      "kind": "stop",
+      "enabled": true
+    },
+    {
+      "kind": "start",
+      "enabled": true
+    },
+    {
+      "kind": "start",
+      "enabled": true
+    },
+    {
+      "kind": "stop",
+      "enabled": true
+    }
+  ],
+  "rssBytes": 177849472,
+  "walBytes": 0,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "metrics": [
+    {
+      "roundTripMs": 0.08808300000009694,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.07887500000003911,
+      "requestBytes": 249,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.04420799999991232,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.042208999999957086,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.04966699999999946,
+      "requestBytes": 249,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.03229100000010021,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.02816599999994196,
+      "requestBytes": 249,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 1212.808875,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.2882080000001679,
+      "requestBytes": 249,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 5.411999999999807,
+      "requestBytes": 248,
+      "replyBytes": 22
+    }
+  ],
+  "runtime": "Bun 1.4.3 macOS arm64",
+  "wrapper": {
+    "exitCode": 0
+  },
+  "temporaryDaemonDataRemoved": true,
+  "heldWriterMeets250msTarget": false
+}

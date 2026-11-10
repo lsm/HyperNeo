@@ -1,5 +1,5 @@
 import type { CreateSpaceLongHorizonAgentReminderParams } from '@hyperneo/shared';
-import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
+import { getNextRunAt, isValidCronExpression } from '../scheduler/cron-utils.ts';
 
 export interface AgentReminderCreateInput {
   spaceId: string;

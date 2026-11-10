@@ -48,7 +48,7 @@ createServer(async (req, res) => {
   const ask = goalId ? {
     name: 'neo.ask.open',
     input: { title: 'Ship the goal guide', request: 'Publish the adapter guide', goalId,
-      todos: [{ title: 'Publish guide', doneWhen: 'Guide published' }] },
+      todos: [{ title: 'Publish guide', doneWhen: 'Guide published', check: { pack: 'core', kind: 'evidence', params: {} } }] },
   } : ASK;
   const block =
     invoke && (goalId || last.includes(MARKER)) && !toolResult

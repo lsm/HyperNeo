@@ -38,10 +38,19 @@ try {
   page.on('websocket', (socket) => socket.on('framesent', (frame) => {
     if (String(frame.payload).includes('settings.global.update')) sent.push(String(frame.payload));
   }));
-  await page.goto(`http://127.0.0.1:${port}/settings?tab=general`);
-  await page.waitForFunction(() => document.body.innerText.includes('Default chat view'));
-  evidence.generalHasThinking = (await page.locator('body').innerText()).includes('Thinking');
-  assert.equal(evidence.generalHasThinking, false);
+  const origin = `http://127.0.0.1:${port}`;
+  const pairing = rpc('device.pair.create', { kind: 'human', name: 'Settings journey browser' });
+  assert.equal(
+    (await page.request.post(`${origin}/pair`, {
+      headers: { origin },
+      data: { code: pairing.code, name: 'Settings journey browser' },
+    })).status(),
+    200
+  );
+  await page.goto(`http://127.0.0.1:${port}/settings?tab=exa`);
+  await page.waitForFunction(() => document.body.innerText.includes('GitHub polling interval'));
+  evidence.advancedHasThinking = (await page.locator('body').innerText()).includes('Thinking');
+  assert.equal(evidence.advancedHasThinking, false);
   await page.goto(`http://127.0.0.1:${port}/settings?tab=models`);
   const select = page.getByLabel('Default thinking', { exact: true });
   await select.waitFor();
@@ -78,7 +87,7 @@ try {
     evidence.observations.push({ width, value: 'think24k', box });
   }
   writeFileSync(`${run}/evidence/default-thinking-settings.json`, JSON.stringify(evidence, null, 2));
-  console.log(JSON.stringify({ ok: true, generalHasThinking: false, newSession: evidence.newSession, neoThinkingUnchanged: true, writesOnOpen: 0, screenshots: [1280, 390] }));
+  console.log(JSON.stringify({ ok: true, advancedHasThinking: false, newSession: evidence.newSession, neoThinkingUnchanged: true, writesOnOpen: 0, screenshots: [1280, 390] }));
 } catch (error) {
   await page.screenshot({ path: `${run}/evidence/default-thinking-failure.png`, fullPage: true });
   writeFileSync(`${run}/evidence/default-thinking-failure.txt`, await page.locator('body').innerText());

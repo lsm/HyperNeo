@@ -6,6 +6,7 @@ import {
   type ClaudeLiveSession,
   type ClaudeTranscriptState,
 } from './claude-desktop-adapter.ts';
+import { withClaudeIdentity } from './claude-runtime-identity.ts';
 import { requireClaudeCliOwner } from './claude-session-owner.ts';
 import type { Rejected, Result, WorkDelivery, WorkDetail, WorkRef, WorkStatus } from './types.ts';
 import { reject } from './work-operations.ts';
@@ -25,6 +26,12 @@ type Source = {
   evidence: WorkDetail['inputEvidence'] | null;
 };
 
+export function claudeCliWorkStatus(status: string): LiveWork['status'] | null {
+  if (status === 'busy') return 'running';
+  if (status === 'waiting') return 'needs_you';
+  return ['idle', 'done', 'completed'].includes(status) ? 'done' : null;
+}
+
 export function requireClaudeCliStatus(
   ref: WorkRef,
   live: readonly ClaudeLiveSession[]
@@ -32,14 +39,7 @@ export function requireClaudeCliStatus(
   const owner = requireClaudeCliOwner(ref.id, live);
   if ('reason' in owner) return owner;
   const session = live.find((candidate) => candidate.sessionId === ref.id)!;
-  const status =
-    session.status === 'busy'
-      ? 'running'
-      : session.status === 'waiting'
-        ? 'needs_you'
-        : ['idle', 'done', 'completed'].includes(session.status)
-          ? 'done'
-          : null;
+  const status = claudeCliWorkStatus(session.status);
   return status
     ? { value: { session, status } }
     : { reason: reject('unreachable', `Unknown Claude CLI status: ${session.status}.`) };
@@ -71,6 +71,7 @@ function describeCliWork(
     ok: true,
     value: {
       ref,
+      ...withClaudeIdentity(transcript),
       title: live.session.name || 'Claude Code session',
       place: { machine: deps.machine, name: 'Claude Code', ...(folder ? { folder } : {}) },
       status: live.status,
@@ -81,7 +82,6 @@ function describeCliWork(
       ...(transcript
         ? { recentInputs: transcript.inputs, ...withExchange(transcript.exchange) }
         : {}),
-      ...(transcript?.openedPrs ? { openedPrs: transcript.openedPrs } : {}),
       ...(evidence ? { inputEvidence: evidence } : {}),
     },
   };

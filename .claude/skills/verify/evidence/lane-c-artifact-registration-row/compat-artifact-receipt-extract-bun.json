@@ -1,0 +1,18 @@
+{
+  "mainThreadMovementClaim": false,
+  "phase": "pure receipt serialization characterization; scratch legacy saves remain on supplied connection, public registration uses activated writer",
+  "firstRpcMs": 8.942541000000006,
+  "publicRegistrationReceiptAndBytesPreserved": true,
+  "publicReceiptBytes": 269,
+  "publicReceiptSha256": "4545f23a769c39359d9cdaa842679cf318363ee5ef5d08aab960008213ab38aa",
+  "optionalFieldMatrixPreserved": true,
+  "matrixCases": 6,
+  "callerOwnedRollbackPreserved": true,
+  "serializationErrorsBeforeWritePreserved": true,
+  "healthMs": 0.27441699999997127,
+  "rssBytes": 209863808,
+  "walBytes": 1293712,
+  "pass": true,
+  "mainInsertRuns": 0,
+  "publicMainInsertBindCounts": []
+}

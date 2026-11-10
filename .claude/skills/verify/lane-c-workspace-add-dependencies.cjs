@@ -1,0 +1,4 @@
+const fs=require('node:fs'),{createHash}=require('node:crypto'),{execFileSync}=require('node:child_process');
+const manifest=JSON.parse(fs.readFileSync('.claude/skills/verify/evidence/lane-c-workspace-add/audited-dependencies.json','utf8'));
+for(const unit of manifest.units){const content=fs.readFileSync(unit.file);if(createHash('sha256').update(content).digest('hex')!==unit.sha256)throw Error('Audited dependency changed: '+unit.file);const previous=execFileSync('git',['show',manifest.base+':'+unit.file]);if(!content.equals(previous))throw Error('Dependency no longer byte-identical to audited base: '+unit.file);}
+console.log(JSON.stringify({exactDependencyFiles:manifest.units.length,fullTransitiveGraphMeasured:manifest.fullTransitiveGraphMeasured,contracts:manifest.contracts,manifestSha256:createHash('sha256').update(fs.readFileSync('.claude/skills/verify/evidence/lane-c-workspace-add/audited-dependencies.json')).digest('hex')},null,2));

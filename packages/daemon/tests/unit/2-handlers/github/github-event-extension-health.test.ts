@@ -1,3 +1,4 @@
+import { clearGitHubWebhookRegistration } from '../../../../src/storage/repositories/github-webhook-clear-persist';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createHash } from 'node:crypto';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
@@ -7,7 +8,8 @@ import {
   GitHubEventExtension,
   type GitHubHealthSnapshot,
 } from '../../../../src/lib/external-events/github/github-event-extension';
-import { ExternalEventStore, type ExternalEvent } from '../../../../src/lib/external-events';
+import type { ExternalEvent } from '../../../../src/lib/external-events';
+import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
 import type {
   ExternalEventExtensionConfigStore,
   SpaceExternalEventSourceConfig,
@@ -155,6 +157,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const db = setupDb();
     const configStore = new HealthConfigStore();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
+      spaceEvents: new ExternalEventStore(db),
       pollIntervalMs: 90_000,
       fetchImpl: fakeUserFetch('octocat'),
     });
@@ -459,6 +462,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const db = setupDb();
     seedSpace(db, 'space-1');
     const extension = new GitHubEventExtension(db, 'ghp_token', {
+      spaceEvents: new ExternalEventStore(db),
       fetchImpl: fakeUserFetch('octocat'),
     });
     const store = new ExternalEventStore(db);
@@ -516,6 +520,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const db = setupDb();
     seedSpace(db, 'space-1');
     const extension = new GitHubEventExtension(db, 'ghp_token', {
+      spaceEvents: new ExternalEventStore(db),
       fetchImpl: fakeUserFetch('octocat'),
     });
     const store = new ExternalEventStore(db);
@@ -1166,7 +1171,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBe('missing events');
   });
 
-  test('clearWebhookRegistration clears the stale delivery timestamp', () => {
+  test('clearing webhook registration clears the stale delivery timestamp', () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
@@ -1179,7 +1184,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     });
     extension.repo.markWebhookReceived(repo.id);
     expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).not.toBeNull();
-    extension.repo.clearWebhookRegistration(repo.id, {});
+    clearGitHubWebhookRegistration(db, repo.id);
     expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).toBeNull();
   });
 
@@ -1975,6 +1980,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const db = setupDb();
     seedSpace(db, 'space-1');
     const extension = new GitHubEventExtension(db, 'ghp_token', {
+      spaceEvents: new ExternalEventStore(db),
       fetchImpl: fakeUserFetch('octocat'),
     });
     const store = new ExternalEventStore(db);

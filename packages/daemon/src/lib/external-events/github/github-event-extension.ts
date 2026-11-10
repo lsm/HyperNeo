@@ -1,3 +1,13 @@
+import { gitHubWatchPollingWrite } from '../../../storage/repositories/github-watch-polling-write.ts';
+import { gitHubWatchedConfigWrite } from '../../../storage/repositories/github-watched-config-write.ts';
+import { gitHubWatchedRepoRead } from '../../../storage/repositories/github-watched-repo-read.ts';
+import { gitHubPollingTimerReads } from '../../../storage/repositories/github-polling-usage-read.ts';
+import { gitHubPollingCapabilityReads } from '../../../storage/repositories/github-polling-usage-read.ts';
+import { gitHubPollingWrites } from '../../../storage/repositories/github-polling-enabled-write.ts';
+import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
+import { gitHubSpaceEnabledWrites } from '../../../storage/repositories/github-space-enabled-write.ts';
+import { gitHubFilterWrites } from '../../../storage/repositories/github-filter-write.ts';
+import { projectGitHubWatchedRepo } from './github-watched-projection.ts';
 import {
   createGitHubPollSource,
   parseRateLimitHeaders,
@@ -9,18 +19,17 @@ import { GitHubPollSlice } from './github-poll-slice.ts';
 import { runLagPhase } from '../../event-loop-activity.ts';
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { CredentialStore } from '../../credentials/credential-store.js';
 import { Logger } from '../../logger.ts';
 import { isRateLimitError } from '../../session/rate-limit-detector.ts';
-import { ExternalEventStore } from '../external-event-store.ts';
 import { SESSION_EVENT_SCOPE } from '../session-external-event-store.ts';
 import type {
   ExternalEvent,
   ExternalEventExtensionContext,
   HttpExternalEventExtension,
   RpcExternalEventExtension,
+  ExternalEventReads,
 } from '../types.ts';
 import { normalizeSessionPrClosure } from './session-pr-closure.ts';
 import {
@@ -117,6 +126,7 @@ const REPO_HOOK_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'mer
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
+  spaceEvents?: ExternalEventReads;
   recordSessionClosure?: (event: ExternalEvent) => Promise<unknown>;
   replaySessionTerminals?: () => Promise<unknown>;
   collectPollPage?: GitHubPollCollector;
@@ -124,7 +134,6 @@ interface GitHubEventExtensionOptions {
   getPollIntervalMs?: () => number | undefined;
   fetchImpl?: typeof fetch;
   credentialStore?: CredentialStore;
-  reactiveDb?: ReactiveDatabase;
   autoReconcileWebhooks?: boolean;
   sessionRepoReferenced?: (owner: string, repo: string) => boolean;
   sessionWatchRepos?: () => { owner: string; repo: string }[];
@@ -287,6 +296,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   readonly repo: GitHubEventExtensionRepository;
   private context?: ExternalEventExtensionContext;
+  private pollingCapabilityTail: Promise<void> = Promise.resolve();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private activePollCycle?: Promise<void>;
   private reconcileSweepPromise?: Promise<void>;
@@ -309,15 +319,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private pollCycleCredentialSource: string | null = null;
   private pollCycleAccessible = false;
   private readonly credentialStore?: CredentialStore;
-  private readonly eventStore: ExternalEventStore;
+  private readonly eventStore: ExternalEventReads | null;
 
   constructor(
-    db: BunDatabase,
+    private readonly db: BunDatabase,
     private readonly githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN,
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
     this.repo = new GitHubEventExtensionRepository(db);
-    this.eventStore = new ExternalEventStore(db, options.reactiveDb);
+    this.eventStore = options.spaceEvents ?? null;
     this.credentialStore = options.credentialStore;
   }
 
@@ -354,15 +364,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
+      await gatewayFor(this.db).call(
+        gitHubSpaceEnabledWrites,
+        'persist',
+        params.spaceId,
+        true,
+        Date.now()
+      );
       const willReenablePollingRows = this.repo
         .listWatchedRepos(params.spaceId)
         .some((repo) => repo.pollingEnabled);
-      this.repo.setRepoEnabled(params.spaceId, true);
       if (willReenablePollingRows && this.getPollIntervalMs() > 0) {
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       }
-      await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -375,8 +390,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
-      this.repo.setRepoEnabled(params.spaceId, false);
-      await this.persistSpaceConfig(context, params.spaceId);
+      await gatewayFor(this.db).call(
+        gitHubSpaceEnabledWrites,
+        'persist',
+        params.spaceId,
+        false,
+        Date.now()
+      );
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -399,10 +419,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || !params.owner || !params.repo) {
         throw new Error('spaceId, owner and repo are required');
       }
-      const existingForValidation = this.repo.getWatchedRepo(
-        params.spaceId,
-        params.owner,
-        params.repo
+      const watchedKey = { spaceId: params.spaceId, owner: params.owner, repo: params.repo };
+      const existingForValidation = await gatewayFor(this.db).run(
+        gitHubWatchedRepoRead,
+        watchedKey
       );
       if (params.pollingEnabled && !existingForValidation?.pollingEnabled) {
         this.assertPollingIntervalEnabled();
@@ -420,7 +440,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         params.owner,
         params.repo,
         async (): Promise<GitHubWatchedRepo> => {
-          const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
+          const existing = await gatewayFor(this.db).run(gitHubWatchedRepoRead, watchedKey);
           const replacingAutoSecret = Boolean(
             params.webhookSecret && existing?.webhookAutoRegistered
           );
@@ -437,35 +457,28 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           if ((replacingAutoSecret || disablingAutoWebhook) && existing?.webhookRemoteId) {
             await this.deleteRemoteWebhookIfUnshared(existing);
           }
-          let w = this.repo.upsertWatchedRepo(upsertParams);
-          if (replacingAutoSecret || disablingAutoWebhook) {
-            this.repo.clearWebhookRegistration(w.id, { clearSecret: disablingAutoWebhook });
-            w = this.repo.getWatchedRepoById(w.id) ?? w;
-          }
-          if (manualSecretRotated) {
-            this.repo.clearWebhookDeliveryHistory(w.id);
-            w = this.repo.getWatchedRepoById(w.id) ?? w;
-          }
-          return w;
+          return gatewayFor(this.db).run(gitHubWatchedConfigWrite, {
+            params: upsertParams,
+            clearRegistration: replacingAutoSecret || disablingAutoWebhook,
+            clearSecret: disablingAutoWebhook,
+            clearDelivery: manualSecretRotated,
+          });
         }
       );
+      const config = await gatewayFor(this.db).run(gitHubWatchPollingWrite, {
+        spaceId: watchedRepo.spaceId,
+        pollingEnabled: watchedRepo.pollingEnabled,
+        wasPolling: existingForValidation?.pollingEnabled ?? false,
+      });
+      await context.config.setSpaceConfig(watchedRepo.spaceId, this.sourceId, config);
       if (watchedRepo.pollingEnabled) {
-        this.repo.setPollingIntent(params.spaceId, true);
-        await this.persistSpaceConfig(context, watchedRepo.spaceId);
         if (this.getPollIntervalMs() > 0) {
           await this.enablePollingCapability(context);
           this.ensurePollingActive();
         }
       } else {
-        if (
-          existingForValidation?.pollingEnabled &&
-          this.repo.listAllPollingConfiguredRepos(params.spaceId).length === 0
-        ) {
-          this.repo.setPollingIntent(params.spaceId, false);
-        }
-        await this.persistSpaceConfig(context, watchedRepo.spaceId);
         await this.disablePollingCapabilityIfUnused(context);
-        this.maybeStopPolling();
+        await this.stopIdlePollingOnReader();
       }
       context.onSourceConfigChanged({
         source: this.sourceId,
@@ -545,7 +558,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       });
       await this.persistSpaceConfig(context, params.spaceId);
       await this.disablePollingCapabilityIfUnused(context);
-      this.maybeStopPolling();
+      await this.stopIdlePollingOnReader();
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -640,28 +653,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (params.enabled) {
         this.assertPollingIntervalEnabled();
       }
-      const repos = this.repo.listWatchedRepos(params.spaceId);
-      for (const repo of repos) {
-        if (params.enabled && repo.webhookEnabled && repo.webhookSecret) {
-          continue;
-        }
-        this.repo.upsertWatchedRepo({
-          spaceId: repo.spaceId,
-          owner: repo.owner,
-          repo: repo.repo,
-          pollingEnabled: params.enabled,
-        });
-      }
+      await gatewayFor(this.db).run(gitHubPollingWrites, {
+        spaceId: params.spaceId,
+        enabled: params.enabled,
+      });
       if (params.enabled) {
-        this.repo.setPollingIntent(params.spaceId, true);
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       } else {
-        this.repo.setPollingIntent(params.spaceId, false);
         await this.disablePollingCapabilityIfUnused(context);
-        this.maybeStopPolling();
+        await this.stopIdlePollingOnReader();
       }
-      await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -676,8 +678,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || typeof params.enabled !== 'boolean') {
         throw new Error('spaceId and enabled are required');
       }
-      this.repo.setFilterCurrentUser(params.spaceId, params.enabled);
-      await this.persistSpaceConfig(context, params.spaceId);
+      await gatewayFor(this.db).call(
+        gitHubFilterWrites,
+        'persist',
+        params.spaceId,
+        params.enabled,
+        Date.now()
+      );
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -710,7 +717,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             if (!ok) dropped++;
           },
           storedEventPrNumber: (spaceId: string, dedupeKey: string) => {
-            const prNumber = this.eventStore.getByDedupe(spaceId, this.sourceId, dedupeKey)?.event
+            const prNumber = this.eventStore?.getByDedupe(spaceId, this.sourceId, dedupeKey)?.event
               .payload.prNumber;
             return typeof prNumber === 'number' ? prNumber : undefined;
           },
@@ -1740,26 +1747,28 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     const rateLimitInfo = this.lastRateLimitInfo;
     const recentCutoff = now - HEALTH_RECENT_ERROR_WINDOW_MS;
-    const recentDeliveries = this.eventStore
-      .listDeliveryLog({
+    const recentDeliveries = (
+      this.eventStore?.listDeliveryLog({
         spaceId,
         status: 'failed',
         source: 'github',
         limit: 5,
-      })
-      .filter((delivery) => delivery.updatedAt >= recentCutoff);
-    const recentErrorTotal = this.eventStore.countDeliveryLog({
-      spaceId,
-      status: 'failed',
-      source: 'github',
-      updatedSince: recentCutoff,
-    });
+      }) ?? []
+    ).filter((delivery) => delivery.updatedAt >= recentCutoff);
+    const recentErrorTotal =
+      this.eventStore?.countDeliveryLog({
+        spaceId,
+        status: 'failed',
+        source: 'github',
+        updatedSince: recentCutoff,
+      }) ?? 0;
 
-    const eventTypeBuckets = this.eventStore.listEventCountsByTopic({
-      spaceId,
-      source: 'github',
-      since: recentCutoff,
-    });
+    const eventTypeBuckets =
+      this.eventStore?.listEventCountsByTopic({
+        spaceId,
+        source: 'github',
+        since: recentCutoff,
+      }) ?? [];
     const eventTypeAccumulators = GITHUB_HEALTH_EVENT_TYPES.reduce(
       (acc, { key }) => {
         acc[key] = { count: 0, lastAt: 0 };
@@ -1855,33 +1864,42 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     };
   }
 
-  private async enablePollingCapability(context: ExternalEventExtensionContext): Promise<void> {
-    const global = await context.config.getGlobalConfig(this.sourceId);
-    if (global.capabilities.polling === true) return;
-    await context.config.setGlobalConfig(this.sourceId, {
-      ...global,
-      capabilities: { ...global.capabilities, polling: true },
+  private runPollingCapabilityUpdate(update: () => Promise<void>): Promise<void> {
+    const current = this.pollingCapabilityTail.then(update);
+    this.pollingCapabilityTail = current.catch(() => undefined);
+    return current;
+  }
+
+  private enablePollingCapability(context: ExternalEventExtensionContext): Promise<void> {
+    return this.runPollingCapabilityUpdate(async () => {
+      const global = await context.config.getGlobalConfig(this.sourceId);
+      if (global.capabilities.polling === true) return;
+      await context.config.setGlobalConfig(this.sourceId, {
+        ...global,
+        capabilities: { ...global.capabilities, polling: true },
+      });
     });
   }
 
-  private async disablePollingCapabilityIfUnused(
-    context: ExternalEventExtensionContext
-  ): Promise<void> {
-    if (this.repo.listAllPollingConfiguredRepos().length > 0) return;
-    if (this.repo.countSpacesWithPollingIntent() > 0) return;
-    if (this.repo.listPollingRepos(SESSION_EVENT_SCOPE).length > 0) return;
-    const global = await context.config.getGlobalConfig(this.sourceId);
-    if (global.capabilities.polling !== true) return;
-    await context.config.setGlobalConfig(this.sourceId, {
-      ...global,
-      capabilities: { ...global.capabilities, polling: false },
+  private disablePollingCapabilityIfUnused(context: ExternalEventExtensionContext): Promise<void> {
+    return this.runPollingCapabilityUpdate(async () => {
+      const inUse = await gatewayFor(this.db).run(gitHubPollingCapabilityReads, {
+        sessionScope: SESSION_EVENT_SCOPE,
+      });
+      if (inUse) return;
+      const global = await context.config.getGlobalConfig(this.sourceId);
+      if (global.capabilities.polling !== true) return;
+      await context.config.setGlobalConfig(this.sourceId, {
+        ...global,
+        capabilities: { ...global.capabilities, polling: false },
+      });
     });
   }
 
   private assertPollingIntervalEnabled(): void {
     if (this.getPollIntervalMs() <= 0) {
       throw new Error(
-        'GitHub polling is disabled globally. Set GitHub polling interval above 0 in General settings to enable polling.'
+        'GitHub polling is disabled globally. Set GitHub polling interval above 0 in Connections & Services > Advanced to enable polling.'
       );
     }
   }
@@ -1892,11 +1910,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.scheduleNextPoll();
   }
 
-  private maybeStopPolling(): void {
-    if (!this.pollTimer) return;
-    if (this.options.sessionWatchRepos || this.repo.listPollingRepos().length > 0) return;
-    clearTimeout(this.pollTimer);
-    this.pollTimer = null;
+  private stopIdlePollingOnReader(): Promise<void> {
+    return this.runPollingCapabilityUpdate(async () => {
+      const timer = this.pollTimer;
+      if (!timer || this.options.sessionWatchRepos) return;
+      const inUse = await gatewayFor(this.db).run(gitHubPollingTimerReads, {});
+      if (inUse || this.pollTimer !== timer) return;
+      clearTimeout(timer);
+      this.pollTimer = null;
+    });
   }
 
   private resetRateLimitObservation(): void {
@@ -2004,26 +2026,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       settings: {
         pollingIntent: this.repo.getPollingIntent(spaceId),
         filterCurrentUser: this.repo.getFilterCurrentUser(spaceId),
-        watchedRepos: repos.map((repo) => ({
-          id: repo.id,
-          owner: repo.owner,
-          repo: repo.repo,
-          enabled: repo.enabled,
-          webhookEnabled: repo.webhookEnabled,
-          pollingEnabled: repo.pollingEnabled,
-          webhookSecret: repo.webhookSecret ? 'configured' : null,
-          webhookRemoteId: repo.webhookRemoteId,
-          webhookUrl: repo.webhookUrl,
-          webhookAutoRegistered: repo.webhookAutoRegistered,
-          webhookActive: repo.webhookActive,
-          webhookLastCheckedAt: repo.webhookLastCheckedAt,
-          webhookLastError: repo.webhookLastError,
-          webhookConfiguredAt: repo.webhookConfiguredAt,
-          lastWebhookAt: repo.lastWebhookAt,
-          lastPollAt: repo.lastPollAt,
-          createdAt: repo.createdAt,
-          updatedAt: repo.updatedAt,
-        })),
+        watchedRepos: repos.map(projectGitHubWatchedRepo),
       },
     });
   }
@@ -2432,17 +2435,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private async githubFetch(path: string, init: RequestInit = {}): Promise<Response> {
     const requestGeneration = this.credentialGeneration;
-    const token = await this.resolveToken();
-    if (!token) {
+    const { token, readFailed } = await this.resolveTokenOrFail();
+    const useCli =
+      !token && !readFailed && !this.options.fetchImpl && (init.method ?? 'GET') === 'GET';
+    if (!token && !useCli) {
       throw new Error('GITHUB_TOKEN is required for GitHub API requests');
     }
-    const response = await (this.options.fetchImpl ?? fetch)(`${GITHUB_API_BASE}${path}`, {
+    const fetchImpl = useCli ? fetchGitHubViaCli : (this.options.fetchImpl ?? fetch);
+    const response = await fetchImpl(`${GITHUB_API_BASE}${path}`, {
       ...init,
       signal: init.signal ?? AbortSignal.timeout(GITHUB_WEBHOOK_REQUEST_TIMEOUT_MS),
       headers: {
         Accept: 'application/vnd.github+json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         'User-Agent': 'HyperNeo-Space-GitHub/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
         ...init.headers,
@@ -3026,7 +3032,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               const unscopedDedupeKey = `${watched.owner.toLowerCase()}/${watched.repo.toLowerCase()}:check_run:${checkRunId}:${conclusion}`;
               const existingEvent =
                 recordedLegacyPr === undefined
-                  ? this.eventStore.getByDedupe(watched.spaceId, this.sourceId, unscopedDedupeKey)
+                  ? (this.eventStore?.getByDedupe(
+                      watched.spaceId,
+                      this.sourceId,
+                      unscopedDedupeKey
+                    ) ?? null)
                   : null;
               const existingLegacyPr =
                 existingEvent && typeof existingEvent.event.payload.prNumber === 'number'

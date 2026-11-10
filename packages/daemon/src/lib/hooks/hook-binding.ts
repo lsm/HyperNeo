@@ -34,11 +34,11 @@ const RAW_HANDLER = Symbol('rawHandler');
 function hookResult(
   data: Record<string, unknown>,
   isError = false
-): import('../space/tools/tool-result.ts').ToolResult {
+): import('../tools/tool-result.ts').ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data) }], isError };
 }
 
-export type AnyToolResult = import('../space/tools/tool-result.ts').ToolResult;
+export type AnyToolResult = import('../tools/tool-result.ts').ToolResult;
 
 type WrappedHandler<T extends Record<string, unknown>> = ((args: T) => Promise<AnyToolResult>) & {
   [RAW_HANDLER]?: (args: T) => Promise<AnyToolResult>;

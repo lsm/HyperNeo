@@ -14,7 +14,7 @@ use worker-turn-delivery.md for that isolated-daemon proof.
 Polling the same historical turn with a changed worker status, waiting reason or
 focus must not add requests; the first observed status is durable per turn. A new
 transport turn can carry a new status, with exact todo/status payload repeats
-suppressed. Do not infer kinds from report text. The unit contracts also check
+suppressed. Only the exact final-line blocker contract in worker-blocker-lines.md changes a todo blocker; arbitrary prose never infers a message kind. The unit contracts also check
 whitespace changes and empty
 text versus the literal no-reply fallback; neither is an exact repeat.
 
@@ -28,7 +28,7 @@ The helper seeds 20 historical turn ends before the first-run cutoff, then
 changes their current status. Neither step adds a model request. The one-time
 cutoff and per-todo/dispatch/turn observations persist across service recreation;
 this intentionally baselines pre-cutoff reports already replayed during #8776.
-It never parses report text. A report ending after the cutoff must still reach
+Historical report relay remains replay-protected; exact final blocker lines are handled separately for the current assignment. A report ending after the cutoff must still reach
 the model, including when first observed after a service restart. Changed bytes
 under a reused turn ID remain deliverable; failed admission must remain retryable.
 Preserve the red-run and fixed-run observed.json and model request bodies.

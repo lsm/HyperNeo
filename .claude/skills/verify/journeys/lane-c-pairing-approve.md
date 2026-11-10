@@ -1,10 +1,8 @@
 # Pairing code approval commits on the DB writer
 
-Run `lane-c-pairing-approve.ts` through `proof-run.sh` with Bun and then with
-`VERIFY_PROOF_RUNTIME=deno` and the cached runtime on PATH. Use fresh evidence
-folders. The helper owns an isolated daemon on an ephemeral non-8399 port,
-synthetic device credentials, disposable HOME/data, native DB workers and a
-refusing GitHub stub. No real credential, key file, model or external HTTP is used.
+Use fresh evidence folders. The helper owns an isolated daemon on an ephemeral non-8399
+port, synthetic device credentials, disposable HOME/data, native DB workers and a refusing
+GitHub stub. No real credential, key file, model or external HTTP is used.
 
 A pending synthetic phone code initially returns HTTP 403. A real WebSocket
 `device.pair.approve` call authenticated as the synthetic paired human must return

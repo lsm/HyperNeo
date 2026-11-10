@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type {
   NeoAsk,
   NeoAskEntry,
@@ -22,6 +23,18 @@ import {
 } from './status-codes.ts';
 import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
+import { neoQuestionCoversTodo } from './todo-state.ts';
+import { todoEvidenceFile } from '../work-locations.ts';
+
+function internalCompletionEvidence(todo: NeoTodo): boolean {
+  const assigned = todoEvidenceFile(todo.id);
+  return (
+    todo.check?.pack === 'core' &&
+    todo.check.kind === 'evidence' &&
+    todo.check.params.path === assigned &&
+    todo.evidence === `File ${assigned} exists.`
+  );
+}
 
 const NEO_TODO_STATUS_EN = {
   'todo.replaced': 'Replaced by "{title}"',
@@ -31,6 +44,7 @@ const NEO_TODO_STATUS_EN = {
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
   'todo.blocked': 'Blocked: {reason}',
+  'todo.waitingResult': 'Waiting for its result',
   'todo.checking': 'Session reported; checking',
   'todo.awaitingNeo': 'Turn finished; waiting for Neo to check',
   'todo.reportedDone': 'Session says it is done',
@@ -57,12 +71,15 @@ export function neoTodoStatusLine(
   }
   if (todo.state === 'failed')
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.failed');
+  if (todo.state === 'blocked' && todo.blockedBy === 'check') return coded('todo.waitingResult');
   if (todo.state === 'blocked') return coded('todo.blocked', { reason: todo.blockedReason ?? '' });
   if (packLine) return packLine;
-  if (todo.state === 'todo') return coded('todo.notStarted');
+  if (todo.state === 'todo')
+    return todo.reason ? neoTextStatus(todo.reason) : coded('todo.notStarted');
   if (todo.state === 'doing')
     return coded(!todo.report ? 'todo.doing' : todo.check ? 'todo.checking' : 'todo.awaitingNeo');
-  if (todo.evidence) return neoTextStatus(todo.evidence);
+  if (todo.evidence)
+    return internalCompletionEvidence(todo) ? coded('todo.done') : neoTextStatus(todo.evidence);
   return coded(todo.report ? 'todo.reportedDone' : 'todo.done');
 }
 
@@ -77,6 +94,31 @@ export function neoAskEntryState(
   if (todos.some((todo) => todo.state === 'doing' || todo.state === 'blocked')) return 'doing';
   const live = todos.filter((todo) => todo.state !== 'removed');
   return live.length && live.every((todo) => todo.state === 'done') ? 'done' : 'todo';
+}
+
+const NEO_OWNED_BLOCKERS: readonly NeoTodo['blockedBy'][] = [
+  'needs-human',
+  'stalled',
+  'environment',
+];
+const neoHandlesBlocker = (todo: Pick<NeoTodo, 'state' | 'blockedBy'>) =>
+  todo.state === 'blocked' && NEO_OWNED_BLOCKERS.includes(todo.blockedBy);
+
+export function neoWorkCounts(
+  openTodos: readonly Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy'>[],
+  openQuestions: readonly Pick<NeoQuestion, 'askId' | 'state' | 'kind' | 'todoId' | 'startTodos'>[],
+  awaitingNeo: readonly Pick<NeoTodo, 'id'>[]
+): { needsYou: number; neoUnhandled: number } {
+  const cards = openQuestions.filter((question) => question.state === 'open');
+  const blocked = openTodos.filter(
+    (todo) =>
+      neoHandlesBlocker(todo) &&
+      !cards.some((card) => card.askId === todo.askId && neoQuestionCoversTodo(card, todo))
+  );
+  return {
+    needsYou: new Set(cards.map((question) => question.askId)).size,
+    neoUnhandled: new Set([...blocked, ...awaitingNeo].map((todo) => todo.id)).size,
+  };
 }
 
 export const NEO_DONE_TODOS_SHOWN = 3;
@@ -166,6 +208,14 @@ function projectNeoTodoEntries(
 ): NeoTodoEntry[] {
   return shown.map((todo) => ({
     ...todo,
+    doneWhen:
+      todo.check?.pack === 'core' &&
+      todo.check.kind === 'evidence' &&
+      todo.check.params.path === todoEvidenceFile(todo.id) &&
+      todo.doneWhen.includes(todoEvidenceFile(todo.id))
+        ? ''
+        : todo.doneWhen,
+    evidence: internalCompletionEvidence(todo) ? null : todo.evidence,
     ...neoTodoStatusLine(
       todo,
       todos,
@@ -228,11 +278,11 @@ export const NeoAskEntrySchema = z.object({
     id: z.string(),
     goalId: Nullable.optional(),
     projectId: Nullable,
-    repo: Nullable,
     parentId: Nullable,
     sessionId: z.string(),
     originMessageId: Nullable,
     title: z.string(),
+    topic: Nullable,
     request: z.string(),
     status: z.enum(['open', 'done', 'dropped']),
     outcome: Nullable,
@@ -323,8 +373,7 @@ export function createNeoDoneTodosOperation(
   ) => Promise<DonePage | Rejection>;
   return defineOperation({
     name: 'neo.ask.doneTodos',
-    description:
-      'Read the done todos of an ask, a page at a time, in list order. An ask with more than 3 done todos (20 for RPC clients) lists none of them in neo.snapshot and carries only doneCount; read them here when you need to check finished work. Pass offset from nextOffset for the next page; nextOffset is null on the last page.',
+    description: neoToolDescription('neo.ask.doneTodos'),
     inputSchema: DoneTodos,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),
@@ -379,8 +428,7 @@ export function createNeoAskReadOperation(
   ) => Promise<{ ok: true; entry: NeoAskEntry } | Rejection>;
   return defineOperation({
     name: 'neo.ask.read',
-    description:
-      'Read one exact work card by askId, todoId or questionId, including its todos and questions, even when it is outside the current snapshot window.',
+    description: neoToolDescription('neo.ask.read'),
     inputSchema,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),

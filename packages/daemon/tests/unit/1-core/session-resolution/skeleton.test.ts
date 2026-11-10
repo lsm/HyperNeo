@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { type FindTarget, type SessionTarget } from '../../../../src/lib/session-resolution/target';
-import { resolveAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { resolveAgentSessionId } from '../../../../src/lib/session-resolution/long-term-agent-session';
 
 describe('session-resolution type assignment tests', () => {
   test('new types accept their literal shapes', () => {

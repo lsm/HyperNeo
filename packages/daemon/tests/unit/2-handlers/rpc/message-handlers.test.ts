@@ -130,11 +130,11 @@ function createMockSessionManager(): {
           page.sinceRowid
         );
         return {
-          sdkMessages: result.messages.map(capSdkMessage),
+          sdkMessages: result.messages.map(capSdkMessage(_sessionId)),
           hasMore: result.hasMore,
           backgroundTaskMessages: agentSessionData.mocks
             .getBackgroundTaskMessages()
-            .map(capSdkMessage),
+            .map(capSdkMessage(_sessionId)),
         };
       },
     }),

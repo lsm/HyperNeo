@@ -18,6 +18,10 @@ vi.mock('../../lib/space-store', () => ({
 vi.mock('../../lib/toast', () => ({ toast: { error: mocks.toastError } }));
 
 import { useSessionRename } from '../useSessionRename';
+import { spaceWebExtension } from '../../lib/space-web-extension';
+import { registerWebExtension } from '../../lib/web-extensions';
+
+registerWebExtension('space', spaceWebExtension);
 
 const inputEvent = (value: string) => ({ currentTarget: { value } }) as any;
 const keyEvent = (key: string) =>

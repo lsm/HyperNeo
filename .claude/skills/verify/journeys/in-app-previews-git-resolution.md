@@ -26,6 +26,10 @@ receipts explicitly say worktree. Old receipts remain readable without revision
 or historical rewriting. Registration retry projects only the original reference
 response. No Git HEAD is invented for local file bytes.
 
+The seed chain reuses the bound-PR helper's canonical `pack_coding_todos`
+repository binding, leaving the legacy todo column null. Source authorization
+must not depend on updates to that frozen column.
+
 The native journey invokes actual operation parsing, policy, result validation,
 Git fixture subprocesses, migrated synthetic SQLite and native descriptor reads.
 It checks complete 1,560,000-byte reads in at-most-256-KiB chunks, stable SHA-256,
@@ -59,9 +63,7 @@ Stop owned services, write `{}` to RUN/git-fixtures.json, restart with the same
 stub, then run the helper in restart mode. It must return the original receipt,
 metadata and full bytes without any new GitHub fixture call. Stop again.
 
-Retain git-resolve-evidence.json, both RPC evidence JSON files, gh.log and doctor
-output. Synthetic fixtures/evidence remain. No live DB, credentials, real GitHub
-or provider traffic, port 8399 or unattended GUI. This proves Bun/macOS and served
-web/headless compatibility; it makes no new Deno/Linux native-runtime or visible
-web/iOS preview UI claim. Fork-head objects unavailable in the bound repository
-refuse; no arbitrary fork/host fallback is attempted. UI is delivered later.
+Retain git-resolve-evidence.json, both RPC evidence JSON files, gh.log and doctor output.
+Synthetic fixtures/evidence remain. No live DB, credentials, real GitHub or provider
+traffic, port 8399 or unattended GUI. Fork-head objects unavailable in the bound
+repository refuse; no arbitrary fork/host fallback is attempted. UI is delivered later.

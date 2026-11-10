@@ -2,6 +2,7 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { AgentMemoryEntry, AgentMemorySearchResult } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { Logger } from '../../lib/logger.ts';
+import { schemaTableExists } from '../schema/extensions.ts';
 import { cosineSimilarity } from '../vector-similarity.ts';
 
 export type { AgentMemoryEntry, AgentMemorySearchResult };
@@ -534,6 +535,7 @@ export class AgentMemoryRepository {
   }
 
   backfillPendingEmbeddings(): void {
+    if (!schemaTableExists(this.db, 'space_agent_memory')) return;
     if (!this.embedder) return;
     this.backfillEmbeddingBatches().catch((error) => {
       log.error('Agent memory embedding backfill failed:', error);

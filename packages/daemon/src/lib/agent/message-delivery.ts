@@ -152,6 +152,7 @@ export function asMessageDeliveryPayload(
 export type DeliveryContent = string | MessageContent[];
 
 export type DeliveryLoadResult = {
+  inputKind?: string;
   content: DeliveryContent;
   sendStatus: string;
   neoBatch?: true;
@@ -168,7 +169,12 @@ export type DeliveryOutcome =
   | {
       outcome: 'blocked';
       retryAt: number;
-      reason?: 'sdk_resume_choice' | 'context_clear_boundary' | 'limit_recovery';
+      reason?:
+        | 'sdk_resume_choice'
+        | 'context_clear_boundary'
+        | 'limit_recovery'
+        | 'query_failure_cooldown'
+        | 'no_provider';
     };
 
 export type DriveTurnOutcome = DeliveryOutcome;
@@ -233,12 +239,6 @@ export function signalDeliveryConsumed(sessionId: string, messageUuid: string): 
   if (!waiters) return;
   deliveryConsumptionWaiters.delete(consumptionKey(sessionId, messageUuid));
   for (const resolve of waiters) resolve();
-}
-
-export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 12 * 60 * 1000;
-
-export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {
-  return provider === 'acp' ? ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS : undefined;
 }
 
 export function deliveryConsumptionTimeoutOrDefault(timeoutMs?: number): number {

@@ -1,3 +1,4 @@
+import '../../../packages/daemon/tests/unit/helpers/register-space-schema.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -125,7 +126,7 @@ try {
     web.use('/*', serveStatic({ root: dist }));
     web.get('*', async c => c.html(await Bun.file(join(dist, 'index.html')).text()));
     preview = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: async (request, server) => {
-      const refused = app.guardRequest(request);
+      const refused = await app.guardRequest(request);
       if (refused) return refused;
       if (new URL(request.url).pathname === '/ws') {
         const device = await app.authenticateUpgrade(request, server.requestIP(request)?.address ?? null);

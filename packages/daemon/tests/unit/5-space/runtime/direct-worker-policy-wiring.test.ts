@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
-import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
-import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/space/runtime/space-mcp-session-policy';
+import { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service';
+import { createSpaceSessionPort } from '../../../../../space/src/runtime/space-session-port';
+import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/session-resolution/space-mcp-session-policy';
 import { createDatabaseDirectTaskWorkerResolver } from '../../../../src/lib/tasks/direct-task-worker-identity';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
 
@@ -37,6 +40,17 @@ beforeEach(() => {
   attempts.claim(taskId, 'attempt', 'direct');
 });
 afterEach(() => db.close());
+
+function sessionDb() {
+  return {
+    spaceSessions: createSpaceSessionPort(
+      db,
+      tasks,
+      new NodeExecutionRepository(db),
+      new SpaceLongHorizonAgentRepository(db)
+    ),
+  };
+}
 
 function policy() {
   return resolveSpaceMcpSessionPolicy(sessions.getSession('direct')!, {
@@ -154,7 +168,7 @@ test.each([
       const session = sessions.getSession('direct')!;
       const target = {
         session: { ...session, config: { ...session.config, provider } },
-        db: { getDatabase: () => db },
+        db: sessionDb(),
         queryRunner: { start },
       } as unknown as AgentSession;
       await expect(AgentSession.prototype.startStreamingQuery.call(target)).rejects.toThrow(
@@ -169,7 +183,7 @@ test('ordinary query startup still invokes its existing runner', async () => {
   const start = mock(async () => {});
   const target = {
     session: createTestSession('ordinary'),
-    db: { getDatabase: () => db },
+    db: sessionDb(),
     queryRunner: { start },
   } as unknown as AgentSession;
   await AgentSession.prototype.startStreamingQuery.call(target);

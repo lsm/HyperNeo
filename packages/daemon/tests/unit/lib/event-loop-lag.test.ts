@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { startEventLoopLagLog } from '../../../src/lib/event-loop-lag';
+import { rpcActivityName, startEventLoopLagLog } from '../../../src/lib/event-loop-lag';
 import {
   SQLiteQueryObserver,
   takeSlowestQuery,
@@ -39,6 +39,21 @@ describe('startEventLoopLagLog startup', () => {
     await settle();
     stop();
     expect(lines).toEqual(['[Daemon] Event loop blocked for 1500ms']);
+  });
+});
+
+describe('rpcActivityName', () => {
+  test('names the operation on an operation.invoke request only', () => {
+    const data = { name: 'neo.snapshot', input: {} };
+    expect(rpcActivityName({ type: 'REQ', method: 'operation.invoke', data }, 'in')).toBe(
+      'rpc.in:operation.invoke:neo.snapshot'
+    );
+    expect(rpcActivityName({ type: 'RSP', method: 'operation.invoke', data }, 'out')).toBe(
+      'rpc.out:operation.invoke'
+    );
+    expect(rpcActivityName({ type: 'REQ', method: 'system.health', data }, 'in')).toBe(
+      'rpc.in:system.health'
+    );
   });
 });
 

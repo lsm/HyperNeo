@@ -1,9 +1,10 @@
+import { seedPrOwner } from './seed-pr-owner.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
@@ -43,7 +44,7 @@ async function rpc(name: string, input: unknown) {
 }
 function pack() {
   const db = sql();
-  return createCodingPack({ database: () => db, readPrs: async () => [], readClaudeOwners: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db), prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo], prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) }, readLedgerRepo: async (_repo, previous) => {
+  return createCodingPack({ database: () => db, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db), prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo], prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) }, readLedgerRepo: async (_repo, previous) => {
     if (phase === 'rate' && previous?.retryAt) return { error: 'GitHub acquisition cooldown', retryAt: reset, quota: { ...previous, deferred: true } };
     reads++;
     if (phase === 'rate') return { error: 'HTTP 429 synthetic-private-diagnostic', retryAt: reset, quota: { status: 429, resource: 'graphql', remaining: 0, resetAt: reset, requestId: 'synthetic', retryAfterMs: null, credentialBucket: 'synthetic:1', retryAt: reset } };
@@ -57,7 +58,7 @@ try {
   neo!.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
   for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'synthetic-reviewer', watchedRepos: [repo] })) assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: key === 'watchedRepos' ? { kind: 'global', key: '' } : { kind: 'repo', key: repo }, key, value })).ok, true);
   const coding = pack();
-  await coding.observeSessions!([{ ref: { adapter: 'hyperneo', id: owner }, status: 'running', lastActivityAt: start, remotes: [], branches: [], openedPrs: [`https://github.com/${repo}/pull/1`] }], start);
+  seedPrOwner(sql(), repo, { adapter: 'hyperneo', id: owner });
   await coding.sweep!(start); assert.equal(jobs().length, 0);
   await new CodingPrLedgerRepository(sql()).write('recordAlias', alias, repo);
   assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'watchedRepos', value: [alias] })).ok, true);

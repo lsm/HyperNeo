@@ -1,0 +1,23 @@
+{
+  "publicRpcCharacterization": {
+    "replies": [
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": true
+      },
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": false
+      }
+    ],
+    "mainStatementRuns": 4,
+    "watchedRows": 2,
+    "sourceWatchedAndSnapshotStayAligned": true,
+    "creationAndSharedCommandTimesPreserved": true
+  },
+  "mainThreadMovementClaim": false,
+  "constructorFreeQueryOnlyContract": true,
+  "pass": true
+}

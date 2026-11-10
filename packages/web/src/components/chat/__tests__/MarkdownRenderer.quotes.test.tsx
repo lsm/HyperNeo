@@ -10,18 +10,26 @@ afterEach(() => {
   locale.value = 'en';
 });
 
-it('localizes the quote control and feedback without changing the copied text', async () => {
+it('uses the same copy control and feedback as code blocks while localizing the quote label', async () => {
   vi.mocked(copyToClipboard).mockResolvedValue(true);
   locale.value = 'zh-Hans';
-  const app = render(<MarkdownRenderer class="neo-markdown" content={'> Original **text**.'} />);
+  const app = render(
+    <MarkdownRenderer class="neo-markdown" content={'> Original **text**.\n\n```text\nCode\n```'} />
+  );
   await waitFor(() => expect(app.getByRole('button', { name: '复制引用' })).toBeTruthy());
-  fireEvent.click(app.getByRole('button', { name: '复制引用' }));
+  const quote = app.getByRole('button', { name: '复制引用' });
+  const code = app.getByRole('button', { name: 'Copy code' });
+  expect(quote.className).toBe(code.className);
+  expect(quote.parentElement?.className).toBe(code.parentElement?.className);
+  fireEvent.click(quote);
   await waitFor(() => expect(copyToClipboard).toHaveBeenLastCalledWith('Original text.'));
-  await waitFor(() => expect(app.getByText('已复制')).toBeTruthy());
-  expect(app.getByRole('button', { name: '复制引用' }).getAttribute('title')).toBe('已复制');
+  await waitFor(() => expect(quote.getAttribute('title')).toBe('Copied!'));
+  expect(quote.textContent).toBe(code.textContent);
+  expect(quote.querySelector('[aria-live]')).toBeNull();
   locale.value = 'en';
-  await waitFor(() => expect(app.getByRole('button', { name: 'Copy quote' })).toBeTruthy());
-  expect(app.getByText('Copied')).toBeTruthy();
+  await waitFor(() => expect(app.getByRole('button', { name: 'Copy quote' })).toBeTruthy(), {
+    timeout: 2000,
+  });
   fireEvent.click(app.getByRole('button', { name: 'Copy quote' }));
   await waitFor(() => expect(copyToClipboard).toHaveBeenLastCalledWith('Original text.'));
 });
@@ -92,16 +100,17 @@ it('keeps line breaks, lists, entities, and code without copying other controls'
   );
 });
 
-it('shows Copied only after success and clears the feedback', async () => {
+it('shows the shared Copied title only after success and clears it', async () => {
   const copy = vi.mocked(copyToClipboard).mockResolvedValueOnce(false).mockResolvedValue(true);
   const app = render(<MarkdownRenderer class="neo-markdown" content={'> Copy this'} />);
   await waitFor(() => expect(app.getByRole('button', { name: 'Copy quote' })).toBeTruthy());
-  fireEvent.click(app.getByRole('button', { name: 'Copy quote' }));
+  const button = app.getByRole('button', { name: 'Copy quote' });
+  fireEvent.click(button);
   await waitFor(() => expect(copy).toHaveBeenLastCalledWith('Copy this'));
-  expect(app.queryByText('Copied')).toBeNull();
-  fireEvent.click(app.getByRole('button', { name: 'Copy quote' }));
-  await waitFor(() => expect(app.getByText('Copied')).toBeTruthy());
-  await waitFor(() => expect(app.queryByText('Copied')).toBeNull(), { timeout: 2000 });
+  expect(button.getAttribute('title')).toBe('Copy quote');
+  fireEvent.click(button);
+  await waitFor(() => expect(button.getAttribute('title')).toBe('Copied!'));
+  await waitFor(() => expect(button.getAttribute('title')).toBe('Copy quote'), { timeout: 2000 });
 });
 
 it('copies each Neo quote as plain text with paragraphs and nested quotes', async () => {
@@ -123,7 +132,7 @@ it('copies each Neo quote as plain text with paragraphs and nested quotes', asyn
       'Hello friend and team.\n\nSecond paragraph.\n\nNested reply.'
     )
   );
-  await waitFor(() => expect(buttons[0].textContent).toContain('Copied'));
+  await waitFor(() => expect(buttons[0].getAttribute('title')).toBe('Copied!'));
   fireEvent.click(buttons[1]);
   await waitFor(() => expect(copyToClipboard).toHaveBeenLastCalledWith('Nested reply.'));
   fireEvent.click(buttons[2]);

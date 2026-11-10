@@ -121,6 +121,7 @@ export type NeoWorkerPermissionMode = (typeof NEO_WORKER_PERMISSION_MODES)[numbe
 export type NeoRuleSource = { sessionId: string; messageId: string } | { questionId: string };
 
 export interface NeoSettings {
+  relaySenders?: { sender: string; name: string }[];
   standingRules?: string[];
   standingRuleSources?: Record<string, NeoRuleSource>;
   preferences?: NeoModelPreference;
@@ -144,6 +145,7 @@ export function neoWorkerPermissionMode(settings?: NeoSettings): NeoWorkerPermis
   return mode && NEO_WORKER_PERMISSION_MODES.includes(mode) ? mode : 'auto';
 }
 
+export const NEO_STANDING_RULES_MAX = 20;
 export const NEO_STANDING_RULE_MAX_CHARS = 500;
 
 export function neoStandingRules(settings?: NeoSettings): string[] {
@@ -166,7 +168,21 @@ export type LanguageSetting = 'system' | 'en' | 'zh-Hans';
 export const WORKER_SANDBOX_MODES = ['off', 'always', 'on-demand'] as const;
 export type WorkerSandboxMode = (typeof WORKER_SANDBOX_MODES)[number];
 
+export interface DriverHealth {
+  status: 'ok' | 'degraded' | 'unavailable';
+  reason: string;
+  clientVersions: Record<string, string>;
+  checkedAt: number;
+  unverifiedVersion: boolean;
+  verifiedVersions?: Record<string, string>;
+  verifiedAt?: number;
+  verifiedJourney?: string;
+  notifiedSignature?: string;
+  pendingNotices?: { id: string; kind: 'health' | 'version'; signature: string; text: string }[];
+}
+
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
+  driverHealth?: Record<string, DriverHealth>;
   workerSandbox?: WorkerSandboxMode;
   toolSelectionDefaults?: SessionToolSelection;
 
@@ -206,6 +222,7 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   neo?: NeoSettings;
 
   workFeedScope?: 'all' | 'own';
+  codexCuAutoReap?: boolean;
 }
 
 export interface SessionSettings extends GlobalSettings {

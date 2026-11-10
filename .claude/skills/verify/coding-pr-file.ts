@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -66,7 +67,7 @@ try {
   assert.equal(Buffer.from(read.data, 'base64').toString(), content);
   const metadata = await call('artifact.file.get', { artifactId: captured.artifact.artifactId });
   assert.equal(metadata.metadata.revision.commitSha, sha);
-  const question = await call('neo.question.ask', { askId: 'synthetic-ask', kind: 'yesno', text: 'The decision changed; review the complete document?', noLabel: 'Keep', yesLabel: 'Approve', artifacts: [captured.artifact] });
+  const question = await call('neo.question.ask', { retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'question-no-longer-needed') } }, askId: 'synthetic-ask', kind: 'yesno', text: 'The decision changed; review the complete document?', noLabel: 'Keep', yesLabel: 'Approve', artifacts: [captured.artifact] });
   assert(question.ok, JSON.stringify(question));
   assert.deepEqual(question.question.artifacts, [captured.artifact]);
   for (const changes of [{ headSha: 'c'.repeat(40) }, { path: 'not-in-pr.md' }]) {

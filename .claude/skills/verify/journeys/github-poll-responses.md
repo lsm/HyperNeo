@@ -19,11 +19,10 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
 ```
 
 The fixture follows two synthetic PRs and invokes the real public `/ws`
-`space.github.pollOnce` RPC twice. It seeds persisted ETags for the conditional
-repo. Its gh returns complete HTTP 304 headers with exit code 1. The large repo
-returns a 100-comment, 1.67 MB page; the next page is empty. Each comment has a
-different ID and its full synthetic body. Inspect `evidence/responses.json` and
-`evidence/requests.jsonl`:
+`space.github.pollOnce` RPC twice. It seeds persisted ETags for the conditional repo. Its
+gh returns complete HTTP 304 headers with exit code 1. The large repo returns a
+100-comment, 1.67 MB page; the next page is empty. Each comment has a different ID and its
+full synthetic body.
 
 - Both repositories acquire a successful poll timestamp. HTTP 304 remains a
   not-modified result with its metadata, not an error or a fresh empty document.
@@ -43,9 +42,8 @@ page is refused with zero stored comments. Both failures are observed through
 the same RPC door before the fix. An earlier fixture without active subscriptions
 is inconclusive and is not the reproduction evidence.
 
-The helper stops the job processor before seeding and closes its WebSocket and
-daemon in finally. Keep the JSON evidence outside the worktree. Model consumption
-and Deno runtime execution are not verified here. This is a transport correction,
-not a ledger consolidation or a claim of reduced live API reads. After deployment,
-check the build commit and normal scheduled poll timestamps read-only; never
-invoke pollOnce on the live daemon or inject an event to manufacture freshness.
+The helper stops the job processor before seeding and closes its WebSocket and daemon in
+finally. Keep the JSON evidence outside the worktree. This is a transport correction, not
+a ledger consolidation or a claim of reduced live API reads. After deployment, check the
+build commit and normal scheduled poll timestamps read-only; never invoke pollOnce on the
+live daemon or inject an event to manufacture freshness.

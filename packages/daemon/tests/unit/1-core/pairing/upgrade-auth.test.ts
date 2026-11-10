@@ -26,7 +26,7 @@ function setup() {
     await new Promise((resolve) => setTimeout(resolve, 0));
     return identity;
   };
-  const pairDevice = (kind: 'human' | 'relay' | 'daemon', name: string) => {
+  const pairDevice = (kind: 'human' | 'relay' | 'daemon' | 'agent', name: string) => {
     const made = repo.createCode(kind, null, true, now);
     return repo.redeem(made.code, name, now)!;
   };
@@ -42,7 +42,32 @@ function setup() {
   return { db, repo, authenticate, pairDevice, upgrade, unpaired, tick: () => (now += 1_000) };
 }
 
-describe('upgrade authentication (report only)', () => {
+describe('upgrade authentication', () => {
+  test('agent devices authenticate read pages only when the reader opts in', async () => {
+    const { db, repo, authenticate } = setup();
+    const made = repo.createCode('agent', null, true, 1_000);
+    const agent = repo.redeem(made.code, 'Remote reader', 1_000)!;
+    const headers = { authorization: `Bearer ${agent.credential}` };
+    const gateway = new DbGateway(':memory:', db);
+    const readAuth = createUpgradeAuthenticator({
+      db: () => gateway,
+      now: () => 1_000,
+      agentRead: true,
+    });
+    try {
+      for (const path of ['/ws', '/', '/pair', '/neo-peer/message']) {
+        const request = new Request(`http://localhost${path}`, { headers });
+        expect(await authenticate(request, null)).toBeNull();
+        expect(await readAuth(request, null)).toBeNull();
+      }
+      const request = new Request('http://localhost/ask/card.md', { headers });
+      expect(await authenticate(request, null)).toBeNull();
+      expect(await readAuth(request, null)).toEqual({ deviceId: agent.device.id, kind: 'agent' });
+      expect(await readAuth(new Request(request, { method: 'POST' }), null)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
   test('a paired device is recognised by its Bearer header or cookie and its last sighting is kept', async () => {
     const { db, authenticate, pairDevice, upgrade, unpaired } = setup();
     const phone = pairDevice('human', 'Phone');
@@ -73,7 +98,7 @@ describe('upgrade authentication (report only)', () => {
     db.close();
   });
 
-  test('an unpaired connection is accepted as unknown and recorded once per client, without any secret', async () => {
+  test('an unpaired connection has no identity and is recorded once per client, without any secret', async () => {
     const { db, authenticate, upgrade, unpaired, tick } = setup();
     expect(await authenticate(upgrade({}), '192.168.1.20')).toBeNull();
     tick();
@@ -188,7 +213,7 @@ describe('upgrade authentication (report only)', () => {
     db.close();
   });
 
-  test('a storage failure never refuses the connection', async () => {
+  test('a storage failure never authenticates the connection', async () => {
     const failing = (run: () => Promise<never>) =>
       createUpgradeAuthenticator({ db: () => ({ run }) as unknown as DbGateway, now: () => 1 });
     const locked = () => Promise.reject(new Error('database is locked'));

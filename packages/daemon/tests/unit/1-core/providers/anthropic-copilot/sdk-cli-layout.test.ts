@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'bun:test';
+import { COPILOT_CLI_VERSION } from '../../../../../src/lib/drivers/copilot-worker.ts';
 
 describe('@github/copilot-sdk bundled runtime layout', () => {
   it('ships the platform runtime packages the SDK client spawns by default', () => {
@@ -9,9 +10,11 @@ describe('@github/copilot-sdk bundled runtime layout', () => {
     const sdkRoot = dirname(dirname(fileURLToPath(entryUrl)));
     const meta = JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf-8')) as {
       name?: string;
+      copilotCliVersion?: string;
       optionalDependencies?: Record<string, string>;
     };
     expect(meta.name).toBe('@github/copilot-sdk');
+    expect(meta.copilotCliVersion).toBe(COPILOT_CLI_VERSION);
 
     const expectedPlatforms = [
       'darwin-arm64',

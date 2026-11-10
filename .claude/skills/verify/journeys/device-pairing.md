@@ -18,6 +18,6 @@ End state:
   until the paired laptop calls `device.pair.approve` (its Bearer credential; since S3 only a paired human device can Allow), then `200`; the used code then answers `401`.
 - Bad codes: `401` until 5 failures in the minute (the used-code retry counts),
   then `429`; `hyperneo pair --reset-lockout` reopens pairing.
-- `paired_devices` holds `Laptop:human, Phone:human`; the raw credential appears
+- `paired_devices` holds `Local tools:human, Local agent reader:agent, Laptop:human, Phone:human`; the raw credential appears
   0 times in the database dump, and the pairing code 0 times in the daemon log.
-- An unpaired WebSocket is still served (nothing is enforced in S1).
+- An unpaired WebSocket is refused before upgrade. See ws-credential-admission.md.

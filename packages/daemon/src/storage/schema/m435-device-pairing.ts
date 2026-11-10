@@ -5,7 +5,7 @@ export function runMigration435(db: Database): void {
     CREATE TABLE IF NOT EXISTS paired_devices (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK (kind IN ('human', 'relay', 'daemon')),
+      kind TEXT NOT NULL CHECK (kind IN ('human', 'relay', 'daemon', 'agent')),
       secret_hash TEXT NOT NULL UNIQUE,
       created_at INTEGER NOT NULL,
       last_seen_at INTEGER,
@@ -17,7 +17,7 @@ export function runMigration435(db: Database): void {
     CREATE TABLE IF NOT EXISTS pairing_codes (
       id TEXT PRIMARY KEY,
       code_hash TEXT NOT NULL UNIQUE,
-      kind TEXT NOT NULL CHECK (kind IN ('human', 'relay', 'daemon')),
+      kind TEXT NOT NULL CHECK (kind IN ('human', 'relay', 'daemon', 'agent')),
       name TEXT,
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,

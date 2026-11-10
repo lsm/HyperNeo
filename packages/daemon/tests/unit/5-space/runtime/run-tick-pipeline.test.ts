@@ -32,15 +32,12 @@ import {
   spawnPendingExecutions,
 } from '../../../../src/lib/workflows/run-tick-pipeline.ts';
 import type {
+  AdmitSpawnExecutionOutcome,
+  RunTickContext,
   RunTickCtx,
   SpaceWorkflowRunTickDeps,
   SpaceWorkflowRunTickOutcome,
 } from '../../../../src/lib/workflows/run-tick-contract.ts';
-import type {
-  AdmitSpawnExecutionOutcome,
-  RunTickContext,
-} from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
 const RUN_ID = 'run-1';
 const SPACE_ID = 'space-1';
@@ -124,7 +121,6 @@ function makeDeps(state: Partial<DepsState> = {}): RecordedDeps {
   const calls: string[] = [];
   const blockedReasons: string[] = [];
   const spawnedArgs: RecordedDeps['spawnedArgs'] = [];
-  const tam = { id: 'tam' } as TaskAgentManager;
   const deps: SpaceWorkflowRunTickDeps = {
     getRun: () => {
       calls.push('getRun');
@@ -152,7 +148,6 @@ function makeDeps(state: Partial<DepsState> = {}): RecordedDeps {
         ? { action: 'halted' }
         : {
             action: 'continue',
-            tam,
             blockedByCrash: false,
             preTickPendingIds: new Set(['exec-pending']),
           };
@@ -188,7 +183,6 @@ function makeDeps(state: Partial<DepsState> = {}): RecordedDeps {
       _meta,
       _run,
       pending,
-      _tam,
       blockedByCrash
     ) => {
       calls.push('spawnPendingExecutions');
@@ -409,7 +403,6 @@ describe('spaceWorkflowRunTick stages', () => {
       space: deps.space,
     });
     expect(ctx.recovery).toEqual({
-      tam: expect.any(Object),
       blockedByCrash: false,
       preTickPendingIds: new Set(['exec-pending']),
     });
@@ -461,7 +454,6 @@ describe('spaceWorkflowRunTick stages', () => {
   test('promotePendingExecutionsWithLiveSessions uses the recovery thread', () => {
     const deps = makeDeps();
     const recovery = {
-      tam: {} as never,
       blockedByCrash: false,
       preTickPendingIds: new Set(['exec-pending']),
     };
@@ -498,7 +490,6 @@ describe('spaceWorkflowRunTick stages', () => {
       run: deps.run,
       space: deps.space,
       recovery: {
-        tam: {} as never,
         blockedByCrash: true,
         preTickPendingIds: new Set<string>(),
       },

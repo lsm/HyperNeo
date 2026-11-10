@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -26,7 +28,7 @@ try {
   const spaces = new SpaceRepository(raw);
   const space = spaces.createSpace({ slug: 'schedule-fixture', name: 'Schedules', workspacePath: join(run, 'workspace') });
   const other = spaces.createSpace({ slug: 'other-fixture', name: 'Other', workspacePath: join(run, 'other') });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const rpc = (method: string, data: unknown) => new Promise<{ schedule: TaskSchedule }>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error(`RPC timeout: ${method}`)), 15000);

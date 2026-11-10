@@ -164,7 +164,6 @@ describe('enforce-context-budget pipeline', () => {
 
   it.each([
     ['native provider', { providerId: 'anthropic' }],
-    ['acp provider', { providerId: 'acp' }],
     ['missing provider', { providerId: undefined }],
     ['limit recovery pending', { limitRecoveryPending: true }],
     ['user question outstanding', { processingStatus: 'waiting_for_input' }],

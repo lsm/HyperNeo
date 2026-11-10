@@ -1,3 +1,5 @@
+import { createWorkerNameSource } from '../../../../src/lib/drivers/worker-names.ts';
+import { planNeoWorkerName } from '../../../../src/lib/neo/worker-name.ts';
 import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -7,7 +9,7 @@ import {
   spaceAgentWorkStatus,
   spaceTaskWorkStatus,
   spaceWorkRefForSession,
-} from '../../../../src/lib/drivers/space-adapter';
+} from '../../../../../space/src/drivers/space-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
@@ -140,6 +142,28 @@ describe('space adapter against the space tables', () => {
   });
   afterEach(() => db.close());
 
+  test('Space naming compares task names without their display numbers', async () => {
+    db.prepare('UPDATE space_tasks SET title = ? WHERE id = ?').run('HyperNeo dev-neokai 1', 't1');
+    const adapter = createSpaceAdapter({
+      readTurnEnds: async () => [],
+      db: () => db,
+      machine: 'imac',
+      searchChats: async () => [],
+      tasks: {
+        create: async () => ({ reason: 'unused' }),
+        cancel: async () => ({ reason: 'unused' }),
+        message: async () => ({ reason: 'unused' }),
+        messageAgent: async () => ({ reason: 'unused' }),
+      },
+    });
+    const [group] = await adapter.find({ includeClosed: false, limit: 20 });
+    expect(group!.work[0]!.title).toBe('#1 HyperNeo dev-neokai 1');
+    const source = createWorkerNameSource(() => [adapter], group!.place);
+    const naming = await source('space', group!.place);
+    expect(naming.taken).toContain('HyperNeo dev-neokai 1');
+    expect(planNeoWorkerName('space', naming.place, naming.taken)).toBe('HyperNeo dev-neokai 2');
+  });
+
   test('keeps every open task when closed tasks are added', async () => {
     const insert = db.prepare(`INSERT INTO space_tasks VALUES (?, 'sp1', ?, 'closed', 'done', ?)`);
     for (let n = 0; n < 600; n++) insert.run(`c${n}`, 100 + n, 1000 + n);
@@ -243,7 +267,7 @@ describe('space adapter against the space tables', () => {
         'Fix parser'
       );
     beforeEach(() => {
-      db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
+      db.exec(`CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, message_type TEXT, sdk_message TEXT,
         timestamp TEXT, parent_tool_use_id TEXT, send_status TEXT);
         INSERT INTO sessions VALUES ('s1', '{"status":"idle"}', '2026-10-14T10:00:00.020Z'),
           ('s2', '{"status":"idle"}', '2026-10-14T10:00:00.030Z');

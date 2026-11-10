@@ -1,7 +1,9 @@
 ## In-app previews: compatibility pins (slice 1)
 
-This tests-only slice preserves existing chat reference text, immutable handoff
-bytes, and mutable workflow facts. It does not expose `artifact.file.*` yet.
+This journey preserves existing chat reference text, immutable handoff bytes
+and mutable workflow facts. It uses no local registration API; historical
+attachment readers are verified separately. Authorization/path assertions use
+the surviving policy primitives, not the removed capture-policy pipeline.
 Run the focused `handoff-artifacts.test.ts`, `artifact-operations.test.ts` and
 web `MarkdownRenderer.test.tsx` suites. The web suite runs headlessly in happy-dom
 against the actual renderer: repo/PR anchors stay intact, inline/fenced paths stay
@@ -27,5 +29,5 @@ its source under a renamed fixture directory, then reads all chunks through the
 real daemon `handoff.read` operation door. Both runs require identical full bytes,
 size and SHA-256 and refuse a foreign daemon reference. Evidence is retained in
 `evidence/preview-pin-*.json`. This proves source-path independence and process
-restart, not the future registration door, scoped preview authorization, a removed
+restart, not the retired local registration door, scoped preview authorization, a removed
 Git worktree, iOS or HTML containment. No credentials, provider/model or live DB.

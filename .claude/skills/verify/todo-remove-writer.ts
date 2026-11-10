@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -25,10 +27,10 @@ globalThis.fetch = (() => { throw new Error('External HTTP is disabled'); }) as 
 const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 assert.notEqual(app.server.port, 8399);
 const hub = new MessageHub({ defaultSessionId: 'global' });
-const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws` });
+const transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws` });
 hub.registerTransport(transport);
 const observer = new MessageHub({ defaultSessionId: 'global' });
-const observerTransport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws` });
+const observerTransport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws` });
 observer.registerTransport(observerTransport);
 let observing = false, notifications = 0, internalNotifications = 0;
 let refreshed: Promise<NeoSnapshot> | undefined;
@@ -58,7 +60,7 @@ const visible = async (id: string) => (await hub.request<NeoSnapshot>('operation
 const root = 'neo:10000000-0000-4000-8000-000000008950';
 const add = (id: string) => {
   todos.openAsk({ id, projectId: null, sessionId: root, originMessageId: null, title: id, request: 'Atomic finalization', createdAt: 1 });
-  const todo = todos.addTodo(id, id, { title: id, doneWhen: 'Observed outcome', check: null, instruction: 'Synthetic work', named: null }, 1);
+  const todo = todos.addTodo(id, id, { approvedAt: 1, title: id, doneWhen: 'Observed outcome', check: null, instruction: 'Synthetic work', named: null }, 1);
   todos.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
   todos.askQuestion(`${id}-start`, id, { text: 'Start?', kind: 'start', options: null, multiple: false, yesLabel: null, noLabel: null, startTodos: [id] }, 3);
 };

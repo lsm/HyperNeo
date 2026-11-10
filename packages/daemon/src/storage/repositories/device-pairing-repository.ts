@@ -2,10 +2,20 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { pairingApproveWrite } from './pairing-approve-write.ts';
+import {
+  pairingApproveWrite,
+  pairingDenyWrite,
+  pairingTerminalApprovalWrites,
+} from './pairing-approve-write.ts';
+import type { PairApprovalRequest } from './pairing-approve-write.ts';
 import { pairingRedeemWrite } from './pairing-redeem-write.ts';
+import type { PairRequest, PairRequestRecord } from '../../lib/pairing/pair-request.ts';
+import { pairingCodeCreateWrites, type PairingCodeDraft } from './pairing-code-create-write.ts';
+import type { PairingCodeCaller } from './pairing-code-create-write.ts';
+import { pairingRevokeWrites } from './pairing-revoke-write.ts';
+import { pairingStateReads } from './pairing-state-read.ts';
 
-export type DeviceKind = 'human' | 'relay' | 'daemon';
+export type DeviceKind = 'human' | 'relay' | 'daemon' | 'agent';
 
 export interface PairedDevice {
   id: string;
@@ -20,7 +30,51 @@ export const PAIRING_CODE_TTL_MS = 10 * 60_000;
 export const UNPAIRED_FIELD_MAX = 255;
 export const UNPAIRED_ROW_CAP = 500;
 
+type SqlRow<T> = { [K in keyof T]: T[K] extends boolean ? number : T[K] } | null;
+
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+
+function insertDevice(db: Database, device: PairedDevice, credential: string, reuse = false): void {
+  db.prepare(
+    `INSERT ${reuse ? 'OR IGNORE ' : ''}INTO paired_devices (id, name, kind, secret_hash, created_at) VALUES (?, ?, ?, ?, ?)`
+  ).run(device.id, device.name, device.kind, hash(credential), device.createdAt);
+}
+
+export const enrollLocalDevice = defineDbOp({
+  name: 'pairing.enrollLocalDevice',
+  mode: 'write',
+  run: (
+    db: Database,
+    {
+      credential,
+      now,
+      kind = 'human',
+    }: { credential: string; now: number; kind?: 'human' | 'agent' }
+  ): void => {
+    insertDevice(
+      db,
+      {
+        id: `${kind === 'agent' ? 'agent-read' : 'local-rpc'}:${randomUUID()}`,
+        name: kind === 'agent' ? 'Local agent reader' : 'Local tools',
+        kind,
+        createdAt: now,
+      },
+      credential,
+      true
+    );
+  },
+});
+
+export const deviceKindByCredential = defineDbOp({
+  name: 'pairing.deviceKindByCredential',
+  mode: 'read',
+  run: (db: Database, credential: string): DeviceKind | null =>
+    (
+      db.prepare('SELECT kind FROM paired_devices WHERE secret_hash = ?').get(hash(credential)) as {
+        kind: DeviceKind;
+      } | null
+    )?.kind ?? null,
+});
 
 export function normalizePairingCode(code: string): string {
   return code.replace(/[\s-]/g, '').toUpperCase();
@@ -123,6 +177,24 @@ export const recordWouldRefuse = defineDbOp({
 export class DevicePairingRepository {
   constructor(private readonly db: Database) {}
 
+  get closeSignal(): AbortSignal {
+    return gatewayFor(this.db).closeSignal;
+  }
+
+  isActiveDeviceAsync(id: string) {
+    return gatewayFor(this.db).call(pairingStateReads, 'isActiveDevice', id);
+  }
+
+  revokeAsync(id: string, caller: PairingCodeCaller, now: number) {
+    const { source, principal, device } = caller;
+    const actor = {
+      source,
+      principal,
+      device: device && { deviceId: device.deviceId, kind: device.kind },
+    };
+    return gatewayFor(this.db).call(pairingRevokeWrites, 'revoke', id, actor, now);
+  }
+
   listWouldRefuse(): {
     reason: 'host_not_allowed' | 'origin_not_allowed';
     kind: 'http' | 'ws' | 'preflight';
@@ -203,42 +275,107 @@ export class DevicePairingRepository {
   countDevices(): { all: number; humans: number } {
     return this.db
       .prepare(
-        'SELECT COUNT(*) AS "all", COUNT(*) FILTER (WHERE kind = \'human\' AND revoked_at IS NULL) AS humans FROM paired_devices'
+        "SELECT COUNT(*) AS \"all\", COUNT(*) FILTER (WHERE kind = 'human' AND revoked_at IS NULL) AS humans FROM paired_devices WHERE id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
       )
       .get() as { all: number; humans: number };
+  }
+
+  createCodeAsync(draft: PairingCodeDraft) {
+    return gatewayFor(this.db).call(pairingCodeCreateWrites, 'create', draft);
   }
 
   createCode(
     kind: DeviceKind,
     name: string | null,
     approved: boolean,
-    now: number
+    now: number,
+    twoWay = false
   ): { id: string; code: string; expiresAt: number } {
     const id = randomUUID();
     const code = Array.from(randomBytes(CODE_LENGTH), (byte) => CODE_ALPHABET[byte % 32]).join('');
     const expiresAt = now + PAIRING_CODE_TTL_MS;
     this.db
       .prepare(
-        `INSERT INTO pairing_codes (id, code_hash, kind, name, created_at, expires_at, approved_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO pairing_codes (id, code_hash, kind, name, created_at, expires_at, approved_at, two_way)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, hash(code), kind, name, now, expiresAt, approved ? now : null);
+      .run(id, hash(code), kind, name, now, expiresAt, approved ? now : null, twoWay ? 1 : 0);
     return { id, code, expiresAt };
   }
 
-  listPending(
-    now: number
-  ): { id: string; kind: DeviceKind; name: string | null; expiresAt: number }[] {
-    return this.db
+  listPending(now: number): {
+    id: string;
+    kind: DeviceKind;
+    name: string | null;
+    requestedName: string | null;
+    expiresAt: number;
+    twoWay: boolean;
+    phoneConfirmed: boolean;
+  }[] {
+    const rows = this.db
       .prepare(
-        `SELECT id, kind, name, expires_at AS expiresAt FROM pairing_codes
+        `SELECT id, kind, name, requested_name AS requestedName, expires_at AS expiresAt,
+           requested_by AS requestedBy, two_way AS twoWay FROM pairing_codes
          WHERE approved_at IS NULL AND used_at IS NULL AND expires_at > ? ORDER BY created_at`
       )
-      .all(now) as { id: string; kind: DeviceKind; name: string | null; expiresAt: number }[];
+      .all(now) as {
+      id: string;
+      kind: DeviceKind;
+      name: string | null;
+      requestedName: string | null;
+      expiresAt: number;
+      requestedBy: string | null;
+      twoWay: number;
+    }[];
+    return rows.map(({ requestedBy, twoWay, ...row }) => ({
+      ...row,
+      twoWay: !!twoWay,
+      phoneConfirmed: !!twoWay && !!requestedBy,
+    }));
   }
 
-  approveAsync(codeId: string, deviceId: string, now: number) {
-    return gatewayFor(this.db).run(pairingApproveWrite, { codeId, deviceId, now });
+  pendingCode(
+    id: string,
+    now: number
+  ): { twoWay: boolean; codeHash: string; requestedBy: string | null } | null {
+    const row = this.db
+      .prepare(
+        `SELECT two_way AS twoWay, code_hash AS codeHash, requested_by AS requestedBy
+         FROM pairing_codes WHERE id = ? AND approved_at IS NULL AND used_at IS NULL AND expires_at > ?`
+      )
+      .get(id, now) as SqlRow<{ twoWay: boolean; codeHash: string; requestedBy: string | null }>;
+    return row && { ...row, twoWay: !!row.twoWay };
+  }
+
+  approveAsync(request: PairApprovalRequest) {
+    return gatewayFor(this.db).run(pairingApproveWrite, request);
+  }
+
+  terminalApproval(): boolean {
+    const row = this.db
+      .prepare('SELECT terminal_approval AS enabled FROM pairing_policy WHERE id = 1')
+      .get() as { enabled: number } | null;
+    return !row || row.enabled === 1;
+  }
+
+  terminalMayApprove(): boolean {
+    return this.countDevices().all === 0 || this.humanRecoveryOpen() || this.terminalApproval();
+  }
+
+  setTerminalApproval(enabled: boolean, changedBy: string, now: number): boolean {
+    const stored = this.db
+      .prepare(
+        `INSERT INTO pairing_policy (id, terminal_approval, changed_by, changed_at) VALUES (1, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET terminal_approval = excluded.terminal_approval,
+           changed_by = excluded.changed_by, changed_at = excluded.changed_at
+         RETURNING terminal_approval AS enabled`
+      )
+      .get(enabled ? 1 : 0, changedBy, now) as { enabled: number };
+    return stored.enabled === 1;
+  }
+
+  setTerminalApprovalAsync(enabled: boolean, changedBy: string, now: number) {
+    return gatewayFor(this.db).call(pairingTerminalApprovalWrites, 'set', enabled, changedBy, now);
   }
 
   approve(id: string, now: number): boolean {
@@ -252,6 +389,21 @@ export class DevicePairingRepository {
     );
   }
 
+  denyAsync(codeId: string, deviceId: string, now: number) {
+    return gatewayFor(this.db).run(pairingDenyWrite, { codeId, deviceId, now });
+  }
+
+  deny(id: string, now: number): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE pairing_codes SET expires_at = ?, denied_at = ?
+           WHERE id = ? AND approved_at IS NULL AND used_at IS NULL AND expires_at > ?`
+        )
+        .run(now, now, id, now).changes > 0
+    );
+  }
+
   isAwaitingApproval(code: string, now: number): boolean {
     return !!this.db
       .prepare(
@@ -259,6 +411,41 @@ export class DevicePairingRepository {
            AND used_at IS NULL AND expires_at > ?`
       )
       .get(hash(normalizePairingCode(code)), now);
+  }
+
+  pairRequest(code: string, now: number): PairRequestRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, approved_at IS NOT NULL AS approved, requested_name AS requestedName,
+           requested_by AS requestedBy, voided_at IS NOT NULL AS voided, two_way AS twoWay,
+           expires_at AS expiresAt, denied_at IS NOT NULL AS denied, expires_at <= ? AS expired
+         FROM pairing_codes WHERE code_hash = ? AND used_at IS NULL`
+      )
+      .get(now, hash(normalizePairingCode(code))) as SqlRow<PairRequestRecord>;
+    return (
+      row && {
+        ...row,
+        approved: !!row.approved,
+        voided: !!row.voided,
+        twoWay: !!row.twoWay,
+        denied: !!row.denied,
+        expired: !!row.expired,
+      }
+    );
+  }
+
+  recordRequester(id: string, name: string, requestedBy: string | null): void {
+    this.db
+      .prepare(
+        'UPDATE pairing_codes SET requested_name = ?, requested_by = ? WHERE id = ? AND requested_name IS NULL'
+      )
+      .run(name, requestedBy, id);
+  }
+
+  voidCode(id: string, now: number): void {
+    this.db
+      .prepare('UPDATE pairing_codes SET expires_at = ?, voided_at = ? WHERE id = ?')
+      .run(now, now, id);
   }
 
   humanRecoveryOpen(): boolean {
@@ -269,8 +456,8 @@ export class DevicePairingRepository {
       .get();
   }
 
-  redeemAsync(code: string, name: string, now: number) {
-    return gatewayFor(this.db).call(pairingRedeemWrite, 'redeem', code, name, now);
+  redeemAsync(request: PairRequest, now: number) {
+    return gatewayFor(this.db).call(pairingRedeemWrite, 'redeem', request, now);
   }
 
   redeem(
@@ -300,11 +487,7 @@ export class DevicePairingRepository {
           )
           .run();
       }
-      this.db
-        .prepare(
-          'INSERT INTO paired_devices (id, name, kind, secret_hash, created_at) VALUES (?, ?, ?, ?, ?)'
-        )
-        .run(device.id, name, claimed.kind, hash(credential), now);
+      insertDevice(this.db, { ...device, kind: claimed.kind }, credential);
       return { device: { ...device, kind: claimed.kind }, credential };
     })();
   }

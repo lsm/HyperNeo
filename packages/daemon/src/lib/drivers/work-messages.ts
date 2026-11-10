@@ -16,10 +16,20 @@ export function workEntryTime(timestamp: unknown): number | undefined {
 
 export const WORK_AGENT_INPUT = '[HyperNeo agent input]';
 
-export function workInput(at: number | undefined, text: string, human?: boolean): WorkInput | null {
+export function workInput(
+  at: number | undefined,
+  text: string,
+  human?: boolean,
+  inputId?: string
+): WorkInput | null {
   const plain = text.replace(/\s+/g, ' ').trim();
   return at !== undefined && plain
-    ? { at, text: plain.slice(0, INPUT_TEXT_LIMIT), ...(human === undefined ? {} : { human }) }
+    ? {
+        at,
+        text: plain.slice(0, INPUT_TEXT_LIMIT),
+        ...(inputId ? { inputId } : {}),
+        ...(human === undefined ? {} : { human }),
+      }
     : null;
 }
 

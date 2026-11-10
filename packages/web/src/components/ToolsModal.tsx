@@ -21,11 +21,11 @@ import { globalSettings } from '../lib/state.ts';
 const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }> = {
   'agent-memory': {
     title: 'Agent memory',
-    description: 'Persistent Space memory read/write/search',
+    description: 'Persistent agent memory read/write/search',
   },
   'db-query': {
     title: 'Database queries',
-    description: 'Read-only SQLite access scoped to this space',
+    description: 'Read-only SQLite access',
   },
 };
 import {

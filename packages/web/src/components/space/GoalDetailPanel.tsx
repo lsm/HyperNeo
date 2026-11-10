@@ -1,10 +1,10 @@
 import type { SpaceGoal, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { navigateToSpaceTask } from '../../lib/router';
+import { navigateToSpaceTask } from '../../lib/space-router';
 import { connectionState } from '../../lib/state';
 import { spaceStore } from '../../lib/space-store';
-import { getGoalStatusConfig } from '../../lib/goal-status';
-import { getPriorityIndicatorTone } from '../../lib/priority-tokens';
+import { getGoalStatusConfig } from '../../lib/space-goal-status';
+import { getPriorityIndicatorTone } from '../../lib/space-priority-tokens';
 import { getWorkspaceLabel } from '../../lib/space-task-helpers';
 import { toast } from '../../lib/toast';
 import { InspectBadge, InspectPanel, InspectPanelHeader } from '../ui/InspectPanel';

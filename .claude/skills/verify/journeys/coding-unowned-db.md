@@ -5,17 +5,13 @@ checkout and installed runtimes, and run each heavy job serially.
 
 ```sh
 python3 .claude/skills/verify/coding-unowned-db-run.py bun before
-python3 .claude/skills/verify/coding-unowned-db-run.py deno before --executable "$DENO"
 python3 .claude/skills/verify/coding-unowned-db-run.py bun verify
-python3 .claude/skills/verify/coding-unowned-db-run.py deno verify --executable "$DENO"
-bun --no-install --no-env-file .claude/skills/verify/coding-unowned-proof-binding.ts HEAD
 ```
 
-DENO must identify an installed runtime; imports use cached-only mode. The runner
-refuses memory below 25% or disk below 25 GiB. Before mode restores only
-pr-events.ts and pr-unowned.ts from origin/dev and restores the draft in finally;
-never edit or run another job concurrently. The failing guarded-main and
-read-only-main regressions are committed before the source fix.
+The runner refuses memory below 25% or disk below 25 GiB. Before mode restores only
+pr-events.ts and pr-unowned.ts from origin/dev and restores the draft in finally; never
+edit or run another job concurrently. The failing guarded-main and read-only-main
+regressions are committed before the source fix.
 
 Every proof owns a fresh HOME/data/TMPDIR and database. A real daemon listens on
 an ephemeral non-8399 port; fake gh refuses all commands and direct HTTP throws.
@@ -44,10 +40,3 @@ verify mode requires zero. Worker commands retain whole reservation transactions
 including their reads. This is not whole-daemon SQL absence or a latency claim.
 Gateway elapsed time and argument/reply sizes are retained without separate
 SQL, queue and clone attribution.
-
-Run the new writer regression, unowned PR and watched-repository suites in the
-CI runner plus full checks. The proof binding identifies one committed
-application for both runtime proofs. After that commit only this journey and
-its evidence folder may change. The audit checks ancestry, application trees,
-helper blobs, successful run receipts and the complete post-proof change list.
-Source, test or helper edits require a new committed proof head and fresh runs.

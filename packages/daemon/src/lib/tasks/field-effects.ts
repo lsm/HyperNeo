@@ -2,7 +2,7 @@ import type { SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { arraysEqual } from '../utils/array-utils.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
-import { requireDependencyExecutionBlock } from '../space/tools/update-task-fields.ts';
+import { requireDependencyExecutionBlock } from './update-task-fields.ts';
 
 export interface SpaceTaskFieldEffects {
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'updateTask'>;

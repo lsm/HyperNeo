@@ -70,7 +70,8 @@
       "!**/.playwright-cli/**",
       "!packages/desktop/src-tauri/target",
       "!packages/desktop/src-tauri/gen",
-      "!packages/desktop/src-tauri/binaries"
+      "!packages/desktop/src-tauri/binaries",
+      "!api-surface.json"
     ]
   }
 }

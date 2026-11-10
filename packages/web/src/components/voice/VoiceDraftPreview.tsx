@@ -10,6 +10,7 @@ export interface VoiceDraftPreviewProps {
   newLine?: boolean;
   hint?: string;
   heightPx?: number;
+  minHeightPx?: number;
   class?: string;
 }
 
@@ -22,6 +23,7 @@ export function VoiceDraftPreview({
   newLine = false,
   hint,
   heightPx,
+  minHeightPx,
   class: className,
 }: VoiceDraftPreviewProps) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -36,7 +38,7 @@ export function VoiceDraftPreview({
     const overflow = marker.offsetTop + marker.offsetHeight - box.clientHeight;
     const line = Number.parseFloat(getComputedStyle(box).lineHeight) || marker.offsetHeight || 1;
     box.scrollTop = overflow > 0 ? Math.ceil(overflow / line) * line : 0;
-  }, [text, from, to, transcribing, interim, heightPx]);
+  }, [text, from, to, transcribing, interim, heightPx, minHeightPx]);
 
   return (
     <div
@@ -47,7 +49,10 @@ export function VoiceDraftPreview({
       aria-label="Draft, read-only while recording"
       data-testid="voice-recording-draft"
       class={cn('relative overflow-y-auto whitespace-pre-wrap break-words', className)}
-      style={heightPx ? { height: `${heightPx}px` } : undefined}
+      style={{
+        height: heightPx ? `${heightPx}px` : undefined,
+        minHeight: minHeightPx ? `${minHeightPx}px` : undefined,
+      }}
     >
       {text.slice(0, from)}
       {to > from && (
@@ -60,7 +65,10 @@ export function VoiceDraftPreview({
       )}
       {newLine && (transcribing || interim) && from > 0 ? '\n' : null}
       {interim && (
-        <span data-testid="voice-interim-text" class="text-fg-faint">
+        <span
+          data-testid="voice-interim-text"
+          class={newLine ? 'italic text-fg-muted' : 'text-fg-faint'}
+        >
           {interim}
         </span>
       )}

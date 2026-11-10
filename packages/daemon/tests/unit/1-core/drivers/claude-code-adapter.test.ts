@@ -28,6 +28,26 @@ const chat = (sessionId: string, text: string, role = 'user'): WorkChatMatch => 
   snippets: [{ match: 'exact', messageId: `${sessionId}-m`, sessionId, role, at: 500, text }],
 });
 
+describe('Claude Code turns', () => {
+  test('a session id that is not a plain name cannot leave the projects folder', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'claude-code-turns-'));
+    try {
+      mkdirSync(join(root, 'projects'));
+      writeFileSync(join(root, 'outside.jsonl'), '');
+      const adapter = createClaudeCodeAdapter({
+        machine: 'test',
+        projectsDir: join(root, 'projects'),
+      });
+      expect(await adapter.turns!({ adapter: 'claude-code', id: '../outside' })).toMatchObject({
+        ok: false,
+        reason: 'not_found',
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('buildClaudeCodeGroups', () => {
   test('lists CLI sessions found by content, leaving Desktop sessions to their adapter', () => {
     const groups = buildClaudeCodeGroups(
@@ -96,7 +116,7 @@ describe('createClaudeCodeAdapter', () => {
         desktopSessions: async () => new Set(),
         liveSessions: async () => [{ sessionId, pid: 456, owner, status }],
       });
-      expect(adapter.capabilities).toEqual(['find', 'status']);
+      expect(adapter.capabilities).toEqual(['find', 'status', 'turns']);
       expect(await adapter.status!(ref, 0, receipt)).toMatchObject({
         ok: true,
         value: {
@@ -120,19 +140,32 @@ describe('createClaudeCodeAdapter', () => {
   });
 
   test('returns a typed refusal when live CLI discovery fails', async () => {
+    let probes = 0;
     const adapter = createClaudeCodeAdapter({
       machine: 'laptop',
       searchChats: async () => [],
       desktopSessions: async () => new Set(),
+      sendInbox: async () => {
+        throw new Error('Must not write after a failed probe');
+      },
       liveSessions: async () => {
+        probes++;
+        await new Promise((resolve) => setTimeout(resolve, 10));
         throw new Error('CLI timed out or is unavailable');
       },
     });
-    expect(await adapter.status!({ adapter: 'claude-code', id: 'session' })).toEqual({
+    const ref = { adapter: 'claude-code', id: 'session' };
+    const [status, sent] = await Promise.all([
+      adapter.status!(ref),
+      adapter.send!(ref, 'Do not send', { from: 'session:origin', caller: { source: 'rpc' } }),
+    ]);
+    expect(status).toEqual({
       ok: false,
       reason: 'not_delivered',
       detail: 'Could not inspect live Claude sessions: CLI timed out or is unavailable',
     });
+    expect(sent).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(probes).toBe(1);
   });
 
   test('discovers CLI folders without a search and links content hits to their actual folder', async () => {

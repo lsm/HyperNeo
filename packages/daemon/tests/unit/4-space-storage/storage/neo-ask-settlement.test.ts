@@ -71,7 +71,6 @@ describe('Data-only atomic ask settlement', () => {
       { askId, status, outcome: 'Closed by the human' },
       10,
     ]);
-  const split = () => run<Receipt | null>('neo.askSettlementWrites', 'splitParent', ['ask', 10]);
   const snapshot = () => ({
     ask: store.getAsk('ask'),
     todos: store.listTodos('ask'),
@@ -84,7 +83,6 @@ describe('Data-only atomic ask settlement', () => {
     store.openAsk({
       id: 'child',
       parentId: 'ask',
-      repo: 'github.com/synthetic/child',
       projectId: null,
       sessionId: 'neo',
       originMessageId: null,
@@ -92,11 +90,54 @@ describe('Data-only atomic ask settlement', () => {
       request: 'Keep child work',
       createdAt: 3,
     });
+  const moveToChild = (id: string) => {
+    db.prepare('UPDATE neo_todos SET ask_id = ? WHERE id = ?').run('child', id);
+    db.prepare(
+      `INSERT INTO pack_coding_todos (todo_id, repo) VALUES (?, ?)
+        ON CONFLICT(todo_id) DO UPDATE SET repo = excluded.repo`
+    ).run(id, 'github.com/synthetic/child');
+  };
   const emptiedParent = () => {
     child();
-    for (const todo of store.listTodos('ask'))
-      store.moveTodo(todo, 'child', 'github.com/synthetic/child', 4);
+    for (const todo of store.listTodos('ask')) moveToChild(todo.id);
   };
+
+  test.each(['todo', 'doing', 'blocked', 'failed', 'removed'] as const)(
+    'done refuses an unfinished %s row without changing work or cards',
+    async (state) => {
+      db.prepare('UPDATE neo_todos SET state = ?, reason = NULL WHERE id = ?').run(state, 'first');
+      store.updateTodo(store.getTodo('second')!, { state: 'done', evidence: 'Observed' }, 3);
+      const before = snapshot();
+      expect(await settle()).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('todos_unfinished:'),
+      });
+      expect(snapshot()).toEqual(before);
+      expect(changes).toEqual([]);
+    }
+  );
+
+  test('a todo added after the snapshot prevents done inside the writer transaction', async () => {
+    for (const todo of store.listTodos('ask'))
+      store.updateTodo(todo, { state: 'done', evidence: 'Observed' }, 3);
+    await run<Snapshot>('neo.askSettlementReads', 'snapshot', ['ask']);
+    store.addTodo(
+      'late',
+      'ask',
+      {
+        title: 'Late step',
+        doneWhen: 'Observed late work',
+        check: null,
+        instruction: null,
+        named: null,
+      },
+      4
+    );
+    const before = snapshot();
+    expect(await settle()).toMatchObject({ ok: false, reason: expect.stringContaining('late') });
+    expect(snapshot()).toEqual(before);
+    expect(changes).toEqual([]);
+  });
 
   test('a read snapshot preserves current full reports without a write', async () => {
     const report = 'Entire work 🦊\n'.repeat(20000);
@@ -109,7 +150,7 @@ describe('Data-only atomic ask settlement', () => {
     expect(snapshot()).toEqual(before);
     expect(changes).toEqual([]);
   });
-  test('done closes unfinished work unverified and preserves failure diagnostics and full reports', async () => {
+  test('done refuses unfinished work and preserves its diagnostic, report and worker', async () => {
     const report = 'Complete prior report 🦊\n'.repeat(20000);
     store.updateTodo(
       store.getTodo('first')!,
@@ -119,28 +160,28 @@ describe('Data-only atomic ask settlement', () => {
     store.updateTodo(store.getTodo('second')!, { state: 'done', evidence: 'Observed' }, 3);
     sessions.create('first', { verb: 'send', ref: { adapter: 'hyperneo', id: 'current' } });
     sessions.recordRef('first', { adapter: 'hyperneo', id: 'current' }, 3);
-    const result = await settle();
-    expect(result).toMatchObject({
-      ok: true,
-      ask: { status: 'done' },
-      todos: [
-        {
-          id: 'first',
-          state: 'closed_unverified',
-          report,
-          reason: expect.stringContaining('check_failed: exit 7'),
-        },
-        { id: 'second', state: 'done', evidence: 'Observed' },
-      ],
-      refs: [
-        { todoId: 'first', ref: { id: 'current' } },
-        { todoId: 'second', ref: null },
-      ],
-      records: [expect.stringContaining('todos_unfinished:')],
+    const before = snapshot();
+    expect(await settle()).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('todos_unfinished:'),
     });
-    expect(store.getQuestion('card')?.state).toBe('retired');
-    expect(new Set(changes)).toEqual(new Set(['neo_asks', 'neo_todos', 'neo_questions']));
+    expect(snapshot()).toEqual(before);
+    expect(sessions.readRef('first')).toMatchObject({ id: 'current' });
+    expect(changes).toEqual([]);
   });
+
+  test.each(['done', 'closed_unverified', 'removed'] as const)(
+    'done accepts existing terminal %s rows without relabeling them',
+    async (state) => {
+      for (const todo of store.listTodos('ask'))
+        store.writeTodo(todo, { state, reason: 'Explicitly ended', evidence: 'Recorded' }, 3);
+      const before = store.listTodos('ask');
+      expect(await settle()).toMatchObject({ ok: true, ask: { status: 'done' }, todos: before });
+      expect(store.listTodos('ask')).toEqual(before);
+      expect(store.getQuestion('card')?.state).toBe('retired');
+    }
+  );
+
   test('dropped removes active work without certifying it', async () => {
     store.updateTodo(store.getTodo('first')!, { state: 'doing', report: 'Retain this' }, 3);
     expect(await settle('dropped')).toMatchObject({
@@ -158,23 +199,20 @@ describe('Data-only atomic ask settlement', () => {
           ? "CREATE TRIGGER reject_row BEFORE UPDATE ON neo_todos WHEN NEW.id='second' BEGIN SELECT RAISE(ABORT, 'synthetic rollback'); END"
           : "CREATE TRIGGER reject_card BEFORE UPDATE ON neo_questions BEGIN SELECT RAISE(ABORT, 'synthetic rollback'); END"
       );
-      await expect(settle()).rejects.toThrow('synthetic rollback');
+      await expect(settle('dropped')).rejects.toThrow('synthetic rollback');
       expect(snapshot()).toEqual(before);
       expect(changes).toEqual([]);
     }
   );
-  test('the writer uses changed current state instead of an earlier snapshot', async () => {
+  test('the writer checks current state instead of an earlier snapshot', async () => {
     await run<Snapshot>('neo.askSettlementReads', 'snapshot', ['ask']);
     store.updateTodo(store.getTodo('first')!, { state: 'done', evidence: 'New evidence' }, 4);
+    const before = snapshot();
     const result = await settle();
-    expect(result).toMatchObject({
-      ok: true,
-      todos: [
-        { id: 'first', state: 'done', evidence: 'New evidence' },
-        { id: 'second', state: 'closed_unverified' },
-      ],
-      records: [expect.not.stringContaining('Observe first')],
-    });
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('second (second)') });
+    expect(!result.ok && result.reason).not.toContain('first (first)');
+    expect(snapshot()).toEqual(before);
+    expect(changes).toEqual([]);
   });
   test('a settled ask rejects a stale plan without changing its existing outcome', async () => {
     await run<Snapshot>('neo.askSettlementReads', 'snapshot', ['ask']);
@@ -185,6 +223,8 @@ describe('Data-only atomic ask settlement', () => {
     expect(changes).toEqual([]);
   });
   test('competing settlements produce one successful receipt', async () => {
+    for (const todo of store.listTodos('ask'))
+      store.updateTodo(todo, { state: 'done', evidence: 'Observed' }, 3);
     const receipts = await Promise.all([settle(), settle('dropped')]);
     expect(receipts.filter((result) => result.ok)).toHaveLength(1);
     expect(receipts[1]).toMatchObject({
@@ -212,7 +252,7 @@ describe('Data-only atomic ask settlement', () => {
     });
     expect(changes).toEqual([]);
   });
-  test('split-parent settlement leaves child work and needs-human cards open', async () => {
+  test('explicit parent settlement leaves historical child work and needs-human cards open', async () => {
     emptiedParent();
     store.updateTodo(
       store.getTodo('first')!,
@@ -234,9 +274,9 @@ describe('Data-only atomic ask settlement', () => {
       5
     );
     const before = snapshot().children;
-    expect(await split()).toMatchObject({
+    expect(await settle()).toMatchObject({
       ok: true,
-      ask: { status: 'done', outcome: expect.stringContaining('Filed 2 todos') },
+      ask: { status: 'done', outcome: 'Closed by the human' },
       todos: [],
       refs: [],
     });
@@ -280,7 +320,7 @@ describe('Data-only atomic ask settlement', () => {
       daemon: null,
     });
     store.answerQuestion(card, { picked: ['Go'] } as never, 'button', 6);
-    await split();
+    await settle();
     const held = await store.recompute(
       store.getTodo('first')!,
       {},
@@ -292,52 +332,34 @@ describe('Data-only atomic ask settlement', () => {
     expect(store.getQuestion(card.id)?.state).toBe('answered');
   });
 
-  test('a root that gained its own todo is not auto-settled', async () => {
-    emptiedParent();
-    store.addTodo(
-      'late',
-      'ask',
-      { title: 'Late', doneWhen: 'Observed', check: null, instruction: null, named: null },
-      5
-    );
-    const before = snapshot();
-    expect(await split()).toBeNull();
-    expect(snapshot()).toEqual(before);
-    expect(changes).toEqual([]);
-  });
-  test('an absent or already settled split root stays quiet', async () => {
-    expect(await split()).toBeNull();
-    emptiedParent();
-    await split();
-    changes.length = 0;
-    expect(await split()).toBeNull();
-    expect(await run('neo.askSettlementWrites', 'splitParent', ['missing', 10])).toBeNull();
-    expect(changes).toEqual([]);
-  });
   test.each(['done', 'dropped'] as const)(
-    'explicit %s settlement ends a needs-human hold using current policy',
+    '%s preserves or explicitly ends a needs-human hold',
     async (status) => {
       store.updateTodo(
         store.getTodo('first')!,
         { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Waiting' },
         3
       );
-      expect(await settle(status)).toMatchObject({
-        ok: true,
-        todos: [
-          {
-            id: 'first',
-            state: status === 'done' ? 'closed_unverified' : 'removed',
-            blockedBy: null,
-          },
-          {},
-        ],
-      });
+      const before = snapshot();
+      const result = await settle(status);
+      if (status === 'done') {
+        expect(result).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining('todos_unfinished:'),
+        });
+        expect(snapshot()).toEqual(before);
+        expect(changes).toEqual([]);
+      } else {
+        expect(result).toMatchObject({
+          ok: true,
+          todos: [{ id: 'first', state: 'removed', blockedBy: null }, {}],
+        });
+      }
     }
   );
   test('shared stop context returns the current ask, adopted ref and live status without writes', async () => {
     child();
-    store.moveTodo(store.getTodo('first')!, 'child', 'github.com/synthetic/child', 4);
+    moveToChild('first');
     sessions.bind('first', { adapter: 'hyperneo', id: 'adopted' }, 5);
     sessions.recordLive('first', 'done', undefined);
     expect(await run('neo.todoSessionReads', 'stopContext', ['first'])).toMatchObject({

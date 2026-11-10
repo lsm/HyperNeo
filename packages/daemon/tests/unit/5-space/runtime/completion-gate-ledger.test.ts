@@ -191,3 +191,53 @@ test('fresh MERGED with a nullable commit settles, but each retry observes upstr
     db.close();
   }
 });
+
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+
+test('completion reserves the writer before reading task state', async () => {
+  const run = realpathSync(mkdtempSync(join(tmpdir(), 'completion-writer-')));
+  const path = join(run, 'test.db');
+  const db = new Database(path);
+  let writer: Database | undefined;
+  try {
+    db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000');
+    runMigrations(db, () => {});
+    createCodingPackTables(db);
+    const space = new SpaceRepository(db).createSpace({
+      name: 'Synthetic completion',
+      slug: 'synthetic-completion',
+      workspacePath: run,
+    });
+    const task = new SpaceTaskRepository(db).createTask({
+      spaceId: space.id,
+      title: 'Synthetic completion',
+      status: 'approved',
+    });
+    writer = new Database(path);
+    writer.exec('PRAGMA busy_timeout=0');
+    let concurrentCommit = false;
+    const manager = new SpaceTaskManager(db, space.id);
+    const completed = await manager.setTaskStatus(task.id, 'done', {
+      guardWrite: () => {
+        try {
+          writer!
+            .prepare('INSERT INTO pack_coding_repo_aliases(alias,canonical) VALUES(?,?)')
+            .run('old/repo', 'synthetic/ledger');
+          concurrentCommit = true;
+        } catch (error) {
+          if (!(error instanceof Error) || !/database is locked/.test(error.message)) throw error;
+        }
+        return undefined;
+      },
+    });
+    expect(completed.status).toBe('done');
+    expect(concurrentCommit).toBe(false);
+  } finally {
+    writer?.close();
+    db.close();
+    rmSync(run, { recursive: true, force: true });
+  }
+});

@@ -6,9 +6,9 @@ import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { submitSessionEvent } from '../../storage/repositories/session-event-submission.ts';
 import type { MailboxDeliveryMode } from '../mailbox/entry.ts';
 import { crashHandler, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
+import { buildImmediateEventMessageUuid } from './event-delivery-rules.ts';
 import { externalEventTopicSuffix } from './event-tiers.ts';
 import type { ExternalEventPublishedPayload } from './external-event-service.ts';
-import { buildImmediateEventMessageUuid } from './immediate-delivery-pipeline.ts';
 import { SESSION_EVENT_SCOPE } from './session-external-event-store.ts';
 import { topicMatchesPattern } from './topic-trie.ts';
 import type { ExternalEvent, ExternalEventRecord } from './types.ts';
@@ -43,6 +43,10 @@ const SESSION_FEEDBACK_ACTION = /^(review_|comment_)/;
 function payloadText(payload: Record<string, unknown>, key: string): string {
   const value = payload[key];
   return typeof value === 'string' ? value.trim() : '';
+}
+
+export function sessionEventMessageUuid(eventId: string, sessionId: string): string {
+  return buildImmediateEventMessageUuid(eventId, `session:${sessionId}`);
 }
 
 export function sessionEventHeadline(event: ExternalEvent): string {
@@ -96,7 +100,7 @@ export function planSessionEventDeliveries(
   return {
     value: sessionIds.map((sessionId) => ({
       sessionId,
-      messageUuid: buildImmediateEventMessageUuid(event.id, `session:${sessionId}`),
+      messageUuid: sessionEventMessageUuid(event.id, sessionId),
       text,
       mode: urgent || !isSessionBusy(sessionId) ? 'immediate' : 'defer',
     })),

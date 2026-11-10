@@ -6,6 +6,7 @@
     { "path": "./packages/messaging" },
     { "path": "./packages/prompts" },
     { "path": "./packages/shared" },
+    { "path": "./packages/space" },
     { "path": "./packages/ui" },
     { "path": "./packages/web" }
   ],

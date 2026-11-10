@@ -89,7 +89,10 @@ describe('Atomic todo mutation commits', () => {
       done: 'reported',
       evidence: report,
     });
-    expect(result).toMatchObject({ ok: true, todo: { state: 'closed_unverified', report } });
+    expect(result).toMatchObject({
+      ok: true,
+      todo: { state: 'blocked', blockedBy: 'check', report },
+    });
     expect(store.getTodo('first')!.report).toBe(report);
     expect(changes).toContain('neo_todos');
   });

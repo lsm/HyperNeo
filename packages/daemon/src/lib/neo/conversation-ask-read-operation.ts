@@ -1,3 +1,5 @@
+import { neoToolDescription } from '@hyperneo/prompts';
+import { presentNeoCardQuotes } from './card-quote.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { NeoPreviewReferenceSchema } from './preview-context-schema.ts';
 import { presentNeoPreviewAsk } from './preview-context.ts';
@@ -105,7 +107,8 @@ async function readAskStatus(
   caller: OperationCaller
 ): Promise<Result> {
   if (!result.ok) return result;
-  const items = await presentStatus(result.items);
+  const statusItems = await presentStatus(result.items);
+  const items = database ? await presentNeoCardQuotes(statusItems, database) : statusItems;
   return {
     ...result,
     items: database
@@ -210,8 +213,7 @@ export function createNeoConversationAskReadOperation(
 ) {
   return defineOperation({
     name: 'neo.conversation.asks.read',
-    description:
-      'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. messageStatus is computed by the daemon: received, queued, working, read, answered or failed. Only a publication explicitly citing a consumed input in replyTo marks it answered; read without a reply stays read. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence. An ask that could not be delivered also carries delivery: { state: "failed" }. With imageRefs: true, each photo comes back as { type: "image_ref", imageId, mediaType, bytes, width, height, thumbnail } instead of its full data; read the full photo with neo.conversation.image.read.',
+    description: neoToolDescription('neo.conversation.asks.read'),
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: AskPageInput,
     resultSchema: z.union([
@@ -301,8 +303,7 @@ export function createNeoConversationImageReadOperation(
 ) {
   return defineOperation({
     name: 'neo.conversation.image.read',
-    description:
-      'Read one full photo from a human ask in the current public conversation, by the imageId that neo.conversation.asks.read returns with imageRefs: true.',
+    description: neoToolDescription('neo.conversation.image.read'),
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: z
       .object({

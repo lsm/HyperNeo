@@ -78,6 +78,65 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo voice', () => {
+  it('shows PCM16 when the browser cannot use Opus', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    voice.start.mockImplementationOnce(async () => {
+      voice.recording = true;
+    });
+    voice.openStream.mockImplementationOnce((_hub, _text, options) => {
+      options.onFormat('pcm16');
+      return { push: vi.fn(), close: vi.fn(), finish: vi.fn() };
+    });
+    render(
+      <NeoVoice
+        sessionId="neo:root"
+        connected
+        draftText=""
+        onTranscript={vi.fn()}
+        onSendVoice={vi.fn()}
+        onError={vi.fn()}
+        onPhase={vi.fn()}
+        onSendHandle={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    expect(await screen.findByText('PCM16')).toBeTruthy();
+  });
+
+  it('tells the user when live transcription falls back to saved audio', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    voice.start.mockImplementationOnce(async () => {
+      voice.recording = true;
+    });
+    voice.openStream.mockImplementationOnce((_hub, _text, options) => {
+      options.onError(new Error('codec failed'));
+      options.onFormat('batch');
+      return { push: vi.fn(), close: vi.fn(), finish: vi.fn() };
+    });
+    const onError = vi.fn();
+    render(
+      <NeoVoice
+        sessionId="neo:root"
+        connected
+        draftText=""
+        onTranscript={vi.fn()}
+        onSendVoice={vi.fn()}
+        onError={onError}
+        onPhase={vi.fn()}
+        onSendHandle={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(
+        'Live transcription failed: codec failed. The recording will use batch transcription.'
+      )
+    );
+    expect(await screen.findByText('Batch')).toBeTruthy();
+  });
+
   it('captures Preview and draft before microphone startup rather than after selection changes', async () => {
     voice.enabled = true;
     let started!: () => void;
@@ -305,6 +364,9 @@ describe('Neo voice', () => {
       if (via === 'Stop') fireEvent.click(stop);
       else (sendFromComposer as unknown as (intent: 'draft' | 'send') => void)('send');
       await waitFor(() => expect(onPhase).toHaveBeenLastCalledWith(phase));
+      expect(stop.hasAttribute('disabled')).toBe(true);
+      expect(stop.getAttribute('aria-busy')).toBe(String(phase === 'drafting'));
+      expect(Boolean(stop.querySelector('[aria-label="Loading"]'))).toBe(phase === 'drafting');
       finish({ kind: 'silent-recording' });
       await waitFor(() => expect(onPhase).toHaveBeenLastCalledWith('idle'));
     }
@@ -514,7 +576,10 @@ describe('Neo voice', () => {
     const view = render(<NeoVoice {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
     await waitFor(() =>
-      expect(voice.openStream).toHaveBeenCalledWith(voice.hub, expect.any(Function))
+      expect(voice.openStream).toHaveBeenCalledWith(voice.hub, expect.any(Function), {
+        onFormat: expect.any(Function),
+        onError: expect.any(Function),
+      })
     );
     heard('hello ne');
     expect(onInterim).toHaveBeenLastCalledWith('hello ne');
@@ -530,10 +595,18 @@ describe('Neo voice', () => {
 
   it('keeps the batch path when no stream was opened', async () => {
     voice.recording = true;
-    voice.submit.mockResolvedValue({
-      kind: 'routed',
-      outcome: { kind: 'insert', transcript: 'batch only', autoSend: false },
-      recordId: 'recording',
+    voice.batch.mockResolvedValueOnce({ text: 'batch only' });
+    voice.submit.mockImplementationOnce(async (_input, deps: Partial<VoiceSubmitDeps>) => {
+      const result = await deps.transcribe!({
+        audioBase64: 'aGk=',
+        mimeType: 'audio/wav',
+        peakLevel: 0.5,
+      });
+      return {
+        kind: 'routed',
+        outcome: { kind: 'insert', transcript: result.text, autoSend: false },
+        recordId: 'recording',
+      };
     });
     const onTranscript = vi.fn();
     render(
@@ -552,6 +625,6 @@ describe('Neo voice', () => {
       screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
     );
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('batch only'));
-    expect(voice.submit.mock.calls[0][1]).not.toHaveProperty('transcribe');
+    expect(voice.batch).toHaveBeenCalledOnce();
   });
 });

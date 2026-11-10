@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
-import * as acp from '../../../../src/lib/drivers/acp-agent-adapter';
+import * as worktrees from '../../../../src/lib/drivers/worktree-project';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -105,6 +105,31 @@ describe('codex-desktop adapter against a Codex state database', () => {
       newId: () => 'abcd1234-0000',
     });
   }
+
+  test('the naming inventory includes threads beyond the normal history display limit', async () => {
+    const db = new Database(statePath);
+    const insert = db.prepare(
+      'INSERT INTO threads (id,name,cwd,source,archived,updated_at_ms) VALUES (?,?,?,?,?,?)'
+    );
+    for (let i = 0; i < 25; i++)
+      insert.run(`named-${i}`, `Codex dolmen ${i + 1}`, '/focus/dolmen', 'exec', 0, NOW - i);
+    db.close();
+    const normal = await adapter().find({
+      folder: '/focus/dolmen',
+      includeClosed: false,
+      limit: 50,
+    });
+    const all = await adapter().find({
+      folder: '/focus/dolmen',
+      includeClosed: false,
+      limit: 50,
+      all: true,
+    });
+    expect(normal.flatMap((group) => group.work)).toHaveLength(20);
+    expect(
+      all.flatMap((group) => group.work).filter((work) => work.ref.id.startsWith('named-'))
+    ).toHaveLength(25);
+  });
 
   test('prefix discovery finds older matching threads before history limits', async () => {
     const db = new Database(statePath);
@@ -213,7 +238,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
   });
 
   test('resolves each worktree folder once per snapshot and refreshes on the next find', async () => {
-    const probe = spyOn(acp, 'gitWorktreeProject');
+    const probe = spyOn(worktrees, 'gitWorktreeProject');
     try {
       const adapter = createCodexDesktopAdapter({
         bootstrapServer: () => Promise.reject(new Error('not used')),
@@ -269,7 +294,8 @@ describe('codex-desktop adapter against a Codex state database', () => {
     ]);
     expect(groups[0].work[0]).toMatchObject({
       ref: { adapter: 'codex-desktop', id: 't1' },
-      place: { machine: 'laptop', folder: join(dir, 'worktree') },
+      place: { machine: 'laptop', folder: '/focus/dolmen' },
+      execution: { machine: 'laptop', directory: join(dir, 'worktree') },
       link: 'codex://threads/t1',
     });
   });

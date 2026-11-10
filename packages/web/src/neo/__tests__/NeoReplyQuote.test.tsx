@@ -196,6 +196,50 @@ describe('reply quote block', () => {
     card.remove();
   });
 
+  it('renders a daemon-resolved question quote after its work card is no longer loaded', () => {
+    const { container } = render(
+      <NeoPublicConversation
+        conversation={conversation(
+          [
+            ask('reply', 1, 'Keep', {
+              kind: 'question',
+              id: 'replaced-card',
+              author: 'neo',
+              excerpt: 'Earlier choice',
+            }),
+          ],
+          []
+        )}
+      />
+    );
+    expect(quoteBar(container, 'question:replaced-card').textContent).toBe('NeoEarlier choice');
+    expect(quoteBar(container, 'question:replaced-card').textContent).not.toContain(
+      t('chat.originalUnavailable')
+    );
+  });
+
+  it('prefers the saved question excerpt over a loaded work-summary title', () => {
+    const { container } = render(
+      <NeoPublicConversation
+        conversation={conversation(
+          [
+            ask('reply', 1, 'Keep', {
+              kind: 'question',
+              id: 'answered-card',
+              author: 'neo',
+              excerpt: 'Replacement choice',
+            }),
+          ],
+          []
+        )}
+        replyLabels={
+          new Map([['question:answered-card', { label: 'Synthetic work card', askId: 'work' }]])
+        }
+      />
+    );
+    expect(quoteBar(container, 'question:answered-card').textContent).toBe('NeoReplacement choice');
+  });
+
   it('shows no author when a quoted question is no longer known', () => {
     const { container } = render(
       <NeoPublicConversation

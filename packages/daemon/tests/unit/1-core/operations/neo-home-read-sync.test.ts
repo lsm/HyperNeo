@@ -214,6 +214,8 @@ describe('Home sync conflict questions', () => {
     expect(question.text).toContain('Human local choice');
     expect(question.text).toContain('Other machine choice');
     expect(question.text).toContain('not apply');
+    expect(question.confirm).toBeNull();
+    expect(question.text).toContain('View full report before choosing');
     expect(question.document).toContain(local);
     expect(question.document).toContain(remoteText);
     expect(question.document).toContain(localHead);

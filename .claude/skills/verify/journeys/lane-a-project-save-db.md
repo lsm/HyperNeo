@@ -4,15 +4,13 @@ Use shared isolation/resource guards from SKILL.md; heavy jobs run serially.
 
 ```sh
 python3 .claude/skills/verify/lane-a-project-save-db-run.py bun verify
-python3 .claude/skills/verify/lane-a-project-save-db-run.py deno verify --executable "$DENO"
 ```
 
-DENO is an existing cached runtime. Each run owns fresh HOME/data/TMPDIR and an
-ephemeral non-8399 daemon. HTTP is refused; gh is a refusing stub. No provider,
-credentials, GitHub, real data, GUI or simulator is used. The helper owns a Python
-child holding only its synthetic WAL writer for 1.2 seconds, waits for it and
-removes all temporary daemon data after preserving evidence. Both modes run the
-checked-out code; reproduce the baseline from the regression commit.
+Each run owns fresh HOME/data/TMPDIR and an ephemeral non-8399 daemon. HTTP is refused; gh
+is a refusing stub. No provider, credentials, GitHub, real data, GUI or simulator is used.
+The helper owns a Python child holding only its synthetic WAL writer for 1.2 seconds,
+waits for it and removes all temporary daemon data after preserving evidence. Both modes
+run the checked-out code; reproduce the baseline from the regression commit.
 
 Real public project.save RPC creates a project while that writer is held. The
 baseline blocks the daemon loop above one second; the fixed route keeps it below
@@ -37,14 +35,8 @@ failed evidence and commit it before implementation. Bind final runtime runs to
 one committed application/helper tree; afterward only this journey and its
 evidence directory may change.
 
-```sh
-bun --no-install --no-env-file .claude/skills/verify/lane-a-project-save-proof-binding.ts HEAD
-```
-
-The first bun-verify directory is an inconclusive helper-correlation failure;
-bun-verify-1 is the observed regression committed before production changes.
-The final pair named in observed.json identifies the committed worker/facade and
-exact coordinator-granted operations.ts patch. A read-only independent observer
-in CI sees only committed notification state; a failed update leaves it unchanged.
-The actual save latency under the held writer is over250ms in both fixed runs,
+The first bun-verify directory is an inconclusive helper-correlation failure; bun-verify-1
+is the observed regression committed before production changes. A read-only independent
+observer in CI sees only committed notification state; a failed update leaves it
+unchanged. The actual save latency under the held writer is over250ms in both fixed runs,
 retained as a missed target alongside the loop/health/off-main successes.

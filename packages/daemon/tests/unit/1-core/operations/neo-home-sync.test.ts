@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -291,7 +292,8 @@ describe('Neo home save remote sync', () => {
     await git(root, 'config', 'remote.origin.receivepack', '/usr/bin/false');
     const before = await git(root, 'rev-list', '--count', 'HEAD');
     const failed = await call('neo.home.save', input);
-    expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('push_failed') });
+    expect(failed.ok).toBe(false);
+    expect(failed.reason).toContain('push_failed');
     const head = await git(root, 'rev-parse', 'HEAD');
     expect(failed.reason).toContain(head);
     expect(await readFile(join(root, input.path), 'utf8')).toBe(input.content);
@@ -383,6 +385,7 @@ describe('Neo home save remote sync', () => {
       sha256: createHash('sha256').update(value.content).digest('hex'),
     };
     const question = await call('neo.question.ask', {
+      retireWhen: pendingTodoCheck,
       askId: 'ask',
       kind: 'yesno',
       text: `${confirm.path} ${confirm.sha256}`,
@@ -433,7 +436,7 @@ describe('Neo home save remote sync', () => {
     await git(root, 'config', 'remote.origin.uploadpack', upload);
     const pending = call('neo.home.save', input);
     try {
-      for (let i = 0; i < 300; i++) {
+      for (let i = 0; i < 1000; i++) {
         if (
           await readFile(ready).then(
             () => true,
@@ -482,37 +485,61 @@ describe('Neo home save remote sync', () => {
         observed = join(fixture, 'network-env');
       await writeFile(
         executable,
-        `#!/bin/sh\nprintf '%s|%s|%s' "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS" "$GIT_SSH_COMMAND" > "${observed}"\nsleep 4\nexit 42\n`,
+        `#!/bin/sh\nprintf '%s|%s|%s' "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS" "$GIT_SSH_COMMAND" > "${observed}"\nsleep 30\nexit 42\n`,
         { mode: 0o755 }
       );
       await git(root, 'config', `remote.origin.${transport}`, executable);
-      home = new NeoHomeRepository(root, repo, 1000);
-      const pending = call('neo.home.save', input);
-      for (let i = 0; i < 300; i++) {
-        if (
-          await readFile(observed).then(
-            () => true,
-            () => false
-          )
-        )
-          break;
-        await new Promise((resolve) => setTimeout(resolve, 10));
+      if (transport === 'receivepack') {
+        const slowFetch = join(fixture, 'slow-uploadpack');
+        await writeFile(slowFetch, '#!/bin/sh\nsleep 3.5\nexec /usr/bin/git-upload-pack "$@"\n', {
+          mode: 0o755,
+        });
+        await git(root, 'config', 'remote.origin.uploadpack', slowFetch);
       }
-      await readFile(observed);
-      const start = Date.now();
+      const armed = new Set<() => void>();
+      home = new NeoHomeRepository(root, repo, (fire) => {
+        armed.add(fire);
+        return () => armed.delete(fire);
+      });
+      const seen: string[] = [];
+      const fireStalled = async () => {
+        const env = await readFile(observed, 'utf8').catch(() => null);
+        if (env === null || armed.size === 0) return;
+        seen.push(env);
+        await rm(observed);
+        for (const fire of armed) fire();
+      };
+      const settle = async <T>(work: Promise<T>) => {
+        let done = false;
+        const watched = work.finally(() => {
+          done = true;
+        });
+        while (!done) {
+          await fireStalled();
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return watched;
+      };
+      const pending = call('neo.home.save', input);
+      while (
+        !(await readFile(observed).then(
+          () => true,
+          () => false
+        ))
+      )
+        await new Promise((resolve) => setTimeout(resolve, 10));
       const queuedRead = call('neo.home.read', { path: 'README.md' });
-      const failed = await pending;
-      expect(await queuedRead).toMatchObject(
+      const failed = await settle(pending);
+      expect(await settle(queuedRead)).toMatchObject(
         transport === 'uploadpack'
           ? { ok: false, reason: expect.stringContaining('timed out') }
           : { ok: true }
       );
-      expect(Date.now() - start).toBeLessThan(4000);
       expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('timed out') });
-      expect(await readFile(observed, 'utf8')).toBe('0|/usr/bin/false|ssh -oBatchMode=yes');
+      expect(seen[0]).toBe('0|/usr/bin/false|ssh -oBatchMode=yes');
       expect(await git(root, 'status', '--porcelain')).toBe('');
     },
-    10000
+    60000
   );
   test('keeps homes without an origin local', async () => {
     await git(root, 'remote', 'remove', 'origin');

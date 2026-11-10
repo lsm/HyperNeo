@@ -7,7 +7,6 @@ import { OpenRouterProvider } from './openrouter-provider.js';
 import { OpencodeProvider } from './opencode-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
-import { AcpProvider } from './acp-provider.js';
 import {
   CustomEndpointProvider,
   customProviderIdFor,
@@ -48,7 +47,6 @@ const BUILT_IN_PROVIDER_FACTORIES: Record<string, () => Provider> = {
   ollama: () => new OllamaProvider({ kind: 'local' }),
   'ollama-cloud': () => new OllamaProvider({ kind: 'cloud' }),
   'anthropic-codex': () => new AnthropicToCodexBridgeProvider(),
-  acp: () => new AcpProvider(),
 };
 
 const BUILT_IN_PROVIDER_IDS = [...Object.keys(BUILT_IN_PROVIDER_FACTORIES), COPILOT_PROVIDER_ID];

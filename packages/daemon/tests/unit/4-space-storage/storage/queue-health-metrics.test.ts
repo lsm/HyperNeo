@@ -3,7 +3,7 @@ import {
   ExternalEventQueueMetrics,
   categorizeFailureReason,
   type QueueHealthGauges,
-} from '../../../../src/lib/external-events/queue-health-metrics';
+} from '../../../../../space/src/external-events/queue-health-metrics';
 
 const EMPTY_GAUGES: QueueHealthGauges = {
   queueDepth: 0,

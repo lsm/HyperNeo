@@ -1,0 +1,169 @@
+import { describe, expect, it } from 'bun:test';
+import { spawn } from 'node:child_process';
+import { processGroupAlive } from '../../../src/lib/process-tree';
+import { ProcessJsonRpcTransport, buildProcessEnv } from '../../../src/lib/process-json-rpc';
+
+describe('buildProcessEnv', () => {
+  it('removes provider-managed routing env from ACP subprocess env', () => {
+    const env = buildProcessEnv({
+      ANTHROPIC_BASE_URL: undefined,
+      ANTHROPIC_AUTH_TOKEN: undefined,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: undefined,
+      KEEP_SESSION: 'session',
+    });
+
+    expect(env.KEEP_SESSION).toBe('session');
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+  });
+
+  it('replaces the inherited process env instead of merging when replaceEnv is set', () => {
+    process.env.ACP_PROBE_TEST_SECRET = 'secret';
+    try {
+      const env = buildProcessEnv({ PATH: '/safe/bin', HOME: '/safe/home' }, true);
+
+      expect(env).toEqual({ PATH: '/safe/bin', HOME: '/safe/home' });
+    } finally {
+      delete process.env.ACP_PROBE_TEST_SECRET;
+    }
+  });
+});
+
+describe('ProcessJsonRpcTransport replaceEnv spawn', () => {
+  it('spawns a real subprocess that cannot see non-allowlisted process env vars', async () => {
+    process.env.ACP_PROBE_TEST_SECRET = 'secret';
+    let transport: ProcessJsonRpcTransport | undefined;
+    try {
+      const exited = new Promise<number | null>((resolve) => {
+        transport = new ProcessJsonRpcTransport({
+          command: 'sh',
+          args: ['-c', '[ -z "$ACP_PROBE_TEST_SECRET" ]'],
+          env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+          replaceEnv: true,
+          onExit: (code) => resolve(code),
+        });
+      });
+
+      expect(await exited).toBe(0);
+    } finally {
+      delete process.env.ACP_PROBE_TEST_SECRET;
+      await transport?.close();
+    }
+  });
+});
+
+describe('processGroupAlive', () => {
+  it('probes the direct pid on win32 instead of a POSIX process group', async () => {
+    expect(processGroupAlive(process.pid, 'win32')).toBe(true);
+
+    const child = spawn('true', [], { stdio: 'ignore' });
+    await new Promise<void>((resolve) => child.on('exit', () => resolve()));
+    expect(processGroupAlive(child.pid!, 'win32')).toBe(false);
+  });
+});
+
+describe('ProcessJsonRpcTransport.sendRequest onSubmitted', () => {
+  it('rejects when the onSubmitted callback throws instead of pending until timeout (#3744105279)', async () => {
+    const transport = new ProcessJsonRpcTransport({
+      command: 'sleep',
+      args: ['30'],
+      requestTimeoutMs: 60_000,
+    } as never);
+    try {
+      await expect(
+        transport.sendRequest('session/prompt', { sessionId: 's' } as never, {
+          onSubmitted: () => {
+            throw new Error('markMessageSubmitted exploded');
+          },
+        })
+      ).rejects.toThrow('markMessageSubmitted exploded');
+    } finally {
+      await transport.close();
+    }
+  });
+
+  const answeringAgent = () =>
+    new ProcessJsonRpcTransport({
+      command: 'sh',
+      args: [
+        '-c',
+        'read l; id=$(echo "$l" | sed -n \'s/.*"id":\\([0-9]*\\).*/\\1/p\'); echo "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":$id,\\"result\\":{}}"; sleep 30',
+      ],
+      requestTimeoutMs: 60_000,
+    } as never);
+  const settleLater = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+  it('holds the response until an async onSubmitted settles', async () => {
+    const transport = answeringAgent();
+    let submitted = false;
+    try {
+      const response = await transport.sendRequest('session/prompt', { sessionId: 's' } as never, {
+        onSubmitted: async () => {
+          await settleLater();
+          submitted = true;
+        },
+      });
+      expect(submitted).toBe(true);
+      expect(response).toMatchObject({ result: {} });
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('times out when an async onSubmitted never settles after the response arrived', async () => {
+    const transport = new ProcessJsonRpcTransport({
+      command: 'sh',
+      args: [
+        '-c',
+        'read l; id=$(echo "$l" | sed -n \'s/.*"id":\\([0-9]*\\).*/\\1/p\'); echo "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":$id,\\"result\\":{}}"; sleep 30',
+      ],
+      requestTimeoutMs: 300,
+    } as never);
+    try {
+      await expect(
+        transport.sendRequest('session/prompt', { sessionId: 's' } as never, {
+          onSubmitted: () => new Promise<void>(() => {}),
+        })
+      ).rejects.toThrow('Submission check timed out');
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('close rejects a request held on its submission check', async () => {
+    const transport = answeringAgent();
+    let entered: () => void = () => {};
+    const checking = new Promise<void>((resolve) => (entered = resolve));
+    const request = transport.sendRequest('session/prompt', { sessionId: 's' } as never, {
+      onSubmitted: () => {
+        entered();
+        return new Promise<void>(() => {});
+      },
+    });
+    const outcome = request.then(
+      () => 'resolved',
+      (error: Error) => error.message
+    );
+    await checking;
+    await settleLater();
+    await transport.close();
+    expect(await outcome).not.toBe('resolved');
+  });
+
+  it('rejects when an async onSubmitted fails after the response arrived', async () => {
+    const transport = answeringAgent();
+    try {
+      await expect(
+        transport.sendRequest('session/prompt', { sessionId: 's' } as never, {
+          onSubmitted: async () => {
+            await settleLater();
+            throw new Error('revoked before submission');
+          },
+        })
+      ).rejects.toThrow('revoked before submission');
+    } finally {
+      await transport.close();
+    }
+  });
+});

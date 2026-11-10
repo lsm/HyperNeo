@@ -34,10 +34,8 @@ loop lag below 1 s. The affected write itself still exceeds 250 ms: record that
 failure explicitly. This contention phase drives the persistence command
 directly; the earlier correctness phases use the scheduled job and snapshot.
 
-Run the runner, settlement, input-attribution and todo-gateway tests. They keep
-start anchoring, unchecked status-read results and notification-after-commit
-behavior. The Deno smoke checks commit and trigger-induced rollback of every
-progress field; the shell-argument regression checks its embedded programs.
-Run the existing todo-session-gateway journey too for recovery races and its
-1.2-second held writer lock: the affected write still misses 250 ms even when
-health and main loop responsiveness pass.
+Run the runner, settlement, input-attribution and todo-gateway tests. They keep start
+anchoring, unchecked status-read results and notification-after-commit behavior. Run the
+existing todo-session-gateway journey too for recovery races and its 1.2-second held
+writer lock: the affected write still misses 250 ms even when health and main loop
+responsiveness pass.

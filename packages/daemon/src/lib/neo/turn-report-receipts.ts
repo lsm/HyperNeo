@@ -1,3 +1,5 @@
+import { skipCoveredNeoNotice } from './covered-notice.ts';
+import type { NeoTurnReportFacts } from './turn-report-plan.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -6,8 +8,8 @@ import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { sentDuringTurn } from '../../storage/repositories/neo-session-message-repository.ts';
 import { qualifyRemoteOrigin, renderAddress } from '../mailbox/address.ts';
 
-type Live = { status: string; waitingFor?: string } | null;
-type Observation = { live: Live; baseline: string | null };
+type Live = { status: string; waitingFor?: string; turnQuestion?: unknown } | null;
+type Observation = { live: Live; baseline: string | null; facts?: NeoTurnReportFacts };
 
 export class NeoTurnReportReceipts {
   private readonly receipts: JobQueueRepository;
@@ -27,16 +29,27 @@ export class NeoTurnReportReceipts {
     dispatchId: string,
     ref: WorkRef,
     live: Live,
-    turn: { id: string; at: number; startedAt?: number; senderMachine?: string; message: string },
-    recipient: string
+    turn: {
+      id: string;
+      at: number;
+      startedAt?: number;
+      senderMachine?: string;
+      message: string;
+      humanInput?: string;
+    },
+    recipient: string,
+    facts?: NeoTurnReportFacts
   ) {
     const scope = [todoId, dispatchId, ref.adapter, ref.id, ref.daemon ?? null];
-    const hash = neoDerivedId(turn.message);
+    const hash = neoDerivedId(
+      turn.humanInput === undefined ? turn.message : JSON.stringify([turn.humanInput, turn.message])
+    );
     const key = neoDerivedId(JSON.stringify(['neo-turn-observed-v2', ...scope, turn.id]));
     const observation =
       this.receipts.submissionReceipt<Observation>(key, 'v2') ??
       this.receipts.commitSubmissionReceipt<Observation>(key, 'v2', () => ({
         live,
+        facts,
         baseline: turn.at <= this.cutoff ? hash : null,
       }));
     const previousId = neoDerivedId(
@@ -63,6 +76,7 @@ export class NeoTurnReportReceipts {
         )
       : localSender;
     if (
+      turn.humanInput === undefined &&
       turn.startedAt !== undefined &&
       (await gatewayFor(this.db).call(sentDuringTurn, 'sentDuringTurn', {
         sender,
@@ -74,10 +88,20 @@ export class NeoTurnReportReceipts {
       this.acknowledge(messageId);
     return {
       live: observation.live,
+      facts: observation.facts,
       messageId,
       previousId,
       skip: this.receipts.submissionReceipt<boolean>(messageId, 'v2') === true,
     };
+  }
+
+  async deliverCoveredNotice(key: string, cardOpen: boolean, deliver: () => Promise<void>) {
+    if (
+      skipCoveredNeoNotice(this.receipts.submissionReceipt<boolean>(key, 'v2') === true, cardOpen)
+    )
+      return;
+    await deliver();
+    this.acknowledge(key);
   }
 
   acknowledge(messageId: string) {

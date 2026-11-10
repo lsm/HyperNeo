@@ -32,11 +32,9 @@ pending-answer needs-human holds, releasing a retired card with no pending
 answer. This activation does not move ask settlement. The removal completion audit
 for #9002 is in neo-todo-remove-writer.md.
 
-Focused stop-context tests additionally cover stale caller states in both
-directions, missing current todos, current adoption, operation errors and
-throws. Run existing runner, runner activation and mutation operation suites
-unchanged, then the full check. Required Deno smoke repeats this same proof;
-label local Deno unverified when unavailable.
+Focused stop-context tests additionally cover stale caller states in both directions,
+missing current todos, current adoption, operation errors and throws. Run existing runner,
+runner activation and mutation operation suites unchanged, then the full check.
 
 The helper closes its transport and daemon in finally and writes
 `todo-stop-context.json`. The wrapper saves evidence before deleting the

@@ -217,6 +217,12 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
   )
     return { action: 'stream_stall_retry' };
   if (
+    errorSignal.isStreamStall &&
+    !isQueryInterrupted(errorSignal, env.lifecycle) &&
+    !limitRecoveryInFlight(env)
+  )
+    return { action: 'network_pause' };
+  if (
     errorSignal.isTransientConnectionError &&
     !isQueryInterrupted(errorSignal, env.lifecycle) &&
     env.attempt === 0

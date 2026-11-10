@@ -1,3 +1,4 @@
+import { secureDataRoot } from '@hyperneo/daemon/lib/data-root-private';
 import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
@@ -79,6 +80,7 @@ const VITE_CLIENT_SHIM = [
 
 export async function startDevServer(config: Config) {
   log.info('🔧 Starting unified development server...');
+  secureDataRoot(getDataDir(), { log: (line) => log.info(line) });
 
   let isShuttingDown = false;
   let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
@@ -202,7 +204,7 @@ export async function startDevServer(config: Config) {
 
     async fetch(req, server) {
       const url = new URL(req.url);
-      const refused = daemonContext.guardRequest(req);
+      const refused = await daemonContext.guardRequest(req);
       if (refused) return refused;
 
       if (req.method === 'OPTIONS') {
@@ -212,14 +214,22 @@ export async function startDevServer(config: Config) {
       if (url.pathname === '/pair' && req.method === 'POST') return daemonContext.handlePair(req);
 
       if (isWebSocketPath(url.pathname)) {
+        const device = await daemonContext.authenticateUpgrade(
+          req,
+          server.requestIP(req)?.address ?? null
+        );
+        if (!device)
+          return new Response('Device pairing required', {
+            status: 401,
+            headers: { 'Cache-Control': 'no-store' },
+          });
+        if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket')
+          return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const upgraded = (server as any).upgrade(req, {
           data: {
             connectionSessionId: 'global',
-            device: await daemonContext.authenticateUpgrade(
-              req,
-              server.requestIP(req)?.address ?? null
-            ),
+            device,
           },
         });
 
@@ -229,6 +239,17 @@ export async function startDevServer(config: Config) {
 
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
+
+      const markdown = await daemonContext.handleAskMarkdown(
+        req,
+        server.requestIP(req)?.address ?? null
+      );
+      if (markdown) return markdown;
+      const image = await daemonContext.handleMessageImage(
+        req,
+        server.requestIP(req)?.address ?? null
+      );
+      if (image) return image;
 
       try {
         const entry = resolveNeoEntry(url);

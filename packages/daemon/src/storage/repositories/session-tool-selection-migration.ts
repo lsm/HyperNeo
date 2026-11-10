@@ -6,8 +6,7 @@ import {
   type SessionToolChoiceInput,
 } from '../../lib/tools/session-tool-choice.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { SpaceWorkflowRepository } from './space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from './space-workflow-run-repository.ts';
+import { extensionSessionSkillVetoes, schemaTableExists } from '../schema/extensions.ts';
 
 export type ToolSelectionCatalog = Pick<
   SessionToolChoiceInput,
@@ -38,15 +37,7 @@ export function pinnedSlotVetoes(db: Database, metadata: string | null | undefin
   const provenance = parseObject<{ promptProvenance?: PromptProvenanceInit }>(
     metadata
   )?.promptProvenance;
-  if (!provenance?.workflowRunId || !provenance.nodeId) return [];
-  const run = new SpaceWorkflowRunRepository(db).getRun(provenance.workflowRunId);
-  const workflow = run ? new SpaceWorkflowRepository(db).getWorkflowForRun(run) : null;
-  const slot = workflow?.nodes
-    .find((node) => node.id === provenance.nodeId)
-    ?.agents.find(
-      (agent) => agent.name === provenance.agentName || agent.agentId === provenance.agentId
-    );
-  return slot?.disabledSkillIds ?? [];
+  return provenance ? extensionSessionSkillVetoes(db, provenance) : [];
 }
 
 function planSelections(db: Database, catalog: ToolSelectionCatalog): SelectionWrite[] {
@@ -76,7 +67,10 @@ function planSelections(db: Database, catalog: ToolSelectionCatalog): SelectionW
       after: JSON.stringify({ ...config, toolSelection }),
     });
   }
-  for (const row of db.prepare('SELECT id, config FROM spaces').all() as ConfigRow[]) {
+  const spaces = schemaTableExists(db, 'spaces')
+    ? (db.prepare('SELECT id, config FROM spaces').all() as ConfigRow[])
+    : [];
+  for (const row of spaces) {
     const config = parseObject<Record<string, unknown>>(row.config);
     if (!config || Object.hasOwn(config, 'toolSelectionDefaults')) continue;
     const toolSelectionDefaults = projectLegacySessionToolSelection({

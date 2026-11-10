@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
@@ -147,8 +148,7 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
 
   return defineOperation({
     name: 'neo.projects.reorganize',
-    description:
-      "Record each local project's code identity and plan project cleanup, returned in cleanupPlanned. Projects never merge on their own: a merge happens only when a run with apply: true applies a planned merge step (the older project stays; old links and conversations of the merged one keep working). It applies the plan only with apply: true, and the daily pass applies every step except merges on its own. Repository projects are never cleaned up. A project with no repository is deleted when empty and the mirror would not create it again, merged into the repository project where most of its cards ran (else one with its title), and otherwise kept. A project only on another machine is deleted when empty and otherwise left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo, the default session or the human only.",
+    description: neoToolDescription('neo.projects.reorganize'),
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

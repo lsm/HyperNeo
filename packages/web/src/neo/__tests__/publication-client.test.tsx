@@ -71,12 +71,46 @@ function deferred<T>() {
 }
 
 describe('authored publication client', () => {
+  it('retains a path-free handoff and refuses malformed or path-bearing references', () => {
+    const reference = {
+      type: 'handoff' as const,
+      daemonId: conversationId,
+      artifactId: 'a'.repeat(64),
+      sha256: 'a'.repeat(64),
+      sessionId: 'worker',
+      name: 'report.md',
+      byteLength: 12,
+    };
+    const row = { ...item(), artifacts: [reference] };
+    expect(presentPublicationPage(response([row]), page)).toEqual({
+      value: { state: 'ready', items: [row], nextAfter: 1 },
+    });
+    for (const invalid of [
+      { ...reference, path: '/private/evidence/report.md' },
+      { ...reference, sha256: 'b'.repeat(64) },
+      { ...reference, name: '../report.md' },
+    ]) {
+      expect(presentPublicationPage(response([{ ...item(), artifacts: [invalid] }]), page)).toEqual(
+        { reason: { state: 'unavailable' } }
+      );
+    }
+  });
   it('pins pure cursor and lifetime gates', () => {
     expect(admitPublicationCursor(page)).toEqual({ value: page });
     expect(admitPublicationLifetime(true)).toEqual({ value: true });
     expect(admitPublicationLifetime(false)).toEqual({ reason: { state: 'stale' } });
     expect(presentPublicationPage(response(), page)).toEqual({
       value: { state: 'ready', items: [item()], nextAfter: 1 },
+    });
+  });
+
+  it('preserves optional session references and rejects malformed session ids', () => {
+    const row = { ...item(), session: 'codex-desktop:synthetic-thread' };
+    expect(presentPublicationPage(response([row]), page)).toEqual({
+      value: { state: 'ready', items: [row], nextAfter: 1 },
+    });
+    expect(presentPublicationPage(response([{ ...row, session: '' }]), page)).toEqual({
+      reason: { state: 'unavailable' },
     });
   });
 

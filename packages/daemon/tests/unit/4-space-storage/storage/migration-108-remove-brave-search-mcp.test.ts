@@ -3,6 +3,24 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigration108 } from '../../../../src/storage/schema/migrations';
 import { createTables } from '../../../../src/storage/schema';
 
+function createTablesWithRoomOverrides(db: BunDatabase): void {
+  createTables(db);
+  db.exec(`
+    CREATE TABLE room_mcp_enablement (
+      room_id TEXT NOT NULL,
+      server_id TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (room_id, server_id)
+    );
+    CREATE TABLE room_skill_overrides (
+      skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+      room_id TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (skill_id, room_id)
+    );
+  `);
+}
+
 function migrationState(db: BunDatabase) {
   return {
     servers: db.prepare(`SELECT id, name FROM app_mcp_servers ORDER BY id`).all(),
@@ -29,7 +47,7 @@ describe('migration 108 removes Brave Search MCP data', () => {
   test('deletes legacy server, skill, and overrides', () => {
     const db = new BunDatabase(':memory:');
     try {
-      createTables(db);
+      createTablesWithRoomOverrides(db);
 
       db.prepare(
         `INSERT INTO app_mcp_servers
@@ -103,7 +121,7 @@ describe('migration 108 removes Brave Search MCP data', () => {
   test('deletes renamed servers that still contain Brave Search MCP config', () => {
     const db = new BunDatabase(':memory:');
     try {
-      createTables(db);
+      createTablesWithRoomOverrides(db);
       db.prepare(
         `INSERT INTO app_mcp_servers
 					(id, name, description, source_type, command, args, env, enabled, source, created_at, updated_at)
@@ -175,7 +193,7 @@ describe('migration 108 removes Brave Search MCP data', () => {
   test('is idempotent when run more than once', () => {
     const db = new BunDatabase(':memory:');
     try {
-      createTables(db);
+      createTablesWithRoomOverrides(db);
       db.prepare(
         `INSERT INTO app_mcp_servers
 					(id, name, description, source_type, command, args, env, enabled, source, created_at, updated_at)
@@ -233,7 +251,7 @@ describe('migration 108 removes Brave Search MCP data', () => {
   test('prunes legacy names from persisted settings and session config', () => {
     const db = new BunDatabase(':memory:');
     try {
-      createTables(db);
+      createTablesWithRoomOverrides(db);
       db.prepare(`UPDATE global_settings SET settings = ? WHERE id = 1`).run(
         JSON.stringify({
           disabledMcpServers: ['brave-search', 'custom-search'],

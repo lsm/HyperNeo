@@ -6,18 +6,13 @@ space on the data volume and refuses to start below 25 GiB:
 ```sh
 python3 .claude/skills/verify/coding-ancestry-db-run.py bun before
 python3 .claude/skills/verify/coding-ancestry-db-run.py bun verify
-python3 .claude/skills/verify/coding-ancestry-db-run.py deno before --executable "$DENO"
-python3 .claude/skills/verify/coding-ancestry-db-run.py deno verify --executable "$DENO"
 ```
 
-`DENO` names an existing Deno 2.9.4 executable; cached modules only are allowed.
-There is no runtime or dependency installation. Every run owns a fresh HOME,
-TMPDIR and synthetic DB, starts an ephemeral non-8399 daemon, refuses real
-HTTP, and uses a gh stub that refuses unsupported requests. No provider,
-model turn, credentials, existing database or UI is used. Evidence JSON and
-synthetic request records are copied to a unique folder before the runner
-immediately removes the entire temporary daemon directory. `run.json` records
-free space and cleanup.
+There is no runtime or dependency installation. Every run owns a fresh HOME, TMPDIR and
+synthetic DB, starts an ephemeral non-8399 daemon, refuses real HTTP, and uses a gh stub
+that refuses unsupported requests. No provider, model turn, credentials, existing database
+or UI is used. Evidence JSON and synthetic request records are copied to a unique folder
+before the runner immediately removes the entire temporary daemon directory.
 
 Before mode temporarily restores only `ancestry-facts.ts` from the pinned
 origin/dev revision, then restores the draft in finally. Run proofs sequentially
@@ -52,9 +47,7 @@ outside this slice, so this is no claim that the entire RPC is free of main SQL.
 
 The regression was committed before the fix. Focused unit tests cover bounded
 reader/writer retries, coalescing, write rollback, later retry, retained failed
-observations, immutable negatives, ordered SHA/host identity and a late positive
-response. The synchronous record API is removed. Existing identity and race expectations
-remain; their fixture writes now await the gateway. A regression binds a separate
-writer and makes the main connection read-only to prove explicit observations
-cannot bypass the gateway. `observed.json` summarizes
-the four retained runtime comparisons; raw JSON is the source evidence.
+observations, immutable negatives, ordered SHA/host identity and a late positive response.
+The synchronous record API is removed. Existing identity and race expectations remain;
+their fixture writes now await the gateway. A regression binds a separate writer and makes
+the main connection read-only to prove explicit observations cannot bypass the gateway.

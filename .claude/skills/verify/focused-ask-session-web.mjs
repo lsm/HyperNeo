@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { leaveSession, sessionTitle } from './session-pane-web.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const [port, run] = process.argv.slice(2);
@@ -46,9 +47,9 @@ try {
       assert.equal(await opener.locator('svg').count(), 1);
       await opener.click();
       const pane = page.locator('.neo-session-pane');
-      await pane.getByRole('heading', { name: saved.source.label, exact: true }).waitFor();
+      await sessionTitle(page, { name: saved.source.label, exact: true }).waitFor();
       await page.screenshot({ path: `${run}/evidence/session-${width}.png`, fullPage: true, animations: 'disabled' });
-      await pane.getByRole('button', { name: 'Back to Neo', exact: true }).click();
+      await leaveSession(page);
       await opener.waitFor();
       observed.push({ width, outcomeLinksVisible: !!saved.outcomeMode, questionRetired: true, sourceRetained: saved.source.link, duplicateHeaderOpenerAbsent: true, duplicateFallbackAbsent: true, todoOpenerReopens: true });
     } finally { await page.close(); }

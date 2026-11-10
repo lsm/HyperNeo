@@ -4,6 +4,7 @@ import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 import type { NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonAppContext } from '../../../src/app';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 10_000 : 60_000;
@@ -479,7 +480,10 @@ describe('Task Agent Lifecycle — Online Tests', () => {
       daemon.trackSession(nodeAgentSessionId);
       await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
 
-      daemon.daemonContext.db.getNodeExecutionRepo().update(execution.id, {
+      new NodeExecutionRepository(
+        daemon.daemonContext.db.getDatabase(),
+        daemon.daemonContext.reactiveDb
+      ).update(execution.id, {
         status: 'idle',
         result: 'Lifecycle completion test',
       });

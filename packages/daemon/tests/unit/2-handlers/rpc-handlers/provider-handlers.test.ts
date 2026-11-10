@@ -7,7 +7,6 @@ import {
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
-import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 import {
   clearModelsCache,
   getModelsCache,
@@ -305,12 +304,7 @@ describe('Provider RPC handlers', () => {
       [{ id: 'provider', options: null }, 'Remote model options must be an object'],
       [{ id: 'provider', options: { extra: true } }, 'Unknown remote model option: extra'],
       [{ id: 'provider', options: { force: 'yes' } }, 'force must be a boolean'],
-      [{ id: 'provider', options: { command: 42 } }, 'ACP command must be a string'],
-      [{ id: 'provider', options: { command: '   ' } }, 'ACP command is required'],
-      [
-        { id: 'provider', options: { command: 'x'.repeat(64 * 1024 + 1) } },
-        'ACP command must be ≤ 65536 chars',
-      ],
+      [{ id: 'provider', options: { command: 42 } }, 'Unknown remote model option: command'],
       [{ id: 'provider', options: { baseUrl: 42 } }, 'baseUrl must be a string'],
       [
         { id: 'provider', options: { baseUrl: `https://${'x'.repeat(2048)}` } },
@@ -337,198 +331,17 @@ describe('Provider RPC handlers', () => {
       await expect(handlers.get('providers.listRemoteModels')!(request, {})).rejects.toThrow(error);
     });
 
-    it('rejects provider-inappropriate options before discovery', async () => {
-      const acp = repo.createProvider({
-        providerId: 'acp',
-        displayName: 'ACP Agent',
-        kind: 'built_in',
-        authType: 'none',
-      });
-      const remote = repo.createProvider({
-        providerId: 'remote',
-        displayName: 'Remote',
-        kind: 'built_in',
-        authType: 'none',
-      });
-      const listRemoteModels = mock(async () => [] as ModelInfo[]);
-      getProviderRegistry().register({ id: 'remote', listRemoteModels } as unknown as Provider);
-      const handlers = setup();
-      const handler = handlers.get('providers.listRemoteModels')!;
-
-      await expect(
-        handler({ id: acp.id, options: { baseUrl: 'https://models.example' } }, {})
-      ).rejects.toThrow('baseUrl is not supported for ACP providers');
-      await expect(
-        handler({ id: remote.id, options: { command: 'devin acp' } }, {})
-      ).rejects.toThrow('command is only supported for ACP providers');
-      expect(listRemoteModels).not.toHaveBeenCalled();
-    });
-
-    it('preserves ACP override parity and leaves saved and cached state unchanged', async () => {
-      const fixture = `${process.execPath} ${process.cwd()}/tests/fixtures/mock-acp-server.ts`;
+    it('reports a removed stored provider as unavailable for discovery', async () => {
       const created = repo.createProvider({
         providerId: 'acp',
-        displayName: 'ACP Agent',
+        displayName: 'Old stored provider',
         kind: 'built_in',
         authType: 'none',
-        configJson: JSON.stringify({ command: 'saved acp' }),
       });
-      const provider = new AcpProvider({}, async () => {});
-      provider.setAcpCommand('registered acp');
-      provider.setCachedModels([
-        {
-          id: 'acp-cached',
-          name: 'ACP Cached',
-          alias: 'acp-cached',
-          family: 'acp',
-          provider: 'acp',
-          contextWindow: 100000,
-          description: 'Cached ACP model',
-          releaseDate: '2026-01-01',
-          available: true,
-        },
-      ]);
-      getProviderRegistry().register(provider);
-      const globalModels: ModelInfo[] = [
-        {
-          id: 'global-cached',
-          name: 'Global Cached',
-          alias: 'global-cached',
-          family: 'anthropic',
-          provider: 'anthropic',
-          contextWindow: 100000,
-          description: 'Cached global model',
-          releaseDate: '2026-01-01',
-          available: true,
-        },
-      ];
-      setModelsCache(new Map([['global', globalModels]]));
-      const handlers = setup();
-
-      const canonical = await handlers.get('providers.listRemoteModels')!(
-        { id: created.id, options: { command: `  ${fixture}  ` } },
-        {}
+      const handler = setup().get('providers.listRemoteModels')!;
+      await expect(handler({ id: created.id }, {})).rejects.toThrow(
+        'Provider acp is not registered'
       );
-      const legacy = await handlers.get('providers.fetchAcpModels')!(
-        { id: created.id, command: fixture },
-        {}
-      );
-
-      expect(canonical).toEqual({ models: [{ id: 'default', name: 'Default', provider: 'acp' }] });
-      expect(legacy).toEqual(canonical);
-      expect(repo.getProvider(created.id)?.configJson).toBe(created.configJson);
-      expect(provider.getAcpCommand()).toBe('registered acp');
-      expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['acp-cached']);
-      expect(getModelsCache().get('global')).toEqual(globalModels);
-      expect(eventBus.publishAsync).not.toHaveBeenCalled();
-    });
-
-    it('uses persisted and explicit environment commands through the canonical route', async () => {
-      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
-      process.env.HYPERNEO_ACP_COMMAND = 'hyperneo-env-acp-binary';
-      const created = repo.createProvider({
-        providerId: 'acp',
-        displayName: 'ACP Agent',
-        kind: 'built_in',
-        authType: 'none',
-        configJson: JSON.stringify({ command: 'hyperneo-saved-acp-binary' }),
-      });
-      const handlers = setup();
-      const handler = handlers.get('providers.listRemoteModels')!;
-
-      try {
-        await expect(handler({ id: created.id }, {})).rejects.toThrow('hyperneo-saved-acp-binary');
-        await expect(handler({ id: created.id, options: { command: '' } }, {})).rejects.toThrow(
-          'hyperneo-env-acp-binary'
-        );
-      } finally {
-        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
-        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
-      }
-    });
-  });
-
-  describe('providers.fetchAcpModels', () => {
-    it('rejects unknown and non-ACP providers', async () => {
-      const anthropic = repo.createProvider({
-        providerId: 'anthropic',
-        displayName: 'Anthropic',
-        kind: 'built_in',
-        authType: 'api_key',
-      });
-      const handlers = setup();
-
-      await expect(
-        handlers.get('providers.fetchAcpModels')!({ id: 'missing', command: 'devin acp' }, {})
-      ).rejects.toThrow('Provider missing not found');
-      await expect(
-        handlers.get('providers.fetchAcpModels')!({ id: anthropic.id, command: 'devin acp' }, {})
-      ).rejects.toThrow('is not an ACP provider');
-    });
-
-    it('rejects invalid command overrides before discovery', async () => {
-      const acp = repo.createProvider({
-        providerId: 'acp',
-        displayName: 'ACP Agent',
-        kind: 'built_in',
-        authType: 'none',
-      });
-      getProviderRegistry().register(new AcpProvider({}, async () => {}));
-      const handlers = setup();
-
-      await expect(
-        handlers.get('providers.fetchAcpModels')!({ id: acp.id, command: '   ' }, {})
-      ).rejects.toThrow('ACP command is required');
-      await expect(
-        handlers.get('providers.fetchAcpModels')!({ id: acp.id, command: 42 }, {})
-      ).rejects.toThrow('ACP command must be a string');
-    });
-
-    it('hydrates the fallback provider from the requested record command', async () => {
-      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
-      delete process.env.HYPERNEO_ACP_COMMAND;
-      const acp = repo.createProvider({
-        providerId: 'acp',
-        displayName: 'ACP Agent',
-        kind: 'built_in',
-        authType: 'none',
-        configJson: JSON.stringify({ command: 'hyperneo-missing-acp-binary' }),
-      });
-      const handlers = setup();
-
-      try {
-        await expect(handlers.get('providers.fetchAcpModels')!({ id: acp.id }, {})).rejects.toThrow(
-          'hyperneo-missing-acp-binary'
-        );
-      } finally {
-        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
-        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
-      }
-    });
-
-    it('resolves an empty-string command through the environment fallback', async () => {
-      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
-      process.env.HYPERNEO_ACP_COMMAND = 'hyperneo-env-acp-binary';
-      const acp = repo.createProvider({
-        providerId: 'acp',
-        displayName: 'ACP Agent',
-        kind: 'built_in',
-        authType: 'none',
-        configJson: JSON.stringify({ command: 'hyperneo-missing-acp-binary' }),
-      });
-      const handlers = setup();
-
-      try {
-        await expect(
-          handlers.get('providers.fetchAcpModels')!({ id: acp.id, command: '' }, {})
-        ).rejects.toThrow('hyperneo-env-acp-binary');
-        await expect(handlers.get('providers.fetchAcpModels')!({ id: acp.id }, {})).rejects.toThrow(
-          'hyperneo-missing-acp-binary'
-        );
-      } finally {
-        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
-        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
-      }
     });
   });
 
@@ -572,99 +385,11 @@ describe('Provider RPC handlers', () => {
       expect(creds.storeApiKey).not.toHaveBeenCalled();
     });
 
-    it('rejects invalid ACP commands before creating or mutating the provider', async () => {
-      const provider = new AcpProvider({}, async () => {});
-      provider.setAcpCommand('devin acp');
-      getProviderRegistry().register(provider);
-      const handlers = setup();
-
-      await expect(
-        handlers.get('providers.create')!(
-          {
-            params: {
-              providerId: 'acp',
-              displayName: 'ACP Agent',
-              kind: 'built_in',
-              authType: 'none',
-              configJson: JSON.stringify({ command: "devin 'acp" }),
-            },
-          },
-          {}
-        )
-      ).rejects.toThrow('Invalid ACP command: unmatched quote');
-
-      expect(repo.listProviders()).toEqual([]);
-      expect(provider.getAcpCommand()).toBe('devin acp');
-
-      const result = (await handlers.get('providers.create')!(
-        {
-          params: {
-            providerId: 'acp',
-            displayName: 'ACP Agent',
-            kind: 'built_in',
-            authType: 'none',
-            configJson: JSON.stringify({ command: 'fixed acp' }),
-          },
-        },
-        {}
-      )) as { success: boolean; provider: ProviderRecord };
-
-      expect(result.success).toBe(true);
-      expect(repo.listProviders()).toHaveLength(1);
-      expect(provider.getAcpCommand()).toBe('fixed acp');
-    });
-
-    it('does not activate a command from a disabled ACP record', async () => {
-      const provider = new AcpProvider({}, async () => {});
-      provider.setAcpCommand('old acp');
-      getProviderRegistry().register(provider);
-      const handlers = setup();
-
-      const result = (await handlers.get('providers.create')!(
-        {
-          params: {
-            providerId: 'acp',
-            displayName: 'ACP Agent',
-            kind: 'built_in',
-            authType: 'none',
-            isEnabled: false,
-            configJson: JSON.stringify({ command: 'new acp' }),
-          },
-        },
-        {}
-      )) as { provider: ProviderRecord };
-
-      expect(result.provider.isEnabled).toBe(false);
-      expect(provider.getAcpCommand()).toBe('old acp');
-    });
-
-    it('unregisters a live built-in provider when created as disabled', async () => {
-      getProviderRegistry().register(new AcpProvider({}, async () => {}));
-      const handlers = setup();
-
-      const result = (await handlers.get('providers.create')!(
-        {
-          params: {
-            providerId: 'acp',
-            displayName: 'ACP Agent',
-            kind: 'built_in',
-            authType: 'none',
-            isEnabled: false,
-            configJson: JSON.stringify({ command: 'new acp' }),
-          },
-        },
-        {}
-      )) as { provider: ProviderRecord };
-
-      expect(result.provider.isEnabled).toBe(false);
-      expect(getProviderRegistry().has('acp')).toBe(false);
-    });
-
     it('does not log out a live built-in provider when created as disabled', async () => {
       const logout = mock(async () => {});
       getProviderRegistry().register({
-        id: 'acp',
-        displayName: 'ACP Agent',
+        id: 'glm',
+        displayName: 'GLM',
         capabilities: {
           streaming: false,
           extendedThinking: false,
@@ -686,8 +411,8 @@ describe('Provider RPC handlers', () => {
       const result = (await handlers.get('providers.create')!(
         {
           params: {
-            providerId: 'acp',
-            displayName: 'ACP Agent',
+            providerId: 'glm',
+            displayName: 'GLM',
             kind: 'built_in',
             authType: 'none',
             isEnabled: false,
@@ -697,7 +422,7 @@ describe('Provider RPC handlers', () => {
       )) as { provider: ProviderRecord };
 
       expect(result.provider.isEnabled).toBe(false);
-      expect(getProviderRegistry().has('acp')).toBe(false);
+      expect(getProviderRegistry().has('glm')).toBe(false);
       expect(logout).not.toHaveBeenCalled();
     });
 
@@ -801,49 +526,6 @@ describe('Provider RPC handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.provider.displayName).toBe('Anthropic Inc');
-    });
-
-    it('rejects invalid ACP commands before persisting or mutating the provider', async () => {
-      const originalConfig = JSON.stringify({ command: 'devin acp' });
-      const created = repo.createProvider({
-        providerId: 'acp',
-        displayName: 'ACP Agent',
-        kind: 'built_in',
-        authType: 'none',
-        configJson: originalConfig,
-      });
-      const provider = new AcpProvider({}, async () => {});
-      provider.setAcpCommand('devin acp');
-      getProviderRegistry().register(provider);
-      const handlers = setup();
-
-      await expect(
-        handlers.get('providers.update')!(
-          {
-            id: created.id,
-            params: {
-              configJson: JSON.stringify({ command: "devin 'acp" }),
-            },
-          },
-          {}
-        )
-      ).rejects.toThrow('Invalid ACP command: unmatched quote');
-
-      expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
-      expect(provider.getAcpCommand()).toBe('devin acp');
-
-      await expect(
-        handlers.get('providers.update')!(
-          { id: created.id, params: { configJson: '{invalid' } },
-          {}
-        )
-      ).rejects.toThrow('Invalid ACP config JSON');
-      expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
-
-      await expect(
-        handlers.get('providers.update')!({ id: created.id, params: { configJson: 'null' } }, {})
-      ).rejects.toThrow('Invalid ACP config JSON');
-      expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
     });
 
     it('emits providers.changed after update', async () => {
@@ -1421,59 +1103,6 @@ describe('Provider RPC handlers', () => {
       expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
         sessionId: 'global',
       });
-    });
-
-    it('probes the ACP command during provider tests even when models are cached', async () => {
-      const created = repo.createProvider({
-        providerId: 'acp',
-        displayName: 'ACP Agent',
-        kind: 'built_in',
-        authType: 'none',
-      });
-      const provider = new AcpProvider({}, async () => {
-        throw new Error('command unavailable');
-      });
-      provider.setAcpCommand('broken acp');
-      provider.setCachedModels([
-        {
-          id: 'acp-cached',
-          name: 'ACP Cached',
-          family: 'acp',
-          provider: 'acp',
-          contextWindow: 100000,
-          available: true,
-        },
-      ]);
-      getProviderRegistry().register(provider);
-      const handlers = setup();
-
-      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
-        healthy: boolean;
-        error?: string;
-      };
-
-      expect(result).toEqual({ healthy: false, error: 'command unavailable' });
-    });
-
-    it('re-probes the ACP command on repeated explicit provider tests', async () => {
-      const created = repo.createProvider({
-        providerId: 'acp',
-        displayName: 'ACP Agent',
-        kind: 'built_in',
-        authType: 'none',
-      });
-      let probes = 0;
-      const provider = new AcpProvider({}, async () => {
-        probes++;
-      });
-      provider.setAcpCommand('devin acp');
-      getProviderRegistry().register(provider);
-      const handlers = setup();
-
-      await handlers.get('providers.test')!({ id: created.id }, {});
-      await handlers.get('providers.test')!({ id: created.id }, {});
-
-      expect(probes).toBe(2);
     });
 
     it('returns unhealthy for missing provider', async () => {

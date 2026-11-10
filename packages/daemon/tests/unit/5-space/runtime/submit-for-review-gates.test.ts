@@ -10,7 +10,7 @@ import {
   submittingNodeId,
 } from '../../../../src/lib/tasks/submit-for-review';
 import type { DirectTaskAttempt } from '../../../../src/storage/repositories/direct-task-execution-repository';
-import type { SpaceMcpSessionPolicyContext } from '../../../../src/lib/space/runtime/space-mcp-session-policy';
+import type { SpaceMcpSessionPolicyContext } from '../../../../src/lib/session-resolution/space-mcp-session-policy';
 
 const policy = {} as SpaceMcpSessionPolicyContext;
 const task = (extra: Partial<SpaceTask> = {}) =>

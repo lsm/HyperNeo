@@ -25,3 +25,6 @@ live model's likelihood of following the guidance. Stop daemon/mock via stop.sh.
 
 Answering can queue a follow-up turn; with no provider configured it may produce
 an expected provider/kickoff notification. This is not model execution proof.
+
+Question fixtures carry an explicit core evidence retirement check inside the
+synthetic run. That file stays absent during rendering and answering checks.

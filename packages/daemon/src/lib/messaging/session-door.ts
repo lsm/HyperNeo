@@ -6,12 +6,18 @@ import { getDataDir } from '../data-dir.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationCaller, OperationRegistry } from '../operations/registry.ts';
 import { SESSION_DOOR_PRINCIPAL } from '../pairing/pairing-operations.ts';
+import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
 
 const DOOR_OPERATIONS = new Set([
   'message.send',
   'neo.question.get',
+  'neo.question.relayAnswer',
   'system.build',
   'device.pair.create',
+  'device.pair.pending',
+  'device.pair.approve',
+  'device.pair.terminal_approval.get',
+  'device.pair.terminal_approval.set',
   'device.pair.reset_lockout',
   'device.list',
   'device.revoke',
@@ -26,7 +32,8 @@ export function sessionDoorPath(): string {
 }
 
 export function planSessionDoorCall(
-  body: unknown
+  body: unknown,
+  device?: UpgradeIdentity
 ): { value: { name: string; input: unknown; caller: OperationCaller } } | { reason: string } {
   const { sender, name, input } = (body ?? {}) as Record<string, unknown>;
   if (typeof sender !== 'string' || !sender.trim())
@@ -40,7 +47,12 @@ export function planSessionDoorCall(
     value: {
       name,
       input: rest,
-      caller: { source: 'mcp', principal: SESSION_DOOR_PRINCIPAL, sessionId: sender.trim() },
+      caller: {
+        source: 'mcp',
+        principal: SESSION_DOOR_PRINCIPAL,
+        sessionId: sender.trim(),
+        device,
+      },
     },
   };
 }
@@ -58,6 +70,7 @@ function doorAnswers(path: string): Promise<boolean> {
 
 export async function startSessionDoor(
   registry: () => OperationRegistry,
+  authenticate: (request: Request, remoteAddress: string | null) => Promise<UpgradeIdentity | null>,
   path = sessionDoorPath()
 ) {
   if (await doorAnswers(path)) throw new Error(`another daemon already serves ${path}`);
@@ -80,13 +93,21 @@ export async function startSessionDoor(
           error:
             'Request exceeds 256 KiB. Write the report to HYPERNEO_HANDOFF_DIR, call handoff.publish, then message.send {to, text, files: [reference]}.',
         });
+      const device = await authenticate(
+        new Request('http://localhost/', {
+          headers: { authorization: request.headers.authorization ?? '' },
+        }),
+        null
+      );
+      if (!device || device.kind !== 'human')
+        return reply(401, { error: 'Device pairing required' });
       let parsed: unknown;
       try {
         parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       } catch {
         return reply(400, { error: 'invalid_json' });
       }
-      const plan = planSessionDoorCall(parsed);
+      const plan = planSessionDoorCall(parsed, device);
       if ('reason' in plan) return reply(400, { error: plan.reason });
       const { name, input, caller } = plan.value;
       reply(200, await invokeOperation(registry(), name, input, caller));

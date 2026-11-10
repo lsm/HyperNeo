@@ -1,3 +1,5 @@
+import { Database as FixtureDatabase } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import assert from 'node:assert/strict';
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,7 +14,8 @@ if (phase === 'seed') {
  const output = await new Response(child.stdout).text(); assert.equal(await child.exited, 0, output);
  console.log('seeded isolated producer-reference fixture');
 } else {
- const rpc = async (name: string, input: unknown) => {
+ const historical = (input: Parameters<ReturnType<typeof legacyAttachmentFixture>['execute']>[0]) => { const fixtureDb = new FixtureDatabase(join(root, 'data/daemon.db')); try { return legacyAttachmentFixture(() => fixtureDb, join(root, 'data')).execute(input); } finally { fixtureDb.close(); } };
+  const rpc = async (name: string, input: unknown) => {
   const child = Bun.spawn([process.execPath, fileURLToPath(new URL('./rpc.ts', import.meta.url)), name, JSON.stringify(input)], {
    env: { ...process.env, VERIFY_PORT: port }, stdout: 'pipe', stderr: 'inherit',
   });
@@ -26,7 +29,7 @@ if (phase === 'seed') {
  };
  const evidencePath = join(root, 'evidence', 'producer-refs-rpc.json');
  if (phase === 'publish') {
-  const registered = await rpc('artifact.file.register', { requestId: 'producer-refs', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Streamed report' });
+  const registered = await historical({ requestId: 'producer-refs', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Streamed report' });
   assert(registered.accepted, JSON.stringify(registered));
   const ref = registered.artifact;
   const before = await card(); assert.equal(before.artifacts, undefined);

@@ -3,7 +3,7 @@ import { VOICE_MAX_AUDIO_BYTES } from '@hyperneo/shared';
 import { bytesToBase64, downsampleChunks, encodeWav } from '../wav.ts';
 
 const TARGET_SAMPLE_RATE = 16_000;
-const MAX_RECORDING_MS = 300_000;
+const MAX_RECORDING_MS = 240_000;
 
 type RecorderNode = AudioWorkletNode | ScriptProcessorNode;
 
@@ -21,7 +21,7 @@ class VoiceRecorderStore {
   readonly isStarting = signal(false);
   readonly durationLimitHit = signal(false);
   readonly recordingSessionId = signal<string | null>(null);
-  readonly recordingSpaceId = signal<string | null>(null);
+  readonly recordingScopeId = signal<string | null>(null);
   readonly recordingTaskId = signal<string | null>(null);
   readonly recordingOwnerId = signal<string | null>(null);
   readonly recordingStartedAt = signal<number | null>(null);
@@ -47,7 +47,7 @@ class VoiceRecorderStore {
     ownerId: string,
     ownerSessionId: string,
     cursor?: { start: number; end: number } | null,
-    ownerSpaceId?: string | null,
+    ownerScopeId?: string | null,
     ownerTaskId?: string | null
   ): Promise<void> => {
     if (this.isRecording.value || this.starting || this.stopping)
@@ -61,7 +61,7 @@ class VoiceRecorderStore {
     this.durationLimitHit.value = false;
     this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
-    this.recordingSpaceId.value = ownerSpaceId ?? null;
+    this.recordingScopeId.value = ownerScopeId ?? null;
     this.recordingTaskId.value = ownerTaskId ?? null;
     this.recordingCursor.value = cursor ?? null;
     const generation = ++this.startGeneration;
@@ -229,7 +229,7 @@ class VoiceRecorderStore {
       await this.teardown();
       this.recordingOwnerId.value = null;
       this.recordingSessionId.value = null;
-      this.recordingSpaceId.value = null;
+      this.recordingScopeId.value = null;
       this.recordingTaskId.value = null;
       this.stoppedByLimit = false;
     } finally {
@@ -258,7 +258,7 @@ class VoiceRecorderStore {
     this.isRecording.value = false;
     this.recordingOwnerId.value = null;
     this.recordingSessionId.value = null;
-    this.recordingSpaceId.value = null;
+    this.recordingScopeId.value = null;
     this.recordingTaskId.value = null;
     this.recordingStartedAt.value = null;
     await this.teardown();

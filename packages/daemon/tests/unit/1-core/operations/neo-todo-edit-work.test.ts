@@ -132,6 +132,7 @@ describe('todos given work later', () => {
   test('edit gives a waiting step its work and the queue picks it up', async () => {
     const { db, store, sessions, invoke, second } = await approvedPlan();
     try {
+      store.updateTodo(second, { approvedAt: 1 }, 1);
       const edited = await invoke('neo.todo.edit', { todoId: second.id, ...work });
       expect(edited.ok).toBe(true);
       expect(store.getTodo(second.id)?.instruction).toBe('Do B.');
@@ -162,4 +163,107 @@ describe('todos given work later', () => {
       db.close();
     }
   });
+
+  test('coding work with a start target but no place is refused when added or edited', async () => {
+    const { db, store, sessions, invoke, step } = setup();
+    try {
+      const ask = store.openAsk({
+        id: 'coding-ask',
+        projectId: null,
+        goalId: null,
+        sessionId: caller.sessionId!,
+        originMessageId: 'coding-origin',
+        title: 'Coding',
+        request: 'Coding',
+        createdAt: 1,
+      });
+      db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('synthetic/repo', ask.id);
+      store.addTodo(
+        'repository-anchor',
+        ask.id,
+        {
+          title: 'Repository context',
+          doneWhen: 'Observed',
+          check: null,
+          instruction: null,
+          named: null,
+        },
+        1,
+        'synthetic/repo'
+      );
+      const placeless = {
+        instruction: 'Do it.',
+        target: { verb: 'start', adapter: 'hyperneo' },
+      };
+      expect(
+        await invoke('neo.todo.add', { askId: ask.id, ...step('New'), ...placeless })
+      ).toMatchObject({ ok: false, reason: expect.stringMatching(/^place_required:/) });
+      expect(store.listTodos(ask.id).map((todo) => todo.id)).toEqual(['repository-anchor']);
+      const waiting = store.addTodo(
+        'waiting',
+        ask.id,
+        {
+          approvedAt: 1,
+          title: 'Waiting',
+          doneWhen: 'Result verified',
+          check: null,
+          instruction: null,
+          named: null,
+        },
+        2,
+        'synthetic/repo'
+      );
+      expect(await invoke('neo.todo.edit', { todoId: waiting.id, ...placeless })).toMatchObject({
+        ok: false,
+        reason: expect.stringMatching(/^place_required:/),
+      });
+      expect(store.getTodo(waiting.id)).toEqual(waiting);
+      expect(sessions.get(waiting.id)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test.each(['ask', 'todo'] as const)(
+    'core evidence target edits preserve %s repository placement',
+    async (source) => {
+      const { db, store, sessions, invoke, step } = setup();
+      try {
+        const ask = store.openAsk({
+          id: 'stored',
+          title: 'Stored',
+          request: 'Stored',
+          sessionId: caller.sessionId!,
+          projectId: null,
+          originMessageId: null,
+          createdAt: 1,
+        });
+        if (source === 'ask')
+          db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('synthetic/ask', ask.id);
+        const todo = store.addTodo(
+          'stored-step',
+          ask.id,
+          { ...step('Stored step'), instruction: null, named: null },
+          2,
+          source === 'todo' ? 'synthetic/todo' : null
+        );
+        const target = { instruction: 'Work', target: { verb: 'start', adapter: 'hyperneo' } };
+        expect(await invoke('neo.todo.edit', { todoId: todo.id, ...target })).toMatchObject({
+          ok: false,
+          reason: expect.stringMatching(/^place_required:/),
+        });
+        expect(
+          await invoke('neo.todo.edit', {
+            todoId: todo.id,
+            ...target,
+            check: { pack: 'core', kind: 'unknown', params: {} },
+          })
+        ).toMatchObject({ ok: false, reason: expect.stringMatching(/^place_required:/) });
+        expect(store.getTodo(todo.id)).toEqual(todo);
+        expect(sessions.get(todo.id)).toBeNull();
+      } finally {
+        db.close();
+      }
+    }
+  );
 });

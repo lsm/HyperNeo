@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
@@ -98,7 +99,7 @@ try {
     throw new Error(`${label} timed out`);
   };
   await wait('first start', async () => { try { return (await fetch(`http://127.0.0.1:${port}/neo`)).ok; } catch { return false; } });
-  socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  socket = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { socket!.onopen = () => done(); socket!.onerror = () => fail(new Error('WebSocket failed')); });
   const rpc = (method: string, data: unknown = {}) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID();
@@ -155,9 +156,14 @@ try {
   await wait('embedding worker load', () => logs.includes('Embeddings ready'), 360000);
   steps.embeddings = { pass: true, excerpts: logs.split('\n').filter(line => line.includes('Embeddings ready') || line.includes('Embedding asset checksum verified')) }; save();
   if (process.env.VERIFY_NODE) {
+    const browserPair = JSON.parse(await cli(['pair', '--name', 'RC isolated browser']));
+    assert.equal(browserPair.approval, 'pending');
+    const allowed = await op('device.pair.approve', { codeId: browserPair.codeId });
+    assert.equal(allowed.ok, true);
     execFileSync(process.env.VERIFY_NODE, ['.claude/skills/verify/release-candidate-web.mjs', String(port), run], {
       env: { PATH: process.env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, NODE_ENV: 'test', NODE_PATH: process.env.NODE_PATH, VERIFY_BROWSER: process.env.VERIFY_BROWSER },
-      stdio: 'inherit',
+      input: JSON.stringify({ code: browserPair.code }),
+      stdio: ['pipe', 'inherit', 'inherit'],
     });
     steps.browser = { pass: true, evidence: 'browser.json and neo-chat.png / life-admin.png' }; save();
   }

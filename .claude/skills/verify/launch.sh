@@ -16,7 +16,7 @@ done
 mkdir -p "$RUN/home" "$RUN/data" "$RUN/bin" "$RUN/evidence"
 cp "$REPO/.claude/skills/verify/${VERIFY_GH_STUB:-gh-stub.sh}" "$RUN/bin/gh"
 clean_env=(env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin"
-  TMPDIR="${TMPDIR:-/tmp}" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1
+  TMPDIR="${TMPDIR:-/tmp}" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 HYPERNEO_SPACE="${HYPERNEO_SPACE:-on}"
   ${VERIFY_LOG_LEVEL:+LOG_LEVEL=$VERIFY_LOG_LEVEL}
   ${VERIFY_MOCK_PORT:+VERIFY_MOCK_PORT=$VERIFY_MOCK_PORT})
 cd "$REPO"

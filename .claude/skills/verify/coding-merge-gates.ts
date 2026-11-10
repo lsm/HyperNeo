@@ -40,7 +40,7 @@ try {
       const todos = new CodingTodoPrRepository(db), ledger = new CodingPrLedgerRepository(db);
       const pack = createCodingPack({ todoPrs: todos, prLedger: ledger,
         prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db),
-        readPrs: async () => [], readClaudeOwners: async () => [], projectRepos: () => [],
+        readPrs: async () => [], projectRepos: () => [],
         prSweepDeps: { tell: async () => true, wake: async () => true } });
       const assignments = new CodingAssignmentsRepository(db);
       if (phase === 'initial') {

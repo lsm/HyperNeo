@@ -1361,9 +1361,9 @@ describe('SessionManager', () => {
 
     it('interrupts only cached provider sessions without clearing resume state', async () => {
       const cachedSession = {
-        id: 'cached-acp-preserved',
-        config: { provider: 'acp' },
-        acpSessionId: 'remote-session',
+        id: 'cached-glm-preserved',
+        config: { provider: 'glm' },
+        sdkSessionId: 'stored-sdk-session',
       } as Session;
       const cachedAgent = {
         setOperationRegistryProvider: mock(() => {}),
@@ -1377,28 +1377,28 @@ describe('SessionManager', () => {
       } as unknown as AgentSession;
       sessionManager.registerSession(cachedAgent);
 
-      await sessionManager.interruptCachedProviderSessions('acp');
+      await sessionManager.interruptCachedProviderSessions('glm');
 
       expect(cachedAgent.cleanup).toHaveBeenCalledTimes(1);
-      expect(sessionManager.getCachedSession('cached-acp-preserved')).toBeNull();
-      expect(cachedSession.acpSessionId).toBe('remote-session');
+      expect(sessionManager.getCachedSession('cached-glm-preserved')).toBeNull();
+      expect(cachedSession.sdkSessionId).toBe('stored-sdk-session');
       expect(mockDb.updateSession).not.toHaveBeenCalled();
     });
 
-    it('clears and interrupts persisted and cached provider sessions', async () => {
+    it('interrupts persisted and cached provider sessions while preserving resume state', async () => {
       const persisted = {
-        id: 'persisted-acp',
-        config: { provider: 'acp' },
-        acpSessionId: 'remote-session',
-        metadata: { acpContextUsageEstimate: 12000, preserved: true },
+        id: 'persisted-glm',
+        config: { provider: 'glm' },
+        sdkSessionId: 'stored-sdk-session',
+        metadata: { totalTokens: 12000, preserved: true },
       } as Session;
       (mockDb.listSessions as ReturnType<typeof mock>).mockReturnValue([
         persisted,
         { id: 'anthropic', config: { provider: 'anthropic' } } as Session,
       ]);
       const cachedSession = {
-        id: 'cached-acp',
-        config: { provider: 'acp' },
+        id: 'cached-glm',
+        config: { provider: 'glm' },
       } as Session;
       const cachedAgent = {
         setOperationRegistryProvider: mock(() => {}),
@@ -1412,37 +1412,30 @@ describe('SessionManager', () => {
       } as unknown as AgentSession;
       sessionManager.registerSession(cachedAgent);
 
-      await sessionManager.interruptProviderSessions('acp');
+      await sessionManager.interruptProviderSessions('glm');
 
-      expect(mockDb.updateSession).toHaveBeenCalledWith('persisted-acp', {
-        acpSessionId: undefined,
-        metadata: {
-          acpContextUsageEstimate: undefined,
-          preserved: true,
-        },
-      });
-      expect(mockDb.updateSession).toHaveBeenCalledWith('cached-acp', {
-        acpSessionId: undefined,
-      });
+      expect(mockDb.updateSession).not.toHaveBeenCalled();
+      expect(persisted.sdkSessionId).toBe('stored-sdk-session');
+      expect(persisted.metadata).toEqual({ totalTokens: 12000, preserved: true });
       expect(cachedAgent.cleanup).toHaveBeenCalledTimes(1);
-      expect(sessionManager.getCachedSession('cached-acp')).toBeNull();
+      expect(sessionManager.getCachedSession('cached-glm')).toBeNull();
     });
 
     it('interrupts only the given provider session ids', async () => {
       const persisted = {
-        id: 'persisted-acp',
-        config: { provider: 'acp' },
-        acpSessionId: 'remote-session',
-        metadata: { acpContextUsageEstimate: 9000, preserved: true },
+        id: 'persisted-glm',
+        config: { provider: 'glm' },
+        sdkSessionId: 'stored-sdk-session',
+        metadata: { totalTokens: 9000, preserved: true },
       } as Session;
       (mockDb.listSessions as ReturnType<typeof mock>).mockReturnValue([
         persisted,
         { id: 'anthropic', config: { provider: 'anthropic' } } as Session,
       ]);
       const cachedSession = {
-        id: 'cached-acp',
-        config: { provider: 'acp' },
-        acpSessionId: 'remote-session',
+        id: 'cached-glm',
+        config: { provider: 'glm' },
+        sdkSessionId: 'stored-sdk-session',
       } as Session;
       const cachedAgent = {
         setOperationRegistryProvider: mock(() => {}),
@@ -1456,15 +1449,23 @@ describe('SessionManager', () => {
       } as unknown as AgentSession;
       sessionManager.registerSession(cachedAgent);
 
-      await sessionManager.interruptProviderSessionsById(['persisted-acp']);
+      const selectedAgent = {
+        ...cachedAgent,
+        getSessionData: mock(() => persisted),
+        cleanup: mock(async () => {}),
+      } as unknown as AgentSession;
+      sessionManager.registerSession(selectedAgent);
 
-      expect(mockDb.updateSession).toHaveBeenCalledWith('persisted-acp', {
-        acpSessionId: undefined,
-        metadata: { acpContextUsageEstimate: undefined, preserved: true },
-      });
+      await sessionManager.interruptProviderSessionsById(['persisted-glm']);
+
+      expect(mockDb.updateSession).not.toHaveBeenCalled();
+      expect(selectedAgent.cleanup).toHaveBeenCalledTimes(1);
+      expect(sessionManager.getCachedSession('persisted-glm')).toBeNull();
+      expect(persisted.sdkSessionId).toBe('stored-sdk-session');
+      expect(persisted.metadata).toEqual({ totalTokens: 9000, preserved: true });
       expect(cachedAgent.cleanup).not.toHaveBeenCalled();
-      expect(sessionManager.getCachedSession('cached-acp')).not.toBeNull();
-      expect(cachedSession.acpSessionId).toBe('remote-session');
+      expect(sessionManager.getCachedSession('cached-glm')).not.toBeNull();
+      expect(cachedSession.sdkSessionId).toBe('stored-sdk-session');
     });
 
     it('preserves exited root PIDs after cache eviction for watchdog ownership', async () => {

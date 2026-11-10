@@ -34,11 +34,6 @@ calls, writer round-trip time and serialized argument/result sizes, maximum
 loop lag, RSS and WAL size. Round-trip timing does not separately attribute
 queue wait, SQL/lock time or clone time; those stages remain unverified here.
 
-Run the runner, settlement, gateway, duplicate-PR and Track regressions. Also run
-the repaired dispatch-evidence journey for start/unconfirmed/steer retention
-across daemon restart. The Deno smoke exercises this command and receipt-refusal
-rollback through real Deno workers in CI.
-Run `deno-smoke-arguments.test.ts` too: it passes the actual embedded programs
-through Bash to check that shell quoting keeps each one complete. With Deno
-2.9.4 on PATH, run `scripts/deno-smoke.sh` on an unused non-8399 port using
-`DENO_SMOKE_PORT`; the script owns its temporary HOME/database and daemon.
+Run the runner, settlement, gateway, duplicate-PR and Track regressions. Also run the
+repaired dispatch-evidence journey for start/unconfirmed/steer retention across daemon
+restart.

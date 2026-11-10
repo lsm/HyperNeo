@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -30,7 +32,7 @@ try {
   assert.notEqual(app.server.port, 8399);
   const db = app.db.getDatabase();
   db.exec('CREATE TABLE synthetic_writer (value INTEGER); INSERT INTO synthetic_writer VALUES (0)');
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC unavailable')); });
   const rpc = (method: string, data: unknown) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC deadline')), 15000);

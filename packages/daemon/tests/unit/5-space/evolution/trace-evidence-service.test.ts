@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { EvidenceRef } from '@hyperneo/shared';
-import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service';
-import { EvolutionTraceEvidenceService } from '../../../../src/lib/evolution/trace-evidence-service';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service';
+import { EvolutionTraceEvidenceService } from '../../../../../space/src/evolution/trace-evidence-service';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';

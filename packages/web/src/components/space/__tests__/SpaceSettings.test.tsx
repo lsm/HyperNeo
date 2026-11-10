@@ -18,7 +18,7 @@ vi.mock('../../../lib/connection-manager', () => ({
   },
 }));
 
-vi.mock('../../../lib/router', () => ({
+vi.mock('../../../lib/space-router', () => ({
   get navigateToSpaces() {
     return mockNavigateToSpaces;
   },
@@ -85,7 +85,7 @@ vi.mock('../../ui/Button', () => ({
 }));
 
 import { SpaceSettings } from '../SpaceSettings';
-import { currentSpaceSettingsTabSignal } from '../../../lib/signals';
+import { currentSpaceSettingsTabSignal } from '../../../lib/space-signals';
 import { spaceStore } from '../../../lib/space-store';
 import { connectionState } from '../../../lib/state';
 import {

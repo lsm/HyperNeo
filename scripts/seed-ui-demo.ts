@@ -1,3 +1,4 @@
+import { readLocalCredential } from '../packages/daemon/src/lib/pairing/local-credential.ts';
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -41,13 +42,14 @@ function rpcCall(ws: WebSocket, method: string, data: unknown = {}): Promise<any
   });
 }
 
-function connectWebSocket(url: string): Promise<WebSocket> {
+async function connectWebSocket(url: string): Promise<WebSocket> {
+  const credential = await readLocalCredential();
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
       () => reject(new Error('WebSocket connection timed out')),
       RPC_TIMEOUT
     );
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } });
     ws.addEventListener('open', () => {
       clearTimeout(timeout);
       resolve(ws);

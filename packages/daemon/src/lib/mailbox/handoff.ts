@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { type MailboxAddress, parseAddress } from './address.ts';
+import { enqueueMailboxEntry } from './enqueue.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { enqueueMailboxAdmission } from '../../storage/repositories/mailbox-admission-write.ts';
 import {
@@ -69,11 +70,21 @@ export function createEntryStage(
   }
 }
 
-export function enqueueStage(
+export async function enqueueStage(
   jobQueue: JobQueueRepository,
-  entry: MailboxEntry
+  entry: MailboxEntry,
+  once?: boolean
 ): Promise<MailboxHandoffOutcome> {
-  return gatewayFor(jobQueue.db).call(enqueueMailboxAdmission, 'enqueue', entry);
+  if (!once) return gatewayFor(jobQueue.db).call(enqueueMailboxAdmission, 'enqueue', entry);
+  return jobQueue.commitSubmissionReceipt(
+    `mailbox-once:${JSON.stringify([entry.to, entry.messageUuid])}`,
+    'v1',
+    () => {
+      const outcome = enqueueMailboxEntry(jobQueue, entry);
+      if (outcome.kind === 'rejected') throw new Error(outcome.reason);
+      return outcome;
+    }
+  );
 }
 
 export function crashHandler(error: unknown): MailboxHandoffOutcome {
@@ -88,7 +99,7 @@ const runMailboxHandoff = (
     rejected,
   })('mailbox-handoff') as PipelineAPI
 )
-  .input(['to', 'message', 'origin', 'policy', 'deliveryMode', 'messageUuid', 'jobQueue'])
+  .input(['to', 'message', 'origin', 'policy', 'deliveryMode', 'messageUuid', 'jobQueue', 'once'])
   .pipe(parseAddressStage, 'to', ['address', 'outcome'])
   .pipe('!rejected', 'outcome')
   .pipe(projectMessageStage, 'message', ['projectedMessage', 'outcome'])
@@ -99,7 +110,7 @@ const runMailboxHandoff = (
     ['entry', 'outcome']
   )
   .pipe('!rejected', 'outcome')
-  .pipe(enqueueStage, ['jobQueue', 'entry'], 'outcome')
+  .pipe(enqueueStage, ['jobQueue', 'entry', 'once'], 'outcome')
   .error(crashHandler, ['error'])
   .endAsync('outcome') as (...args: unknown[]) => Promise<MailboxHandoffOutcome>;
 
@@ -110,6 +121,7 @@ export interface MailboxHandoffArgs {
   policy?: Partial<MailboxEntryPolicy>;
   deliveryMode?: MailboxDeliveryMode;
   messageUuid?: string;
+  once?: boolean;
   jobQueue: JobQueueRepository;
 }
 
@@ -121,6 +133,7 @@ export function handoffPromptToMailbox(args: MailboxHandoffArgs): Promise<Mailbo
     args.policy,
     args.deliveryMode,
     args.messageUuid,
-    args.jobQueue
+    args.jobQueue,
+    args.once
   ).catch(crashHandler);
 }

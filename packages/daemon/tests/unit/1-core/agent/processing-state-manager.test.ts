@@ -1104,6 +1104,67 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('setWaiting', () => {
+    const waiting = () => {
+      const state = manager.getState();
+      return state.status === 'processing' ? state.waiting : undefined;
+    };
+    const assistant = {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'hi' }] },
+    } as unknown as SDKMessage;
+
+    test('publishes the reason on the processing state', async () => {
+      await manager.setProcessing('m');
+      emitMock.mockClear();
+      await manager.setWaiting('model');
+      expect(waiting()).toBe('model');
+      expect(emitMock).toHaveBeenCalledWith(
+        'session.updated',
+        expect.objectContaining({
+          processingState: expect.objectContaining({ waiting: 'model' }),
+        })
+      );
+    });
+
+    test('model output clears it, a non-output message does not', async () => {
+      await manager.setProcessing('m');
+      await manager.setWaiting('model');
+      await manager.detectPhaseFromMessage({ type: 'system', subtype: 'init' } as SDKMessage);
+      expect(waiting()).toBe('model');
+      await manager.detectPhaseFromMessage(assistant);
+      expect(waiting()).toBeUndefined();
+    });
+
+    test('a model reason set after the turn ended does not reach the next turn', async () => {
+      await manager.setWaiting('model');
+      await manager.setProcessing('next');
+      expect(waiting()).toBeUndefined();
+    });
+
+    test('a reason set while queued reaches the next processing state', async () => {
+      await manager.setWaiting('reconnecting');
+      await manager.setQueued('m');
+      await manager.setProcessing('m');
+      expect(waiting()).toBe('reconnecting');
+    });
+
+    test.each([
+      ['idle', () => manager.setIdle()],
+      ['interrupted', () => manager.setInterrupted()],
+      [
+        'cooldown',
+        () => manager.setRateLimitCooldown({ retryCount: 0, maxRetries: 1, retryAt: 1 }),
+      ],
+    ])('leaving the turn through %s drops it', async (_name, leave) => {
+      await manager.setProcessing('m');
+      await manager.setWaiting('model');
+      await leave();
+      await manager.setProcessing('next');
+      expect(waiting()).toBeUndefined();
+    });
+  });
+
   describe('setInterrupted', () => {
     test('transitions to interrupted state', async () => {
       await manager.setInterrupted();
@@ -1364,6 +1425,14 @@ describe('ProcessingStateManager', () => {
       await manager.updatePhase('thinking');
 
       expect(emitMock).not.toHaveBeenCalled();
+    });
+
+    test('keeps the turn messageIds across a phase transition', async () => {
+      await manager.setProcessing('msg-2', 'initializing', ['msg-1', 'msg-2']);
+      await manager.updatePhase('streaming');
+
+      const state = manager.getState();
+      expect(state.messageIds).toEqual(['msg-1', 'msg-2']);
     });
 
     test('persists phase update to database', async () => {

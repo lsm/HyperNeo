@@ -19,7 +19,13 @@ import type { DirectTaskWorkerIdentity } from '../../../../src/lib/tasks/direct-
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
-import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
+import {
+  contributeDefaultOperations,
+  createDatabaseOperationCatalog,
+} from '../../../../src/lib/operations/database-catalog';
+import { createSpaceDefaultOperations } from '../../../../src/lib/tasks/catalog-operations.ts';
+
+contributeDefaultOperations('space', createSpaceDefaultOperations);
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { DIRECT_TASK_OUTCOME } from '../../../../src/lib/tasks/direct-outcome-jobs';

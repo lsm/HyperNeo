@@ -1,9 +1,9 @@
 import WebSocket from 'ws';
 import { Logger } from '../logger.ts';
-import { existsSync } from 'node:fs';
+import { existsSync, readlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { AcpTransport } from '../acp/acp-transport.ts';
+import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 
 const log = new Logger('codex-send');
@@ -17,6 +17,41 @@ export class CodexRequestError extends Error {
   ) {
     super(message);
   }
+}
+
+export interface CodexSocketFile {
+  exists: boolean;
+  target?: string;
+}
+
+export function codexConnectError(
+  socketPath: string,
+  cause: unknown,
+  socket: CodexSocketFile
+): Error {
+  const detail =
+    socket.exists === false && socket.target
+      ? `it points to ${socket.target}, which no longer exists`
+      : socket.exists === false
+        ? 'there is no socket file there'
+        : cause instanceof Error
+          ? cause.message
+          : typeof (cause as { message?: unknown } | null)?.message === 'string'
+            ? (cause as { message: string }).message
+            : String(cause);
+  return new Error(`Could not connect to the Codex app-server at ${socketPath}: ${detail}`, {
+    cause,
+  });
+}
+
+function readCodexSocketFile(socketPath: string): CodexSocketFile {
+  let target: string | undefined;
+  try {
+    target = readlinkSync(socketPath);
+  } catch {
+    target = undefined;
+  }
+  return { exists: existsSync(socketPath), ...(target ? { target } : {}) };
 }
 
 export interface CodexAppServer {
@@ -43,7 +78,7 @@ export async function startCodexBootstrapServer(
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
   });
-  const transport = new AcpTransport({
+  const transport = new ProcessJsonRpcTransport({
     command,
     args: ['app-server', '--listen', 'stdio://'],
     requestTimeoutMs: CALL_TIMEOUT_MS,
@@ -210,7 +245,9 @@ export function connectCodexAppServer(
       }
       pending.clear();
     });
-    socket.on('error', reject);
+    socket.on('error', (cause) =>
+      reject(codexConnectError(socketPath, cause, readCodexSocketFile(socketPath)))
+    );
     socket.on('open', async () => {
       try {
         await call('initialize', {

@@ -20,17 +20,15 @@ receipt preserves the entire Unicode report and returns only a successor
 candidate; no work is started.
 
 Two competing start claims must yield one winner. The winner uses the current
-stored target, atomically relocates the todo to its repository card, and
+stored target, keeps the todo on its original ask across repositories, and
 returns the committed todo/ask/target without opening a worker. A pruning-only
 change must set `changed` and announce the question table; unchanged/missing
 state work must stay quiet. No Neo event or runtime dispatch occurs in this
 build rung, and no todo admission/state SQL runs on main.
 
-Unit cases additionally cover stale completion checks, adopted targets,
-settled asks and rollback during a claim. Run them with the existing state
-writer, runner, repository-selection and pack-boundary contracts, plus the full
-check. The required Deno smoke invokes this same helper; local Deno remains
-unverified if not installed. The helper stops its daemon in finally and writes
-`todo-runner-state.json`; the wrapper saves evidence then removes the temporary
-HOME/database. This correctness proof makes no latency-target, GUI or real
-provider claim.
+Unit cases additionally cover stale completion checks, adopted targets, settled asks and
+rollback during a claim. Run them with the existing state writer, runner,
+repository-selection and pack-boundary contracts, plus the full check. The helper stops
+its daemon in finally and writes `todo-runner-state.json`; the wrapper saves evidence then
+removes the temporary HOME/database. This correctness proof makes no latency-target, GUI
+or real provider claim.

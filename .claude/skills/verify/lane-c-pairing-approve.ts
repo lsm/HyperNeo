@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -105,12 +106,12 @@ try {
   const active = repo.redeem(activeCode.code, 'Synthetic approver', Date.now())!;
   const connect = async (credential?: string) => {
     const hub = new MessageHub({ defaultSessionId: 'global' });
-    const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app!.server.port}/ws`, autoReconnect: false, createSocket: (url) => credential ? new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }) : new WebSocket(url) });
+    const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app!.server.port}/ws`, autoReconnect: false, createSocket: (url) => credential ? new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }) : createLocalSocket(url) });
     transports.push(transport); hub.registerTransport(transport); await transport.initialize();
     return hub;
   };
   const human = await connect(active.credential);
-  const unpaired = await connect();
+  const local = await connect();
   const approve = (id: string, hub = human) => hub.request<{ ok: boolean; reason?: string }>('operation.invoke', { name: 'device.pair.approve', input: { codeId: id } });
   const approvedAt = (id: string) => inspect(() => (raw.prepare('SELECT approved_at FROM pairing_codes WHERE id = ?').get(id) as { approved_at: number | null }).approved_at);
   const redeem = (code: string) => nativeFetch(`http://127.0.0.1:${app!.server.port}/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, name: 'Synthetic phone' }) });
@@ -127,7 +128,7 @@ try {
   const replies = await Promise.all([approve(duplicate.id), approve(duplicate.id)]);
   assert.equal(replies.filter((r) => r.ok).length, 1); assert(replies.some((r) => r.reason?.startsWith('not_pending')));
   evidence.concurrentMs = performance.now() - warmAt; evidence.concurrentWinnerCount = 1;
-  const denied = seed(); assert.match((await approve(denied.id, unpaired)).reason!, /not_paired/); assert.equal(approvedAt(denied.id), null); evidence.unpairedRefused = true;
+  const denied = seed(); assert.equal((await nativeFetch(`http://127.0.0.1:${app!.server.port}/ws`)).status, 401); assert.equal(approvedAt(denied.id), null); evidence.unpairedRefused = true;
   const expired = seed(); raw.prepare('UPDATE pairing_codes SET expires_at = ? WHERE id = ?').run(Date.now() - 1, expired.id);
   assert.match((await approve(expired.id)).reason!, /not_pending/); assert.equal(approvedAt(expired.id), null); evidence.expiredRefused = true;
   const revokedCode = repo.createCode('human', 'Synthetic revoked approver', true, Date.now());
@@ -138,7 +139,7 @@ try {
   const heldCode = seed(); lock = new SQLite(app.db.getDbPath()); lock.exec('BEGIN IMMEDIATE'); lock.prepare('UPDATE synthetic_pairing_lock SET value=1').run();
   let settled = false; const heldAt = performance.now(); const held = approve(heldCode.id).finally(() => { settled = true; });
   await new Promise((done) => setTimeout(done, 20)); assert.equal(settled, false); assert.equal(approvedAt(heldCode.id), null);
-  const healthAt = performance.now(); assert.equal((await unpaired.request<{ status: string }>('system.health', {})).status, 'ok'); evidence.healthWhileHeldMs = performance.now() - healthAt;
+  const healthAt = performance.now(); assert.equal((await local.request<{ status: string }>('system.health', {})).status, 'ok'); evidence.healthWhileHeldMs = performance.now() - healthAt;
   const outside = (raw.prepare('SELECT value FROM synthetic_pairing_lock').get() as { value: number }).value;
   const inside = (lock.prepare('SELECT value FROM synthetic_pairing_lock').get() as { value: number }).value;
   assert.equal(outside, 0); assert.equal(inside, 1); evidence.writerIsolation = { outside, inside };

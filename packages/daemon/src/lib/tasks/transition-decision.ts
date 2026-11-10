@@ -6,7 +6,7 @@ import {
   routeTaskUpdate,
   type TaskUpdateRejectReason,
   type TaskUpdateRouting,
-} from '../space/tools/task-transition-routing.ts';
+} from './task-transition-routing.ts';
 export interface SpaceTaskTransitionDecisionInput {
   taskId: string;
   currentStatus: SpaceTaskStatus;

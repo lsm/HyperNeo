@@ -1,5 +1,9 @@
 # In-app artifact previews
 
+Historical design snapshot: local file registration described below has been
+retired. Working files use source-bound live reads; Git and historical attachments
+retain their versioned readers. See the [current compatibility verification](../../.claude/skills/verify/journeys/retire-local-register.md).
+
 Status: proposal for human approval. Tracks [#7934](https://github.com/lsm/HyperNeo/issues/7934).
 This PR changes this page only. Build nothing until Neo relays the human's approval.
 Merge this design only after that approval, hyperneo-ai-test approval of the exact
@@ -151,7 +155,7 @@ check followed by ordinary open is insufficient: parent swaps can race it.
 Reject hard-linked source files and recheck descriptor identity/size during the
 copy. If a supported runtime/platform cannot enforce this open contract, return
 `safe_open_unavailable`; do not fall back to a racy file read. Pin platform seams
-and prove races before wiring registration on Bun and Deno.
+and prove races before wiring registration on Bun.
 
 Root allowance never overrides the sensitive-file deny policy: `.ssh`, `.git`
 internals, keychains, private keys, `.env*`, auth/credentials JSON, token stores,

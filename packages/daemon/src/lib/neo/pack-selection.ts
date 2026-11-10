@@ -13,7 +13,7 @@ export function neoPackBriefs(
 ): NeoPackBrief[] {
   const seen = new Set<string>();
   return installed.filter((brief) => {
-    if (seen.has(brief.id) || !enabled.includes(brief.id)) return false;
+    if (seen.has(brief.id) || (!brief.alwaysEnabled && !enabled.includes(brief.id))) return false;
     seen.add(brief.id);
     return true;
   });
@@ -26,7 +26,8 @@ export function neoPacks(input: {
 }): NeoPack[] {
   const seen = new Set<string>();
   return [...input.builtins, ...input.filePacks].filter((pack) => {
-    if (seen.has(pack.id) || !input.enabled.includes(pack.id)) return false;
+    if (seen.has(pack.id) || (!pack.alwaysEnabled && !input.enabled.includes(pack.id)))
+      return false;
     seen.add(pack.id);
     return true;
   });

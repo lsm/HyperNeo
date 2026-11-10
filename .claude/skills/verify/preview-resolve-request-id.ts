@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -21,6 +22,8 @@ hub.registerTransport(transport);
 const evidence: Record<string, unknown> = { port: daemon.server.port };
 try {
   assert.notEqual(daemon.server.port, 8399);
+  await daemon.spaceRuntimeService.ready();
+  await daemon.jobProcessor.stop();
   await transport.initialize();
   const tap = { sourceMessageOrCard: { kind: 'message', id: 'source' }, reference: 'report.md' };
   const receipts = () => (daemon.db.getDatabase().prepare('SELECT COUNT(*) AS count FROM artifact_files').get() as { count: number }).count;
@@ -36,20 +39,20 @@ try {
   assert(attempts.every((attempt) => JSON.stringify(attempt).includes('requestId')), 'missing requestId must fail input validation');
   const input = { ...tap, requestId: '11111111-1111-4111-8111-111111111111' };
   const first = await hub.request<{ accepted: boolean }>('operation.invoke', { name: 'artifact.reference.resolve', input });
-  assert.equal(first.accepted, true);
+  assert.equal(first.accepted, false);
+  assert.equal((first as {reason?:string}).reason, 'client_upgrade_required');
   const second = await hub.request('operation.invoke', { name: 'artifact.reference.resolve', input });
   assert.deepEqual(second, first);
-  assert.equal(receipts(), 1);
-  evidence.keyedReceipt = first;
+  assert.equal(receipts(), 0);
+  evidence.keyedRefusal = first;
   evidence.afterKeyedRetries = receipts();
   const target = { source: tap.sourceMessageOrCard as { kind: 'message'; id: string }, reference: tap.reference };
   const web = await resolveArtifactReference(hub, target);
-  assert.equal(web.kind, 'artifact');
+  assert.deepEqual(web, { kind: 'state', state: 'client_update' });
   assert.deepEqual(await resolveArtifactReference(hub, target), web);
-  assert.equal(receipts(), 2);
-  assert.notDeepEqual(await resolveArtifactReference(hub, { ...target }), web);
-  assert.equal(receipts(), 3);
-  evidence.webClient = { retryStable: true, newTapDistinct: true, receipts: receipts() };
+  assert.deepEqual(await resolveArtifactReference(hub, { ...target }), web);
+  assert.equal(receipts(), 0);
+  evidence.webClient = { upgradeMessage: true, retryStable: true, receipts: receipts() };
   evidence.passed = true;
 } finally {
   await writeFile(join(root, 'evidence', 'request-id.json'), JSON.stringify(evidence, null, 2));

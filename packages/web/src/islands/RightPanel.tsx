@@ -1,20 +1,14 @@
 import { useEffect, useState } from 'preact/hooks';
-import { GoalDetailPanel } from '../components/space/GoalDetailPanel.tsx';
-import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { SessionInspector } from './SessionInspector.tsx';
 import { sessionStore } from '../lib/session-store.ts';
 import {
-  currentSpaceCanonicalIdSignal,
-  currentSpaceGoalIdSignal,
-  currentSpaceIdSignal,
-  currentSpaceScopeIdSignal,
-  currentSpaceViewModeSignal,
-  navSectionSignal,
+  type ExtensionPanelTarget,
   type RightPanelTarget,
   rightPanelTargetSignal,
 } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
+import { shellExtensions } from '../lib/web-extensions.ts';
 
 const TRANSITION_MS = 200;
 const DEFAULT_PANEL_WIDTH = 440;
@@ -65,43 +59,17 @@ function useIsDesktopPanel(): boolean {
   return isDesktop;
 }
 
-function useToggleTarget(): RightPanelTarget | null {
-  const activeSessionId = sessionStore.activeSessionId.value;
-
-  const routeSpaceId = currentSpaceIdSignal.value;
-  const inSpace = navSectionSignal.value === 'spaces' && routeSpaceId !== null;
-  const spaceId = currentSpaceCanonicalIdSignal.value ?? routeSpaceId;
-  const viewMode = currentSpaceViewModeSignal.value;
-  const goalId = currentSpaceGoalIdSignal.value;
-  const scopeId = currentSpaceScopeIdSignal.value;
-
-  if (activeSessionId) return null;
-  if (inSpace && spaceId && viewMode === 'goals' && goalId) {
-    return { type: 'goal', spaceId, goalId };
-  }
-  if (inSpace && spaceId && viewMode === 'forge' && scopeId) {
-    return { type: 'scope', spaceId, scopeId };
-  }
-  return null;
+function useToggleTarget(): ExtensionPanelTarget | null {
+  if (sessionStore.activeSessionId.value) return null;
+  return shellExtensions().flatMap((extension) => extension.panelTarget() ?? [])[0] ?? null;
 }
 
-function targetMatchesContext(target: RightPanelTarget, toggleTarget: RightPanelTarget | null) {
-  if (!toggleTarget) return false;
-  if (target.type !== toggleTarget.type) return false;
-  if (target.type === 'inspector') {
-    return toggleTarget.type === 'inspector' && target.sessionId === toggleTarget.sessionId;
-  }
-  if (target.type === 'goal') {
-    return (
-      toggleTarget.type === 'goal' &&
-      target.spaceId === toggleTarget.spaceId &&
-      target.goalId === toggleTarget.goalId
-    );
-  }
+function targetMatchesContext(target: RightPanelTarget, toggleTarget: ExtensionPanelTarget | null) {
   return (
-    toggleTarget.type === 'scope' &&
-    target.spaceId === toggleTarget.spaceId &&
-    target.scopeId === toggleTarget.scopeId
+    target.type === 'extension' &&
+    target.panel === toggleTarget?.panel &&
+    target.owner === toggleTarget.owner &&
+    target.item === toggleTarget.item
   );
 }
 
@@ -122,7 +90,8 @@ export function RightPanelToggle() {
       return;
     }
     if (!targetMatchesContext(target, toggleTarget)) {
-      rightPanelTargetSignal.value = toggleTarget.type === target.type ? toggleTarget : null;
+      rightPanelTargetSignal.value =
+        target.type === 'extension' && toggleTarget.panel === target.panel ? toggleTarget : null;
     }
   }, [target, toggleTarget, activeSessionId]);
 
@@ -288,16 +257,8 @@ export function RightPanel() {
               section={renderedTarget.section}
             />
           )}
-          {renderedTarget?.type === 'goal' && (
-            <GoalDetailPanel
-              spaceId={renderedTarget.spaceId}
-              navigationSpaceId={currentSpaceIdSignal.value ?? renderedTarget.spaceId}
-              goalId={renderedTarget.goalId}
-            />
-          )}
-          {renderedTarget?.type === 'scope' && (
-            <ScopeDetailPanel spaceId={renderedTarget.spaceId} scopeId={renderedTarget.scopeId} />
-          )}
+          {renderedTarget?.type === 'extension' &&
+            shellExtensions().map((extension) => extension.renderPanel(renderedTarget))}
         </div>
       </div>
     </>

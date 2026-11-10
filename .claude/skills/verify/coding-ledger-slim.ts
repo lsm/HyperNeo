@@ -1,3 +1,4 @@
+import { seedPrOwner } from './seed-pr-owner.ts';
 import { CodingPrSweepRepository, sweepCodingPrs } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -58,7 +59,7 @@ try {
   db.prepare("UPDATE neo_pack_preferences SET value_json=? WHERE pack='coding' AND key='watchedRepos'").run(JSON.stringify(['synthetic/active', 'synthetic/idle']));
   db.prepare("INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/active','mergePolicy','\"review_bot\"','human',0)").run();
   db.prepare("INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/active','reviewBot','\"bot\"','human',0)").run();
-  await ledger.write('observeSessions', [{ ref: { adapter: 'hyperneo', id: String(root.sessionId) }, status: { state: 'running' }, lastActivityAt: Date.now(), remotes: ['git@github.com:synthetic/active.git'], branches: ['b1'], openedPrs: ['https://github.com/synthetic/active/pull/1'] }], Date.now());
+  seedPrOwner(db, 'synthetic/active', { adapter: 'hyperneo', id: String(root.sessionId) });
   const mainSql: string[] = [];
   evidence.mainSql = mainSql;
   const prepare = db.prepare.bind(db);

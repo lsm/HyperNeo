@@ -3,7 +3,7 @@ import { expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import { createTestDb } from '../../../helpers/database.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   createSendMessageOperation,
   type SessionSent,
@@ -68,7 +68,14 @@ async function setup() {
   const todo = service.todos.addTodo(
     'todo',
     'ask',
-    { title: 'Build', doneWhen: 'Done', instruction: 'Stay quiet', check: null, named: null },
+    {
+      approvedAt: 1,
+      title: 'Build',
+      doneWhen: 'Done',
+      instruction: 'Stay quiet',
+      check: null,
+      named: null,
+    },
     1
   );
   service.todoSessions.bind(todo.id, ref, 2);
@@ -210,7 +217,7 @@ test.each(['dead', 'expired', 'cleaned'] as const)(
       const recovered = await send(input);
       expect(recovered).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
       expect(recovered).not.toEqual(first);
-      expect(service.todos.listQuestions('ask')).toHaveLength(1);
+      expect(service.todos.listQuestions('ask')).toHaveLength(0);
       expect(service.todos.getTodo('todo')?.blockedBy).toBe('needs-human');
       expect(jobs.listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })).toHaveLength(1);
       expect(await send(input)).toEqual(recovered);
@@ -292,12 +299,12 @@ test('distinct image-only envelope reports retain their media and receive differ
   }
 });
 
-test('quiet worker blockers immediately create a held card with one durable wake across repeats and operation reconstruction', async () => {
+test('quiet worker blockers reach Neo, not a card, with one durable wake across repeats and operation reconstruction', async () => {
   const { db, service, send } = await setup();
   try {
     const first = await send(input);
     expect(first).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
-    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+    expect(service.todos.listQuestions('ask')).toHaveLength(0);
     expect(service.todos.getTodo('todo')).toMatchObject({
       state: 'blocked',
       blockedBy: 'needs-human',
@@ -313,10 +320,124 @@ test('quiet worker blockers immediately create a held card with one durable wake
             JSON.stringify(first.kind === 'completed' ? first.value : null)
       )
     ).toBe(true);
-    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+    expect(service.todos.listQuestions('ask')).toHaveLength(0);
     expect(
       db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
     ).toHaveLength(1);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('only Neo turns a worker question into a card, in its own words, keeping the answer route', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    expect(service.todos.listQuestions('ask')).toEqual([]);
+    expect(service.todos.getTodo('todo')?.nextAction).toContain('relay the question');
+    const wake = db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' });
+    expect(JSON.stringify(wake)).toContain('neo.question.relay');
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    expect(await service.relayWorkerQuestion(words, 'someone-else')).toMatchObject({ ok: false });
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({
+      ok: true,
+      question: { text: 'Deploy where?', document: 'Original blocker report' },
+    });
+    const [card] = service.todos.listQuestions('ask');
+    expect(service.todos.questionAnswers.list(card.id)).toHaveLength(1);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a staged question tells a zh-Hans human the next step in Chinese', async () => {
+  const { db, service, send } = await setup();
+  try {
+    db.updateGlobalSettings({ language: 'zh-Hans' });
+    await send({ ...input, question: { ...input.question, language: 'zh-Hans' } });
+    expect(service.todos.getTodo('todo')?.nextAction).toBe('Neo 需要回复工人,或把问题转给人。');
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a relay uses the staged question once, whatever the language is by then', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    db.updateGlobalSettings({ language: input.question.language === 'en' ? 'zh-Hans' : 'en' });
+    const words = { todoId: 'todo', title: '部署到哪里?', options: ['预发', '生产'] };
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({ ok: true });
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('no_worker_question'),
+    });
+    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a question staged during a relay stays staged', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    const store = service.storeWorkerQuestion.bind(service);
+    service.storeWorkerQuestion = (async (...args: Parameters<typeof store>) => {
+      await send({ ...input, question: { ...input.question, title: 'Which region?' } });
+      return store(...args);
+    }) as typeof service.storeWorkerQuestion;
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({ ok: true });
+    expect(service.todoSessions.readNudge('todo')?.workerQuestion?.title).toBe('Which region?');
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a relay waits while the human already has a card for that todo', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    await service.relayWorkerQuestion(words, 'neo');
+    await send({ ...input, question: { ...input.question, title: 'Which region?' } });
+    expect(
+      await service.relayWorkerQuestion({ ...words, title: 'Which region?' }, 'neo')
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('card_open') });
+    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+    expect(service.todoSessions.readNudge('todo')?.workerQuestion?.title).toBe('Which region?');
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a new worker question on the same todo wakes Neo again, and a repeat does not', async () => {
+  const { db, service, send } = await setup();
+  try {
+    const wakes = () =>
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' });
+    await send(input);
+    await send(input);
+    expect(wakes()).toHaveLength(1);
+    await send({ ...input, question: { ...input.question, title: 'Which region?' } });
+    expect(wakes()).toHaveLength(2);
+    expect(JSON.stringify(wakes()[1].payload)).toContain('Which region?');
+    await service.todoSessions.inputs.accept(
+      'todo',
+      'neo',
+      { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+      'Next step',
+      Date.now()
+    );
+    await send(input);
+    expect(wakes()).toHaveLength(3);
   } finally {
     service.dispose();
     db.close();

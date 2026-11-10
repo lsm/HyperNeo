@@ -1,5 +1,7 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const run = resolve(process.argv[2]);
@@ -54,6 +56,7 @@ try {
     JobQueueProcessor.prototype.start = start;
   }
   assert.notEqual(app.server.port, 8399);
+  await app.spaceRuntimeService.ready();
   await Promise.all([...processors].map((owned) => owned.stop()));
   const repo = app.jobQueue;
   const raw = app.db.getDatabase();
@@ -63,7 +66,7 @@ try {
   const first = repo.enqueue({ queue: 'github.poll', payload: {}, runAt: Date.now() + 60_000 });
   const foreign = repo.enqueue({ queue: 'synthetic.foreign', payload: {} });
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
   hub.registerTransport(transport);
   await transport.initialize();
   const prepare = raw.prepare;
@@ -130,6 +133,5 @@ try {
   globalThis.fetch = originalFetch;
   for (const restore of providerRestores.reverse()) restore();
   writeFileSync(join(run, 'evidence/github-poll-refresh-retry.json'), JSON.stringify(evidence, null, 2));
-  for (const name of ['data', 'home', 'workspace']) rmSync(join(run, name), { recursive: true, force: true });
 }
 console.log('ok actual app subscriber logs a failed receipt, retries the next same-value settings RPC, then memoizes success');

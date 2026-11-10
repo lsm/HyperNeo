@@ -1,0 +1,35 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "SQL-only extraction; public persistence remains on the supplied main connection",
+  "publicRpc": {
+    "replies": [
+      {
+        "source": "synthetic-extension",
+        "globallyEnabled": true
+      },
+      {
+        "source": "synthetic-extension",
+        "globallyEnabled": false
+      }
+    ],
+    "callbacks": [
+      {
+        "kind": "start",
+        "enabled": true
+      },
+      {
+        "kind": "stop",
+        "enabled": true
+      }
+    ],
+    "mainUpsertRuns": 2,
+    "exactJsonAndCreationTimePreserved": true
+  },
+  "runtime": "Bun 1.4.3 macOS arm64",
+  "exitCode": 1,
+  "expectedFailure": "Global extension SQL helper is unavailable",
+  "unitContracts": {
+    "legacyPassed": 2,
+    "missingHelperFailed": 2
+  }
+}

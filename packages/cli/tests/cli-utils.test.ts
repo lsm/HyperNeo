@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, spyOn } from 'bun:test';
 import {
   parseArgs,
   getHelpText,
@@ -9,7 +9,31 @@ import {
   isWebSocketPath,
   createJsonErrorResponse,
   findAvailablePort,
+  printServerUrls,
 } from '../src/cli-utils';
+
+describe('printServerUrls', () => {
+  test.each([
+    ['127.0.0.1', '127.0.0.1'],
+    ['localhost', 'localhost'],
+    ['0.0.0.0', '127.0.0.1'],
+    ['::', '127.0.0.1'],
+    ['::1', '[::1]'],
+    ['0:0:0:0:0:0:0:1', '[0:0:0:0:0:0:0:1]'],
+    ['2001:db8::1', '[2001:db8::1]'],
+    ['daemon.example', 'daemon.example'],
+  ])('advertises the issuer origin for host %s', (host, dialable) => {
+    const output = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      printServerUrls(9311, host);
+      const lines = output.mock.calls.map(([line]) => String(line));
+      expect(lines[0]).toContain(`Local:   http://${dialable}:9311`);
+      expect(lines.at(-1)).toContain(`WebSocket: ws://${dialable}:9311/ws`);
+    } finally {
+      output.mockRestore();
+    }
+  });
+});
 
 describe('parseArgs', () => {
   test('returns empty options for no arguments', () => {

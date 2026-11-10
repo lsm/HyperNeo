@@ -1,0 +1,114 @@
+import assert from 'node:assert/strict';
+import { z } from '../../../packages/daemon/node_modules/zod/index.js';
+import { createOperationRegistry, defineOperation } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { WorkRefSchema } from '../../../packages/daemon/src/lib/drivers/types.ts';
+import { presentPublicationPage } from '../../../packages/web/src/neo/publication-client.ts';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { NeoSessionMessageRepository } from '../../../packages/daemon/src/storage/repositories/neo-session-message-repository.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+
+const run = process.argv[2];
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+await mkdir(join(run, 'evidence'), { recursive: true });
+await writeFile(join(run, 'bin/gh'), '#!/bin/sh\nexit 73\n', { mode: 0o755 });
+const config = { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true };
+const app = await createDaemonApp({ config, standalone: false, verbose: false });
+let ws: WebSocket | undefined;
+const evidence: Record<string, unknown> = {};
+try {
+  await app.jobProcessor.stop();
+  assert.equal(config.port, 0);
+  assert.equal(config.disableWorktrees, true);
+  assert.notEqual(app.server.port, 8399);
+  evidence.isolation = { requestedPort: config.port, actualPort: app.server.port, disableWorktrees: config.disableWorktrees };
+  const conversationId = '20000000-0000-4000-8000-000000000001';
+  const root = `neo:${conversationId}`;
+  const worker = 'synthetic-worker';
+  await app.db.createSession({ id: root, title: 'Synthetic Neo', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { model: 'synthetic' }, metadata: {} } as never);
+  await app.db.createSession({ id: worker, title: 'Synthetic worker', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { model: 'synthetic' }, metadata: {} } as never);
+  const repo = new NeoRepository(app.db.getDatabase());
+  repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
+  let adapterAvailable = false;
+  const original = app.sessionManager.getOperationRegistry();
+  const registry = createOperationRegistry([...original.entries.filter((entry) => entry.name !== 'work.status'), defineOperation({
+    name: 'work.status', description: 'Synthetic external session', inputSchema: z.object({ ref: WorkRefSchema }), resultSchema: z.unknown(),
+    execute: ({ ref }) => {
+      if (ref.id === 'synthetic-failure') throw new Error('Synthetic adapter error');
+      if (ref.id !== 'synthetic-external') return { ok: false, reason: 'not_found' };
+      return adapterAvailable ? { ok: true, value: { ref, title: 'External worker', place: { machine: 'synthetic', name: 'Synthetic' }, status: 'running', lastActivityAt: 1 } } : { ok: false, reason: 'unreachable' };
+    },
+  })]);
+  app.sessionManager.getOperationRegistry = () => registry;
+  const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
+  const publish = async (requestId: string, session?: string) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId, shortText: 'Session update', fullText: 'This is the requested session.', session } })).content[0].text);
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
+  const read = (name = 'neo.publication.read') => new Promise<{ ok: boolean; items: { session?: string; role?: string; publication?: { session?: string } }[] }>((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => reject(new Error('Publication reader timed out')), 10000);
+    ws!.onmessage = event => {
+      const reply = JSON.parse(String(event.data));
+      if ((reply.requestId ?? reply.id) !== id) return;
+      clearTimeout(timer);
+      if (reply.error) reject(new Error(JSON.stringify(reply.error)));
+      else resolve(reply.data);
+    };
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input: { conversationId } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+  evidence.unknown = await publish('session-proof', 'missing-session');
+  evidence.before = await read();
+  assert.match(JSON.stringify(evidence.unknown), /unknown_session/);
+  assert.match(JSON.stringify(evidence.unknown), /missing-session/);
+  assert.equal((evidence.before as { items: unknown[] }).items.length, 0);
+  evidence.valid = await publish('session-proof', worker);
+  evidence.retry = await publish('session-proof', worker);
+  const after = await read();
+  evidence.after = after;
+  assert.equal((evidence.valid as { created: boolean }).created, true);
+  assert.equal((evidence.retry as { created: boolean }).created, false);
+  assert.equal(after.items.length, 1);
+  assert.equal(after.items[0].session, worker);
+  const web = presentPublicationPage(after, { conversationId, after: 0, limit: 50 });
+  evidence.web = web;
+  assert('value' in web && web.value.state === 'ready');
+  assert.equal(web.value.items[0].session, worker);
+  evidence.unavailable = await publish('external-proof', 'codex-desktop:synthetic-external');
+  assert.equal((evidence.unavailable as { reason: string }).reason, 'session_lookup_failed');
+  evidence.lookupError = await publish('failed-proof', 'codex-desktop:synthetic-failure');
+  assert.equal((evidence.lookupError as { reason: string }).reason, 'session_lookup_failed');
+  assert.equal((await read()).items.length, 1);
+  adapterAvailable = true;
+  evidence.adapterRetry = await publish('external-proof', 'codex-desktop:synthetic-external');
+  assert.equal((evidence.adapterRetry as { accepted: boolean }).accepted, true);
+  assert.equal((evidence.adapterRetry as { publication: { session: string } }).publication.session, 'codex-desktop:synthetic-external');
+  await new NeoSessionMessageRepository(app.db.getDatabase()).record({ conversationId, messageId: 'worker-report', fromSession: worker, fromName: 'Worker', toSession: root, toName: 'Neo', text: 'Synthetic report', createdAt: new Date().toISOString(), kind: 'session' });
+  await app.db.updateSession(root, { processingState: JSON.stringify({ status: 'processing', messageId: 'worker-report' }) });
+  evidence.auto = await publish('source-proof');
+  assert.equal((evidence.auto as { publication: { session: string } }).publication.session, worker);
+  await app.db.updateSession(root, { processingState: JSON.stringify({ status: 'processing', messageIds: ['worker-report', 'unknown-source'] }) });
+  evidence.mixed = await publish('mixed-proof');
+  assert.equal((evidence.mixed as { publication: { session?: string } }).publication.session, undefined);
+  await app.db.updateSession(root, { processingState: JSON.stringify({ status: 'idle' }) });
+  evidence.idle = await publish('idle-proof');
+  assert.equal((evidence.idle as { publication: { session?: string } }).publication.session, undefined);
+  evidence.autoRetry = await publish('source-proof');
+  assert.equal((evidence.autoRetry as { accepted: boolean; created: boolean; publication: { session?: string } }).accepted, true);
+  assert.equal((evidence.autoRetry as { created: boolean }).created, false);
+  assert.equal((evidence.autoRetry as { publication: { session?: string } }).publication.session, worker);
+  evidence.final = await read();
+  const conversation = await read('neo.conversation.read');
+  evidence.conversation = conversation;
+  assert.equal(conversation.items.find((item) => item.role === 'neo')?.publication?.session, worker);
+  evidence.passed = true;
+} finally {
+  ws?.close();
+  await app.cleanup();
+  await writeFile(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
+}

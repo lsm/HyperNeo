@@ -1,7 +1,32 @@
 import type { Database } from '../../../../../storage/sqlite-compat.ts';
 
+export function prepareCodingTodoStorage(db: Database): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_todos (
+    todo_id TEXT PRIMARY KEY REFERENCES neo_todos(id) ON DELETE CASCADE,
+    repo TEXT
+  );`);
+}
+
 export function createCodingPackTables(db: Database, activatedAt = Date.now()): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_delivery_facts (
+  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_daemon_merges (
+    url TEXT NOT NULL, head TEXT NOT NULL, actor TEXT NOT NULL,
+    started_at INTEGER NOT NULL, merge_commit TEXT, merged_at INTEGER, notified_at INTEGER,
+    PRIMARY KEY (url, head)
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_retries (
+    url TEXT NOT NULL, head TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (url, head)
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_failures (
+    url TEXT NOT NULL, head TEXT NOT NULL, actor TEXT NOT NULL,
+    started_at INTEGER NOT NULL, error TEXT NOT NULL, confirmed_open INTEGER NOT NULL DEFAULT 0, notified_at INTEGER,
+    PRIMARY KEY (url, head, started_at)
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_notices (
+    url TEXT NOT NULL, head TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL,
+    PRIMARY KEY (url, head, kind),
+    FOREIGN KEY (url, head) REFERENCES pack_coding_daemon_merges(url, head) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_delivery_facts (
     todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
     head TEXT NOT NULL,
@@ -26,14 +51,6 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     fact_json TEXT NOT NULL CHECK (json_valid(fact_json)),
     PRIMARY KEY (url, stage)
   );
-  CREATE TABLE IF NOT EXISTS pack_coding_pr_claims (
-    todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
-    url TEXT NOT NULL,
-    claim TEXT NOT NULL CHECK (claim IN ('named', 'reported', 'branch')),
-    claimed_at INTEGER NOT NULL,
-    PRIMARY KEY (todo_id, url)
-  );
-  CREATE INDEX IF NOT EXISTS idx_pack_coding_pr_claims_url ON pack_coding_pr_claims(url);
   CREATE TABLE IF NOT EXISTS pack_coding_pr_ledger (
     repo TEXT NOT NULL,
     number INTEGER NOT NULL,
@@ -146,18 +163,8 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     pending_text TEXT
   );
   DROP TABLE IF EXISTS pack_coding_session_prs;
-  CREATE TABLE IF NOT EXISTS pack_coding_session_facts (
-    ref TEXT PRIMARY KEY CHECK (json_valid(ref)),
-    repos TEXT NOT NULL CHECK (json_valid(repos)),
-    branches TEXT NOT NULL CHECK (json_valid(branches)),
-    linked TEXT CHECK (linked IS NULL OR json_valid(linked)),
-    linked_window INTEGER NOT NULL DEFAULT 0,
-    owned TEXT NOT NULL CHECK (json_valid(owned)),
-    opened TEXT NOT NULL CHECK (json_valid(opened)),
-    dismissed TEXT NOT NULL CHECK (json_valid(dismissed)),
-    active_at INTEGER NOT NULL,
-    seen_at INTEGER NOT NULL
-  )`);
+  DROP TABLE IF EXISTS pack_coding_pr_claims;
+  DROP TABLE IF EXISTS pack_coding_session_facts;`);
   const heads = db.prepare('PRAGMA table_info(pack_coding_stage_heads)').all() as {
     name: string;
   }[];
@@ -175,9 +182,6 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     db.exec(
       'ALTER TABLE pack_coding_pr_ledger ADD COLUMN terminal_event_json TEXT CHECK (terminal_event_json IS NULL OR json_valid(terminal_event_json))'
     );
-  db.prepare(
-    'INSERT OR IGNORE INTO pack_coding_pr_event_state (id, activated_at) VALUES (1, ?)'
-  ).run(activatedAt);
   if (!ledger.some((column) => column.name === 'reply_at'))
     db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN reply_at INTEGER');
   if (!ledger.some((column) => column.name === 'created_at'))
@@ -191,7 +195,6 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
   }[];
   if (!unowned.some((column) => column.name === 'pending_rows'))
     db.exec('ALTER TABLE pack_coding_pr_unowned_state ADD COLUMN pending_rows TEXT');
-  db.prepare(
-    'INSERT OR IGNORE INTO pack_coding_pr_unowned_state (id, activated_at) VALUES (1, ?)'
-  ).run(activatedAt);
+  for (const table of ['pack_coding_pr_event_state', 'pack_coding_pr_unowned_state'])
+    db.prepare(`INSERT OR IGNORE INTO ${table} (id, activated_at) VALUES (1, ?)`).run(activatedAt);
 }

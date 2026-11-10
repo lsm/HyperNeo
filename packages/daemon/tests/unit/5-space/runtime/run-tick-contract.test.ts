@@ -47,7 +47,6 @@ describe('run-tick contract result helpers', () => {
     const outcome: SpaceWorkflowRunTickOutcome = { action: 'ran_to_completion' };
     const recovery: StrandedExecutionRecoveryResult = {
       action: 'continue',
-      tam: {} as never,
       blockedByCrash: false,
       preTickPendingIds: new Set<string>(),
     };

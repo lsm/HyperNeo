@@ -30,6 +30,15 @@ export const HandoffReference = z.strictObject({
   path: z.string(),
 });
 type Reference = z.infer<typeof HandoffReference>;
+export const PublicHandoffReference = HandoffReference.omit({ path: true }).extend({
+  type: z.literal('handoff'),
+});
+type PublicReference = z.infer<typeof PublicHandoffReference>;
+
+export function publicHandoffReference(ref: Reference): PublicReference {
+  const { path: _path, ...publicFields } = HandoffReference.parse(ref);
+  return PublicHandoffReference.parse({ ...publicFields, type: 'handoff' });
+}
 
 function directory(dataDir: string, parts: string[]): string {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -195,6 +204,16 @@ export async function readHandoff(
     nextOffset: Math.min(offset + length, position),
     complete: offset + length >= position,
   };
+}
+
+export async function readPublicHandoff(
+  dataDir: string,
+  input: PublicReference,
+  offset = 0,
+  length = HANDOFF_CHUNK_BYTES
+) {
+  const { type: _type, ...ref } = PublicHandoffReference.parse(input);
+  return readHandoff(dataDir, { ...ref, path: artifactPath(dataDir, ref) }, offset, length);
 }
 
 export async function publishHandoff(dataDir: string, sessionId: string, name: string) {

@@ -4,9 +4,9 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   EvolutionScopeService,
   mergeEvolutionPolicy,
-} from '../../../../src/lib/evolution/scope-service';
-import { extractArtifactDetail } from '../../../../src/lib/evolution/scope-evidence-summaries';
-import { rankLessonsByTaskRelevance } from '../../../../src/lib/evolution/lesson-ranking';
+} from '../../../../../space/src/evolution/scope-service';
+import { extractArtifactDetail } from '../../../../../space/src/evolution/scope-evidence-summaries';
+import { rankLessonsByTaskRelevance } from '../../../../../space/src/evolution/lesson-ranking';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';

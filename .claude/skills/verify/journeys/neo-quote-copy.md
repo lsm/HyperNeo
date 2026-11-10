@@ -21,9 +21,9 @@ synthetic publications to the isolated database. It visits the real `/neo` page
 at desktop and touch widths in light and dark mode, copies a formatted quote
 using Enter and a nested quote using click or tap, and reads the real clipboard.
 Desktop uses English; touch uses Chinese browser language. Require the matching
-localized quote label and copied feedback. The component regression also switches
+localized quote label and the shared code-copy Copied! title/checkmark feedback. The component regression also switches
 language while the quote is mounted, without changing the copied text.
-It asserts paragraph boundaries, no Markdown syntax, feedback expiry, a 44px
+It asserts paragraph boundaries, no Markdown syntax, feedback expiry, a code-copy-equivalent 44px
 touch target, and a gutter separating text from the button. The quote also
 contains a highlighted Python fence with indentation and multiple blank lines,
 plus a multiline display-math formula: the clipboard must keep the code

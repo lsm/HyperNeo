@@ -86,7 +86,14 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
     const step = store.addTodo(
       `${id}-step`,
       id,
-      { title: 'First step', doneWhen: 'done', check: null, instruction: 'Do it.', named: null },
+      {
+        approvedAt: 1,
+        title: 'First step',
+        doneWhen: 'done',
+        check: null,
+        instruction: 'Do it.',
+        named: null,
+      },
       0
     );
     db.prepare(
@@ -104,6 +111,7 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
       `t${++created}`,
       askId,
       {
+        approvedAt: 1,
         title: `t${created}`,
         doneWhen: 'done',
         check: null,
@@ -180,6 +188,7 @@ describe('queued todos start themselves', () => {
     const ref = { adapter: 'codex-desktop', id: 'thread-1' };
     const first = w.add(w.approved(), { verb: 'send', ref });
     const second = w.add(w.approved(), { verb: 'send', ref });
+    w.idle.add(ref.id);
     await w.tick();
     expect([w.state(first), w.state(second)]).toEqual(['doing', 'todo']);
     await w.finish(first);
@@ -199,8 +208,9 @@ describe('queued todos start themselves', () => {
   test('an ask nobody approved waits for its start question', async () => {
     const w = (current = world());
     const todo = w.add(w.ask());
+    w.store.updateTodo(w.store.getTodo(todo)!, { approvedAt: null }, 1);
     await w.tick();
-    expect(w.state(todo)).toBe('todo');
+    expect(w.state(todo)).toBe('blocked');
     expect(w.started).toEqual([]);
   });
 
@@ -247,6 +257,7 @@ describe('queued todos start themselves', () => {
     const ask = w.approved();
     const [ticked, unticked] = [w.add(ask), w.add(ask)];
     for (const id of [ticked, unticked]) {
+      w.store.updateTodo(w.store.getTodo(id)!, { approvedAt: null }, 2);
       w.store.joinStartQuestion(w.store.getTodo(id)!, 2);
       w.store.updateTodo(
         w.store.getTodo(id)!,
@@ -270,6 +281,7 @@ describe('queued todos start themselves', () => {
     const w = (current = world());
     const ask = w.approved();
     const todo = w.add(ask);
+    w.store.updateTodo(w.store.getTodo(todo)!, { approvedAt: null }, 2);
     w.store.joinStartQuestion(w.store.getTodo(todo)!, 2);
     w.store.updateTodo(
       w.store.getTodo(todo)!,
@@ -356,10 +368,10 @@ describe('queued todos start themselves', () => {
     const w = (current = world());
     const ask = w.ask();
     const todo = w.add(ask);
+    w.store.updateTodo(w.store.getTodo(todo)!, { approvedAt: null }, 2);
     w.store.joinStartQuestion(w.store.getTodo(todo)!, 2);
     const question = w.store.listQuestions(ask).find((item) => item.kind === 'start')!;
-    w.store.answerQuestion(question, [], 'button', 3);
-    w.store.updateTodo(w.store.getTodo(todo)!, { state: 'todo' }, 4);
+    w.store.answerQuestion(question, [todo], 'button', 3);
     await w.tick();
     expect(w.state(todo)).toBe('doing');
   });

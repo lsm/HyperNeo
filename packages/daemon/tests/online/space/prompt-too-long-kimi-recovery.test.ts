@@ -5,6 +5,7 @@ import { waitForIdle } from '../../helpers/daemon-actions';
 import type { NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonAppContext } from '../../../src/app';
 import { buildPromptTooLongContinueNag } from '../../../src/lib/session/prompt-too-long-recovery';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 45_000 : 60_000;
@@ -254,7 +255,10 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
     await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
     await waitForSdkMessageType(daemon, sessionId, 'result', IDLE_TIMEOUT);
 
-    daemon.daemonContext.db.getNodeExecutionRepo().update(execution.id, {
+    new NodeExecutionRepository(
+      daemon.daemonContext.db.getDatabase(),
+      daemon.daemonContext.reactiveDb
+    ).update(execution.id, {
       status: 'idle',
       result: 'Kimi prompt-too-long injected',
     });

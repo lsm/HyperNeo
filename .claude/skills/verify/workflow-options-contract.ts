@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -34,7 +36,7 @@ try {
     { id: 'start', name: 'Start', agents: [{ agentId: '', templateKey: 'worker.swe', name: 'Worker' }] },
     { id: 'finish', name: 'Finish', agents: [{ agentId: '', templateKey: 'worker.swe', name: 'Worker' }] },
   ], startNodeId: 'start', endNodeId: 'finish', tags: ['initial'] });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const rpc = (method: string, data: unknown) => new Promise<{ workflow: SpaceWorkflow }>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error(`RPC timeout: ${method}`)), 15000);

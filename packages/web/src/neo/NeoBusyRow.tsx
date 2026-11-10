@@ -1,4 +1,11 @@
+import type { AgentProcessingState } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
+import { t } from '../lib/i18n/index.ts';
+
+export function neoWaitingLine(state: AgentProcessingState): string | null {
+  if (state.status !== 'processing' || !state.waiting) return null;
+  return t(state.waiting === 'model' ? 'session.waitingModel' : 'session.waitingReconnect');
+}
 
 export function NeoBusyRow({ words }: { words: readonly string[] }) {
   const [index, setIndex] = useState(0);
@@ -20,7 +27,7 @@ export function NeoBusyRow({ words }: { words: readonly string[] }) {
             <i />
             <i />
           </span>
-          <span class="truncate">{words[index % words.length]}</span>
+          <span class="min-w-0">{words[index % words.length]}</span>
         </div>
       )}
     </div>

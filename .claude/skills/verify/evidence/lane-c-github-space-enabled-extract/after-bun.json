@@ -1,0 +1,30 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Verbatim GitHub source setting/watched enable SQL extraction only; public writes stay on main, constructor/backfill untouched",
+  "publicRpcMs": 0.9851670000000468,
+  "publicRpc": {
+    "replies": [
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": true
+      },
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": false
+      }
+    ],
+    "mainStatementRuns": 4,
+    "watchedRows": 2,
+    "sourceWatchedAndSnapshotStayAligned": true,
+    "creationAndSharedCommandTimesPreserved": true
+  },
+  "suppliedTimeResultAndCallerRollbackPreserved": true,
+  "pass": true,
+  "runtime": "Bun 1.4.3 macOS arm64",
+  "wrapper": {
+    "exitCode": 0
+  },
+  "temporaryDaemonDataRemoved": true
+}

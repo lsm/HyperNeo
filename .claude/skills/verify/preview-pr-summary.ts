@@ -16,7 +16,7 @@ const output = await new Response(child.stdout).text(); assert.equal(await child
 const data = join(root, 'data'); let db = new Database(join(data, 'daemon.db'));
 const url = 'https://github.com/lsm/HyperNeo/pull/42'; const sha = 'a'.repeat(40);
 function source(text = `[PR](${url})`) { db.prepare(`UPDATE sdk_message_bodies SET sdk_message = ? WHERE seq = (SELECT rowid FROM sdk_messages WHERE id='source')`).run(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } })); }
-source(); db.prepare(`UPDATE neo_todos SET repo = 'github.com/lsm/hyperneo' WHERE id='todo'`).run();
+source(); db.prepare(`UPDATE pack_coding_todos SET repo = 'github.com/lsm/hyperneo' WHERE todo_id='todo'`).run();
 const raw = { url, title: 'Synthetic design PR', body: '# Complete untrusted body\n<script>inert string</script>', state: 'OPEN', headRefOid: sha,
  reviews: [{ state: 'APPROVED', commit: { oid: 'b'.repeat(40) }, author: { login: 'reviewer' } }], statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }], changedFiles: 3,
  files: [{ path: 'docs/report.md', additions: 10, deletions: 2 }] };
@@ -48,10 +48,10 @@ for (const invalid of [
 writeFileSync(join(root, 'pr.json'), '{ invalid JSON'); assert.deepEqual(await call(), unavailable);
 fixture({ ...raw, body: 'x'.repeat(1100000) }); assert.deepEqual(await call(), unavailable);
 renameSync(join(root, 'pr.json'), join(root, 'pr.retained.json')); assert.deepEqual(await call(), unavailable); fixture(raw);
-source('[PR](https://unconfigured.example/lsm/HyperNeo/pull/42)'); db.prepare(`UPDATE neo_todos SET repo = 'unconfigured.example/lsm/hyperneo' WHERE id='todo'`).run();
+source('[PR](https://unconfigured.example/lsm/HyperNeo/pull/42)'); db.prepare(`UPDATE pack_coding_todos SET repo = 'unconfigured.example/lsm/hyperneo' WHERE todo_id='todo'`).run();
 before = calls().length; assert.deepEqual(await call({ ...request, reference: 'https://unconfigured.example/lsm/HyperNeo/pull/42' }), unavailable); assert.equal(calls().length, before);
-source(); db.prepare(`UPDATE neo_todos SET repo = 'github.com/lsm/hyperneo' WHERE id='todo'`).run();
-const changing = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, async (target) => {
+source(); db.prepare(`UPDATE pack_coding_todos SET repo = 'github.com/lsm/hyperneo' WHERE todo_id='todo'`).run();
+const changing = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), async (target) => {
  const result = await readBoundPrSummary(target); source('Reference removed'); return result;
 })]);
 assert.deepEqual(await call(request, changing), unavailable); source();

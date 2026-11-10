@@ -4,12 +4,12 @@ import { readFileSync } from 'node:fs';
 import { Glob } from 'bun';
 import { OPERATION_NAMES } from '../packages/shared/src/types/operation-names.ts';
 
-const SOURCE_ROOT = 'packages/daemon/src';
+const SOURCE_ROOT = 'packages';
 const DEFINITION = /defineOperation\(\{\s*name:\s*'([^']+)'/g;
 
 function definedNames(): Map<string, string> {
   const found = new Map<string, string>();
-  for (const file of new Glob('**/*.ts').scanSync(SOURCE_ROOT)) {
+  for (const file of new Glob('{daemon,space}/src/**/*.ts').scanSync(SOURCE_ROOT)) {
     const path = `${SOURCE_ROOT}/${file}`;
     for (const match of readFileSync(path, 'utf8').matchAll(DEFINITION)) {
       found.set(match[1], path);

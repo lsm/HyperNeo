@@ -140,8 +140,7 @@ export type Provider =
   | 'ollama'
   | 'ollama-cloud'
   | 'anthropic-copilot'
-  | 'anthropic-codex'
-  | 'acp';
+  | 'anthropic-codex';
 
 export interface ProviderConfig {
   apiKey?: string;
@@ -201,7 +200,6 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
   'ollama-cloud': 'off',
   'anthropic-copilot': 'off',
   'anthropic-codex': 'granular',
-  acp: 'granular',
 };
 
 export function normalizeThinkingLevel(level: string | undefined | null): ThinkingLevel {
@@ -220,7 +218,7 @@ export const THINKING_EFFORTS: readonly ThinkingEffort[] = [
   'max',
 ];
 
-const THINKING_LEVEL_EFFORT: Record<ThinkingLevel, ThinkingEffort | undefined> = {
+export const THINKING_LEVEL_EFFORT: Record<ThinkingLevel, ThinkingEffort | undefined> = {
   off: undefined,
   think8k: 'low',
   think16k: 'medium',
@@ -245,6 +243,8 @@ export const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = 
 );
 
 export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
+  harness?: 'sdk' | 'codex';
+
   toolSelection?: SessionToolSelection;
   toolProfile?: SessionToolProfile;
 
@@ -385,12 +385,10 @@ export interface SessionMetadata {
   costBaseline?: number;
   refusalRewindTargetUuid?: string | null;
   sdkCapabilities?: string[];
-  acpInstructionsSent?: boolean;
-  acpCommandIdentity?: string;
-  acpSessionCommand?: string;
   pastSdkSessionIds?: string[];
+  oapClearThreadId?: string;
+  oapRecovery?: { previous: string | null; text: string; pendingOpen: boolean; claim?: string };
   pendingModelSwitch?: PendingModelSwitch | null;
-  acpContextUsageEstimate?: number;
   worktreeChoice?: {
     status: 'pending' | 'completed';
     choice?: 'worktree' | 'direct';

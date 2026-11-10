@@ -150,7 +150,10 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
     ...(messageStatus ? { messageStatus } : {}),
     ...(object(row.delivery)?.state === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
     ...(replyTo &&
-    (replyTo.kind === 'question' || replyTo.kind === 'todo' || replyTo.kind === 'message') &&
+    (replyTo.kind === 'ask' ||
+      replyTo.kind === 'question' ||
+      replyTo.kind === 'todo' ||
+      replyTo.kind === 'message') &&
     text(replyTo.id, 160)
       ? {
           replyTo: {

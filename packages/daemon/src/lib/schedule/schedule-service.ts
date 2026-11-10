@@ -11,7 +11,7 @@ import type {
 import type { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { getNextRunAt } from './cron-utils.ts';
+import { getNextRunAt } from '../scheduler/cron-utils.ts';
 import {
   computeInitialNextRun,
   computeResumeNextRun,
@@ -19,7 +19,6 @@ import {
   validateScheduleUpdate,
 } from './schedule-trigger.ts';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants.ts';
-import type { TaskScheduleFirePayload } from '../job-handlers/task-schedule-fire.handler.ts';
 
 export interface CreateScheduleInput {
   spaceId: string;
@@ -50,6 +49,10 @@ export interface UpdateScheduleInput {
   cronExpression?: string | null;
   runAt?: number | null;
   timezone?: string;
+}
+
+export interface TaskScheduleFirePayload extends Record<string, unknown> {
+  scheduleId: string;
 }
 
 export interface ScheduleServiceDeps {
@@ -191,6 +194,10 @@ export class ScheduleService {
 
   pauseScheduleAsync(scheduleId: string): Promise<TaskSchedule> {
     return gatewayFor(this.deps.db).call(taskSchedulePauseWrites, 'pause', scheduleId);
+  }
+
+  ensureSchedulePaused(scheduleId: string): Promise<TaskSchedule> {
+    return gatewayFor(this.deps.db).call(taskSchedulePauseWrites, 'ensurePaused', scheduleId);
   }
 
   pauseSchedule(scheduleId: string): TaskSchedule {

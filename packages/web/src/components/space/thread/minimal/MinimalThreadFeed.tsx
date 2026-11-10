@@ -18,8 +18,8 @@ import type {
 import { ToolIcon } from '../../../sdk/tools/ToolIcon';
 import { humanizeSystemSubtype, buildFeedTurns } from './feed-builders.ts';
 import { isSDKResultError } from '@hyperneo/shared/sdk/type-guards';
-import { pushOverlayHistory } from '../../../../lib/router';
-import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions';
+import { pushOverlayHistory } from '../../../../lib/space-router';
+import { ThreadMessageActions } from '../../../sdk/ThreadMessageActions';
 import { useVisibleTick } from '../../../../hooks/useVisibleTick';
 import { formatDuration, formatClock, agentInitial, shortAgentName } from './minimal-mock-data';
 import { getAgentColor, getAgentTextColor } from '../space-task-thread-agent-colors';
@@ -520,7 +520,7 @@ function CompletedBody({
           </div>
         ) : null}
       </div>
-      <SpaceTaskThreadMessageActions
+      <ThreadMessageActions
         timestamp={turn.startedAt}
         copyText={turn.lastMessage}
         align="left"
@@ -757,7 +757,7 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
             />
           </div>
         ) : null}
-        <SpaceTaskThreadMessageActions
+        <ThreadMessageActions
           timestamp={turn.createdAt}
           copyText={turn.body}
           align="right"

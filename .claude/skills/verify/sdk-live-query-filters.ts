@@ -1,3 +1,4 @@
+import '../../../packages/daemon/tests/unit/helpers/register-space-schema.ts';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';

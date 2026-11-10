@@ -8,7 +8,7 @@ import {
   type OperationCaller,
   type OperationCallerRole,
 } from '../operations/registry.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
 import { awaitsWorkerHandoff, isRetryableTaskStatus, retryTargetStatus } from './transitions.ts';
 import { isActiveSessionInSpace, resolveSpaceTaskOwner } from './metadata.ts';

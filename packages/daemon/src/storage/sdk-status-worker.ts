@@ -1,5 +1,7 @@
 import { searchNeoCards } from './neo-card-search.ts';
 import { readHyperneoTurnEnds } from './hyperneo-turn-ends-read.ts';
+import { readHyperneoTurnFacts } from './hyperneo-turn-facts-read.ts';
+import { readClaudeDesktopRecordFiles } from './claude-desktop-read.ts';
 import { readCodexSnapshot } from './codex-desktop-read.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts } from '../lib/neo/message-status.ts';
@@ -40,19 +42,23 @@ worker.onmessage = ({ data }) => {
       ? 'card-search'
       : 'query' in args
         ? 'work-search'
-        : 'hyperneoTurnEnds' in args
-          ? 'hyperneo-turn-ends'
-          : 'codexSnapshot' in args
-            ? 'codex-snapshot'
-            : 'turnVectors' in args
-              ? 'turn-vectors'
-              : 'neoMessageStatus' in args
-                ? 'neo-message-status'
-                : 'feed' in args
-                  ? 'message-feed'
-                  : 'page' in args
-                    ? 'sdk-page'
-                    : 'sdk-status'
+        : 'hyperneoTurnFacts' in args
+          ? 'hyperneo-turn-facts'
+          : 'hyperneoTurnEnds' in args
+            ? 'hyperneo-turn-ends'
+            : 'claudeRecords' in args
+              ? 'claude-records'
+              : 'codexSnapshot' in args
+                ? 'codex-snapshot'
+                : 'turnVectors' in args
+                  ? 'turn-vectors'
+                  : 'neoMessageStatus' in args
+                    ? 'neo-message-status'
+                    : 'feed' in args
+                      ? 'message-feed'
+                      : 'page' in args
+                        ? 'sdk-page'
+                        : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -60,6 +66,8 @@ worker.onmessage = ({ data }) => {
       db?.close();
       db = null;
       repository = null;
+    } else if ('claudeRecords' in args) {
+      result = readClaudeDesktopRecordFiles(args.claudeRecords.sessionsDir);
     } else if ('codexSnapshot' in args) {
       result = readCodexSnapshot(
         args.codexSnapshot.statePath,
@@ -96,6 +104,10 @@ worker.onmessage = ({ data }) => {
             args.hyperneoTurnEnds.sessionId,
             args.hyperneoTurnEnds.since
           );
+        }
+        if ('hyperneoTurnFacts' in args) {
+          const { sessionId, cursor, limit } = args.hyperneoTurnFacts;
+          return readHyperneoTurnFacts(db!, sessionId, cursor, limit);
         }
         if ('turnVectors' in args) {
           const { model, dimensions, limit } = args.turnVectors;

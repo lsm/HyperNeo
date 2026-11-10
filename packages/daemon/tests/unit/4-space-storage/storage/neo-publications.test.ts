@@ -291,7 +291,7 @@ describe('Neo publication ledger', () => {
 describe('migration 288 publication durability', () => {
   test('generic agent SQL cannot bypass future publication operation admission', () => {
     expect(getExcludedTableNames()).toContain('neo_publications');
-    for (const scope of ['global', 'room', 'space'] as const)
+    for (const scope of ['global', 'space'] as const)
       expect(getAccessibleTableNames(scope)).not.toContain('neo_publications');
   });
 

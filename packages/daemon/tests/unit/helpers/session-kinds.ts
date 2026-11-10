@@ -1,6 +1,6 @@
 import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import { longTermAgentSessionId } from './legacy-agent-session-id';
-import type { SpaceMcpSessionPolicyContext } from '../../../src/lib/space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../../../src/lib/session-resolution/space-mcp-session-policy.ts';
 
 export type SessionKind =
   | 'agent_card'

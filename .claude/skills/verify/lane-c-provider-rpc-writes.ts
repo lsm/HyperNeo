@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -27,7 +28,7 @@ try {
   const first = repo.createProvider({ ...params('synthetic-provider-first'), configJson: JSON.stringify({ command: 'synthetic-command', discoveredModels: { models: [{ id: 'synthetic-model' }] } }) });
   const second = repo.createProvider(params('synthetic-provider-second'));
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
   hub.registerTransport(transport);
   await transport.initialize();
   const raw = app.db.getDatabase();

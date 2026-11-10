@@ -467,6 +467,7 @@ describe('withCodexDesktopIpc', () => {
           registry,
           'work.send',
           {
+            notice: true,
             ref: { adapter: driver.id, id },
             message: 'Identical input',
           },

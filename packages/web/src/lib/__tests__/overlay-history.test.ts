@@ -1,23 +1,21 @@
 // @ts-nocheck
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { initializeRouter, cleanupRouter, registerRouteExtension } from '../router';
+import { pushOverlayHistory, closeOverlayHistory, spaceRoutes } from '../space-router';
+import { navSectionSignal } from '../signals';
 import {
-  pushOverlayHistory,
-  closeOverlayHistory,
-  initializeRouter,
-  cleanupRouter,
-} from '../router';
-import {
-  navSectionSignal,
   spaceOverlaySessionIdSignal,
   spaceOverlayAgentNameSignal,
   spaceOverlayTaskContextSignal,
   currentSpaceIdSignal,
-} from '../signals';
+} from '../space-signals';
 
 let originalHistory: unknown;
 let originalLocation: unknown;
 let mockHistory: unknown;
 let mockLocation: unknown;
+
+registerRouteExtension(spaceRoutes);
 
 describe('Overlay history', () => {
   beforeEach(() => {

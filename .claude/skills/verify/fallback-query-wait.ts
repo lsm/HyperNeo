@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from "../../../packages/daemon/src/lib/pairing/local-credential.ts";
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -10,6 +12,7 @@ import type { Session } from '@hyperneo/shared';
 
 const run = resolve(process.argv.at(-1)!);
 const cancel = process.argv.includes('--cancel');
+const override = process.argv.includes('--override');
 let resultAnnounced = false;
 let allowInterrupt = () => {};
 const interruptGate = new Promise<void>((done) => {
@@ -144,7 +147,7 @@ const app = await createDaemonApp({
 });
 assert.notEqual(app.server.port, 8399);
 const hub = new MessageHub({ defaultSessionId: 'global' });
-const transport = new WebSocketClientTransport({
+const transport = new WebSocketClientTransport({ createSocket: createLocalSocket,
   url: `ws://127.0.0.1:${app.server.port}/ws`,
   autoReconnect: false,
 });
@@ -182,8 +185,12 @@ try {
   for (const server of registry.servers)
     await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
   await app.settingsManager.updateGlobalSettingsAsync({
-    modelFallbackMap: {},
-    fallbackModels: [{ provider: 'anthropic', model: 'sonnet' }],
+    modelFallbackMap: {
+      [override ? 'anthropic/haiku' : 'anthropic/opus']: [
+        { provider: 'anthropic', model: 'sonnet', thinkingLevel: 'think16k' },
+      ],
+    },
+    fallbackModels: [{ provider: 'anthropic', model: 'sonnet', thinkingLevel: 'think24k' }],
   });
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
     workspacePath: join(run, 'workspace'),
@@ -240,6 +247,7 @@ try {
     assert(oldClosed && oldInterrupted);
     assert.equal(starts.length, 2);
     assert(starts[1].model.includes('sonnet'));
+    assert.equal((evidence.session as Session).config.thinkingLevel, override ? 'think16k' : 'think24k');
     assert.equal(consumed.length, 2);
     const content = (value: unknown) =>
       (value as { message: { content: unknown } }).message.content;

@@ -615,12 +615,14 @@ describe('api-helpers', () => {
           }
         ).getHubIfConnected.mockReturnValue(mockHub);
 
-        const result = await apiHelpers.listProviderRemoteModels('k1', { command: 'devin acp' });
+        const result = await apiHelpers.listProviderRemoteModels('k1', {
+          baseUrl: 'https://models.invalid',
+        });
 
         expect(result).toEqual({ models: [{ id: 'kimi-k3', name: 'Kimi K3' }] });
         expect(mockHub.request).toHaveBeenCalledWith(
           'providers.listRemoteModels',
-          { id: 'k1', options: { command: 'devin acp' } },
+          { id: 'k1', options: { baseUrl: 'https://models.invalid' } },
           { timeout: 30000 }
         );
       });
@@ -1130,45 +1132,6 @@ describe('api-helpers', () => {
           'providers.test',
           { id: 'p-1' },
           { timeout: 25000 }
-        );
-      });
-    });
-
-    describe('fetchAcpModels', () => {
-      it('should fetch ACP models with id and command at 30000ms timeout', async () => {
-        const mockHub = mockConnectedHub({ models: [{ id: 'devin-model' }] });
-
-        const result = await apiHelpers.fetchAcpModels('p-1', 'devin acp');
-
-        expect(result).toEqual({ models: [{ id: 'devin-model' }] });
-        expect(mockHub.request).toHaveBeenCalledWith(
-          'providers.fetchAcpModels',
-          { id: 'p-1', command: 'devin acp' },
-          { timeout: 30000 }
-        );
-      });
-
-      it('should forward an empty command as an explicit environment fallback', async () => {
-        const mockHub = mockConnectedHub({ models: [] });
-
-        await apiHelpers.fetchAcpModels('p-1', '');
-
-        expect(mockHub.request).toHaveBeenCalledWith(
-          'providers.fetchAcpModels',
-          { id: 'p-1', command: '' },
-          { timeout: 30000 }
-        );
-      });
-
-      it('should omit the command when not provided', async () => {
-        const mockHub = mockConnectedHub({ models: [] });
-
-        await apiHelpers.fetchAcpModels('p-1');
-
-        expect(mockHub.request).toHaveBeenCalledWith(
-          'providers.fetchAcpModels',
-          { id: 'p-1', command: undefined },
-          { timeout: 30000 }
         );
       });
     });

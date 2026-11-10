@@ -1,4 +1,5 @@
 import { generateUUID } from '@hyperneo/shared/utils';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ArtifactFileMetadata } from '@hyperneo/shared/types/artifact-file';
 import { t } from '../../lib/i18n/index.ts';
@@ -12,6 +13,9 @@ import {
 import type { ArtifactResolution } from '../../lib/artifact-reference-client.ts';
 import { ArtifactPreview } from './ArtifactPreview.tsx';
 import { ReferenceView } from './ReferenceView.tsx';
+import { LiveFilePreview } from './LiveFilePreview.tsx';
+import { isLiveReference } from '../../lib/live-file-client.ts';
+import { previewFileKey, sessionTabKey } from '../../lib/artifact-preview-workspace.ts';
 import {
   ArtifactPreviewTabs,
   artifactTabIds,
@@ -27,14 +31,18 @@ export function ArtifactPreviewPanel({
   markdownClass,
   fileTabs = false,
   work,
+  renderSession,
   suspended = false,
   expansion,
+  onAskFile,
 }: {
   markdownClass?: string;
   fileTabs?: boolean;
-  work?: { id: string; showTab: boolean; count: number };
+  work?: { id: string; count: number };
+  renderSession?: (sessionId: string) => ComponentChildren;
   suspended?: boolean;
   expansion?: { expanded: boolean; toggle: () => void };
+  onAskFile?: (path: string) => void;
 } = {}) {
   const stack = artifactPreviewStack.value;
   const top = stack.at(-1);
@@ -50,17 +58,26 @@ export function ArtifactPreviewPanel({
   const tabbed = fileTabs && desktop;
   const phone = fileTabs && !desktop;
   const files = artifactPreviewWorkspace.state.value.files;
-  const selectedId = top?.kind === 'artifact' ? top.artifactId : null;
+  const selectedId =
+    top?.kind === 'artifact'
+      ? top.artifactId
+      : top?.kind === 'session'
+        ? sessionTabKey(top.sessionId)
+        : top && isLiveReference(top)
+          ? previewFileKey({ reference: top, title: '' })
+          : null;
   const workActive = tabbed && !!work && artifactPreviewWorkspace.state.value.open && !top;
   const open = !!top || workActive;
-  const reference = tabbed && top?.kind === 'reference' ? top : undefined;
-  const showWork = tabbed && work?.showTab;
+  const reference = tabbed && top?.kind === 'reference' && !isLiveReference(top) ? top : undefined;
+  const showWork = tabbed && !!work;
   const focusEntry = workActive ? artifactWorkTabId : tabbed && selectedId ? open : stack[0];
   const dialog = useRef<HTMLDivElement>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
   const resolved = useRef(new Map<string, ArtifactResolution>());
   const visible = useRef(!suspended);
   visible.current = !suspended;
+  const typing = useRef(false);
+  typing.current = top?.kind === 'session';
   useLayoutEffect(() => {
     touch.current = null;
   }, [top, phone, suspended]);
@@ -84,7 +101,7 @@ export function ArtifactPreviewPanel({
         foregroundEscape = event;
     };
     const onKey = (event: KeyboardEvent) => {
-      if (!visible.current) return;
+      if (!visible.current || typing.current) return;
       if (
         event.key === 'Escape' &&
         !event.isComposing &&
@@ -273,20 +290,35 @@ export function ArtifactPreviewPanel({
         {tabbed &&
           files.map((file) => (
             <div
-              key={file.artifactId}
-              id={artifactTabIds(file.artifactId).panel}
+              key={previewFileKey(file)}
+              id={artifactTabIds(previewFileKey(file)).panel}
               role="tabpanel"
-              hidden={file.artifactId !== selectedId}
-              aria-labelledby={artifactTabIds(file.artifactId).tab}
-              class={file.artifactId === selectedId ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+              hidden={previewFileKey(file) !== selectedId}
+              aria-labelledby={artifactTabIds(previewFileKey(file)).tab}
+              class={
+                previewFileKey(file) === selectedId ? 'flex min-h-0 flex-1 flex-col' : 'hidden'
+              }
             >
-              <ArtifactPreview
-                artifactId={file.artifactId}
-                onBack={backArtifactPreview}
-                markdownClass={markdownClass}
-                presentation="tabbed"
-                onMetadata={rememberMetadata}
-              />
+              {file.sessionId !== undefined ? (
+                renderSession?.(file.sessionId)
+              ) : file.reference ? (
+                previewFileKey(file) === selectedId && !suspended ? (
+                  <LiveFilePreview
+                    target={file.reference}
+                    markdownClass={markdownClass}
+                    tabbed
+                    onAskFile={onAskFile}
+                  />
+                ) : null
+              ) : (
+                <ArtifactPreview
+                  artifactId={file.artifactId}
+                  onBack={backArtifactPreview}
+                  markdownClass={markdownClass}
+                  presentation="tabbed"
+                  onMetadata={rememberMetadata}
+                />
+              )}
             </div>
           ))}
         {!tabbed && top?.kind === 'artifact' ? (
@@ -297,7 +329,7 @@ export function ArtifactPreviewPanel({
             onBack={backArtifactPreview}
             markdownClass={markdownClass}
           />
-        ) : top?.kind === 'reference' ? (
+        ) : top?.kind === 'reference' && (!tabbed || !isLiveReference(top)) ? (
           <div
             id={reference ? artifactReferencePanelId : undefined}
             role={reference ? 'tabpanel' : undefined}
@@ -312,6 +344,7 @@ export function ArtifactPreviewPanel({
               promoteFiles={fileTabs}
               suspended={suspended}
               tabbed={!!reference}
+              onAskFile={onAskFile}
             />
           </div>
         ) : null}

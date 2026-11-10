@@ -2,8 +2,8 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { MessageHub, type RequestHandler, generateUUID } from '@hyperneo/shared';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
-import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { ExternalEventExtensionManager } from '../../../../src/lib/external-events/extension-manager';
 import type {
   ExternalEventExtension,
@@ -16,6 +16,7 @@ import {
   type InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 async function createSignature(payload: string, secret: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -126,7 +127,7 @@ describe('external event extension startup primitives', () => {
     db = setupDb();
     bus = createInternalEventBus<Record<string, unknown>>();
     service = new ExternalEventService(new ExternalEventStore(db), bus);
-    config = new ExternalEventExtensionConfigStore(db);
+    config = createExternalEventConfigStore(db);
   });
 
   test('registers GitHub routes and RPC handlers when globally enabled', async () => {

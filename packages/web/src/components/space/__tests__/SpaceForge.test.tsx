@@ -52,7 +52,8 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
   },
 }));
 
-import { currentSpaceScopeIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
+import { rightPanelTargetSignal } from '../../../lib/signals';
+import { currentSpaceScopeIdSignal } from '../../../lib/space-signals';
 import { spaceStore } from '../../../lib/space-store';
 import { ScopeDetail, SpaceForge } from '../SpaceForge';
 
@@ -167,9 +168,10 @@ describe('SpaceForge', () => {
     fireEvent.click(screen.getByRole('button', { name: /Second scope/ }));
     expect(currentSpaceScopeIdSignal.value).toBe('scope-2');
     expect(rightPanelTargetSignal.value).toEqual({
-      type: 'scope',
-      spaceId: 'space-1',
-      scopeId: 'scope-2',
+      type: 'extension',
+      panel: 'scope',
+      owner: 'space-1',
+      item: 'scope-2',
     });
 
     unmount();

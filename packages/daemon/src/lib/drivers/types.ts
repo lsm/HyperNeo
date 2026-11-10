@@ -1,6 +1,7 @@
 import { WorkerIdentitySchema } from './worker-identity-schema.ts';
 import { z } from 'zod';
 import type { WorkTurnPage } from '../../storage/work-turn-page.ts';
+import type { WorkTurn } from '../../storage/work-turns.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -46,6 +47,7 @@ const DesktopUIEvidenceSchema = z.object({
 });
 
 export const WorkSummarySchema = z.object({
+  execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   worker: WorkerIdentitySchema.optional(),
   ref: WorkRefSchema,
   title: z.string(),
@@ -63,7 +65,16 @@ export const WorkSummarySchema = z.object({
     )
     .optional(),
   model: z.string().optional(),
+  provider: z.string().optional(),
   effort: z.string().optional(),
+  identityObservation: z
+    .object({
+      source: z.literal('assistant-transcript'),
+      at: z.number().optional(),
+      messageId: z.string().optional(),
+    })
+    .describe('Last observed assistant runtime identity; not a prediction of the next turn.')
+    .optional(),
   remoteLink: z.string().optional(),
   remoteControl: z
     .boolean()
@@ -89,10 +100,23 @@ export const PlaceGroupSchema = z.object({
   work: z.array(WorkSummarySchema),
 });
 
+export const WorkTurnFactSchema = z.object({
+  id: z.string().min(1),
+  startedAt: z.number(),
+  endedAt: z.number(),
+  ended: z.string(),
+  inputs: z.array(z.string()),
+  urls: z.array(z.string()),
+  finalUrls: z.array(z.string()),
+  complete: z.boolean(),
+  cursor: z.string().min(1),
+});
+
 export const WorkRejectionSchema = z.enum([
   ...workStartConfiguration.refusalSchema.options,
   ...workStartPreparation.refusalSchema.options,
   'unknown_adapter',
+  'worker_busy',
   'unsupported',
   'not_supported',
   'not_found',
@@ -132,6 +156,7 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
 }
 
 export const WorkInputSchema = z.object({
+  inputId: z.string().optional(),
   at: z.number(),
   text: z.string(),
   human: z.boolean().optional(),
@@ -191,6 +216,7 @@ export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
 
 export const WorkStartedSchema = WorkSummarySchema.extend({
   receipt: WorkInputReceiptSchema.optional(),
+  reused: z.literal(true).optional(),
 });
 
 export const WorkTurnEndSchema = z.object({
@@ -201,18 +227,27 @@ export const WorkTurnEndSchema = z.object({
   message: z.string(),
 });
 
+export const WorkTurnQuestionSchema = z.object({
+  id: z.string(),
+  at: z.number(),
+  text: z.string(),
+  actions: z.array(z.string()),
+});
+export type WorkTurnQuestion = z.infer<typeof WorkTurnQuestionSchema>;
+
 export const WorkDetailSchema = WorkSummarySchema.extend({
   turnEnds: z.array(WorkTurnEndSchema).optional(),
   inputEvidence: WorkInputEvidenceSchema.optional(),
   startReceipt: WorkInputReceiptSchema.optional(),
-  execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),
   waitingFor: z.string().max(200).optional(),
+  turnQuestion: WorkTurnQuestionSchema.optional().describe(
+    'The worker ended its turn on this question. It is idle, so a reply is a normal next turn.'
+  ),
   recentInputs: z.array(WorkInputSchema).optional(),
   exchange: z.array(WorkExchangeEntrySchema).optional(),
   exchangeCut: z.boolean().optional(),
-  openedPrs: z.array(z.string()).optional(),
   linkedPrs: z
     .array(
       z.object({
@@ -254,8 +289,10 @@ export type WorkVerb =
   | 'queue'
   | 'withdraw'
   | 'status'
+  | 'turns'
   | 'stop'
   | 'archive';
+export type WorkTurnFact = z.infer<typeof WorkTurnFactSchema>;
 export type WorkWithdrawal = {
   queuedSubmissionId: string;
   withdrawn: boolean;
@@ -265,6 +302,7 @@ export type WorkWithdrawal = {
 export type ArchiveAdmission = () => Rejected | null;
 
 export interface FindQuery {
+  all?: true;
   idPrefix?: string;
   text?: string;
   folder?: string;
@@ -280,6 +318,7 @@ export interface StartRequest {
   title: string;
   message: string;
   createFolder?: boolean;
+  provenance?: boolean;
   preparation?: z.infer<typeof workStartPreparation.schema>;
   model?: string;
   effort?: string;
@@ -288,17 +327,40 @@ export interface StartRequest {
 export interface WorkCallContext {
   from: string;
   caller: OperationCaller;
+  idempotencyKey?: string;
 }
 
 export type WorkRenamed = { renamed: true; title: string };
+
+export const WorkArchivedSchema = z.object({
+  archived: z.boolean(),
+  worktree: z
+    .object({ directory: z.string().min(1), removed: z.boolean(), reason: z.string().optional() })
+    .optional(),
+});
+export type WorkArchived = z.infer<typeof WorkArchivedSchema>;
+
+export interface WorkSessionFact {
+  id: string;
+  name: string;
+  status: WorkStatus;
+  lastActivityAt: number;
+}
 
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
   readonly unsupportedCapabilities?: Partial<Record<WorkVerb, string>>;
+  readonly resolveStartConfiguration?: (
+    request: StartRequest
+  ) => Promise<Result<
+    z.infer<typeof workStartConfiguration.schema> & { provider?: string }
+  > | null>;
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
+  readonly sessions?: () => Promise<readonly WorkSessionFact[]>;
+  readonly readInput?: (sessionId: string, marker: string) => Promise<WorkTurn | null>;
   readonly readTurns?: (
     sessionId: string,
     around: string | undefined,
@@ -310,6 +372,11 @@ export interface WorkAdapter {
     request: StartRequest,
     context: WorkCallContext
   ) => Promise<Result<WorkStarted>>;
+  readonly turns?: (
+    ref: WorkRef,
+    cursor?: string,
+    limit?: number
+  ) => Promise<Result<{ turns: WorkTurnFact[] }>>;
   readonly send?: (
     ref: WorkRef,
     message: string,
@@ -333,8 +400,5 @@ export interface WorkAdapter {
     receipt?: WorkDelivery['receipt']
   ) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
-  readonly archive?: (
-    ref: WorkRef,
-    admit: ArchiveAdmission
-  ) => Promise<Result<{ archived: boolean }>>;
+  readonly archive?: (ref: WorkRef, admit: ArchiveAdmission) => Promise<Result<WorkArchived>>;
 }

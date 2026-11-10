@@ -1,7 +1,8 @@
+import { withWorkerProvenance } from './worker-provenance.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { WorktreeManager } from '../worktree-manager.ts';
-import { gitWorktreeProject } from './acp-agent-adapter.ts';
+import { gitWorktreeProject } from './worktree-project.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
 import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
@@ -30,6 +31,7 @@ import type {
   WorkAdapter,
   WorkCallContext,
   WorkDelivery,
+  WorkTurnFact,
   WorkDetail,
   WorkInput,
   WorkRef,
@@ -111,14 +113,17 @@ export interface HyperneoSessionControl {
     prepared?: { sessionId: string; projectPath: string }
   ): Promise<string>;
   resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
+  resolveDefaultModel?(): Promise<{ id: string; provider: string } | null>;
   effort?(sessionId: string): string | null;
   model(sessionId: string): string | null;
+  provider?(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
   announce(sessionId: string): void;
   interrupt(sessionId: string): boolean | Promise<boolean>;
 }
 
 export interface HyperneoAdapterDeps {
+  readTurnFacts: (sessionId: string, cursor?: string, limit?: number) => Promise<WorkTurnFact[]>;
   readTurnEnds: (sessionId: string, since: number) => Promise<NonNullable<WorkDetail['turnEnds']>>;
   prepareExecution?: WorkExecutionPreparer;
   worktreeBaseDir?: (projectPath: string) => string;
@@ -131,7 +136,8 @@ export interface HyperneoAdapterDeps {
     message: string,
     from: string,
     messageUuid: string,
-    deliveryMode?: MailboxDeliveryMode
+    deliveryMode?: MailboxDeliveryMode,
+    once?: boolean
   ) => Promise<MailboxHandoffOutcome>;
   sessions: HyperneoSessionControl;
   neoFolder: () => string;
@@ -258,7 +264,7 @@ export function buildHyperneoGroups(
           withSessionLoad(withChatEvidence(toWork(session, machine), matched.get(session.id)))
         )
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
-        .slice(0, SESSIONS_PER_PLACE);
+        .slice(0, query.all ? undefined : SESSIONS_PER_PLACE);
       if ((query.idPrefix || !placeMatches) && work.length === 0) return [];
       return [
         {
@@ -409,24 +415,25 @@ export function readHyperneoInputs(db: BunDatabase, id: string, since?: number):
     since === undefined
       ? db
           .prepare(
-            `SELECT timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
+            `SELECT sdk_uuid AS inputId, timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
               WHERE session_id = ? AND ${LANDED_INPUT} ORDER BY timestamp DESC LIMIT ${TAIL_INPUTS}`
           )
           .all(id)
           .reverse()
       : db
           .prepare(
-            `SELECT timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
+            `SELECT sdk_uuid AS inputId, timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
               WHERE session_id = ? AND timestamp > ? AND ${LANDED_INPUT}
               ORDER BY timestamp ASC LIMIT ${INPUTS_AFTER}`
           )
           .all(id, new Date(since).toISOString())
-  ) as { timestamp: string; message: string }[];
+  ) as { inputId: string; timestamp: string; message: string }[];
   const inputs = rows.flatMap((row) => {
     const input = workInput(
       workEntryTime(row.timestamp),
       hyperneoInputText(row.message),
-      JSON.parse(row.message).inputKind === 'human'
+      JSON.parse(row.message).inputKind === 'human',
+      row.inputId
     );
     return input ? [input] : [];
   });
@@ -489,6 +496,9 @@ export async function describeHyperneoWork(
   since?: number
 ): Promise<Result<WorkDetail>> {
   const work = toWork(row, deps.machine);
+  const model = deps.sessions.model(row.id);
+  const provider = deps.sessions.provider?.(row.id);
+  const effort = deps.sessions.effort?.(row.id);
   const turnEnds = since === undefined ? [] : await deps.readTurnEnds(row.id, since);
   const last = row.queryFailureId
     ? { reply: row.queryFailureError, failed: 1, at: row.lastActiveAt }
@@ -497,6 +507,9 @@ export async function describeHyperneoWork(
     ok: true,
     value: {
       ...work,
+      ...(model ? { model } : {}),
+      ...(provider ? { provider } : {}),
+      ...(effort ? { effort } : {}),
       ...(turnEnds.length ? { turnEnds } : {}),
       status: work.status === 'done' && last?.failed ? 'failed' : work.status,
       ...(last?.reply
@@ -519,13 +532,14 @@ export async function deliverToHyperneo(
   deps: HyperneoAdapterDeps,
   deliveryMode?: MailboxDeliveryMode
 ): Promise<Result<WorkDelivery>> {
-  const inputId = crypto.randomUUID();
+  const inputId = context.idempotencyKey ?? crypto.randomUUID();
   const outcome = await deps.handoff(
     row.id,
     withReplyLine(message, context.from),
     context.from,
     inputId,
-    deliveryMode
+    deliveryMode,
+    !!context.idempotencyKey
   );
   if (outcome.kind === 'rejected') return reject('not_delivered', outcome.reason);
   return {
@@ -574,7 +588,7 @@ export async function createHyperneoSession(
   let sessionId: string | undefined;
   try {
     if (prepared && workerSandboxOn(request.preparation?.sandbox))
-      await installClaudeNativeWrites(prepared.value.directory, [folder]);
+      await installClaudeNativeWrites(prepared.value.directory, [folder], true);
     sessionId = await deps.sessions.create(
       prepared?.value.directory ?? folder,
       request.title,
@@ -631,14 +645,15 @@ function confirmHyperneoStart(
   sessionId: string,
   request: StartRequest,
   deps: HyperneoAdapterDeps
-): Gate<{ sessionId: string; model: string | null }> {
+): Gate<{ sessionId: string; model: string | null; effort: string | null }> {
   const model = deps.sessions.model(sessionId);
+  const effort = deps.sessions.effort?.(sessionId) ?? null;
   const confirmed = workStartConfiguration.confirm(request, {
     ...(model ? { model } : {}),
-    ...(request.effort ? { effort: deps.sessions.effort?.(sessionId) ?? undefined } : {}),
+    ...(effort ? { effort } : {}),
   });
   return confirmed.ok
-    ? { value: { sessionId, model } }
+    ? { value: { sessionId, model, effort } }
     : {
         reason: reject(
           confirmed.reason,
@@ -648,16 +663,23 @@ function confirmHyperneoStart(
 }
 
 export async function openHyperneoWork(
-  confirmed: { sessionId: string; model: string | null },
+  confirmed: { sessionId: string; model: string | null; effort?: string | null },
   request: StartRequest,
   context: WorkCallContext,
   deps: HyperneoAdapterDeps
 ): Promise<Result<WorkStarted>> {
-  const { sessionId, model } = confirmed;
+  const { sessionId, model, effort } = confirmed;
+  const message = request.provenance
+    ? withWorkerProvenance(request.message, {
+        model,
+        effort: effort ?? null,
+        harness: 'hyperneo',
+      })
+    : request.message;
   const inputId = crypto.randomUUID();
   const outcome = await deps.handoff(
     sessionId,
-    withReplyLine(request.message, context.from),
+    withReplyLine(message, context.from),
     context.from,
     inputId
   );
@@ -676,7 +698,7 @@ export async function openHyperneoWork(
       ...work,
       ...(work.status === 'done' ? { status: 'queued' as const } : {}),
       ...(model ? { model } : {}),
-      ...(request.effort ? { effort: request.effort } : {}),
+      ...(effort ? { effort } : {}),
       receipt: { executionId: sessionId, inputId },
     },
   };
@@ -805,6 +827,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       'find',
       'start',
       'send',
+      'turns',
       'queue',
       'status',
       'stop',
@@ -821,7 +844,22 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
     rename: deps.sessions.rename
       ? (ref, title, context) => runHyperneoRename(ref, title, context, deps)
       : undefined,
+    resolveStartConfiguration: async (request) => {
+      const result = await requireHyperneoStartConfiguration(request, deps);
+      if ('reason' in result) return result.reason;
+      if (request.model === undefined && request.effort !== undefined) {
+        const model = await deps.sessions.resolveDefaultModel?.();
+        return model
+          ? { ok: true, value: { ...result.value, model: model.id, provider: model.provider } }
+          : null;
+      }
+      return { ok: true, value: result.value };
+    },
     start: (request, context) => runHyperneoStart(request, context, deps),
+    turns: async (ref, cursor, limit) => ({
+      ok: true,
+      value: { turns: await deps.readTurnFacts(ref.id, cursor, limit) },
+    }),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
     queue: (ref, message, context) => runHyperneoSend(ref, message, context, deps, 'defer'),
     withdraw: deps.sessions.withdraw

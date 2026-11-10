@@ -1,4 +1,4 @@
-import type { Session, SpaceTask } from '@hyperneo/shared';
+import type { Session } from '@hyperneo/shared';
 import { Dialog, DialogBackdrop, DialogPanel } from '@hyperneo/ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
@@ -11,7 +11,7 @@ import {
   type CommandDescriptor,
   type RankedCommand,
 } from '../lib/command-registry.ts';
-import { navigateToSession, navigateToSpace, navigateToSpaceTask } from '../lib/router.ts';
+import { navigateToSession } from '../lib/router.ts';
 import { searchHighlightMessageIdSignal } from '../lib/signals.ts';
 import {
   commandPaletteModeSignal,
@@ -19,18 +19,21 @@ import {
   currentSessionIdSignal,
   type CommandPaletteMode,
 } from '../lib/signals.ts';
-import { spaceStore, type SpaceWithTasks } from '../lib/space-store.ts';
+import {
+  type ExtensionPaletteItem,
+  type ExtensionSearchResult,
+  extensionNav,
+} from '../lib/web-extensions.ts';
 import { sessions } from '../lib/state.ts';
+import { workspaceLabel } from '../lib/workspace-label.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 
-export interface MessageSearchResult {
+export interface MessageSearchResult extends ExtensionSearchResult {
   kind: 'message' | 'task';
   sourceId: string;
   messageId?: string;
   sessionId?: string;
-  taskId?: string;
-  spaceId?: string;
   taskNumber?: number;
   messageType?: string;
   title: string;
@@ -69,23 +72,7 @@ type PaletteItem =
       subtitle: string;
       session: Session;
     }
-  | {
-      type: 'space';
-      id: string;
-      group: 'recent' | 'spaces';
-      title: string;
-      subtitle: string;
-      spaceId: string;
-    }
-  | {
-      type: 'space-task';
-      id: string;
-      group: 'recent' | 'tasks';
-      title: string;
-      subtitle: string;
-      spaceId: string;
-      taskId: string;
-    }
+  | ({ type: 'extension' } & ExtensionPaletteItem)
   | {
       type: 'message';
       id: string;
@@ -100,12 +87,14 @@ function groupLabel(group: PaletteItem['group']): string {
   if (group === 'recent') return 'Recent';
   if (group === 'chats') return 'Chats';
   if (group === 'messages') return 'Messages';
-  if (group === 'spaces') return 'Spaces';
   if (group === 'tasks') return 'Tasks';
-  return categoryLabel(group);
+  return (
+    extensionNav().find((nav) => nav.section === group)?.label ??
+    categoryLabel(group as CommandCategory)
+  );
 }
 
-function iconFor(type: PaletteItem['type']) {
+function iconFor(type: Exclude<PaletteItem['type'], 'extension'>) {
   if (type === 'command') {
     return (
       <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor">
@@ -113,35 +102,11 @@ function iconFor(type: PaletteItem['type']) {
       </svg>
     );
   }
-  if (type === 'session' || type === 'message') {
-    return (
-      <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor">
-        <path
-          d="M4.5 5.5A3 3 0 0 1 7.5 2.5h5A3 3 0 0 1 15.5 5.5v4A3 3 0 0 1 12.5 12.5H9l-4 3v-3.4A3 3 0 0 1 4.5 9.5z"
-          stroke-width="1.5"
-          stroke-linejoin="round"
-        />
-      </svg>
-    );
-  }
-  if (type === 'space') {
-    return (
-      <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor">
-        <path
-          d="M5 6.5 10 4l5 2.5-5 2.5zM5 10l5 2.5 5-2.5M5 13.5l5 2.5 5-2.5"
-          stroke-width="1.5"
-          stroke-linejoin="round"
-          stroke-linecap="round"
-        />
-      </svg>
-    );
-  }
   return (
     <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor">
       <path
-        d="M6.5 3.5h7l1 2v11h-9v-11zM7 8h6M7 11h6"
+        d="M4.5 5.5A3 3 0 0 1 7.5 2.5h5A3 3 0 0 1 15.5 5.5v4A3 3 0 0 1 12.5 12.5H9l-4 3v-3.4A3 3 0 0 1 4.5 9.5z"
         stroke-width="1.5"
-        stroke-linecap="round"
         stroke-linejoin="round"
       />
     </svg>
@@ -158,11 +123,6 @@ function commandItems(results: readonly RankedCommand[]): PaletteItem[] {
     shortcut: command.shortcut ? formatShortcutDisplay(command.shortcut) : undefined,
     command,
   }));
-}
-
-function workspaceLabel(path: string | null): string {
-  if (!path) return 'No folder';
-  return path.split('/').filter(Boolean).at(-1) ?? path;
 }
 
 function sessionItems(allSessions: Session[], query: string, limit: number): PaletteItem[] {
@@ -195,68 +155,6 @@ function sessionItems(allSessions: Session[], query: string, limit: number): Pal
     title: session.title || 'Untitled chat',
     subtitle: workspaceLabel(session.workspacePath),
     session,
-  }));
-}
-
-function spaceItems(spaces: SpaceWithTasks[], query: string, limit: number): PaletteItem[] {
-  const trimmed = query.trim();
-  const ranked = spaces
-    .map((space) => {
-      const score = trimmed
-        ? Math.max(
-            fuzzyScore(space.name, trimmed),
-            fuzzyScore(space.description, trimmed),
-            fuzzyScore(space.workspacePath, trimmed)
-          )
-        : 1;
-      return { space, score };
-    })
-    .filter(({ space, score }) => space.status !== 'archived' && score > 0)
-    .sort((a, b) => {
-      if (trimmed && b.score !== a.score) return b.score - a.score;
-      return b.space.updatedAt - a.space.updatedAt;
-    })
-    .slice(0, limit);
-
-  return ranked.map(({ space }) => ({
-    type: 'space' as const,
-    id: `space:${space.id}`,
-    group: trimmed ? 'spaces' : 'recent',
-    title: space.name,
-    subtitle: workspaceLabel(space.workspacePath),
-    spaceId: space.slug,
-  }));
-}
-
-function taskItemsFromSpaces(
-  spaces: SpaceWithTasks[],
-  query: string,
-  limit: number
-): PaletteItem[] {
-  const trimmed = query.trim();
-  const ranked: Array<{ task: SpaceTask; spaceName: string; spaceSlug: string; score: number }> =
-    [];
-  for (const space of spaces) {
-    for (const task of space.tasks) {
-      const score = trimmed
-        ? Math.max(fuzzyScore(task.title, trimmed), fuzzyScore(task.description, trimmed))
-        : 1;
-      if (score <= 0) continue;
-      ranked.push({ task, spaceName: space.name, spaceSlug: space.slug, score });
-    }
-  }
-  ranked.sort((a, b) => {
-    if (trimmed && b.score !== a.score) return b.score - a.score;
-    return b.task.updatedAt - a.task.updatedAt;
-  });
-  return ranked.slice(0, limit).map(({ task, spaceName, spaceSlug }) => ({
-    type: 'space-task' as const,
-    id: `space-task:${task.id}`,
-    group: trimmed ? 'tasks' : 'recent',
-    title: task.title,
-    subtitle: `${spaceName} · Task #${task.taskNumber}`,
-    spaceId: spaceSlug,
-    taskId: task.id,
   }));
 }
 
@@ -301,7 +199,7 @@ export function CommandPalette() {
     setSelectedIndex(0);
     setMessageResults([]);
     setRegistryVersion((v) => v + 1);
-    spaceStore.initGlobalList().catch(() => {});
+    for (const nav of extensionNav()) nav.warmPalette();
     setTimeout(() => inputRef.current?.focus(), 0);
   }, [open, mode]);
 
@@ -352,16 +250,30 @@ export function CommandPalette() {
   }, [open, query, mode]);
 
   const allSessions = sessions.value;
-  const spacesWithTasks = spaceStore.spacesWithTasks.value;
+  const extensions: string[] = extensionNav().map((nav) => nav.extension);
+  const extensionsKey = extensions.join();
+  const paletteSources = extensionNav().map((nav) => nav.paletteSource());
+  const extensionItems = useMemo(
+    () =>
+      open
+        ? extensionNav().flatMap((nav) =>
+            nav.paletteItems(query).map((item) => ({ type: 'extension' as const, ...item }))
+          )
+        : [],
+    [open, query, extensionsKey, ...paletteSources]
+  );
 
-  const items = useMemo(() => {
+  const rankedItems = useMemo(() => {
     const forcedCommand = query.trimStart().startsWith('>');
     const commandQuery = forcedCommand ? query.trimStart().slice(1).trimStart() : query;
-    const commands = commandItems(commandRegistry.search(commandQuery));
+    const commands = commandItems(
+      commandRegistry
+        .search(commandQuery)
+        .filter(({ command }) => !command.extension || extensions.includes(command.extension))
+    );
     const quickItems = [
       ...sessionItems(allSessions, query, query.trim() ? 8 : 5),
-      ...spaceItems(spacesWithTasks, query, query.trim() ? 5 : 3),
-      ...taskItemsFromSpaces(spacesWithTasks, query, query.trim() ? 5 : 3),
+      ...extensionItems,
       ...messageItems(messageResults),
     ];
 
@@ -370,20 +282,21 @@ export function CommandPalette() {
       return query.trim() ? [...commands.slice(0, 8), ...quickItems.slice(0, 8)] : commands;
     }
     return query.trim() ? [...quickItems, ...commands.slice(0, 5)] : quickItems;
-  }, [query, mode, messageResults, allSessions, spacesWithTasks, registryVersion]);
+  }, [query, mode, messageResults, allSessions, extensionItems, registryVersion, extensionsKey]);
 
   const groupedItems = useMemo(() => {
     const groups: Array<{ key: PaletteItem['group']; items: PaletteItem[] }> = [];
-    for (const item of items) {
-      const last = groups.at(-1);
-      if (last?.key === item.group) {
+    for (const item of rankedItems) {
+      const last = groups.find((group) => group.key === item.group);
+      if (last) {
         last.items.push(item);
       } else {
         groups.push({ key: item.group, items: [item] });
       }
     }
     return groups;
-  }, [items]);
+  }, [rankedItems]);
+  const items = useMemo(() => groupedItems.flatMap((group) => group.items), [groupedItems]);
 
   useEffect(() => {
     setSelectedIndex((index) => Math.min(index, Math.max(items.length - 1, 0)));
@@ -421,19 +334,13 @@ export function CommandPalette() {
         navigateToSession(item.session.id);
         return;
       }
-      if (item.type === 'space') {
-        navigateToSpace(item.spaceId);
-        return;
-      }
-      if (item.type === 'space-task') {
-        navigateToSpaceTask(item.spaceId, item.taskId);
+      if (item.type === 'extension') {
+        item.open();
         return;
       }
       const result = item.result;
-      if (result.kind === 'task' && result.spaceId && result.taskId) {
-        navigateToSpaceTask(result.spaceId, result.taskId);
+      if (result.kind === 'task' && extensionNav().some((nav) => nav.openSearchResult(result)))
         return;
-      }
       if (!result.sessionId || !result.messageId) return;
       searchHighlightMessageIdSignal.value = {
         sessionId: result.sessionId,
@@ -644,7 +551,7 @@ function PaletteRow({
             active ? 'border-line-strong bg-fill text-fg' : 'border-line bg-fill-soft text-fg-muted'
           )}
         >
-          {iconFor(item.type)}
+          {item.type === 'extension' ? <item.icon /> : iconFor(item.type)}
         </span>
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium">{item.title}</span>

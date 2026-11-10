@@ -137,7 +137,12 @@ if (process.argv.includes('agents')) {
   append(s, {
     type: 'assistant',
     uuid: crypto.randomUUID(),
-    message: { content: [{ type: 'text', text: 'ready' }], stop_reason: 'end_turn' },
+    effort: 'medium',
+    message: {
+      model: 'claude-opus-5-5',
+      content: [{ type: 'text', text: 'ready' }],
+      stop_reason: 'end_turn',
+    },
   });
   log({ kind: 'prepare', id: s.id, text, args: process.argv.slice(2) });
 } else if (process.argv.includes('--resume')) {

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -117,4 +117,14 @@ test('history pages preserve same-time ordering, project scope, summaries and re
   const last = await page(older.nextCursor);
   expect(last.entries.map((entry) => entry.ask.id)).toEqual(['done-01', 'done-00']);
   expect(last.nextCursor).toBeNull();
+});
+
+test('snapshot asks carry their topic, null when unset', async () => {
+  ask('labelled');
+  ask('plain');
+  db.getDatabase().prepare("UPDATE neo_asks SET topic = 'OAP' WHERE id = 'labelled'").run();
+  const view = await snapshot();
+  const topic = (id: string) => view.todoAsks?.find((entry) => entry.ask.id === id)?.ask.topic;
+  expect(topic('labelled')).toBe('OAP');
+  expect(topic('plain')).toBeNull();
 });

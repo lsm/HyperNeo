@@ -9,10 +9,10 @@ export type NeoAskGroup = 'attention' | 'running' | 'outcomes';
 const holdsBlocked = (entry: Pick<NeoAskEntry, 'todos'>) =>
   entry.todos.some((todo) => todo.state === 'blocked');
 
-export function neoAskEntryGroup(entry: Pick<NeoAskEntry, 'state' | 'todos'>): NeoAskGroup {
+export function neoAskEntryGroup(entry: Pick<NeoAskEntry, 'state'>): NeoAskGroup {
   return entry.state === 'done' || entry.state === 'dropped'
     ? 'outcomes'
-    : entry.state === 'waiting' || holdsBlocked(entry)
+    : entry.state === 'waiting'
       ? 'attention'
       : 'running';
 }

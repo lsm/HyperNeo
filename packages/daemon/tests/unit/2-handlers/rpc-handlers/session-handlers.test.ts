@@ -23,9 +23,9 @@ import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
-import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
@@ -210,6 +210,7 @@ describe('Session RPC Handlers — models.list', () => {
       name: 'Healthy',
       provider: 'healthy',
       contextWindow: 128000,
+      effortLevels: ['low', 'high'],
     } as ModelInfo;
     for (const [id, discover] of [
       ['healthy', async () => [model]],
@@ -237,7 +238,11 @@ describe('Session RPC Handlers — models.list', () => {
       unavailableProviders: Array<{ providerId: string; available: boolean }>;
     };
     expect(result.models).toEqual([
-      expect.objectContaining({ id: 'healthy-model', available: true }),
+      expect.objectContaining({
+        id: 'healthy-model',
+        available: true,
+        effortLevels: ['low', 'high'],
+      }),
     ]);
     expect(result.unavailableProviders).toContainEqual(
       expect.objectContaining({ providerId: 'broken', available: false })
@@ -924,6 +929,7 @@ describe('Session RPC Handlers — models.list', () => {
     let eventBus: ReturnType<typeof createMockInternalEventBus>;
     let removeSessionMock: ReturnType<typeof mock>;
     let archiveResourcesMock: ReturnType<typeof mock>;
+    let sessionManager: SessionManager;
 
     beforeEach(async () => {
       messageHubData = createMockMessageHub();
@@ -931,7 +937,7 @@ describe('Session RPC Handlers — models.list', () => {
       removeSessionMock = mock(async () => ({ id: 'space-1', sessionIds: [] }));
       archiveResourcesMock = mock(async () => undefined);
 
-      const sessionManager = {
+      sessionManager = {
         getSessionAsync: mock(async () => ({
           getSessionData: () => ({
             id: 'sess-1',
@@ -1117,6 +1123,23 @@ describe('Session RPC Handlers — models.list', () => {
       expect(result.success).toBe(true);
       expect(archiveResourcesMock).toHaveBeenCalledWith('sess-1', 'ui_session_archive');
       expect(removeSessionMock).toHaveBeenCalledWith('space-1', 'sess-1');
+    });
+
+    it('archives a session that names a space when Space is not loaded', async () => {
+      const hub = createMockMessageHub();
+      const { setupSessionHandlers } = await import(
+        '../../../../src/lib/rpc-handlers/session-handlers'
+      );
+      setupSessionHandlers(hub.hub, sessionManager, eventBus);
+
+      const result = (await hub.handlers.get('session.archive')!(
+        { sessionId: 'sess-1', confirmed: true },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(archiveResourcesMock).toHaveBeenCalledWith('sess-1', 'ui_session_archive');
+      expect(removeSessionMock).not.toHaveBeenCalled();
     });
   });
 

@@ -17,11 +17,10 @@ park counters without spending retries. Old claim tokens must fail both the
 waiting and parking branches without changing a replacement claim. The owned
 claim may wait, and the complete frozen Unicode start note survives.
 
-Main-connection instrumentation must record zero parking or waiting UPDATEs.
-The baseline completes the behavioral checks but fails that SQL assertion;
-commit the failing reproduction before changing the handler. Repeat with
-`VERIFY_PROOF_RUNTIME=deno` and supported Deno on PATH. The wrapper preserves
-job states and handler results, then removes its isolated daemon data.
+Main-connection instrumentation must record zero parking or waiting UPDATEs. The baseline
+completes the behavioral checks but fails that SQL assertion; commit the failing
+reproduction before changing the handler. The wrapper preserves job states and handler
+results, then removes its isolated daemon data.
 
 Run direct-start-jobs and job-queue-repository unit suites for capacity admission,
 park budgets, lifecycle races and claim fencing. The capacity/dependency proof

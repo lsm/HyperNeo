@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
 import { NeoLive } from '../NeoLive.tsx';
-import { readNeoAttachment, attachmentMessage, restoreNeoImages } from '../neo-attachments.ts';
+import {
+  readNeoAttachment,
+  attachmentMessage,
+  restoreNeoImages,
+  neoSentWords,
+} from '../neo-attachments.ts';
 
 const sendMessage = vi.hoisted(() => vi.fn());
 const useNeoMock = vi.hoisted(() => vi.fn());
@@ -189,6 +194,43 @@ describe('Neo attachments', () => {
       })
     );
   });
+  it('captures photo thumbnails and whole file chips in message order without changing payloads', async () => {
+    render(composer());
+    await attach(new File(['first'], 'a.png', { type: 'image/png' }));
+    await attach(new File(['Hello'], 'b.txt', { type: 'text/plain' }));
+    await attach(new File(['second'], 'c.png', { type: 'image/png' }));
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+    input.getBoundingClientRect = () => new DOMRect(20, 780, 300, 52);
+    const chips = [...screen.getByRole('list', { name: 'Attachments' }).children];
+    chips.forEach((chip, index) => {
+      chip.getBoundingClientRect = () => new DOMRect(20 + index * 100, 700, 140, 56);
+      const image = chip.querySelector('img');
+      if (image) image.getBoundingClientRect = () => new DOMRect(20 + index * 100, 708, 40, 40);
+    });
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    const [payload, origin] = sendMessage.mock.calls[0];
+    expect(payload.images.map((image: { data: string }) => image.data)).toEqual([
+      'Zmlyc3Q=',
+      'c2Vjb25k',
+    ]);
+    expect(payload.text).toContain('Hello');
+    expect(payload.media).toBeUndefined();
+    expect(
+      origin.media.map((item: { target: string; from: DOMRect }) => [
+        item.target,
+        item.from.x,
+        item.from.width,
+        item.from.height,
+      ])
+    ).toEqual([
+      ['photo-0', 20, 40, 40],
+      ['file-0', 120, 140, 56],
+      ['photo-1', 220, 40, 40],
+    ]);
+    expect(screen.queryByRole('list', { name: 'Attachments' })).toBeNull();
+  });
+
   it('clears attachments on send and isolates drafts across conversation remounts', async () => {
     const id = crypto.randomUUID();
     const view = render(composer(id));
@@ -208,6 +250,8 @@ describe('Neo attachments', () => {
     expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
     fireEvent.focusIn(screen.getByRole('textbox', { name: 'Message Neo' }));
     const send = await screen.findByRole('button', { name: 'Send message' });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    await attach();
     expect((send as HTMLButtonElement).disabled).toBe(false);
   });
   it('does not clear a new attachment added while sending or submit twice', async () => {
@@ -246,5 +290,17 @@ describe('restoreNeoImages', () => {
       )
     ).toBe(false);
     expect(restoreNeoImages(id, [photo])).toBe(true);
+  });
+});
+
+describe('sent photo words', () => {
+  it.each([
+    ['Attached files', true, ''],
+    ['Attached files', false, 'Attached files'],
+    [' Attached files ', true, ' Attached files '],
+    ['The lamp flickers', true, 'The lamp flickers'],
+    ['', true, ''],
+  ])('shows %j with photos=%s as %j', (text, photos, words) => {
+    expect(neoSentWords(text, photos)).toBe(words);
   });
 });

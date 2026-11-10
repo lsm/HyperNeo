@@ -17,6 +17,7 @@ import type {
   MessageOrigin,
   ModelInfo,
   PendingModelSwitch,
+  ProcessingWaiting,
   Provider,
   QuestionDraftResponse,
   RewindMode,
@@ -47,10 +48,11 @@ import { ErrorCategory, ErrorManager, type StructuredError } from '../error-mana
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import { OapReopenRefusedError } from '../oap/oap-reopen.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import {
   type CallerScopeResolver,
-  NO_CALLER_SCOPE,
+  PLAIN_SESSION_SCOPE,
   resolveCallerIdentity,
 } from '../operations/caller.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
@@ -62,12 +64,11 @@ import type {
   OperationRegistryProvider,
 } from '../operations/registry.ts';
 import { SettingsManager } from '../settings-manager.ts';
-import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
 import {
   NETWORK_OUTAGE_NOTICE,
   NetworkOutagePause,
-  probeNetworkHost,
-  providerProbeHost,
+  probeProviderUrl,
+  providerProbeUrl,
 } from './network-outage-pause.ts';
 import { runRateLimitManualCancel } from './rate-limit-manual-cancel.ts';
 import { runRateLimitManualRetry } from './rate-limit-manual-retry.ts';
@@ -82,6 +83,15 @@ export class ClearConversationCancelledError extends Error {
   constructor() {
     super('clearConversationContext cancelled by query teardown');
     this.name = 'ClearConversationCancelledError';
+  }
+}
+
+export class ClearConversationUnsupportedError extends Error {
+  constructor(
+    message = 'Clearing a Codex conversation is not supported yet. The existing thread was not cleared.'
+  ) {
+    super(message);
+    this.name = 'ClearConversationUnsupportedError';
   }
 }
 
@@ -145,6 +155,7 @@ export interface AgentSessionInit {
 }
 
 export interface AgentSessionRuntimeOptions {
+  oap?: import('./query-runner.ts').OapQueryRuntime;
   getGithubToken?(): Promise<string | null>;
   operationRegistryProvider?: () => OperationRegistry | undefined;
   callerScopeResolver?: CallerScopeResolver;
@@ -161,13 +172,13 @@ import {
   isSDKResultSuccess,
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
-import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
   getSessionContextModelInfo,
   initializeModels,
   getModelInfo,
   resolveModelAlias,
   resolveSessionContextModelInfo,
+  refreshModels,
 } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
 import {
@@ -179,7 +190,12 @@ import {
   claimProviderFailureNotice,
   recordClassifiedProviderFailure,
 } from '../providers/provider-failure-store.ts';
-import { resolveAvailableQueryProvider } from '../providers/registry.ts';
+import { type ProviderRegistry, resolveAvailableQueryProvider } from '../providers/registry.ts';
+import {
+  isProviderOn,
+  NO_PROVIDER_RETRY_MS,
+  planSessionProvider,
+} from '../session/session-provider-plan.ts';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
@@ -203,7 +219,6 @@ import {
   type DriveTurnOutcome,
   DeliveryEnqueueRejectedError,
   deliverMessage,
-  deliveryConsumptionTimeoutMs,
   deliveryConsumptionTimeoutOrDefault,
   MANUAL_RECOVERY_PARK_MS,
   MESSAGE_DELIVERY_PARK_MS,
@@ -213,7 +228,6 @@ import {
   signalDeliveryConsumed,
   throwIfDeliveryAborted,
   waitForDeliveryAbort,
-  waitForDeliveryConsumption,
   withSessionLock,
 } from './message-delivery.ts';
 import { deliveryMetrics } from './message-delivery-metrics.ts';
@@ -239,7 +253,6 @@ import {
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
 } from './query-options-builder.ts';
-import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
 import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { QueryRunner, type QueryRunnerContext, type TrackedAgentProcess } from './query-runner.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
@@ -293,7 +306,7 @@ export class AgentSession
   private operationMcpServerRole?: OperationCallerRole;
 
   private operationRegistryProvider?: () => OperationRegistry | undefined;
-  private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
+  private callerScopeResolver: CallerScopeResolver = PLAIN_SESSION_SCOPE;
   private defaultOperationRegistry?: OperationRegistry;
   private spaceScopeResolver: SessionScopeResolver = NO_SESSION_SCOPE;
   private attachedCapabilities: readonly AuthoredCapabilityContribution[] = [];
@@ -385,7 +398,7 @@ export class AgentSession
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly attemptTokens = new QueryAttemptRegistry();
 
-  private queryRunner: QueryRunner | AcpQueryRunner;
+  private queryRunner: QueryRunner;
   readonly interruptHandler: InterruptHandler;
   private interruptRequests = 0;
   private sdkRuntimeConfig: SDKRuntimeConfig;
@@ -399,6 +412,8 @@ export class AgentSession
 
   private rateLimitWatchdog: RateLimitWatchdog;
   private networkPause: NetworkOutagePause;
+  private authRejected = false;
+  private interruptedAt = 0;
 
   queryObject: QueryLike | null = null;
   private queryPromiseValue: Promise<void> | null = null;
@@ -492,6 +507,10 @@ export class AgentSession
     return this.db.mcpEnablement;
   }
 
+  get oap(): import('./query-runner.ts').OapQueryRuntime | undefined {
+    return this.runtimeOptions.oap;
+  }
+
   constructor(
     readonly session: Session,
     readonly db: Database,
@@ -505,7 +524,7 @@ export class AgentSession
     private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
   ) {
     this.operationRegistryProvider = runtimeOptions.operationRegistryProvider;
-    this.callerScopeResolver = runtimeOptions.callerScopeResolver ?? NO_CALLER_SCOPE;
+    this.callerScopeResolver = runtimeOptions.callerScopeResolver ?? PLAIN_SESSION_SCOPE;
     this.spaceScopeResolver = runtimeOptions.spaceScopeResolver ?? NO_SESSION_SCOPE;
     this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);
     this.logger = new Logger(`AgentSession ${session.id}`);
@@ -576,8 +595,7 @@ export class AgentSession
 
     this.optionsBuilder = new QueryOptionsBuilder(this);
 
-    this.queryRunner =
-      session.config.provider === 'acp' ? new AcpQueryRunner(this) : new QueryRunner(this);
+    this.queryRunner = new QueryRunner(this);
 
     this.interruptHandler = new InterruptHandler(this);
 
@@ -662,20 +680,7 @@ export class AgentSession
 
     this.networkPause = new NetworkOutagePause({
       now: () => Date.now(),
-      probe: probeNetworkHost,
-      fallbackHost: () => {
-        const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
-        try {
-          return providerProbeHost(
-            getProviderRegistry()
-              .get(provider)
-              ?.buildSdkConfig(this.session.config.model ?? 'sonnet')
-              .envVars.ANTHROPIC_BASE_URL?.toString()
-          );
-        } catch {
-          return null;
-        }
-      },
+      probe: (host) => (host ? probeProviderUrl(`https://${host}/`) : this.providerReachable()),
       schedule: (run, delayMs) => {
         const timer = setTimeout(run, delayMs);
         timer.unref?.();
@@ -723,9 +728,7 @@ export class AgentSession
       const restarted = appliedConfig || restartedForSettings || switched;
       this.flushPendingTaskNotificationRequery();
       const reconcileOwner = restarted ? this.stateManager.getCurrentIdleOwner() : owner;
-      void this.reconcileStrandedDeliveries(reconcileOwner).catch((error) => {
-        this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);
-      });
+      void this.reconcileStrandedDeliveries(reconcileOwner);
     });
 
     if (session.metadata?.lastContextInfo) {
@@ -743,19 +746,13 @@ export class AgentSession
 
     if (this.runtimeOptions.autoReplayPendingMessages ?? true) {
       this.scheduleInitialPendingMessageReplay();
-      void this.reconcileStrandedDeliveries().catch((error) => {
-        this.logger.warn('Startup reconcileStrandedDeliveries failed:', error);
-      });
+      void this.reconcileStrandedDeliveries();
     }
 
     this.reconcilerProvisioned = this.runtimeOptions.autoReplayPendingMessages ?? true;
     this.reconcileTimer = setInterval(() => {
       if (!this.reconcilerProvisioned) return;
-      void runLagPhase('timer:stranded_deliveries', () => this.reconcileStrandedDeliveries()).catch(
-        (error) => {
-          this.logger.warn('Periodic reconcileStrandedDeliveries failed:', error);
-        }
-      );
+      void runLagPhase('timer:stranded_deliveries', () => this.reconcileStrandedDeliveries());
     }, SESSION_RECONCILE_INTERVAL_MS);
     if (typeof this.reconcileTimer.unref === 'function') {
       this.reconcileTimer.unref();
@@ -957,7 +954,7 @@ export class AgentSession
         `Session ${this.session.id} is ${this.session.status}; refusing to start the query`
       );
     }
-    const startGuard = createDirectQueryStartGuard(this.db.getDatabase(), () => this.session);
+    const startGuard = this.db.spaceSessions?.queryStartGuard(() => this.session);
     const rawProviderId = this.session.config.provider as string | undefined;
     const normalizedProviderId = rawProviderId?.trim() || undefined;
     if (rawProviderId !== normalizedProviderId) {
@@ -965,14 +962,6 @@ export class AgentSession
       try {
         await this.db.updateSession(this.session.id, { config: { ...this.session.config } });
       } catch {}
-    }
-    const wantsAcp = this.session.config.provider === 'acp';
-    const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
-    if (wantsAcp !== hasAcpRunner) {
-      (
-        this.queryRunner as unknown as { invalidateAttemptTokens?: () => void }
-      ).invalidateAttemptTokens?.();
-      this.queryRunner = wantsAcp ? new AcpQueryRunner(this) : new QueryRunner(this);
     }
     if (startGuard) await this.queryRunner.start(startGuard);
     else await this.queryRunner.start();
@@ -1160,6 +1149,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.interruptRequests += 1;
+    this.interruptedAt = Date.now();
     try {
       this.rateLimitWatchdog.cancel();
       this.networkPause.stop();
@@ -1206,6 +1196,75 @@ export class AgentSession
     await this.stateManager.setIdle();
   }
 
+  async humanSendFacts() {
+    const stream = this.queryRunner instanceof QueryRunner ? this.queryRunner.streamFacts() : null;
+    const latched =
+      this.queryRunner instanceof QueryRunner && this.queryRunner.failureLatchedUntil() !== null;
+    const auth = await getProviderRegistry()
+      .get(this.providerId())
+      ?.getAuthStatus?.()
+      .catch(() => null);
+    return {
+      status: this.stateManager.getState().status,
+      held:
+        latched ||
+        this.authRejected ||
+        (typeof auth?.expiresAt === 'number' && auth.expiresAt <= Date.now()) ||
+        this.networkPause.isActive() ||
+        this.rateLimitWatchdog.isRecoveryPending(),
+      openTools: stream?.openTools.length ?? 0,
+      lastActivityAt: stream?.lastActivityAt ?? Date.now(),
+    };
+  }
+
+  lastInterruptAt(): number {
+    return this.interruptedAt;
+  }
+
+  lastSdkOutputAt(): number {
+    return this.queryRunner instanceof QueryRunner
+      ? (this.queryRunner.streamFacts().lastOutputAt ?? 0)
+      : Date.now();
+  }
+
+  providerId(): string {
+    return (this.session.config.provider as string | undefined) ?? 'anthropic';
+  }
+
+  async providerReachable(): Promise<boolean> {
+    const { getProviderService } = await import('../provider-service.ts');
+    const env = await getProviderService()
+      .resolveSessionProviderEnvVars(this.session)
+      .catch(() => null);
+    return probeProviderUrl(
+      providerProbeUrl(env?.ANTHROPIC_BASE_URL?.toString(), this.providerUpstreamUrl())
+    );
+  }
+
+  private providerUpstreamUrl(): string | undefined {
+    try {
+      return getProviderRegistry()
+        .get(this.providerId())
+        ?.buildSdkConfig(this.session.config.model ?? 'sonnet')
+        .envVars.ANTHROPIC_BASE_URL?.toString();
+    } catch {
+      return undefined;
+    }
+  }
+
+  async holdForNetwork(): Promise<void> {
+    if (!this.networkPause.isActive())
+      await this.networkPause.start('The model provider is unreachable', null);
+  }
+
+  async showNotice(text: string): Promise<void> {
+    await this.queryRunner.displayErrorAsAssistantMessage(text, { markAsError: true });
+  }
+
+  async setWaiting(waiting: ProcessingWaiting): Promise<void> {
+    await this.stateManager.setWaiting(waiting);
+  }
+
   async resetQuery(options?: {
     restartQuery?: boolean;
     hardReset?: boolean;
@@ -1214,6 +1273,8 @@ export class AgentSession
     this.networkPause.stop();
     if (options?.hardReset && this.queryRunner instanceof QueryRunner)
       await this.queryRunner.resetFailureEpisode();
+    if (options?.hardReset && this.stateManager.getState().status === 'rate_limit_cooldown')
+      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
 
     const restartQuery = options?.restartQuery ?? true;
     if (options?.hardReset && this.runtimeOptions.hardReset) {
@@ -1224,19 +1285,32 @@ export class AgentSession
   }
 
   async clearConversationContext(boundaryOwner?: ContextClearBoundaryOwner): Promise<void> {
+    const clear = () =>
+      this.session.config.harness === 'codex'
+        ? this.clearCodexContext()
+        : this.runClearConversationFlow();
     if (boundaryOwner) {
-      await this.runClearConversationFlow();
+      await clear();
       return;
     }
     const owner = await acquireContextClearBoundary(this.session.id);
     try {
-      await this.runClearConversationFlow();
+      await clear();
     } finally {
       owner.release();
     }
   }
 
   async startFreshContext(): Promise<void> {
+    if (this.session.config.harness === 'codex') {
+      const owner = await acquireContextClearBoundary(this.session.id);
+      try {
+        await this.clearCodexContext();
+      } finally {
+        owner.release();
+      }
+      return;
+    }
     const reset = await this.resetQuery({ restartQuery: false });
     if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
     await this.retirePastSdkContext();
@@ -1246,6 +1320,40 @@ export class AgentSession
       sdkSessionId: undefined,
       sdkOriginPath: undefined,
     });
+  }
+
+  private async clearCodexContext(): Promise<void> {
+    if (!this.oap?.clear) await this.refuseContextClear();
+    try {
+      const reset = await this.resetQuery({ restartQuery: false });
+      if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
+      await this.retirePastSdkContext();
+      await this.oap!.clear!();
+    } catch (error) {
+      if (error instanceof OapReopenRefusedError)
+        throw new ClearConversationUnsupportedError(error.message);
+      this.logger.warn('Failed to clear the Codex thread:', error);
+      await this.refuseContextClear('Could not clear the Codex thread. No message was sent.');
+    }
+  }
+
+  private async refuseContextClear(message?: string): Promise<never> {
+    const error = new ClearConversationUnsupportedError(message);
+    try {
+      await this.showNotice(error.message);
+    } catch (cause) {
+      this.logger.warn('Failed to save the Codex context-clear refusal:', cause);
+      this.internalEventBus.publishAsync('session.error', {
+        sessionId: this.session.id,
+        error: error.message,
+        details: {
+          category: ErrorCategory.SYSTEM,
+          message: error.message,
+          userMessage: error.message,
+        },
+      });
+    }
+    throw error;
   }
 
   private async retirePastSdkContext(): Promise<void> {
@@ -1466,6 +1574,7 @@ export class AgentSession
 
   async cancelRateLimitRetry(): Promise<void> {
     this.networkPause.stop();
+    const owner = this.stateManager.getCurrentIdleOwner();
     await runRateLimitManualCancel({
       db: this.db,
       sessionId: this.session.id,
@@ -1473,8 +1582,13 @@ export class AgentSession
       getPersistedArmMessageUuid: () =>
         this.rateLimitWatchdog.getPersistedEpisodeMessageUuid?.() ?? undefined,
       cancelWatchdog: () => this.rateLimitWatchdog.cancel(false),
-      isInMemoryCooldown: () => this.stateManager.getState().status === 'rate_limit_cooldown',
-      clearCooldown: () => this.stateManager.setIdle(),
+      isInMemoryCooldown: () =>
+        this.rateLimitWatchdog.isRecoveryPending() ||
+        this.stateManager.getState().status === 'rate_limit_cooldown',
+      clearCooldown: () =>
+        this.stateManager.getState().status === 'waiting_for_input'
+          ? undefined
+          : this.stateManager.setIdle({ owner }),
       publishStatusesFailed: async (messageIds) => {
         await this.internalEventBus
           .publish('messages.statusChanged', {
@@ -1554,6 +1668,7 @@ export class AgentSession
       : this.modelSwitchHandler.switchModel(newModel, newProvider);
   }
 
+  private providerWaitAnnounced = false;
   private modelSwitchBusy = false;
   private modelSwitchChain: Promise<unknown> = Promise.resolve();
 
@@ -1655,7 +1770,6 @@ export class AgentSession
   }
 
   async applyThinkingLevel(): Promise<void> {
-    if (this.queryObject instanceof AcpQueryAdapter) return;
     const level = this.optionsBuilder.getEffectiveThinkingLevel();
     getProviderRegistry()
       .get(this.session.config.provider ?? '')
@@ -1674,15 +1788,10 @@ export class AgentSession
   }
 
   async getToolInventory(): Promise<SessionToolInventory> {
-    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner) {
-      return { state: 'unverified', tools: [], skills: [], plugins: [], mcpServers: [] };
-    }
     return this.queryRunner.getToolInventory();
   }
 
   async applyToolChoice(key: SessionToolChoiceKey): Promise<SessionToolApplication> {
-    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner)
-      return { application: 'restart_required', reason: 'provider_unverified' };
     if (key.startsWith('skill:') && this.isQueryActiveOrStarting())
       return { application: 'restart_required', reason: 'instructions_reload_unavailable' };
     return this.queryRunner.applyToolChoice();
@@ -1742,13 +1851,6 @@ export class AgentSession
   }
 
   reconcileEffectiveMcpServers(): void {
-    if (this.session.config.provider === 'acp') {
-      this.logger.info(
-        `mcp.reconcile skipped: provider 'acp' does not support live MCP updates; ` +
-          `changes apply on next query recreation (session ${this.session.id})`
-      );
-      return;
-    }
     this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
   }
 
@@ -2079,7 +2181,6 @@ export class AgentSession
   ): Promise<void> {
     const queryGeneration = runnerGeneration ?? this.getQueryGeneration();
     if (
-      this.session.config.provider !== 'acp' &&
       queryGeneration === this.getQueryGeneration() &&
       isSDKSessionStateChangedMessage(message) &&
       message.state !== 'idle'
@@ -2112,7 +2213,6 @@ export class AgentSession
   }
 
   private observeTaskNotificationResult(message: import('@hyperneo/shared/sdk').SDKMessage): void {
-    if (this.session.config.provider === 'acp') return;
     if (isSDKSessionStateChangedMessage(message)) {
       if (message.state === 'idle') {
         this.taskNotificationRequeryAwaitingSdkIdle = false;
@@ -2467,12 +2567,11 @@ export class AgentSession
   private async escalateTaskNotificationRequeryExhaustion(): Promise<void> {
     const attempts = this.taskNotificationRequeryAttempts;
     const episodeToken = this.taskNotificationRequeryEpisodeToken;
-    const execution = this.db.getNodeExecutionRepo?.().getByAgentSessionId(this.session.id) ?? null;
     const event = buildTaskNotificationRequeryEscalationEvent({
       sessionId: this.session.id,
       spaceId: this.session.context?.spaceId,
       taskId: this.session.context?.taskId,
-      workflowRunId: execution?.workflowRunId,
+      workflowRunId: this.db.spaceSessions?.workflowRunIdForSession(this.session.id),
       attempts,
       timestamp: new Date().toISOString(),
     });
@@ -2612,6 +2711,7 @@ export class AgentSession
     )
       this.networkPause.endOutage();
     if (isSDKResultSuccess(message) && message.is_error !== true) {
+      this.authRejected = false;
       const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
       if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {
@@ -2677,6 +2777,7 @@ export class AgentSession
 
   async onProviderAuthRejected(error: string, queryGeneration?: number): Promise<void> {
     if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) return;
+    this.authRejected = true;
     const providerId = this.session.config.provider ?? 'anthropic';
     if (providerId === 'anthropic') return;
     recordClassifiedProviderFailure(providerId, { errorKind: 'credential', message: error });
@@ -2720,6 +2821,45 @@ export class AgentSession
     });
   }
 
+  private async applySessionProviderPlan(
+    registry: ProviderRegistry,
+    pinned: string | undefined
+  ): Promise<DeliveryOutcome | null> {
+    const plan = await planSessionProvider(
+      {
+        wanted: pinned ?? 'anthropic',
+        pinned: pinned !== undefined,
+        model: this.session.config.model || 'sonnet',
+        settings: this.db.getGlobalSettings(),
+      },
+      registry.getAll()
+    );
+    if (plan.kind === 'wait') {
+      if (!this.providerWaitAnnounced) {
+        this.providerWaitAnnounced = true;
+        await this.queryRunner.displayErrorAsAssistantMessage(plan.notice, { markAsError: false });
+      }
+      return {
+        outcome: 'blocked',
+        retryAt: Date.now() + NO_PROVIDER_RETRY_MS,
+        reason: 'no_provider',
+      };
+    }
+    await refreshModels(undefined, { allowPartial: true });
+    const moved = await this.modelSwitchHandler.switchModel(
+      plan.model,
+      plan.provider,
+      false,
+      undefined,
+      true
+    );
+    if (!moved.success) throw new MessageDeliveryTerminalTurnError(moved.error ?? plan.provider);
+    this.providerWaitAnnounced = false;
+    if (plan.notice)
+      await this.queryRunner.displayErrorAsAssistantMessage(plan.notice, { markAsError: false });
+    return null;
+  }
+
   private async admitDelivery(args: {
     messageUuid: string;
     content: string | MessageContent[];
@@ -2742,28 +2882,61 @@ export class AgentSession
           if (this.db.getSession(this.session.id)?.status === 'archived') {
             throw new MessageDeliveryTerminalTurnError('Session is archived');
           }
+          if (this.session.config.harness === 'codex') {
+            const delivery = this.db
+              .getSDKMessageRepo()
+              .getDeliveryContent(this.session.id, messageUuid);
+            if (
+              delivery?.sendStatus === 'submitted' &&
+              !this.messageQueue.hasYielded(messageUuid)
+            ) {
+              const reason =
+                'Codex message was submitted before recovery; its outcome is unknown and it will not be resent automatically.';
+              const failure = new MessageDeliveryTerminalTurnError(
+                reason,
+                'uncertain_oap_submission'
+              );
+              const failedId = await this.db.writeSDKMessage(
+                'markDeliveryFailedByUuid',
+                this.session.id,
+                messageUuid
+              );
+              if (failedId) {
+                await this.internalEventBus.publish('messages.statusChanged', {
+                  sessionId: this.session.id,
+                  messageIds: [failedId],
+                  status: 'failed',
+                });
+              }
+              await this.errorManager.handleError(
+                this.session.id,
+                failure,
+                ErrorCategory.SESSION,
+                reason
+              );
+              throw failure;
+            }
+          }
           const pinned = (this.session.config.provider as string | undefined)?.trim() || undefined;
+          if (pinned === 'acp') {
+            const message =
+              'ACP session providers have been retired. Choose another provider for this session.';
+            await this.queryRunner.displayErrorAsAssistantMessage(message, { markAsError: true });
+            throw new MessageDeliveryTerminalTurnError(message, 'provider_retired');
+          }
           const registry = initializeProviders();
-          if (pinned || !registry.has('anthropic')) {
+          if (this.session.config.harness !== 'codex' && (pinned || !registry.has('anthropic'))) {
             await waitForOptionalProviderRegistration(registry, pinned !== undefined);
             const { provider } = await resolveAvailableQueryProvider(
               registry,
               this.session.config.model || 'sonnet',
               pinned
             );
-            if (!provider) {
-              const providerId = pinned ?? 'anthropic';
-              const message = `Provider '${providerId}' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider.`;
-              await this.errorManager.handleError(
-                this.session.id,
-                new Error(
-                  `Provider '${providerId}' is not registered; cannot prepare environment for session '${this.session.id}'`
-                ),
-                ErrorCategory.MODEL,
-                message,
-                this.stateManager.getState()
-              );
-              throw new MessageDeliveryTerminalTurnError(message);
+            if (!provider || !(await isProviderOn(provider))) {
+              const blocked = await this.applySessionProviderPlan(registry, pinned);
+              if (blocked) return blocked;
+            } else {
+              this.providerWaitAnnounced = false;
             }
           }
           if (this.isCleaningUp()) return { outcome: 'aborted' };
@@ -2785,6 +2958,12 @@ export class AgentSession
                   this.rateLimitWatchdog.getState().retryAt ?? 0
                 );
             return { outcome: 'blocked', retryAt, reason: 'limit_recovery' };
+          }
+
+          const latchedUntil =
+            this.queryRunner instanceof QueryRunner ? this.queryRunner.failureLatchedUntil() : null;
+          if (latchedUntil !== null) {
+            return { outcome: 'blocked', retryAt: latchedUntil, reason: 'query_failure_cooldown' };
           }
 
           if (this.networkPause.isActive()) await this.resumeNetworkPauseFor(messageUuid);
@@ -2852,15 +3031,11 @@ export class AgentSession
       return admission;
     }
 
-    const timeoutMs = deliveryConsumptionTimeoutOrDefault(
-      deliveryConsumptionTimeoutMs(this.session.config.provider)
-    );
+    const timeoutMs = deliveryConsumptionTimeoutOrDefault();
     const ackWaitStartedAt = Date.now();
     let ackTimedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const aborted = waitForDeliveryAbort(signal);
-    const consumption = waitForDeliveryConsumption(this.session.id, messageUuid);
-    let failedPoll: ReturnType<typeof setInterval> | undefined;
     const admissionTimeout = (): Promise<never> =>
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -2873,36 +3048,8 @@ export class AgentSession
           );
         }, timeoutMs);
       });
-    const failedBeforeAcceptance = (): Promise<never> =>
-      new Promise<never>((_, reject) => {
-        failedPoll = setInterval(() => {
-          const current = this.db
-            .getSDKMessageRepo()
-            .getDeliveryContent(this.session.id, messageUuid);
-          if (current?.sendStatus === 'failed' || current?.sendStatus === 'deferred') {
-            clearInterval(failedPoll);
-            failedPoll = undefined;
-            reject(
-              new MessageDeliveryRecoverableTurnError(
-                'Delivery failed before acceptance',
-                'admission_failed'
-              )
-            );
-          }
-        }, 500);
-      });
     try {
       await Promise.race([admission.acknowledgment, admissionTimeout(), aborted.promise]);
-      if (this.session.config.provider === 'acp') {
-        clearTimeout(timeoutId);
-        timeoutId = undefined;
-        await Promise.race([
-          consumption.promise,
-          failedBeforeAcceptance(),
-          admissionTimeout(),
-          aborted.promise,
-        ]);
-      }
       deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'acknowledged');
     } catch (error) {
       if (ackTimedOut) {
@@ -2920,8 +3067,6 @@ export class AgentSession
       if (ackTimedOut || !this.isDeliveryConsumed(messageUuid)) throw error;
     } finally {
       clearTimeout(timeoutId);
-      if (failedPoll !== undefined) clearInterval(failedPoll);
-      consumption.cancel();
       aborted.cancel();
     }
 
@@ -2942,10 +3087,6 @@ export class AgentSession
   }
 
   private async publishToolResultConsumed(sessionId: string, uuids: string[]): Promise<void> {
-    if (this.session.config.provider === 'acp') {
-      if (uuids.length === 1) return;
-      uuids = uuids.slice(1);
-    }
     for (const uuid of uuids) {
       const row = this.db.getMessageByStatusAndUuid?.(sessionId, 'consumed', uuid);
       if (!row || row.type !== 'user') continue;
@@ -3076,6 +3217,23 @@ export class AgentSession
   }
 
   async reconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
+    try {
+      return await this.runReconcileStrandedDeliveries(owner);
+    } catch (error) {
+      this.logger.warn('reconcileStrandedDeliveries failed:', error);
+      await this.errorManager
+        .handleError(
+          this.session.id,
+          error instanceof Error ? error : new Error(String(error)),
+          ErrorCategory.SYSTEM,
+          'Background delivery recovery failed; a message may be stuck. Try resending it.'
+        )
+        .catch(() => {});
+      return 0;
+    }
+  }
+
+  private async runReconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
     const jobQueue = this.db.getJobQueueRepo?.();
     if (!jobQueue) return 0;
     const status = this.stateManager.getState().status;

@@ -8,6 +8,7 @@ const [phase, directory, port = '9417'] = process.argv.slice(2);
 const run = realpathSync(directory);
 const verify = fileURLToPath(new URL('.', import.meta.url));
 assert.notEqual(port, '8399');
+const historical = (input) => JSON.parse(execFileSync('bun', [join(verify, 'legacy-attachment-fixture.ts'), run, JSON.stringify(input)], { env: { HOME: join(run, 'home'), NODE_ENV: 'test', HYPERNEO_DATA_DIR: join(run, 'data'), TMPDIR: run, PATH: process.env.PATH }, encoding: 'utf8' }));
 const rpc = (name, input) => {
  const out = execFileSync('bun', [join(verify, 'rpc.ts'), name, JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8' });
  const reply = JSON.parse(out).reply; assert(!reply.error, out); return reply.value ?? reply;
@@ -21,7 +22,7 @@ const context = { kind: 'todo', id: 'todo' };
 if (phase === 'prepare') {
  const opened = rpc('neo.open', {}); assert(opened.ok, JSON.stringify(opened));
  const register = (path, bundle) => {
-  const result = rpc('artifact.file.register', { requestId: `bundle-${path}`, context, path, title: path === 'report.html' ? 'Bundled report' : path, ...(bundle ? { bundle } : {}) });
+  const result = historical({ requestId: `bundle-${path}`, context, path, title: path === 'report.html' ? 'Bundled report' : path, ...(bundle ? { bundle } : {}) });
   assert(result.accepted, JSON.stringify(result)); return result.artifact;
  };
  const css = register('theme.css'); const image = register('chart.png');

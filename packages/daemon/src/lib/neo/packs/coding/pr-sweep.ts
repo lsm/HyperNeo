@@ -5,7 +5,7 @@ import { planNudge } from '../../nudge.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import type { CodingPrState } from './pr-ledger.ts';
+import { CodingPrLedgerRepository, type CodingPrState } from './pr-ledger.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
 export const CODING_PR_REMINDERS = 2;
@@ -24,10 +24,13 @@ export type CodingSweepRow = {
   readAt: number;
   nudges: number;
   owner: WorkRef | null;
+  mergeBy?: 'owner' | 'daemon';
 };
 
 export type CodingSweepDeps = {
-  tell(ref: WorkRef, key: string, text: string): Promise<boolean>;
+  host: string;
+  human?(key: string, text: string): Promise<boolean>;
+  tell(ref: WorkRef, key: string, text: string, pr?: string): Promise<boolean>;
   wake(key: string, text: string): Promise<boolean>;
 };
 
@@ -55,6 +58,7 @@ export function planCodingPrNudge(
   row: CodingSweepRow,
   now: number
 ): { kind: 'remind' | 'escalate'; nudges: number } | null {
+  if (row.state === 'approved_green' && row.mergeBy === 'daemon') return null;
   if (!STATE_TEXT[row.state] || !row.owner || now - row.readAt > CODING_PR_FRESH_MS) return null;
   return planNudge({ since: row.stateSince, nudges: row.nudges }, now);
 }
@@ -97,7 +101,11 @@ export class CodingPrSweepRepository {
         .all() as (Omit<CodingSweepRow, 'owner'> & { owner: string })[]
     )
       .filter((row) => codingRepoWatched(this.db, row.repo))
-      .map((row) => ({ ...row, owner: JSON.parse(row.owner) as WorkRef }));
+      .map((row) => ({
+        ...row,
+        mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
+        owner: JSON.parse(row.owner) as WorkRef,
+      }));
   }
 
   markLater(row: CodingSweepRow, nudges: number, now: number): Promise<void> {
@@ -114,6 +122,9 @@ export class CodingPrSweepRepository {
   }
 }
 
+export const codingPrUrl = (host: string, row: { repo: string; number: number }) =>
+  `https://${host}/${row.repo}/pull/${row.number}`;
+
 export async function sweepCodingPrs(
   repo: CodingPrSweepRepository,
   deps: CodingSweepDeps,
@@ -125,7 +136,9 @@ export async function sweepCodingPrs(
     const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}:${nudge.nudges}`;
     const told =
       nudge.kind === 'remind' &&
-      (await deps.tell(row.owner!, key, codingPrNudgeText(row, now)).catch(() => false));
+      (await deps
+        .tell(row.owner!, key, codingPrNudgeText(row, now), codingPrUrl(deps.host, row))
+        .catch(() => false));
     if (nudge.kind === 'remind')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {

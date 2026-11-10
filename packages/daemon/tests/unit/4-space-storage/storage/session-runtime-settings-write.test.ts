@@ -142,26 +142,6 @@ describe('session runtime settings capture and conditional write', () => {
     expect(row().sdk_session_id).toBe('fictional-sdk');
   });
 
-  test('the ACP identity clear removes both ACP metadata keys and nothing else', () => {
-    repo.createSession(session());
-    expect(cas({ model: 'x', clearAcpSession: true })).toBe('won');
-    expect(row().acp_session_id).toBeNull();
-    expect(storedMetadata()).toEqual(
-      Object.fromEntries(Object.entries(METADATA).filter(([key]) => !ACP_KEYS.includes(key)))
-    );
-    expect(row().sdk_session_id).toBe('fictional-sdk');
-    expect(row().sdk_origin_path).toBe('/fictional/origin');
-  });
-
-  test('the SDK identity clear removes both SDK columns and leaves the ACP identity intact', () => {
-    repo.createSession(session());
-    expect(cas({ model: 'x', clearSdkSession: true })).toBe('won');
-    expect(row().sdk_session_id).toBeNull();
-    expect(row().sdk_origin_path).toBeNull();
-    expect(row().acp_session_id).toBe('fictional-acp');
-    expect(storedMetadata()).toEqual(METADATA);
-  });
-
   test('reusing a spent snapshot is superseded instead of applied twice', () => {
     repo.createSession(session());
     const snapshot = capture()!;
@@ -312,7 +292,7 @@ describe('session runtime settings capture and conditional write', () => {
 });
 
 describe('runtime settings patch plan', () => {
-  const NONE = { clearAcpMetadata: false, clearAcpSession: false, clearSdkSession: false };
+  const NONE = { clearSdkSession: false };
   const entries = (patch: Parameters<typeof planRuntimeSettingsPatch>[0]) =>
     planRuntimeSettingsPatch(patch).configEntries;
 
@@ -324,22 +304,9 @@ describe('runtime settings patch plan', () => {
     expect(entries({ provider: 'glm' })).toEqual([['$.provider', 'glm']]);
   });
 
-  test('treats the ACP clear as primitive mechanics and the SDK clear as independent', () => {
-    expect(planRuntimeSettingsPatch({ model: 'm' })).toMatchObject(NONE);
-    expect(planRuntimeSettingsPatch({ model: 'm', clearAcpSession: true })).toMatchObject({
-      ...NONE,
-      clearAcpMetadata: true,
-      clearAcpSession: true,
-    });
-    expect(planRuntimeSettingsPatch({ model: 'm', clearSdkSession: true })).toMatchObject({
-      ...NONE,
-      clearSdkSession: true,
-    });
-  });
-
   test('refuses a patch with no settings and a patch with an empty value', () => {
     expect(() => planRuntimeSettingsPatch({})).toThrow('nothing to write');
-    expect(() => planRuntimeSettingsPatch({ clearAcpSession: true })).toThrow('nothing to write');
+    expect(() => planRuntimeSettingsPatch({ clearSdkSession: true })).toThrow('nothing to write');
     expect(() => planRuntimeSettingsPatch({ model: '' })).toThrow(
       'model must be a non-empty string'
     );

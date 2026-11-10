@@ -16,10 +16,10 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test LOG_LEVEL=error \
 The helper seeds a source-bound synthetic report, owns an ephemeral loopback
 daemon, and calls operation.invoke over its real WebSocket RPC door. Two calls
 without requestId must fail input validation and create zero immutable receipt
-rows. Two calls with the same per-tap requestId must return one identical accepted
-receipt and leave exactly one registry row. The actual web resolver then retries
-one target object without another receipt, and a distinct tap creates one new
-receipt. Its IDs live in a WeakMap keyed by the immutable preview target; they
+rows. Local taps with a requestId now return client_upgrade_required on every
+retry and leave zero registry rows. The web compatibility resolver must return
+client_update for the same target and for a fresh tap, with no snapshot fallback.
+Its IDs live in a WeakMap keyed by the immutable preview target; they
 last across retries and disappear with that target, without mutating UI state. Before the fix the first pair
 succeeds with different artifact IDs and leaves two receipts. It reads only the
 owned synthetic registry, saves evidence/request-id.json, and closes its socket

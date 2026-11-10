@@ -1,3 +1,4 @@
+import { createLocalSocket } from "../../../packages/daemon/src/lib/pairing/local-credential.ts";
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -141,7 +142,7 @@ try {
     globallyEnabled: true,
     capabilities: { polling: true, rpcConfig: true },
   });
-  ws = new WebSocket('ws://127.0.0.1:' + app.server.port + '/ws');
+  ws = new createLocalSocket('ws://127.0.0.1:' + app.server.port + '/ws');
   await new Promise<void>((done, fail) => {
     ws!.onopen = () => done();
     ws!.onerror = () => fail(new Error('RPC unavailable'));

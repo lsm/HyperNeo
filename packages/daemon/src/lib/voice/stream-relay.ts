@@ -1,4 +1,10 @@
-import { VOICE_MAX_AUDIO_BYTES, type VoiceMode, type VoiceSettings } from '@hyperneo/shared';
+import { opusInputDefaults, type OpusInput } from './opus-input.ts';
+import {
+  MessageHubHandlerError,
+  VOICE_MAX_AUDIO_BYTES,
+  type VoiceMode,
+  type VoiceSettings,
+} from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
@@ -12,24 +18,21 @@ import { voiceDiagnostic } from './diagnostics.ts';
 import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
 import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 import { streamProtocol, type StreamProtocol } from './stream-protocols.ts';
+import type { ClientEventData } from '../operations/client-event-schemas.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
 const START_TIMEOUT_MS = 8_000;
 const CREDENTIAL_LOOKUP_TIMEOUT_MS = 16_000;
 
-export interface VoiceStreamText {
-  streamId: string;
-  text: string;
-  isFinal: boolean;
-}
+export type VoiceStreamText = ClientEventData<'voice.stream.text'>;
 
 export interface VoiceStreamDeps {
   clientId?: string;
   language?: 'zh' | 'en';
   voice: () => VoiceSettings | undefined;
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>;
-  transcribeWav: (wavBase64: string) => Promise<VoiceTranscribeOutcome>;
+  transcribeWav: (wavBase64: string, signal?: AbortSignal) => Promise<VoiceTranscribeOutcome>;
   push: (text: VoiceStreamText) => void;
   createRelay?: AsrRelayFactory;
 }
@@ -215,7 +218,17 @@ export class VoiceStream {
   private fallbackReason: string | undefined;
   private chunks: Uint8Array[] = [];
   private cancelled = false;
+  private readonly fallbackAbort = new AbortController();
   private bytes = 0;
+  private codec: OpusInput | null = null;
+  private encodedBytes = 0;
+  private receivedChunks = 0;
+  private inputBytesReceived = 0;
+  private lastChunkAt = 0;
+  private lastChunkFinishedAt: number | null = null;
+  private inputTail: Promise<void> = Promise.resolve();
+  private partialOpus = false;
+  private queued = { bytes: 0, count: 0 };
   private relay: AsrRelay | null = null;
   private relayAlive = false;
   private finishedWaiter: ((result: { ok: boolean; text: string }) => void) | null = null;
@@ -323,7 +336,100 @@ export class VoiceStream {
     }, 1_000);
   }
 
-  stop(): Promise<
+  async enableOpus(): Promise<void> {
+    this.codec = await opusInputDefaults.create();
+  }
+
+  writeInput(
+    select: () => Uint8Array,
+    size: number,
+    appendEmpty: boolean,
+    timing: { startedAt: number; decodeMs: number; offset?: number } = {
+      startedAt: Date.now(),
+      decodeMs: 0,
+    }
+  ): Promise<string | null> {
+    const chunkSeq = ++this.receivedChunks;
+    const receipt = {
+      streamId: this.id,
+      chunkSeq,
+      bytes: size,
+      ...(typeof timing.offset === 'number' &&
+      Number.isSafeInteger(timing.offset) &&
+      timing.offset >= 0
+        ? { offset: timing.offset }
+        : {}),
+    };
+    this.inputBytesReceived += size;
+    this.lastChunkAt = timing.startedAt;
+    if (this.queued.count === 0 && this.lastChunkFinishedAt !== null) {
+      const gapMs = timing.startedAt - this.lastChunkFinishedAt;
+      if (gapMs > 1000) voiceDiagnostic('voice.stream.chunk.late', { ...receipt, gapMs });
+    }
+    let decodeMs = timing.decodeMs;
+    const recordDecode = () =>
+      voiceDiagnostic('voice.stream.chunk.decode', {
+        ...receipt,
+        codec: this.codec ? 1 : 0,
+        decodeMs,
+      });
+    if (
+      this.codec &&
+      (this.queued.bytes + size > VOICE_MAX_AUDIO_BYTES || this.queued.count >= 128)
+    ) {
+      recordDecode();
+      return Promise.resolve('Voice input queue is full; retry after pending chunks finish');
+    }
+    this.queued.bytes += size;
+    this.queued.count++;
+    const accept = async () => {
+      const audio = select();
+      if (!audio.byteLength && !appendEmpty) return null;
+      if (!this.codec) return this.write(audio);
+      try {
+        const decodingAt = performance.now();
+        const decoded = await this.codec.decode(audio).finally(() => {
+          decodeMs += Math.max(0, performance.now() - decodingAt);
+        });
+        const refused = decoded.pcm.byteLength ? this.write(decoded.pcm) : null;
+        if (refused) throw new MessageHubHandlerError(refused, 'VOICE_STREAM_INVALID_OPUS');
+        this.partialOpus = decoded.partial;
+        this.encodedBytes += audio.byteLength;
+        return null;
+      } catch (error) {
+        this.cancel();
+        throw error instanceof MessageHubHandlerError
+          ? error
+          : new MessageHubHandlerError(
+              error instanceof Error ? error.message : String(error),
+              'VOICE_STREAM_INVALID_OPUS'
+            );
+      }
+    };
+    const result = (this.codec ? this.inputTail.then(accept) : accept()).finally(() => {
+      this.queued.bytes -= size;
+      this.queued.count--;
+      recordDecode();
+      this.lastChunkFinishedAt = Date.now();
+    });
+    this.inputTail = result.then(
+      () => {},
+      () => {}
+    );
+    return result;
+  }
+
+  stop(): ReturnType<VoiceStream['stopReady']> {
+    return this.codec
+      ? this.inputTail.then(() =>
+          this.partialOpus
+            ? { error: 'Incomplete Opus packet', retryable: true as const }
+            : this.stopReady()
+        )
+      : this.stopReady();
+  }
+
+  private stopReady(): Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > {
     if (!this.stopping) {
@@ -349,6 +455,7 @@ export class VoiceStream {
               'error' in result ? 'failed' : 'completed',
               'error' in result && result.retryable === true
             );
+            if (!('error' in result) || !result.retryable) this.codec?.close();
             return result;
           },
           (error: unknown) => {
@@ -366,6 +473,7 @@ export class VoiceStream {
   private async finish(): Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > {
+    if (this.cancelled) return { error: 'Voice stream cancelled' };
     const relay = this.relay;
     const wasAlive = this.relayAlive;
     if (relay && wasAlive) {
@@ -374,7 +482,7 @@ export class VoiceStream {
       });
       relay.post({ type: 'finish' });
       const result = await finished;
-      this.close();
+      this.closeRelay();
       if (this.cancelled) return { error: 'Voice stream cancelled' };
       if (result.ok && (result.text || this.bytes === 0)) {
         this.deps.push({ streamId: this.id, text: result.text, isFinal: true });
@@ -390,7 +498,10 @@ export class VoiceStream {
       pcm.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    const outcome = await this.deps.transcribeWav(Buffer.from(pcm16Wav(pcm)).toString('base64'));
+    const outcome = await this.deps.transcribeWav(
+      Buffer.from(pcm16Wav(pcm)).toString('base64'),
+      this.fallbackAbort.signal
+    );
     if (this.cancelled) return { error: 'Voice stream cancelled' };
     if (outcome.action !== 'transcribed')
       return {
@@ -399,6 +510,10 @@ export class VoiceStream {
       };
     this.deps.push({ streamId: this.id, text: outcome.text, isFinal: true });
     return { text: outcome.text, via: 'batch' };
+  }
+
+  get receivedBytes(): number {
+    return this.codec ? this.encodedBytes : this.bytes;
   }
 
   write(pcm: Uint8Array): string | null {
@@ -411,20 +526,38 @@ export class VoiceStream {
     return null;
   }
 
-  cancel(): void {
+  cancel(): Promise<void> {
     this.cancelled = true;
+    this.fallbackAbort.abort();
+    const waiter = this.finishedWaiter;
+    this.finishedWaiter = null;
+    waiter?.({ ok: false, text: '' });
+    this.close('client_disconnected');
     this.chunks = [];
     this.bytes = 0;
-    this.close('client_disconnected');
+    return this.stopping
+      ? this.stopping.then(
+          () => {},
+          () => {}
+        )
+      : Promise.resolve();
   }
 
   close(reason = 'closed'): void {
+    this.codec?.close();
+    this.closeRelay(reason);
+  }
+
+  private closeRelay(reason = 'closed'): void {
     voiceDiagnostic('voice.stream.close', {
       streamId: this.id,
       clientId: this.deps.clientId,
       reason,
       via: this.via,
       audioBytes: this.bytes,
+      receivedChunks: this.receivedChunks,
+      receivedBytes: this.inputBytesReceived,
+      lastChunkAt: this.lastChunkAt,
       audioDurationMs: (this.bytes / (STREAM_SAMPLE_RATE * 2)) * 1000,
       durationMs: Date.now() - this.startedAt,
     });

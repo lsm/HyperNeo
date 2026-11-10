@@ -1,3 +1,4 @@
+import type { WorkRef } from '../../lib/drivers/types.ts';
 import type { NeoDriverTarget, readDriverOutcome } from '../../lib/neo/driver-work.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
@@ -7,7 +8,7 @@ type Target = Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
 type Outcome = ReturnType<typeof readDriverOutcome>;
 type InputRow = {
   id: string;
-  todoId: string;
+  todoId: string | null;
   originSessionId: string;
   target: string;
   message: string;
@@ -36,7 +37,7 @@ export const acceptWorkDeliveryInput = defineDbOp({
     db: Database,
     input: {
       id: string;
-      todoId: string;
+      todoId: string | null;
       originSessionId: string;
       target: Target;
       message: string;
@@ -74,7 +75,7 @@ export class WorkDeliveryInputRepository {
   constructor(private readonly db: Database) {}
 
   async accept(
-    todoId: string,
+    todoId: string | null,
     originSessionId: string,
     target: Target,
     message: string,
@@ -96,12 +97,43 @@ export class WorkDeliveryInputRepository {
     return gatewayFor(this.db).run(recordWorkDeliveryOutcome, { id, outcome, now });
   }
 
-  list(todoId: string) {
+  list(scope: string | { adapter: string; id: string; daemon?: string }) {
+    const where =
+      typeof scope === 'string'
+        ? 'todo_id = ?'
+        : `json_extract(outcome, '$.ref.adapter') = ? AND json_extract(outcome, '$.ref.id') = ?
+        AND json_extract(outcome, '$.ref.daemon') IS ?`;
+    const params =
+      typeof scope === 'string' ? [scope] : [scope.adapter, scope.id, scope.daemon ?? null];
     return (
       this.db
-        .prepare(`${SELECT} WHERE todo_id = ? ORDER BY accepted_at, rowid`)
-        .all(todoId) as InputRow[]
+        .prepare(`${SELECT} WHERE ${where} ORDER BY accepted_at, rowid`)
+        .all(...params) as InputRow[]
     ).map(readInput);
+  }
+
+  openWorkerRefs(): { ref: WorkRef; lastActivityAt: number | null }[] {
+    const rows = this.db
+      .prepare(`WITH workers(ref) AS (
+          SELECT json_extract(d.outcome, '$.ref')
+            FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
+            JOIN work_delivery_inputs d ON d.todo_id = t.id
+            WHERE a.status = 'open'
+              AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
+          UNION
+          SELECT s.ref
+            FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
+            JOIN neo_todo_sessions s ON s.todo_id = t.id
+            WHERE a.status = 'open'
+              AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
+              AND json_extract(s.target, '$.verb') = 'adopt'
+        )
+        SELECT workers.ref AS ref, w.last_activity_at AS lastActivityAt FROM workers
+        LEFT JOIN work_sessions w ON w.adapter = json_extract(workers.ref, '$.adapter')
+          AND w.id = json_extract(workers.ref, '$.id')
+        WHERE workers.ref IS NOT NULL ORDER BY workers.ref`)
+      .all() as { ref: string; lastActivityAt: number | null }[];
+    return rows.map((row) => ({ ...row, ref: JSON.parse(row.ref) as WorkRef }));
   }
 
   due(now: number, limit = 100) {

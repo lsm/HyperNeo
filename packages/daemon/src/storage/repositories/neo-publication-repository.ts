@@ -12,11 +12,13 @@ import type {
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { admitNeoPublication } from '../../lib/neo/publication.ts';
+import { admitNeoPublication, workerSession } from '../../lib/neo/publication.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { neoPublicationEditWrites } from './neo-publication-edit-writes.ts';
+
+export type NeoPublicationWriteResult = NeoPublicationAppendResult & { versionCreated?: true };
 
 type Row = { sequence: number; payloadJson: string; createdAt: string };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
@@ -36,7 +38,17 @@ function decode(row: Row): NeoPublication {
   } = JSON.parse(row.payloadJson);
   const parsed = admitNeoPublication(message);
   if ('reason' in parsed) throw new Error('Invalid stored Neo publication');
-  return { ...parsed.value, sequence: row.sequence, createdAt: row.createdAt };
+  return {
+    ...parsed.value,
+    session: workerSession(parsed.value.session),
+    sequence: row.sequence,
+    createdAt: row.createdAt,
+  };
+}
+
+function withoutNeoSession(payloadJson: string): string {
+  const { session, ...stored } = JSON.parse(payloadJson) as NeoPublicationInput;
+  return workerSession(session) ? payloadJson : JSON.stringify(stored);
 }
 
 function hasTrigger(
@@ -55,8 +67,8 @@ function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
   payload: string
-): NeoPublicationAppendResult {
-  return db.transaction((): NeoPublicationAppendResult => {
+): NeoPublicationWriteResult {
+  return db.transaction((): NeoPublicationWriteResult => {
     if (input.cardReply) {
       const target = db
         .prepare('SELECT ask_id FROM neo_questions WHERE id = ?')
@@ -92,6 +104,15 @@ function appendImmutable(
           )
         )
           return { accepted: true, created: false, publication: current };
+        if (
+          input.artifacts &&
+          current.artifacts?.some(
+            (item) =>
+              'type' in item &&
+              !input.artifacts!.some((next) => JSON.stringify(next) === JSON.stringify(item))
+          )
+        )
+          return { accepted: false, reason: 'publication_conflict' };
         const revisions = [...(current.revisions ?? [])];
         for (const revisionId of new Set([
           current.revisionId ?? current.publicationId,
@@ -102,6 +123,7 @@ function appendImmutable(
             revisionId,
             shortText: current.shortText,
             fullText: current.fullText,
+            session: current.session,
             createdAt: current.editedAt ?? current.createdAt,
             producerInput: current.answerInput ?? current.producerInput,
             askOrigin: current.answerOrigin ?? current.askOrigin,
@@ -112,7 +134,9 @@ function appendImmutable(
           ...(JSON.parse(prior.payloadJson) as NeoPublicationInput),
           shortText: input.shortText,
           fullText: input.fullText,
+          artifacts: input.artifacts ?? current.artifacts,
           links: input.links,
+          session: input.session,
           cardReply: input.cardReply,
           revisionId: input.publicationId,
           revisions,
@@ -124,6 +148,7 @@ function appendImmutable(
         return {
           accepted: true,
           created: false,
+          versionCreated: true,
           publication: { ...next, sequence: current.sequence, createdAt: current.createdAt },
         };
       }
@@ -164,10 +189,11 @@ function appendImmutable(
           ...original,
           shortText: first.shortText,
           fullText: first.fullText,
+          session: workerSession(first.session),
           awaiting: first.awaiting,
         }
       : null;
-    return row.payloadJson === payload ||
+    return withoutNeoSession(row.payloadJson) === payload ||
       (initial && JSON.stringify(admitNeoPublication(initial)) === JSON.stringify({ value: input }))
       ? { accepted: true, created: !!inserted, publication: decode(row) }
       : { accepted: false, reason: 'publication_conflict' };
@@ -197,7 +223,7 @@ const append = (superpipe({})('neo-publication-append') as PipelineAPI)
   .end('append') as (
   input: unknown,
   db: Database
-) => NeoPublicationAppendResult | 'invalid_publication';
+) => NeoPublicationWriteResult | 'invalid_publication';
 
 const readPage = (superpipe({})('neo-publication-page') as PipelineAPI)
   .input(['input', 'db'])
@@ -246,7 +272,7 @@ export class NeoPublicationRepository {
     });
   }
 
-  append(input: unknown): NeoPublicationAppendResult {
+  append(input: unknown): NeoPublicationWriteResult {
     const result = append(input, this.db);
     if (result === 'invalid_publication') return { accepted: false, reason: result };
     return result;
@@ -286,6 +312,7 @@ export class NeoPublicationRepository {
         revisionId: message.revisionId ?? message.publicationId,
         shortText: message.shortText,
         fullText: message.fullText,
+        session: message.session,
         createdAt: message.editedAt ?? message.createdAt,
         producerInput: message.answerInput ?? message.producerInput,
         askOrigin: message.answerOrigin ?? message.askOrigin,

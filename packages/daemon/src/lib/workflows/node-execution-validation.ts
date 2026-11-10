@@ -8,6 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import { migratedAgentTemplateKey } from '../agents/template-synthesis.ts';
+import { TransientSpawnError } from '../session/transient-spawn-error.ts';
 
 export type ExecutionWorkflowValidationResult =
   | { valid: true }
@@ -39,13 +40,6 @@ export class PermanentSpawnError extends Error {
 
 export function isPermanentSpawnError(err: unknown): err is PermanentSpawnError {
   return err instanceof PermanentSpawnError;
-}
-
-export class TransientSpawnError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TransientSpawnError';
-  }
 }
 
 export function isTransientSpawnError(err: unknown): err is TransientSpawnError {

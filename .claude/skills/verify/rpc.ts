@@ -1,3 +1,4 @@
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 const [, , name, json = '{}', wait = '0'] = process.argv;
 const port = process.env.VERIFY_PORT;
 if (!port || !name) {
@@ -5,7 +6,9 @@ if (!port || !name) {
   process.exit(2);
 }
 const headers: Record<string, string> = {};
-if (process.env.VERIFY_CREDENTIAL) headers.authorization = `Bearer ${process.env.VERIFY_CREDENTIAL}`;
+if (!process.env.VERIFY_CREDENTIAL && !process.env.HYPERNEO_DATA_DIR)
+  throw new Error('Supply VERIFY_CREDENTIAL or the isolated daemon HYPERNEO_DATA_DIR.');
+headers.authorization = `Bearer ${process.env.VERIFY_CREDENTIAL ?? await readLocalCredential()}`;
 if (process.env.VERIFY_ORIGIN) headers.origin = process.env.VERIFY_ORIGIN;
 const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers } as unknown as string[]);
 await new Promise((resolve, reject) => {

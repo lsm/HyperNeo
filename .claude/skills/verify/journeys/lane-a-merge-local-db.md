@@ -5,17 +5,15 @@ Use shared isolation and the resource guard in SKILL.md; run heavy jobs serially
 ```sh
 python3 .claude/skills/verify/lane-a-merge-local-db-run.py bun before
 python3 .claude/skills/verify/lane-a-merge-local-db-run.py bun verify
-python3 .claude/skills/verify/lane-a-merge-local-db-run.py deno verify --executable "$DENO"
 ```
 
-DENO names an existing runtime with cached imports. Every run owns a fresh
-synthetic HOME/data/TMPDIR, real daemon and ephemeral non-8399 listener. The gh
-fixture answers only synthetic PR/review/check/thread reads and logs calls;
-external HTTP is refused. No credentials, live daemon/data, model or GUI is used.
-The runner retains evidence and removes temporary daemon data after shutdown.
-Before mode temporarily restores the old merge files from origin/dev and restores
-the draft in finally; do not edit concurrently. Commit the failing real RPC
-regression before production changes.
+Every run owns a fresh synthetic HOME/data/TMPDIR, real daemon and ephemeral non-8399
+listener. The gh fixture answers only synthetic PR/review/check/thread reads and logs
+calls; external HTTP is refused. No credentials, live daemon/data, model or GUI is used.
+The runner retains evidence and removes temporary daemon data after shutdown. Before mode
+temporarily restores the old merge files from origin/dev and restores the draft in
+finally; do not edit concurrently. Commit the failing real RPC regression before
+production changes.
 
 The real neo.coding.merge.prepare operation refuses missing verification,
 non-current review, pending/failing CI, unresolved threads, missing sign-off and
@@ -39,10 +37,6 @@ Gateway duration and argument/reply sizes do not separately attribute SQL, queue
 or cloning costs. Retain failed attempts as failures rather than partial passes.
 
 Bind both successful runtime runs to the committed application/helper tree:
-
-```sh
-bun --no-install --no-env-file .claude/skills/verify/lane-a-merge-local-proof-binding.ts HEAD
-```
 
 Only this journey and its evidence directory may change after the bound proof
 commit. Source, test or helper changes require new committed runtime proofs.

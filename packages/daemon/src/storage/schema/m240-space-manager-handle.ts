@@ -1,4 +1,4 @@
-import { slugifyWithinLimit } from '../../lib/space/slug.ts';
+import { slugifyWithinLimit } from '../../lib/agents/slug.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 function tableExists(db: BunDatabase, tableName: string): boolean {

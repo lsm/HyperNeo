@@ -1,14 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { VIDEO_MAX_BYTES, videoExtension } from '@hyperneo/shared/types/video-container';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { Database } from '../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
 import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
-import type { ArtifactContext } from './file-policy.ts';
-import { loadRegistrationBinding } from './registration-binding.ts';
+import { artifactFileRowWrites } from '../../storage/repositories/artifact-file-row-write.ts';
+import type { Database } from '../../storage/sqlite-compat.ts';
 import { artifactCaptureOwner } from './capture-owner.ts';
-import { storedKind } from './register-operation.ts';
+import type { ArtifactContext } from './file-policy.ts';
 import { readBoundGitBlob } from './git-blob.ts';
+import { loadRegistrationBinding } from './registration-binding.ts';
+import { storedKind } from './stored-kind.ts';
 
 type Plan = { repository: string; sha: string; path: string; context: ArtifactContext };
 const lanes = new WeakMap<Database, Promise<unknown>>();
@@ -21,28 +25,36 @@ export function captureGitArtifact(
   readBlob = readBoundGitBlob,
   home = homedir()
 ) {
-  const repo = new ArtifactFileRepository(db);
   const key = `git:${requestId}`;
   const fingerprint = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
   const unavailable = () => ({ accepted: false as const, reason: 'unavailable' as const });
   async function publish(
-    blob: Extract<Awaited<ReturnType<typeof readBoundGitBlob>>, { accepted: true }>
+    blob: Extract<Awaited<ReturnType<typeof readBoundGitBlob>>, { accepted: true }>,
+    repo: ArtifactFileRepository
   ) {
     const binding = loadRegistrationBinding(db, repo.daemonId, plan.context, home);
     if (!binding || !(await current())) return unavailable();
+    const matches = async () =>
+      (await current()) &&
+      JSON.stringify(loadRegistrationBinding(db, repo.daemonId, plan.context, home)) ===
+        JSON.stringify(binding);
+    if (videoExtension(plan.path) && blob.bytes.length > VIDEO_MAX_BYTES)
+      return {
+        accepted: false as const,
+        reason: 'size_limit' as const,
+        actualBytes: blob.bytes.length,
+        limitBytes: VIDEO_MAX_BYTES,
+      };
     const snapshot = await (await artifactCaptureOwner(db, data)).capture(blob.bytes);
     if (!snapshot.accepted) return snapshot;
     if (snapshot.sha256 !== blob.sha256) return unavailable();
     const kind = await storedKind(join(data, 'artifacts'), snapshot.sha256, plan.path);
     if (!kind.accepted) return kind;
     if (!kind.value) return { accepted: false, reason: 'unsupported_type' };
-    if (
-      !(await current()) ||
-      JSON.stringify(loadRegistrationBinding(db, repo.daemonId, plan.context, home)) !==
-        JSON.stringify(binding)
-    )
-      return unavailable();
-    return repo.save(
+    if (!(await matches())) return unavailable();
+    const saved = await gatewayFor(db).call(
+      artifactFileRowWrites,
+      'publish',
       plan.context,
       key,
       fingerprint,
@@ -63,9 +75,10 @@ export function captureGitArtifact(
       plan.path,
       { kind: 'commit', repository: plan.repository, commitSha: plan.sha, blobSha: blob.blobSha }
     );
+    return (await matches()) ? { accepted: true, artifact: saved.artifact } : unavailable();
   }
   const run = (superpipe({})('artifact-git-capture') as PipelineAPI)
-    .input(['plan'])
+    .input(['plan', 'repo'])
     .pipe(
       async (plan: Plan) => {
         if (!(await current())) return { reason: unavailable() };
@@ -79,13 +92,15 @@ export function captureGitArtifact(
       'plan',
       'result:captured'
     )
-    .pipe(publish, 'captured', 'captured')
-    .endAsync('captured') as (plan: Plan) => Promise<unknown>;
+    .pipe(publish, ['captured', 'repo'], 'captured')
+    .endAsync('captured') as (plan: Plan, repo: ArtifactFileRepository) => Promise<unknown>;
   const result = (lanes.get(db) ?? Promise.resolve())
     .catch(() => {})
     .then(async () => {
+      const daemonId = await gatewayFor(db).call(artifactIdentityWrites, 'ensure', randomUUID());
+      const repo = new ArtifactFileRepository(db, daemonId);
       const previous = repo.receipt(plan.context, key);
-      if (!previous) return run(plan);
+      if (!previous) return run(plan, repo);
       if (previous.fingerprint !== fingerprint)
         return { accepted: false, reason: 'source_changed' };
       return (await current())

@@ -4,7 +4,7 @@ import type { CreateEvidenceRefParams, StructuredLogEvent } from '@hyperneo/shar
 import {
   EvolutionLogEvidenceService,
   PRODUCT_EVOLUTION_SCOPE_ID,
-} from '../../../../src/lib/evolution/log-evidence-service';
+} from '../../../../../space/src/evolution/log-evidence-service';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import type { EvidenceRef } from '@hyperneo/shared';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';

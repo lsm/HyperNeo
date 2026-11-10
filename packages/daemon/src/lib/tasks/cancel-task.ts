@@ -5,7 +5,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import { StaleTaskGuardError, type SpaceTaskManager } from './task-manager.ts';
 import { taskRejectionKind } from './transitions.ts';
 import { isActiveSessionInSpace } from './metadata.ts';

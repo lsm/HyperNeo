@@ -3,23 +3,12 @@ import { z } from 'zod';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import {
   createDaemonOperationCatalog,
-  type TaskOperationDependencies,
+  type MessagingOperationDependencies,
 } from '../../../../src/lib/operations/catalog';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { defineOperation } from '../../../../src/lib/operations/registry';
 
-const unused = () => {
-  throw new Error('task dependency should not run in this test');
-};
-
-const tasks = {
-  readTask: unused,
-  createTask: unused,
-  listTasks: unused,
-  editTask: unused,
-  transitionTask: unused,
-  sessionStatus: () => 'active',
-} as unknown as TaskOperationDependencies;
+const tasks: MessagingOperationDependencies = { sessionStatus: () => 'active' };
 
 function familyOperation(execute = mock(async () => ({ ok: true }))) {
   return {

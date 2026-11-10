@@ -1,5 +1,8 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import {
+  ClearConversationUnsupportedError,
+  type AgentSession,
+} from '../../../../src/lib/agent/agent-session.ts';
 import type { MailboxHandoffArgs } from '../../../../src/lib/mailbox/handoff.ts';
 import {
   type AgentMessageDeliveryDeps,
@@ -308,6 +311,25 @@ describe('deliverAgentMessageToTarget', () => {
       messageId: 'msg-8',
     });
     expect(live.clearMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not hand off a task when Codex context clearing is unsupported', async () => {
+    const live = makeSession({ status: 'idle' });
+    const error = new ClearConversationUnsupportedError();
+    live.clearMock.mockRejectedValue(error);
+    const { deps, handoffCalls } = makeDeps({
+      getSessionAsync: async () => live.session,
+      slotResetsContext: () => true,
+    });
+    await expect(
+      deliverAgentMessageToTarget({
+        deps,
+        target: WORKER_TARGET,
+        message: 'do not deliver with old context',
+        messageId: 'msg-unsupported-clear',
+      })
+    ).rejects.toBe(error);
+    expect(handoffCalls).toHaveLength(0);
   });
 
   it('skips the context clear while the session is busy', async () => {

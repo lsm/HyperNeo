@@ -10,8 +10,8 @@ import type {
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { TaskAgentManagerConfig } from '../../../../../space/src/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { SpawnSupersededError } from '../../../../src/lib/workflows/node-execution-validation.ts';
 import { PermanentSpawnError } from '../../../../src/lib/workflows/node-execution-validation.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';

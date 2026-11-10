@@ -1,8 +1,9 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
+import { NeoVoice } from '../NeoVoice.tsx';
 import type { NeoQuote } from '../neo-intake.ts';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { resetVoiceAudioOutbox } from '../../lib/voice/voice-audio-outbox.ts';
@@ -16,19 +17,31 @@ type IntakeInput = {
 
 const voice = vi.hoisted(() => ({ recording: true, stop: vi.fn() }));
 vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => true }));
-vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
-  isVoiceRecordingSupported: () => true,
-  useVoiceRecorder: () => ({
-    isRecording: voice.recording,
-    isStarting: false,
-    durationLimitHit: false,
-    start: vi.fn(),
-    stop: voice.stop,
-    cancel: vi.fn(),
-    getLevel: () => 0,
-    recordingStartedAt: null,
-  }),
-}));
+vi.mock('../../hooks/useVoiceRecorder.ts', () => {
+  const recording = signal(voice.recording);
+  Object.defineProperty(voice, 'recording', {
+    get: () => recording.value,
+    set: (value: boolean) => {
+      recording.value = value;
+    },
+    configurable: true,
+  });
+  return {
+    isVoiceRecordingSupported: () => true,
+    useVoiceRecorder: () => ({
+      get isRecording() {
+        return voice.recording;
+      },
+      isStarting: false,
+      durationLimitHit: false,
+      start: vi.fn(),
+      stop: voice.stop,
+      cancel: vi.fn(),
+      getLevel: () => 0,
+      recordingStartedAt: null,
+    }),
+  };
+});
 vi.mock('../NeoPreferences.tsx', () => ({ NeoPreferences: () => null }));
 const attachmentFiles = vi.hoisted(() => ({ current: [] as unknown[] }));
 vi.mock('../neo-attachments.ts', async (importOriginal) => ({
@@ -45,6 +58,7 @@ vi.mock('../../hooks/useInterrupt.ts', () => ({
 }));
 vi.mock('../../lib/state.ts', () => ({
   connectionState: { value: 'connected', subscribe: () => () => {} },
+  systemState: { value: null },
 }));
 
 const hubRequest = vi.fn(
@@ -71,6 +85,7 @@ const hubRequest = vi.fn(
       };
     }
     if (method === 'voice.transcribe') return { text: 'spoken second' };
+    if (method === 'voice.transcribe.cancel') return { ok: true };
     throw new Error(`No handler for method: ${method}`);
   }
 );
@@ -212,6 +227,156 @@ afterEach(async () => {
 });
 
 describe('NeoComposer and NeoVoice send integration', () => {
+  it('keeps a new transcription active when a cancelled response finishes later', async () => {
+    const releases: Array<(value: Record<string, unknown>) => void> = [];
+    hubRequest.mockImplementation(async (method, payload) => {
+      if (method === 'voice.stream.start') return { streamId: 'batch-stream', via: 'batch' };
+      if (method === 'voice.stream.cancel') return { ok: true };
+      return method === 'voice.transcribe'
+        ? new Promise((resolve) => releases.push(resolve))
+        : defaultHub(method, payload);
+    });
+    const view = renderComposer('keep typed words');
+    await awaitRecordingComposer();
+    fireEvent.click(stopControl());
+    await waitFor(() => expect(releases).toHaveLength(1));
+    fireEvent.click(buttonNamed('Cancel recording'));
+    await screen.findByRole('button', { name: 'Start voice input' });
+    fireEvent.click(buttonNamed('Start voice input'));
+    act(() => {
+      voice.recording = true;
+    });
+    await awaitRecordingComposer();
+    fireEvent.click(stopControl());
+    await waitFor(() => expect(releases).toHaveLength(2));
+    await act(async () => {
+      releases[0]({ text: 'cancelled old words' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.getByTestId('voice-transcribing')).toBeTruthy();
+    expect(view.onTranscript).not.toHaveBeenCalled();
+    releases[1]({ text: 'new words' });
+    await waitFor(() => expect(view.onTranscript).toHaveBeenCalledExactlyOnceWith('new words'));
+    expect(view.current.value).toBe('keep typed words\nnew words');
+    expect(asks()).toHaveLength(0);
+  });
+
+  it('disables cancellation after the completed transcript is being delivered', async () => {
+    let finishDelivery: () => void = () => {};
+    hubRequest.mockImplementation(async (method, payload) => {
+      if (method === 'operation.invoke')
+        await new Promise<void>((resolve) => {
+          finishDelivery = resolve;
+        });
+      return defaultHub(method, payload);
+    });
+    const view = renderComposer();
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    expect(buttonNamed('Cancel recording').disabled).toBe(true);
+    finishDelivery();
+    await waitFor(() => expect(view.current.value).toBe(''));
+  });
+
+  it('rejects cancellation when delivery starts before disabled controls render', async () => {
+    let finishDelivery: () => void = () => {};
+    let releaseTranscript: (value: { text: string }) => void = () => {};
+    let sendFromComposer: ((intent: 'draft' | 'send') => void) | null = null;
+    const onSendVoice = vi.fn(() => {
+      expect(buttonNamed('Cancel recording').disabled).toBe(false);
+      fireEvent.click(buttonNamed('Cancel recording'));
+      return new Promise<{ kind: 'accepted' }>((resolve) => {
+        finishDelivery = () => resolve({ kind: 'accepted' });
+      });
+    });
+    render(
+      <NeoVoice
+        sessionId="neo-1"
+        connected
+        draftText=""
+        onTranscript={vi.fn()}
+        onSendVoice={onSendVoice}
+        onError={vi.fn()}
+        onPhase={vi.fn()}
+        onSendHandle={(send) => {
+          sendFromComposer = send;
+        }}
+      />
+    );
+    await waitFor(() => expect(sendFromComposer).toBeTypeOf('function'));
+    sendFromComposer!('send');
+    await waitFor(() => expect(onSendVoice).toHaveBeenCalledOnce());
+    await waitFor(() => expect(buttonNamed('Cancel recording').disabled).toBe(true));
+    finishDelivery();
+    await screen.findByRole('button', { name: 'Start voice input', exact: true });
+    hubRequest.mockImplementation(async (method, payload) => {
+      if (method === 'voice.transcribe')
+        return new Promise((resolve) => {
+          releaseTranscript = resolve;
+        });
+      return defaultHub(method, payload);
+    });
+    await act(async () => {
+      voice.recording = true;
+    });
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Stop recording and keep the text as a draft',
+        exact: true,
+      })
+    );
+    await screen.findByTestId('voice-transcribing');
+    expect(buttonNamed('Cancel recording').disabled).toBe(false);
+    fireEvent.click(buttonNamed('Cancel recording'));
+    await screen.findByRole('button', { name: 'Start voice input', exact: true });
+    releaseTranscript({ text: 'discarded words' });
+  });
+
+  it.each(['draft', 'send', 'upgrade'] as const)(
+    'cancels pending %s transcription without inserting or sending its late result',
+    async (intent) => {
+      let release: (value: Record<string, unknown>) => void = () => {};
+      hubRequest.mockImplementation(async (method, payload) =>
+        method === 'voice.transcribe'
+          ? new Promise((resolve) => {
+              release = resolve;
+            })
+          : defaultHub(method, payload)
+      );
+      const view = renderComposer('keep typed words');
+      await awaitRecordingComposer();
+      fireEvent.click(intent === 'send' ? sendControl() : stopControl());
+      await waitFor(() =>
+        expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+      );
+      if (intent === 'upgrade') {
+        fireEvent.click(buttonNamed('Send message'));
+        await waitFor(() => expect([...store.records.values()][0]?.intent).toBe('send'));
+      }
+      const cancel = buttonNamed('Cancel recording');
+      expect(cancel.disabled).toBe(false);
+      fireEvent.click(cancel);
+      await screen.findByRole('button', { name: 'Start voice input' });
+      await waitFor(() => expect(store.records.size).toBe(0));
+      expect(view.current.value).toBe('keep typed words');
+      const upload = hubRequest.mock.calls.find(
+        ([method]) => method === 'voice.transcribe'
+      )?.[1] as { transcriptionId?: string };
+      expect(upload.transcriptionId).toEqual(expect.any(String));
+      expect(
+        hubRequest.mock.calls.filter(([method]) => method === 'voice.transcribe.cancel')
+      ).toEqual([['voice.transcribe.cancel', { transcriptionId: upload.transcriptionId }]]);
+      await act(async () => {
+        release({ text: 'late cancelled words' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(view.onTranscript).not.toHaveBeenCalled();
+      expect(asks()).toHaveLength(0);
+      expect(view.current.value).toBe('keep typed words');
+      expect(reportedErrors(view.onError)).toEqual([]);
+    }
+  );
   it.each([
     ['quote', false],
     ['quote', true],
@@ -369,11 +534,11 @@ describe('NeoComposer and NeoVoice send integration', () => {
       expect(screen.getByText(/To Neo.*Current B/)).toBeTruthy();
     }
   );
-  it('sends the typed draft and transcript with the selected quote only through normal send', async () => {
+  it('Stop keeps quoted speech as a draft until the ordinary Send', async () => {
     const quote: NeoQuote = { author: 'Neo', text: 'Earlier answer', anchor: 'source' };
     const { current, onTranscript, onSend, rerender } = renderComposer('typed first', quote);
     const stop = await screen.findByRole('button', {
-      name: 'Stop recording and add it to your draft',
+      name: 'Stop recording and keep the text as a draft',
     });
     fireEvent.click(stop);
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken second'));
@@ -404,7 +569,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
       text: 'Earlier answer',
       anchor: 'source',
     });
-    await screen.findByRole('button', { name: 'Stop recording and add it to your draft' });
+    await awaitRecordingComposer();
     fireEvent.click(buttonNamed('Remove reply'));
     expect(onCancelQuote).toHaveBeenCalledTimes(1);
     rerender();
@@ -457,6 +622,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'operation.invoke') throw new Error('Request timeout: operation.invoke');
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     const { onError } = renderComposer();
@@ -551,29 +717,14 @@ describe('NeoComposer and NeoVoice send integration', () => {
     }
   );
 
-  it('with attachments staged, the arrow adds the transcript to the draft instead of sending', async () => {
+  it('Stop keeps staged attachments and the transcript in the draft without sending', async () => {
     attachmentFiles.current = [{ id: 'f1', kind: 'text', name: 'notes.txt', text: 'hi' }];
     const { onTranscript, onError } = renderComposer();
-    await waitFor(() =>
-      expect(buttonNamed('Stop recording and add it to your draft')).toBeTruthy()
-    );
-    const arrow = buttonNamed('Stop recording and add it to your draft');
-    expect(arrow.disabled).toBe(false);
-    expect(arrow.title).toContain('attachments');
-    expect(screen.getByRole('status').textContent).toBe(
-      'Recording · Stop adds it to your draft; send it with your attachments'
-    );
-
-    fireEvent.click(arrow);
-
+    await waitFor(() => expect(stopControl().disabled).toBe(false));
+    fireEvent.click(stopControl());
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken second'));
     expect(asks()).toHaveLength(0);
-    expect(reportedErrors(onError)).toContain(
-      'Added to your draft so it goes out with your attachments. Click send when ready.'
-    );
-    expect(reportedErrors(onError)).not.toContain(
-      'Could not send that recording. It is saved below so you can retry.'
-    );
+    expect(reportedErrors(onError)).toEqual([]);
   });
 
   it('persists the typed draft at record creation, before transcription finishes', async () => {
@@ -641,6 +792,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
       if (method === 'operation.invoke')
         return { ok: false, reason: 'Open a Neo conversation before sending.' };
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     const { onError, onDraft } = renderComposer();
@@ -662,6 +814,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'operation.invoke') return { ok: true, requestId: 'someone-else' };
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     const { onError } = renderComposer();
@@ -679,6 +832,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'operation.invoke') return { ok: false, reason: 'Session archived.' };
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     renderComposer();
@@ -694,6 +848,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'operation.invoke') throw new Error('Request timeout: operation.invoke');
       if (method === 'voice.transcribe') return { text: 'spoken second' };
+      if (method === 'voice.transcribe.cancel') return { ok: true };
       throw new Error(`No handler for method: ${method}`);
     });
     const { onError } = renderComposer();
@@ -718,6 +873,61 @@ describe('NeoComposer and NeoVoice send integration', () => {
     expect(onSend).not.toHaveBeenCalled();
     expect(store.records.size).toBe(0);
   });
+});
+
+describe('Send during recording captures the whole composition', () => {
+  it.each(['plain', 'quote', 'image', 'file', 'quote-image', 'quote-file', 'quote-image-file'])(
+    '%s submits once after the held transcript without leaving a draft',
+    async (composition) => {
+      let release: (value: Record<string, unknown>) => void = () => {};
+      hubRequest.mockImplementation(async (method, payload) =>
+        method === 'voice.transcribe'
+          ? new Promise((resolve) => {
+              release = resolve;
+            })
+          : defaultHub(method, payload)
+      );
+      if (composition.includes('image'))
+        attachmentFiles.current.push({
+          id: 'photo1',
+          kind: 'image',
+          name: 'photo.png',
+          image: { data: 'aGk=', media_type: 'image/png' },
+        });
+      if (composition.includes('file'))
+        attachmentFiles.current.push({
+          id: 'file1',
+          kind: 'text',
+          name: 'notes.txt',
+          text: 'file words',
+        });
+      const quote = composition.includes('quote')
+        ? {
+            author: 'Neo' as const,
+            anchor: 'source',
+            text: 'quoted words',
+            replyTo: { kind: 'message' as const, id: 'source', excerpt: 'quoted words' },
+          }
+        : undefined;
+      const view = renderComposer('typed first', quote);
+      await waitFor(() => expect(stopControl().disabled).toBe(false));
+      fireEvent.submit(document.querySelector('form')!);
+      await waitFor(() =>
+        expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+      );
+      expect(asks()).toHaveLength(0);
+      release({ text: 'spoken second' });
+      await waitFor(() => expect(asks()).toHaveLength(1));
+      const input = asks()[0][1].input;
+      expect(JSON.stringify(input.content)).toContain('typed first\\nspoken second');
+      if (composition.includes('quote')) expect(input).toHaveProperty('replyTo', quote?.replyTo);
+      if (composition.includes('file'))
+        expect(JSON.stringify(input.content)).toContain('file words');
+      if (composition.includes('image')) expect(JSON.stringify(input.content)).toContain('aGk=');
+      expect(view.onTranscript).not.toHaveBeenCalled();
+      expect(view.current.value).toBe('');
+    }
+  );
 });
 
 describe('Send accepted while final transcription is pending', () => {

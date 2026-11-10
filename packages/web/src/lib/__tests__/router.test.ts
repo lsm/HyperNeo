@@ -2,6 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   cleanupRouter,
   createSessionPath,
+  getSessionIdFromPath,
+  initializeRouter,
+  navigateBack,
+  navigateToSession,
+  navigateToSessions,
+  navigateToSettings,
+} from '../router';
+import { registerRouteExtension } from '../router';
+import { spaceRoutes } from '../space-router';
+import {
   createSpaceAgentPath,
   createSpaceConfigurePath,
   createSpaceGoalsPath,
@@ -11,7 +21,6 @@ import {
   createSpaceSessionPath,
   createSpaceTaskPath,
   createSpaceTasksPath,
-  getSessionIdFromPath,
   getSpaceAgentFromPath,
   getSpaceConfigureTabFromPath,
   getSpaceGoalsFromPath,
@@ -20,11 +29,6 @@ import {
   getSpaceIdFromPath,
   getSpaceTaskIdFromPath,
   getSpaceTaskViewFromPath,
-  initializeRouter,
-  navigateBack,
-  navigateToHome,
-  navigateToSession,
-  navigateToSettings,
   navigateToSpace,
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
@@ -35,9 +39,9 @@ import {
   navigateToSpacesPage,
   navigateToSpaceTask,
   navigateToSpaceTasks,
-} from '../router';
+} from '../space-router';
+import { currentSessionIdSignal, navSectionSignal, settingsSectionSignal } from '../signals';
 import {
-  currentSessionIdSignal,
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
@@ -46,9 +50,7 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
-  settingsSectionSignal,
-} from '../signals';
+} from '../space-signals';
 
 const SESSION_ID = '550e8400-e29b-41d4-a716-446655440000';
 const SPACE_ID = 'demo-space';
@@ -66,7 +68,7 @@ function resetSignals() {
   currentSpaceSettingsTabSignal.value = 'general';
   currentSpaceTasksFilterTabSignal.value = 'active';
   navSectionSignal.value = 'spaces';
-  settingsSectionSignal.value = 'general';
+  settingsSectionSignal.value = 'preferences';
 }
 
 function finishNavigation() {
@@ -80,6 +82,8 @@ function setPath(path: string) {
     configurable: true,
   });
 }
+
+registerRouteExtension(spaceRoutes);
 
 describe('router', () => {
   beforeEach(() => {
@@ -302,7 +306,7 @@ describe('router', () => {
     );
   });
 
-  it.each(['providers', 'neo-model', 'coding-pack'])(
+  it.each(['providers', 'neo-model', 'coding-pack', 'connections', 'harness'])(
     'initializes settings route %s from tab query parameters',
     (section) => {
       setPath(`/settings?tab=${section}`);
@@ -318,9 +322,36 @@ describe('router', () => {
       initializeRouter();
 
       expect(navSectionSignal.value).toBe('settings');
-      expect(settingsSectionSignal.value).toBe('general');
+      expect(settingsSectionSignal.value).toBe('preferences');
     }
   );
+
+  it('opens Sessions & Harness for the old Models link', () => {
+    setPath('/settings?tab=models');
+    initializeRouter();
+    expect(navSectionSignal.value).toBe('settings');
+    expect(settingsSectionSignal.value).toBe('harness');
+  });
+
+  it('opens Preferences for the bare settings route and the old Appearance link', () => {
+    setPath('/settings');
+    initializeRouter();
+    expect(settingsSectionSignal.value).toBe('preferences');
+
+    cleanupRouter();
+    settingsSectionSignal.value = 'providers';
+    setPath('/settings?tab=appearance');
+    initializeRouter();
+    expect(navSectionSignal.value).toBe('settings');
+    expect(settingsSectionSignal.value).toBe('preferences');
+
+    cleanupRouter();
+    settingsSectionSignal.value = 'providers';
+    setPath('/settings?tab=general');
+    initializeRouter();
+    expect(navSectionSignal.value).toBe('settings');
+    expect(settingsSectionSignal.value).toBe('preferences');
+  });
 
   it('navigates to settings tabs and updates URL query parameters', () => {
     navigateToSettings('skills');
@@ -344,6 +375,19 @@ describe('router', () => {
     );
   });
 
+  it('returns the legacy application home to /sessions', () => {
+    setPath('/settings?tab=devices');
+    initializeRouter();
+    navigateToSessions();
+    expect(navSectionSignal.value).toBe('chats');
+    expect(currentSessionIdSignal.value).toBeNull();
+    expect(window.history.pushState).toHaveBeenLastCalledWith(
+      { path: '/sessions', [IN_APP_HISTORY_DEPTH_KEY]: 1 },
+      '',
+      '/sessions'
+    );
+  });
+
   it('navigates session, settings, and home routes', () => {
     navigateToSession(SESSION_ID);
     expect(window.history.pushState).toHaveBeenLastCalledWith(
@@ -360,7 +404,7 @@ describe('router', () => {
     expect(currentSessionIdSignal.value).toBeNull();
     finishNavigation();
 
-    navigateToHome();
+    navigateToSpacesPage();
     expect(navSectionSignal.value).toBe('spaces');
     expect(window.history.pushState).toHaveBeenLastCalledWith(
       { path: '/spaces', [IN_APP_HISTORY_DEPTH_KEY]: 3 },

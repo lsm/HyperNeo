@@ -47,6 +47,49 @@ function calls(request: ReturnType<typeof vi.fn>, method: string) {
 }
 
 describe('openVoiceStream', () => {
+  it('finishes closing only after the server acknowledges stream cancellation', async () => {
+    let acknowledge: (value: unknown) => void = () => {};
+    const { hub, request } = fakeHub((method) =>
+      method === 'voice.stream.cancel'
+        ? new Promise((resolve) => {
+            acknowledge = resolve;
+          })
+        : streaming(method)
+    );
+    const live = openVoiceStream(hub, vi.fn());
+    await vi.waitFor(() => expect(calls(request, 'voice.stream.start')).toHaveLength(1));
+    let closed = false;
+    const closing = Promise.resolve(live.close()).then(() => {
+      closed = true;
+    });
+    await vi.waitFor(() => expect(calls(request, 'voice.stream.cancel')).toHaveLength(1));
+    try {
+      expect(closed).toBe(false);
+    } finally {
+      acknowledge({ ok: true });
+      await closing;
+    }
+    expect(closed).toBe(true);
+  });
+
+  it('does not report a late stop error after the stream was cancelled', async () => {
+    let rejectStop: (error: Error) => void = () => {};
+    const { hub, request } = fakeHub((method) =>
+      method === 'voice.stream.stop'
+        ? new Promise((_resolve, reject) => {
+            rejectStop = reject;
+          })
+        : streaming(method)
+    );
+    const onError = vi.fn();
+    const live = openVoiceStream(hub, vi.fn(), { onError });
+    const finished = live.finish();
+    await vi.waitFor(() => expect(calls(request, 'voice.stream.stop')).toHaveLength(1));
+    live.close();
+    rejectStop(new Error('Unknown voice stream'));
+    expect(await finished).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+  });
   it.each(['auto', 'zh', 'en'] as const)(
     'sends the %s choice on every new connection',
     async (language) => {
@@ -70,6 +113,7 @@ describe('openVoiceStream', () => {
     const { hub, request } = fakeHub(streaming);
     const first = openVoiceStream(hub, vi.fn());
     setVoiceLanguage('zh');
+    await vi.waitFor(() => expect(calls(request, 'voice.stream.start')).toHaveLength(1));
     expect(calls(request, 'voice.stream.start')).toEqual([
       ['voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 }],
     ]);
@@ -156,6 +200,7 @@ describe('openVoiceStream', () => {
     const abandoned = fakeHub(streaming);
     const live = openVoiceStream(abandoned.hub, vi.fn());
     live.push(new Float32Array(1_600), 16_000);
+    await vi.waitFor(() => expect(calls(abandoned.request, 'voice.stream.start')).toHaveLength(1));
     live.close();
     live.close();
     await vi.waitFor(() =>

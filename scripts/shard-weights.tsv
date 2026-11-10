@@ -29,7 +29,7 @@
 55634	packages/daemon/tests/online/space/prompt-too-long-kimi-recovery.test.ts
 67205	packages/daemon/tests/online/space/task-agent-lifecycle.test.ts
 31648	packages/daemon/tests/online/space/task-agent-skills.test.ts
-802	packages/daemon/tests/unit/1-core/acp-transport.test.ts
+802	packages/daemon/tests/unit/1-core/process-json-rpc.test.ts
 7	packages/daemon/tests/unit/1-core/agent/ack-selection.test.ts
 134	packages/daemon/tests/unit/1-core/agent/agent-session-clear-context.test.ts
 17014	packages/daemon/tests/unit/1-core/agent/agent-session.test.ts
@@ -95,6 +95,7 @@
 6	packages/daemon/tests/unit/1-core/agent/reconciler-sweep.test.ts
 10	packages/daemon/tests/unit/1-core/agent/repeated-tool-error-gates.test.ts
 20	packages/daemon/tests/unit/1-core/agent/repeated-tool-error-guardrail.test.ts
+2316	packages/daemon/tests/unit/1-core/agent/retired-session-provider.test.ts
 53	packages/daemon/tests/unit/1-core/agent/rewind-handler.test.ts
 219	packages/daemon/tests/unit/1-core/agent/runtime-settings-commit-owner.test.ts
 553	packages/daemon/tests/unit/1-core/agent/runtime-settings-commit.test.ts
@@ -150,7 +151,7 @@
 14	packages/daemon/tests/unit/1-core/credentials/oauth-refresh-scheduler.test.ts
 10	packages/daemon/tests/unit/1-core/credentials/provider-credential-manager.test.ts
 5	packages/daemon/tests/unit/1-core/credentials/refresh-due-gate.test.ts
-13	packages/daemon/tests/unit/1-core/drivers/acp-agent-adapter.test.ts
+13	packages/daemon/tests/unit/1-core/drivers/copilot-discovery-groups.test.ts
 16	packages/daemon/tests/unit/1-core/drivers/claude-code-adapter.test.ts
 104	packages/daemon/tests/unit/1-core/drivers/claude-desktop-adapter.test.ts
 48	packages/daemon/tests/unit/1-core/drivers/claude-desktop-start.test.ts
@@ -170,7 +171,6 @@
 4	packages/daemon/tests/unit/1-core/drivers/match-chats.test.ts
 4	packages/daemon/tests/unit/1-core/drivers/neo-places.test.ts
 5	packages/daemon/tests/unit/1-core/drivers/neo-project.test.ts
-5	packages/daemon/tests/unit/1-core/drivers/opened-prs.test.ts
 11	packages/daemon/tests/unit/1-core/drivers/read-operation.test.ts
 26	packages/daemon/tests/unit/1-core/drivers/space-adapter.test.ts
 20	packages/daemon/tests/unit/1-core/drivers/space-verbs.test.ts
@@ -263,7 +263,6 @@
 1174	packages/daemon/tests/unit/1-core/operations/neo-session-track.test.ts
 3555	packages/daemon/tests/unit/1-core/operations/neo-session-watch.test.ts
 14	packages/daemon/tests/unit/1-core/operations/neo-settle-driver-work.test.ts
-501	packages/daemon/tests/unit/1-core/operations/neo-snapshot-compact.test.ts
 6	packages/daemon/tests/unit/1-core/operations/neo-snapshot-read.test.ts
 117	packages/daemon/tests/unit/1-core/operations/neo-tail-page-read.test.ts
 2718	packages/daemon/tests/unit/1-core/operations/neo-terminal-error-result.test.ts
@@ -283,8 +282,6 @@
 15	packages/daemon/tests/unit/1-core/operations/work-start-configuration.test.ts
 63	packages/daemon/tests/unit/1-core/process-fatal-logger.test.ts
 44	packages/daemon/tests/unit/1-core/process-watchdog.test.ts
-36	packages/daemon/tests/unit/1-core/providers/acp-command-probe.test.ts
-24	packages/daemon/tests/unit/1-core/providers/acp-provider.test.ts
 22	packages/daemon/tests/unit/1-core/providers/anthropic-copilot/conversation.test.ts
 5	packages/daemon/tests/unit/1-core/providers/anthropic-copilot/copilot-cli-resolver.test.ts
 14	packages/daemon/tests/unit/1-core/providers/anthropic-copilot/get-or-create-client.test.ts
@@ -361,7 +358,6 @@
 4	packages/daemon/tests/unit/1-core/session/tools-config.test.ts
 4	packages/daemon/tests/unit/1-core/startup-phase-timer.test.ts
 1094	packages/daemon/tests/unit/1-core/tasks/create-task.test.ts
-5	packages/daemon/tests/unit/1-core/work-queue/dependency-graph.test.ts
 11	packages/daemon/tests/unit/1-core/tasks/dependency-plan.test.ts
 1091	packages/daemon/tests/unit/1-core/tasks/edit-task.test.ts
 232	packages/daemon/tests/unit/1-core/tasks/list-tasks.test.ts
@@ -381,6 +377,7 @@
 7	packages/daemon/tests/unit/1-core/tasks/task-row.test.ts
 2657	packages/daemon/tests/unit/1-core/tasks/transition-task.test.ts
 12	packages/daemon/tests/unit/1-core/tasks/transitions.test.ts
+5	packages/daemon/tests/unit/1-core/work-queue/dependency-graph.test.ts
 13820	packages/daemon/tests/unit/2-handlers/db-query/db-query-integration.test.ts
 154	packages/daemon/tests/unit/2-handlers/db-query/db-query-worker-service.test.ts
 1271	packages/daemon/tests/unit/2-handlers/db-query/schema-parity-check.test.ts
@@ -407,7 +404,6 @@
 4	packages/daemon/tests/unit/2-handlers/github/github-self-echo.test.ts
 15	packages/daemon/tests/unit/2-handlers/github/github-service-polling.test.ts
 3215	packages/daemon/tests/unit/2-handlers/github/github-session-repo-watch.test.ts
-9	packages/daemon/tests/unit/2-handlers/github/inbox-manager.test.ts
 9	packages/daemon/tests/unit/2-handlers/github/polling-service.test.ts
 12	packages/daemon/tests/unit/2-handlers/github/security-agent.test.ts
 14	packages/daemon/tests/unit/2-handlers/github/webhook-admission-pipeline.test.ts
@@ -520,10 +516,7 @@
 4144	packages/daemon/tests/unit/4-space-storage/storage/external-event-extension.test.ts
 109	packages/daemon/tests/unit/4-space-storage/storage/external-event-service.test.ts
 826	packages/daemon/tests/unit/4-space-storage/storage/external-event-store.test.ts
-62	packages/daemon/tests/unit/4-space-storage/storage/goal-repository-live-query.test.ts
-10	packages/daemon/tests/unit/4-space-storage/storage/goal-repository-short-id.test.ts
 13	packages/daemon/tests/unit/4-space-storage/storage/hidden-subtype-idle-detection.test.ts
-47	packages/daemon/tests/unit/4-space-storage/storage/inbox-item-repository.test.ts
 7	packages/daemon/tests/unit/4-space-storage/storage/ingest-external-event-pipeline.test.ts
 597	packages/daemon/tests/unit/4-space-storage/storage/job-queue-contention.test.ts
 516	packages/daemon/tests/unit/4-space-storage/storage/job-queue-processor-exempt-per-session.test.ts
@@ -703,7 +696,6 @@
 118	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-443-session-schedule-wakes.test.ts
 6642	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-45_test.ts
 13445	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-47_test.ts
-993	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-48_test.ts
 2343	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-51_test.ts
 7778	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-53_test.ts
 2919	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-54_test.ts
@@ -770,7 +762,6 @@
 225	packages/daemon/tests/unit/4-space-storage/storage/sqlite-query-observability.test.ts
 7	packages/daemon/tests/unit/4-space-storage/storage/sqlite-statement-cache.test.ts
 4210	packages/daemon/tests/unit/4-space-storage/storage/task-id-resolution-cache.test.ts
-41	packages/daemon/tests/unit/4-space-storage/storage/task-live-query-archived-filter.test.ts
 274	packages/daemon/tests/unit/4-space-storage/storage/task-schedule-repository.test.ts
 253	packages/daemon/tests/unit/4-space-storage/storage/tool-continuation-recovery-repository.test.ts
 11	packages/daemon/tests/unit/4-space-storage/storage/topic-trie.test.ts
@@ -1061,16 +1052,9 @@
 19	packages/daemon/tests/unit/5-space/workspaces/workspace-manager.test.ts
 15656	packages/daemon/tests/unit/5-space/workspaces/worktree-manager.test.ts
 28	packages/daemon/tests/unit/helpers/dev-proxy.test.ts
-51	packages/daemon/tests/unit/lib/acp/acp-client.test.ts
-6	packages/daemon/tests/unit/lib/acp/acp-command.test.ts
-56	packages/daemon/tests/unit/lib/acp/acp-integration.test.ts
-16	packages/daemon/tests/unit/lib/acp/acp-message-translator.test.ts
-57	packages/daemon/tests/unit/lib/acp/acp-model-fetcher.test.ts
-18	packages/daemon/tests/unit/lib/acp/acp-query-adapter.test.ts
-6634	packages/daemon/tests/unit/lib/acp/acp-query-runner.test.ts
-11	packages/daemon/tests/unit/lib/acp/acp-safe-fs.test.ts
-780	packages/daemon/tests/unit/lib/acp/acp-terminal-manager.test.ts
-16	packages/daemon/tests/unit/lib/acp/acp-transport.test.ts
+6	packages/daemon/tests/unit/lib/safe-process-env.test.ts
+11	packages/daemon/tests/unit/lib/safe-fs.test.ts
+16	packages/daemon/tests/unit/lib/process-json-rpc-env.test.ts
 10524	packages/daemon/tests/unit/lib/event-loop-watchdog.test.ts
 10	packages/daemon/tests/unit/lib/job-handlers/message-delivery-dead-letter.test.ts
 14	packages/daemon/tests/unit/lib/job-handlers/message-delivery.handler.test.ts

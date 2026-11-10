@@ -22,6 +22,7 @@ function record(id: string, fields: Record<string, unknown> = {}) {
     title: id,
     isArchived: false,
     lastActivityAt: 0,
+    permissionMode: 'auto',
     ...fields,
   };
 }
@@ -92,6 +93,15 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
       liveSessions: async () => live,
+      listProcesses: async () =>
+        live
+          .filter((session) => session.owner === 'cli')
+          .map((session) => ({
+            pid: session.pid!,
+            ppid: 1,
+            elapsedSeconds: 1,
+            command: 'claude --permission-mode auto',
+          })),
       folderExists: () => true,
       makeFolder: () => {},
       homeDir: '/Users/test',
@@ -645,6 +655,8 @@ describe('B1 native task delivery', () => {
     const summary = {
       ref: { adapter: 'claude-desktop', id: 'local_target' },
       title: 'Synthetic task',
+      model: 'claude-opus-5-5',
+      effort: 'medium',
       permissionMode: 'acceptEdits',
       status: 'queued',
     } as unknown as WorkSummary;
@@ -670,7 +682,8 @@ describe('B1 native task delivery', () => {
       async (target, message, _deps, deliveryContext) => {
         expect(deliveryContext).toEqual(context);
         expect(target.sessionId).toBe('local_target');
-        expect(message).toBe('Exact actual task');
+        expect(message).toContain('Exact actual task');
+        expect(message).toContain('Agent: claude-opus-5-5 (effort: medium) via Claude');
         order.push('native-message');
         return {
           ok: true,
@@ -678,7 +691,9 @@ describe('B1 native task delivery', () => {
         };
       }
     );
-    expect(await wrapped.start!({ message: 'Exact actual task' } as never, context)).toMatchObject({
+    expect(
+      await wrapped.start!({ message: 'Exact actual task', provenance: true } as never, context)
+    ).toMatchObject({
       ok: true,
       value: {
         permissionMode: 'acceptEdits',

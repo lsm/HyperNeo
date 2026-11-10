@@ -50,15 +50,14 @@ import { generateUUID, isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from './connection-manager';
+import { invokeOperation, requireAccepted } from './operations';
 import {
   editTaskMetadata,
-  invokeOperation,
   setPreferredWorkflow,
   transitionTask,
   type TaskTransitionResult,
-  requireAccepted,
-} from './operations';
-import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
+} from './space-task-operations';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './space-signals';
 
 const logger = new Logger('hyperneo:web:spacestore');
 

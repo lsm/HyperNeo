@@ -1,3 +1,5 @@
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { hostname } from 'node:os';
@@ -33,7 +35,7 @@ const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1',
 let socket: WebSocket | undefined;
 try {
   await app.spaceRuntimeService.ready();
-  socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as never);
   await new Promise<void>((done, fail) => { socket!.onopen = () => done(); socket!.onerror = () => fail(new Error('WebSocket failed')); });
   const rpc = (method: string, data: unknown): Promise<any> => new Promise((done, fail) => {
     const id = crypto.randomUUID();

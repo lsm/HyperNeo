@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -5,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { ingestSessionEvent, SessionExternalEventStore, SESSION_EVENT_SCOPE } from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
 import { sessionEventText, mailSessionEvent } from '../../../packages/daemon/src/lib/external-events/session-event-delivery.ts';
 import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src/storage/repositories/session-event-subscription-repository.ts';
-import { buildImmediateEventMessageUuid } from '../../../packages/daemon/src/lib/external-events/immediate-delivery-pipeline.ts';
+import { buildImmediateEventMessageUuid } from '../../../packages/daemon/src/lib/external-events/event-delivery-rules.ts';
 import type { ExternalEvent } from '../../../packages/daemon/src/lib/external-events/types.ts';
 
 const run = resolve(process.argv[2]);
@@ -29,7 +30,7 @@ try {
   assert.notEqual(app.server.port, 8399);
   await app.jobProcessor.stop();
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
   hub.registerTransport(transport);
   await transport.initialize();
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {

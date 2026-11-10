@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { artifactPreviewStack, previewWorkspace } from '../artifact-preview-store.ts';
+import { previewFileKey } from '../artifact-preview-workspace.ts';
 import type {
   PreviewWorkspaceEvent,
   PreviewWorkspaceState,
@@ -14,7 +15,7 @@ describe('previewWorkspace', () => {
   it('reopens a file from Work without duplicating or reordering its tab', () => {
     const first = open(previewWorkspace.empty(), 'report', 'Report');
     const second = open(first, 'page', 'Website');
-    const work = previewWorkspace.step(second, { kind: 'select', artifactId: null });
+    const work = previewWorkspace.step(second, { kind: 'select', key: null });
     expect(work.open).toBe(true);
     expect(work.selectedId).toBeNull();
     expect(ids(work)).toEqual(['report', 'page']);
@@ -32,24 +33,34 @@ describe('previewWorkspace', () => {
     expect(before.files).toEqual([file('snapshot-1', 'Report')]);
   });
 
-  it('closes the active tab into its left predecessor, then the persistent Work tab', () => {
+  it('keeps a session tab apart from a file with the same id', () => {
+    const session = { sessionId: 'a', title: 'Worker' };
+    const state = previewWorkspace.step(open(previewWorkspace.empty(), 'a'), {
+      kind: 'open',
+      file: session,
+    });
+    expect(state.files).toHaveLength(2);
+    expect(state.selectedId).toBe(previewFileKey(session));
+  });
+
+  it('closes the active tab into its left predecessor, then Work, and empties on the last', () => {
     let state = open(open(open(previewWorkspace.empty(), 'a'), 'b'), 'c');
-    state = previewWorkspace.step(state, { kind: 'select', artifactId: 'b' });
-    state = previewWorkspace.step(state, { kind: 'close', artifactId: 'b' });
+    state = previewWorkspace.step(state, { kind: 'select', key: 'b' });
+    state = previewWorkspace.step(state, { kind: 'close', key: 'b' });
     expect(state.selectedId).toBe('a');
     expect(ids(state)).toEqual(['a', 'c']);
-    state = previewWorkspace.step(state, { kind: 'close', artifactId: 'a' });
+    state = previewWorkspace.step(state, { kind: 'close', key: 'a' });
     expect(state.selectedId).toBeNull();
     expect(ids(state)).toEqual(['c']);
-    state = previewWorkspace.step(state, { kind: 'close', artifactId: 'c' });
-    expect(state).toEqual({ open: true, selectedId: null, files: [] });
+    state = previewWorkspace.step(state, { kind: 'close', key: 'c' });
+    expect(state).toEqual(previewWorkspace.empty());
     expect(open(state, 'd').selectedId).toBe('d');
   });
 
   it.each(['a', 'c'])('closes background tab %s while preserving the selected file', (id) => {
     let state = open(open(open(previewWorkspace.empty(), 'a'), 'b'), 'c');
-    state = previewWorkspace.step(state, { kind: 'select', artifactId: 'b' });
-    const after = previewWorkspace.step(state, { kind: 'close', artifactId: id });
+    state = previewWorkspace.step(state, { kind: 'select', key: 'b' });
+    const after = previewWorkspace.step(state, { kind: 'close', key: id });
     expect(after.selectedId).toBe('b');
     expect(ids(after)).not.toContain(id);
     expect(after.open).toBe(true);
@@ -72,10 +83,10 @@ describe('previewWorkspace', () => {
 
   it('ignores stale file events and clears files only when the workspace is dismissed', () => {
     const closed = previewWorkspace.empty();
-    expect(previewWorkspace.step(closed, { kind: 'select', artifactId: 'missing' })).toBe(closed);
+    expect(previewWorkspace.step(closed, { kind: 'select', key: 'missing' })).toBe(closed);
     const state = open(closed, 'a');
-    expect(previewWorkspace.step(state, { kind: 'close', artifactId: 'missing' })).toBe(state);
-    expect(previewWorkspace.step(state, { kind: 'select', artifactId: 'missing' })).toBe(state);
+    expect(previewWorkspace.step(state, { kind: 'close', key: 'missing' })).toBe(state);
+    expect(previewWorkspace.step(state, { kind: 'select', key: 'missing' })).toBe(state);
     const dismissed = previewWorkspace.step(state, { kind: 'dismiss' });
     expect(dismissed).toEqual({ open: false, files: [], selectedId: null });
     expect(ids(open(dismissed, 'b'))).toEqual(['b']);
@@ -86,9 +97,9 @@ describe('previewWorkspace', () => {
     const after = previewWorkspace.step(state, { kind: 'update', file: file('a', 'Report') });
     expect(after.selectedId).toBe('b');
     expect(after.files[0]).toEqual(file('a', 'Report'));
-    const closed = previewWorkspace.step(after, { kind: 'close', artifactId: 'a' });
+    const closed = previewWorkspace.step(after, { kind: 'close', key: 'a' });
     expect(previewWorkspace.step(closed, { kind: 'update', file: file('a') })).toBe(closed);
-    const work = previewWorkspace.step(after, { kind: 'select', artifactId: null });
+    const work = previewWorkspace.step(after, { kind: 'select', key: null });
     expect(previewWorkspace.step(work, { kind: 'update', file: file('a') }).selectedId).toBeNull();
   });
 
@@ -99,8 +110,8 @@ describe('previewWorkspace', () => {
     for (let index = 0; index < 40; index++) {
       events.push(
         { kind: 'open', file: file(`file-${index % 9}`, `Title ${index}`) },
-        { kind: 'select', artifactId: index % 3 ? `file-${index % 7}` : null },
-        { kind: 'close', artifactId: `file-${(index + 4) % 9}` }
+        { kind: 'select', key: index % 3 ? `file-${index % 7}` : null },
+        { kind: 'close', key: `file-${(index + 4) % 9}` }
       );
       if (index % 11 === 0) events.push({ kind: 'dismiss' });
     }

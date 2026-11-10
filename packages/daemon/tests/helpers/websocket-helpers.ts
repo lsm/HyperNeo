@@ -1,6 +1,22 @@
+const credentials = new Map<string, string>();
+
+export function registerDaemonCredential(baseUrl: string, credential: string): () => void {
+  credentials.set(baseUrl, credential);
+  return () => {
+    credentials.delete(baseUrl);
+  };
+}
+
+export function createAuthenticatedTestSocket(url: string): WebSocket {
+  const credential = credentials.get(new URL(url.replace(/^ws/, 'http')).origin);
+  if (!credential)
+    throw new Error('Register the isolated daemon credential before opening a test socket.');
+  return new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } });
+}
+
 export function createWebSocket(baseUrl: string): WebSocket {
   const wsUrl = baseUrl.replace('http://', 'ws://');
-  const ws = new WebSocket(`${wsUrl}/ws`);
+  const ws = createAuthenticatedTestSocket(`${wsUrl}/ws`);
 
   ws.addEventListener('error', (error) => {
     if (process.env.TEST_VERBOSE) {

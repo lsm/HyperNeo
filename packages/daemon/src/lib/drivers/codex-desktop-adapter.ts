@@ -1,3 +1,4 @@
+import { withWorkerProvenance } from './worker-provenance.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { basename, join } from 'node:path';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
@@ -12,6 +13,8 @@ import {
 import { runLagPhase } from '../event-loop-activity.ts';
 import { Logger } from '../logger.ts';
 import { codexHeartbeatQuiet } from './codex-heartbeat.ts';
+import { codexUserInput, INJECTED_INPUT, messageText, parseLine } from './codex-rollout-lines.ts';
+import { readCodexTurnFacts } from './codex-turn-reader.ts';
 import { type WorkExecutionPreparer, workStartPreparation } from './start-preparation.ts';
 import {
   codexWorkerSandbox,
@@ -27,14 +30,13 @@ export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-r
 
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
-import { gitWorktreeProject } from './acp-agent-adapter.ts';
+import { gitWorktreeProject } from './worktree-project.ts';
 import { type CodexAppServer, CodexRequestError } from './codex-app-server.ts';
 import { type CodexSendGate, steerCodexDesktopTurn } from './codex-desktop-handoff.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 import { workExecutionLocation } from './execution-location.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { matchChatsBy } from './match-chats.ts';
-import { codexOpenedPrs, createCodexPrReader } from './opened-prs.ts';
 import { withChatEvidence } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
@@ -53,6 +55,7 @@ import type {
   WorkRef,
   WorkStarted,
   WorkStatus,
+  WorkTurnFact,
   WorkSummary,
   WorkWithdrawal,
 } from './types.ts';
@@ -70,7 +73,7 @@ import {
   workInput,
 } from './work-messages.ts';
 import { reject } from './work-operations.ts';
-import { type GitCheckout, planWorkPlacement } from './work-placement.ts';
+import { type GitCheckout, prepareWorkerFolder, cleanupOwnedWorktree } from './work-placement.ts';
 
 const THREADS_PER_PLACE = 20;
 const RECENT_MS = 2 * 60_000;
@@ -79,7 +82,6 @@ const QUEUE_TIMEOUT_MS = 30_000;
 const START_RECEIPT_TRIES = 10;
 const START_RECEIPT_WAIT_MS = 200;
 const TURN_MARKERS = new Set(['task_started', 'task_complete', 'turn_aborted']);
-const INJECTED_INPUT = /^<([a-z_]+)>[\s\S]*<\/\1>$/;
 const CODEX_ASK_TOOL = 'request_user_input_async';
 
 export interface CodexRootRow {
@@ -145,6 +147,8 @@ export interface CodexThreadDetail {
 }
 
 export interface CodexTurnState {
+  model?: string;
+  effort?: string;
   turnEnds?: WorkDetail['turnEnds'];
   marker: string | null;
   outcome?: 'asked' | 'errored';
@@ -152,7 +156,6 @@ export interface CodexTurnState {
   replyAt?: number;
   inputs?: WorkInput[];
   exchange?: WorkExchange;
-  openedPrs?: string[];
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -259,7 +262,8 @@ export function buildCodexGroups(
             {
               ref: { adapter: 'codex-desktop', id: thread.id },
               title: thread.title,
-              place: { ...linked, folder: thread.folder },
+              place: linked,
+              ...workExecutionLocation(thread.folder, deps.machine),
               status: codexStatus(thread, now),
               lastActivityAt: thread.updatedAt,
               link: `codex://threads/${thread.id}`,
@@ -268,7 +272,7 @@ export function buildCodexGroups(
           )
         )
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
-        .slice(0, THREADS_PER_PLACE);
+        .slice(0, query.all ? undefined : THREADS_PER_PLACE);
       if ((query.idPrefix || !placeMatches) && work.length === 0) return [];
       return [
         {
@@ -361,35 +365,6 @@ export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES):
   return (await readTailLines(path, bytes)).lines;
 }
 
-function parseLine(
-  line: string
-): { type?: unknown; payload?: Record<string, unknown>; timestamp?: unknown } | null {
-  try {
-    const entry = JSON.parse(line) as {
-      type?: unknown;
-      payload?: Record<string, unknown>;
-      timestamp?: unknown;
-    };
-    return entry && typeof entry === 'object' ? entry : null;
-  } catch {
-    return null;
-  }
-}
-
-function messageText(payload: Record<string, unknown>, role: string): string | null {
-  if (payload.type !== 'message' || payload.role !== role) return null;
-  const parts = Array.isArray(payload.content) ? payload.content : [];
-  const text = parts
-    .flatMap((part) =>
-      part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
-        ? [(part as { text: string }).text]
-        : []
-    )
-    .join('\n')
-    .trim();
-  return text || null;
-}
-
 function withReplyAt(state: CodexTurnState, replyAt: number | undefined): CodexTurnState {
   return state.reply !== null && replyAt !== undefined ? { ...state, replyAt } : state;
 }
@@ -455,7 +430,8 @@ export function codexRecentInputs(lines: readonly string[], since?: number): Wor
         text,
         !text.includes(WORK_AGENT_INPUT) &&
           !text.includes('Neo routed this to you:') &&
-          !text.startsWith('# AGENTS.md instructions')
+          !text.startsWith('# AGENTS.md instructions'),
+        codexUserInput(entry)?.id
       );
       return input ? [input] : [];
     }),
@@ -545,16 +521,30 @@ export function requireOpenCodexThread(detail: CodexThreadDetail): Gate<CodexThr
     : { value: detail };
 }
 
+function recordedCodexConfiguration(
+  lines: readonly string[]
+): Pick<CodexTurnState, 'model' | 'effort'> {
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const entry = parseLine(lines[index]);
+    if (entry?.type !== 'turn_context') continue;
+    const model = entry.payload?.model;
+    const effort = entry.payload?.effort;
+    return {
+      ...(typeof model === 'string' && model.trim() ? { model: model.trim() } : {}),
+      ...(typeof effort === 'string' && effort.trim()
+        ? { effort: workStartConfiguration.normalize(effort) }
+        : {}),
+    };
+  }
+  return {};
+}
+
 export async function readCodexTurn(
   detail: CodexThreadDetail,
-  since?: number,
-  readOpenedPrs?: ReturnType<typeof createCodexPrReader>
+  since?: number
 ): Promise<CodexTurnState> {
   try {
     const { lines, truncated } = await readTailLines(detail.thread.rolloutPath, ROLLOUT_TAIL_BYTES);
-    const openedPrs = readOpenedPrs
-      ? readOpenedPrs(detail.thread.rolloutPath, lines)
-      : codexOpenedPrs(lines);
     let startedAt: number | undefined;
     const turnEnds = lines.flatMap((line, index) => {
       const entry = parseLine(line),
@@ -587,10 +577,10 @@ export async function readCodexTurn(
     });
     return {
       ...codexTurnState(lines),
+      ...recordedCodexConfiguration(lines),
       ...(turnEnds.length ? { turnEnds } : {}),
       inputs: codexRecentInputs(lines, since),
       ...(since !== undefined ? { exchange: codexExchange(lines, since, truncated) } : {}),
-      ...(openedPrs.length ? { openedPrs } : {}),
     };
   } catch {
     return { marker: null, reply: null };
@@ -613,6 +603,8 @@ export async function describeCodexThread(
       place: { machine: deps.machine, folder, name: root?.name || basename(folder) || folder },
       ...workExecutionLocation(thread.folder, deps.machine),
       status: turnStatus(thread, state, deps.now()),
+      ...(state.model ? { model: state.model } : {}),
+      ...(state.effort ? { effort: state.effort } : {}),
       ...(state.turnEnds?.length ? { turnEnds: state.turnEnds } : {}),
       lastActivityAt: thread.updatedAt,
       link: `codex://threads/${thread.id}`,
@@ -620,7 +612,6 @@ export async function describeCodexThread(
       ...(state.reply && state.replyAt !== undefined ? { lastReplyAt: state.replyAt } : {}),
       ...(state.inputs ? { recentInputs: state.inputs } : {}),
       ...withExchange(state.exchange),
-      ...(state.openedPrs ? { openedPrs: state.openedPrs } : {}),
       ...(detail.linkedPrs ? { linkedPrs: detail.linkedPrs.map((url) => ({ url })) } : {}),
       ...(thread.branch ? { branches: [thread.branch] } : {}),
     },
@@ -629,16 +620,6 @@ export async function describeCodexThread(
 
 type CodexReceipt = NonNullable<WorkDelivery['receipt']>;
 type CodexInputEvidence = NonNullable<WorkDetail['inputEvidence']>;
-
-function codexUserInput(
-  entry: ReturnType<typeof parseLine>
-): { id: string; text: string; at: number | undefined } | null {
-  const payload = entry?.type === 'response_item' ? (entry.payload ?? {}) : null;
-  const text = payload ? messageText(payload, 'user') : null;
-  if (!payload || text === null || INJECTED_INPUT.test(text) || typeof payload.id !== 'string')
-    return null;
-  return payload.id ? { id: payload.id, text, at: workEntryTime(entry?.timestamp) } : null;
-}
 
 export function codexUserInputIds(lines: readonly string[]): Set<string> {
   return new Set(lines.flatMap((line) => codexUserInput(parseLine(line))?.id ?? []));
@@ -1055,10 +1036,10 @@ export async function withdrawCodexMessage(
 }
 
 const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
-  .input(['ref', 'deps', 'since', 'receipt', 'readOpenedPrs'])
+  .input(['ref', 'deps', 'since', 'receipt'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe((detail: CodexThreadDetail) => detail, 'outcome', 'detail')
-  .pipe(readCodexTurn, ['detail', 'since', 'readOpenedPrs'], 'turn')
+  .pipe(readCodexTurn, ['detail', 'since'], 'turn')
   .pipe(readCodexInputEvidence, ['detail', 'receipt'], 'evidence')
   .pipe(describeCodexThread, ['detail', 'turn', 'deps'], 'outcome')
   .pipe(withCodexInputEvidence, ['outcome', 'evidence'], 'outcome')
@@ -1066,8 +1047,7 @@ const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
   ref: WorkRef,
   deps: CodexDesktopAdapterDeps,
   since: number | undefined,
-  receipt: CodexReceipt | undefined,
-  readOpenedPrs: ReturnType<typeof createCodexPrReader>
+  receipt: CodexReceipt | undefined
 ) => Promise<Result<WorkDetail>>;
 
 const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
@@ -1150,38 +1130,12 @@ interface CodexWorkFolder {
   release: () => Promise<void>;
 }
 
-async function runGit(args: string[], repo: string, deps: CodexDesktopAdapterDeps) {
-  const proc = deps.spawn(['git', ...args], { cwd: repo, stdout: 'ignore', stderr: 'pipe' });
-  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-  return { code, stderr: stderr.trim() };
-}
-
 export async function prepareCodexWorkFolder(
   folder: string,
   deps: CodexDesktopAdapterDeps,
   inPlace = false
 ): Promise<Result<CodexWorkFolder>> {
-  const placement = planWorkPlacement(
-    inPlace ? null : await deps.gitCheckout(folder).catch(() => null)
-  );
-  if (placement.kind === 'in_place') {
-    return { ok: true, value: { cwd: folder, release: async () => {} } };
-  }
-  const { repo } = placement;
-  const worktree = join(deps.worktreesDir, deps.newId().slice(0, 8), basename(repo));
-  const added = await runGit(['worktree', 'add', '--detach', worktree, 'HEAD'], repo, deps);
-  if (added.code !== 0) {
-    return reject('not_delivered', `Could not create a worktree in ${repo}: ${added.stderr}`);
-  }
-  return {
-    ok: true,
-    value: {
-      cwd: worktree,
-      release: async () => {
-        await runGit(['worktree', 'remove', '--force', worktree], repo, deps).catch(() => {});
-      },
-    },
-  };
+  return prepareWorkerFolder(folder, deps, inPlace);
 }
 
 export async function withCodexAppServer<Value>(
@@ -1285,7 +1239,14 @@ export async function startCodexThread(
       }
       await server.call('thread/name/set', { threadId, name: request.title });
       await server.close();
-      const message = `${request.message}\n${CODEX_WORKER_INSTRUCTIONS}`;
+      const brief = request.provenance
+        ? withWorkerProvenance(request.message, {
+            model: model ?? null,
+            effort: effort ?? null,
+            harness: 'codex-desktop',
+          })
+        : request.message;
+      const message = `${brief}\n${CODEX_WORKER_INSTRUCTIONS}`;
       await deps.startDesktopTurn(threadId, {
         threadId,
         approvalPolicy: 'never',
@@ -1377,8 +1338,25 @@ const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
   deps: CodexDesktopAdapterDeps
 ) => Promise<Result<{ stopped: boolean }>>;
 
+const runCodexTurns = (superpipe({})('codex-turns') as PipelineAPI)
+  .input(['ref', 'cursor', 'limit', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(
+    async (detail: CodexThreadDetail, cursor: string | undefined, limit: number | undefined) => ({
+      ok: true as const,
+      value: { turns: await readCodexTurnFacts(detail.thread.rolloutPath, cursor, limit) },
+    }),
+    ['outcome', 'cursor', 'limit'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  cursor: string | undefined,
+  limit: number | undefined,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<{ turns: WorkTurnFact[] }>>;
+
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
-  const readOpenedPrs = createCodexPrReader();
   return {
     id: 'codex-desktop',
     supportsStartPreparation: !!deps.prepareExecution,
@@ -1392,6 +1370,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       'queue',
       'withdraw',
       'status',
+      'turns',
       'stop',
       'archive',
     ],
@@ -1400,6 +1379,17 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         query,
         deps,
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
+      ),
+    sessions: async () =>
+      (await loadCodexSnapshot({ includeClosed: true, limit: 0 }, deps)).threads.map((thread) => ({
+        id: thread.id,
+        name: thread.title,
+        status: codexStatus(thread, deps.now()),
+        lastActivityAt: thread.updatedAt,
+      })),
+    resolveStartConfiguration: (request) =>
+      withCodexAppServer({ appServer: deps.bootstrapServer }, (server) =>
+        selectCodexConfiguration({ model: request.model, effort: request.effort }, server)
       ),
     start: (request) => runCodexStart(request, deps),
     rename: (ref, title) => runCodexRename(ref, title, deps),
@@ -1425,7 +1415,8 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         'queue'
       ),
     withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
-    status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt, readOpenedPrs),
+    status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt),
+    turns: (ref, cursor, limit) => runCodexTurns(ref, cursor, limit, deps),
     stop: (ref) => runCodexStop(ref, deps),
     archive: async (ref, admit) => {
       const found = requireCodexThread(ref, deps);
@@ -1434,26 +1425,18 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         const refused = admit();
         if (refused) return refused;
         await releaseWorkerSandbox(found.value.thread.folder);
-        return { ok: true, value: { archived: false } };
+        const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
+        return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
       }
-      return withCodexAppServer(deps, async (server) => {
-        const read = z
-          .object({
-            thread: z.object({ id: z.literal(ref.id), status: z.object({ type: z.string() }) }),
-          })
-          .parse(await server.call('thread/read', { threadId: ref.id }));
-        if (
-          read.thread.status.type === 'active' ||
-          (await readActiveCodexTurn(found.value.thread.rolloutPath))
-        )
-          return reject('busy', 'The Codex thread still has a live turn.');
-        if (!['idle', 'notLoaded'].includes(read.thread.status.type))
-          return reject('unreachable', 'Codex cannot confirm an idle thread.');
-        const refused = admit();
-        if (refused) return refused;
-        await releaseWorkerSandbox(found.value.thread.folder);
+      if (await readActiveCodexTurn(found.value.thread.rolloutPath))
+        return reject('busy', 'The Codex thread still has a live turn.');
+      const refused = admit();
+      if (refused) return refused;
+      await releaseWorkerSandbox(found.value.thread.folder);
+      return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
         await server.call('thread/archive', { threadId: ref.id });
-        return { ok: true, value: { archived: true } };
+        const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
+        return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
       });
     },
   };

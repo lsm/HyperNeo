@@ -1,8 +1,7 @@
 import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { DeliveryRecord, MessageRecord } from '../../../../messaging/src/types.ts';
 import { createDeliverTaskWorkerMessagePipeline } from '../tasks/task-message-delivery.ts';
-import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
-import type { ToolResult } from '../space/tools/tool-result.ts';
+import type { ToolResult } from '../tools/tool-result.ts';
 import { SpaceDeliveryFacade } from './delivery-facade.ts';
 import { formatAgentMessage } from './envelope.ts';
 import type { OutboundSender } from './outbound-sender-identity.ts';
@@ -32,7 +31,7 @@ export async function deliverToWorker(
 ): Promise<TaskMessageSendResult> {
   const audit = deps.audit ?? (() => {});
   const pipeline = createDeliverTaskWorkerMessagePipeline({
-    taskAgentManager: deps.taskAgentManager as TaskAgentManager,
+    taskAgentManager: deps.taskAgentManager,
     nodeExecutionRepo: { getById: deps.getNodeExecutionById },
     ensureTargetSession: deps.ensureTargetSession,
     activateNode: deps.activateNode,

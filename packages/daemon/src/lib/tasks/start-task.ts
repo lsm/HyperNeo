@@ -9,7 +9,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isActiveSessionInSpace } from './metadata.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import {
   claimDirectStart,
   directTaskStartIdentity,

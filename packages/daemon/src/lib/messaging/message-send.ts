@@ -20,7 +20,7 @@ import { createMailboxEntry, toMailboxMessage } from '../mailbox/entry.ts';
 import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
 import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { AgentReferenceSchema } from '../agents/agent-reference.ts';
+import { AgentReferenceSchema } from './agent-reference-schema.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 import { wrapSessionContent } from './session-envelope.ts';
 
@@ -310,6 +310,22 @@ export function requireTargetSession(
     : { value: input };
 }
 
+export function requireNeoProjectTarget(
+  input: SendInput,
+  caller: OperationCaller,
+  inNeoProject: (sessionId: string) => boolean
+): { value: SendInput } | { reason: SendResult } {
+  return caller.role === 'neo' && caller.source === 'mcp' && !inNeoProject(input.sessionId)
+    ? {
+        reason: {
+          kind: 'rejected',
+          reason:
+            'work_send_required: Neo reaches a session outside its project with work.send and a todoId or notice:true',
+        },
+      }
+    : { value: input };
+}
+
 function admitOperationMessage(
   input: SendRequest,
   caller: OperationCaller
@@ -503,6 +519,7 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
     'limit',
     'sent',
     'report',
+    'inNeoProject',
   ])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
   .pipe(selectSendOrigin, ['input', 'caller'], 'origin')
@@ -511,6 +528,7 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   .pipe(resolveMessageTarget, ['receipt', 'resolveAgent'], 'result:receipt')
   .pipe(forwardRemoteMessage, ['receipt', 'origin', 'forwardRemote'], 'result:receipt')
   .pipe(requireTargetSession, ['receipt', 'sessionStatus'], 'result:receipt')
+  .pipe(requireNeoProjectTarget, ['receipt', 'caller', 'inNeoProject'], 'result:receipt')
   .pipe(admitSessionSend, ['receipt', 'origin', 'limit'], 'result:receipt')
   .pipe((admitted: SendInput) => admitted, 'receipt', 'admitted')
   .pipe(prepareHandoff, ['receipt', 'caller', 'origin', 'limit'], 'result:receipt')
@@ -548,7 +566,8 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   sessionTitle: SessionTitleRead,
   limit: SessionSendLimiter,
   sent: SessionSentObserver,
-  report: SessionReportHandler
+  report: SessionReportHandler,
+  inNeoProject: (sessionId: string) => boolean
 ) => Promise<SendResult>;
 
 export function createSendMessageOperation(
@@ -559,7 +578,8 @@ export function createSendMessageOperation(
   sessionTitle: SessionTitleRead = () => null,
   sent: SessionSentObserver = () => {},
   isNeo: (sessionId: string) => boolean = () => false,
-  report: SessionReportHandler = async () => null
+  report: SessionReportHandler = async () => null,
+  inNeoProject: (sessionId: string) => boolean = () => true
 ) {
   const ordinaryLimit = createSessionSendLimiter();
   const limit: SessionSendLimiter = {
@@ -579,7 +599,7 @@ export function createSendMessageOperation(
   return defineOperation({
     name: 'message.send',
     description:
-      'For question/blocked reports to Neo requiring a human decision, include question:{todoId,title,options,language}; title and each of 2–6 options are one line of at most 80 characters in the human language (en or zh-Hans). This immediately opens or reuses the todo card, holds the todo and wakes Neo once. Send coordination questions (order, slots, who goes first) to Neo with kind question and no question envelope, never a human card. Unattributed reports wake Neo once for triage. ' +
+      'For question/blocked reports to Neo requiring a human decision, include question:{todoId,title,options,language}; title and each of 2–6 options are one line of at most 80 characters in the human language (en or zh-Hans). This holds the todo and wakes Neo, who answers you or puts the question to the human. Send coordination questions (order, slots, who goes first) to Neo with kind question and no question envelope, never a human card. Unattributed reports wake Neo once for triage. ' +
       'Send {to, text, kind?, files?}; kind is the structured worker milestone done, blocked, question or failed (use done for PR milestones). Send reports through this operation instead of encoding a kind in text. files contains published handoff references. Text over 4 KiB UTF-8 is published in full in the bound sender outbox; accepted receipts include files. Optional idempotencyKey replays the same durable receipt, and conflicts if reused for different input. Same-user tampering is detected by hash, not prevented by OS isolation. The legacy SDK envelope also persists a message for a session, addressed by session id or by agent {space, agent}, and not restricted to the caller Space. An agent target names the space by id, slug or name and the agent by id, @handle or display name; it finds or starts that agent\'s session, and an unknown or ambiguous name is rejected with the candidates. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied. A message from a session reaches the recipient as task input inside a daemon-written <session-message from-session=… from-name=…> envelope saying it is not from the human; it is injected into a running turn at the next tool round or wakes an idle session. Sends from a session to ordinary recipients are limited to 6 a minute, and identical text within 10 minutes is refused as a duplicate. Neo retains every report; unstructured notes wait for one ordered batch. Batches over 64 KiB are delivered as complete hash-checked files read with handoff.read. from is set by a daemon forwarding a send, as daemon:<sender daemon>::session:<id>; it is honored only from the RPC door, which is trusted as the local user, and only when it is an address.',
     inputSchema: SendMessageInputSchema,
     resultSchema: SendMessageResultSchema,
@@ -594,7 +614,8 @@ export function createSendMessageOperation(
         sessionTitle,
         limit,
         sent,
-        report
+        report,
+        inNeoProject
       ),
   });
 }

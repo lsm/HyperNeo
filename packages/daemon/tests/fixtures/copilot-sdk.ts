@@ -2,12 +2,25 @@
 import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+const sdkCliVersion: string = JSON.parse(
+  readFileSync(
+    new URL('../../node_modules/@github/copilot-sdk/package.json', import.meta.url),
+    'utf8'
+  )
+).copilotCliVersion;
+
+if (process.argv.includes('--disable-builtin-mcps')) {
+  process.stderr.write("copilot-runtime: unsupported argument '--disable-builtin-mcps'\n");
+  process.exit(1);
+}
+
 let buffer = Buffer.alloc(0);
 let sessionId = '';
 let input = 0;
 let eventId = 0;
 let pendingAck: (() => void) | undefined;
 const serial: { id: string; interaction: string; prompt: string }[] = [];
+const queueItems: { id: string; messageId: string }[] = [];
 const fixtureState = () => join(process.cwd(), `${sessionId}.fixture.json`);
 const send = (message: unknown) => {
   const data = JSON.stringify(message);
@@ -49,15 +62,25 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
   );
   const reply = (result: unknown) => send({ jsonrpc: '2.0', id: msg.id, result });
   switch (msg.method) {
-    case 'connect':
-      reply({ protocolVersion: process.argv.includes('--bad-protocol') ? 99 : 3 });
+    case 'connect': {
+      const answer = () =>
+        reply({ protocolVersion: process.argv.includes('--bad-protocol') ? 99 : 3 });
+      if (!process.argv.includes('--held-connect')) answer();
+      else {
+        const timer = setInterval(() => {
+          if (!existsSync(join(process.cwd(), 'release-connect'))) return;
+          clearInterval(timer);
+          answer();
+        }, 5);
+      }
       break;
+    }
     case 'status.get':
       reply({
         version: process.argv.includes('--wrong-version')
           ? 'unsupported-fixture'
           : process.argv.includes('--production-version')
-            ? '1.0.83'
+            ? sdkCliVersion
             : 'fixture-1',
         protocolVersion: 3,
       });
@@ -81,6 +104,31 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
             ],
       });
       break;
+    case 'session.list': {
+      if (process.argv.includes('--held-list')) break;
+      if (existsSync(join(process.cwd(), 'copilot-list-failure'))) {
+        send({
+          jsonrpc: '2.0',
+          id: msg.id,
+          error: { code: -32000, message: 'Synthetic listing failure' },
+        });
+        break;
+      }
+      const sessions = JSON.parse(readFileSync(join(process.cwd(), 'copilot-list.json'), 'utf8'));
+      reply({
+        sessions: sessions.map(
+          (session: { sessionId: string; cwd?: string; title?: string; updatedAt?: string }) => ({
+            sessionId: session.sessionId,
+            startTime: session.updatedAt ?? new Date(0).toISOString(),
+            modifiedTime: session.updatedAt ?? new Date(0).toISOString(),
+            summary: session.title,
+            isRemote: false,
+            ...(session.cwd ? { context: { cwd: session.cwd } } : {}),
+          })
+        ),
+      });
+      break;
+    }
     case 'session.create':
       sessionId = String(msg.params?.sessionId);
       if (process.argv.includes('--durable-inputs')) writeFileSync(fixtureState(), '0');
@@ -144,6 +192,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         reply({ messageId: id });
         break;
       }
+      if (prompt === 'queued') queueItems.push({ id: `queue-item-${input}`, messageId: id });
       if (prompt === 'crash') {
         reply({ messageId: id });
         setTimeout(() => process.exit(1), 5);
@@ -161,6 +210,36 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
           interactionId: `interaction-${input}`,
           delivery: 'idle',
         });
+      if (prompt === 'human-watch') {
+        const timer = setInterval(() => {
+          const path = join(process.cwd(), 'human-request.json');
+          if (!existsSync(path)) return;
+          clearInterval(timer);
+          const human = JSON.parse(readFileSync(path, 'utf8')) as {
+            text: string;
+            earlierInputs?: number;
+          };
+          for (let index = 0; index < (human.earlierInputs ?? 0); index++)
+            event('user.message', {
+              messageId: `earlier-${index}`,
+              interactionId: `earlier-turn-${index}`,
+              content: `Earlier direct note ${index}`,
+            });
+          event('user.message', {
+            messageId: 'human-direct',
+            interactionId: 'human-turn',
+            content: human.text,
+          });
+          event('assistant.message', {
+            messageId: 'human-reply',
+            interactionId: 'human-turn',
+            content: 'Prepared the blue summary directly for the human.',
+            phase: 'final_answer',
+          });
+          event('session.idle', {});
+          writeFileSync(join(process.cwd(), 'human-emitted'), 'ready');
+        }, 5);
+      }
       if (prompt === 'history') {
         event('tool.execution_start', {
           toolCallId: 'tool-1',
@@ -310,6 +389,23 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       } else if (prompt === 'ping-ack') pendingAck = () => reply({ messageId: id });
       else if (prompt === 'late-ack') setTimeout(() => reply({ messageId: id }), 20);
       else if (prompt !== 'lost-ack') reply({ messageId: id });
+      break;
+    }
+    case 'session.queue.pendingItems':
+      reply({
+        items: queueItems.map((item) => ({
+          ...item,
+          kind: 'message',
+          displayText: 'queued',
+          agentMode: 'interactive',
+        })),
+        steeringMessages: [],
+      });
+      break;
+    case 'session.queue.removeAt': {
+      const index = queueItems.findIndex((item) => item.id === msg.params?.id);
+      if (index >= 0) queueItems.splice(index, 1);
+      if (!process.argv.includes('--lost-remove-ack')) reply({ removed: index >= 0 });
       break;
     }
     case 'session.abort':

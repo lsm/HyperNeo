@@ -20,7 +20,7 @@ awaited time and cannot by itself attribute an event-loop block.
 | Codex Desktop scan | on demand, including status refresh | `scanner:codex_desktop` | `lib/drivers/codex-desktop-adapter.ts`, `loadCodexSnapshot` |
 | Codex external SQLite | each state read | `scanner:codex_desktop:open/configure/query/close`; snapshot `roots/folders/threads` | `lib/drivers/codex-desktop-adapter.ts`, `readCodexStateOnce`, `readCodexSnapshot`; synchronous spans |
 | Codex worktree resolution and grouping | each discovery | `scanner:codex_desktop:worktrees/groups` | `lib/drivers/codex-desktop-adapter.ts`; worktrees includes async I/O, groups is synchronous |
-| Worktree pointer metadata/content | lookup when needed | `scanner:worktree:metadata/read` | `lib/drivers/acp-agent-adapter.ts`, `gitWorktreeProject`; async spans, cache validated by metadata |
+| Worktree pointer metadata/content | lookup when needed | `scanner:worktree:metadata/read` | `lib/drivers/worktree-project.ts`, `gitWorktreeProject`; async spans, cache validated by metadata |
 | Per-adapter local discovery | each work.find | `work:find:<adapter id>` | `lib/drivers/find-operation.ts`, `findLocally`; includes async waits and failures |
 | Claude Desktop scan | on demand, including status refresh | `scanner:claude_desktop` | `lib/drivers/claude-desktop-adapter.ts`, `loadClaudeDesktopRecords` |
 | Claude Code scan | on demand, including status refresh | `scanner:claude_code` | `lib/drivers/claude-code-adapter.ts`, `scan` |
@@ -28,7 +28,7 @@ awaited time and cannot by itself attribute an event-loop block.
 | Rate-limit startup retry | 60 s one-shot retry; other cooldowns vary | `timer:rate_limit_retry` | `lib/agent/rate-limit-watchdog.ts`, `scheduleStartupFailureRetry` |
 | Copilot stale conversation cleanup | 10 min timeout, reset by activity | `timer:copilot_conversation_expiry` | `lib/providers/anthropic-copilot/conversation.ts`, `scheduleCleanup` |
 | Coding pack sweep/reconciliation | durable job, **5 min** | `job:neo.pack.sweep` | `lib/neo/pack-sweep.ts` |
-| Coding PR recheck | **10 min cache gate**, no independent timer | enclosing `job:neo.work.driver.refresh` / `job:neo.pack.sweep` | `lib/neo/session-ask-links.ts`, `NEO_SESSION_PR_RECHECK_MS` |
+| Coding PR recheck | **10 min cache gate**, no independent timer | enclosing `job:neo.work.driver.refresh` / `job:neo.pack.sweep` | `lib/neo/session-ask-links.ts`, `NEO_SESSION_RECHECK_MS` |
 | Coding workspace rules refresh | **10 min cache**, no independent timer | enclosing work/pack job or RPC | `lib/neo/packs/coding/work-prs.ts`, `RULES_MS` |
 | Search index flush | **2 s**, not 60 s | `search:index_flush` | `storage/index.ts` |
 | Search FTS merge dispatch | **30 s**, worker owns merge | `timer:search_merge_worker_start` | `storage/database-core.ts` |

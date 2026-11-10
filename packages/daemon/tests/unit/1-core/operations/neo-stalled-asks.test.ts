@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
@@ -11,6 +11,8 @@ let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: ReturnType<typeof createNeoService>;
 let now: ReturnType<typeof spyOn>;
 const note = 'This ask has nothing in progress. Add the next todo, or settle it.';
+const finishedNote =
+  'All todos are finished: write the outcome with neo.ask.settle, or add the next todo.';
 beforeEach(async () => {
   db = await createTestDb();
   service = createNeoService(
@@ -101,13 +103,66 @@ test('only stale open asks without active, waiting or questioned work receive th
     'recipient-done',
     'recipient-empty',
   ]);
-  expect(
-    tell.mock.calls.every(
-      (call) => String(call[2]).includes(note) && String(call[2]).includes('Ask:')
-    )
-  ).toBe(true);
+  for (const [recipient, , text] of tell.mock.calls) {
+    expect(String(text)).toContain('Ask:');
+    expect(String(text)).toContain(recipient === 'recipient-done' ? finishedNote : note);
+  }
   await service.refreshDriverWork();
   expect(tell).toHaveBeenCalledTimes(3);
+});
+
+test('Neo is told when the last todo ends, then on the repeat, and again after new work', async () => {
+  ask('finished', clock);
+  todo('finished', 'doing');
+  const tell = spyOn(service, 'deliverForward').mockResolvedValue(undefined);
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(0);
+  clock += 1;
+  service.todos.updateTodo(service.todos.getTodo('todo-finished')!, { state: 'done' }, clock);
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(1);
+  expect(String(tell.mock.calls[0][2])).toContain(finishedNote);
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(1);
+  clock += 4 * hour;
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(2);
+  clock += 1;
+  const item = service.todos.getTodo('todo-finished')!;
+  service.todos.updateTodo(item, { state: 'doing' }, clock);
+  clock += 1;
+  service.todos.updateTodo(service.todos.getTodo(item.id)!, { state: 'done' }, clock);
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(3);
+});
+
+test('an unfinished ask still waits two hours', async () => {
+  ask('failed', clock);
+  todo('failed', 'doing');
+  service.todos.updateTodo(service.todos.getTodo('todo-failed')!, { state: 'failed' }, clock);
+  ask('empty-recent', clock);
+  const tell = spyOn(service, 'deliverForward').mockResolvedValue(undefined);
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(0);
+});
+
+test('a parent with an open child is not finished', async () => {
+  ask('parent', clock);
+  todo('parent', 'done');
+  service.todos.updateTodo(service.todos.getTodo('todo-parent')!, { state: 'done' }, clock);
+  service.todos.openAsk({
+    id: 'child',
+    sessionId: 'recipient-parent',
+    projectId: null,
+    originMessageId: null,
+    title: 'child',
+    request: 'Synthetic work',
+    createdAt: clock,
+    parentId: 'parent',
+  });
+  const tell = spyOn(service, 'deliverForward').mockResolvedValue(undefined);
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(0);
 });
 
 test('a wake repeats no sooner than four hours and concurrent refreshes send once', async () => {
@@ -152,7 +207,7 @@ test('new todo activity restarts the inactivity clock before a later wake', asyn
   );
   await service.refreshDriverWork();
   expect(tell).toHaveBeenCalledTimes(1);
-  service.todos.updateTodo(step, { state: 'done' }, clock);
+  service.todos.updateTodo(step, { state: 'removed' }, clock);
   clock += 2 * hour - 1;
   await service.refreshDriverWork();
   expect(tell).toHaveBeenCalledTimes(1);

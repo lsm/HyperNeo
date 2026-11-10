@@ -9,7 +9,7 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager';
 import type { Database } from '../../../../src/storage/database';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';

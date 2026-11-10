@@ -4,7 +4,7 @@ import {
   DIRECT_TASK_PARK_BUDGET,
   decideParkAdmission,
   parkAdmissionInput,
-} from '../../../../src/lib/tasks/park-budget';
+} from '../../../../src/lib/job-handlers/park-budget';
 
 const BUDGET = { maxParks: 3, maxParkedMs: 1000 };
 

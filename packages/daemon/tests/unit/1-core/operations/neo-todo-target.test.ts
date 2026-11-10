@@ -113,15 +113,63 @@ function fixture(
     expect(reply.isError ?? false).toBe(false);
     return JSON.parse(reply.content[0].text);
   };
-  return { db, todos, sessions, add, bind, starts: () => starts };
+  return { db, todos, sessions, add, bind, handler, starts: () => starts };
 }
 
 describe('todo target identity at the MCP add door', () => {
+  test.each(['coding', 'core'])(
+    'continue retains the lookup cause only when the %s policy needs a repository',
+    async (pack) => {
+      const f = fixture({ refs: [] });
+      try {
+        const todo = f.todos.addTodo(
+          'continued',
+          'ask',
+          {
+            title: 'Continue work',
+            doneWhen: 'Complete',
+            instruction: 'Continue',
+            named: { repository: 'example/repo' },
+            check:
+              pack === 'coding'
+                ? {
+                    pack,
+                    kind: 'pr_merged',
+                    params: { urls: ['https://github.com/example/repo/pull/1'] },
+                  }
+                : pendingTodoCheck,
+            approvedAt: 1,
+          },
+          1,
+          'github.com/example/repo'
+        );
+        f.sessions.bind(todo.id, { adapter: 'hyperneo', id: full }, 1);
+        const current = f.todos.updateTodo(todo, { state: 'doing', startedAt: 1 }, 1);
+        const reply = await f.handler({
+          name: 'neo.todo.continue',
+          input: { todoId: todo.id, message: 'Continue' },
+        });
+        const result = JSON.parse(reply.content[0].text);
+        expect(result).toEqual({
+          ok: false,
+          reason:
+            pack === 'coding'
+              ? `target_not_found: no hyperneo work matches ${full}.`
+              : 'Unexpected dispatch',
+        });
+        expect(f.todos.getTodo(todo.id)).toEqual(current);
+      } finally {
+        f.db.close();
+      }
+    }
+  );
+
   test('direct binding stores the resolved reference rather than the supplied prefix', async () => {
     const f = fixture();
     try {
       const original = { adapter: 'hyperneo', id: full };
       const added = await f.add({ verb: 'send', ref: original });
+      f.todos.updateTodo(added.todo, { approvedAt: 1 }, 1);
       const ref = { adapter: 'codex-desktop', daemon: 'synthetic-peer', id: full.slice(0, 8) };
       const result = await f.bind(added.todo.id, ref);
       expect(result.ok).toBe(true);
@@ -164,15 +212,13 @@ describe('todo target identity at the MCP add door', () => {
       f.db.close();
     }
   });
-  test.each(['send', 'bind'])('stores the resolved full id for a %s target', async (verb) => {
+  test('stores the resolved full id for a send target', async () => {
     const f = fixture();
     try {
       const ref = { adapter: 'codex-desktop', daemon: 'synthetic-peer', id: full.slice(0, 8) };
-      const result = await f.add({ verb, ref });
+      const result = await f.add({ verb: 'send', ref });
       expect(result.ok).toBe(true);
-      const target =
-        verb === 'bind' ? f.sessions.readRef(result.todo.id) : f.sessions.get(result.todo.id)?.ref;
-      expect(target).toEqual({ ...ref, id: full });
+      expect(f.sessions.get(result.todo.id)?.ref).toEqual({ ...ref, id: full });
       expect(f.starts()).toBe(0);
     } finally {
       f.db.close();

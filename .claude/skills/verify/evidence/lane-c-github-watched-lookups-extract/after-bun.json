@@ -1,0 +1,30 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Verbatim watched key/id SELECT extraction only; public reads/writes remain main-side, constructor/backfill and UPSERT/cursor policy unchanged",
+  "publicRpcMs": 1.3507079999999405,
+  "publicRpc": {
+    "replies": [
+      {
+        "spaceId": "synthetic-watched-lookup",
+        "id": "50cec741-5ed4-4437-aba5-44ca0a44ebf8",
+        "enabled": true
+      },
+      {
+        "spaceId": "synthetic-watched-lookup",
+        "id": "50cec741-5ed4-4437-aba5-44ca0a44ebf8",
+        "enabled": false
+      },
+      {
+        "spaceId": "synthetic-watched-lookup-peer",
+        "id": "94209fb4-5c07-43a2-9e50-e23a5576395d",
+        "enabled": true
+      }
+    ],
+    "mainLookupReads": 15,
+    "lookupReadsObserved": true,
+    "sameIdentityAndCreationTimePreserved": true,
+    "spaceIsolationAndSavedConfigPreserved": true
+  },
+  "constructorFreeQueryOnlyRowsAndCursorErrorsPreserved": true,
+  "pass": true
+}

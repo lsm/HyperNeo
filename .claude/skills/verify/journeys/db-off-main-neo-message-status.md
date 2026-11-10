@@ -58,10 +58,7 @@ Zero target SQL calls on main is asserted for every file-backed `verify` run.
 `slowThresholdMs=0` in this synthetic helper records individual SQL and snapshot
 transaction times; this is never a production logging setting.
 
-For supported Deno, run the same natural file-backed helper with Deno2.9.4
-instead of Bun (`deno run -A --config packages/daemon/deno.json <helper> verify
-<run>`), with a fresh `DENO_DIR` inside the run. A Bun executable remains on PATH
-for the independent health probe. Repeat memory separately. Both runtimes must
-serve both nonempty public pages and acknowledge worker close during cleanup.
-The natural cold-worker RPC overhead is part of the reported result; a 1200ms
-controlled stalled read still misses250ms even when main lag is below1s.
+A Bun executable remains on PATH for the independent health probe. Repeat memory
+separately. Both runtimes must serve both nonempty public pages and acknowledge worker
+close during cleanup. The natural cold-worker RPC overhead is part of the reported result;
+a 1200ms controlled stalled read still misses250ms even when main lag is below1s.

@@ -42,11 +42,8 @@ public state must show exactly one card, with no automatic replay and an explici
 repeat refused by authoritative duplicate admission. No driver start/send/stop
 or external notification delivery belongs inside the command.
 
-Run the new transaction tests with the existing human Track compatibility tests
-and the full repository check. Deno smoke registers this same helper; label local
-Deno unverified when unavailable. Independent Verify uses the recorded contract
-and exact PR head. Retain neo-track-admission-build.json, proof.log and wrapper
-exit status; require exit zero and no closed-database errors. The helper closes
-its workers, socket and daemon, and the wrapper saves evidence before removing
-the temporary HOME/data. Post-merge smoke checks the containing build's internal
+Run the new transaction tests with the existing human Track compatibility tests and the
+full repository check. Independent Verify uses the recorded contract and exact PR head.
+The helper closes its workers, socket and daemon, and the wrapper saves evidence before
+removing the temporary HOME/data. Post-merge smoke checks the containing build's internal
 command/public reader; live human Track activation is not claimed by this slice.

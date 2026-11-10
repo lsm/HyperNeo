@@ -12,7 +12,7 @@ import {
   type OperationCallerRole,
 } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
-import { resolveSessionCallerScope } from '../../../../src/lib/space/runtime/space-caller-scope';
+import { resolveSessionCallerScope } from '../../../../src/lib/session-resolution/space-caller-scope';
 
 let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;

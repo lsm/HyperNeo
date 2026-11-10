@@ -4,7 +4,7 @@ import {
   readHyperneoInputs,
   readHyperneoLastResult,
 } from '../../../../src/lib/drivers/hyperneo-adapter';
-import { readSpaceStartReceipt } from '../../../../src/lib/drivers/space-adapter';
+import { readSpaceStartReceipt } from '../../../../../space/src/drivers/space-adapter';
 import { readSessionInputEvidence } from '../../../../src/lib/drivers/space-input-evidence';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { runMigration416 } from '../../../../src/storage/schema/m416-sdk-message-filter-indexes';
@@ -128,6 +128,7 @@ describe('SDK runtime filter contracts', () => {
       { isReplay: true, message: { content: [{ type: 'text', text: 'Replay text' }] } },
       6
     );
+    expect(readHyperneoInputs(db, 's')[0]).toMatchObject({ inputId: 'human', human: true });
     expect(readHyperneoInputs(db, 's').map((input) => input.text)).toEqual([
       'Human',
       'Null kind',

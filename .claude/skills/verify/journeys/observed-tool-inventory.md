@@ -15,7 +15,7 @@ status observation feed the actual production projection with those tool names.
 Pass: awaiting-init is empty; init observes tools/instructions without claiming
 a per-server tool count; status supplies the exact tool name; late init/status
 and stop from the old attempt cannot change the replacement; invalidating the
-owner immediately removes attachment; ACP stays unverified. Plugin paths must
+owner immediately removes attachment. Plugin paths must
 not appear in the projection. The helper asserts these facts and writes
 `evidence/inventory.json`, including explicit false capture/panel verification
 flags. It closes only its owned MCP transports in finally.

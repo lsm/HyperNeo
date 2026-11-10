@@ -2,7 +2,6 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import { requireNeoOpenAsk } from '../../lib/neo/todo-operations.ts';
-import { neoSplitOutcome } from '../../lib/neo/todo-repo.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -15,7 +14,6 @@ type Rejection = { ok: false; reason: string };
 type Receipt = {
   ok: true;
   refs: { todoId: string; ref: WorkRef | null }[];
-  records?: string[];
 } & Snapshot;
 type Changes = Pick<ReactiveDatabase, 'notifyChange'> | undefined;
 
@@ -33,10 +31,34 @@ const snapshot = (superpipe({})('neo.ask.settlement-snapshot') as PipelineAPI)
   )
   .end('outcome') as (store: NeoAskTodoRepository, id: string) => Snapshot | Rejection;
 
+export function requireNeoAskSettlement(
+  current: Snapshot | Rejection,
+  input: Input
+): { value: Snapshot } | { reason: Rejection } {
+  if ('ok' in current) return { reason: current };
+  const unfinished =
+    input.status === 'done'
+      ? current.todos.filter(
+          (todo) =>
+            !['done', 'closed_unverified'].includes(todo.state) &&
+            !(todo.state === 'removed' && todo.reason)
+        )
+      : [];
+  return unfinished.length
+    ? {
+        reason: {
+          ok: false,
+          reason: `todos_unfinished: ${unfinished.map((todo) => `${todo.title} (${todo.id}): ${todo.doneWhen}`).join('; ')}. Finish these todos, remove them with reasons, or settle dropped.`,
+        },
+      }
+    : { value: current };
+}
+
 const settle = (superpipe({})('neo.ask.commit-settlement') as PipelineAPI)
   .input(['store', 'sessions', 'input', 'now', 'changes'])
   .pipe(
-    (store: NeoAskTodoRepository, input: Input) => requireNeoOpenAsk(store.getAsk(input.askId)),
+    (store: NeoAskTodoRepository, input: Input) =>
+      requireNeoAskSettlement(snapshot(store, input.askId), input),
     ['store', 'input'],
     'result:outcome'
   )
@@ -44,36 +66,19 @@ const settle = (superpipe({})('neo.ask.commit-settlement') as PipelineAPI)
     (
       store: NeoAskTodoRepository,
       sessions: NeoTodoSessionRepository,
-      currentAsk: NeoAsk,
+      current: Snapshot,
       input: Input,
       now: number,
       changes: Changes
     ): Receipt => {
-      const before = store.listTodos(currentAsk.id);
-      const unfinished =
-        input.status === 'done'
-          ? before.filter(
-              (todo) =>
-                !['done', 'closed_unverified'].includes(todo.state) &&
-                !(todo.state === 'removed' && todo.reason)
-            )
-          : [];
+      const before = current.todos;
       const questionOpen = store
-        .listQuestions(currentAsk.id)
+        .listQuestions(current.ask.id)
         .some((question) => question.state === 'open');
-      const ask = store.settleAsk(
-        currentAsk,
-        input.status,
-        input.outcome,
-        now,
-        unfinished.map((todo) => todo.id)
-      );
+      const ask = store.settleAsk(current.ask, input.status, input.outcome, now);
       const todos = store.listTodos(ask.id);
       changes?.notifyChange('neo_asks');
-      if (
-        unfinished.length ||
-        before.some((todo) => ['todo', 'doing', 'blocked'].includes(todo.state))
-      )
+      if (before.some((todo) => ['todo', 'doing', 'blocked'].includes(todo.state)))
         changes?.notifyChange('neo_todos');
       if (questionOpen) changes?.notifyChange('neo_questions');
       return {
@@ -81,13 +86,6 @@ const settle = (superpipe({})('neo.ask.commit-settlement') as PipelineAPI)
         ask,
         todos,
         refs: todos.map((todo) => ({ todoId: todo.id, ref: sessions.readRef(todo.id) })),
-        ...(unfinished.length
-          ? {
-              records: [
-                `todos_unfinished: closed unverified: ${unfinished.map((todo) => `${todo.title} (${todo.id}): ${todo.doneWhen}`).join('; ')}`,
-              ],
-            }
-          : {}),
       };
     },
     ['store', 'sessions', 'outcome', 'input', 'now', 'changes'],
@@ -101,37 +99,6 @@ const settle = (superpipe({})('neo.ask.commit-settlement') as PipelineAPI)
   changes: Changes
 ) => Receipt | Rejection;
 
-const splitParent = (superpipe({})('neo.ask.commit-split-parent') as PipelineAPI)
-  .input(['store', 'sessions', 'id', 'now', 'changes'])
-  .pipe(
-    (store: NeoAskTodoRepository, id: string): { value: Input } | { reason: null } => {
-      const parent = store.getAsk(id);
-      const children = store.listChildAsks(id);
-      return parent?.status === 'open' && children.length && !store.listTodos(id).length
-        ? {
-            value: {
-              askId: id,
-              status: 'done',
-              outcome: neoSplitOutcome(
-                children,
-                children.reduce((count, child) => count + store.listTodos(child.id).length, 0)
-              ),
-            },
-          }
-        : { reason: null };
-    },
-    ['store', 'id'],
-    'result:outcome'
-  )
-  .pipe(settle, ['store', 'sessions', 'outcome', 'now', 'changes'], 'outcome')
-  .end('outcome') as (
-  store: NeoAskTodoRepository,
-  sessions: NeoTodoSessionRepository,
-  id: string,
-  now: number,
-  changes: Changes
-) => Receipt | Rejection | null;
-
 class NeoAskSettlement {
   private readonly store: NeoAskTodoRepository;
   private readonly sessions: NeoTodoSessionRepository;
@@ -139,17 +106,14 @@ class NeoAskSettlement {
     db: Database,
     private readonly changes: Changes = undefined
   ) {
-    this.store = new NeoAskTodoRepository(db);
-    this.sessions = new NeoTodoSessionRepository(db);
+    this.store = new NeoAskTodoRepository(db, undefined, undefined, undefined, changes);
+    this.sessions = new NeoTodoSessionRepository(db, changes);
   }
   snapshot(id: string) {
     return snapshot(this.store, id);
   }
   settle(input: Input, now: number) {
     return settle(this.store, this.sessions, input, now, this.changes);
-  }
-  splitParent(id: string, now: number) {
-    return splitParent(this.store, this.sessions, id, now, this.changes);
   }
 }
 
@@ -163,5 +127,5 @@ export const neoAskSettlementWrites = defineRepositoryOp(
   'neo.askSettlementWrites',
   'write',
   NeoAskSettlement,
-  ['settle', 'splitParent']
+  ['settle']
 );

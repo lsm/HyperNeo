@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, vi } from 'bun:test';
 import {
   sessionOperationLockArmedAtCountForTest,
   withSessionOperationLock,
@@ -88,19 +88,25 @@ describe('withSessionOperationLock', () => {
   it('cleans up a timed-out waiter so the next operation can proceed', async () => {
     process.env.HYPERNEO_OPERATION_LOCK_ACQUIRE_TIMEOUT_MS = '10';
     process.env.HYPERNEO_OPERATION_LOCK_LEAK_CEILING_MS = '20';
+    vi.useFakeTimers();
+    try {
+      const slow = withSessionOperationLock('s', () => slowResolve(50));
+      await vi.advanceTimersByTimeAsync(0);
 
-    const slow = withSessionOperationLock('s', () => slowResolve(50));
-    await tick(0);
+      const waiter = withSessionOperationLock('s', async () => 'waiter');
+      const expired = expect(waiter).rejects.toBeInstanceOf(DOMException);
+      await vi.advanceTimersByTimeAsync(10);
+      await expired;
 
-    const waiter = withSessionOperationLock('s', async () => 'waiter');
-    await expect(waiter).rejects.toBeInstanceOf(DOMException);
-
-    await tick(30);
-
-    const next = withSessionOperationLock('s', async () => 'next');
-    await expect(next).resolves.toBe('next');
-
-    await expect(slow).resolves.toBe('slow');
+      await vi.advanceTimersByTimeAsync(30);
+      const next = withSessionOperationLock('s', async () => 'next');
+      const completed = expect(next).resolves.toBe('next');
+      await vi.advanceTimersByTimeAsync(10);
+      await completed;
+      await expect(slow).resolves.toBe('slow');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a timed-out waiter with a successor does not reclaim the successor chain', async () => {

@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -5,6 +6,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { applyPackPreferenceAnswer } from '../../storage/repositories/pack-preference-answer.ts';
 import { defineOperation } from '../operations/registry.ts';
+import { openHumanCard } from './human-card.ts';
 import { PackPreferenceInput, validatePackPreference } from './preference-operations.ts';
 import { formatPreferenceProposal } from './preference-proposal.ts';
 import type { NeoPack } from './pack-contract.ts';
@@ -27,7 +29,8 @@ export function createPackPreferenceQuestions(
   db: Database,
   store: NeoAskTodoRepository,
   packs: () => readonly NeoPack[],
-  language: () => LanguageSetting | undefined
+  language: () => LanguageSetting | undefined,
+  refresh: () => Promise<void>
 ) {
   const ask = (superpipe({})('pack.preferences.ask') as PipelineAPI)
     .input(['input'])
@@ -67,7 +70,8 @@ export function createPackPreferenceQuestions(
             packs(),
             language()
           );
-          store.askQuestion(
+          openHumanCard(
+            store,
             questionId,
             input.askId,
             {
@@ -92,7 +96,12 @@ export function createPackPreferenceQuestions(
   const apply = (superpipe({})('pack.preferences.applyAnswer') as PipelineAPI)
     .input(['input'])
     .pipe(
-      (input: z.infer<typeof Apply>) => applyPackPreferenceAnswer(db, input.questionId),
+      async (input: z.infer<typeof Apply>) => {
+        const result = applyPackPreferenceAnswer(db, input.questionId);
+        if (!result.ok) return result;
+        if (result.applied) await refresh();
+        return { ok: true as const };
+      },
       'input',
       'outcome'
     )
@@ -100,8 +109,7 @@ export function createPackPreferenceQuestions(
   return [
     defineOperation({
       name: 'pack.preferences.ask',
-      description:
-        'Ask the human to apply typed pack settings. The daemon displays and binds this exact immutable proposal; no settings change until human yes. Reuse requestId for pending retries; question_closed means use a new requestId to ask again.',
+      description: neoToolDescription('pack.preferences.ask'),
       inputSchema: Ask,
       resultSchema: Result,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -109,8 +117,7 @@ export function createPackPreferenceQuestions(
     }),
     defineOperation({
       name: 'pack.preferences.applyAnswer',
-      description:
-        'Retry applying a bound settings question by questionId only. Requires the recorded human yes; accepts no replacement values. Already-applied answers never overwrite later human changes.',
+      description: neoToolDescription('pack.preferences.applyAnswer'),
       inputSchema: Apply,
       resultSchema: Result,
       policy: { safetyClass: 'mutate' },

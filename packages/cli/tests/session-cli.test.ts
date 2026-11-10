@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -83,6 +83,7 @@ describe('hyperneo send, question and build', () => {
 
   test('build prints bounded failed health and exits unsuccessfully', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'build-cli-'));
+    await writeFile(join(dir, 'local-rpc.credential'), 'a'.repeat(43), { mode: 0o600 });
     const socketPath = join(dir, 'door.sock');
     const value = {
       commit: 'a'.repeat(40),
@@ -128,4 +129,39 @@ describe('hyperneo send, question and build', () => {
     });
     expect(planSessionCommand(['send', 'neo-root'], 's1')).toHaveProperty('reason');
   });
+
+  test('pair --qr reports an unreachable daemon instead of crashing', async () => {
+    const errors: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((text: string) => errors.push(text));
+    try {
+      expect(
+        await runSessionCommand(['pair', '--qr', '--address', 'https://mac.example.ts.net'], {
+          HYPERNEO_SESSION_DOOR: '/nonexistent-hyperneo/session-door.sock',
+        })
+      ).toBe(1);
+    } finally {
+      log.mockRestore();
+    }
+    expect(errors.join('\n')).toContain('not reachable');
+  });
+});
+
+test('relay requires place, time and a words separator', () => {
+  expect(
+    planSessionCommand(
+      ['relay', 'q', '--where', 'here', '--when', 'Monday', '--', '  exact words  '],
+      's'
+    )
+  ).toEqual({
+    value: {
+      name: 'neo.question.relayAnswer',
+      input: { questionId: 'q', where: 'here', when: 'Monday', words: '  exact words  ' },
+    },
+  });
+  for (const args of [
+    ['relay', 'q', '--', 'yes'],
+    ['relay', 'q', '--where', 'here', '--when', 'Monday', 'yes'],
+    ['relay', 'q', '--where', 'here', '--when', 'Monday', '--'],
+  ])
+    expect(planSessionCommand(args, 's')).toHaveProperty('reason');
 });

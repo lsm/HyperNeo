@@ -6,7 +6,7 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
+import type { TaskWorkerMessageInjector } from '../tasks/task-message-delivery.ts';
 import { resolveOutboundSender } from './outbound-sender-identity.ts';
 import { deliverToAgent, deliverToWorker } from './task-message-send-delivery.ts';
 import { locateTask, resolveMessageTarget, resolveWorkflow } from './task-message-send-target.ts';
@@ -71,7 +71,7 @@ export interface TaskMessageSendDependencies {
   getNodeExecutionById: (executionId: string) => NodeExecution | null;
   ensureTargetSession: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
   activateNode: (runId: string, nodeId: string) => Promise<void>;
-  taskAgentManager: Pick<TaskAgentManager, 'injectSubSessionMessage'>;
+  taskAgentManager: TaskWorkerMessageInjector;
   messageResolver?: ActorResolver;
   messageResolverFactory?: (
     spaceId: string,

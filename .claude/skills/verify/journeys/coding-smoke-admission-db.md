@@ -5,17 +5,13 @@ checkout and installed runtimes; run each heavy job serially.
 
 ```sh
 python3 .claude/skills/verify/coding-smoke-admission-db-run.py bun before
-python3 .claude/skills/verify/coding-smoke-admission-db-run.py deno before --executable "$DENO"
 python3 .claude/skills/verify/coding-smoke-admission-db-run.py bun verify
-python3 .claude/skills/verify/coding-smoke-admission-db-run.py deno verify --executable "$DENO"
-bun --no-install --no-env-file .claude/skills/verify/coding-smoke-admission-proof-binding.ts HEAD
 ```
 
-DENO names an existing runtime. Imports are cached-only. Every run owns a fresh
-synthetic HOME/data/TMPDIR and real daemon on an ephemeral non-8399 port. The
-runner saves evidence before immediately deleting temporary daemon data. Before
-mode restores smoke-operation.ts and delivery-facts.ts from origin/dev and
-restores the draft in finally; never edit or run another job concurrently.
+Imports are cached-only. Every run owns a fresh synthetic HOME/data/TMPDIR and real daemon
+on an ephemeral non-8399 port. The runner saves evidence before immediately deleting
+temporary daemon data. Before mode restores smoke-operation.ts and delivery-facts.ts from
+origin/dev and restores the draft in finally; never edit or run another job concurrently.
 The bound-writer regression must fail and be committed before implementation.
 
 The helper calls the actual neo.coding.smoke WebSocket operation. A local gh

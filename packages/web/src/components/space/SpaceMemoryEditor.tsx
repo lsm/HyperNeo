@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentMemoryEntry } from '@hyperneo/shared';
 import { FORM_CONTROL_CLASS, FORM_LABEL_CLASS, FormActions } from '../ui/FormField';
 import { Modal } from '../ui/Modal';
-import { memoryStore } from '../../lib/memory-store';
+import { memoryStore } from '../../lib/space-memory-store';
 import { toast } from '../../lib/toast';
 
 const KEY_MAX_LENGTH = 200;

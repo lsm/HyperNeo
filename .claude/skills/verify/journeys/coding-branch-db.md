@@ -32,14 +32,12 @@ another collector waits and a real `system.health` RPC answers. Health must stay
 under 250 ms and main-loop lag under one second. The affected write misses its
 250 ms target while the lock is held; the report records that limitation.
 
-Repeat with Deno 2.9.4 in a new isolated environment from `packages/daemon`,
-using `deno run -A ../../.claude/skills/verify/coding-branch-db.ts verify "$RUN"`.
-The fake gh still uses the installed Bun runtime. No provider, model, browser,
-existing data, credentials or real GitHub is used. Owned daemon instances,
-sockets and lock processes close in finally. Branch-reader contracts additionally
-cover aliases, partial/empty/failed coverage, retry-after, bounded contention,
-coalescing and stale observations. Other coding observation families and watch
-policy reads remain separate slices.
+The fake gh still uses the installed Bun runtime. No provider, model, browser, existing
+data, credentials or real GitHub is used. Owned daemon instances, sockets and lock
+processes close in finally. Branch-reader contracts additionally cover aliases,
+partial/empty/failed coverage, retry-after, bounded contention, coalescing and stale
+observations. Other coding observation families and watch policy reads remain separate
+slices.
 
 RPC timings are retained separately: initial `work.find` discovery can still
 exceed 250 ms even when warm status/snapshot reads and main-loop responsiveness

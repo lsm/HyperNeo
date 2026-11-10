@@ -24,11 +24,10 @@ the reply must retain the frozen hooks despite the edited live definition.
 Instrumentation during startup migration must record zero version INSERTs and
 pin UPDATEs on main. Evidence includes `startupSql` and the recovered pin.
 
-The wiring regression commit completes the job proof but fails this startup SQL
-assertion. The earlier build contract instead ended dead with
-`workflow.run.pin.write does not run migrateSnapshot`. Repeat with
-`VERIFY_PROOF_RUNTIME=deno` and supported Deno on PATH for the second runtime.
-The wrapper preserves evidence and removes its temporary database and home.
+The wiring regression commit completes the job proof but fails this startup SQL assertion.
+The earlier build contract instead ended dead with `workflow.run.pin.write does not run
+migrateSnapshot`. The wrapper preserves evidence and removes its temporary database and
+home.
 
 The workflow-run-pin-write unit cases cover preservation of ordinary pin
 admission, snapshot replacement, transaction rollback, and notifications only

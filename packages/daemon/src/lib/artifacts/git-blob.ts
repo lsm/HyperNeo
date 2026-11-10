@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import {
   ARTIFACT_DEFAULT_LIMITS,
   type ArtifactRefusal,
 } from '@hyperneo/shared/types/artifact-file';
-import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
+import { VIDEO_MAX_BYTES, videoExtension } from '@hyperneo/shared/types/video-container';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { runGhJson } from '../github/gh-lookup-helpers.ts';
@@ -11,7 +12,8 @@ import { spawnProcess } from '../runtime-spawn/index.ts';
 import { sensitivePath, unsafePath } from './file-policy.ts';
 
 const oid = z.string().regex(/^[a-f0-9]{40}$/);
-const limit = ARTIFACT_DEFAULT_LIMITS.artifactBytes;
+const byteLimit = (path: string) =>
+  videoExtension(path) ? VIDEO_MAX_BYTES : ARTIFACT_DEFAULT_LIMITS.artifactBytes;
 const targetSchema = z.strictObject({
   repository: z.string().regex(/^github\.com\/[\w.-]+\/[\w.-]+$/),
   sha: oid,
@@ -29,11 +31,11 @@ const targetSchema = z.strictObject({
 type Target = z.infer<typeof targetSchema>;
 type Blob = { accepted: true; bytes: Buffer; sha256: string; blobSha: string };
 const unavailable = (): ArtifactRefusal => ({ accepted: false, reason: 'unavailable' });
-const tooLarge = (actualBytes: number) => ({
+const tooLarge = (actualBytes: number, limitBytes: number) => ({
   accepted: false as const,
   reason: 'size_limit' as const,
   actualBytes,
-  limitBytes: limit,
+  limitBytes,
 });
 const commitSchema = z.object({ sha: oid, tree: z.object({ sha: oid }) });
 const treeSchema = z.object({
@@ -60,7 +62,7 @@ async function json(target: Target, suffix: string, blob = false) {
       stripGHRepo: true,
       hostHint: 'github.com',
       resourceHint: 'core',
-      ...(blob ? { maxBufferBytes: Math.ceil(limit * 1.5) + 8192 } : {}),
+      ...(blob ? { maxBufferBytes: Math.ceil(byteLimit(target.path) * 1.5) + 8192 } : {}),
     }
   );
   const data = result.ok ? result.data : null;
@@ -90,8 +92,8 @@ async function locate(target: Target) {
     } else {
       if (entry.type !== 'blob' || !['100644', '100755'].includes(entry.mode))
         return { reason: unavailable() };
-      return entry.size !== undefined && entry.size > limit
-        ? { reason: tooLarge(entry.size) }
+      return entry.size !== undefined && entry.size > byteLimit(target.path)
+        ? { reason: tooLarge(entry.size, byteLimit(target.path)) }
         : { value: entry.sha };
     }
   }
@@ -108,7 +110,8 @@ async function download(target: Target, blobSha: string) {
     })
     .safeParse(await json(target, `blobs/${blobSha}`, true));
   if (!parsed.success || parsed.data.sha !== blobSha) return unavailable();
-  if (parsed.data.size > limit) return tooLarge(parsed.data.size);
+  if (parsed.data.size > byteLimit(target.path))
+    return tooLarge(parsed.data.size, byteLimit(target.path));
   const encoded = parsed.data.content.replace(/[\r\n]/g, '');
   if (encoded.length !== 4 * Math.ceil(parsed.data.size / 3)) return unavailable();
   const bytes = Buffer.from(encoded, 'base64');

@@ -5,7 +5,7 @@ import {
   extractConversationMessages,
   parseConversationFrictionJson,
   type TraceMessage,
-} from '../../../../src/lib/evolution/conversation-analysis-service';
+} from '../../../../../space/src/evolution/conversation-analysis-service';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';

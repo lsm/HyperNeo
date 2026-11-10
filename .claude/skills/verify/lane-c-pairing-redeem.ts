@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
@@ -111,7 +112,7 @@ try {
   const post = (code: string, name = 'Synthetic phone', browser = false) => nativeFetch(base + '/pair', { method: 'POST', headers: { 'content-type': 'application/json', ...(browser ? { origin: base } : {}) }, body: JSON.stringify({ code, name }) });
   const connect = async (credential?: string) => {
     const hub = new MessageHub({ defaultSessionId: 'global' });
-    const transport = new WebSocketClientTransport({ url: base.replace('http', 'ws') + '/ws', autoReconnect: false, createSocket: (url) => credential ? new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }) : new WebSocket(url) });
+    const transport = new WebSocketClientTransport({ url: base.replace('http', 'ws') + '/ws', autoReconnect: false, createSocket: (url) => credential ? new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }) : createLocalSocket(url) });
     transports.push(transport); hub.registerTransport(transport); await transport.initialize(); return hub;
   };
   const health = await connect();

@@ -256,7 +256,11 @@ describe('ArtifactPreviewPanel', () => {
     );
     render(<ArtifactPreviewPanel />);
     act(() =>
-      openArtifactPreview({ kind: 'reference', source, reference: 'docs/design/layout.md' })
+      openArtifactPreview({
+        kind: 'reference',
+        source,
+        reference: `https://github.com/acme/demo/blob/${headSha}/docs/design/layout.md`,
+      })
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Todo t1' }));
     await screen.findByRole('heading', { name: 'Layout design' });
@@ -264,7 +268,7 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('explains a forbidden reference without a path', async () => {
-    route(() => ({ accepted: false, reason: 'sensitive_path' }));
+    request.mockResolvedValue({ accepted: false, reason: 'forbidden' });
     render(<ArtifactPreviewPanel />);
     act(() => openArtifactPreview({ kind: 'reference', source, reference: '/Users/x/.env.md' }));
     await screen.findByText('This reference points outside what the preview may open.');
@@ -343,7 +347,7 @@ describe('Neo phone preview sheet', () => {
         <button>Open synthetic file</button>
         <ArtifactPreviewPanel
           fileTabs
-          work={{ id: 'phone-work', showTab: true, count: 2 }}
+          work={{ id: 'phone-work', count: 2 }}
           expansion={{ expanded: false, toggle: vi.fn() }}
         />
       </div>

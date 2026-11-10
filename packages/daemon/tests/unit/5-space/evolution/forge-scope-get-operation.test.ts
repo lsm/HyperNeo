@@ -3,11 +3,11 @@ import type { Session } from '@hyperneo/shared';
 import type {
   EvolutionAuditEntry,
   EvolutionAuditWriter,
-} from '../../../../src/lib/evolution/admission.ts';
-import { EvolutionEpisodeService } from '../../../../src/lib/evolution/episode-service.ts';
-import { createEvolutionOperations } from '../../../../src/lib/evolution/operations.ts';
-import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service.ts';
-import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
+} from '../../../../../space/src/evolution/admission.ts';
+import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
+import { createEvolutionOperations } from '../../../../../space/src/evolution/operations.ts';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service.ts';
+import { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

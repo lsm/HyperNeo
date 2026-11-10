@@ -1,6 +1,6 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { describe, expect, test } from 'bun:test';
 import {
-  admitArtifactCapture,
   admitArtifactContext,
   loadArtifactContextBinding,
   authorizeArtifactCaller,
@@ -9,6 +9,14 @@ import {
   type ArtifactPolicyDependencies,
 } from '../../../../src/lib/artifacts/file-policy.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+
+const admitArtifactCapture = (superpipe({})('legacy-policy-test') as PipelineAPI)
+  .input(['context', 'source', 'caller', 'deps'])
+  .pipe(admitArtifactContext, 'context', 'result:policy')
+  .pipe(loadArtifactContextBinding, ['policy', 'deps', 'caller'], 'result:policy')
+  .pipe(authorizeArtifactCaller, ['policy', 'caller'], 'result:policy')
+  .pipe(resolveArtifactSource, ['policy', 'source', 'deps'], 'result:policy')
+  .endAsync('policy');
 
 const context = { kind: 'todo' as const, id: 'synthetic-todo' };
 const binding: ArtifactContextBinding = {

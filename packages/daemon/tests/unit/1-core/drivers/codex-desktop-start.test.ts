@@ -471,6 +471,27 @@ describe('codex-desktop start', () => {
     ]);
   });
 
+  test('injects confirmed identity into the first task input', async () => {
+    const { instance, calls } = adapter({
+      call: async (method) =>
+        method === 'model/list'
+          ? catalog
+          : method === 'thread/start'
+            ? { thread: { id: 'th1' }, model: model.model, reasoningEffort: 'medium' }
+            : {},
+    });
+    const result = await instance.start!({ ...request, provenance: true }, user);
+    expect(result.ok).toBe(true);
+    const turn = calls.find(([name]) => name === 'desktop/start-turn')![1];
+    expect(turn.input).toEqual([
+      {
+        type: 'text',
+        text: expect.stringContaining('Agent: gpt-6.1-sol (effort: medium) via Codex'),
+        text_elements: [],
+      },
+    ]);
+  });
+
   test('rejects unsupported effort before preparing work', async () => {
     const { instance, calls, spawned, closed } = adapter(
       { call: async () => catalog },
@@ -818,5 +839,21 @@ describe('codex-desktop start', () => {
         'desktop/start-turn: busy Thread th2 was created, but its opening turn was not confirmed.',
     });
     expect(halfway.closed()).toBe(true);
+  });
+});
+
+describe('Codex reuse configuration resolution', () => {
+  test('uses the start catalog without creating a thread or turn', async () => {
+    const run = adapter({ call: async () => catalog });
+    expect(
+      await run.instance.resolveStartConfiguration!({
+        ...request,
+        model: 'sol 6.1',
+        effort: ' Medium ',
+      })
+    ).toEqual({ ok: true, value: { model: 'gpt-6.1-sol', effort: 'medium' } });
+    expect(run.calls.map(([method]) => method)).toEqual(['model/list']);
+    expect(run.closed()).toBe(true);
+    expect(run.spawned).toEqual([]);
   });
 });

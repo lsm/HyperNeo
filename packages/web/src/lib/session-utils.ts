@@ -1,10 +1,13 @@
 import type { Session } from '@hyperneo/shared';
+import { extensionOwnsSession } from './web-extensions.ts';
 
 const USER_SESSION_TYPES = new Set<string | undefined>(['worker', undefined]);
 
 export function isUserSession(session: Session): boolean {
   return (
-    USER_SESSION_TYPES.has(session.type) && !session.context?.roomId && !session.context?.spaceId
+    USER_SESSION_TYPES.has(session.type) &&
+    !session.context?.roomId &&
+    !extensionOwnsSession(session)
   );
 }
 

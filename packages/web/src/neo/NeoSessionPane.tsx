@@ -2,15 +2,16 @@ import type { ChatMessage } from '@hyperneo/shared';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 import { setupFocusTrap } from '../components/ui/Modal.tsx';
+import { artifactPreviewWorkspace } from '../lib/artifact-preview-store.ts';
 import { t } from '../lib/i18n/index.ts';
 import { useInputDraft } from '../hooks/useInputDraft.ts';
 import { useInterrupt } from '../hooks/useInterrupt.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
-import { SessionStore } from '../lib/session-store.ts';
+import { LIVE_QUERY_MESSAGE_LIMIT, SessionStore } from '../lib/session-store.ts';
 import type { MessageImage } from '@hyperneo/shared';
 import { NeoComposer } from './NeoComposer.tsx';
 import { restoreNeoImages } from './neo-attachments.ts';
-import { NeoBusyRow } from './NeoBusyRow.tsx';
+import { NeoBusyRow, neoWaitingLine } from './NeoBusyRow.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoMessage } from './NeoMessage.tsx';
 import { NeoSessionStepsLine, NeoThinkingRow, NeoToolRow } from './NeoSessionSteps.tsx';
@@ -63,14 +64,15 @@ function SessionEntryView({ entry }: { entry: SessionEntry }) {
 export function NeoSessionPane({
   sessionId,
   title,
-  overlay,
+  label: callerLabel,
   onClose,
 }: {
   sessionId: string;
   title: string;
-  overlay: boolean;
-  onClose: () => void;
+  label?: string;
+  onClose?: () => void;
 }) {
+  const overlay = !!onClose;
   const pane = useRef<HTMLElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -87,6 +89,7 @@ export function NeoSessionPane({
     [store]
   );
   useEffect(() => {
+    if (!overlay) return;
     pane.current?.focus();
     const target = opener.current;
     return () => {
@@ -125,7 +128,12 @@ export function NeoSessionPane({
     pinned.current = false;
     setOlderFailed(false);
     try {
-      const older = await store.loadOlderMessages(oldest.timestamp, 100, sessionId, oldest.rowid);
+      const older = await store.loadOlderMessages(
+        oldest.timestamp,
+        LIVE_QUERY_MESSAGE_LIMIT,
+        sessionId,
+        oldest.rowid
+      );
       if (older.messages.length) store.prependMessages(older.messages);
       requestAnimationFrame(() => {
         if (el) el.scrollTop = el.scrollHeight - fromBottom;
@@ -136,10 +144,15 @@ export function NeoSessionPane({
       setLoadingOlder(false);
     }
   }
+  const label = callerLabel ?? store.sessionState.value?.worker?.label ?? title;
+  useEffect(() => {
+    if (!overlay) artifactPreviewWorkspace.update({ sessionId, title: label });
+  }, [overlay, sessionId, label]);
   const state = store.agentState.value;
   const question = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
   const last = blocks.at(-1)?.at(-1);
   const showsRunningSteps = last?.type === 'steps' && last.steps.running;
+  const waitingLine = neoWaitingLine(state);
   const error = notice || store.error.value?.message;
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -162,21 +175,21 @@ export function NeoSessionPane({
       role={overlay ? 'dialog' : undefined}
       aria-modal={overlay ? true : undefined}
       class="neo-session-pane flex flex-col outline-none"
-      aria-label={t('session.chat', { title })}
+      aria-label={t('session.chat', { title: label })}
     >
-      <header class="flex shrink-0 items-center gap-3 border-b border-line px-3 py-2">
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t('session.back')}
-          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-fg hover:bg-fill-soft"
-        >
-          <NeoIcon name="back" />
-        </button>
-        <h2 class="min-w-0 truncate text-sm font-medium text-fg">
-          {store.sessionState.value?.worker?.label ?? title}
-        </h2>
-      </header>
+      {overlay && (
+        <header class="flex shrink-0 items-center gap-3 border-b border-line px-3 py-2">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('session.back')}
+            class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-fg hover:bg-fill-soft"
+          >
+            <NeoIcon name="back" />
+          </button>
+          <h2 class="min-w-0 truncate text-sm font-medium text-fg">{label}</h2>
+        </header>
+      )}
       <div
         ref={scroller}
         class="min-h-0 flex-1 overflow-y-auto"
@@ -235,7 +248,9 @@ export function NeoSessionPane({
               />
             </div>
           )}
-          {running && !showsRunningSteps && <NeoBusyRow words={[t('session.working')]} />}
+          {running && (waitingLine || !showsRunningSteps) && (
+            <NeoBusyRow words={[waitingLine ?? t('session.working')]} />
+          )}
           {error && (
             <p role="alert" class="text-sm text-danger">
               {error}

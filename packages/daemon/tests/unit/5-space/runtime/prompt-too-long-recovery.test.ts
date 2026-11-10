@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   buildPromptTooLongContinueNag,
@@ -13,8 +13,8 @@ import {
   isPromptTooLongUserMessage,
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
 } from '../../../../src/lib/session/prompt-too-long-recovery';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';

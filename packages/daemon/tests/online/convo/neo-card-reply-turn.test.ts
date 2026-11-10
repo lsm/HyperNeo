@@ -1,6 +1,9 @@
+import { createLocalSocket } from '../../../src/lib/pairing/local-credential.ts';
+import { pendingTodoCheck } from '../../unit/helpers/todo-check-packs.ts';
+import { testDirectories } from '../../helpers/temporary-directory';
 import { expect, test } from 'bun:test';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
+
+const createTestDirectory = testDirectories();
 
 function deferred() {
   let resolve!: () => void;
@@ -24,7 +29,7 @@ async function until(check: () => boolean | Promise<boolean>) {
 }
 
 test('Costco human input survives a consumed teammate prompt when question.ask omits replyTo', async () => {
-  const isolated = await mkdtemp(join(tmpdir(), 'neo-card-reply-turn-'));
+  const isolated = createTestDirectory(join(tmpdir(), 'neo-card-reply-turn-'));
   const requestId = crypto.randomUUID();
   const firstModel = deferred();
   const releaseModel = deferred();
@@ -69,8 +74,9 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
           input: {
             name: 'neo.question.ask',
             input: {
+              retireWhen: pendingTodoCheck,
               askId: 'costco',
-              text: phase === 'reply' ? '周六还是周日去 Costco？' : `Costco ${phase}`,
+              text: phase === 'reply' ? '周六还是周日去 Costco？' : `Costco ${phase} 怎么安排？`,
               kind: 'choice',
               options: ['周六', '周日'],
             },
@@ -185,6 +191,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     expect(daemon.server.port).not.toBe(8399);
     daemon.db.updateGlobalSettings({ language: 'zh-Hans' });
     transport = new WebSocketClientTransport({
+      createSocket: createLocalSocket,
       url: `ws://127.0.0.1:${daemon.server.port}/ws`,
       autoReconnect: false,
     });
@@ -293,6 +300,12 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
       items: [expect.objectContaining({ requestId, messageStatus: 'read' })],
     });
     expect((await read()).items).toEqual(page.items);
+    const nextPhase = (index: number) =>
+      hub.request('operation.invoke', {
+        name: 'neo.question.retire',
+        input: { questionId: todos.listQuestions('costco')[index].id, reason: 'Next phase.' },
+      });
+    await nextPhase(0);
     phase = 'background';
     rounds = 0;
     finished = false;
@@ -313,6 +326,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     );
     const afterBackground = await read();
     expect(todos.listQuestions('costco')).toHaveLength(2);
+    await nextPhase(1);
     expect(afterBackground.items).toEqual(page.items);
     phase = 'later';
     rounds = 0;
@@ -359,23 +373,3 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     }
   }
 }, 90000);
-
-test('ACP Neo persists a no-replyTo card notice through its real operation proxy', async () => {
-  const run = await mkdtemp(join(tmpdir(), 'neo-card-reply-acp-'));
-  await mkdir(join(run, 'home'));
-  const proof = fileURLToPath(
-    new URL('../../../../../.claude/skills/verify/card-reply-acp.ts', import.meta.url)
-  );
-  const output = execFileSync('bun', [proof, run], {
-    env: {
-      HOME: join(run, 'home'),
-      PATH: process.env.PATH,
-      NODE_ENV: 'test',
-      HYPERNEO_DATA_DIR: join(run, 'data'),
-      LOG_LEVEL: 'error',
-    },
-    timeout: 60000,
-    encoding: 'utf8',
-  });
-  expect(output).toContain('PASS ACP card reply');
-}, 70000);

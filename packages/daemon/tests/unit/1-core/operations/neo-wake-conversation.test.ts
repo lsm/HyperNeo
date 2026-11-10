@@ -7,7 +7,7 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import { createNeoConversationReadOperation } from '../../../../src/lib/neo/conversation-read-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,

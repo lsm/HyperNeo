@@ -3,7 +3,7 @@ import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../packages/daemon/src/storage/schema/index.ts';
-import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
@@ -25,7 +25,8 @@ sessions.create('todo', { verb: 'start', adapter: 'hyperneo', place: { machine: 
 sessions.recordRef('todo', { adapter: 'hyperneo', id: 'todo-worker' });
 db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('todo-worker','Synthetic',?,'now','now','active','{}','{}')`).run(workspace);
 const worker: OperationCaller = { source: 'mcp', role: 'direct_task_worker', sessionId: 'todo-worker' };
-const registry = createOperationRegistry([createArtifactRegistration(() => db, data, join(root, 'home')), ...createArtifactReadOperations(() => db, data)]);
+const registry = createOperationRegistry([...createArtifactReadOperations(() => db, data)]);
+const historical = (input: Parameters<ReturnType<typeof legacyAttachmentFixture>['execute']>[0]) => legacyAttachmentFixture(() => db, data, join(root, 'home')).execute(input);
 async function call(name: string, input: unknown, caller = worker) {
  const result = await invokeOperation(registry, name, input, caller);
  assert.equal(result.kind, 'completed', JSON.stringify(result));
@@ -36,7 +37,7 @@ writeFileSync(join(workspace, 'hostile.html'), hostile);
 writeFileSync(join(workspace, 'big.html'), `<p>${'x'.repeat(2 * 1024 * 1024)}</p>`);
 writeFileSync(join(workspace, 'notes.md'), '# Not HTML\n');
 writeFileSync(join(workspace, 'deep.html'), `${'<div>'.repeat(200000)}Kept`);
-const register = async (path: string) => (await call('artifact.file.register', { requestId: path, context: { kind: 'todo', id: 'todo' }, path, title: path })).artifact.artifactId;
+const register = async (path: string) => (await historical({ requestId: path, context: { kind: 'todo', id: 'todo' }, path, title: path })).artifact.artifactId;
 const page = await call('artifact.file.html', { artifactId: await register('hostile.html') });
 assert.equal(page.accepted, true, JSON.stringify(page));
 const document = String(page.document);
@@ -51,6 +52,6 @@ assert.deepEqual(await call('artifact.file.html', { artifactId: await register('
 assert.deepEqual(await call('artifact.file.html', { artifactId: await register('big.html') }), { accepted: false, reason: 'size_limit' });
 assert.deepEqual(await call('artifact.file.html', { artifactId: 'missing' }), { accepted: false, reason: 'unavailable' });
 assert.deepEqual(await call('artifact.file.html', { artifactId: await register('deep.html') }), { accepted: false, reason: 'size_limit' });
-const id = (await call('artifact.file.register', { requestId: 'hostile.html', context: { kind: 'todo', id: 'todo' }, path: 'hostile.html', title: 'hostile.html' })).artifact.artifactId;
+const id = (await historical({ requestId: 'hostile.html', context: { kind: 'todo', id: 'todo' }, path: 'hostile.html', title: 'hostile.html' })).artifact.artifactId;
 assert.deepEqual(await call('artifact.file.html', { artifactId: id }, { ...worker, sessionId: 'foreign' }), { accepted: false, reason: 'unavailable' });
 console.log(JSON.stringify({ inertDocument: true, cspFirst: true, textKept: true, scriptsNoticed: true, hostLinks: true, typeRefused: true, sizeRefused: true, depthRefused: true, authorityRechecked: true }));

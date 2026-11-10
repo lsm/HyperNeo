@@ -1,5 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
+import { createLiveFileRead } from '../../../packages/daemon/src/lib/artifacts/live-file-read.ts';
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
@@ -41,7 +41,7 @@ for (const item of cases) {
   writeFileSync(join(home, item.file), `# ${item.field}\nUnique synthetic attachment bytes.\n`);
 }
 writeFileSync(join(home, 'unmentioned.md'), '# Exists but absent from every source field\n');
-const registry = createOperationRegistry([createArtifactReferenceResolve(() => db, data, home), ...createArtifactReadOperations(() => db, data)]);
+const registry = createOperationRegistry([createLiveFileRead(() => db, home), ...createArtifactReadOperations(() => db, data)]);
 type Reply = { accepted: boolean; reason?: string; artifact?: { artifactId: string }; data?: string };
 let remote: ((name: string, input: unknown) => Promise<Reply>) | undefined;
 let stop = async () => {};
@@ -71,19 +71,19 @@ try {
     remote = (name, input) => hub.request('operation.invoke', { name, input });
   }
   for (const item of cases) {
-    const tap = { sourceMessageOrCard: { kind: 'todo', id: `source-${item.field}` }, reference: `~/${item.file}`, requestId: randomUUID() };
-    const receipt = await call('artifact.reference.resolve', tap);
+    const tap = { sourceMessageOrCard: { kind: 'todo', id: `source-${item.field}` }, reference: `~/${item.file}` };
+    const receipt = await call('file.reference.read', tap);
     const observed: Record<string, unknown> = { field: item.field, reference: tap.reference, receipt };
     evidence.cases.push(observed);
     if (receipt.accepted) {
-      const read = await call('artifact.file.read', { artifactId: receipt.artifact!.artifactId });
+      const read = receipt;
       assert.equal(read.accepted, true);
       assert.equal(Buffer.from(read.data!, 'base64').toString(), `# ${item.field}\nUnique synthetic attachment bytes.\n`);
-      assert.deepEqual(await call('artifact.reference.resolve', tap), receipt);
+      assert.deepEqual(await call('file.reference.read', tap), receipt);
       observed.exactBytesRead = true; observed.retryStable = true;
     }
   }
-  evidence.unmentioned = await call('artifact.reference.resolve', { sourceMessageOrCard: { kind: 'todo', id: 'source-title' }, reference: '~/unmentioned.md', requestId: randomUUID() });
+  evidence.unmentioned = await call('file.reference.read', { sourceMessageOrCard: { kind: 'todo', id: 'source-title' }, reference: '~/unmentioned.md' });
   assert.equal(evidence.unmentioned.accepted, false);
   assert(evidence.cases.every(item => (item.receipt as Reply).accepted), JSON.stringify(evidence.cases));
   evidence.passed = true;

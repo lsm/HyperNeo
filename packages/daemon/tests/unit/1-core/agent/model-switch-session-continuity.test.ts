@@ -330,38 +330,6 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     expect(stop).toHaveBeenCalledTimes(1);
     expect(restartSpy).not.toHaveBeenCalled();
   });
-
-  it('clears acpSessionId when switching away from ACP', async () => {
-    mockSession.config.model = 'acp-default';
-    mockSession.config.provider = 'acp';
-    mockSession.acpSessionId = 'acp-session-abc';
-
-    handler = createHandler();
-    const result = await handler.switchModel('opus', 'anthropic');
-
-    expect(result.success).toBe(true);
-    expect(mockSession.acpSessionId).toBeUndefined();
-    expect(updateSessionSpy).toHaveBeenCalledWith(
-      mockSession.id,
-      expect.objectContaining({ acpSessionId: undefined })
-    );
-  });
-
-  it('clears sdkSessionId and sdkOriginPath when switching into ACP', async () => {
-    mockSession.sdkSessionId = 'sdk-session-abc';
-    mockSession.sdkOriginPath = '/test/workspace';
-
-    handler = createHandler();
-    const result = await handler.switchModel('acp-default', 'acp');
-
-    expect(result.success).toBe(true);
-    expect(mockSession.sdkSessionId).toBeUndefined();
-    expect(mockSession.sdkOriginPath).toBeUndefined();
-    expect(updateSessionSpy).toHaveBeenCalledWith(
-      mockSession.id,
-      expect.objectContaining({ sdkSessionId: undefined, sdkOriginPath: undefined })
-    );
-  });
 });
 
 describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)', () => {
@@ -441,6 +409,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
         setIdle: setIdleSpy,
         setQueued: setQueuedSpy,
         getState: getStateSpy,
+        releaseIdleWaiters: mock(() => {}),
       } as unknown as ProcessingStateManager,
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,

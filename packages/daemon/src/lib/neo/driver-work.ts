@@ -1,3 +1,4 @@
+import { planNeoWorkerName } from './worker-name.ts';
 import {
   fillPrompt,
   NEO_WORK_BLOCKER,
@@ -12,6 +13,7 @@ import { z } from 'zod';
 import { workStartConfiguration } from '../drivers/start-configuration.ts';
 import {
   PlaceSchema,
+  type Place,
   type WorkDelivery,
   WorkDeliverySchema,
   type WorkExchangeEntry,
@@ -25,16 +27,18 @@ import {
   type WorkStatus,
   WorkStatusSchema,
   WorkTurnEndSchema,
+  type WorkTurnQuestion,
+  WorkTurnQuestionSchema,
 } from '../drivers/types.ts';
 import { WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import type { NeoSessionFacts } from './pack-contract.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
 
 const NeoStartWorkTarget = z.object({
   verb: z.literal('start'),
   adapter: z.string().min(1).max(80),
+  name: z.string().trim().min(1).max(80).optional(),
   place: PlaceSchema.optional(),
   createFolder: z.boolean().optional(),
   preparationParameters: z
@@ -52,11 +56,16 @@ const NeoStartWorkTarget = z.object({
 
 const NeoSendWorkTarget = z.object({ verb: z.literal('send'), ref: WorkRefSchema });
 
-export const NeoTodoTargetSchema = z.discriminatedUnion('verb', [
-  NeoStartWorkTarget,
-  NeoSendWorkTarget,
-  z.object({ verb: z.literal('bind'), ref: WorkRefSchema }),
-]);
+export const NeoTodoTargetSchema = z.discriminatedUnion(
+  'verb',
+  [NeoStartWorkTarget, NeoSendWorkTarget],
+  {
+    error: (issue) =>
+      (issue.input as { verb?: unknown } | undefined)?.verb === 'bind'
+        ? 'bind is its own operation: use neo.todo.bind {todoId, ref} for work already running; to give a worker a new task use target {verb: send, ref}.'
+        : undefined,
+  }
+);
 
 export type NeoTodoTarget = z.infer<typeof NeoTodoTargetSchema>;
 
@@ -64,7 +73,7 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   NeoReadWorkTarget,
   NeoStartWorkTarget,
   NeoSendWorkTarget,
-  z.object({ verb: z.literal('adopt'), ref: WorkRefSchema }),
+  z.object({ verb: z.literal('adopt'), ref: WorkRefSchema, boundAt: z.number().optional() }),
 ]);
 
 export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;
@@ -102,7 +111,8 @@ export function driverWorkCall(
   target: Exclude<NeoDriverTarget, { verb: 'read' }>,
   work: Pick<NeoWork, 'title' | 'instruction'>,
   goal: NeoWorkGoal | null = null,
-  formatGoal: (instruction: string, goal: NeoWorkGoal | null) => string = withWorkGoal
+  formatGoal: (instruction: string, goal: NeoWorkGoal | null) => string = withWorkGoal,
+  naming?: { place: Place; taken: readonly string[] }
 ): { name: 'work.start' | 'work.send'; input: Record<string, unknown> } {
   const message = formatGoal(work.instruction, goal);
   return target.verb === 'start'
@@ -111,7 +121,15 @@ export function driverWorkCall(
         input: {
           adapter: target.adapter,
           place: target.place,
-          title: work.title,
+          title:
+            target.name ??
+            (target.place?.daemon
+              ? work.title
+              : planNeoWorkerName(
+                  target.adapter,
+                  target.place ?? naming?.place,
+                  naming?.taken ?? []
+                )),
           message,
           ...(target.createFolder ? { createFolder: true } : {}),
           ...(target.model ? { model: target.model } : {}),
@@ -185,6 +203,18 @@ export function readDriverOutcome(
   };
 }
 
+export function readDriverIdentity(outcome: OperationOutcome) {
+  const status = parseDriverStatusReply(outcome);
+  if (!status?.ok) return null;
+  const value = status.value;
+  if (value.model === undefined && value.effort === undefined && !value.identityObservation)
+    return null;
+  return {
+    model: typeof value?.model === 'string' ? value.model : null,
+    effort: typeof value?.effort === 'string' ? value.effort : null,
+  };
+}
+
 const DriverStatusSchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
@@ -198,18 +228,6 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
         recentInputs: z.array(WorkInputSchema).optional(),
         exchange: z.array(WorkExchangeEntrySchema).optional(),
         exchangeCut: z.boolean().optional(),
-        openedPrs: z.array(z.string()).optional(),
-        linkedPrs: z
-          .array(
-            z.object({
-              url: z.string(),
-              dismissed: z.literal(true).optional(),
-              own: z.literal(true).optional(),
-            })
-          )
-          .optional(),
-        linkedPrsWindow: z.literal(true).optional(),
-        branches: z.array(z.string()).optional(),
         execution: z.object({ directory: z.string() }).passthrough().optional(),
       })
       .passthrough(),
@@ -244,6 +262,7 @@ export function readDriverLive(outcome: OperationOutcome): {
   link?: string;
   remoteLink?: string;
   waitingFor?: string;
+  turnQuestion?: WorkTurnQuestion;
 } | null {
   const value = parseDriverStatus(outcome);
   if (!value) return null;
@@ -262,18 +281,35 @@ export function readDriverLive(outcome: OperationOutcome): {
     ...(typeof link === 'string' ? { link } : {}),
     ...(typeof remoteLink === 'string' ? { remoteLink } : {}),
     ...(typeof waitingFor === 'string' ? { waitingFor } : {}),
+    ...readTurnQuestion(value),
   };
 }
 
+function readTurnQuestion(value: unknown): { turnQuestion?: WorkTurnQuestion } {
+  const parsed = WorkTurnQuestionSchema.safeParse(
+    (value as { turnQuestion?: unknown }).turnQuestion
+  );
+  return parsed.success ? { turnQuestion: parsed.data } : {};
+}
+
+export const isWaitingOnPrompt = (live: { status: WorkStatus; turnQuestion?: WorkTurnQuestion }) =>
+  live.status === 'needs_you' && !live.turnQuestion;
+
 export function decideCardLiveStatus(
-  session: { status: WorkStatus; lastActivityAt: number; lastReplyAt?: number },
+  session: {
+    status: WorkStatus;
+    lastActivityAt: number;
+    lastReplyAt?: number;
+    turnQuestion?: WorkTurnQuestion;
+  },
   anchoredAt: number | null,
   prior: WorkStatus | null
 ): WorkStatus {
   if (session.status === 'failed' || session.status === 'stopped') return session.status;
   if (anchoredAt === null) return 'queued';
   const replied = session.lastReplyAt !== undefined && session.lastReplyAt > anchoredAt;
-  if (!replied) return session.status === 'done' ? 'running' : session.status;
+  if (!replied)
+    return session.status === 'done' || session.turnQuestion ? 'running' : session.status;
   if (session.status === 'running') return prior === 'done' ? 'done' : 'running';
   return session.status === 'needs_you' ? 'needs_you' : 'done';
 }
@@ -297,7 +333,9 @@ export function readDriverSendBaseline(
   const value = parseDriverStatus(outcome);
   if (!value) return fallback;
   const { status, lastActivityAt } = value;
-  return status === 'running' || status === 'needs_you' ? null : lastActivityAt;
+  return status === 'running' || isWaitingOnPrompt({ status, ...readTurnQuestion(value) })
+    ? null
+    : lastActivityAt;
 }
 
 export interface DriverSent {
@@ -311,27 +349,8 @@ export function messageOpening(message: string): string {
   return message.trim().split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 80);
 }
 
-function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
+export function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
   return parseDriverStatus(outcome)?.recentInputs ?? null;
-}
-
-export function readDriverSessionFacts(
-  outcome: OperationOutcome
-): Omit<NeoSessionFacts, 'ref' | 'status' | 'lastActivityAt' | 'remotes'> | null {
-  const value = parseDriverStatus(outcome);
-  return value
-    ? {
-        ...(value.execution ? { folder: value.execution.directory } : {}),
-        branches: value.branches ?? [],
-        ...(value.linkedPrs ? { linkedPrs: value.linkedPrs } : {}),
-        ...(value.linkedPrsWindow ? { linkedPrsWindow: true as const } : {}),
-        openedPrs: value.openedPrs ?? [],
-      }
-    : null;
-}
-
-export function readDriverOpenedPrs(outcome: OperationOutcome): string[] {
-  return parseDriverStatus(outcome)?.openedPrs ?? [];
 }
 
 export function readDriverLastInputAt(outcome: OperationOutcome): number | null {

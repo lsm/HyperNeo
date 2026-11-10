@@ -5,8 +5,8 @@ import {
   EvolutionEpisodeService,
   parseEpisodeJudgeJson,
   resolveEpisodeJudgeModel,
-} from '../../../../src/lib/evolution/episode-service';
-import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service';
+} from '../../../../../space/src/evolution/episode-service';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository';
@@ -16,7 +16,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
-import { SpaceGoalService } from '../../../../src/lib/goals/service';
+import { SpaceGoalService } from '../../../../../space/src/goals/service';
 import { CodingArtifactProfile } from '../../../../src/lib/workflows/coding-artifact-profile';
 import type { WorkflowArtifactProfile } from '../../../../src/lib/workflows/artifact-profile';
 import { createSpaceTables } from '../../helpers/space-test-db';

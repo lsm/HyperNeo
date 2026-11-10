@@ -1,0 +1,13 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Verbatim existing-row UPDATE extraction; fresh envelope 199, excluded audited stable data modules 102, total known 301. Public writes remain main-side; full public/shared-barrel/runtime closure unclaimed",
+  "publicRpcMs": 3.9828750000000355,
+  "publicRpc": {
+    "mainUpdates": 3,
+    "existingUpdatesObserved": true,
+    "identityTimeAndCursorPolicyPreserved": true,
+    "peerIsolationAndSavedConfigPreserved": true
+  },
+  "constructorFreeSuppliedTimeFailureAndRollbackPreserved": true,
+  "pass": true
+}

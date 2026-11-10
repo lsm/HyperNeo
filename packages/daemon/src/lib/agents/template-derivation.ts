@@ -6,7 +6,7 @@ import type {
   SpaceAgentAutonomyLevel,
   ThinkingLevel,
 } from '@hyperneo/shared';
-import { slugifyWithinLimit } from '../space/slug.ts';
+import { slugifyWithinLimit } from './slug.ts';
 
 export interface AgentTemplateDerivationSource {
   displayName: string;

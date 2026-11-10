@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from "../../../packages/daemon/src/lib/pairing/local-credential.ts";
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -22,7 +24,7 @@ const pause=()=>new Promise(done=>setTimeout(done,25));
 const indexes=()=>app!.db.getDatabase().prepare("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_sdk_messages_uuid_status','idx_sdk_messages_session') ORDER BY name").all();
 async function start(){
  app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:path}),verbose:false});assert.notEqual(app.server.port,8399);app.db.updateGlobalSettings({neo:{packs:[]}});
- ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+ ws=new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
  await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('RPC connection failed'));});
 }
 async function stop(){ws?.close();ws=undefined;await app?.cleanup();app=undefined;}

@@ -93,6 +93,22 @@ describe('normalizeModelList', () => {
     expect(result).toEqual([{ id: 'gpt-4' }, { id: 'gpt-3.5-turbo' }]);
   });
 
+  it('preserves optional remote names and positive context limits', () => {
+    expect(
+      normalizeModelList('openai-chat', {
+        data: [
+          { id: 'deepseek-pro', name: 'Remote Pro', context_window: 262144 },
+          { id: 'deepseek-flash', display_name: 'Remote Flash', context_length: 524288 },
+          { id: 'deepseek-invalid', name: 123, context_window: -1 },
+        ],
+      })
+    ).toEqual([
+      { id: 'deepseek-pro', name: 'Remote Pro', contextWindow: 262144 },
+      { id: 'deepseek-flash', name: 'Remote Flash', contextWindow: 524288 },
+      { id: 'deepseek-invalid' },
+    ]);
+  });
+
   it('normalizes the Anthropic /v1/models shape with display names', () => {
     const result = normalizeModelList('anthropic-messages', {
       data: [

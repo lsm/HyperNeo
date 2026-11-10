@@ -4,9 +4,9 @@ import {
   isWorkflowRunWaiting,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { RunTickContext } from '../space/runtime/space-runtime.ts';
 import {
   continued,
+  type RunTickContext,
   type RunTickCtx,
   type SpaceWorkflowRunTickDeps,
   type SpaceWorkflowRunTickOutcome,
@@ -114,7 +114,6 @@ export async function recoverStrandedExecutions(ctx: RunTickCtx): Promise<RunTic
   return {
     ...ctx,
     recovery: {
-      tam: result.tam,
       blockedByCrash: result.blockedByCrash,
       preTickPendingIds: result.preTickPendingIds,
     },
@@ -145,8 +144,7 @@ export function promotePendingExecutionsWithLiveSessions(ctx: RunTickCtx): RunTi
     ...ctx,
     nodeExecutions: ctx.deps.promotePendingExecutionsWithLiveSessions(
       ctx.runId,
-      ctx.recovery!.preTickPendingIds,
-      ctx.recovery!.tam
+      ctx.recovery!.preTickPendingIds
     ),
   };
 }
@@ -192,7 +190,6 @@ export async function spawnPendingExecutions(ctx: RunTickCtx): Promise<RunTickCt
     ctx.context!.meta,
     ctx.run!,
     spawn.pendingExecutions,
-    ctx.recovery!.tam,
     ctx.recovery!.blockedByCrash
   );
   return { ...ctx, spawned };

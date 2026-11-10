@@ -15,6 +15,7 @@ import type { NeoAskState } from '../useNeoConversationAsks.ts';
 import type { NeoPublicationState } from '../useNeoPublications.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
+let sendMock: ReturnType<typeof vi.fn>;
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -30,12 +31,23 @@ vi.mock('../neo-attachments.ts', async (original) => ({
   restoreNeoImages: restoreImages,
 }));
 vi.mock('../NeoComposer.tsx', () => ({
-  NeoComposer: (props: { draft: string; onDraft: (value: string) => void }) => (
-    <textarea
-      aria-label="Draft"
-      value={props.draft}
-      onInput={(event) => props.onDraft(event.currentTarget.value)}
-    />
+  NeoComposer: (props: {
+    draft: string;
+    onDraft: (value: string) => void;
+    onSend: (input: { text: string }) => void;
+  }) => (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        props.onSend({ text: props.draft });
+      }}
+    >
+      <textarea
+        aria-label="Draft"
+        value={props.draft}
+        onInput={(event) => props.onDraft(event.currentTarget.value)}
+      />
+    </form>
   ),
 }));
 
@@ -168,6 +180,7 @@ beforeEach(async () => {
     store.messagesLoaded.value = true;
     sessionId.value = root;
   });
+  sendMock = vi.fn(async () => ({ ok: true }));
   useNeoMock.mockImplementation(() => {
     const rootSnapshot = source.value;
     const conversation = projectNeoPublicConversation(
@@ -193,7 +206,8 @@ beforeEach(async () => {
       setError: (value: string) => (error.value = value),
       open,
       retry: vi.fn(),
-      send: vi.fn(),
+      send: sendMock,
+      sendRequestId: () => undefined,
       act: vi.fn(),
       busyWork: null,
     };
@@ -215,6 +229,14 @@ const askArticle = (id: string) =>
     item.getAttribute('data-public-entry')?.includes(`"ask","${id}"`)
   )! as HTMLElement;
 describe('NeoLive durable conversation activation', () => {
+  it('opens legacy settings from the Neo connection error', () => {
+    error.value = 'Synthetic connection failure';
+    render(<NeoLive />);
+    expect(screen.getByRole('link', { name: 'HyperNeo settings ↗' }).getAttribute('href')).toBe(
+      '/settings'
+    );
+  });
+
   it('never shows the SDK transcript for a root without a durable conversation identity', async () => {
     source.value = { ...source.value, sessionId: 'neo:legacy' };
     sessionId.value = 'neo:legacy';
@@ -459,17 +481,23 @@ describe('NeoLive durable conversation activation', () => {
     expect(await within(publicView()).findByText('a-reply', { selector: 'strong' })).toBeTruthy();
     expect(screen.getByText('Native session controls could not be loaded.')).toBeTruthy();
     expect(screen.queryByText('Opening your conversation…')).toBeNull();
-    expect(screen.queryByLabelText('Draft')).toBeNull();
-    await act(async () => {
-      store.loadErrorKind.value = null;
-      store.messagesLoaded.value = true;
-    });
     expect(screen.getByLabelText('Draft')).toBeTruthy();
     await act(async () => {
       store.activeSessionId.value = 'stale-native-owner';
     });
     expect(screen.queryByLabelText('Public conversation')).toBeNull();
     expect(screen.queryByLabelText('Draft')).toBeNull();
+  });
+
+  it('shows the composer and sends when the raw transcript never loads', async () => {
+    store.messagesLoaded.value = false;
+    render(<NeoLive />);
+    const draft = (await screen.findByLabelText('Draft')) as HTMLTextAreaElement;
+    fireEvent.input(draft, { target: { value: 'still here' } });
+    await waitFor(() => expect(draft.value).toBe('still here'));
+    fireEvent.submit(draft.closest('form')!);
+    await waitFor(() => expect(sendMock).toHaveBeenCalledOnce());
+    expect(JSON.stringify(sendMock.mock.calls[0])).toContain('still here');
   });
 
   it('labels holder replies as Neo without author navigation', async () => {
@@ -655,6 +683,53 @@ describe('NeoLive durable conversation activation', () => {
       asks.value = { ...asks.value, items: [ask('third')] };
     });
     await waitFor(() => expect(main.scrollTop).toBe(1000));
+  });
+
+  it('keeps the bottom pin through nested message resizing without moving a manual reader', async () => {
+    const { container } = render(<NeoLive />);
+    const main = container.querySelector('main')!;
+    let height = 1000;
+    Object.defineProperties(main, {
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    await act(async () => {
+      asks.value = { ...asks.value, items: [ask('first')] };
+    });
+    await waitFor(() => expect(main.scrollTop).toBe(1000));
+    fireEvent.scroll(main);
+    height = 500;
+    main.scrollTop = 300;
+    publicView().append(document.createElement('p'));
+    await waitFor(() => expect(main.scrollTop).toBe(500));
+    height = 1200;
+    publicView().append(document.createElement('p'));
+    await waitFor(() => expect(main.scrollTop).toBe(1200));
+    fireEvent.scroll(main);
+    main.scrollTop = 10;
+    fireEvent.scroll(main);
+    height = 1400;
+    publicView().append(document.createElement('p'));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(main.scrollTop).toBe(10);
+  });
+
+  it('returns to the bottom when sending after reading older messages', async () => {
+    const { container } = render(<NeoLive />);
+    const main = container.querySelector('main')!;
+    Object.defineProperties(main, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    main.scrollTop = 800;
+    fireEvent.scroll(main);
+    main.scrollTop = 0;
+    fireEvent.scroll(main);
+    const input = screen.getByRole('textbox', { name: 'Draft' });
+    fireEvent.input(input, { target: { value: 'A new thought' } });
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1));
+    expect(main.scrollTop).toBe(1000);
   });
 
   it('keeps following new messages after a tap on an unavailable quote', async () => {

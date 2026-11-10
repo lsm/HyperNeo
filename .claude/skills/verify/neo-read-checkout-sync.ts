@@ -1,3 +1,4 @@
+import { createLocalSocket } from "../../../packages/daemon/src/lib/pairing/local-credential.ts";
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -58,7 +59,7 @@ try {
  const ext = app.extensionManager.getExtension('github') as GitHubEventExtension;
  ext.repo.upsertWatchedRepo({spaceId:'proof-space',owner:'synthetic',repo:'neo-read-proof',pollingEnabled:true});
  await new ExternalEventExtensionConfigStore(app.db.getDatabase()).setGlobalConfig('github',{source:'github',globallyEnabled:true,capabilities:{polling:true,rpcConfig:true}});
- ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+ ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
  await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('RPC unavailable'));});
  const poll = () => new Promise<unknown>((done,fail)=>{
   const id=crypto.randomUUID(), timer=setTimeout(()=>fail(new Error('poll RPC deadline')),30000);

@@ -25,6 +25,10 @@ const { mockNavigateToSpaceTask, mockToastSuccess, mockToastError } = vi.hoisted
   mockToastError: vi.fn(),
 }));
 
+vi.mock('../../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/router')),
+}));
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceTask: mockNavigateToSpaceTask,
 }));
@@ -41,7 +45,8 @@ vi.mock('../../../lib/utils', () => ({
   getRelativeTime: () => '1m ago',
 }));
 
-import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
+import { rightPanelTargetSignal } from '../../../lib/signals';
+import { currentSpaceGoalIdSignal } from '../../../lib/space-signals';
 import { spaceStore } from '../../../lib/space-store';
 import { SpaceGoalDialog } from '../SpaceGoalDialog';
 import { SpaceGoals } from '../SpaceGoals';
@@ -273,12 +278,18 @@ describe('SpaceGoals', () => {
     fireEvent.click(screen.getByRole('button', { name: /Second goal/ }));
     expect(currentSpaceGoalIdSignal.value).toBe('goal-2');
     expect(rightPanelTargetSignal.value).toEqual({
-      type: 'goal',
-      spaceId: 'space-1',
-      goalId: 'goal-2',
+      type: 'extension',
+      panel: 'goal',
+      owner: 'space-1',
+      item: 'goal-2',
     });
 
-    rightPanelTargetSignal.value = { type: 'goal', spaceId: 'space-1', goalId: 'goal-2' };
+    rightPanelTargetSignal.value = {
+      type: 'extension',
+      panel: 'goal',
+      owner: 'space-1',
+      item: 'goal-2',
+    };
     unmount();
 
     expect(currentSpaceGoalIdSignal.value).toBeNull();

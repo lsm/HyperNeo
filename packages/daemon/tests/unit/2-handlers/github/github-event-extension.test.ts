@@ -2,12 +2,10 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
-import {
-  ExternalEventService,
-  ExternalEventStore,
-  type ExternalEvent,
-} from '../../../../src/lib/external-events';
+import { ExternalEventService, type ExternalEvent } from '../../../../src/lib/external-events';
+import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
+import { ExternalEventExtensionConfigStore as SqliteExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { syncGitHubPollingCapability } from '../../../../src/app';
 import {
   mapEventType,
@@ -45,6 +43,12 @@ function setupDb(): BunDatabase {
   createTables(db);
   runMigrations(db, () => {});
   return db;
+}
+
+function seedRpcSpace(db: BunDatabase): void {
+  db.prepare(
+    'INSERT INTO spaces(id,slug,name,workspace_path,created_at,updated_at)VALUES(?,?,?,?,?,?)'
+  ).run('space-1', 'space-1', 'Synthetic Space', 'synthetic-space-workspace', 1, 1);
 }
 
 class StaticExternalEventExtensionConfigStore implements ExternalEventExtensionConfigStore {
@@ -1535,6 +1539,7 @@ describe('GitHubEventExtension', () => {
 
   test('RPC disable persists for newly watched repositories', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db);
     const clientHub = new MessageHub();
     const hub = new MessageHub();
@@ -1597,6 +1602,7 @@ describe('GitHubEventExtension', () => {
 
   test('RPC unwatchRepo preserves explicit space enablement after removing last repository', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db);
     const clientHub = new MessageHub();
     const hub = new MessageHub();
@@ -6920,7 +6926,9 @@ describe('GitHubEventExtension', () => {
   test('polling scopes legacy check-run key when owner was seeded by webhook', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
-    const extension = new GitHubEventExtension(db, 'token');
+    const extension = new GitHubEventExtension(db, 'token', {
+      spaceEvents: new ExternalEventStore(db),
+    });
     await extension.start({
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -7289,7 +7297,9 @@ describe('GitHubEventExtension', () => {
   test('polling honors recorded legacy owner during fan-out regardless of order', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
-    const extension = new GitHubEventExtension(db, 'token');
+    const extension = new GitHubEventExtension(db, 'token', {
+      spaceEvents: new ExternalEventStore(db),
+    });
     await extension.start({
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -8738,6 +8748,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled flips global capability and starts timer', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -8847,6 +8858,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.enable re-enables webhook delivery without polling re-arm when interval is 0', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { getPollIntervalMs: () => 0 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -8965,6 +8977,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled false clears the timer when no polling repos remain', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -9000,6 +9013,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled(false) flips the global capability off when no polling repos remain', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -9033,10 +9047,16 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled persists per-space intent independent of polling rows', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
-    const configStore = new RecordingConfigStore({ globallyEnabled: true, polling: false });
+    const configStore = new SqliteExtensionConfigStore(db);
+    await configStore.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { rpcConfig: true, polling: false },
+    });
     const context = {
       publisher: { publish: async () => {} },
       config: configStore,
@@ -9068,6 +9088,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled(true) skips repos with webhook delivery configured (manual or auto)', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -9125,6 +9146,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.enable restarts polling capability for previously-disabled spaces', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -11815,6 +11837,7 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
 
   test('setFilterCurrentUser RPC round-trips the setting through the space config', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db);
     const clientHub = new MessageHub();
     const hub = new MessageHub();
@@ -11822,7 +11845,13 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     clientHub.registerTransport(clientTransport);
     hub.registerTransport(serverTransport);
     await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
-    const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
+    const config = new SqliteExtensionConfigStore(db);
+    await config.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { webhooks: true, polling: true, rpcConfig: true },
+      settings: {},
+    });
     const context = {
       publisher: { publish: async () => {} },
       config,

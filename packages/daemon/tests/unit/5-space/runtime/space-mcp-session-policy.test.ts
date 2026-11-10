@@ -5,7 +5,7 @@ import {
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionRole,
   spaceWorkflowWorkerRequiredMcpServers,
-} from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
+} from '../../../../src/lib/session-resolution/space-mcp-session-policy.ts';
 
 const now = Date.now();
 

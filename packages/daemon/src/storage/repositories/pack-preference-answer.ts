@@ -20,7 +20,7 @@ export function applyPackPreferenceAnswer(db: Database, questionId: string) {
         }
       | undefined;
     if (!row) return { ok: false as const, reason: 'no_bound_proposal' };
-    if (row.applied_at !== null) return { ok: true as const };
+    if (row.applied_at !== null) return { ok: true as const, applied: false };
     if (
       row.state !== 'answered' ||
       row.kind !== 'yesno' ||
@@ -47,6 +47,6 @@ export function applyPackPreferenceAnswer(db: Database, questionId: string) {
       now,
       questionId
     );
-    return { ok: true as const };
+    return { ok: true as const, applied: true };
   })();
 }

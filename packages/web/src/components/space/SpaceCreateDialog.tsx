@@ -2,7 +2,7 @@ import { CloseGlyph } from '../icons/common-glyphs.tsx';
 import { DEFAULT_SEED_AGENT_TEMPLATE_KEY, type SpaceCreateResult } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
-import { navigateToSpace } from '../../lib/router';
+import { navigateToSpace } from '../../lib/space-router';
 import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,

@@ -45,7 +45,7 @@ describe('human stored reference capture', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
-  test('opens unregistered home-relative publication HTML through the existing capture checks', () => {
+  test('reads unregistered home-relative publication HTML through the live reader', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-home-reference-')));
     mkdirSync(join(root, 'home'));
     try {
@@ -69,10 +69,10 @@ describe('human stored reference capture', () => {
       );
       expect(JSON.parse(output)).toMatchObject({
         passed: true,
-        sameAbsoluteSnapshot: true,
+        sameAbsoluteContent: true,
         unregisteredHtmlContent: '<h1>Home-relative HTML content</h1>',
         sourceBound: true,
-        ownershipRechecked: true,
+        sourceRechecked: true,
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -118,7 +118,7 @@ describe('human stored reference capture', () => {
         .success
     ).toBe(true);
   });
-  test('captures only source-bound synthetic bytes and rechecks current authority', () => {
+  test('rejects retired local taps while preserving source authority and saved attachments', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-resolve-')));
     mkdirSync(join(root, 'home'));
     try {

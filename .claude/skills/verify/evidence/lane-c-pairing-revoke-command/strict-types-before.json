@@ -1,0 +1,13 @@
+{
+  "compiler": "6.0.3",
+  "config": "packages/daemon/tsconfig.tests.json",
+  "root": "packages/daemon/tests/unit/1-core/pairing/pairing-revoke-command.test.ts",
+  "errors": [
+    {
+      "code": 2345,
+      "file": "packages/daemon/tests/unit/1-core/pairing/pairing-revoke-command.test.ts",
+      "line": 38,
+      "message": "Argument of type '{ method: string; args: (string | number | OperationCaller)[]; }' is not assignable to parameter of type 'never'."
+    }
+  ]
+}

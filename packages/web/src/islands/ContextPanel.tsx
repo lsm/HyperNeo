@@ -1,33 +1,17 @@
-import { CheckGlyph, ChevronLeftGlyph } from '../components/icons/common-glyphs.tsx';
-import { useState, useEffect, useMemo } from 'preact/hooks';
+import { t } from '../lib/i18n/index.ts';
 import {
   navSectionSignal,
   contextPanelOpenSignal,
-  currentSpaceIdSignal,
-  currentSpaceCanonicalIdSignal,
-  currentSpaceSettingsTabSignal,
-  currentSpaceTasksFilterTabSignal,
-  currentSpaceViewModeSignal,
   settingsSectionSignal,
   type SettingsSection,
 } from '../lib/signals.ts';
-import {
-  navigateToSettings,
-  navigateToSpaces,
-  navigateToSpace,
-  navigateToSpaceAgent,
-  navigateToSpaceConfigure,
-  navigateToSpaceGoals,
-  navigateToSpaceEvolve,
-  navigateToSpaceMemories,
-  navigateToSpaceTasks,
-} from '../lib/router.ts';
+import { navigateToSettings } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
-import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { SectionSwitcher } from '../components/SectionSwitcher.tsx';
+import { isConnectionsSection } from '../components/settings/ConnectionsServicesPage.tsx';
+import { isCapabilitiesSection } from '../components/settings/CapabilitiesPage.tsx';
 import { SessionsSidebar } from './SessionsSidebar.tsx';
-import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
-import { spaceStore } from '../lib/space-store.ts';
+import { extensionNav, shellExtensions } from '../lib/web-extensions.ts';
 
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSection;
@@ -35,38 +19,32 @@ const SETTINGS_SECTIONS: Array<{
   icon: string;
   accent: string;
 }> = [
-  { id: 'general', label: 'General', icon: 'settings', accent: 'text-accent-soft bg-accent/15' },
   {
-    id: 'appearance',
-    label: 'Appearance',
+    id: 'preferences',
+    label: 'Preferences',
     icon: 'palette',
     accent: 'text-cat-purple bg-cat-purple/15',
   },
-  { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-info-soft bg-sky-500/15' },
-  { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
-  { id: 'exa', label: 'Exa Search', icon: 'search', accent: 'text-cat-teal bg-cat-teal/15' },
+  { id: 'neo-model', label: 'Neo', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
   {
-    id: 'app-mcp-servers',
-    label: 'MCP Servers',
-    icon: 'server',
-    accent: 'text-cat-violet bg-cat-violet/15',
+    id: 'harness',
+    label: 'Sessions & Harness',
+    icon: 'swap',
+    accent: 'text-cat-cyan bg-cat-cyan/15',
   },
-  { id: 'devices', label: 'Devices', icon: 'devices', accent: 'text-cat-cyan bg-cat-cyan/15' },
   {
-    id: 'remote-daemons',
-    label: 'Remote Daemons',
-    icon: 'server',
-    accent: 'text-cat-teal bg-cat-teal/15',
-  },
-  { id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-success-soft bg-success/15' },
-  {
-    id: 'coding-pack',
-    label: 'Coding pack',
+    id: 'providers',
+    label: 'Connections & Services',
     icon: 'plug',
-    accent: 'text-cat-violet bg-cat-violet/15',
+    accent: 'text-accent-soft bg-accent/15',
   },
-  { id: 'neo-model', label: 'Neo model', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
-  { id: 'models', label: 'Models', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
+  {
+    id: 'skills',
+    label: 'Capabilities',
+    icon: 'skills',
+    accent: 'text-success-soft bg-success/15',
+  },
+  { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
   { id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-warning bg-warning/15' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', accent: 'text-cat-pink bg-pink-500/15' },
   { id: 'about', label: 'About', icon: 'info', accent: 'text-fg-soft bg-fill' },
@@ -74,34 +52,6 @@ const SETTINGS_SECTIONS: Array<{
 
 function SectionIcon({ type }: { type: string }) {
   switch (type) {
-    case 'settings':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-          />
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-          />
-        </svg>
-      );
-    case 'devices':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
-          />
-        </svg>
-      );
     case 'server':
       return (
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -110,28 +60,6 @@ function SectionIcon({ type }: { type: string }) {
             stroke-linejoin="round"
             stroke-width={2}
             d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
-          />
-        </svg>
-      );
-    case 'cloud':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
-          />
-        </svg>
-      );
-    case 'search':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"
           />
         </svg>
       );
@@ -229,60 +157,13 @@ function SectionIcon({ type }: { type: string }) {
 }
 
 export function ContextPanel() {
-  const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
-
   const navSection = navSectionSignal.value;
   const isPanelOpen = contextPanelOpenSignal.value;
-
-  useEffect(() => {
-    if (navSection === 'spaces') {
-      spaceStore.initGlobalList().catch(() => {});
-    }
-  }, [navSection]);
   const activeSettingsSection = settingsSectionSignal.value;
-  const currentSpaceId = currentSpaceIdSignal.value;
-  const currentSpaceCanonicalId = currentSpaceCanonicalIdSignal.value;
-  const detailPanelSpaceId = currentSpaceCanonicalId ?? currentSpaceId;
-  const currentSpaceSettingsTab = currentSpaceSettingsTabSignal.value;
-  const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
-  const currentSpaceViewMode = currentSpaceViewModeSignal.value;
-  const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
-  const headerTitle = spaceStore.space.value?.name ?? 'Space';
+  const inExtensionContext = extensionNav().some((nav) => nav.contextTabs() !== null);
+  const sidebars = shellExtensions().flatMap((extension) => extension.sidebar(navSection) ?? []);
 
   const handlePanelClose = () => {
-    contextPanelOpenSignal.value = false;
-  };
-
-  const handleSpaceSwitch = (spaceId: string) => {
-    switch (currentSpaceViewMode) {
-      case 'agents':
-        navigateToSpaceAgent(spaceId);
-        break;
-      case 'tasks':
-        navigateToSpaceTasks(spaceId, currentSpaceTasksFilterTab);
-        break;
-      case 'goals':
-        navigateToSpaceGoals(spaceId);
-        break;
-      case 'memories':
-        navigateToSpaceMemories(spaceId);
-        break;
-      case 'forge':
-        navigateToSpaceEvolve(spaceId);
-        break;
-      case 'configure':
-        navigateToSpaceConfigure(spaceId, currentSpaceSettingsTab);
-        break;
-      case 'overview':
-      default:
-        navigateToSpace(spaceId);
-        break;
-    }
-    contextPanelOpenSignal.value = false;
-  };
-
-  const handleCreateSpace = () => {
-    setCreateSpaceOpen(true);
     contextPanelOpenSignal.value = false;
   };
 
@@ -290,102 +171,6 @@ export function ContextPanel() {
     navigateToSettings(section);
     contextPanelOpenSignal.value = false;
   };
-
-  const activeSpaces = useMemo(
-    () => spaceStore.spacesWithTasks.value.filter((space) => space.status === 'active'),
-    [spaceStore.spacesWithTasks.value]
-  );
-
-  const spaceSwitcherContent = (
-    <div class="flex-1 overflow-y-auto py-2" data-testid="space-switcher">
-      {activeSpaces.length === 0 ? (
-        <div class="px-4 py-8 text-center">
-          <svg
-            class="w-10 h-10 mx-auto text-fg-muted mb-3"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={1.5}
-              d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-            />
-          </svg>
-          <p class="text-sm font-medium text-fg-soft">No spaces yet</p>
-          <p class="text-xs text-fg-muted mt-1">
-            Create a Space to organize agents, missions, and project context.
-          </p>
-        </div>
-      ) : (
-        <nav class="px-2 space-y-1" aria-label="Switch spaces">
-          {activeSpaces.map((space) => {
-            const isCurrent = space.id === currentSpaceId;
-            return (
-              <button
-                key={space.id}
-                type="button"
-                onClick={() => handleSpaceSwitch(space.slug)}
-                aria-current={isCurrent ? 'page' : undefined}
-                class={cn(
-                  'w-full rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors',
-                  isCurrent
-                    ? 'bg-fill border border-transparent text-fg'
-                    : 'border border-transparent text-fg-muted hover:bg-fill-soft hover:text-fg'
-                )}
-              >
-                <svg
-                  class="w-5 h-5 flex-shrink-0 text-fg-muted"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={1.75}
-                    d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-                  />
-                </svg>
-                <div class="min-w-0 flex-1">
-                  <div class="text-sm font-medium truncate">{space.name}</div>
-                  {space.description && (
-                    <div class="text-xs text-fg-muted truncate mt-0.5">{space.description}</div>
-                  )}
-                </div>
-                {isCurrent && (
-                  <CheckGlyph
-                    class="w-4 h-4 text-fg-soft flex-shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  />
-                )}
-              </button>
-            );
-          })}
-        </nav>
-      )}
-      <div class="px-4 pt-4 pb-6">
-        <button
-          type="button"
-          onClick={handleCreateSpace}
-          class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-line-strong hover:border-line-strong hover:bg-fill-soft text-sm text-fg-muted hover:text-fg transition-colors"
-        >
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-          Create Space
-        </button>
-      </div>
-    </div>
-  );
 
   return (
     <>
@@ -415,64 +200,19 @@ export function ContextPanel() {
           <SectionSwitcher onClose={handlePanelClose} variant="titlebar" />
         </div>
         <div class="desktop-standard-switcher">
-          <SectionSwitcher onClose={handlePanelClose} showDivider compact={isSpaceDetail} />
+          <SectionSwitcher onClose={handlePanelClose} showDivider compact={inExtensionContext} />
         </div>
 
-        {isSpaceDetail && (
-          <div class="hidden h-9 items-center gap-1 px-4 pt-1 md:flex">
-            <button
-              type="button"
-              onClick={() => navigateToSpaces()}
-              class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg"
-              title="Back to Spaces"
-              aria-label="Back to Spaces"
-            >
-              <ChevronLeftGlyph
-                class="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              />
-            </button>
-            <h2 class="min-w-0 flex-1 text-sm font-semibold text-fg truncate">{headerTitle}</h2>
-          </div>
-        )}
-
         <div
-          key={navSection + (isSpaceDetail ? '-space-detail' : '')}
+          key={navSection + (inExtensionContext ? '-extension-detail' : '')}
           class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
         >
           {navSection === 'chats' && (
             <SessionsSidebar onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
           )}
-          {navSection === 'spaces' && !isSpaceDetail && spaceSwitcherContent}
-          {navSection === 'spaces' && isSpaceDetail && (
-            <div class="flex-1 flex flex-col overflow-hidden">
-              <div class="md:hidden px-2 pt-2 pb-1 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigateToSpaces();
-                    contextPanelOpenSignal.value = false;
-                  }}
-                  class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg w-full text-sm text-fg-muted hover:text-fg hover:bg-fill-soft transition-colors"
-                >
-                  <ChevronLeftGlyph
-                    class="w-4 h-4 flex-shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  />
-                  All Spaces
-                </button>
-              </div>
-              <SpaceDetailPanel
-                spaceId={detailPanelSpaceId!}
-                navigationSpaceId={currentSpaceId!}
-                onNavigate={() => (contextPanelOpenSignal.value = false)}
-              />
-            </div>
-          )}
+          {sidebars.map((Sidebar) => (
+            <Sidebar key={navSection} onClose={handlePanelClose} />
+          ))}
           {navSection === 'settings' && (
             <div class="flex-1 overflow-y-auto scrollbar-dark px-2 py-3">
               <div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-fg-muted">
@@ -480,7 +220,10 @@ export function ContextPanel() {
               </div>
               <nav class="space-y-1" aria-label="Settings sections">
                 {SETTINGS_SECTIONS.map((section) => {
-                  const isActive = activeSettingsSection === section.id;
+                  const isActive =
+                    activeSettingsSection === section.id ||
+                    (section.id === 'providers' && isConnectionsSection(activeSettingsSection)) ||
+                    (section.id === 'skills' && isCapabilitiesSection(activeSettingsSection));
                   return (
                     <button
                       key={section.id}
@@ -501,7 +244,9 @@ export function ContextPanel() {
                       >
                         <SectionIcon type={section.icon} />
                       </span>
-                      <span class="truncate text-sm font-medium">{section.label}</span>
+                      <span class="truncate text-sm font-medium">
+                        {section.id === 'providers' ? t('connections.page') : section.label}
+                      </span>
                     </button>
                   );
                 })}
@@ -539,7 +284,6 @@ export function ContextPanel() {
           </button>
         </div>
       </div>
-      <SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />
     </>
   );
 }

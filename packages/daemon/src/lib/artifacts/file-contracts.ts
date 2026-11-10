@@ -50,7 +50,7 @@ export function unregisteredArtifact(
   return (
     refs.find((ref, index) => {
       const known = registered[index];
-      return !known || fields.some((field) => known[field] !== ref[field]);
+      return ref.kind === 'video' || !known || fields.some((field) => known[field] !== ref[field]);
     }) ?? null
   );
 }

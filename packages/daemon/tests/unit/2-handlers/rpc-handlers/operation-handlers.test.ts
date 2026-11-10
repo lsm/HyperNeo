@@ -1,4 +1,5 @@
 import { createDaemonOperationCatalog } from '../../../../src/lib/operations/catalog.ts';
+import { createTaskCatalogOperations } from '../../../../src/lib/tasks/catalog-operations.ts';
 import { transitionStandaloneTask } from '../../../../src/storage/tasks/transition-task';
 import { createStandaloneTaskMetadataEditor } from '../../../../src/lib/tasks/metadata-standalone';
 import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
@@ -35,15 +36,18 @@ describe('operation.invoke RPC registration', () => {
     server.registerTransport(transports[1]);
     unregister = setupOperationHandlers(
       server,
-      createDaemonOperationCatalog(mailbox.jobQueue, {
-        sessionStatus: () => 'active',
-        readTask: (taskId) => readTaskCore(taskDb, taskId),
-        createTask: (input, creatorSessionId) =>
-          runDbOpOn(taskDb)(createStandaloneTask, { input, creatorSessionId }),
-        listTasks: (input) => listTaskCores(taskDb, input),
-        editTask: createStandaloneTaskMetadataEditor(taskDb, runDbOpOn(taskDb)),
-        transitionTask: (input) => runDbOpOn(taskDb)(transitionStandaloneTask, input),
-      }),
+      createDaemonOperationCatalog(
+        mailbox.jobQueue,
+        { sessionStatus: () => 'active' },
+        createTaskCatalogOperations({ getDatabase: () => taskDb } as never, {
+          readTask: (taskId) => readTaskCore(taskDb, taskId),
+          createTask: (input, creatorSessionId) =>
+            runDbOpOn(taskDb)(createStandaloneTask, { input, creatorSessionId }),
+          listTasks: (input) => listTaskCores(taskDb, input),
+          editTask: createStandaloneTaskMetadataEditor(taskDb, runDbOpOn(taskDb)),
+          transitionTask: (input) => runDbOpOn(taskDb)(transitionStandaloneTask, input),
+        })
+      ),
       () => null
     );
     await Promise.all(transports.map((transport) => transport.initialize()));

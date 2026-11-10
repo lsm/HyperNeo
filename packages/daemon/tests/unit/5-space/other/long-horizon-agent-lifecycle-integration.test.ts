@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import type { EpisodeJudgePromptInput } from '../../../../src/lib/evolution/episode-service';
-import { EvolutionEpisodeService } from '../../../../src/lib/evolution/episode-service';
-import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service';
+import type { EpisodeJudgePromptInput } from '../../../../../space/src/evolution/episode-service';
+import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service';
 import {
   GOAL_AUTOMATION_EXECUTE,
   TASK_SCHEDULE_FIRE,
 } from '../../../../src/lib/job-queue-constants';
-import { handleGoalAutomationExecute } from '../../../../src/lib/job-handlers/goal-automation-execute.handler';
-import { handleTaskScheduleFire } from '../../../../src/lib/job-handlers/task-schedule-fire.handler';
-import { GoalAutomationService } from '../../../../src/lib/goals/automation-service';
+import { handleGoalAutomationExecute } from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
+import { handleTaskScheduleFire } from '../../../../../space/src/job-handlers/task-schedule-fire.handler.ts';
+import { GoalAutomationService } from '../../../../../space/src/goals/automation-service';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/agents/long-horizon-templates';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../src/lib/rpc-handlers';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../../space/src/goals/automation-schedule-sync.ts';
 import { GoalAutomationCursorRepository } from '../../../../src/storage/repositories/goal-automation-cursor-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';

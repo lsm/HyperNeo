@@ -26,13 +26,10 @@ records that limitation. Evidence is `evidence/project-forget-writer.json` withi
 the run directory. The helper closes its socket, lock process and daemon. No
 provider, model, GitHub, browser, existing database or credentials are used.
 
-For Deno 2.9.4, run from `packages/daemon` in a new isolated environment, replacing
-the Bun invocation with
-`deno run -A ../../.claude/skills/verify/neo-project-forget-writer.ts verify "$RUN"`.
-To compare the regression-only checkout, copy the proof helper there and run its
-`before` mode in another fresh directory; it requires target SQL on main.
-The recorded in-place baseline used the old operation and pack callback with an
-export-name-only compatibility shim for the newly registered worker module.
+To compare the regression-only checkout, copy the proof helper there and run its `before`
+mode in another fresh directory; it requires target SQL on main. The recorded in-place
+baseline used the old operation and pack callback with an export-name-only compatibility
+shim for the newly registered worker module.
 
 Unit contracts cover refused/protected/unknown projects, worker bindings,
 shared/renamed watches, disabled packs, one-winner admission and external

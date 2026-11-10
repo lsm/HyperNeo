@@ -38,6 +38,17 @@ describe('routeDriveTurnOutcome outcome gates', () => {
     });
   });
 
+  it('query_failure_cooldown requeues until the failure latch expires', () => {
+    expect(
+      routeDriveTurnOutcome({ outcome: 'blocked', retryAt: 9012, reason: 'query_failure_cooldown' })
+    ).toEqual({
+      mutation: 'requeue',
+      retryAt: 9012,
+      settleSkipped: false,
+      result: { parked: 'query_failure_cooldown', retryAt: 9012 },
+    });
+  });
+
   it('aborted mutates nothing and settles the skipped delivery', () => {
     expect(routeDriveTurnOutcome({ outcome: 'aborted' })).toEqual({
       mutation: 'none',

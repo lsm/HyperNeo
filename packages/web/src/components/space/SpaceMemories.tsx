@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentMemoryEntry } from '@hyperneo/shared';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
-import { memoryStore } from '../../lib/memory-store';
+import { memoryStore } from '../../lib/space-memory-store';
 import { toast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
 import { SpaceMemoryEditor } from './SpaceMemoryEditor';

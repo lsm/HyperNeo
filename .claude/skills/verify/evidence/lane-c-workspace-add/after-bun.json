@@ -1,0 +1,97 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "firstRpcMs": 2.6232499999999845,
+  "committedHistoryBeforeRealMcpImport": true,
+  "disabledImportedCanonicalDefault": true,
+  "changeEventAfterImportCommit": true,
+  "normalizedLiteralPath": true,
+  "repeatedAndConcurrentCounters": true,
+  "malformedImportRetainsHistoryAndCatalog": true,
+  "scanExceptionDoesNotUndoHistory": true,
+  "failedWritePreventsScan": true,
+  "healthWhileWriterHeldMs": 1.6598330000000487,
+  "deliberatelyHeldWriterMs": 1240.490333,
+  "admissionTimestampAndCommitOrdering": true,
+  "preCommitFailurePreventsScan": true,
+  "unknownOutcomeNeverReplayedOrScanned": true,
+  "invalidPathRejectedBeforeWriter": true,
+  "maxLoopLagMs": 3.6190410000000384,
+  "rssBytes": 191759440,
+  "walBytes": 12392,
+  "commandPosts": 13,
+  "publicWorkspaceAddExercised": true,
+  "historyAndMcpSourceReadsRemainMain": true,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.14608300000008967,
+      "requestBytes": 106,
+      "replyBytes": 115,
+      "encodeMs": 0.006833999999912521
+    },
+    {
+      "roundTripMs": 0.061875000000100044,
+      "requestBytes": 106,
+      "replyBytes": 115,
+      "encodeMs": 0.004333999999971638
+    },
+    {
+      "roundTripMs": 0.08391700000004221,
+      "requestBytes": 100,
+      "replyBytes": 109,
+      "encodeMs": 0.0010419999999840002
+    },
+    {
+      "roundTripMs": 0.1971250000000282,
+      "requestBytes": 100,
+      "replyBytes": 109,
+      "encodeMs": 0.0005830000000059954
+    },
+    {
+      "roundTripMs": 0.2552500000000464,
+      "requestBytes": 100,
+      "replyBytes": 109,
+      "encodeMs": 0.0004159999999728825
+    },
+    {
+      "roundTripMs": 0.2984160000000884,
+      "requestBytes": 100,
+      "replyBytes": 109,
+      "encodeMs": 0.00033399999995253893
+    },
+    {
+      "roundTripMs": 0.06020899999998619,
+      "requestBytes": 106,
+      "replyBytes": 115,
+      "encodeMs": 0.0011660000000119908
+    },
+    {
+      "roundTripMs": 0.08124999999995453,
+      "requestBytes": 102,
+      "replyBytes": 111,
+      "encodeMs": 0.0009579999999687061
+    },
+    {
+      "roundTripMs": 1237.503625,
+      "requestBytes": 94,
+      "replyBytes": 103,
+      "encodeMs": 0.01516700000001947
+    },
+    {
+      "roundTripMs": 4.36850000000004,
+      "requestBytes": 97,
+      "replyBytes": 106,
+      "encodeMs": 0.0062499999999090505
+    },
+    {
+      "roundTripMs": 4.9650000000001455,
+      "requestBytes": 97,
+      "replyBytes": 106,
+      "encodeMs": 0.004500000000007276
+    }
+  ],
+  "runtime": "bun",
+  "runtimeVersion": "1.4.3",
+  "temporaryDaemonDataRemoved": true
+}

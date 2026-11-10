@@ -7,7 +7,7 @@ import {
   resolveLiveWorkspaceSyncTarget,
   runLiveWorkspaceSyncFlow,
   type LiveWorkspaceSyncRequest,
-} from '../../../../src/lib/space/runtime/live-workspace-sync-flow';
+} from '../../../../../space/src/runtime/live-workspace-sync-flow';
 import {
   admitWorkflowProvisioning,
   rehydrateExecutionStage,
@@ -18,13 +18,13 @@ import {
   type ProvisioningFacts,
   type ProvisioningOwner,
   type ProvisioningRequest,
-} from '../../../../src/lib/space/runtime/provision-workflow-session-flow';
+} from '../../../../../space/src/runtime/provision-workflow-session-flow';
 import {
   healWorkspaceSession,
   resolveSelfHealWorkspaceTarget,
   runSelfHealWorkspaceFlow,
   type SelfHealWorkspaceRequest,
-} from '../../../../src/lib/space/runtime/self-heal-workspace-flow';
+} from '../../../../../space/src/runtime/self-heal-workspace-flow';
 
 const TASK_ID = 'task-1';
 const SPACE_ID = 'space-1';

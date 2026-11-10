@@ -17,11 +17,9 @@ waiting clears that metadata. No retry is spent and the full Unicode payload
 survives. Main-connection instrumentation records zero target requeue UPDATEs.
 Evidence includes the control job's terminal result and captured SQL.
 
-The same contract before the build ends dead with `jobs.write does not run
-requeueParked`. The failing contract is committed before the catalog change.
-Repeat with `VERIFY_PROOF_RUNTIME=deno` and the supported Deno on PATH. The
-shared wrapper scrubs the environment, saves evidence and removes synthetic
-daemon data after cleanup.
+The same contract before the build ends dead with `jobs.write does not run requeueParked`.
+The failing contract is committed before the catalog change. The shared wrapper scrubs the
+environment, saves evidence and removes synthetic daemon data after cleanup.
 
 Run the existing job-queue-repository unit cases for requeue, stale-token fencing,
 park metadata and waiting semantics. This journey proves command availability

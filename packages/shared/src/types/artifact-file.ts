@@ -1,4 +1,32 @@
-export const ARTIFACT_KINDS = ['markdown', 'html', 'image', 'json', 'log', 'text'] as const;
+export const ARTIFACT_KINDS = [
+  'markdown',
+  'html',
+  'image',
+  'json',
+  'log',
+  'text',
+  'video',
+] as const;
+
+export const PREVIEWABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
+  'md',
+  'markdown',
+  'txt',
+  'json',
+  'jsonl',
+  'log',
+  'csv',
+  'css',
+  'html',
+  'htm',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'mp4',
+  'mov',
+]);
 
 export const ARTIFACT_DEFAULT_LIMITS = {
   artifactBytes: 64 * 1024 * 1024,
@@ -34,6 +62,16 @@ export interface ArtifactRef {
   readonly title: string;
   readonly kind: (typeof ARTIFACT_KINDS)[number];
   readonly byteLength: number;
+}
+
+export interface PublicHandoffReference {
+  readonly type: 'handoff';
+  readonly daemonId: string;
+  readonly artifactId: string;
+  readonly sessionId: string;
+  readonly name: string;
+  readonly byteLength: number;
+  readonly sha256: string;
 }
 
 export interface ArtifactProjection {

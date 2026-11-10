@@ -1,4 +1,5 @@
 import { compileArgs, COMPILED_WORKER_ENTRYPOINTS } from './compiled-worker-entrypoints.ts';
+import { checkSdkRuntimes } from './sdk-runtime-check.ts';
 import { readReleaseBuildCommit } from '../packages/daemon/src/lib/build-metadata.ts';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -43,6 +44,11 @@ function verifyBundledDependency(outputPath: string, needle: string): void {
   }
 }
 
+function runsOnThisMachine(target: string): boolean {
+  const platform = process.platform === 'win32' ? 'windows' : process.platform;
+  return target === `bun-${platform}-${process.arch}`;
+}
+
 console.log('Step 1: Building web frontend...\n');
 bun(['run', 'build'], join(ROOT, 'packages', 'web'));
 
@@ -73,6 +79,7 @@ for (const target of targets) {
   console.log('  Verifying Copilot SDK bundle markers...');
   verifyBundledDependency(outputPath, '@github/copilot-sdk');
   verifyBundledDependency(outputPath, 'vscode-jsonrpc');
+  if (runsOnThisMachine(target)) await checkSdkRuntimes(outputPath);
 
   if (!target.includes('windows')) {
     const daemonOutputPath = outputFileForTarget(target, 'hyperneod');
@@ -88,6 +95,7 @@ for (const target of targets) {
 
     verifyBundledDependency(daemonOutputPath, '@github/copilot-sdk');
     verifyBundledDependency(daemonOutputPath, 'vscode-jsonrpc');
+    if (runsOnThisMachine(target)) await checkSdkRuntimes(daemonOutputPath);
   }
 }
 

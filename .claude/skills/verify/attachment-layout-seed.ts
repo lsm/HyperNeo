@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
-import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import { captureGitArtifact } from '../../../packages/daemon/src/lib/artifacts/git-capture.ts';
 
 const root = realpathSync(process.argv[2]);
@@ -34,7 +34,7 @@ const db = new Database(join(data, 'daemon.db'));
 const context = { kind: 'todo' as const, id: 'todo' };
 const markdown = '# Launch plan\n\nA synthetic document for trying the attachment layout.\n\n## Decisions\n\n| Topic | Proposal |\n| --- | --- |\n| Audience | Curious readers |\n| Launch | A small pilot |\n\nOpen the other attachment while this stays open. The chat remains usable on wide screens.\n';
 writeFileSync(join(root, 'workspace', 'report.md'), markdown);
-const local = await createArtifactRegistration(() => db, data, join(root, 'home')).execute({ requestId: 'layout-markdown', context, path: 'report.md', title: 'Launch plan (Markdown)' }, { source: 'rpc', principal: 'local' });
+const local = await legacyAttachmentFixture(() => db, data, join(root, 'home')).execute({ requestId: 'layout-markdown', context, path: 'report.md', title: 'Launch plan (Markdown)' }, { source: 'rpc', principal: 'local' });
 assert(local.accepted, JSON.stringify(local));
 const bytes = Buffer.from('# PR layout proposal\n\nThis synthetic PR file is captured as an immutable git blob.\n\n## Review notes\n\n- Keep the conversation clickable.\n- Replace the preview when another attachment opens.\n- Close with X, Escape or browser Back.\n');
 const git = await captureGitArtifact(db, data, { context, repository: 'github.com/example/demo', sha: 'a'.repeat(40), path: 'docs/proposal.md' }, 'layout-git', async () => true, async () => ({ accepted: true, bytes, sha256: createHash('sha256').update(bytes).digest('hex'), blobSha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex') }), join(root, 'home'));

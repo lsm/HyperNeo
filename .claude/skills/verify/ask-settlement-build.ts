@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -18,7 +20,7 @@ for(const path of ['workspace','bin','evidence'])mkdirSync(join(run,path),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 const prepare=db.prepare.bind(db),replay=app.db.gateway.onChanges;let record=false,mainSql=0,held=false,neoEvents=0;const tables:string[]=[];
 db.prepare=((sql:string)=>{if(record && /neo_todos|neo_asks|neo_questions|neo_todo_sessions/.test(sql))mainSql++;return prepare(sql);}) as typeof db.prepare;
@@ -26,8 +28,7 @@ app.db.gateway.onChanges=changes=>{if(record)tables.push(...changes.map(change=>
 const off=hub.onEvent('neo.changed',()=>{neoEvents++;});
 type Receipt={ok:false;reason:string}|{ok:true;ask:NeoAsk;todos:NeoTodo[];records?:string[]};
 const command=<T>(name:string,mode:'read'|'write',method:string,args:unknown[])=>app.db.gateway.run({name,mode,run:()=>{throw new Error('Settlement must run in DB workers');}} as DbOp<object,T>,{method,args});
-const settle=()=>command<Receipt>('neo.askSettlementWrites','write','settle',[{askId:'ask',status:'done',outcome:'Explicitly ended'},10]);
-const split=()=>command<Receipt|null>('neo.askSettlementWrites','write','splitParent',['parent',20]);
+const settle=()=>command<Receipt>('neo.askSettlementWrites','write','settle',[{askId:'ask',status:'dropped',outcome:'Explicitly ended'},10]);
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{ask:NeoAsk;todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const result:Record<string,unknown>={runtimeCallersMoved:false};
 try{
@@ -35,8 +36,8 @@ try{
  const root='neo:10000000-0000-4000-8000-000000009076';
  await app.db.createSession({id:root,title:'Synthetic settlement build',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
- const ask=(id:string,parentId:string|null=null)=>store.openAsk({id,parentId,repo:parentId?'github.com/synthetic/child':null,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep full work',createdAt:1});
- const todo=(id:string,askId:string)=>store.addTodo(id,askId,{title:id,doneWhen:'Observed outcome',check:null,instruction:null,named:null},1);
+ const ask=(id:string,parentId:string|null=null)=>store.openAsk({id,parentId,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep full work',createdAt:1});
+ const todo=(id:string,askId:string)=>store.addTodo(id,askId,{ approvedAt: 1,title:id,doneWhen:'Observed outcome',check:null,instruction:null,named:null},1);
  ask('ask');todo('first','ask');todo('second','ask');
  const report='Full settlement report 🦊\n'.repeat(20000).trim();
  store.updateTodo(store.getTodo('first')!,{state:'doing',report},2);
@@ -54,23 +55,23 @@ try{
  await new Promise(resolve=>setTimeout(resolve,80));if(error)throw error;
  assert.equal(replied,false);assert.equal(tables.length,0);assert.deepEqual(await visible(),before);await hub.request('system.health',{});
  db.exec('ROLLBACK');held=false;const receipt=await pending;record=false;
- assert(receipt.ok);assert.equal(receipt.ask.status,'done');assert(receipt.todos.every(todo=>todo.state==='closed_unverified'));
- assert(receipt.todos.some(todo=>todo.id==='first' && todo.report===report));assert(receipt.records?.[0].startsWith('todos_unfinished:'));
+ assert(receipt.ok);assert.equal(receipt.ask.status,'dropped');assert(receipt.todos.every(todo=>todo.state==='removed'));
+ assert(receipt.todos.some(todo=>todo.id==='first' && todo.report===report));
  assert((await visible()).entry.todos.some(todo=>todo.id==='first' && todo.report===report));assert.equal(store.getQuestion('card')?.state,'retired');result.commitBeforeReply=true;result.explicitSettlementEndsHumanHold=true;
  result.fullReport={bytes:Buffer.byteLength(report),sha256:createHash('sha256').update(report).digest('hex')};
  record=true;
  const stop=await command<{todo:NeoTodo;ask:NeoAsk;ref:{id:string};live:string;adopted:boolean}>('neo.todoSessionReads','read','stopContext',['first']);record=false;
- assert.equal(stop.ref.id,'adopted-worker');assert.equal(stop.live,'done');assert.equal(stop.adopted,true);assert.equal(stop.ask.status,'done');result.currentStopContext=true;
+ assert.equal(stop.ref.id,'adopted-worker');assert.equal(stop.live,'done');assert.equal(stop.adopted,true);assert.equal(stop.ask.status,'dropped');result.currentStopContext=true;
  ask('parent');ask('child','parent');todo('child-work','child');
  store.updateTodo(store.getTodo('child-work')!,{state:'blocked',blockedBy:'needs-human',blockedReason:'Choose'},3);
  store.askQuestion('child-card','child',{kind:'choice',todoId:'child-work',text:'Choose',options:['Go','Stop'],multiple:false,yesLabel:null,noLabel:null},3);
- const beforeChild=await visible('child');record=true;const parent=await split();record=false;
- assert(parent?.ok && parent.ask.status==='done');assert.deepEqual(await visible('child'),beforeChild);
+ const beforeChild=await visible('child');
+ assert.equal((await visible('parent')).entry.ask.status,'open');assert.deepEqual(await visible('child'),beforeChild);
  store.retireQuestion(store.getQuestion('child-card')!,'Neo decided per the human',null,30);
  record=true;
  const released=await command<{todo:NeoTodo}>('neo.todoRunnerWrites','write','recompute',['child-work',null,{},40,{state:'no_opinion'}]);record=false;
- assert.notEqual(released.todo.blockedBy,'needs-human');assert(['todo','doing'].includes(released.todo.state));result.splitParentPreservesChild=true;result.retiredCardReleasesHold=true;
- const prior=tables.length;record=true;assert.deepEqual(await split(),null);const stale=await settle();assert(!stale.ok && stale.reason.startsWith('ask_settled:'));record=false;assert.equal(tables.length,prior);result.noopsQuiet=true;
+ assert.notEqual(released.todo.blockedBy,'needs-human');assert(['todo','doing'].includes(released.todo.state));result.historicalChildPreserved=true;result.retiredCardReleasesHold=true;
+ const prior=tables.length;record=true;const stale=await settle();assert(!stale.ok && stale.reason.startsWith('ask_settled:'));record=false;assert.equal(tables.length,prior);result.noopsQuiet=true;
  assert.equal(mainSql,0);await hub.request('system.health',{});assert.equal(neoEvents,0);result.mainSql=0;result.noNeoEvents=true;result.verified=true;
 }finally{
  if(held)db.exec('ROLLBACK');off();db.prepare=prepare;app.db.gateway.onChanges=replay;

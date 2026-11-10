@@ -39,15 +39,15 @@ import {
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
 } from '../../../../src/lib/agents/long-horizon-tools.ts';
 import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
+import { SpaceManager as SpaceMgr } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/workflows/workflow-manager.ts';
-import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import { createAgentSubscriptionOperations } from '../../../../src/lib/external-events/agent-subscription-operations.ts';
+import type { SpaceRuntimeServiceConfig } from '../../../../../space/src/runtime/space-runtime-service.ts';
+import { createAgentSubscriptionOperations } from '../../../../../space/src/external-events/agent-subscription-operations.ts';
 import { isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
-import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
@@ -886,7 +886,7 @@ describe('SpaceRuntimeService', () => {
         updateMetadata: mock(async () => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
-        restart: mock(async () => {}),
+        restart: mock(async () => ({ blocked: false })),
         getSessionData: mock(() => ({ id: 'session-1', metadata: {}, config: {} }) as Session),
       } as unknown as AgentSession;
     }
@@ -2496,7 +2496,7 @@ describe('SpaceRuntimeService', () => {
           sessionData.config = { ...sessionData.config, ...updates };
         }),
         resetQuery: mock(async () => ({ success: true })),
-        restart: mock(async () => {}),
+        restart: mock(async () => ({ blocked: false })),
         getSessionData: mock(() => sessionData),
       } as unknown as AgentSession;
       let created = existing;
@@ -3954,7 +3954,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
   test('updates provider undefined → kimi on the next wake', async () => {
     const updateConfig = mock(async () => {});
     const resetQuery = mock(async () => ({ success: true }));
-    const restart = mock(async () => {});
+    const restart = mock(async () => ({ blocked: false }));
     const stranded = {
       getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: undefined } }),
       updateConfig,
@@ -3981,6 +3981,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     const reevaluate = mock(async () => {});
     const restart = mock(async (options?: { beforeStart?: () => Promise<void> }) => {
       await options?.beforeStart?.();
+      return { blocked: false };
     });
     const session = {
       getSessionData: () => ({ config: { model: 'old-model', provider: 'kimi' } }),

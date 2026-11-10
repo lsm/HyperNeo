@@ -6,7 +6,7 @@ import {
   WorkSummarySchema,
   type WorkSummary,
 } from '../../../../src/lib/drivers/types.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   createOperationRegistry,
   defineOperation,

@@ -1,4 +1,6 @@
+import type { ClientEventData } from './operations/client-event-schemas.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { homedir } from 'node:os';
 import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@hyperneo/shared';
 import type { SessionManager } from './session-manager.ts';
 import type { AuthManager } from './auth-manager.ts';
@@ -296,6 +298,7 @@ export class StateProjectionService {
       maxSessions: this.config.maxSessions,
       storageLocation: this.config.dbPath,
       workspaceRoot: this.config.workspaceRoot,
+      homeDirectory: homedir(),
 
       auth: authStatus,
 
@@ -323,7 +326,7 @@ export class StateProjectionService {
     };
   }
 
-  private async getSettingsState(): Promise<SettingsState> {
+  private async getSettingsState(): Promise<SettingsState & ClientEventData<'state.settings'>> {
     const settings = sanitizeGlobalSettings(
       this.settingsManager.getGlobalSettings(),
       this.credentialManager
@@ -348,7 +351,9 @@ export class StateProjectionService {
     };
   }
 
-  private async getSessionState(sessionId: string): Promise<SessionState> {
+  private async getSessionState(
+    sessionId: string
+  ): Promise<SessionState & ClientEventData<'state.session'>> {
     const agentSession = await this.sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       if (sessionId.startsWith('room:') || sessionId.startsWith('conv:')) {

@@ -1,13 +1,13 @@
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { navigateToSpaceTasks } from '../../lib/router';
-import { currentSpaceTasksFilterTabSignal } from '../../lib/signals';
+import { navigateToSpaceTasks } from '../../lib/space-router';
+import { currentSpaceTasksFilterTabSignal } from '../../lib/space-signals';
 import { type SummarySpaceTask, spaceStore } from '../../lib/space-store';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
-import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
+import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/space-task-filters';
 import { toast } from '../../lib/toast';
-import { getTaskStatusClasses, getTaskStatusConfig } from '../../lib/task-status';
+import { getTaskStatusClasses, getTaskStatusConfig } from '../../lib/space-task-status';
 import { Spinner } from '../ui/Spinner';
 import { StatusBadge } from '../ui/StatusBadge';
 import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';

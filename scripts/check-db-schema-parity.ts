@@ -6,6 +6,10 @@ import {
 import { createTables, runMigrations } from '../packages/daemon/src/storage/schema';
 import { Database } from '../packages/daemon/src/storage/sqlite-compat';
 import { createSpaceTables } from '../packages/daemon/tests/unit/helpers/space-test-db';
+import { registerSchemaExtension } from '../packages/daemon/src/storage/schema/extensions';
+import { SPACE_SCHEMA } from '../packages/daemon/src/storage/schema/space-schema';
+
+registerSchemaExtension(SPACE_SCHEMA);
 
 type ColumnRow = {
   name: string;
@@ -349,7 +353,6 @@ export function checkScopeRegistration(prodDb: Database): string[] {
   const registeredTables = new Set([
     ...getExcludedTableNames(),
     ...getAccessibleTableNames('global'),
-    ...getAccessibleTableNames('room'),
     ...getAccessibleTableNames('space'),
   ]);
   const prodTableNames = getTableNames(prodDb);
@@ -364,8 +367,8 @@ export function checkScopeRegistration(prodDb: Database): string[] {
     );
   }
 
-  const staleAccessibleTables = ['global', 'room', 'space'].flatMap((scopeType) =>
-    getAccessibleTableNames(scopeType as 'global' | 'room' | 'space')
+  const staleAccessibleTables = ['global', 'space'].flatMap((scopeType) =>
+    getAccessibleTableNames(scopeType as 'global' | 'space')
       .filter((tableName) => !prodTables.has(tableName))
       .map((tableName) => `${scopeType}:${tableName}`)
   );
@@ -376,8 +379,8 @@ export function checkScopeRegistration(prodDb: Database): string[] {
     );
   }
 
-  const scopeColumnFailures = ['global', 'room', 'space'].flatMap((scopeType) =>
-    getScopeConfig(scopeType as 'global' | 'room' | 'space').flatMap((config) =>
+  const scopeColumnFailures = ['global', 'space'].flatMap((scopeType) =>
+    getScopeConfig(scopeType as 'global' | 'space').flatMap((config) =>
       validateScopeConfigColumns(prodDb, scopeType, config)
     )
   );

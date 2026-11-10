@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { getPresetAgentTemplates } from '../../../../src/lib/agents/seed-agents.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {} from '../../../../src/lib/workflows/post-approval-route-selection.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
 import { createTaskCompletion } from '../../../../src/lib/tasks/complete-task.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { createTestSession } from '../../../helpers/database';

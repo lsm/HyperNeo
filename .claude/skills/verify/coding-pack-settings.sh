@@ -21,4 +21,9 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 [[ "$ready" == true ]]
-node .claude/skills/verify/coding-pack-settings.mjs "$PORT" "$RUN"
+for _ in $(seq 1 60); do
+  [[ -S "$RUN/data/session-door.sock" ]] && break
+  sleep 0.5
+done
+[[ -S "$RUN/data/session-door.sock" ]]
+HYPERNEO_DATA_DIR="$RUN/data" node .claude/skills/verify/coding-pack-settings.mjs "$PORT" "$RUN"

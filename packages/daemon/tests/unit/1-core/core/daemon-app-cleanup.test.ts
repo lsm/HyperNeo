@@ -1,5 +1,14 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test, jest } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemonApp, releaseStartupFileLogCapture } from '../../../../src/app';
@@ -34,7 +43,6 @@ describe('Daemon App Cleanup', () => {
   let originalAnthropicAuthToken: string | undefined;
   let originalGlmApiKey: string | undefined;
   let originalTestUserSettingsDir: string | undefined;
-  let originalAcpCommand: string | undefined;
   let bunServeSpy: ReturnType<typeof spyOn> | null = null;
   const logs: string[] = [];
 
@@ -44,12 +52,10 @@ describe('Daemon App Cleanup', () => {
     originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
     originalGlmApiKey = process.env.GLM_API_KEY;
     originalTestUserSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
-    originalAcpCommand = process.env.HYPERNEO_ACP_COMMAND;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     delete process.env.GLM_API_KEY;
-    delete process.env.HYPERNEO_ACP_COMMAND;
 
     clearStructuredLogSubscribers();
 
@@ -110,11 +116,6 @@ describe('Daemon App Cleanup', () => {
     } else {
       delete process.env.TEST_USER_SETTINGS_DIR;
     }
-    if (originalAcpCommand !== undefined) {
-      process.env.HYPERNEO_ACP_COMMAND = originalAcpCommand;
-    } else {
-      delete process.env.HYPERNEO_ACP_COMMAND;
-    }
 
     console.log = originalConsoleLog;
     console.error = originalConsoleError;
@@ -143,6 +144,39 @@ describe('Daemon App Cleanup', () => {
     } finally {
       await daemonContext.cleanup();
     }
+  });
+
+  test('closes the daemon-owned OAP engine during cleanup', async () => {
+    const daemonContext = await createDaemonApp({ config, verbose: false, standalone: false });
+    const root = mkdtempSync(join(tmpdir(), 'oap-daemon-cleanup-'));
+    const binaryPath = join(root, 'hub');
+    const script = `#!${process.execPath}
+if (process.argv[2] === '--version') { console.log('fixture'); process.exit(0); }
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({id:request.id,ok:true,result:process.pid}) + '\\n');
+});
+`;
+    writeFileSync(binaryPath, script);
+    chmodSync(binaryPath, 0o700);
+    let cleaned = false;
+    try {
+      const hub = await daemonContext.oapEngine.getHub({
+        binaryPath,
+        identity: { version: 'fixture', sha256: createHash('sha256').update(script).digest('hex') },
+        stateDirectory: join(root, 'state'),
+        codexExecutable: join(root, 'codex'),
+        codexHome: join(root, 'codex-home'),
+      });
+      const pid = (await hub.request('ping')) as number;
+      await daemonContext.cleanup();
+      cleaned = true;
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      if (!cleaned) await daemonContext.cleanup();
+      rmSync(root, { recursive: true, force: true });
+    }
+    await expect(daemonContext.oapEngine.getHub({} as never)).rejects.toThrow('closed');
   });
 
   describe('pending RPC calls timeout', () => {
@@ -274,7 +308,6 @@ describe('Daemon App Cleanup', () => {
       delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.GLM_API_KEY;
-      delete process.env.HYPERNEO_ACP_COMMAND;
     });
 
     afterEach(() => {
@@ -323,7 +356,6 @@ describe('Daemon App Cleanup', () => {
       async (fails) => {
         const directory = join(tmpdir(), `hyperneo-shutdown-sql-${crypto.randomUUID()}`);
         const path = join(directory, 'daemon.jsonl');
-        jest.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
         const arm = spyOn(watchdog, 'armStallDetectionWhenStartupSettles').mockImplementation(
           (_handle, _settled, options) => options?.onArm?.('startup_settled')
         );
@@ -377,7 +409,6 @@ describe('Daemon App Cleanup', () => {
           if (fails) app?.db.close();
           observer.close();
           arm.mockRestore();
-          jest.useRealTimers();
           rmSync(directory, { recursive: true, force: true });
         }
       }

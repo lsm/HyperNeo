@@ -1,0 +1,24 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Verbatim cursor UPDATE extraction only; public polling writes remain main-side, activation/reset policy and constructor/backfill unchanged",
+  "publicRpcMs": 1.2435829999999441,
+  "publicRpc": {
+    "mainCursorUpdates": 1,
+    "cursorResetAndUnrelatedFieldsPreserved": true,
+    "disableDoesNotRewriteCursor": true,
+    "savedProjectionMatchesCommit": true,
+    "cursor": {
+      "lastSeenAt": 15,
+      "etags": {
+        "issues": "synthetic-etag"
+      },
+      "checkRunPollingEnabledAt": 1793275540966,
+      "endpointLastSeenAt": {
+        "issues": 24
+      },
+      "endpointPendingLastSeenAt": {
+        "pulls": 26
+      }
+    }
+  }
+}

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConnectionManager } from '../connection-manager';
+import { spaceWebExtension } from '../../lib/space-web-extension';
+import { registerWebExtension } from '../../lib/web-extensions';
+
+registerWebExtension('space', spaceWebExtension);
 
 const fixture = vi.hoisted(() => ({
   effects: [] as string[],

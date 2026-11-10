@@ -4,6 +4,8 @@ import { act, render, cleanup, screen, waitFor, fireEvent } from '@testing-libra
 import type { ProviderRecord } from '@hyperneo/shared';
 
 const {
+  mockNavigateToSettings,
+  mockUpdateGlobalSettings,
   mockListProviders,
   mockListProviderAuthStatus,
   mockUpdateProvider,
@@ -27,6 +29,8 @@ const {
   mockListAvailableModels,
   mockRequest,
 } = vi.hoisted(() => ({
+  mockNavigateToSettings: vi.fn(),
+  mockUpdateGlobalSettings: vi.fn(),
   mockListProviders: vi.fn(),
   mockListProviderAuthStatus: vi.fn(),
   mockUpdateProvider: vi.fn(),
@@ -51,7 +55,10 @@ const {
   mockRequest: vi.fn(),
 }));
 
+vi.mock('../../../lib/router.ts', () => ({ navigateToSettings: mockNavigateToSettings }));
+
 vi.mock('../../../lib/api-helpers.ts', () => ({
+  updateGlobalSettings: (updates: unknown) => mockUpdateGlobalSettings(updates),
   listProviders: () => mockListProviders(),
   listProviderAuthStatus: () => mockListProviderAuthStatus(),
   updateProvider: (id: string, params: unknown, creds?: unknown) =>
@@ -104,36 +111,6 @@ vi.mock('../OAuthModal.tsx', () => ({
       </button>
       <button data-testid="oauth-complete-btn" onClick={onComplete}>
         Complete
-      </button>
-    </div>
-  ),
-}));
-
-vi.mock('../AcpEditorModal.tsx', () => ({
-  AcpEditorModal: ({
-    providerId,
-    command,
-    models,
-    envBacked,
-    configJson,
-    onClose,
-  }: {
-    providerId: string;
-    command: string;
-    models: Array<{ id: string }> | undefined;
-    envBacked?: boolean;
-    configJson?: string;
-    onClose: () => void;
-  }) => (
-    <div data-testid="acp-editor-modal">
-      <span>{`${providerId}:${command}:${(models ?? []).map((model) => model.id).join(',')}`}</span>
-      <span data-testid="acp-editor-models-state">
-        {models === undefined ? 'absent' : models.length === 0 ? 'empty' : 'set'}
-      </span>
-      <span data-testid="acp-editor-config-json">{configJson ?? ''}</span>
-      <span data-testid="acp-editor-env-backed">{envBacked ? 'env' : 'explicit'}</span>
-      <button data-testid="acp-editor-close" onClick={onClose}>
-        Close
       </button>
     </div>
   ),
@@ -295,6 +272,8 @@ describe('ProvidersSettings', () => {
     mockListAvailableModels.mockReset();
     mockListAvailableModels.mockResolvedValue({ models: [], cached: true });
     globalStore.systemState.value = null;
+    globalStore.settings.value = null;
+    mockUpdateGlobalSettings.mockResolvedValue(undefined);
     connectionState.value = 'connecting';
   });
 
@@ -638,118 +617,6 @@ describe('ProvidersSettings', () => {
     });
   });
 
-  it('renders ACP configuration and opens the editor', async () => {
-    const provider = createMockProvider('acp-1', 'acp', {
-      displayName: 'ACP Agent',
-      authType: 'none',
-      configJson: JSON.stringify({
-        command: 'devin acp',
-        models: [{ id: 'devin-model', name: 'Devin Model' }],
-      }),
-    });
-    mockListProviders.mockResolvedValue({ providers: [provider] });
-
-    const { container } = render(<ProvidersSettings />);
-    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
-    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
-    await waitFor(() => expect(container.textContent).toContain('devin acp'));
-    expect(container.textContent).toContain('Devin Model');
-
-    fireEvent.click(screen.getByText('Edit'));
-    expect(screen.getByTestId('acp-editor-modal').textContent).toContain(
-      'acp-1:devin acp:devin-model'
-    );
-    fireEvent.click(screen.getByTestId('acp-editor-close'));
-    expect(screen.queryByTestId('acp-editor-modal')).toBeNull();
-  });
-
-  it('treats a disabled record without a stored command as environment-backed', async () => {
-    const provider = createMockProvider('acp-1', 'acp', {
-      displayName: 'ACP Agent',
-      authType: 'none',
-      isEnabled: false,
-      available: false,
-    });
-    mockListProviders.mockResolvedValue({ providers: [provider] });
-
-    const { container } = render(<ProvidersSettings />);
-    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
-    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
-    await waitFor(() => expect(screen.getByText('Edit')).toBeTruthy());
-
-    fireEvent.click(screen.getByText('Edit'));
-    expect(screen.getByTestId('acp-editor-env-backed').textContent).toBe('env');
-  });
-
-  it('handles malformed ACP configuration', async () => {
-    const provider = createMockProvider('acp-1', 'acp', {
-      displayName: 'ACP Agent',
-      authType: 'none',
-      configJson: '{invalid',
-    });
-    mockListProviders.mockResolvedValue({ providers: [provider] });
-
-    const { container } = render(<ProvidersSettings />);
-    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
-    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
-
-    await waitFor(() => expect(container.textContent).toContain('No command set'));
-  });
-
-  it('falls back to ACP model ids for malformed names', async () => {
-    const provider = createMockProvider('acp-1', 'acp', {
-      displayName: 'ACP Agent',
-      authType: 'none',
-      configJson: JSON.stringify({
-        command: 'devin acp',
-        models: [{ id: 'devin-model', name: { invalid: true } }],
-      }),
-    });
-    mockListProviders.mockResolvedValue({ providers: [provider] });
-
-    const { container } = render(<ProvidersSettings />);
-    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
-    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
-
-    await waitFor(() => expect(container.textContent).toContain('devin-model'));
-    fireEvent.click(screen.getByText('Edit'));
-    expect(screen.getByTestId('acp-editor-modal').textContent).toContain(
-      'acp-1:devin acp:devin-model'
-    );
-  });
-
-  it('treats an all-invalid ACP models array as absent when opening the editor', async () => {
-    const provider = createMockProvider('acp-1', 'acp', {
-      displayName: 'ACP Agent',
-      authType: 'none',
-      configJson: JSON.stringify({ command: 'devin acp', models: [null] }),
-    });
-    mockListProviders.mockResolvedValue({ providers: [provider] });
-
-    const { container } = render(<ProvidersSettings />);
-    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
-    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
-    fireEvent.click(screen.getByText('Edit'));
-
-    expect(screen.getByTestId('acp-editor-models-state').textContent).toBe('absent');
-  });
-
-  it('keeps an explicitly empty ACP models array distinct from absent', async () => {
-    const provider = createMockProvider('acp-1', 'acp', {
-      displayName: 'ACP Agent',
-      authType: 'none',
-      configJson: JSON.stringify({ command: 'devin acp', models: [] }),
-    });
-    mockListProviders.mockResolvedValue({ providers: [provider] });
-
-    const { container } = render(<ProvidersSettings />);
-    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
-    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
-    fireEvent.click(screen.getByText('Edit'));
-
-    expect(screen.getByTestId('acp-editor-models-state').textContent).toBe('empty');
-  });
-
   it('toggles provider enabled state', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', isEnabled: true }),
@@ -769,6 +636,12 @@ describe('ProvidersSettings', () => {
     });
   });
 
+  it('links the provider default explanation to Sessions & Harness', async () => {
+    render(<ProvidersSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sessions & Harness' }));
+    expect(mockNavigateToSettings).toHaveBeenCalledWith('harness');
+  });
+
   it('sets provider as default', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', isDefault: false }),
@@ -780,7 +653,7 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
 
-    const starButton = container.querySelector('button[title="Set as default"]');
+    const starButton = screen.getByRole('button', { name: 'Set Anthropic as default provider' });
     if (starButton) fireEvent.click(starButton);
 
     await waitFor(() => {
@@ -1717,6 +1590,45 @@ describe('ProvidersSettings', () => {
       return screen.getByTestId('visible-models-panel')!;
     };
 
+    it('shows the OpenRouter allowlist beside visible models without writing on open', async () => {
+      const provider = createMockProvider('or1', 'openrouter', { displayName: 'OpenRouter' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('OpenRouter'));
+      await expandFirstProvider(container);
+      expect(screen.getByLabelText('OpenRouter allowlist')).toBeTruthy();
+      expect(container.textContent).toContain('No allowlist restriction');
+      expect(mockUpdateProvider).not.toHaveBeenCalled();
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it('shows the saved intersection and saves the allowlist without changing curation', async () => {
+      globalStore.settings.value = {
+        settingSources: ['user', 'project', 'local'],
+        providerModelAllowlists: { openrouter: ['vendor/a', 'vendor/b'], kimi: ['kimi/a'] },
+      };
+      const provider = createMockProvider('or1', 'openrouter', {
+        displayName: 'OpenRouter',
+        configJson: JSON.stringify({ models: [{ id: 'vendor/b' }, { id: 'vendor/c' }] }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('OpenRouter'));
+      await expandFirstProvider(container);
+      expect(container.textContent).toContain('Saved models on both lists (1): vendor/b');
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+      fireEvent.input(screen.getByLabelText('OpenRouter allowlist'), {
+        target: { value: 'vendor/c\nvendor/c' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
+      await waitFor(() =>
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
+          providerModelAllowlists: { openrouter: ['vendor/c'], kimi: ['kimi/a'] },
+        })
+      );
+      expect(mockUpdateProvider).not.toHaveBeenCalled();
+    });
+
     it('fetches remote candidates and renders them merged with stored curation', async () => {
       const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
       mockListProviders.mockResolvedValue({ providers: [provider] });
@@ -1806,64 +1718,6 @@ describe('ProvidersSettings', () => {
       for (const box of boxes) {
         expect(box.checked).toBe(false);
       }
-    });
-
-    it('probes the stored ACP command and allows toggling before save', async () => {
-      const provider = createMockProvider('acp-1', 'acp', {
-        displayName: 'ACP Agent',
-        authType: 'none',
-        configJson: JSON.stringify({ command: 'devin acp' }),
-      });
-      mockListProviders.mockResolvedValue({ providers: [provider] });
-      mockListProviderRemoteModels.mockResolvedValue({
-        models: [{ id: 'devin-model', name: 'Devin Model' }],
-      });
-
-      const { container } = render(<ProvidersSettings />);
-      await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
-      const panel = await expandFirstProvider(container);
-
-      fireEvent.click(screen.getByText('Fetch models'));
-
-      await waitFor(() => {
-        expect(mockListProviderRemoteModels).toHaveBeenCalledWith('acp-1', {
-          command: 'devin acp',
-          force: true,
-        });
-      });
-      await waitFor(() => expect(panel.textContent).toContain('devin-model'));
-      expect(mockUpdateProvider).not.toHaveBeenCalled();
-      expect(mockToastSuccess).not.toHaveBeenCalled();
-      const box = panel.querySelector<HTMLInputElement>('input[type="checkbox"]');
-      expect(box?.checked).toBe(true);
-      expect(box?.disabled).toBe(false);
-      fireEvent.click(box!);
-      expect(mockUpdateProvider).not.toHaveBeenCalled();
-    });
-
-    it('probes a stored baseUrl override for non-ACP providers', async () => {
-      const provider = createMockProvider('m1', 'minimax', {
-        displayName: 'MiniMax',
-        baseUrl: 'https://api.minimax.io/v1',
-      });
-      mockListProviders.mockResolvedValue({ providers: [provider] });
-      mockListProviderRemoteModels.mockResolvedValue({ models: [{ id: 'abab6.5s-chat' }] });
-
-      const { container } = render(<ProvidersSettings />);
-      await waitFor(() => expect(container.textContent).toContain('MiniMax'));
-      await expandFirstProvider(container);
-
-      fireEvent.click(screen.getByText('Fetch models'));
-
-      await waitFor(() => {
-        expect(mockListProviderRemoteModels).toHaveBeenCalledWith('m1', {
-          baseUrl: 'https://api.minimax.io/v1',
-          force: true,
-        });
-      });
-      await waitFor(() =>
-        expect(screen.getByTestId('visible-models-panel')!.textContent).toContain('abab6.5s-chat')
-      );
     });
 
     it('renders the fetch error without leaving the panel', async () => {

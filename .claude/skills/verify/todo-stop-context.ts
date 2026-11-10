@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -19,7 +21,7 @@ for(const path of ['workspace','bin','evidence'])mkdirSync(join(run,path),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const network=globalThis.fetch; globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false}); assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 const prepare=db.prepare.bind(db),read=NeoTodoSessionRepository.prototype.read,registry=app.sessionManager.getOperationRegistry();
 let mainSql=0,watch=false,beforeRead=()=>{},beforeStop=()=>{};
@@ -40,7 +42,7 @@ type Receipt={ok:false;reason:string}|{ok:true;todo:NeoTodo;records?:string[]};
 const mutate=(kind:'close'|'remove',id:string,replacedBy?:string)=>hub.request<Receipt>('operation.invoke',{name:`neo.todo.${kind}`,input:{todoId:id,reason:'Explicit human outcome',...(replacedBy?{replacedBy}:{})}});
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const seed=(id:string,askId='ask')=>{
- store.addTodo(id,askId,{title:id,doneWhen:'Observed',check:null,instruction:null,named:null},1);
+ store.addTodo(id,askId,{ approvedAt: 1, dependsOn: [], title:id,doneWhen:'Observed',check:null,instruction:null,named:null},1);
  store.updateTodo(store.getTodo(id)!,{state:'doing',report},2);
  sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id}});sessions.recordRef(id,{adapter:'hyperneo',id},2);
 };
@@ -53,7 +55,7 @@ try{
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  for(const id of ['ask','settled'])store.openAsk({id,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep work',createdAt:1});
  seed('close');watch=true;const closed=await mutate('close','close');watch=false;
- assert(closed.ok && closed.todo.state==='closed_unverified');assert.equal(closed.todo.report,report);
+ assert(closed.ok && closed.todo.state==='blocked' && closed.todo.blockedBy==='check');assert.equal(closed.todo.report,report);
  assert((await visible()).entry.todos.some(todo=>todo.id==='close' && todo.report===report));result.realClose=true;
  seed('remove');watch=true;const removed=await mutate('remove','remove');watch=false;
  assert(removed.ok && removed.todo.state==='removed');assert.equal(removed.todo.report,report);

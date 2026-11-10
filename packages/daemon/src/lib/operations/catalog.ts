@@ -1,11 +1,4 @@
-import { createTransitionTaskOperation } from '../tasks/transition-operation.ts';
-import { createUpdateTaskOperation } from '../tasks/update-operation.ts';
-import { createListTasksOperation } from '../tasks/list-operation.ts';
-import { createCreateTaskOperation } from '../tasks/create-operation.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import type { CreateStandaloneTaskInput } from '../../storage/tasks/create-task.ts';
-import type { TransitionStandaloneTaskInput } from '../../storage/tasks/transition-task.ts';
-import { createGetTaskOperation } from '../tasks/get-operation.ts';
 import { createDiscoveryOperations } from './discovery.ts';
 import {
   createSendMessageOperation,
@@ -30,65 +23,38 @@ import {
 } from './registry.ts';
 import { createHandoffOperations } from '../handoffs/operations.ts';
 
-export interface TaskOperationDependencies {
-  members?: OperationDefinition;
-  pendingCompletion?: readonly OperationDefinition[];
-  start?: OperationDefinition;
-  setPreferredWorkflow?: OperationDefinition;
-  create?: OperationDefinition;
-  transition?: OperationDefinition;
-  retry?: OperationDefinition;
-  sendSessionMessage?: OperationDefinition;
-  sendTaskMessage?: OperationDefinition;
-  readTask: Parameters<typeof createGetTaskOperation>[0];
-  readTaskByNumber?: Parameters<typeof createGetTaskOperation>[1];
-  createTask: Parameters<typeof createCreateTaskOperation<CreateStandaloneTaskInput>>[0];
-  listTasks: Parameters<typeof createListTasksOperation>[0];
-  editTask: Parameters<typeof createUpdateTaskOperation>[0];
-  transitionTask: Parameters<
-    typeof createTransitionTaskOperation<TransitionStandaloneTaskInput>
-  >[0];
+export interface MessagingOperationDependencies {
   sessionStatus: SessionStatusRead;
   sessionTitle?: SessionTitleRead;
   resolveMessageAgent?: AgentTargetResolver;
   sessionSent?: SessionSentObserver;
   isNeo?: (sessionId: string) => boolean;
+  inNeoProject?: (sessionId: string) => boolean;
   workerReport?: SessionReportHandler;
 }
 
 export function createDaemonOperationCatalog(
   jobQueue: JobQueueRepository,
-  tasks: TaskOperationDependencies,
+  messaging: MessagingOperationDependencies,
   extra: readonly OperationDefinition[] = []
 ): OperationRegistry {
   const registry: OperationRegistry = createOperationRegistry([
-    ...createHandoffOperations(tasks.sessionStatus),
+    ...createHandoffOperations(messaging.sessionStatus),
     createSendMessageOperation(
       jobQueue,
-      tasks.sessionStatus,
+      messaging.sessionStatus,
       createRemoteSendForwarder(remoteDaemons),
-      tasks.resolveMessageAgent,
-      tasks.sessionTitle,
-      tasks.sessionSent,
-      tasks.isNeo,
-      tasks.workerReport
+      messaging.resolveMessageAgent,
+      messaging.sessionTitle,
+      messaging.sessionSent,
+      messaging.isNeo,
+      messaging.workerReport,
+      messaging.inNeoProject
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),
     createListDaemonsOperation(remoteDaemons),
     createDetachDaemonOperation(remoteDaemons),
-    createGetTaskOperation(tasks.readTask, tasks.readTaskByNumber),
-    tasks.create ?? createCreateTaskOperation(tasks.createTask),
-    createListTasksOperation(tasks.listTasks),
-    createUpdateTaskOperation(tasks.editTask),
-    tasks.transition ?? createTransitionTaskOperation(tasks.transitionTask),
-    ...(tasks.members ? [tasks.members] : []),
-    ...(tasks.retry ? [tasks.retry] : []),
-    ...(tasks.pendingCompletion ?? []),
-    ...(tasks.start ? [tasks.start] : []),
-    ...(tasks.setPreferredWorkflow ? [tasks.setPreferredWorkflow] : []),
-    ...(tasks.sendSessionMessage ? [tasks.sendSessionMessage] : []),
-    ...(tasks.sendTaskMessage ? [tasks.sendTaskMessage] : []),
     ...extra,
     ...createDiscoveryOperations(() => registry),
   ]);

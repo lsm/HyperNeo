@@ -4,8 +4,9 @@ import {
   commandPaletteOpenSignal,
   navSectionSignal,
 } from '../lib/signals.ts';
-import { navigateToSessions, navigateToSpaces } from '../lib/router.ts';
+import { navigateToSessions } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
+import { extensionNav } from '../lib/web-extensions.ts';
 
 interface SectionSwitcherProps {
   onClose?: () => void;
@@ -13,11 +14,6 @@ interface SectionSwitcherProps {
   showDivider?: boolean;
   compact?: boolean;
 }
-
-const SECTIONS = [
-  { id: 'chats', label: 'Chats', onClick: navigateToSessions },
-  { id: 'spaces', label: 'Spaces', onClick: navigateToSpaces },
-] as const;
 
 export function SectionSwitcher({
   onClose,
@@ -27,6 +23,11 @@ export function SectionSwitcher({
 }: SectionSwitcherProps) {
   const navSection = navSectionSignal.value;
   const isTitlebar = variant === 'titlebar';
+  const extensions = extensionNav();
+  const sections = [
+    { id: 'chats', label: 'Chats', open: navigateToSessions },
+    ...extensions.map(({ section, label, open }) => ({ id: section, label, open })),
+  ];
   const openQuickOpen = () => {
     commandPaletteModeSignal.value = 'quick-open';
     commandPaletteOpenSignal.value = true;
@@ -43,36 +44,51 @@ export function SectionSwitcher({
       )}
       data-tauri-drag-region={isTitlebar ? true : undefined}
     >
-      <div
-        class={cn(
-          'grid w-[136px] grid-cols-2 flex-none rounded-full bg-surface/70 p-0.5',
-          isTitlebar || compact ? 'h-6 bg-bg/70' : 'h-7'
-        )}
-        role="tablist"
-      >
-        {SECTIONS.map((section) => {
-          const isActive = navSection === section.id;
-          return (
-            <button
-              key={section.id}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => {
-                section.onClick();
-                onClose?.();
-              }}
-              class={cn(
-                'rounded-full font-medium transition-colors',
-                'px-2 text-[12px] leading-5',
-                isActive ? 'bg-fill text-fg' : 'text-fg-faint hover:bg-fill-soft hover:text-fg-soft'
-              )}
-            >
-              {section.label}
-            </button>
-          );
-        })}
-      </div>
+      {extensions.length === 0 ? (
+        <button
+          type="button"
+          onClick={() => {
+            navigateToSessions();
+            onClose?.();
+          }}
+          class="px-1 text-sm font-semibold text-fg"
+        >
+          Chats
+        </button>
+      ) : (
+        <div
+          class={cn(
+            'grid w-[136px] grid-cols-2 flex-none rounded-full bg-surface/70 p-0.5',
+            isTitlebar || compact ? 'h-6 bg-bg/70' : 'h-7'
+          )}
+          role="tablist"
+        >
+          {sections.map((section) => {
+            const isActive = navSection === section.id;
+            return (
+              <button
+                key={section.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => {
+                  section.open();
+                  onClose?.();
+                }}
+                class={cn(
+                  'rounded-full font-medium transition-colors',
+                  'px-2 text-[12px] leading-5',
+                  isActive
+                    ? 'bg-fill text-fg'
+                    : 'text-fg-faint hover:bg-fill-soft hover:text-fg-soft'
+                )}
+              >
+                {section.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <button
         type="button"
         onClick={openQuickOpen}

@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { handleTaskScheduleFire } from '../../../../src/lib/job-handlers/task-schedule-fire.handler';
+import { handleTaskScheduleFire } from '../../../../../space/src/job-handlers/task-schedule-fire.handler.ts';
 import { TASK_SCHEDULE_FIRE } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
@@ -9,7 +9,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
-import { SpaceGoalService } from '../../../../src/lib/goals/service';
+import { SpaceGoalService } from '../../../../../space/src/goals/service';
 import {
   createInternalEventBus,
   type DaemonInternalEventMap,

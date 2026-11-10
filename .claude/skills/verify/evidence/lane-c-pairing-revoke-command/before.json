@@ -1,0 +1,12 @@
+{
+  "commandFailure": "Error: Unknown write DB op: pairing.revokeDevice.write",
+  "mainSqlAttempts": 0,
+  "timings": [],
+  "stage": "before command construction",
+  "runtime": "Bun",
+  "focusedTests": {
+    "failed": 8,
+    "cause": "registered command absent"
+  },
+  "temporaryDataRemoved": true
+}

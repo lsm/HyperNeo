@@ -1,6 +1,6 @@
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
-import { classifyReportableTerminal } from '../../../../src/lib/goals/reportable-terminal-gates.ts';
+import { classifyReportableTerminal } from '../../../../../space/src/goals/reportable-terminal-gates.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
@@ -9,17 +9,17 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
-import { MAX_BLOCKED_RUN_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { MAX_BLOCKED_RUN_RETRIES } from '../../../../../space/src/runtime/constants.ts';
+import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
 import {
   PermanentSpawnError,
   SpawnSupersededError,
-  TransientSpawnError,
 } from '../../../../src/lib/workflows/node-execution-validation.ts';
+import { TransientSpawnError } from '../../../../src/lib/session/transient-spawn-error.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';

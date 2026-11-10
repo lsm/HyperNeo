@@ -17,10 +17,9 @@ status worker), never on main. Evidence lands in
 `evidence/card-search-rpc.json`; the wrapper removes the disposable HOME and
 daemon data after owned resources close.
 
-A title containing literal brackets must not be mistaken for a highlighted
-match when only the request contains the query. The dedicated unit and actual
-RPC regressions report meta rather than title; both failed on the staged head.
-Run this journey with both Bun and pinned Deno through the shared wrapper.
+A title containing literal brackets must not be mistaken for a highlighted match when only
+the request contains the query. The dedicated unit and actual RPC regressions report meta
+rather than title; both failed on the staged head.
 
 Production statement execution belongs to the existing SDK status worker; the
 query helper builds SQL and projects pointer rows. File-backed databases dispatch
@@ -28,15 +27,13 @@ to that worker. The explicitly supported :memory: backend reads its existing
 connection; add `memory` before the run directory through the wrapper to exercise
 that mode. It must return the same pointers, fields and snippets.
 
-The proof also searches a bracket-wrapped title with no outcome: it must return a
-title match and a string snippet. Three-character and two-character Chinese
-queries must both find the old card whose full body this client never read.
-Single short literals search every card field in recency/id order. Several
-short words without a searchable term still receive `query_too_short`; a short
-word beside a searchable term remains valid. The message.search leg uses the
-same two-character query and must return the title match, excluding the record
-whose query appears only in its body.
-Run file and memory modes with Bun and pinned Deno. The main-thread SQL ratchet
+The proof also searches a bracket-wrapped title with no outcome: it must return a title
+match and a string snippet. Three-character and two-character Chinese queries must both
+find the old card whose full body this client never read. Single short literals search
+every card field in recency/id order. Several short words without a searchable term still
+receive `query_too_short`; a short word beside a searchable term remains valid. The
+message.search leg uses the same two-character query and must return the title match,
+excluding the record whose query appears only in its body. The main-thread SQL ratchet
 must pass without increasing its baseline.
 
 The in-place tokenizer upgrade, restart and browser scope notice have their own

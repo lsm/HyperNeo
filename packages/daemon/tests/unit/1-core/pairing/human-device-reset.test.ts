@@ -1,3 +1,4 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { createTestDb } from '../../../helpers/database.ts';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog.ts';
@@ -46,25 +47,29 @@ test('reset revokes only human credentials, closes their sockets and retains a n
     expect(await call('device.reset_human')).toMatchObject({ ok: true });
     expect(closed).toEqual([phone.device.id]);
     expect(
-      touchDevice.run(db.getDatabase(), {
+      await gatewayFor(db.getDatabase()).run(touchDevice, {
         credential: phone.credential,
         host: null,
         now: Date.now(),
       })
     ).toBeNull();
     expect(
-      touchDevice.run(db.getDatabase(), {
-        credential: relay.credential,
-        host: null,
-        now: Date.now(),
-      })?.id
+      (
+        await gatewayFor(db.getDatabase()).run(touchDevice, {
+          credential: relay.credential,
+          host: null,
+          now: Date.now(),
+        })
+      )?.id
     ).toBe(relay.device.id);
     expect(
-      touchDevice.run(db.getDatabase(), {
-        credential: peer.credential,
-        host: null,
-        now: Date.now(),
-      })?.id
+      (
+        await gatewayFor(db.getDatabase()).run(touchDevice, {
+          credential: peer.credential,
+          host: null,
+          now: Date.now(),
+        })
+      )?.id
     ).toBe(peer.device.id);
     expect(repo.listDevices()).toHaveLength(3);
     expect(repo.listDevices().find((d) => d.id === phone.device.id)?.revokedAt).toEqual(

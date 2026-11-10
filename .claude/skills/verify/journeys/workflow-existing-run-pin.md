@@ -23,7 +23,6 @@ database and home. This proves existing-run pin persistence and startup ordering
 new-run creation, snapshot migration, admission reads, GUI behavior, worker death
 and held-lock latency are separate verification surfaces.
 
-Run the workflow-run repository and workflow-manager unit files to preserve
-snapshot resolution, rollback on a rejected pin, idempotency and backfill failure
-isolation. For Deno, run the same wrapper with `VERIFY_PROOF_RUNTIME=deno` and
-the supported Deno runtime on PATH. Shared smoke registration belongs to core.
+Run the workflow-run repository and workflow-manager unit files to preserve snapshot
+resolution, rollback on a rejected pin, idempotency and backfill failure isolation. Shared
+smoke registration belongs to core.

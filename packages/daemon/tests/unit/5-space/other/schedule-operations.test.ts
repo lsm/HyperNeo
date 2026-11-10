@@ -103,7 +103,7 @@ function harness(): Harness {
         );
       },
       getSchedule: (scheduleId) => state.stored.find((entry) => entry.id === scheduleId) ?? null,
-      pauseSchedule: (scheduleId) => {
+      ensureSchedulePaused: async (scheduleId) => {
         state.calls.push('pauseSchedule');
         if (state.transitionThrows) throw new Error(state.transitionThrows);
         return schedule({ id: scheduleId, status: 'paused' });

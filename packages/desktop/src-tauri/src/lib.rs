@@ -1,3 +1,7 @@
+mod desktop_permissions;
+#[cfg(target_os = "macos")]
+mod desktop_drivers;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -60,6 +64,10 @@ struct RuntimeDescriptor {
 }
 
 fn kill_sidecar<R: Runtime>(app: &tauri::AppHandle<R>) {
+	#[cfg(target_os = "macos")]
+	if let Some(control) = app.try_state::<desktop_drivers::Control>() {
+		tauri::async_runtime::block_on(control.shutdown());
+	}
 	if let Some(state) = app.try_state::<SidecarState>() {
 		if let Ok(mut guard) = state.child.lock() {
 			if let Some(child) = guard.take() {
@@ -172,6 +180,7 @@ fn fail_startup<R: Runtime>(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	let app = tauri::Builder::default()
+		.invoke_handler(tauri::generate_handler![desktop_permissions::desktop_permission_status])
 		.plugin(tauri_plugin_shell::init())
 		.plugin(tauri_plugin_notification::init())
 		.plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -190,6 +199,15 @@ pub fn run() {
 					})
 					.build(),
 			)?;
+
+			#[cfg(target_os = "macos")]
+			if let Some(control) = tauri::async_runtime::block_on(desktop_drivers::Control::setup(
+				runtime_descriptor_path().and_then(|path| path.parent().map(PathBuf::from)),
+				std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
+				"/usr/bin:/bin:/usr/sbin:/sbin".into(),
+			)) {
+				app.manage(control);
+			}
 
 			// System tray menu.
 			let show_item = MenuItem::with_id(app, "show", "Show HyperNeo", true, None::<&str>)?;

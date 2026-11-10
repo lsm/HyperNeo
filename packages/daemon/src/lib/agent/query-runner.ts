@@ -8,7 +8,7 @@ import type {
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
+import type { DeclarativeToolGuard, MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { SessionToolApplication } from '@hyperneo/shared/types/session-tool-choice';
@@ -32,10 +32,6 @@ import type { ProviderEnvVars } from '../provider-service.ts';
 import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
-import {
-  FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-  resolveSpaceMcpSessionPolicy,
-} from '../space/runtime/space-mcp-session-policy.ts';
 import { sleep } from '../utils/sleep.ts';
 import { QueryFailureGovernor, QueryFailureCapError } from './query-failure-episode.ts';
 import type { AgentSession } from './agent-session.ts';
@@ -49,6 +45,8 @@ import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
+import { createOapQuery, type OapQueryHub } from '../oap/oap-query.ts';
+import { codexSessionRefusal, selectSessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
   decideQueryRetry,
@@ -71,6 +69,7 @@ import {
   type SdkStartExitInfo,
 } from './startup-watch-pipeline.ts';
 import {
+  getOpenToolStallTimeoutMs,
   getStreamSilenceTimeoutMs,
   noteStreamFed,
   noteStreamMessage,
@@ -358,6 +357,12 @@ interface RetryTeardownOptions {
   snapshotRequeueLabel?: string;
 }
 
+export interface OapQueryRuntime {
+  openDirectorySupported: boolean;
+  hub: OapQueryHub | Promise<OapQueryHub>;
+  clear?(): Promise<void>;
+}
+
 export interface QueryRunnerContext {
   readonly session: Session;
   readonly db: Database;
@@ -370,6 +375,8 @@ export interface QueryRunnerContext {
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   readonly messageHandler: SDKMessageHandler;
+  readonly toolGuards?: DeclarativeToolGuard[];
+  readonly oap?: OapQueryRuntime;
 
   queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
@@ -442,6 +449,8 @@ export class QueryRunner {
   private _turnConsumedUserMessages: Array<{ uuid: string; content: string | MessageContent[] }> =
     [];
 
+  private _turnConsumedGeneration: number | null = null;
+
   private fedAfterTurnEnd: Array<{
     uuid: string;
     content: string | MessageContent[];
@@ -482,11 +491,22 @@ export class QueryRunner {
   }
 
   private readonly failures: QueryFailureGovernor;
-  constructor(private ctx: QueryRunnerContext) {
+  constructor(
+    private ctx: QueryRunnerContext,
+    private queryFactory: (args: Parameters<typeof query>[0]) => QueryLike = query
+  ) {
     this.failures = new QueryFailureGovernor(ctx.session, ctx.db);
   }
   resetFailureEpisode() {
     return this.failures.reset();
+  }
+
+  streamFacts(): StreamSilenceState {
+    return this.streamSilence;
+  }
+
+  failureLatchedUntil() {
+    return this.failures.latchedUntil();
   }
 
   private notifyToolInventory(): void {
@@ -765,19 +785,151 @@ export class QueryRunner {
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
     const silenceThresholdMs = getStreamSilenceTimeoutMs();
-    this.streamSilence = { lastActivityAt: Date.now(), openTools: [] };
+    const openToolStallMs = getOpenToolStallTimeoutMs();
+    let lastStall: { silentMs: number; openToolCount: number } | null = null;
+    this.streamSilence = {
+      lastActivityAt: Date.now(),
+      lastOutputAt: this.streamSilence.lastOutputAt,
+      openTools: [],
+    };
 
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
     let processExited = false;
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
     let removeFlagSettingsFile: (() => void) | undefined;
     let episodeId: string | undefined;
+    let engine: 'sdk' | 'codex' = 'sdk';
+    let oapQuery: ReturnType<typeof createOapQuery> | undefined;
     const interruptEpoch = messageQueue.getUserInterruptEpoch?.();
     const owns = () =>
       this.ctx.getQueryGeneration() === queryGeneration && !this.ctx.isCleaningUp();
     const live = () => attemptToken.isLive() && owns();
+    const maySettleInterrupted = () => owns() && this.ctx.attemptTokens.isLatest(attemptToken);
 
     try {
+      engine = selectSessionEngine(session.config.harness);
+      if (engine === 'codex') {
+        if (!this.ctx.oap?.openDirectorySupported) {
+          throw new Error('Codex is unavailable: OAP open-directory support is not available.');
+        }
+        const refusal = codexSessionRefusal(
+          session.config,
+          !!session.context?.spaceId,
+          !!neoCoordinatorBinding(this.ctx.db, session.id),
+          !!this.ctx.toolGuards?.length
+        );
+        if (refusal) throw new Error(refusal);
+        runAbortController = new AbortController();
+        this.ctx.queryAbortController = runAbortController;
+        const oapHub = await this.ctx.oap.hub;
+        if (!live()) return;
+        const prompt = this.createMessageGeneratorWrapper(
+          queryGeneration,
+          recoveryState.startGuard,
+          questionInputs,
+          live,
+          humanInputs,
+          false
+        );
+        oapQuery = createOapQuery({
+          sessionId: session.id,
+          prompt,
+          hub: oapHub,
+          isLive: live,
+          maySettleInterrupted,
+          onSubmitted: async (message) => {
+            if (!message.uuid || !live()) return;
+            const ids = await this.ctx.db.writeSDKMessage(
+              'markDeliverySubmittedByUuids',
+              session.id,
+              [message.uuid]
+            );
+            if (
+              !ids.length &&
+              this.ctx.db.getSDKMessageRepo?.().getDeliveryContent(session.id, message.uuid)
+            ) {
+              throw new Error('Codex prompt was already submitted or cannot be submitted safely');
+            }
+            if (live() && ids.length) {
+              await this.ctx.internalEventBus.publish('messages.statusChanged', {
+                sessionId: session.id,
+                messageIds: ids,
+                status: 'submitted',
+              });
+            }
+          },
+          onAccepted: async (message) => {
+            if (!message.uuid || !live()) return;
+            await messageQueue.onMessageYielded?.(message.uuid, Date.now());
+            if (live()) messageQueue.acknowledgeYielded(message.uuid, queryGeneration);
+          },
+          onRefused: async (message) => {
+            if (!message.uuid || !live()) return;
+            const id = await this.ctx.db.writeSDKMessage(
+              'markDeliveryFailedByUuid',
+              session.id,
+              message.uuid
+            );
+            if (id && live()) {
+              await this.ctx.internalEventBus.publish('messages.statusChanged', {
+                sessionId: session.id,
+                messageIds: [id],
+                status: 'failed',
+              });
+            }
+          },
+        });
+        this.ctx.queryObject = oapQuery;
+        for await (const message of this.createAbortableQuery(
+          oapQuery,
+          runAbortController.signal
+        )) {
+          const sdkMessage = message as SDKMessage;
+          const toolResult =
+            sdkMessage.type === 'user' &&
+            sdkMessage.isSynthetic === true &&
+            Array.isArray(sdkMessage.message.content) &&
+            sdkMessage.message.content.length > 0 &&
+            sdkMessage.message.content.every(
+              (part: unknown) =>
+                typeof part === 'object' &&
+                part !== null &&
+                'type' in part &&
+                part.type === 'tool_result'
+            );
+          if (
+            !live() &&
+            !(
+              (sdkMessage.type === 'assistant' || sdkMessage.type === 'result' || toolResult) &&
+              oapQuery.wasInterrupted() &&
+              maySettleInterrupted()
+            )
+          )
+            break;
+          this.ctx.firstMessageReceived = true;
+          this._consumedUserMessages.delete(queryGeneration);
+          if (sdkMessage.type === 'result') {
+            questionInputs.endTurn();
+            humanInputs.endTurn();
+          }
+          await this.handleSDKMessage(sdkMessage, queryGeneration);
+          if (
+            !live() &&
+            !(
+              (sdkMessage.type === 'assistant' || toolResult) &&
+              oapQuery.wasInterrupted() &&
+              maySettleInterrupted()
+            )
+          )
+            break;
+          if (sdkMessage.type === 'result') {
+            const messageId = this._lastConsumedUserMessage?.uuid;
+            if (messageId) messageQueue.acknowledgeYielded(messageId, queryGeneration);
+            if (!messageQueue.hasQueuedMessages()) messageQueue.stop();
+          }
+        }
+        return;
+      }
       episodeId = await this.failures.admit(live);
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
         '../providers/factory.js'
@@ -908,21 +1060,16 @@ export class QueryRunner {
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
       const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-      const spacePolicy = resolveSpaceMcpSessionPolicy(session, {
-        nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
-        taskRepo: this.ctx.db.getSpaceTaskRepo(),
-        longHorizonAgentRepo:
-          this.ctx.db.getLongHorizonAgentRepo?.() ?? FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-      });
-      const isWorkflowSubSession = spacePolicy.isWorkflowWorker;
+      const spacePolicy = this.ctx.db.spaceSessions?.mcpPolicy(session);
+      const isWorkflowSubSession = spacePolicy?.isWorkflowWorker;
       const sessionTaskId = session.context?.taskId as string | undefined;
       const snapshotPayload = {
         event: 'query.mcp.snapshot',
         sessionId: session.id,
         sessionType: session.type,
-        role: spacePolicy.role,
-        owner: spacePolicy.owner,
-        ...(spacePolicy.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
+        role: spacePolicy?.role ?? 'session',
+        owner: spacePolicy?.owner ?? 'none',
+        ...(spacePolicy?.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
         ...(sessionTaskId ? { taskId: sessionTaskId } : {}),
         ...(isWorkflowSubSession ? { workflowSubSession: true } : {}),
         mcpServers: mcpServerNames,
@@ -1051,7 +1198,7 @@ export class QueryRunner {
       );
       recoveryState.startGuard?.();
       const queryObject = runLagPhase('sdk:query_create', () =>
-        query({
+        this.queryFactory({
           prompt: this.createMessageGeneratorWrapper(
             queryGeneration,
             recoveryState.startGuard,
@@ -1068,15 +1215,13 @@ export class QueryRunner {
         logger.warn('Background fetch of models failed:', e);
       });
 
-      if (session.config.provider !== 'acp') {
-        const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};
-        void queryObject.setMcpServers?.(effectiveMcpServers).catch((err) => {
-          logger.warn(
-            `QueryRunner.start: post-start MCP reconcile failed for session ${session.id}: ` +
-              `${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      }
+      const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};
+      void queryObject.setMcpServers?.(effectiveMcpServers).catch((err) => {
+        logger.warn(
+          `QueryRunner.start: post-start MCP reconcile failed for session ${session.id}: ` +
+            `${err instanceof Error ? err.message : String(err)}`
+        );
+      });
 
       const queryStartTime = Date.now();
 
@@ -1170,6 +1315,7 @@ export class QueryRunner {
               processing: stateManager.getState().status === 'processing',
               now: Date.now(),
               thresholdMs: silenceThresholdMs,
+              openToolStallMs,
             });
           let silenceTimer: ReturnType<typeof setTimeout> | undefined;
           if (firstMessageArrived) {
@@ -1190,9 +1336,17 @@ export class QueryRunner {
           if (winner.kind === 'silence') {
             const planned = silence();
             if (!planned.stalled) continue;
-            logger.warn(`Model stream silent for ${planned.silentMs}ms; aborting the request.`);
+            const openTools = this.streamSilence.openTools;
+            lastStall = { silentMs: planned.silentMs, openToolCount: openTools.length };
+            logger.warn(
+              openTools.length
+                ? `Model stream silent for ${planned.silentMs}ms with ${openTools.length} open tool call(s) [${openTools.join(', ')}]; aborting the request.`
+                : `Model stream silent for ${planned.silentMs}ms; aborting the request.`
+            );
             throw new Error(
-              `${STREAM_STALL_ERROR}: no data from the model for ${Math.round(planned.silentMs / 1000)}s`
+              openTools.length
+                ? `${STREAM_STALL_ERROR}: ${openTools.length} tool call(s) ran without a result for ${Math.round(planned.silentMs / 1000)}s`
+                : `${STREAM_STALL_ERROR}: no data from the model for ${Math.round(planned.silentMs / 1000)}s`
             );
           }
 
@@ -1470,19 +1624,37 @@ export class QueryRunner {
         resolveDrain = () => {};
       }
     } catch (error) {
-      this.ctx.attemptTokens.invalidate(attemptToken);
-
       releaseStartupPermit('query_error');
 
       const errorMessage = String(error);
       isAbortError = error instanceof Error && error.name === 'AbortError';
       const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
+      if (engine === 'codex') {
+        if (!live()) return;
+        const failure = error instanceof Error ? error : new Error(errorMessage);
+        messageQueue.clear(cancelled ? undefined : failure);
+        if (!cancelled && live()) {
+          await errorManager.handleError(
+            session.id,
+            failure,
+            ErrorCategory.SESSION,
+            failure.message,
+            stateManager.getState(),
+            { harness: 'codex' },
+            live
+          );
+        }
+        return;
+      }
+      this.ctx.attemptTokens.invalidate(attemptToken);
       const isQueryInterrupted =
         cancelled || this.ctx.queryAbortController?.signal.aborted === true;
       let episode: Session['metadata']['queryFailureEpisode'];
       if (!cancelled && owns()) {
         episode =
-          episodeId && !(error instanceof QueryFailureCapError)
+          episodeId &&
+          !(error instanceof QueryFailureCapError) &&
+          !isNetworkUnreachableError(errorMessage)
             ? await this.failures.failure(errorMessage, episodeId)
             : session.metadata.queryFailureEpisode;
       }
@@ -1540,7 +1712,7 @@ export class QueryRunner {
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
       if (episode?.failed) {
         const terminal = new QueryFailureCapError(
-          `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
+          `Query stopped after ${episode.failures} failures: ${episode.error}. Send a message to recover.`
         );
         messageQueue.clear(terminal);
         await errorManager.handleError(
@@ -1697,7 +1869,10 @@ export class QueryRunner {
           idleFirst: true,
           snapshotLastConsumed: true,
           snapshotRequeueLabel: 'model stream stall retry',
-          notice: `⚠️ The model sent nothing for ${Math.round(silenceThresholdMs / 1000)} s. Retrying…`,
+          notice:
+            lastStall && lastStall.openToolCount > 0
+              ? `⚠️ ${lastStall.openToolCount} tool call(s) ran without a result for ${Math.round(lastStall.silentMs / 1000)} s. Retrying…`
+              : `⚠️ The model sent nothing for ${Math.round((lastStall?.silentMs ?? silenceThresholdMs) / 1000)} s. Retrying…`,
           guardAfterExit: true,
           restartQueue: true,
         });
@@ -1913,6 +2088,7 @@ export class QueryRunner {
         messageQueue.clear();
       }
     } finally {
+      const attemptOwned = attemptToken.isLive();
       this.ctx.attemptTokens.invalidate(attemptToken);
       this.toolInventory.end(attemptToken);
       this.notifyToolInventory();
@@ -1920,11 +2096,14 @@ export class QueryRunner {
 
       releaseStartupPermit('attempt_finished');
 
-      const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
+      const generationChanged = this.ctx.getQueryGeneration() !== queryGeneration;
+      const isStaleQuery = generationChanged || (engine === 'codex' && !attemptOwned);
 
-      if (isStaleQuery) {
+      if (generationChanged) {
         stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
       }
+
+      if (isStaleQuery && engine === 'codex') oapQuery?.close();
 
       if (!isStaleQuery) {
         const timer = this.ctx.startupTimeoutTimer;
@@ -1953,6 +2132,7 @@ export class QueryRunner {
 
         this._lastConsumedUserMessage = null;
         this._turnConsumedUserMessages = [];
+        this._turnConsumedGeneration = null;
 
         if (
           this.ctx.getQueryGeneration() === queryGeneration &&
@@ -2287,7 +2467,8 @@ export class QueryRunner {
     startGuard?: () => void,
     questionInputs?: QuestionInputScope,
     liveAttempt?: () => boolean,
-    humanInputs?: QuestionInputScope
+    humanInputs?: QuestionInputScope,
+    notifyOnYield = true
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
@@ -2305,7 +2486,7 @@ export class QueryRunner {
       }
       const live = () => !this.ctx.isCleaningUp() && (liveAttempt?.() ?? true);
       await this.failures.admit(live);
-      await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
+      if (notifyOnYield) await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
       const promptContent = (queuedMessage.message as { content?: unknown } | undefined)?.content;
@@ -2328,11 +2509,14 @@ export class QueryRunner {
       }
 
       if (!isInternal) {
-        await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
         this._lastConsumedUserMessage = {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
+        if (this._turnConsumedGeneration !== queryGeneration) {
+          this._turnConsumedUserMessages = [];
+          this._turnConsumedGeneration = queryGeneration;
+        }
         this._turnConsumedUserMessages.push({
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
@@ -2340,6 +2524,11 @@ export class QueryRunner {
         if (this._turnConsumedUserMessages.length > 32) {
           this._turnConsumedUserMessages.shift();
         }
+        await stateManager.setProcessing(
+          message.uuid ?? 'unknown',
+          'initializing',
+          this._turnConsumedUserMessages.map((entry) => entry.uuid)
+        );
         if (!this.ctx.firstMessageReceived) {
           const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
           generationMessages.push({
@@ -2551,10 +2740,12 @@ export class QueryRunner {
     }
     if (messageHint === 'stream_stall') {
       return (
-        `The model stopped sending anything for ${Math.round(getStreamSilenceTimeoutMs() / 1000)} s, ` +
+        `The model stopped sending anything for ${Math.round(getStreamSilenceTimeoutMs() / 1000)} s ` +
+        `(${Math.round(getOpenToolStallTimeoutMs() / 1000)} s while a tool call was open), ` +
         `again after one automatic retry, so this turn was stopped. ` +
-        `Try: resending your message, or switching models. The limit is ` +
-        `HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS (current: ${getStreamSilenceTimeoutMs()}ms).`
+        `Try: resending your message, or switching models. The limits are ` +
+        `HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS (current: ${getStreamSilenceTimeoutMs()}ms) and ` +
+        `HYPERNEO_SDK_OPEN_TOOL_STALL_TIMEOUT_MS (current: ${getOpenToolStallTimeoutMs()}ms).`
       );
     }
     if (messageHint === 'conversation_not_found') {

@@ -1,3 +1,4 @@
+import { generateUUID } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '../ui/Button.tsx';
 import { FormField, formControlClass } from '../ui/FormField.tsx';
@@ -14,12 +15,35 @@ function pairFailureMessage(
   body: { error?: unknown; retryAfterMs?: unknown }
 ): string {
   if (status === 403) return 'Approval was refused. Use an already paired phone or browser.';
+  if (status === 401 && body.error === 'code_denied')
+    return 'This code was denied. Make a new one with hyperneo pair.';
+  if (status === 401 && body.error === 'code_expired')
+    return 'This code expired. Make a new one with hyperneo pair.';
   if (status === 401) return 'That code is wrong or expired. Make a new one with hyperneo pair.';
+  if (status === 409 && body.error === 'code_used_elsewhere')
+    return 'This code was used from another window. Make a new one with hyperneo pair.';
   if (status === 429) {
     const minutes = Math.max(1, Math.ceil(Number(body.retryAfterMs ?? 0) / 60_000));
     return `Too many tries. Pairing reopens in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
   }
   return 'Pairing failed. Check the code and try again.';
+}
+
+const fallbackRequestIds = new Map<string, string>();
+
+function pairRequestId(code: string): string {
+  const key = `hyperneo.pair.request.${code.replace(/[\s-]/g, '').toUpperCase()}`;
+  try {
+    const kept = sessionStorage.getItem(key);
+    if (kept) return kept;
+    const made = generateUUID();
+    sessionStorage.setItem(key, made);
+    return made;
+  } catch {
+    const made = fallbackRequestIds.get(key) ?? generateUUID();
+    fallbackRequestIds.set(key, made);
+    return made;
+  }
 }
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
@@ -65,7 +89,11 @@ export function PairPage() {
     current.current = controller;
     const { signal } = controller;
     const until = Date.now() + 10 * 60_000;
-    const body = JSON.stringify({ code: code.trim(), name: name.trim() });
+    const body = JSON.stringify({
+      code: code.trim(),
+      name: name.trim(),
+      requestId: pairRequestId(code),
+    });
     history.replaceState(null, '', location.pathname);
     setState({ kind: 'pairing' });
     const timer = setTimeout(() => {

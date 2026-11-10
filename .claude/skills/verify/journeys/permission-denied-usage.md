@@ -35,6 +35,5 @@ toast text. A path-scoped Read deny is inconclusive for this bug: the SDK does
 not emit this best-effort advisory for that denial path. Use the native Bash
 `dontAsk` fixture above.
 
-The helper closes its WebSocket, daemon and mock in finally. Preserve the JSON
-and command output outside the worktree. Bun execution is verified; Deno, live
-provider behavior and GUI rendering are not verified by this journey.
+The helper closes its WebSocket, daemon and mock in finally. Preserve the JSON and command
+output outside the worktree.

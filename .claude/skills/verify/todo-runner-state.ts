@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -20,7 +22,7 @@ const network=globalThis.fetch;
 globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});
 assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});
+const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});
 hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 const prepare=db.prepare.bind(db),replay=app.db.gateway.onChanges;
@@ -39,9 +41,11 @@ try {
   const root='neo:10000000-0000-4000-8000-000000009040';
   await app.db.createSession({id:root,title:'Synthetic runner build',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
-  store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Ordered work',request:'Keep full work',createdAt:1,repo:'github.com/synthetic/base'});
+  store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Ordered work',request:'Keep full work',createdAt:1});
+  db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/base', 'ask');
+  assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('ask') as { repo: string }).repo, 'github.com/synthetic/base');
   for(const id of ['state','claim']) {
-    store.addTodo(id,'ask',{title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
+    store.addTodo(id,'ask',{ approvedAt: 1,title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
     sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});
   }
   const text='Stored runner report 🦊\n'.repeat(20000).trim();
@@ -76,12 +80,12 @@ try {
   record=true;
   const claims=await Promise.all([runCommand<Claim>('claim',['claim',11]),runCommand<Claim>('claim',['claim',12])]);
   record=false; assert(claims[0].ok && claims[0].ask); assert(!claims[1].ok && !claims[1].changed);
-  assert.equal(claims[0].target?.ref?.id,'current-worker'); assert.equal(claims[0].ask.repo,'github.com/synthetic/other');
+  assert.equal(claims[0].target?.ref?.id,'current-worker'); assert.equal(claims[0].ask.id,'ask'); assert.equal(claims[0].todo?.askId,'ask'); assert.deepEqual(store.listChildAsks('ask'),[]);
   assert.equal(claims[0].todo.askId,claims[0].ask.id);
   assert((await visible(claims[0].ask.id)).entry.todos.some(todo=>todo.id==='claim' && todo.state==='doing'));
   assert.equal(sessions.readRef('claim'),null); assert.deepEqual(sessionCount(),originalSessions);
-  result.singleClaimWinner=true; result.currentTarget=true; result.atomicRelocation=true;
-  store.addTodo('stable','ask',{title:'Stable',doneWhen:'Observed',check:null,instruction:null,named:null},4);
+  result.singleClaimWinner=true; result.currentTarget=true; result.originalAskPreserved=true;
+  store.addTodo('stable','ask',{ approvedAt: 1,title:'Stable',doneWhen:'Observed',check:null,instruction:null,named:null},4);
   prepare("UPDATE neo_todos SET state='doing',started_at=4 WHERE id='stable'").run();
   store.askQuestion('stale','ask',{kind:'start',text:'Start?',startTodos:['stable'],options:null,multiple:false,yesLabel:null,noLabel:null},4);
   const previous=tables.length; record=true;

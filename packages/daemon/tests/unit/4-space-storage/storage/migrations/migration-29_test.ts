@@ -380,14 +380,4 @@ describe('Migration 29: Space system tables', () => {
       );
     }).toThrow();
   });
-
-  test('no existing core tables are dropped or modified by migration 29', () => {
-    runMigrations(db, () => {});
-
-    const tablesFromEarlierMigrations = ['mission_metric_history', 'mission_executions'];
-
-    for (const table of tablesFromEarlierMigrations) {
-      expect(tableExists(db, table)).toBe(true);
-    }
-  });
 });

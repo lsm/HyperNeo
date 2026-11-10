@@ -2,12 +2,15 @@ import { useEffect, useRef } from 'preact/hooks';
 import type { MessageDeliveryMode, MessageImage } from '@hyperneo/shared';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
+import { PendingAgentChat } from './PendingAgentChat.tsx';
+import { clearOverlayHighlightMessageId } from '../../lib/space-router.ts';
+import { spaceVoiceScope } from './space-nav.tsx';
 import { VoiceRecordingIndicator } from '../voice/VoiceRecordingIndicator.tsx';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import ChatContainer from '../../islands/ChatContainer';
 import { SessionStore } from '../../lib/session-store';
-import type { SpaceOverlayTaskContext } from '../../lib/signals';
-import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/signals';
+import type { SpaceOverlayTaskContext } from '../../lib/space-signals';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/space-signals';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
 
@@ -156,7 +159,7 @@ export function AgentOverlayChat({
       <VoiceSurfaceContext.Provider
         value={{
           surfaceId: 'agent-overlay',
-          spaceId: voiceSurfaceSpaceId,
+          scopeId: spaceVoiceScope(voiceSurfaceSpaceId),
           taskId: taskContext?.taskId ?? null,
         }}
       >
@@ -182,16 +185,24 @@ export function AgentOverlayChat({
             )}
           >
             <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
-              <ChatContainer
-                key={sessionId ?? `pending:${pendingAgent?.taskId}:${pendingAgent?.agentName}`}
-                sessionId={sessionId ?? ''}
-                onBack={onClose}
-                highlightMessageId={highlightMessageId}
-                pendingAgent={pendingAgent ?? null}
-                onSendOverride={handleTaskContextSend}
-                store={storeRef.current ?? undefined}
-                readonly={(taskContext?.readonly ?? false) && !pendingAgent}
-              />
+              {pendingAgent ? (
+                <PendingAgentChat
+                  key={`pending:${pendingAgent.taskId}:${pendingAgent.agentName}`}
+                  pendingAgent={pendingAgent}
+                  onBack={onClose}
+                />
+              ) : (
+                <ChatContainer
+                  key={sessionId ?? ''}
+                  sessionId={sessionId ?? ''}
+                  onBack={onClose}
+                  highlightMessageId={highlightMessageId}
+                  onHighlightConsumed={clearOverlayHighlightMessageId}
+                  onSendOverride={handleTaskContextSend}
+                  store={storeRef.current ?? undefined}
+                  readonly={taskContext?.readonly ?? false}
+                />
+              )}
             </div>
 
             <VoiceRecordingIndicator inOverlay />

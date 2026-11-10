@@ -12,13 +12,13 @@ export type { VoiceRecording } from '../lib/voice/voice-recorder-store.ts';
 
 export interface VoiceSurfaceInfo {
   surfaceId: string;
-  spaceId: string | null;
+  scopeId: string | null;
   taskId?: string | null;
 }
 
 export const VoiceSurfaceContext = createContext<VoiceSurfaceInfo>({
   surfaceId: 'primary',
-  spaceId: null,
+  scopeId: null,
   taskId: null,
 });
 
@@ -30,7 +30,7 @@ export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: bool
   const surface = useContext(VoiceSurfaceContext);
 
   const surfaceId = surface.surfaceId;
-  const surfaceSpaceId = surface.spaceId;
+  const surfaceScopeId = surface.scopeId;
   const surfaceTaskId = surface.taskId ?? null;
   useEffect(() => {
     registerVoiceComposer(ownerId, { surfaceId, sessionId, canAdopt: autoAdopt });
@@ -71,7 +71,7 @@ export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: bool
       return owns() ? voiceRecorderStore.recordingCursor.value : null;
     },
     start: (cursor?: { start: number; end: number } | null) =>
-      voiceRecorderStore.start(ownerId, sessionId, cursor, surfaceSpaceId, surfaceTaskId),
+      voiceRecorderStore.start(ownerId, sessionId, cursor, surfaceScopeId, surfaceTaskId),
     stop: voiceRecorderStore.stop,
     cancel: () => (owns() ? voiceRecorderStore.cancel() : Promise.resolve()),
     getLevel: voiceRecorderStore.getLevel,

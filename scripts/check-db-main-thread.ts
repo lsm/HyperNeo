@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const baselinePath = 'scripts/db-main-thread-baseline.json';
@@ -8,7 +8,12 @@ const workers = new Set([
   'lib/message-search-merge-worker.ts',
   'lib/event-loop-watchdog-worker.ts',
   'lib/neo/project-mirror-worker.ts',
+  'lib/neo/packs/coding/review-merge-hold-worker.ts',
   'storage/db-gateway/db-gateway-worker.ts',
+  'storage/repositories/google-connections-worker.ts',
+  'storage/repositories/neo-ask-input-worker.ts',
+  'storage/repositories/neo-peer-repository.ts',
+  'storage/repositories/neo-tracker-mirror.ts',
   'storage/repositories/agent-memory-embed-worker.ts',
   'storage/sdk-message-body-admission-worker.ts',
   'storage/sdk-message-body-backup-worker.ts',
@@ -52,6 +57,8 @@ function count(root: string): Counts {
     }
   };
   walk(join(root, 'packages/daemon/src'));
+  const spaceRoot = join(root, 'packages/space/src');
+  if (existsSync(spaceRoot)) walk(spaceRoot, 'lib/space/');
   return counts;
 }
 

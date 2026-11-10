@@ -39,8 +39,6 @@ export interface DaemonBehaviorConfig {
   sdkAcp?: {
     sdkStartupMaxConcurrent?: number;
     sdkStartInactivityTimeoutMs?: number;
-    acpMcpProxyCallTimeoutMs?: number;
-    acpContextWindow?: number;
   };
   providersMisc?: {
     providerMaxRetries?: number;
@@ -94,8 +92,6 @@ const FAMILY_ROWS: FamilyRows = {
   sdkAcp: {
     sdkStartupMaxConcurrent: [3, 'max concurrent SDK subprocess startups'],
     sdkStartInactivityTimeoutMs: [600_000, 'inactivity backstop while awaiting SDK start'],
-    acpMcpProxyCallTimeoutMs: [60_000, 'per-call timeout for proxied ACP MCP tools'],
-    acpContextWindow: [200_000, 'context window size reported for ACP agents'],
   },
   providersMisc: {
     providerMaxRetries: [3, 'max retries for failed provider queries'],

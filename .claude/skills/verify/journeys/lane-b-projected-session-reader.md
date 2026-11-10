@@ -1,8 +1,7 @@
 # Projected session inventory and health count use the readers
 
-Run `lane-b-projected-session-reader.ts` through `proof-run.sh` in a fresh
-synthetic daemon. Native Deno smoke uses the same helper and a disposable
-HOME/data/TMPDIR. No provider key, model turn or external HTTP is required.
+Run `lane-b-projected-session-reader.ts` through `proof-run.sh` in a fresh synthetic
+daemon. No provider key, model turn or external HTTP is required.
 
 Seed human, archived and excluded sessions. A statement proxy installed before
 startup denies all main session-table and session_counters execution during

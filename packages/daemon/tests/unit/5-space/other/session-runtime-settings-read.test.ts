@@ -14,8 +14,8 @@ import {
 } from '../../../../src/lib/operations/registry';
 import { listOperationSummaries } from '../../../../src/lib/operations/discovery';
 import { registerSessionOperations } from '../../../../src/lib/rpc-handlers/family-operations/session';
-import { resolveSessionSpaceId } from '../../../../src/lib/space/runtime/space-caller-scope';
-import type { SpaceMcpSessionPolicyContext } from '../../../../src/lib/space/runtime/space-mcp-session-policy';
+import { resolveSessionSpaceId } from '../../../../src/lib/session-resolution/space-caller-scope';
+import type { SpaceMcpSessionPolicyContext } from '../../../../src/lib/session-resolution/space-mcp-session-policy';
 
 const worktree = { worktreePath: '/w' } as Session['worktree'];
 const inSpace = (spaceId: string) => ({ spaceId }) as Session['context'];

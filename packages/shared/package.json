@@ -1,6 +1,6 @@
 {
   "name": "@hyperneo/shared",
-  "version": "0.50.0",
+  "version": "0.56.2",
   "type": "module",
   "license": "Apache-2.0",
   "main": "src/mod.ts",
@@ -14,7 +14,8 @@
     "./provider": "./src/provider/index.ts",
     "./provider/*": "./src/provider/*.ts",
     "./logger": "./src/logger.ts",
-    "./acp": "./src/acp/index.ts",
+    "./pair-confirm-code": "./src/pair-confirm-code.ts",
+    "./command": "./src/command.ts",
     "./message-hub/unix-socket-transport": "./src/message-hub/unix-socket-transport.ts",
     "./message-hub/stdio-transport": "./src/message-hub/stdio-transport.ts",
     "./message-hub/protocol": "./src/message-hub/protocol.ts",

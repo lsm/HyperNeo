@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -104,7 +105,7 @@ try {
   const raw = app.db.getDatabase();
   await waitForSdkBodyCopy(raw);
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
   hub.registerTransport(transport); await transport.initialize();
   const create = (note: string, cadence: unknown = { kind: 'every', everyMs: 3_600_000 }) => hub.request<{ ok: boolean; schedule: SessionSchedule; reason?: string }>('operation.invoke', { name: 'schedule.session.create', input: { target: { adapter: 'hyperneo', id: session.id }, cadence, note } });
   const inspect = <T>(fn: () => T): T => { const previous = measuring; measuring = false; try { return fn(); } finally { measuring = previous; } };

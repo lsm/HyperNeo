@@ -1,14 +1,16 @@
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 let db: Database;
 let store: ExternalEventExtensionConfigStore;
 
 beforeEach(() => {
   db = new Database(':memory:');
-  store = new ExternalEventExtensionConfigStore(db);
+  db.exec('CREATE TABLE spaces (id TEXT PRIMARY KEY)');
+  store = createExternalEventConfigStore(db);
 });
 
 describe('ExternalEventExtensionConfigStore', () => {
@@ -180,7 +182,7 @@ describe('ExternalEventExtensionConfigStore', () => {
     db.close();
     db = new Database(':memory:');
     createSpaceTables(db);
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
     const now = Date.now();
     db.prepare(
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)

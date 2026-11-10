@@ -1,0 +1,9 @@
+{
+  "publicMutationActivated": true,
+  "publicBaselineReaderConfirmed": true,
+  "mainGuardSelfCheckPassed": true,
+  "phase": "first_public_rpc",
+  "firstRpcError": "MessageHubResponseError: Target GitHub SQL reached main",
+  "mainSqlAttempts": 1,
+  "metrics": []
+}

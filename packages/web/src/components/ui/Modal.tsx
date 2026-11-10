@@ -133,7 +133,11 @@ export function Modal({
       >
         {(title || showCloseButton) && (
           <div class="flex items-center justify-between px-4 py-3 border-b border-line flex-shrink-0">
-            {title && <h2 class="text-sm font-semibold text-fg">{title}</h2>}
+            {title && (
+              <h2 class="text-sm font-semibold text-fg max-[720px]:min-w-0 max-[720px]:break-words">
+                {title}
+              </h2>
+            )}
             {showCloseButton && (
               <button
                 type="button"

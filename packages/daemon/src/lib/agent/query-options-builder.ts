@@ -1,4 +1,6 @@
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
+import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { neoPlanContextHooks } from './neo-plan-hook.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -36,7 +38,7 @@ import { join } from 'path';
 import type { Database } from '../../storage/database.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
-import { NON_DELEGATING_GENERAL_AGENT } from '../agents/custom-agent.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from './non-delegating-agent.ts';
 import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { getDataDir } from '../data-dir.ts';
 import { readClaudeWorkerSandbox } from '../drivers/claude-native-writes.ts';
@@ -82,13 +84,14 @@ import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { type ExaWebToolsActivation, resolveExaWebToolsActivation } from './exa-web-tools.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
+import { createNeoBashTimeoutHook, NEO_BASH_TIMEOUT_ENV } from './neo-bash-cap.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
   resolveConfig,
 } from './output-limiter-hook.ts';
 import type { QuestionInputOriginSource } from './question-input-origin.ts';
-import { awaitSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
+import { awaitSDKCliPathForQuery, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
 const log = new Logger('QueryOptionsBuilder');
@@ -419,7 +422,7 @@ export class QueryOptionsBuilder {
     const session = overrides?.session ?? this.ctx.session;
     const config = this.admittedConfig(session);
     const toolInputs = this.canonicalToolInputs(session);
-    const workerSandbox = await readClaudeWorkerSandbox(this.getCwd());
+    const workerSandbox = await readClaudeWorkerSandbox(this.getCwd(), true);
 
     await this.ctx.settingsManager.prepareSDKOptions();
 
@@ -506,7 +509,11 @@ export class QueryOptionsBuilder {
       : handoffDraftDirectory(getDataDir(), this.ctx.session.id);
     if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
     if (handoffDirectory) workerSandbox?.sandbox.filesystem.allowWrite.push(handoffDirectory);
-    const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
+    const rootNeo = neo?.projectId === null;
+    const hooks = this.buildHooks(
+      overrides?.askUserQuestionHook ?? this.askUserQuestionHook,
+      rootNeo
+    );
     const requestedPermissionMode = this.getPermissionMode();
     const permissionMode =
       requestedPermissionMode === 'bypassPermissions' &&
@@ -586,6 +593,7 @@ export class QueryOptionsBuilder {
         ...(!neo && this.getCwd() ? workerWorkEnvironment(this.getCwd()!) : {}),
         ...workerSandbox?.env,
         ...readAccess?.env,
+        ...(rootNeo ? NEO_BASH_TIMEOUT_ENV : {}),
       },
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
       executableArgs: config.executableArgs,
@@ -1100,7 +1108,7 @@ export class QueryOptionsBuilder {
     return 'bypassPermissions';
   }
 
-  private buildHooks(askUserQuestionHook?: HookCallback): Options['hooks'] {
+  private buildHooks(askUserQuestionHook?: HookCallback, rootNeo = false): Options['hooks'] {
     const hooks: NonNullable<Options['hooks']> = {};
     const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
 
@@ -1171,6 +1179,16 @@ export class QueryOptionsBuilder {
 
     const postFailureHooks: NonNullable<Options['hooks']>['PostToolUseFailure'] = [];
     postFailureHooks.push({ hooks: [loopDetectorHooks.postToolUseFailure] });
+    if (rootNeo) {
+      const todos = new NeoAskTodoRepository(this.ctx.db!.getDatabase());
+      Object.assign(
+        hooks,
+        neoPlanContextHooks(() => todos.read('planContext'))
+      );
+      const timeoutHook = createNeoBashTimeoutHook();
+      postHooks.push({ matcher: 'Bash', hooks: [timeoutHook] });
+      postFailureHooks.push({ matcher: 'Bash', hooks: [timeoutHook] });
+    }
     hooks.PostToolUseFailure = postFailureHooks;
     return hooks;
   }
@@ -1189,7 +1207,7 @@ export class QueryOptionsBuilder {
       return config.pathToClaudeCodeExecutable;
     }
 
-    return awaitSDKCliPath();
+    return awaitSDKCliPathForQuery();
   }
 
   private getOverrideDisabledSkillIds(): Set<string> {

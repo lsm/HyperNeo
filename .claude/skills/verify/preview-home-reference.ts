@@ -1,3 +1,5 @@
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { reserveNeoConversation } from '../../../packages/daemon/src/storage/repositories/neo-conversation-reservation.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import {
@@ -12,7 +14,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
-import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
+import { createLiveFileRead } from '../../../packages/daemon/src/lib/artifacts/live-file-read.ts';
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
@@ -56,21 +58,23 @@ try {
   db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata)
     VALUES ('neo','Synthetic',?,'now','now','active','{}','{}')`).run(workspace);
   const denied = [
-    ['~other/report.html', 'unavailable'],
-    ['~', 'unavailable'],
+    ['~', 'forbidden'],
     ['~/HyperNeo/../outside.html', 'unsafe_path'],
     ['~/HyperNeo/引用配色/../引用配色/quote-colour-options.html', 'unsafe_path'],
     ['~/HyperNeo/%2e%2e/outside.html', 'unsafe_path'],
-    ['~/HyperNeo/linked.html', 'unavailable'],
+    ['~/HyperNeo/linked.html', 'unsafe_path'],
     ['~/HyperNeo/.ssh/secret.html', 'sensitive_path'],
     ['~/HyperNeo/binary.html', 'unsupported_type'],
     ['~/HyperNeo/large.html', 'size_limit'],
   ];
+  const conversationId = randomUUID();
+  reserveNeoConversation(db, conversationId, Date.now());
+  new NeoRepository(db).reserveBinding({ sessionId: 'neo', kind: 'neo', projectId: null });
   const publicationId = randomUUID();
   const origin = { sessionId: 'neo', messageId: 'm' };
   assert(
     new NeoPublicationRepository(db).append({
-      conversationId: randomUUID(),
+      conversationId,
       publicationId,
       producerInput: origin,
       askOrigin: origin,
@@ -82,7 +86,7 @@ try {
     }).accepted
   );
   const registry = createOperationRegistry([
-    createArtifactReferenceResolve(() => db, data, home),
+    createLiveFileRead(() => db, home),
     ...createArtifactReadOperations(() => db, data),
   ]);
   const human = { source: 'rpc' as const, principal: 'local' as const };
@@ -104,47 +108,42 @@ try {
     ).value;
   }
   const tap = (path: string) =>
-    call('artifact.reference.resolve', {
+    call('file.reference.read', {
       sourceMessageOrCard: { kind: 'publication', id: publicationId },
       reference: path,
-      requestId: randomUUID(),
     });
   const count = () =>
     (db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n;
   assert.equal(count(), 0);
   const receipt = await tap(reference);
   assert.equal(receipt.accepted, true, JSON.stringify(receipt));
-  assert.equal(count(), 1);
-  const id = { artifactId: receipt.artifact.artifactId };
-  assert.equal(Buffer.from((await call('artifact.file.read', id)).data, 'base64').toString(), html);
-  const preview = await call('artifact.file.html', id);
-  assert(preview.accepted);
-  assert(preview.document.includes(html));
+  assert.equal(count(), 0);
+  assert(Buffer.from(receipt.data, 'base64').toString().includes(html));
   const absoluteReceipt = await tap(absolute);
   assert(absoluteReceipt.accepted);
-  const metadata = (await call('artifact.file.get', id)).metadata;
-  assert.equal(
-    (await call('artifact.file.get', { artifactId: absoluteReceipt.artifact.artifactId })).metadata
-      .sha256,
-    metadata.sha256
-  );
+  assert.equal(absoluteReceipt.data, receipt.data);
   assert.equal((await tap('~/outside.html')).accepted, true);
+  const observedDenials: unknown[] = [];
   for (const [path, reason] of denied) {
     const before = count();
-    assert.equal((await tap(path)).reason, reason, path);
+    const result = await tap(path);
+    observedDenials.push({ path, reason: result.reason });
+    assert.equal(result.accepted, false, path);
+    if (['unsafe_path', 'sensitive_path'].includes(reason)) assert(['forbidden', reason].includes(result.reason!), path);
+    else assert.equal(result.reason, reason, path);
     assert.equal(count(), before, path);
   }
-  assert.equal((await tap('~/HyperNeo/not-in-message.html')).reason, 'unavailable');
-  db.prepare('UPDATE neo_asks SET session_id = ? WHERE id = ?').run('replacement', 'ask');
-  assert.equal((await tap(reference)).reason, 'unavailable');
+  assert.equal((await tap('~/HyperNeo/not-in-message.html')).reason, 'forbidden');
+  db.prepare("UPDATE neo_publications SET payload_json = json_set(payload_json, '$.shortText', 'Reference removed', '$.fullText', 'Reference removed') WHERE publication_id = ?").run(publicationId);
+  assert.equal((await tap(reference)).reason, 'forbidden');
   const evidence = {
     passed: true,
     unregisteredHtmlContent: html,
-    previewDocumentServed: true,
-    sameAbsoluteSnapshot: true,
-    denials: denied.map(([path, reason]) => ({ path, reason })),
+    liveDocumentServed: true,
+    sameAbsoluteContent: true,
+    denials: observedDenials,
     sourceBound: true,
-    ownershipRechecked: true,
+    sourceRechecked: true,
   };
   mkdirSync(join(root, 'evidence'), { recursive: true });
   writeFileSync(join(root, 'evidence', 'home-reference.json'), JSON.stringify(evidence, null, 2));

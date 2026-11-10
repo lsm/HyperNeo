@@ -12,6 +12,7 @@ import { createListTaskMembersOperation } from '../../../../src/lib/tasks/list-t
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
+import { createTaskCatalogOperations } from '../../../../src/lib/tasks/catalog-operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { fixtureChanges } from '../../helpers/run-db-op';
 
@@ -49,11 +50,13 @@ beforeEach(() => {
   });
 });
 
-function catalog(overrides: Parameters<typeof createDatabaseOperationCatalog>[2]) {
+function catalog(overrides: Parameters<typeof createTaskCatalogOperations>[1]) {
+  const database = { getDatabase: () => db, notifyChange: () => {} } as never;
   return createDatabaseOperationCatalog(
-    { getDatabase: () => db, notifyChange: () => {} } as never,
+    database,
     new JobQueueRepository(db),
-    overrides
+    {},
+    createTaskCatalogOperations(database, overrides)
   );
 }
 

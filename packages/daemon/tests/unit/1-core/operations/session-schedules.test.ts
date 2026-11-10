@@ -84,7 +84,6 @@ describe('session schedules', () => {
     const goal = goals.create(
       'worker-1',
       { title: 'Ship the guide', doneTest: 'Published' },
-      'human',
       Date.now()
     );
     source.sync(goal);
@@ -94,7 +93,7 @@ describe('session schedules', () => {
       ok: true,
       schedules: [{ sourceKind: 'goal', sourceId: goal.id, sourceLabel: 'Ship the guide' }],
     });
-    goals.update(goal, { title: 'Publish the guide' }, 'human', Date.now());
+    goals.update(goal, { title: 'Publish the guide' }, Date.now());
     expect(await call('schedule.session.list', { target }, human)).toMatchObject({
       schedules: [{ sourceLabel: 'Publish the guide' }],
     });

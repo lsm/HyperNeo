@@ -238,7 +238,7 @@ describe('durable public ask storage', () => {
 describe('migration 289 accepted ask durability', () => {
   test('generic agent SQL cannot bypass future intake admission', () => {
     expect(getExcludedTableNames()).toContain('neo_conversation_asks');
-    for (const scope of ['global', 'room', 'space'] as const)
+    for (const scope of ['global', 'space'] as const)
       expect(getAccessibleTableNames(scope)).not.toContain('neo_conversation_asks');
   });
 

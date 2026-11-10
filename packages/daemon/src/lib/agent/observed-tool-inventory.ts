@@ -72,10 +72,10 @@ export class ObservedToolInventory {
   private owner: QueryAttemptToken | null = null;
   private inventory = empty('not_running');
 
-  begin(token: QueryAttemptToken, provider: 'sdk' | 'acp'): void {
+  begin(token: QueryAttemptToken, _provider: 'sdk'): void {
     if (!token.isLive()) return;
     this.owner = token;
-    this.inventory = empty(provider === 'sdk' ? 'awaiting_init' : 'unverified');
+    this.inventory = empty('awaiting_init');
   }
 
   captureInit(token: QueryAttemptToken, message: InitObservation): void {

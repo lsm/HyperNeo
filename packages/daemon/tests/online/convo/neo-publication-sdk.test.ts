@@ -1,3 +1,5 @@
+import { createLocalSocket } from '../../../src/lib/pairing/local-credential.ts';
+import { pendingTodoCheck } from '../../unit/helpers/todo-check-packs.ts';
 import { expect, test } from 'bun:test';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -221,6 +223,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
                         add: ['Keep synthetic garden changes as drafts.'],
                       }
                     : {
+                        retireWhen: pendingTodoCheck,
                         askId: 'fictional-garden',
                         kind: 'reply',
                         text: 'Which synthetic flower?',
@@ -412,6 +415,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     });
     daemon.settingsManager.updateGlobalSettings({ sandbox: { enabled: false } });
     transport = new WebSocketClientTransport({
+      createSocket: createLocalSocket,
       url: `ws://127.0.0.1:${daemon.server.port}/ws`,
       autoReconnect: false,
     });
@@ -739,7 +743,16 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(nudged, 'ending with Done. keeps the CLI from nudging for visible output').toEqual([]);
     const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
+    const { listPackPreferences } = await import('../../../src/lib/neo/preference-operations.ts');
     const { neoSettingsPackBriefs } = await import('../../../src/lib/neo/packs/index.ts');
+    const { createDelegationPack } = await import('../../../src/lib/neo/packs/delegation/pack.ts');
+    const database = daemon.db.getDatabase();
+    const delegation = createDelegationPack(() => database);
+    const expectedPrompt = neoPrompt(
+      neoSettingsPackBriefs().map((brief) => (brief.id === delegation.id ? delegation : brief)),
+      [],
+      listPackPreferences(database)
+    );
     if (process.env.VERIFY_EVIDENCE_DIR) {
       await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
       await writeFile(
@@ -817,7 +830,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     expect(nativeToolsSeen[0]).not.toEqual(expect.arrayContaining(['Edit']));
     expect(approvalProbeDenied).toBe(false);
     expect(existsSync(approvalProbeFile)).toBe(false);
-    expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt(neoSettingsPackBriefs()));
+    expect(storedAtStartup.config.systemPrompt).toBe(expectedPrompt);
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Bash');
     expect(storedAtStartup.config.sandbox?.enabled ?? false).toBeFalsy();
@@ -827,7 +840,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     expect(daemon.db.getSession(root)?.sdkSessionId).toBe(sdkSessionId);
     expect(daemon.db.getSession(root)?.sdkOriginPath).toBe(newCwd);
     expect(existsSync(getSDKSessionFilePath(newCwd, sdkSessionId))).toBe(true);
-    expect(sent[0].system).toContain(neoPrompt(neoSettingsPackBriefs()));
+    expect(sent[0].system).toContain(expectedPrompt);
     expect(sent[0].system).not.toContain('On a scheduled goal wake, use its goalId');
     for (const instruction of [
       'neo.home.init',
@@ -841,9 +854,10 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     const human = (sent[0].human as { type: string; text?: string }[]).filter(
       (part) => part.type === 'text'
     );
-    expect(human.map((part) => part.text).slice(-2)).toEqual([
+    expect(human.map((part) => part.text).slice(-3)).toEqual([
       expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),
       'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
+      '[listening: no]\nBefore time-consuming work, publish one short reply first: what you will do, plus a line or two of what you already know. Answer a quick question directly instead. Then continue.',
     ]);
     expect(human.map((part) => part.text).join('\n')).not.toContain('<human-input>');
     expect(human.map((part) => part.text)).toContain(`[message id: ${requestId}]`);

@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 parser = argparse.ArgumentParser()
-parser.add_argument('runtime', choices=['bun', 'deno'])
+parser.add_argument('runtime', choices=['bun'])
 parser.add_argument('mode', choices=['before', 'verify'])
 parser.add_argument('--executable')
 args = parser.parse_args()
@@ -55,13 +55,8 @@ try:
            'TMPDIR': str(run / 'tmp'), 'NODE_ENV': 'test',
            'HYPERNEO_DATA_DIR': str(run / 'data'), 'LOG_LEVEL': 'error'}
     helper = str(repo / '.claude/skills/verify/coding-merge-receipt-db.ts')
-    if args.runtime == 'bun':
-        command = [exe, '--no-install', '--no-env-file', helper, args.mode, str(run)]
-        cwd = repo
-    else:
-        env['DENO_DIR'] = str(Path.home() / 'Library/Caches/deno')
-        command = [exe, 'run', '--cached-only', '-A', helper, args.mode, str(run)]
-        cwd = repo / 'packages/daemon'
+    command = [exe, '--no-install', '--no-env-file', helper, args.mode, str(run)]
+    cwd = repo
     with (run / 'proof.log').open('w') as output:
         result = subprocess.run(command, cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT)
 finally:

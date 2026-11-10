@@ -7,7 +7,7 @@ import {
   gateOwnedGoalIds,
   ownedGoalIdsFromLinks,
   subscribeAgentActivationOutcomeRedelivery,
-} from '../../../../src/lib/goals/agent-activation-outcome-redelivery';
+} from '../../../../../space/src/goals/agent-activation-outcome-redelivery';
 
 const SPACE_ID = 'space-1';
 

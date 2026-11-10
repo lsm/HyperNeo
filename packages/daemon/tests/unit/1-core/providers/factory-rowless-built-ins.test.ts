@@ -78,7 +78,7 @@ describe('disableBuiltInProvidersWithoutEnabledRecord', () => {
   it('can register every built-in provider added later, including deepseek and opencode', async () => {
     disableBuiltInProvidersWithoutEnabledRecord([]);
     initializeProviders();
-    for (const providerId of ['deepseek', 'opencode', 'ollama-cloud', 'acp']) {
+    for (const providerId of ['deepseek', 'opencode', 'ollama-cloud']) {
       expect(getProviderRegistry().has(providerId)).toBe(false);
       await ensureBuiltInProviderRegistered(providerId);
       expect(getProviderRegistry().has(providerId)).toBe(true);

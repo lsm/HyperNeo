@@ -4,12 +4,12 @@ import type { ExternalEventPublishedPayload } from '../../../../src/lib/external
 import {
   evaluateRequeueTaskLifecycle,
   isPublishedExternalEventExpired,
-  isQueuedExternalEventExpired,
   isWorkflowTargetOwnedBySpace,
   prepareExternalEventTask,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
-} from '../../../../src/lib/external-events/admission-gates';
+} from '../../../../../space/src/external-events/admission-gates';
+import { isQueuedExternalEventExpired } from '../../../../src/lib/external-events/event-delivery-rules';
 
 function makeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
   return {

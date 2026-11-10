@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import { globalStore } from '../lib/global-store';
-import { spaceStore } from '../lib/space-store';
+import { shellExtensions } from '../lib/web-extensions';
 import { applyOptimisticSessionInfo } from '../lib/session-store';
 import { updateSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
@@ -20,6 +20,10 @@ export interface UseSessionRenameResult {
   startEditing: () => void;
   commit: () => void;
   inputProps: SessionRenameInputProps;
+}
+
+function announceRename(sessionId: string, title: string): void {
+  for (const extension of shellExtensions()) extension.sessionRenamed(sessionId, title);
 }
 
 export function useSessionRename(sessionId: string, currentTitle: string): UseSessionRenameResult {
@@ -50,13 +54,13 @@ export function useSessionRename(sessionId: string, currentTitle: string): UseSe
     if (!trimmed || trimmed === currentTitle) return;
 
     globalStore.updateSession(sessionId, { title: trimmed });
-    spaceStore.updateSession(sessionId, { title: trimmed });
+    announceRename(sessionId, trimmed);
     applyOptimisticSessionInfo(sessionId, { title: trimmed });
     try {
       await updateSession(sessionId, { title: trimmed, metadata: { titleSetBy: 'user' } });
     } catch {
       globalStore.updateSession(sessionId, { title: currentTitle });
-      spaceStore.updateSession(sessionId, { title: currentTitle });
+      announceRename(sessionId, currentTitle);
       applyOptimisticSessionInfo(sessionId, { title: currentTitle }, trimmed);
       toast.error('Failed to rename');
     }

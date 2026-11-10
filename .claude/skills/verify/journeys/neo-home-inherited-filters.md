@@ -44,14 +44,12 @@ The local-read operation contract also seeds a malformed inherited Git profile.
 Tolerant Git probes must preserve local document access; required Git commands
 must still fail rather than silently discard the profile.
 
-Run the shared wrapper with `.claude/skills/verify/neo-home-config-drivers.ts`,
-once under Bun and once under pinned Deno. This listener-free proof runs real
-rebase and merge commands with custom drivers configured in global, system,
-local and command scopes. Each unsafe driver would write outside the home.
-Conflicts must still contain both versions and remain resolvable using Git's
-builtin text merge, with no outside marker. Inherited external diff and textconv
-commands must be absent, leaving ordinary diff output. Local diff settings remain
-covered by the daemon's explicit no-ext-diff/no-textconv flags.
+This listener-free proof runs real rebase and merge commands with custom drivers
+configured in global, system, local and command scopes. Each unsafe driver would write
+outside the home. Conflicts must still contain both versions and remain resolvable using
+Git's builtin text merge, with no outside marker. Inherited external diff and textconv
+commands must be absent, leaving ordinary diff output. Local diff settings remain covered
+by the daemon's explicit no-ext-diff/no-textconv flags.
 
 The same helper clones through inherited URL rewrites whose subsection names
 contain quotes, backslashes and literal tabs, checking the exact document bytes.
@@ -60,14 +58,12 @@ remain literal. Inspect `neo-home-config-drivers.json`. Operation contracts also
 exercise the real conflict-question/answer/save path. This command proof does
 not establish daemon RPC startup or native SDK sandbox enforcement.
 
-For legacy Git configuration bytes, run the shared wrapper with
-`.claude/skills/verify/neo-home-config-bytes.ts` under Bun and pinned Deno.
-Its synthetic profiles use a Latin-1 identity, an explicit commit encoding and
-a filter name containing a non-UTF-8 byte. The raw commit author header must
-match the original bytes in global, system, local and included command settings.
-A UTF-8 identity supplied through command configuration must remain UTF-8, and no
-selected raw filter name may execute its outside-home marker. Inspect the recorded hex
-prefixes in `neo-home-config-bytes.json`.
+Its synthetic profiles use a Latin-1 identity, an explicit commit encoding and a filter
+name containing a non-UTF-8 byte. The raw commit author header must match the original
+bytes in global, system, local and included command settings. A UTF-8 identity supplied
+through command configuration must remain UTF-8, and no selected raw filter name may
+execute its outside-home marker. Inspect the recorded hex prefixes in
+`neo-home-config-bytes.json`.
 
 Command settings and driver overrides live in a protected command-scope include
 file so their bytes do not pass through UTF-8-only environment strings. Repeat the existing driver

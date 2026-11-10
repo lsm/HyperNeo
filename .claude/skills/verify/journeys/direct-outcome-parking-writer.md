@@ -19,10 +19,9 @@ Main-connection instrumentation must capture zero parking UPDATE statements.
 The baseline runs all these behavior checks but fails the final SQL assertion;
 that failing reproduction is committed before the wiring change.
 
-Repeat with `VERIFY_PROOF_RUNTIME=deno` and supported Deno on PATH. Evidence
-includes persisted job states and both stale/current handler outcomes. The
-shared wrapper isolates homes, preserves evidence and cleans up daemon data.
-No model turn, real worker process, live DB or fixed port is used.
+Evidence includes persisted job states and both stale/current handler outcomes. The shared
+wrapper isolates homes, preserves evidence and cleans up daemon data. No model turn, real
+worker process, live DB or fixed port is used.
 
 Run the direct-outcome-jobs and job-queue-repository unit files to retain park
 budgets, the fixed park window, shutdown retry behavior and claim fencing.

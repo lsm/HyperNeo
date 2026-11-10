@@ -19,7 +19,7 @@ export interface ClaudeInboxSubmission {
   messageId: string;
   inputId: string;
   text: string;
-  fromMode?: 'bypass' | 'prompting';
+  fromMode: 'bypass' | 'prompting';
 }
 
 export type ClaudeInboxEvent =
@@ -74,6 +74,7 @@ export function claudeInboxFrame(
   z.string().uuid().parse(submission.inputId);
   if (!submission.text.trim()) throw new Error('Claude inbox message is empty.');
   const from = claudeInboxAddress(replyPath);
+  const fromMode = z.enum(['bypass', 'prompting']).parse(submission.fromMode);
   const text = claudeInboxText(submission.text);
   const frame = `${JSON.stringify({
     msgV: 1,
@@ -85,7 +86,7 @@ export function claudeInboxFrame(
     priority: 'next',
     message: {
       role: 'user',
-      content: `<cross-session-message from="${from}" from-name="HyperNeo" from-mode="${submission.fromMode ?? 'bypass'}">\n${text}\n</cross-session-message>`,
+      content: `<cross-session-message from="${from}" from-name="HyperNeo" from-mode="${fromMode}">\n${text}\n</cross-session-message>`,
     },
   })}\n`;
   if (Buffer.byteLength(frame) > FRAME_LIMIT) throw new Error('Claude inbox frame is too large.');

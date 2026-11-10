@@ -15,6 +15,7 @@ import {
   createWorkFeedOffsetsTable,
 } from '../../../../src/storage/schema/m302-work-index-kinds';
 import { runMigration455 } from '../../../../src/storage/schema/m455-work-started-sessions';
+import { runMigration465 } from '../../../../src/storage/schema/m465-work-unusable';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { readStartedWork, recordStartedWork } from '../../../../src/storage/work-started-sessions';
 
@@ -35,9 +36,12 @@ beforeEach(() => {
     message_type TEXT, title TEXT, body TEXT, timestamp INTEGER, UNIQUE (kind, source_id))`);
   db.exec('CREATE TABLE sessions (id TEXT, sdk_session_id TEXT)');
   db.exec('CREATE TABLE neo_todo_sessions (todo_id TEXT PRIMARY KEY, target TEXT, ref TEXT)');
+  db.exec('CREATE TABLE neo_todos (id TEXT, ask_id TEXT, state TEXT)');
+  db.exec('CREATE TABLE neo_asks (id TEXT, status TEXT)');
   createWorkFeedOffsetsTable(db);
   createFeedTurnIndex(db);
   runMigration455(db);
+  runMigration465(db);
 });
 
 afterEach(() => {

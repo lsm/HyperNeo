@@ -11,6 +11,10 @@ import { CodingPrSweepRepository } from '../../../../src/lib/neo/packs/coding/pr
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { WorkTurnRepository } from '../../../../src/storage/repositories/work-turn-repository.ts';
+import { runMigration477 } from '../../../../src/storage/schema/m477-work-turns.ts';
+import { runMigration480 } from '../../../../src/storage/schema/m480-work-turn-urls.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const ship = Date.now();
@@ -44,7 +48,6 @@ function setup() {
     createCodingPack({
       database: () => db,
       readPrs: async () => [],
-      readClaudeOwners: async () => [],
       todoPrs: new CodingTodoPrRepository(db),
       prLedger: ledger,
       prEvents: new CodingPrEventRepository(db),
@@ -92,6 +95,146 @@ function setup() {
 }
 
 describe('coding pack newly unowned PR notifications', () => {
+  const turn = (url: string, complete: boolean) => ({
+    id: 'turn-1',
+    startedAt: ship,
+    endedAt: ship + 90_000,
+    ended: 'end_turn',
+    inputs: [],
+    urls: [url],
+    finalUrls: [url],
+    complete,
+    cursor: '{"seq":1,"consumed":0}',
+  });
+  const worker = { adapter: 'claude-desktop', id: 'worker' };
+  const url = 'https://github.com/synthetic/a/pull/1';
+
+  const markWorkerRunning = (db: Database, state: 'doing' | 'blocked') => {
+    const store = new NeoAskTodoRepository(db);
+    store.openAsk({
+      id: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Work',
+      request: 'Work',
+      createdAt: 1,
+    });
+    store.addTodo(
+      'todo',
+      'ask',
+      { title: 'Work', doneWhen: 'Done', check: null, instruction: 'Go', named: null },
+      1
+    );
+    store.updateTodo(store.getTodo('todo')!, { state, startedAt: 2 }, 2);
+    db.prepare(
+      `INSERT INTO neo_todo_sessions (todo_id, target, ref, live_status)
+       VALUES ('todo', '{}', ?, 'running')`
+    ).run(JSON.stringify(worker));
+  };
+
+  test('the turn that produced a PR makes its session the owner', async () => {
+    const { db, wakes, cycle } = setup();
+    try {
+      await new WorkTurnRepository(db).record(worker, [turn(url, true)]);
+      await cycle([pr(1)]);
+      expect(
+        db.prepare("SELECT owner FROM pack_coding_pr_ledger WHERE repo = 'synthetic/a'").get()
+      ).toEqual({ owner: JSON.stringify(worker) });
+      expect(wakes.flatMap((wake) => wake.text)).not.toContainEqual(
+        expect.stringContaining('synthetic/a#1')
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test('naming a PR on a todo hands it to that session, ahead of the turn that produced it', async () => {
+    const { db, cycle } = setup();
+    try {
+      markWorkerRunning(db, 'doing');
+      db.prepare("UPDATE neo_todos SET check_json = ? WHERE id = 'todo'").run(
+        JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [url] } })
+      );
+      await new WorkTurnRepository(db).record({ adapter: 'codex-desktop', id: 'producer' }, [
+        turn(url, true),
+      ]);
+      await cycle([pr(1)]);
+      expect(
+        db.prepare("SELECT owner FROM pack_coding_pr_ledger WHERE repo = 'synthetic/a'").get()
+      ).toEqual({ owner: JSON.stringify(worker) });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a turn that could not be read fully holds the unowned notice until it is known', async () => {
+    const { db, wakes, cycle } = setup();
+    try {
+      await new WorkTurnRepository(db).record(worker, [turn(url, false)]);
+      await cycle([pr(1)]);
+      expect(wakes.flatMap((wake) => wake.text)).not.toContainEqual(
+        expect.stringContaining('synthetic/a#1')
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a turn recorded after owners were assigned does not announce its PR as unowned', async () => {
+    const { db, cycle } = setup();
+    try {
+      const turns = new WorkTurnRepository(db);
+      await turns.record(worker, [turn(url, false)]);
+      await cycle([pr(1)]);
+      await turns.record(worker, [turn(url, true)]);
+      expect(new CodingPrEventRepository(db).pendingUnowned(ship + 120_000)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a PR opened while a worker turn runs waits for that turn to end', async () => {
+    const { db, wakes, cycle } = setup();
+    try {
+      markWorkerRunning(db, 'doing');
+      await cycle([pr(1)]);
+      expect(wakes).toEqual([]);
+
+      await new WorkTurnRepository(db).record(worker, [
+        { ...turn('https://example.com', true), endedAt: ship + 100_000 },
+      ]);
+      await cycle([pr(1)], ship + 180_000);
+      expect(wakes[0].text).toContain('synthetic/a#1');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a worker blocked on its check does not hold the notice, since nothing refreshes its status', async () => {
+    const { db, wakes, cycle } = setup();
+    try {
+      markWorkerRunning(db, 'blocked');
+      await cycle([pr(1)]);
+      expect(wakes[0].text).toContain('synthetic/a#1');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a PR no turn produced and no session claims is announced', async () => {
+    const { db, wakes, cycle } = setup();
+    try {
+      await new WorkTurnRepository(db).record(worker, [
+        { ...turn(url, true), startedAt: ship - 2000, endedAt: ship - 1000 },
+      ]);
+      await cycle([pr(1)]);
+      expect(wakes[0].text).toContain('synthetic/a#1');
+    } finally {
+      db.close();
+    }
+  });
+
   test('one reconcile wakes Neo once with all new human PRs across repos, never the old backlog', async () => {
     const { db, wakes, cycle } = setup();
     try {
@@ -126,20 +269,7 @@ describe('coding pack newly unowned PR notifications', () => {
   test('a known owner is not announced, and each PR is listed once through restart, head change and pruning', async () => {
     const { db, ledger, wakes, cycle, restart } = setup();
     try {
-      ledger.observeSessions(
-        [
-          {
-            ref: { adapter: 'codex-desktop', id: 'owner' },
-            status: 'running',
-            lastActivityAt: ship,
-            remotes: [],
-            branches: [],
-            openedPrs: [],
-            linkedPrs: [{ url: 'https://github.com/synthetic/a/pull/1', own: true }],
-          },
-        ],
-        ship
-      );
+      await new WorkTurnRepository(db).record(worker, [turn(url, true)]);
       await cycle([pr(1)]);
       expect(wakes).toHaveLength(1);
       expect(wakes[0].text).not.toContain('synthetic/a#1');
@@ -223,6 +353,12 @@ describe('coding pack unowned PR persistence', () => {
         .get() as { activated_at: number };
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, cutoff + 600_000);
+      runMigration477(db);
+      runMigration480(db);
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
+           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
+      );
       expect(db.prepare('SELECT activated_at FROM pack_coding_pr_unowned_state').get()).toEqual({
         activated_at: cutoff,
       });
@@ -245,6 +381,12 @@ describe('coding pack unowned PR persistence', () => {
     try {
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 10);
+      runMigration477(db);
+      runMigration480(db);
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
+           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
+      );
       db.prepare(`INSERT INTO pack_coding_pr_ledger (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
         VALUES ('synthetic/a',1,'Synthetic','b','h','unreviewed',20,20,11,0)`).run();
       const pending = new CodingPrEventRepository(db).pendingUnowned(20);
@@ -253,6 +395,12 @@ describe('coding pack unowned PR persistence', () => {
       db = new Database(path);
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 30);
+      runMigration477(db);
+      runMigration480(db);
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
+           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
+      );
       const repo = new CodingPrEventRepository(db);
       const sent: unknown[] = [];
       await wakeCodingUnownedPrs(
@@ -290,6 +438,12 @@ describe('coding pack unowned PR persistence', () => {
         INSERT INTO pack_coding_pr_ledger (repo,number,title,read_at) VALUES ('synthetic/a',1,'Keep this row',1)`);
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 2);
+      runMigration477(db);
+      runMigration480(db);
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
+           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
+      );
       expect(
         db.prepare('SELECT title,created_at,author_is_bot FROM pack_coding_pr_ledger').get()
       ).toEqual({

@@ -1,3 +1,4 @@
+import { createPairWaits } from '../../../../src/lib/pairing/pair-waits';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { createPairRoute } from '../../../../src/lib/pairing/pair-route';
@@ -25,6 +26,7 @@ describe('HTTP pairing redemption writer', () => {
     gateway = new DbGateway(':memory:', writer);
     bindGateway(main, gateway);
     route = createPairRoute({
+      waits: createPairWaits(),
       repo: new DevicePairingRepository(main),
       limiter: createPairingLimiter(),
       now: () => now,

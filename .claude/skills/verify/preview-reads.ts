@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFile
 import { join, resolve } from 'node:path';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../packages/daemon/src/storage/schema/index.ts';
-import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import type { ArtifactRef, ArtifactFileMetadata } from '../../../packages/shared/src/types/artifact-file.ts';
 import { readArtifactChunk } from '../../../packages/daemon/src/lib/artifacts/read-snapshot.ts';
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
@@ -33,8 +33,8 @@ for (const id of ['todo', 'other']) {
 const worker: OperationCaller = { source: 'mcp', role: 'direct_task_worker', sessionId: 'todo-worker' };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const context = { kind: 'todo', id: 'todo' };
-const registration = createArtifactRegistration(() => db, data, join(root, 'home'));
-const registry = createOperationRegistry([registration, ...createArtifactReadOperations(() => db, data)]);
+const registry = createOperationRegistry([...createArtifactReadOperations(() => db, data)]);
+const historical = (input: Parameters<ReturnType<typeof legacyAttachmentFixture>['execute']>[0]) => legacyAttachmentFixture(() => db, data, join(root, 'home')).execute(input);
 async function call(name: string, input: unknown, caller = worker, catalog = registry) {
  const result = await invokeOperation(catalog, name, input, caller);
  assert.equal(result.kind, 'completed', JSON.stringify(result));
@@ -43,7 +43,7 @@ async function call(name: string, input: unknown, caller = worker, catalog = reg
 const bytes = Buffer.from('# Complete synthetic 🦊\n'.repeat(25000));
 writeFileSync(join(workspace, 'report.md'), bytes);
 const refs = [];
-for (let index = 0; index < 3; index++) refs.push((await call('artifact.file.register', { requestId: `r${index}`, context, path: 'report.md', title: `Report ${index}` })).artifact);
+for (let index = 0; index < 3; index++) refs.push((await historical({ requestId: `r${index}`, context, path: 'report.md', title: `Report ${index}` })).artifact);
 const first = refs[0];
 const metadata = await call('artifact.file.get', { artifactId: first.artifactId });
 assert.deepEqual(metadata.metadata.artifact, first);
@@ -63,16 +63,16 @@ do {
  assert.equal(page.artifacts.length, 1); all.push(...page.artifacts); cursor = page.nextCursor;
 } while (cursor);
 assert.deepEqual(new Set(all.map((ref) => ref.artifactId)), new Set(refs.map((ref) => ref.artifactId)));
-const foreign = (await call('artifact.file.register', { requestId: 'foreign', context: { kind: 'todo', id: 'other' }, path: 'report.md', title: 'Other' }, human)).artifact;
+const foreign = (await historical({ requestId: 'foreign', context: { kind: 'todo', id: 'other' }, path: 'report.md', title: 'Other' }, human)).artifact;
 assert.deepEqual(await call('artifact.file.list', { context, cursor: foreign.artifactId }), unavailable);
 writeFileSync(join(workspace, 'empty.md'), '');
-const empty = (await call('artifact.file.register', { requestId: 'empty', context: { kind: 'todo', id: 'other' }, path: 'empty.md', title: 'Empty' }, human)).artifact;
+const empty = (await historical({ requestId: 'empty', context: { kind: 'todo', id: 'other' }, path: 'empty.md', title: 'Empty' }, human)).artifact;
 assert.deepEqual(await call('artifact.file.read', { artifactId: empty.artifactId }, human), {
  accepted: true, data: '', nextOffset: 0, byteLength: 0, sha256: createHash('sha256').digest('hex'), complete: true,
 });
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64');
 writeFileSync(join(workspace, 'image.png'), png);
-const image = (await call('artifact.file.register', { requestId: 'image', context: { kind: 'todo', id: 'other' }, path: 'image.png', title: 'Image' }, human)).artifact;
+const image = (await historical({ requestId: 'image', context: { kind: 'todo', id: 'other' }, path: 'image.png', title: 'Image' }, human)).artifact;
 assert.equal(image.kind, 'image');
 assert(Buffer.from((await call('artifact.file.read', { artifactId: image.artifactId }, human)).data, 'base64').equals(png));
 renameSync(workspace, `${workspace}.retained`);

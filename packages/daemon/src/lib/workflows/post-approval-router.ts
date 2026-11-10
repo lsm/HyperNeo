@@ -1,4 +1,5 @@
 import type {
+  InternalUpdateSpaceTaskParams,
   PostApprovalRoute,
   SpaceApprovalSource,
   SpaceTask,
@@ -54,11 +55,13 @@ export interface PostApprovalRouterDeps {
   spawner: PostApprovalSubSessionSpawner;
   livenessProbe?: SessionLivenessProbe;
   resolveCompletionOutcome?: (task: SpaceTask) => UpdateSpaceTaskParams | null;
-  goalService?: Pick<import('../goals/service.ts').SpaceGoalService, 'handleTaskTerminal'>;
-  evolutionScopeService?: Pick<
-    import('../evolution/scope-service.ts').EvolutionScopeService,
-    'captureCompletedTaskEvidence'
-  >;
+  goalService?: {
+    handleTaskTerminal(
+      taskId: string,
+      transition: { fromStatus: SpaceTask['status']; updates: InternalUpdateSpaceTaskParams }
+    ): object | null;
+  };
+  evolutionScopeService?: { captureCompletedTaskEvidence(params: { taskId: string }): unknown };
   validateRecordedPointer?: (args: {
     sessionId: string;
     taskId: string;

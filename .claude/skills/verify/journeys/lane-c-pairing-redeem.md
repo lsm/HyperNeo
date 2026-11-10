@@ -3,12 +3,10 @@
 Remeasure local bodies with `bun .claude/skills/verify/lane-c-pairing-redeem-measure.cjs`;
 the route, repository, command and limiter must stay within 200 lines.
 
-Run `lane-c-pairing-redeem.ts` through `proof-run.sh` with Bun, then with
-`VERIFY_PROOF_RUNTIME=deno` and the cached runtime on PATH. Use fresh evidence
-folders. The helper owns an isolated daemon, ephemeral non-8399 port, synthetic
-pairing codes/device credentials, fresh HOME/data, native DB workers and a
-refusing GitHub stub. External HTTP and provider credentials are unavailable.
-Only loopback requests to the owned HTTP server use the preserved native fetch.
+Use fresh evidence folders. The helper owns an isolated daemon, ephemeral non-8399 port,
+synthetic pairing codes/device credentials, fresh HOME/data, native DB workers and a
+refusing GitHub stub. External HTTP and provider credentials are unavailable. Only
+loopback requests to the owned HTTP server use the preserved native fetch.
 
 Deny new and cached main statements for code claims, device insertion, pending
 approval detection and recovery reset/read/invalidation. Commit the failing

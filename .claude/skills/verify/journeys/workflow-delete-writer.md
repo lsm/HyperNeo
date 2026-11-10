@@ -12,10 +12,9 @@ a mismatched optional Space must be refused without changing either workflow.
 A repeated delete must report the missing workflow. Instrumentation must see no
 executable-run guard query or workflow DELETE on the main connection.
 
-The same journey before the fix completes those behavior checks but fails its
-SQL assertion. That regression is committed before wiring. Repeat with
-`VERIFY_PROOF_RUNTIME=deno` and supported Deno on PATH. The wrapper preserves RPC
-replies and SQL evidence before removing the synthetic home and database.
+The same journey before the fix completes those behavior checks but fails its SQL
+assertion. That regression is committed before wiring. The wrapper preserves RPC replies
+and SQL evidence before removing the synthetic home and database.
 
 The RPC uses `SpaceWorkflowManager.deleteWorkflowAsync(id)`. The legacy sync API
 remains for unported import callers; lane C owns that handler and can switch to

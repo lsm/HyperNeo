@@ -20,7 +20,7 @@ const mockLoadMore = vi.fn();
 const mockExists = vi.fn();
 const mockCreate = vi.fn();
 
-vi.mock('../../../lib/memory-store', () => ({
+vi.mock('../../../lib/space-memory-store', () => ({
   get memoryStore() {
     return {
       memories: mockMemories,

@@ -16,7 +16,7 @@ const models = vi.hoisted(() => ({
   valid: vi.fn(async () => true),
   catalog: vi.fn(() => [
     { id: 'new-model', provider: 'anthropic' },
-    { id: 'old-model', provider: 'acp' },
+    { id: 'old-model', provider: 'openrouter' },
   ]),
 }));
 vi.mock('../../../../src/lib/model-service.ts', async (original) => ({
@@ -48,7 +48,7 @@ describe('session.runtimeSettings.update native boundary', () => {
     models.valid.mockReset().mockResolvedValue(true);
     models.catalog.mockReset().mockReturnValue([
       { id: 'new-model', provider: 'anthropic' },
-      { id: 'old-model', provider: 'acp' },
+      { id: 'old-model', provider: 'openrouter' },
     ]);
   });
   afterEach(() => db.close());
@@ -138,7 +138,11 @@ describe('session.runtimeSettings.update native boundary', () => {
     };
   }
 
-  const PATCHES = [{ model: 'new-model' }, { provider: 'acp' }, { thinkingLevel: 'think16k' }];
+  const PATCHES = [
+    { model: 'new-model' },
+    { provider: 'openrouter' },
+    { thinkingLevel: 'think16k' },
+  ];
   for (const patch of PATCHES) {
     test.each(
       [
@@ -238,22 +242,22 @@ describe('session.runtimeSettings.update native boundary', () => {
     expect(f.blindWrite).not.toHaveBeenCalled();
   });
 
-  test('cold provider changes atomically clear SDK identity without losing other config', async () => {
+  test('cold SDK provider changes atomically preserve resume identity and other config', async () => {
     const f = fixture();
     repo.updateSession(f.session.id, {
       sdkSessionId: 'fictional-sdk',
       sdkOriginPath: '/fictional/origin',
     });
     f.cold();
-    expect(await f.invoke({ provider: 'acp', thinkingLevel: 'think8k' })).toMatchObject({
+    expect(await f.invoke({ provider: 'openrouter', thinkingLevel: 'think8k' })).toMatchObject({
       ok: true,
     });
     const stored = repo.getSession(f.session.id)!;
-    expect(stored.sdkSessionId).toBeUndefined();
-    expect(stored.sdkOriginPath).toBeUndefined();
+    expect(stored.sdkSessionId).toBe('fictional-sdk');
+    expect(stored.sdkOriginPath).toBe('/fictional/origin');
     expect(stored.config).toMatchObject({
       model: 'old-model',
-      provider: 'acp',
+      provider: 'openrouter',
       thinkingLevel: 'think8k',
       maxTokens: f.session.config.maxTokens,
     });

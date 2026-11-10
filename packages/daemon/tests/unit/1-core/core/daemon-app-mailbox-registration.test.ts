@@ -7,12 +7,16 @@ import { createDaemonApp, type DaemonAppContext } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 import { MAILBOX_EXPIRE_FIRE } from '../../../../src/lib/job-queue-constants';
 import * as delivery from '../../../../src/lib/mailbox/delivery';
+import * as modelDelivery from '../../../../src/lib/job-handlers/message-delivery.handler';
+import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { neoIntakeMessage } from '../../../../src/lib/neo/intake';
 import * as replay from '../../../../src/lib/mailbox/deferred-replay-scheduler';
 import * as failure from '../../../../src/lib/mailbox/failure';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import { SessionManager } from '../../../../src/lib/session-manager';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
-import { createDefaultSessionResolutionDeps } from '../../../../src/lib/session-resolution/default-deps';
+import { createDefaultSessionResolutionDeps } from '../../../../../space/src/runtime/session-resolution-deps';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
@@ -33,6 +37,7 @@ describe('Daemon app mailbox registration', () => {
   let originalSettingsDir: string | undefined;
   let deliveryDeps: delivery.MailboxDeliveryDeps;
   let failureDeps: failure.MailboxFailureDeps;
+  let modelDeliveryDeps: modelDelivery.MessageDeliveryHandlerDeps;
   let deliveryHandler: ReturnType<typeof delivery.createMailboxDeliveryHandler>;
   let deadHandler: ReturnType<typeof failure.createMailboxDeadHandler>;
   let scheduler: ReturnType<typeof replay.createMailboxDeferredReplayScheduler>;
@@ -85,6 +90,11 @@ describe('Daemon app mailbox registration', () => {
     });
     spyOn(JobQueueProcessor.prototype, 'start').mockImplementation(() => {
       lifecycle.push('start');
+    });
+    const createModelDelivery = modelDelivery.createMessageDeliveryHandler;
+    spyOn(modelDelivery, 'createMessageDeliveryHandler').mockImplementation((deps) => {
+      modelDeliveryDeps = deps;
+      return createModelDelivery(deps);
     });
     const createDelivery = delivery.createMailboxDeliveryHandler;
     spyOn(delivery, 'createMailboxDeliveryHandler').mockImplementation((deps) => {
@@ -172,6 +182,111 @@ describe('Daemon app mailbox registration', () => {
     spyOn(app!.sessionManager, 'getSessionAsync').mockResolvedValue(lookupSession());
     return id;
   }
+
+  async function listening(enabled: boolean, clientId = 'listener') {
+    if (!app!.messageHub.getRouter()!.getClientById(clientId))
+      app!.messageHub
+        .getRouter()!
+        .registerConnection({ id: clientId, isOpen: () => true, send() {} });
+    const result = await invokeOperation(
+      app!.sessionManager.getOperationRegistry(),
+      'neo.speech.listen',
+      { sessionId: 'neo:root', enabled },
+      {
+        source: 'rpc',
+        principal: 'local',
+        clientId,
+        device: { deviceId: `synthetic-${clientId}`, kind: 'human' },
+      }
+    );
+    expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
+  }
+
+  async function modelInput(content: SDKUserMessage['message']['content'], inputKind = 'human') {
+    const pending = { content, inputKind, sendStatus: 'enqueued' };
+    const loaded = await modelDeliveryDeps.prepareContent!(pending, {
+      payload: { sessionId: 'neo:root' },
+    } as Job);
+    return typeof loaded.content === 'string'
+      ? loaded.content
+      : loaded.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+  }
+
+  test('listening case 4: typed request then live listening uses delivery-time state', async () => {
+    await recipient(true);
+    const message = neoIntakeMessage({
+      sessionId: 'neo:root',
+      requestId: crypto.randomUUID(),
+      content: 'Check this',
+      inputMode: 'text',
+      speech: false,
+    });
+    await listening(true);
+    const delivered = await modelInput(message.message.content);
+    expect(delivered).toContain('[input: text]');
+    expect(delivered).toContain('[listening: yes]');
+    expect(delivered).toContain('before time-consuming work');
+  });
+
+  test('listening case 5: live request then leaving voice uses a text acknowledgment', async () => {
+    await recipient(true);
+    await listening(true);
+    const message = neoIntakeMessage({
+      sessionId: 'neo:root',
+      requestId: crypto.randomUUID(),
+      content: 'Check this',
+      inputMode: 'live_voice',
+      speech: true,
+    });
+    await listening(false);
+    const delivered = await modelInput(message.message.content);
+    expect(delivered).toContain('[input: live_voice]');
+    expect(delivered).toContain('[listening: no]');
+    expect(delivered).toContain('Before time-consuming work, publish one short reply first:');
+    expect(delivered).not.toContain('call neo.speech.say');
+  });
+
+  test.each(['worker report', 'scheduled wake'])(
+    'listening case 6: %s carries current state without a human acknowledgment',
+    async (content) => {
+      await recipient(true);
+      await listening(true);
+      const delivered = await modelInput(content, 'system');
+      expect(delivered).toContain('[listening: yes]');
+      expect(delivered).not.toContain('before time-consuming work');
+      await listening(false);
+      expect(await modelInput(content, 'system')).toContain('[listening: no]');
+    }
+  );
+
+  test('listening changes inject only into a processing turn and preserve last-client wins', async () => {
+    await recipient(true);
+    let status = 'idle';
+    spyOn(app!.sessionManager, 'getCachedSession').mockImplementation(
+      () => ({ getProcessingState: () => ({ status }) }) as never
+    );
+    const injected = () =>
+      app!.jobQueue.listActiveByPayload('message_delivery', { sessionId: 'neo:root' });
+    const lastText = () =>
+      app!.db
+        .getSDKMessageRepo()
+        .getDeliveryContent('neo:root', injected().at(-1)!.payload.messageUuid as string)?.content;
+    await listening(true);
+    expect(injected()).toHaveLength(0);
+    status = 'processing';
+    await listening(false);
+    expect(JSON.stringify(lastText())).toContain('The human stopped listening.');
+    await listening(true);
+    expect(JSON.stringify(lastText())).toContain('The human is now listening.');
+    const count = injected().length;
+    await listening(true, 'other');
+    await listening(false, 'listener');
+    expect(injected()).toHaveLength(count);
+    expect(await modelInput('worker', 'system')).toContain('[listening: yes]');
+    status = 'idle';
+    await listening(false, 'other');
+    expect(injected()).toHaveLength(count);
+  });
 
   test('an ordinary recipient still receives an untyped worker message immediately', async () => {
     const id = await recipient(false);

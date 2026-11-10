@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
-import type { MessageHub } from '@hyperneo/shared';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import type { MessageHub, Session } from '@hyperneo/shared';
+import { createNeoService } from '../../helpers/neo-service.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -10,7 +10,7 @@ import {
   CodingPrLedgerRepository,
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
-import { createTestDb } from '../../../helpers/database.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: ReturnType<typeof createNeoService>;
@@ -33,7 +33,11 @@ beforeEach(async () => {
   db = await createTestDb();
   service = createNeoService(
     db,
-    {} as SessionManager,
+    {
+      updateSession: async (id: string, updates: Partial<Session>) => {
+        await db.updateSession(id, updates);
+      },
+    } as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,
     new InternalEventBus()
   );
@@ -90,6 +94,21 @@ test('forgetting a project stops its polling without deleting retained history o
   expect(db.getDatabase().prepare('SELECT repo FROM pack_coding_pr_ledger').all()).toEqual([
     { repo: 'chosen/repo' },
   ]);
+});
+
+test('forgetting a watched repository refreshes Neo’s stored prompt', async () => {
+  const root = 'neo:synthetic-forget';
+  await db.createSession(createTestSession(root));
+  service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+  await service.recover();
+  const prompt = () => db.getSession(root)?.config.systemPrompt;
+  expect(prompt()).toContain('"key":"watchedRepos","value":["chosen/repo","kept/repo"]');
+
+  expect(await call('neo.project.forget', { projectId: 'forgotten' })).toMatchObject({
+    value: { ok: true },
+  });
+  expect(prompt()).toContain('"key":"watchedRepos","value":["kept/repo"]');
+  expect(prompt()).not.toContain('chosen/repo');
 });
 
 test('a refused forget leaves repository watches untouched', async () => {

@@ -6,8 +6,8 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { createTaskMetadataEditor, type TaskMetadataOwner } from './metadata-editor.ts';
 import { Logger } from '../logger.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
-import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import { resolveSessionSpaceId } from '../session-resolution/space-caller-scope.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import { createSpaceTaskFieldUpdater, type SpaceTaskFieldEffects } from './field-effects.ts';
 
 const log = new Logger('SpaceTaskMetadata');

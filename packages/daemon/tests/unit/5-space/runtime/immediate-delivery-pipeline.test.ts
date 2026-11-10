@@ -8,15 +8,17 @@ import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { buildSyntheticExternalEventMessage } from '../../../../src/lib/external-events/deferred-event-digest';
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
 import type { DeliveryFailure } from '../../../../src/lib/external-events/types';
-import type { ExternalEventTaskDecision } from '../../../../src/lib/external-events/admission-gates';
+import type { ExternalEventTaskDecision } from '../../../../../space/src/external-events/admission-gates';
 import {
   buildImmediateEventMessageUuid,
-  deliverImmediateEvent,
   IMMEDIATE_EVENT_MESSAGE_UUID_PREFIX,
+} from '../../../../src/lib/external-events/event-delivery-rules';
+import {
+  deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
   type ImmediateEventDeliveryInput,
   pickMechanics,
-} from '../../../../src/lib/external-events/immediate-delivery-pipeline';
+} from '../../../../../space/src/external-events/immediate-delivery-pipeline';
 
 const SPACE_ID = 'space-1';
 const RUN_ID = 'run-1';

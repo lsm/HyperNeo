@@ -1,6 +1,31 @@
 const STEP = 20 * 60_000;
 
+export interface StagedWorkerQuestion {
+  kind: 'question' | 'blocked';
+  title: string;
+  options: string[];
+  language: 'en' | 'zh-Hans';
+  report: string;
+}
+
 export type FollowThroughIncident = {
+  stallReminder?: {
+    since: number;
+    delivered: { id: string; at: number }[];
+    pending?: string;
+    sessionId?: string;
+  };
+  checkOnlyReminder?: FollowThroughIncident['stallReminder'];
+  turnQuestion?: string;
+  workerQuestion?: StagedWorkerQuestion;
+  blockerReport?: {
+    id: string;
+    dispatchId: string;
+    at: number;
+    triagedAt?: number;
+    remindedAt?: number;
+  };
+  unreachableToldAt?: number;
   since: number;
   nudges: number;
   at?: number;

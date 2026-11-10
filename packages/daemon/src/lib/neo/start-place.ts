@@ -1,7 +1,8 @@
 import { NEO_NON_CODING_FILES } from '@hyperneo/prompts';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { homedir } from 'node:os';
 import { existsSync, mkdirSync } from 'node:fs';
-import { isAbsolute, join, normalize, resolve } from 'node:path';
+import { isAbsolute, normalize } from 'node:path';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
@@ -9,6 +10,7 @@ import { extractTextBlockContents } from '../../storage/repositories/sdk-message
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { ensureStartFolder } from '../drivers/start-folder.ts';
 import { reject, type WorkVerbDeps } from '../drivers/work-operations.ts';
+import { neoUserFolder } from './folder.ts';
 
 function namesPath(text: string, folder: string): boolean {
   return text
@@ -55,6 +57,7 @@ export function neoStartPlace(deps: {
   db: Database;
   machine: string;
   workspaceRoot?: string;
+  repository(todo: NeoTodo | null, ask: NeoAsk | null): string | null;
 }): NonNullable<WorkVerbDeps['startPlace']> {
   return (input, caller) => {
     if (caller.role !== 'neo' && input.place) return { value: { ...input, place: input.place } };
@@ -64,9 +67,9 @@ export function neoStartPlace(deps: {
     const ask =
       candidate?.sessionId === caller.sessionId && candidate?.status === 'open' ? candidate : null;
     const repo = new NeoRepository(deps.db);
-    const repository = todo?.repo || ask?.repo;
+    const repository = deps.repository(todo, ask);
     if (repository && input.place) return { value: { ...input, place: input.place } };
-    const home = resolve(deps.workspaceRoot ?? join(homedir(), 'HyperNeo'));
+    const home = neoUserFolder(deps.workspaceRoot);
     const place =
       input.place ??
       (!repository && ask ? { machine: deps.machine, folder: home, name: 'Home' } : null);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildThreadEvents, parseThreadRow } from '../thread/space-task-thread-events';
-import type { SpaceTaskThreadMessageRow } from '../../../hooks/useSpaceTaskMessages';
+import type { SpaceTaskThreadMessageRow } from '../useSpaceTaskMessages';
 
 function makeRow(
   overrides: Partial<SpaceTaskThreadMessageRow> & { content: string }

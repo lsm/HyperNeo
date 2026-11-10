@@ -269,6 +269,10 @@ jobs:
         env:
           GLM_API_KEY: smoke-test
 
+      - name: Start Claude and Copilot from a folder with no node_modules
+        if: matrix.smoke
+        run: bun scripts/sdk-runtime-check.ts ./dist/bin/${{ matrix.binary }} --network
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
@@ -405,13 +409,20 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then
             BUNDLES_FLAG="--bundles msi,nsis"
           fi
-          cargo tauri build --target ${{ matrix.rust-target }} $BUNDLES_FLAG
+          bash build-bundle.sh ${{ matrix.rust-target }} $BUNDLES_FLAG
         env:
+          HYPERNEO_SIGNED_DESKTOP: ${{ runner.os == 'macOS' && '1' || '0' }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+
+      - name: Check macOS bundle runtime paths
+        if: runner.os == 'macOS'
+        run: |
+          python3 packages/desktop/check-macos-rpaths.py \
+            "packages/desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/macos/HyperNeo.app"
 
       - name: Collect desktop artifacts
         run: |

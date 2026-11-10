@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SpaceTask } from '@hyperneo/shared';
-import { requireDependencyExecutionBlock } from '../../../../src/lib/space/tools/update-task-fields.ts';
+import { requireDependencyExecutionBlock } from '../../../../src/lib/tasks/update-task-fields.ts';
 
 const task = {
   id: 'task',

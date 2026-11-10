@@ -5,7 +5,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { BUILD_METADATA } from '../../../packages/daemon/src/lib/build-metadata.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
@@ -41,8 +41,7 @@ async function close() { await neo?.dispose(); neo = undefined; await app?.clean
 async function cycle(at: number) {
   const db = sql();
   const pack = createCodingPack({
-    database: () => db, readPrs: async () => [], readClaudeOwners: async () => [],
-    todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db),
+    database: () => db, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db),
     prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo],
     prSweepDeps: { tell: async () => true, wake: (key, text) => { wakeAttempts.push({ key, text }); return neo!.wakeNeo(key, text); } },
     readLedgerRepo: async () => complete ? { data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: [] }, done: { nodes: [] } } } } : null,

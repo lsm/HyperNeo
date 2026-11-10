@@ -3,16 +3,28 @@ import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { spaceStore } from '../../lib/space-store';
+import { navSectionSignal } from '../../lib/signals';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
-} from '../../lib/signals';
+} from '../../lib/space-signals';
 import { BottomTabBar } from '../BottomTabBar';
+import {
+  declareExtensionNav,
+  registerWebExtension,
+  type SpaceWebExtension,
+} from '../../lib/web-extensions';
+import { spaceNav } from '../../components/space/space-nav';
 
+declareExtensionNav(spaceNav);
+
+vi.mock('../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../lib/router')),
+}));
 vi.mock('../../lib/router', () => ({
   navigateToSessions: vi.fn(),
   navigateToSettings: vi.fn(),
@@ -139,5 +151,29 @@ describe('BottomTabBar space active tab', () => {
     currentSpaceSessionIdSignal.value = 'session-agent-1';
     rerender(<BottomTabBar />);
     expect(selectedTabLabel()).toBe('Agents');
+  });
+});
+
+describe('BottomTabBar without Space', () => {
+  beforeEach(() => {
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    navSectionSignal.value = 'chats';
+    currentSpaceIdSignal.value = null;
+  });
+
+  afterEach(() => {
+    cleanup();
+    registerWebExtension('space', { store: spaceStore } as unknown as SpaceWebExtension);
+  });
+
+  it('shows no Spaces tab when the daemon does not provide Space', () => {
+    registerWebExtension('space', null);
+    render(<BottomTabBar />);
+    const tabs = screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'));
+    expect(tabs).toEqual(['Chats', 'Settings']);
   });
 });

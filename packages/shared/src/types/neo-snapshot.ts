@@ -154,6 +154,7 @@ export interface NeoSessionNotice {
   at: number;
   link?: string;
   remoteLink?: string;
+  question?: { id: string; at: number; text: string; actions: string[] };
 }
 
 export interface NeoSessionNoticeGroup {
@@ -198,10 +199,15 @@ export interface NeoSnapshot {
   omitted?: { asks?: number };
   working?: NeoWorkingSession[];
   todoAsks?: NeoAskEntry[];
+  needsYou?: number;
+  neoUnhandled?: number;
   historyCursor?: { updatedAt: number; id: string } | null;
   packRows?: NeoPackRows[];
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
-  trimmed?: string;
+  more?: {
+    asks?: { count: number; cursor: { updatedAt: number; id: string } };
+    working?: { count: number };
+  };
 }
 
 export type NeoWorkingStatus = 'queued' | 'processing' | 'rate_limit_cooldown';

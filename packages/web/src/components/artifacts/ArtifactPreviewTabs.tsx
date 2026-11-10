@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { artifactPreviewWorkspace } from '../../lib/artifact-preview-store.ts';
-import type { PreviewWorkspaceFile } from '../../lib/artifact-preview-workspace.ts';
+import { previewFileKey, type PreviewWorkspaceFile } from '../../lib/artifact-preview-workspace.ts';
 import { t } from '../../lib/i18n/index.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
 
@@ -38,11 +38,11 @@ export function ArtifactPreviewTabs({
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
-  const budget = Math.max(0, available - 8 - (work ? 84 : 0) - (reference ? 180 : 0));
+  const budget = Math.max(0, available - 8 - (work ? 100 : 0) - (reference ? 180 : 0));
   const count =
     files.length * 92 > budget ? Math.max(1, Math.floor((budget - 40) / 92)) : files.length;
   const indices = files.slice(0, count).map((_, index) => index);
-  const selected = files.findIndex((file) => file.artifactId === selectedId);
+  const selected = files.findIndex((file) => previewFileKey(file) === selectedId);
   if (selected >= count && indices.length) indices[indices.length - 1] = selected;
   const shown = indices.map((index) => files[index]);
   const overflow = files.filter((_, index) => !indices.includes(index));
@@ -104,7 +104,7 @@ export function ArtifactPreviewTabs({
             aria-controls={work.id}
             aria-selected={work.selected}
             tabIndex={work.selected || (!reference && !selectedId && !files.length) ? 0 : -1}
-            class={`h-8 w-20 shrink-0 truncate rounded-full px-2 text-xs hover:bg-surface-raised hover:text-fg ${work.selected ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
+            class={`h-8 w-24 shrink-0 truncate rounded-full px-2 text-xs hover:bg-surface-raised hover:text-fg ${work.selected ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
             onClick={() => {
               setMenuOpen(false);
               artifactPreviewWorkspace.select(null);
@@ -122,38 +122,39 @@ export function ArtifactPreviewTabs({
         )}
         {shown.map((file) => (
           <div
-            key={file.artifactId}
+            key={previewFileKey(file)}
             style={{ width: `${width}px` }}
-            class={`group flex shrink-0 items-center rounded-full hover:bg-surface-raised hover:text-fg ${file.artifactId === selectedId ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
+            class={`group flex shrink-0 items-center rounded-full hover:bg-surface-raised hover:text-fg ${previewFileKey(file) === selectedId ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
           >
             <button
               type="button"
               role="tab"
-              id={artifactTabIds(file.artifactId).tab}
-              aria-controls={artifactTabIds(file.artifactId).panel}
-              aria-selected={file.artifactId === selectedId}
+              id={artifactTabIds(previewFileKey(file)).tab}
+              aria-controls={artifactTabIds(previewFileKey(file)).panel}
+              aria-selected={previewFileKey(file) === selectedId}
               tabIndex={
                 !reference &&
                 !work?.selected &&
-                file.artifactId === (selectedId ?? shown[0]?.artifactId)
+                previewFileKey(file) ===
+                  (selectedId ?? (shown[0] ? previewFileKey(shown[0]) : null))
                   ? 0
                   : -1
               }
               title={file.title || t('artifact.untitled')}
               class="min-w-0 flex-1 truncate rounded-full px-3 py-1.5 text-left text-xs"
-              onClick={() => artifactPreviewWorkspace.select(file.artifactId)}
+              onClick={() => artifactPreviewWorkspace.select(previewFileKey(file))}
             >
               {file.title || t('artifact.untitled')}
             </button>
             <button
               type="button"
               aria-label={t('artifact.closeFile', { name: file.title || t('artifact.untitled') })}
-              tabIndex={file.artifactId === selectedId ? 0 : -1}
-              class={`mr-1 h-6 w-6 shrink-0 rounded-full text-xs hover:bg-fill-strong group-hover:opacity-100 group-focus-within:opacity-100 ${file.artifactId === selectedId ? 'opacity-100' : 'opacity-0'}`}
+              tabIndex={previewFileKey(file) === selectedId ? 0 : -1}
+              class={`mr-1 h-6 w-6 shrink-0 rounded-full text-xs hover:bg-fill-strong group-hover:opacity-100 group-focus-within:opacity-100 ${previewFileKey(file) === selectedId ? 'opacity-100' : 'opacity-0'}`}
               onClick={() => {
                 focusSelected.current = true;
                 setMenuOpen(false);
-                artifactPreviewWorkspace.close(file.artifactId);
+                artifactPreviewWorkspace.close(previewFileKey(file));
               }}
             >
               ×
@@ -197,7 +198,7 @@ export function ArtifactPreviewTabs({
             label: file.title || t('artifact.untitled'),
             onClick: () => {
               focusSelected.current = true;
-              artifactPreviewWorkspace.select(file.artifactId);
+              artifactPreviewWorkspace.select(previewFileKey(file));
               setMenuOpen(false);
             },
           }))}

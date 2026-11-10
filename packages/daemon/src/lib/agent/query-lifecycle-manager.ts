@@ -80,32 +80,6 @@ export class QueryLifecycleManager {
     this.logger = new Logger(`QueryLifecycleManager ${ctx.session.id}`);
   }
 
-  private async clearAcpSessionStateForReset(): Promise<void> {
-    const { session, db } = this.ctx;
-    if (session.config.provider !== 'acp') return;
-
-    const updates: Partial<Session> = {};
-    if (session.acpSessionId) {
-      session.acpSessionId = undefined;
-      updates.acpSessionId = undefined;
-    }
-    if (
-      session.metadata?.acpInstructionsSent ||
-      session.metadata?.acpContextUsageEstimate !== undefined
-    ) {
-      session.metadata = {
-        ...session.metadata,
-        acpInstructionsSent: undefined,
-        acpContextUsageEstimate: undefined,
-      };
-      updates.metadata = session.metadata;
-    }
-
-    if (Object.keys(updates).length > 0) {
-      await db.updateSession(session.id, updates);
-    }
-  }
-
   private getSDKWorkspacePath(): string {
     const { session } = this.ctx;
     return sessionSdkPath(session) ?? process.cwd();
@@ -348,7 +322,6 @@ export class QueryLifecycleManager {
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
-      await this.clearAcpSessionStateForReset();
       await stateManager.setIdle();
       await this.ctx.clearModelsCache();
       return { success: true };
@@ -371,7 +344,6 @@ export class QueryLifecycleManager {
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
-      await this.clearAcpSessionStateForReset();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
       await this.stop({
@@ -406,7 +378,7 @@ export class QueryLifecycleManager {
 
   private async gateOnMissingTranscript(caller: string): Promise<boolean> {
     const { session } = this.ctx;
-    if (session.config.provider === 'acp' || !session.sdkSessionId) {
+    if (!session.sdkSessionId || session.config.harness === 'codex') {
       return true;
     }
     if (await this.validateAndRepairWithMigration()) {
@@ -773,13 +745,21 @@ export class QueryLifecycleManager {
       return false;
     }
 
-    const _reason = this.ctx.pendingRestartReason;
+    const reason = this.ctx.pendingRestartReason;
     this.ctx.pendingRestartReason = null;
 
     try {
       await this.restart();
       return true;
-    } catch {
+    } catch (error) {
+      this.logger.warn(`Deferred restart (${reason}) failed:`, error);
+      await this.ctx.errorManager.handleError(
+        this.ctx.session.id,
+        error instanceof Error ? error : new Error(String(error)),
+        ErrorCategory.SESSION,
+        'The agent failed to restart after a settings change. Try "Reset Agent" if the chat stays unresponsive.',
+        this.ctx.stateManager.getState()
+      );
       return false;
     }
   }

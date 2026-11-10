@@ -1,4 +1,5 @@
 import { beforeEach, describe, test, expect } from 'vitest';
+import { initializeRouter, registerRouteExtension } from '../router';
 import {
   getSpaceIdFromPath,
   getSpaceSessionIdFromPath,
@@ -7,9 +8,11 @@ import {
   createSpaceSessionPath,
   createSpaceTaskPath,
   getSpaceAgentDetailFromPath,
-  initializeRouter,
-} from '../router';
-import { currentSpaceAgentHandleSignal } from '../signals';
+  spaceRoutes,
+} from '../space-router';
+import { currentSpaceAgentHandleSignal } from '../space-signals';
+
+registerRouteExtension(spaceRoutes);
 
 function setPath(path: string) {
   const url = new URL(path, 'https://hyperneo.test');

@@ -11,7 +11,7 @@ let mockIsReconnecting = false;
 let lastAutoScrollMessageCount;
 let lastAutoScrollResetKey;
 
-vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
+vi.mock('../useSpaceTaskMessages', () => ({
   useSpaceTaskMessages: () => ({
     rows: mockRows,
     isLoading: mockIsLoading,

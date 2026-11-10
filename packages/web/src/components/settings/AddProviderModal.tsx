@@ -22,7 +22,6 @@ interface BuiltInProviderPreset {
   displayName: string;
   authType: 'api_key' | 'oauth' | 'none';
   description: string;
-  configField?: 'command';
 }
 
 const QUICK_ADD_PROVIDERS: BuiltInProviderPreset[] = [
@@ -95,13 +94,6 @@ const MORE_PROVIDERS: BuiltInProviderPreset[] = [
     authType: 'api_key',
     description: 'Cloud Ollama endpoints',
   },
-  {
-    providerId: 'acp',
-    displayName: 'ACP Agent',
-    authType: 'none',
-    description: 'ACP agent (e.g. Devin) via a shell command',
-    configField: 'command',
-  },
 ];
 
 interface AddProviderModalProps {
@@ -121,7 +113,6 @@ export function AddProviderModal({
   onProviderAdded,
 }: AddProviderModalProps) {
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
-  const [acpCommands, setAcpCommands] = useState<Record<string, string>>({});
   const [addingId, setAddingId] = useState<string | null>(null);
   const [oauthFlow, setOauthFlow] = useState<OAuthFlowState | null>(null);
   const [showMore, setShowMore] = useState(false);
@@ -141,8 +132,6 @@ export function AddProviderModal({
 
   const handleAddBuiltIn = async (preset: BuiltInProviderPreset) => {
     const key = apiKeys[preset.providerId]?.trim();
-    const command =
-      preset.configField === 'command' ? acpCommands[preset.providerId]?.trim() : undefined;
     if (preset.authType === 'api_key' && !key) {
       toast.error('API key is required');
       return;
@@ -157,11 +146,7 @@ export function AddProviderModal({
           authType: preset.authType,
           isEnabled: true,
           configJson:
-            preset.providerId === 'kimi'
-              ? JSON.stringify({ region: kimiRegion })
-              : preset.configField === 'command' && command
-                ? JSON.stringify({ command })
-                : undefined,
+            preset.providerId === 'kimi' ? JSON.stringify({ region: kimiRegion }) : undefined,
         },
         preset.authType === 'api_key' && key ? { apiKey: key } : undefined
       );
@@ -373,30 +358,6 @@ export function AddProviderModal({
                 Login with Claude subscription
               </Button>
             )}
-          </div>
-        ) : preset.configField === 'command' ? (
-          <div class="flex gap-2">
-            <input
-              type="text"
-              placeholder="e.g. devin acp"
-              value={acpCommands[preset.providerId] ?? ''}
-              onInput={(e) =>
-                setAcpCommands((prev) => ({
-                  ...prev,
-                  [preset.providerId]: e.currentTarget.value,
-                }))
-              }
-              class="flex-1 min-w-0 bg-bg border border-line rounded px-2 py-1 text-xs text-fg focus:outline-none focus:border-accent font-mono"
-            />
-            <Button
-              size="xs"
-              variant="primary"
-              onClick={() => handleAddBuiltIn(preset)}
-              loading={addingId === preset.providerId}
-              disabled={addingId !== null}
-            >
-              Add
-            </Button>
           </div>
         ) : preset.authType === 'oauth' ? (
           <Button

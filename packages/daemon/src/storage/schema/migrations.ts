@@ -1,7 +1,37 @@
+import { runMigration495 } from './m495-neo-answer-provenance.ts';
+import { runMigration493 } from './m493-neo-ask-inputs.ts';
+import { runMigration494 } from './m494-tracker-mirrors.ts';
+import { runMigration488 } from './m488-pair-voided-at.ts';
+import { runMigration489 } from './m489-pair-two-way.ts';
+import { runMigration490 } from './m490-pairing-policy.ts';
+import { runMigration491 } from './m491-pair-denied-at.ts';
+import { runMigration492 } from './m492-drop-neo-todo-repo.ts';
+import { runMigration487 } from './m487-pair-requested-by.ts';
+import { runMigration486 } from './m486-neo-ask-topic.ts';
+import { runMigration485 } from './m485-pair-requested-name.ts';
+import { runMigration484 } from './m484-todo-approval-question.ts';
+import { runMigration482 } from './m482-todo-bound-at.ts';
+import { runMigration483 } from './m483-neo-session-seen-question.ts';
+import { runMigration481 } from './m481-agent-devices.ts';
+import { runMigration476 } from './m476-neo-todo-approved-at.ts';
+import { runMigration480 } from './m480-work-turn-urls.ts';
+import { runMigration477 } from './m477-work-turns.ts';
+import { runMigration478 } from './m478-work-sessions.ts';
+import { runMigration479 } from './m479-work-session-activity.ts';
+import { runMigration475 } from './m475-work-delivery-optional-todo.ts';
+import { runMigration474 } from './m474-trim-sdk-message-indexes.ts';
+import { runMigration473 } from './m473-drop-inbox-items.ts';
+import { runMigration472 } from './m472-drop-room-era-tables.ts';
+import { runMigration471 } from './m471-neo-peer-address.ts';
+import { runMigration470 } from './m470-neo-peers.ts';
+import { runMigration469 } from './m469-work-delivery-ref-index.ts';
+import { runMigration467 } from './m467-google-connections.ts';
+import { runMigration466 } from './m466-neo-question-retire-when.ts';
 import { runMigration461 } from './m461-neo-card-search-fts.ts';
 import { runMigration462 } from './m462-trigram-fts.ts';
 import { runMigration463 } from './m463-neo-todo-priority.ts';
 import { runMigration464 } from './m464-neo-todo-dependencies.ts';
+import { runMigration465 } from './m465-work-unusable.ts';
 import { runMigration459 } from './m459-operation-accepted-records.ts';
 import { runMigration460 } from './m460-neo-session-message-kind.ts';
 import { runMigration458 } from './m458-neo-todo-closed-unverified.ts';
@@ -44,6 +74,7 @@ import { runMigration388 } from './m388-claude-desktop-bridge-events.ts';
 import { runMigration387 } from './m387-neo-ask-todo-tables.ts';
 import { runMigration389 } from './m389-neo-conversation.ts';
 import baselineSchema from './baseline-v041.json' with { type: 'json' };
+import { applyExtensionBaselines, extensionMigration } from './extensions.ts';
 import { runMigration370 } from './m370-neo-project-merges.ts';
 import { runMigration371 } from './m371-neo-work-admission-claims.ts';
 import { runMigration372 } from './m372-neo-ask-item-removed-reason.ts';
@@ -74,7 +105,6 @@ import { runMigration402 } from './m402-drop-neo-pr-refs.ts';
 import { runMigration403 } from './m403-neo-ask-todo-repo.ts';
 import { runMigration404 } from './m404-drop-neo-holder-bindings.ts';
 import { runMigration405 } from './m405-neo-ask-parent.ts';
-import { runMigration406 } from './m406-goal-owner-session.ts';
 import { runMigration407 } from './m407-drop-legacy-neo-work.ts';
 import { runMigration408 } from './m408-search-vector-model-index.ts';
 import { runMigration409 } from './m409-sdk-messages-covering-indexes.ts';
@@ -100,45 +130,13 @@ import { runMigration369 } from './m369-neo-input-receipts.ts';
 import { runMigration364 } from './m364-neo-outcome-bindings.ts';
 import { runMigration365 } from './m365-neo-cross-project-dispatch.ts';
 import { runMigration361 } from './m361-neo-project-avatars.ts';
-import { runMigration260 } from './m260-direct-start-requests.ts';
-import { runMigration258 } from './m258-direct-process-ownership.ts';
-import { runMigration257 } from './m257-direct-outcome-job.ts';
-import { runMigration256 } from './m256-direct-finalization.ts';
-import { runMigration255 } from './m255-task-lifecycle-generation.ts';
-import { runMigration253 } from './m253-direct-kickoff-dispatches.ts';
-import { runMigration254 } from './m254-direct-stop-verification.ts';
-import { runMigration252 } from './m252-direct-kickoff-intents.ts';
-import { runMigration251 } from './m251-direct-session-provenance.ts';
-import { runMigration250 } from './m250-direct-stop-requests.ts';
-import { runMigration248 } from './m248-direct-task-execution.ts';
-import { runMigration249 } from './m249-resolve-template-sentinel-rows.ts';
-import { runMigration247 } from './m247-pending-completion-generation.ts';
-import { runMigration245 } from './m245-reminder-space-index.ts';
-import { runMigration246 } from './m246-template-version-seq-space-key.ts';
-import { runMigration244 } from './m244-backfill-template-ownership.ts';
-import { runMigration243 } from './m243-space-agent-template-space-key.ts';
-import { runMigration242 } from './m242-task-list-indexes.ts';
-import { runMigration261 } from './m261-task-list-updated-indexes.ts';
 import { runMigration262 } from './m262-mcp-attach-error.ts';
 import { runMigration263 } from './m263-message-delivery-uuid-index.ts';
 import { runMigration264 } from './m264-agent-child-processes.ts';
-import { runMigration272 } from './m272-space-session-event-subscriptions.ts';
-import { runMigration273 } from './m273-backfill-agent-session-ids.ts';
-import { runMigration265 } from './m265-workflow-run-blocked-retries.ts';
 import { runMigration266 } from './m266-task-assistant-messages-index.ts';
-import { runMigration267 } from './m267-restamp-contracts-task-approve.ts';
-import { runMigration268 } from './m268-rename-agent-forge-scopes.ts';
-import { runMigration269 } from './m269-restamp-goal-task-trigger.ts';
-import { runMigration270 } from './m270-restamp-contracts-task-transition-review.ts';
-import { runMigration271 } from './m271-relocate-built-in-key-templates.ts';
-import { runMigration274 } from './m274-convert-ad-hoc-space-sessions.ts';
-import { runMigration275 } from './m275-link-agent-owned-sessions.ts';
-import { runMigration276 } from './m276-relocate-space-manager-template.ts';
-import { runMigration277 } from './m277-archive-orphaned-agent-sessions.ts';
 import { runMigration278 } from './m278-neo-contexts.ts';
 import { runMigration279 } from './m279-neo-consultations.ts';
 import { runMigration280 } from './m280-neo-context-write-grants.ts';
-import { runMigration281 } from './m281-space-agent-template-hides.ts';
 import { runMigration282 } from './m282-neo-consultation-origins.ts';
 import { runMigration283 } from './m283-neo-work-origins.ts';
 import { runMigration284 } from './m284-neo-work-targets.ts';
@@ -163,7 +161,6 @@ import { runMigration299 } from './m299-neo-routing-log.ts';
 import { runMigration300 } from './m300-neo-routing-digested.ts';
 import { runMigration301 } from './m301-neo-routing-turn-notes.ts';
 import { runMigration302 } from './m302-work-index-kinds.ts';
-import { runMigration303 } from './m303-external-delivery-task-index.ts';
 import { runMigration304 } from './m304-task-message-rows.ts';
 import { runMigration305 } from './m305-task-message-artifact-keys.ts';
 import { runMigration306 } from './m306-sandbox-default-off.ts';
@@ -172,7 +169,6 @@ import { runMigration308 } from './m308-neo-work-continues.ts';
 import { runMigration309 } from './m309-neo-work-driver-remote-link.ts';
 import { runMigration310 } from './m310-neo-work-driver-sent.ts';
 import { runMigration311 } from './m311-neo-work-driver-retries.ts';
-import { runMigration312 } from './m312-drop-artifact-cache.ts';
 import { runMigration313 } from './m313-neo-asks.ts';
 import { runMigration314 } from './m314-neo-work-prs.ts';
 import { runMigration315 } from './m315-client-registrations.ts';
@@ -221,7 +217,6 @@ import { runMigration357 } from './m357-neo-ask-item-deploy-check.ts';
 import { runMigration358 } from './m358-neo-ask-revisions.ts';
 import { runMigration359 } from './m359-neo-pack-check-registry.ts';
 
-import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
   deriveArtifactKey,
@@ -231,7 +226,7 @@ import {
 } from '@hyperneo/shared';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/agents/legacy-long-horizon-migration.ts';
-import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/agents/slug.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { createEvolutionTables } from './evolution.ts';
 import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
@@ -273,8 +268,6 @@ import { runMigration235 } from './m235-expire-legacy-pending-agent-messages.ts'
 import { runMigration236 } from './m236-deferred-message-partial-index.ts';
 import { runMigration237 } from './m237-task-reconcile-watermark.ts';
 import { runMigration238 } from './m238-space-agent-template-labels.ts';
-import { runMigration239 } from './m239-rename-worker-coder-template-key.ts';
-import { runMigration240 } from './m240-space-manager-handle.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
@@ -286,6 +279,11 @@ export function runMigrations(
 ): MigrationSpaceReclaimRequest[] {
   ensureMigrationMarkersTable(db);
   seedHistoricalMigrationMarkers(db);
+  applyExtensionBaselines(db, {
+    baselineDone: hasMigrationMarker(db, migrationMarkerKey(238)),
+    applied: (key) => hasMigrationMarker(db, key),
+    mark: (key) => markMigration(db, key),
+  });
 
   let backupCreated = false;
   const rewriteMigrationKeys = new Set<string>();
@@ -301,6 +299,12 @@ export function runMigrations(
     rewriteMigrationKeys.add(key);
     runMarkedMigration(db, key, migration, ensureBackup);
   };
+  const spaceStep = (key: string, step: typeof run = run): void => {
+    const migration = extensionMigration(key);
+    if (migration) step(key, () => migration(db));
+  };
+  const space = (step: typeof run, version: number): void =>
+    spaceStep(migrationMarkerKey(version), step);
 
   rewrite(migrationMarkerKey(13), () => runMigration13(db));
 
@@ -747,57 +751,57 @@ export function runMigrations(
 
   run(migrationMarkerKey(237), () => runMigration237(db));
 
-  run(migrationMarkerKey(239), () => runMigration239(db));
+  space(run, 239);
 
-  run(migrationMarkerKey(240), () => runMigration240(db));
+  space(run, 240);
 
-  run(migrationMarkerKey(241), () => migrateStandaloneTaskOwnership(db));
+  space(run, 241);
 
-  run(migrationMarkerKey(242), () => runMigration242(db));
+  space(run, 242);
 
-  rewrite(migrationMarkerKey(243), () => runMigration243(db));
+  space(rewrite, 243);
 
-  run(migrationMarkerKey(244), () => runMigration244(db));
+  space(run, 244);
 
-  run(migrationMarkerKey(245), () => runMigration245(db));
+  space(run, 245);
 
-  rewrite(migrationMarkerKey(246), () => runMigration246(db));
+  space(rewrite, 246);
 
-  run(migrationMarkerKey(247), () => runMigration247(db));
-  run(migrationMarkerKey(248), () => runMigration248(db));
+  space(run, 247);
+  space(run, 248);
 
-  run(migrationMarkerKey(249), () => runMigration249(db));
-  run(migrationMarkerKey(250), () => runMigration250(db));
-  run(migrationMarkerKey(251), () => runMigration251(db));
-  run(migrationMarkerKey(252), () => runMigration252(db));
-  run(migrationMarkerKey(253), () => runMigration253(db));
-  run(migrationMarkerKey(254), () => runMigration254(db));
-  run(migrationMarkerKey(255), () => runMigration255(db));
-  run(migrationMarkerKey(256), () => runMigration256(db));
-  run(migrationMarkerKey(257), () => runMigration257(db));
-  run(migrationMarkerKey(258), () => runMigration258(db));
-  run(migrationMarkerKey(260), () => runMigration260(db));
-  run(migrationMarkerKey(261), () => runMigration261(db));
+  space(run, 249);
+  space(run, 250);
+  space(run, 251);
+  space(run, 252);
+  space(run, 253);
+  space(run, 254);
+  space(run, 255);
+  space(run, 256);
+  space(run, 257);
+  space(run, 258);
+  space(run, 260);
+  space(run, 261);
   run(migrationMarkerKey(262), () => runMigration262(db));
   run(migrationMarkerKey(263), () => runMigration263(db));
   run(migrationMarkerKey(264), () => runMigration264(db));
-  run(migrationMarkerKey(265), () => runMigration265(db));
+  space(run, 265);
   run(migrationMarkerKey(266), () => runMigration266(db));
-  run(migrationMarkerKey(267), () => runMigration267(db));
-  run(migrationMarkerKey(268), () => runMigration268(db));
-  run(migrationMarkerKey(269), () => runMigration269(db));
-  run(migrationMarkerKey(270), () => runMigration270(db));
-  run(migrationMarkerKey(271), () => runMigration271(db));
-  run(migrationMarkerKey(272), () => runMigration272(db));
-  run(migrationMarkerKey(273), () => runMigration273(db));
-  run(migrationMarkerKey(274), () => runMigration274(db));
-  run(migrationMarkerKey(275), () => runMigration275(db));
-  run(migrationMarkerKey(276), () => runMigration276(db));
-  run(migrationMarkerKey(277), () => runMigration277(db));
+  space(run, 267);
+  space(run, 268);
+  space(run, 269);
+  space(run, 270);
+  space(run, 271);
+  space(run, 272);
+  space(run, 273);
+  space(run, 274);
+  space(run, 275);
+  space(run, 276);
+  space(run, 277);
   run(migrationMarkerKey(278), () => runMigration278(db));
   run(migrationMarkerKey(279), () => runMigration279(db));
   run(migrationMarkerKey(280), () => runMigration280(db));
-  run(migrationMarkerKey(281), () => runMigration281(db));
+  space(run, 281);
   run(migrationMarkerKey(282), () => runMigration282(db));
   run(migrationMarkerKey(283), () => runMigration283(db));
   run(migrationMarkerKey(284), () => runMigration284(db));
@@ -819,7 +823,7 @@ export function runMigrations(
   run(migrationMarkerKey(300), () => runMigration300(db));
   run(migrationMarkerKey(301), () => runMigration301(db));
   run(migrationMarkerKey(302), () => runMigration302(db));
-  run(migrationMarkerKey(303), () => runMigration303(db));
+  space(run, 303);
   run(migrationMarkerKey(304), () => runMigration304(db));
   run(migrationMarkerKey(305), () => runMigration305(db));
   run(migrationMarkerKey(306), () => runMigration306(db));
@@ -828,7 +832,7 @@ export function runMigrations(
   run(migrationMarkerKey(309), () => runMigration309(db));
   run(migrationMarkerKey(310), () => runMigration310(db));
   run(migrationMarkerKey(311), () => runMigration311(db));
-  run(migrationMarkerKey(312), () => runMigration312(db));
+  space(run, 312);
   run(migrationMarkerKey(313), () => runMigration313(db));
   run(migrationMarkerKey(314), () => runMigration314(db));
   run(migrationMarkerKey(315), () => runMigration315(db));
@@ -925,7 +929,7 @@ export function runMigrations(
   run(migrationMarkerKey(403), () => runMigration403(db));
   run(migrationMarkerKey(404), () => runMigration404(db));
   run(migrationMarkerKey(405), () => runMigration405(db));
-  run(migrationMarkerKey(406), () => runMigration406(db));
+  space(run, 406);
   run(migrationMarkerKey(407), () => runMigration407(db));
   run(migrationMarkerKey(408), () => runMigration408(db));
   run(migrationMarkerKey(409), () => runMigration409(db));
@@ -940,6 +944,7 @@ export function runMigrations(
   run(migrationMarkerKey(418), () => runMigration418(db));
   run(migrationMarkerKey(419), () => runMigration419(db));
   run(migrationMarkerKey(420), () => runMigration420(db));
+  spaceStep('space_migration_420');
   run(migrationMarkerKey(421), () => runMigration421(db));
   run(migrationMarkerKey(422), () => runMigration422(db));
   run(migrationMarkerKey(424), () => runMigration424(db));
@@ -963,6 +968,7 @@ export function runMigrations(
   run(migrationMarkerKey(442), () => runMigration442(db));
   run(migrationMarkerKey(443), () => runMigration443(db));
   run(migrationMarkerKey(444), () => runMigration444(db));
+  spaceStep('space_migration_444');
   run(migrationMarkerKey(445), () => runMigration445(db));
   run(migrationMarkerKey(446), () => runMigration446(db));
   run(migrationMarkerKey(447), () => runMigration447(db));
@@ -983,6 +989,42 @@ export function runMigrations(
   run(migrationMarkerKey(462), () => runMigration462(db));
   run(migrationMarkerKey(463), () => runMigration463(db));
   run(migrationMarkerKey(464), () => runMigration464(db));
+  run(migrationMarkerKey(465), () => runMigration465(db));
+  run(migrationMarkerKey(466), () => runMigration466(db));
+  run(migrationMarkerKey(467), () => runMigration467(db));
+  run(migrationMarkerKey(468), () => {
+    db.exec('UPDATE work_feed_offsets SET offset = 0, size = -1');
+  });
+  run(migrationMarkerKey(469), () => runMigration469(db));
+  run(migrationMarkerKey(470), () => runMigration470(db));
+  run(migrationMarkerKey(471), () => runMigration471(db));
+  run(migrationMarkerKey(472), () => runMigration472(db));
+  run(migrationMarkerKey(473), () => runMigration473(db));
+  run(migrationMarkerKey(474), () => runMigration474(db));
+  run(migrationMarkerKey(475), () => runMigration475(db));
+  run(migrationMarkerKey(476), () => runMigration476(db));
+  run(migrationMarkerKey(477), () => runMigration477(db));
+  run(migrationMarkerKey(478), () => runMigration478(db));
+  run(migrationMarkerKey(479), () => runMigration479(db));
+  run(migrationMarkerKey(480), () => {
+    runMigration480(db);
+    runMigration479(db);
+  });
+  run(migrationMarkerKey(481), () => runMigration481(db));
+  run(migrationMarkerKey(482), () => runMigration482(db));
+  run(migrationMarkerKey(483), () => runMigration483(db));
+  run(migrationMarkerKey(484), () => runMigration484(db));
+  run(migrationMarkerKey(485), () => runMigration485(db));
+  run(migrationMarkerKey(486), () => runMigration486(db));
+  run(migrationMarkerKey(487), () => runMigration487(db));
+  run(migrationMarkerKey(488), () => runMigration488(db));
+  run(migrationMarkerKey(489), () => runMigration489(db));
+  run(migrationMarkerKey(490), () => runMigration490(db));
+  run(migrationMarkerKey(491), () => runMigration491(db));
+  run(migrationMarkerKey(492), () => runMigration492(db));
+  run(migrationMarkerKey(493), () => runMigration493(db));
+  run(migrationMarkerKey(494), () => runMigration494(db));
+  run(migrationMarkerKey(495), () => runMigration495(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

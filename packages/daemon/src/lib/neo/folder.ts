@@ -1,9 +1,13 @@
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository.ts';
 import { getDataDir } from '../data-dir.ts';
+
+export const neoUserFolder = (workspaceRoot?: string) =>
+  resolve(workspaceRoot ?? join(homedir(), 'HyperNeo'));
 
 export function neoFolderPath(): string {
   return join(getDataDir(), 'Neo');

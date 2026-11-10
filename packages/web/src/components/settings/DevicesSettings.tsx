@@ -1,3 +1,4 @@
+import { PairConfirmInput, pairApprovalReady } from './PairConfirmInput.tsx';
 import { useEffect, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
@@ -7,9 +8,9 @@ import { formatRelativeTime } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 import { PairPhoneFlow } from './PairPhoneFlow.tsx';
-import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsRow, SettingsSection, SettingsToggle } from './SettingsSection.tsx';
 
-type Kind = 'human' | 'relay' | 'daemon';
+type Kind = 'human' | 'relay' | 'daemon' | 'agent';
 type Refused = { ok: false; reason: string };
 interface Device {
   id: string;
@@ -21,6 +22,9 @@ interface Device {
   current: boolean;
 }
 interface Pending {
+  twoWay?: boolean;
+  phoneConfirmed?: boolean;
+  requestedName?: string | null;
   id: string;
   kind: Kind;
   name: string | null;
@@ -58,6 +62,7 @@ type View =
       pending: Pending[];
       unpaired: Unpaired[];
       wouldRefuse: WouldRefuse[];
+      terminalApproval: boolean;
     };
 
 const REFUSAL_LABEL = {
@@ -69,6 +74,7 @@ const REFUSAL_LABEL = {
 } as const;
 
 const KIND_LABEL: Record<Kind, string> = {
+  agent: 'Agent reader',
   human: 'Phone or browser',
   relay: 'Push relay',
   daemon: 'Daemon',
@@ -88,10 +94,11 @@ async function loadView(): Promise<View> {
     return devices.reason.startsWith('not_paired')
       ? { kind: 'unpaired' }
       : { kind: 'failed', reason: devices.reason };
-  const [pending, unpaired, wouldRefuse] = await Promise.all([
+  const [pending, unpaired, wouldRefuse, terminal] = await Promise.all([
     call<{ pending: Pending[] }>('device.pair.pending'),
     call<{ connections: Unpaired[] }>('device.unpaired.list'),
     call<{ requests: WouldRefuse[] }>('device.would_refuse.list'),
+    call<{ enabled: boolean }>('device.pair.terminal_approval.get'),
   ]);
   return {
     kind: 'ready',
@@ -99,6 +106,7 @@ async function loadView(): Promise<View> {
     pending: pending.ok ? pending.pending : [],
     unpaired: unpaired.ok ? unpaired.connections : [],
     wouldRefuse: wouldRefuse.ok ? wouldRefuse.requests : [],
+    terminalApproval: terminal.ok && terminal.enabled,
   };
 }
 
@@ -111,6 +119,7 @@ export function DevicesSettings() {
   const [error, setError] = useState<string | null>(null);
   const [newKind, setNewKind] = useState<Kind>('human');
   const [newName, setNewName] = useState('');
+  const [confirmCodes, setConfirmCodes] = useState<Record<string, string>>({});
   const hosts = globalSettings.value?.allowedHosts ?? [];
   const [newHost, setNewHost] = useState('');
   const saveHosts = async (change: (current: string[]) => string[]) => {
@@ -121,13 +130,25 @@ export function DevicesSettings() {
     if (!saved?.success) setError('Could not save the allowed hosts.');
   };
 
-  const reload = () =>
+  const reload = (background = false) =>
     loadView()
-      .then(setView)
-      .catch((failure: unknown) => setView({ kind: 'failed', reason: String(failure) }));
+      .then((next) => {
+        if (!background || next.kind !== 'failed') setView(next);
+      })
+      .catch((failure: unknown) => {
+        if (!background) setView({ kind: 'failed', reason: String(failure) });
+      });
   useEffect(() => {
     void reload();
   }, []);
+
+  const waitingForPhone =
+    view.kind === 'ready' && view.pending.some((item) => item.twoWay && !item.phoneConfirmed);
+  useEffect(() => {
+    if (!waitingForPhone) return;
+    const timer = setInterval(() => void reload(true), 1000);
+    return () => clearInterval(timer);
+  }, [waitingForPhone]);
 
   const act = async (run: () => Promise<{ ok: boolean; reason?: string }>) => {
     setError(null);
@@ -178,6 +199,9 @@ export function DevicesSettings() {
     );
 
   const link = code ? `${location.origin}/pair#${code.code}` : '';
+  const canEnableTerminal = view.devices.some(
+    (device) => device.current && device.kind === 'human' && !device.id.startsWith('local-rpc:')
+  );
   return (
     <>
       {error && <div class="px-1 text-xs text-danger">{error}</div>}
@@ -191,17 +215,39 @@ export function DevicesSettings() {
         ) : (
           <SettingsGroup>
             {view.pending.map((item) => (
-              <div key={item.id} class="flex items-center gap-3 px-4 py-3">
+              <div key={item.id} class="flex flex-wrap items-start gap-3 px-4 py-3">
                 <div class="min-w-0 flex-1">
                   <div class="truncate text-sm font-medium text-fg-soft">
-                    {item.name ?? 'Unnamed device'}
+                    {item.requestedName ?? item.name ?? 'Unnamed device'}
                   </div>
                   <div class="text-xs text-fg-faint">{KIND_LABEL[item.kind]}</div>
                 </div>
+                <PairConfirmInput
+                  pending={item}
+                  name={item.requestedName ?? item.name ?? 'Unnamed device'}
+                  value={confirmCodes[item.id] ?? ''}
+                  onInput={(value) => setConfirmCodes({ ...confirmCodes, [item.id]: value })}
+                />
                 <Button
                   size="sm"
-                  aria-label={`Allow ${item.name ?? 'Unnamed device'}`}
-                  onClick={() => act(() => call('device.pair.approve', { codeId: item.id }))}
+                  variant="secondary"
+                  aria-label={`Deny ${item.requestedName ?? item.name ?? 'Unnamed device'}`}
+                  onClick={() => act(() => call('device.pair.deny', { codeId: item.id }))}
+                >
+                  Deny
+                </Button>
+                <Button
+                  size="sm"
+                  aria-label={`Allow ${item.requestedName ?? item.name ?? 'Unnamed device'}`}
+                  disabled={!pairApprovalReady(item, confirmCodes[item.id] ?? '')}
+                  onClick={() =>
+                    act(() =>
+                      call('device.pair.approve', {
+                        codeId: item.id,
+                        ...(item.twoWay ? { confirmCode: confirmCodes[item.id] } : {}),
+                      })
+                    )
+                  }
                 >
                   Allow
                 </Button>
@@ -209,6 +255,30 @@ export function DevicesSettings() {
             ))}
           </SettingsGroup>
         )}
+      </SettingsSection>
+      <SettingsSection
+        title="Terminal approval"
+        description="The terminal on this computer can allow a new device after you type the 8-letter code shown on the phone."
+      >
+        <SettingsGroup>
+          <SettingsRow
+            label="Allow from the terminal"
+            description={
+              view.terminalApproval || canEnableTerminal
+                ? 'Anyone on this computer can turn this off; only a paired phone or browser can turn it back on.'
+                : 'Turn this back on from a paired phone or browser.'
+            }
+          >
+            <SettingsToggle
+              aria-label="Allow from the terminal"
+              checked={view.terminalApproval}
+              disabled={!view.terminalApproval && !canEnableTerminal}
+              onChange={(enabled) =>
+                act(() => call('device.pair.terminal_approval.set', { enabled }))
+              }
+            />
+          </SettingsRow>
+        </SettingsGroup>
       </SettingsSection>
       <SettingsSection
         title="Devices"

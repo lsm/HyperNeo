@@ -1,8 +1,7 @@
 # Transcript shutdown markers follow insertion order
 
-Run `lane-b-transcript-shutdown-order.ts` through `proof-run.sh` in a fresh
-synthetic source daemon. Run the same helper with the cached Deno runtime for
-the native-worker smoke. It needs no provider turn, model mock or external HTTP.
+Run `lane-b-transcript-shutdown-order.ts` through `proof-run.sh` in a fresh synthetic
+source daemon. It needs no provider turn, model mock or external HTTP.
 
 Use SKILL.md's shared `waitForSdkBodyCopy` setup after fixture seeding, before
 capturing body hashes or acquiring the competing writer. This keeps startup

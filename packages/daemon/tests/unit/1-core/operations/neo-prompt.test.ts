@@ -11,19 +11,57 @@ import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('root Neo system prompt', () => {
+  test('adds every ask step together before starting the first', () => {
+    expect(NEO_ROOT_PROMPT).toContain(
+      'Add all ask steps as todos together, in order, before starting the first.'
+    );
+  });
+  test.each([false, true])(
+    'delivers follow-up input binding guidance with packs: %s',
+    (enabled) => {
+      const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+      expect(prompt).toContain('Human requests use input');
+      expect(prompt).toContain('plain follow-ups add their open askId');
+      expect(prompt).not.toContain('Human requests use input, never askId');
+    }
+  );
+  test('tells Neo to answer a worker question itself before asking the human', () => {
+    expect(NEO_ROOT_TURN_END).toContain(
+      'A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.relay, so the card links the session and the answer reaches the worker.'
+    );
+  });
+  test('tells Neo to label asks with a reused short topic', () => {
+    expect(NEO_ROOT_TURN_END).toContain('neo.ask.topic');
+    expect(NEO_ROOT_TURN_END).toContain('never coin a near-synonym');
+    expect(NEO_ROOT_TURN_END).toContain('其他');
+  });
+  test('tells Neo to add parallel running work with after: [] before binding', () => {
+    expect(NEO_ROOT_TURN_END).toContain('so pass after: [] for parallel running work.');
+  });
+  test.each([
+    { packs: [] },
+    { packs: ['coding'] },
+    { packs: ['life-admin'] },
+    { packs: ['coding', 'life-admin'] },
+  ])('delivered root and pack guidance use paths with $packs', ({ packs }) => {
+    const prompt = neoPrompt(packs.length ? neoSettingsPackBriefs({ packs }) : []);
+    expect(prompt).toContain('core.evidence {}');
+    expect(prompt).toContain('absolute path on the owning daemon');
+    expect(prompt).toContain('fixed-head Git');
+    expect(prompt).not.toContain('{artifact:registeredArtifactId}');
+    expect(prompt).not.toContain('saved registered confirmation');
+    expect(prompt).toContain('owner_unavailable');
+  });
   test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
     const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
     expect(prompt).toContain(
-      'otherwise start a new worker there, named for the matter, never across projects'
+      "work.start may reuse an existing idle worker of the same project; trust the receipt's ref."
     );
-    if (enabled) {
-      expect(prompt).toContain('named for the project and a number');
-      expect(prompt).toContain('work.rename');
-    } else {
-      expect(prompt).not.toContain('project and a number');
-      expect(prompt).not.toContain('never a task title');
-      expect(prompt).not.toContain('work.rename');
-    }
+    expect(prompt).not.toContain('Give a new item to an idle worker');
+    expect(prompt).not.toContain('project and a number');
+    expect(prompt).not.toContain('never a task title');
+    expect(prompt).not.toContain('work.rename');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('named for the project and a number');
     expect(prompt).toContain('Coordination questions');
     expect(prompt).toContain('never human cards');
     expect(prompt).toContain('Message Neo only at milestones');
@@ -33,10 +71,12 @@ describe('root Neo system prompt', () => {
   });
 
   test('assembles core guidance with the short root, replacing the Claude Code preset', () => {
-    expect(neoPrompt([])).toBe(
-      `${NEO_ROOT_PROMPT}\n\n${NEO_FOCUSED_DISCUSSION}\n\n${NEO_ROOT_TURN_END}`
+    expect(neoPrompt([]).startsWith(`${NEO_ROOT_PROMPT}\n\n${NEO_FOCUSED_DISCUSSION}\n\n`)).toBe(
+      true
     );
+    expect(neoPrompt([]).endsWith(NEO_ROOT_TURN_END)).toBe(true);
     expect(neoPrompt([])).not.toContain(NEO_GOAL_CYCLE);
+    expect(neoPrompt([])).toContain('Your Bash commands are capped at 2 minutes');
     expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
     expect(NEO_ROOT_TURN_END).toContain('On other turns');
     expect(NEO_ROOT_TURN_END).toContain('end the turn without text');
@@ -50,6 +90,22 @@ describe('root Neo system prompt', () => {
       expect(NEO_ROOT_PROMPT).toContain(fact);
     expect(NEO_ROOT_PROMPT).not.toContain('Everything for the human goes through');
     expect(NEO_ROOT_PROMPT).not.toContain('Plain assistant text shows only');
+  });
+
+  test('delivers per-todo reminder guidance while retaining the short root', () => {
+    const prompt = neoPrompt([]);
+    expect(prompt).toContain('even when its ask has other work or open questions');
+    expect(prompt).toContain('later reminders queue as fresh-turn input every two hours');
+    expect(prompt).toContain('stopping after three consumed reminders');
+  });
+
+  test.each([false, true])('delivers completion guidance with packs: %s', (enabled) => {
+    const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+    expect(prompt).toContain('Settle an ask done only after its todos finish.');
+    expect(prompt).toContain(
+      'For abandoned work, use dropped or remove individual todos with reasons.'
+    );
+    expect(prompt).toContain('An unfinished-todo refusal keeps the ask open.');
   });
 
   test('routes continuing discussion into a fresh prepared session using existing flows', () => {
@@ -105,6 +161,20 @@ describe('root Neo system prompt', () => {
     }
   );
 
+  test('handles direct human work as matter news without repeating the assignment', () => {
+    const prompt = neoPrompt([]);
+    for (const rule of [
+      'the human worked directly in a worker',
+      'record new work the human started as a todo on that ask',
+      'Do not assign again',
+      'stay quiet',
+      'tools and access this instance actually has',
+      'Follow the human preferences supplied by enabled packs',
+      'concrete next step',
+    ])
+      expect(prompt).toContain(rule);
+  });
+
   test('gives questions and publications the same concise Markdown guidance', () => {
     const prompt = neoPrompt([]);
     expect(prompt).toContain('For neo.question.ask text and publication shortText, use Markdown');
@@ -133,9 +203,10 @@ describe('root Neo system prompt', () => {
   test('appends the pack briefing only when packs are enabled', () => {
     const coding = neoPrompt(neoSettingsPackBriefs());
     expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);
-    expect(coding).toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(coding).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(coding).toContain('load its guidance skill: coding-pack.');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('never sleep or poll gh');
-    expect(coding.trim().split('\n').at(-1)).toBe(NEO_ROOT_TURN_END.trim());
+    expect(coding.trim().endsWith(NEO_ROOT_TURN_END.trim())).toBe(true);
     expect(neoPrompt([])).not.toContain('Domain packs');
     expect(coding.replace(NEO_FOCUSED_DISCUSSION, '')).not.toMatch(
       /holder|consult|forward|dispatch/i

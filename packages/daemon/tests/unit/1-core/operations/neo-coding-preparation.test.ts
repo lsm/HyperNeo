@@ -1,5 +1,5 @@
 import { createCodexDesktopAdapter } from '../../../../src/lib/drivers/codex-desktop-adapter';
-import { gitWorktreeProject } from '../../../../src/lib/drivers/acp-agent-adapter';
+import { gitWorktreeProject } from '../../../../src/lib/drivers/worktree-project';
 import { workStartPreparation } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
@@ -15,10 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
-import {
-  prepareCodingExecution,
-  requireVerifySkill,
-} from '../../../../src/lib/neo/packs/coding/prepare-execution';
+import { prepareCodingExecution } from '../../../../src/lib/neo/packs/coding/prepare-execution';
 
 const roots: string[] = [];
 const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
@@ -350,38 +347,15 @@ describe('prepareCodingExecution', () => {
     expect(existsSync(f.destination)).toBe(false);
   });
 
-  test('a base without a verify skill refuses the start, unless the todo is the one that creates it', async () => {
+  test('leaves the verify-skill gate to the worker brief instead of rejecting sandbox checkout', async () => {
     const f = fixture();
     git(f.remote, 'rm', '-r', '-q', '.claude');
     git(f.remote, 'commit', '-m', 'drop the verify skill');
-    const refused = await prepareCodingExecution(f.request, f.effects);
-    expect(refused).toMatchObject({
-      ok: false,
-      reason: expect.stringMatching(/^verify_skill_missing: .*verifySkill "create"/),
-    });
-    expect(existsSync(f.destination)).toBe(false);
-    const created = await prepareCodingExecution(
-      { ...f.request, parameters: { ...f.request.parameters, verifySkill: 'create' } },
-      f.effects
-    );
-    expect(created.ok).toBe(true);
-    if (created.ok) await created.value.release();
-    expect(
-      await prepareCodingExecution(
-        { ...f.request, parameters: { ...f.request.parameters, verifySkill: 'skip' } },
-        f.effects
-      )
-    ).toMatchObject({ ok: false, reason: expect.stringMatching(/^verify_skill_missing/) });
-    writeFileSync(join(f.remote, 'AGENTS.md'), '# Repo\n\n```md\n## Verify\n```\n');
-    git(f.remote, 'add', 'AGENTS.md');
-    git(f.remote, 'commit', '-m', 'example only');
-    expect(await prepareCodingExecution(f.request, f.effects)).toMatchObject({ ok: false });
-    writeFileSync(join(f.remote, 'AGENTS.md'), '# Repo\n\n## Verify\n\nRun `make dev`.\n');
-    git(f.remote, 'add', 'AGENTS.md');
-    git(f.remote, 'commit', '-m', 'verify section');
-    const sectioned = await prepareCodingExecution(f.request, f.effects);
-    expect(sectioned.ok).toBe(true);
-    if (sectioned.ok) await sectioned.value.release();
+    const prepared = await prepareCodingExecution(f.request, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(existsSync(prepared.value.directory)).toBe(true);
+    await prepared.value.release();
   });
 
   test('an omitted target uses the advertised remote default, never local HEAD', async () => {
@@ -553,53 +527,5 @@ describe('prepareCodingExecution', () => {
     const result = await prepareCodingExecution(f.request, f.effects);
     expect(result.ok).toBe(false);
     expect(readFileSync(f.destination, 'utf8')).toBe('existing content');
-  });
-});
-
-describe('requireVerifySkill', () => {
-  test.each([
-    ['a column-0 fence', '```md\n## Verify\n```\n', false],
-    ['an indented fence', '   ~~~\n## Verify\n   ~~~\n', false],
-    ['an unclosed fence', '```\n## Verify\nrun it\n', false],
-    ['a heading after a closed fence', '```\nx\n```\n\n## Verify\n', true],
-    ['a 4-backtick fence around a 3-backtick line', '````\n```\n## Verify\n````\n', false],
-    ['a heading after a 4-backtick fence with an inner line', '````\n```\n````\n## Verify\n', true],
-    ['a closer with trailing text', '```\n``` not a closer\n## Verify\n```\n', false],
-    ['a bare hash before a Verify paragraph', '#\n\nVerify changes with make check.\n', false],
-    ['a hash with no space', '#Verify\n', false],
-    ['an indented heading', '  ## Verify\n', true],
-    ['a CRLF fence', '```md\r\n## Verify\r\n```\r\n', false],
-    ['a CRLF heading', '## Verify\r\nRun it.\r\n', true],
-  ])('a Verify heading in %s counts only outside code', (_case, doc, passes) => {
-    const listed = { code: 0, stdout: 'AGENTS.md\n', stderr: '' };
-    const agents = { code: 0, stdout: `# Repo\n\n${doc}`, stderr: '' };
-    expect('value' in requireVerifySkill(undefined, listed, agents)).toBe(passes);
-  });
-});
-
-test.each([
-  ['.claude/skills/verify/SKILL.md', true],
-  ['.claude/skills/verify-ui/SKILL.md', true],
-  ['.claude/skills/verify/nested/SKILL.md', false],
-  ['docs/.claude/skills/verify/SKILL.md', false],
-  ['.claude/skills/Verify/SKILL.md', false],
-])('verify preflight recognizes tracked path %s: %s', (path, accepted) => {
-  const result = requireVerifySkill(undefined, { code: 0, stdout: `${path}\n`, stderr: '' }, null);
-  expect('value' in result).toBe(accepted);
-});
-
-test('verify create bypasses read failures, but every other mode requires a readable listing', () => {
-  const failed = { code: 1, stdout: '', stderr: '  unavailable \n' };
-  const agents = { code: 0, stdout: '## Verify\n', stderr: '' };
-  expect(requireVerifySkill('create', failed, null)).toEqual({ value: true });
-  for (const mode of [undefined, 'Create', 'skip', true]) {
-    expect(requireVerifySkill(mode, failed, agents)).toEqual({
-      reason: { ok: false, reason: 'verify_skill_unreadable: unavailable' },
-    });
-  }
-  expect(
-    requireVerifySkill(undefined, { ...failed, code: 0 }, { ...agents, code: 1 })
-  ).toMatchObject({
-    reason: { ok: false, reason: expect.stringContaining('verify_skill_missing:') },
   });
 });

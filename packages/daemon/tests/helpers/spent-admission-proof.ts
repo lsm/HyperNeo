@@ -1,7 +1,9 @@
+import { createLocalSocket } from '../../src/lib/pairing/local-credential.ts';
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +16,8 @@ export async function verifySpentAdmission(
   scenario: 'interrupted' | 'idle' | 'history' = 'interrupted'
 ): Promise<void> {
   const run = await mkdtemp(join(tmpdir(), 'spent-admission-'));
+  const removeRun = () => rmSync(run, { recursive: true, force: true });
+  process.once('exit', removeRun);
   const requestId = randomUUID();
   const markers = ['ADMISSION_HEAD', 'QUEUED_ONE', 'QUEUED_TWO', 'QUEUED_THREE', 'QUEUED_FOUR'];
   const requests: string[] = [];
@@ -59,9 +63,7 @@ export async function verifySpentAdmission(
       return res.end('{}');
     }
     const active =
-      body.tools?.some((tool: { name: string }) =>
-        tool.name.endsWith('hyperneo-operations__invoke')
-      ) && JSON.stringify(body.messages).includes('synthetic recovery garden');
+      body.tools?.length > 0 && JSON.stringify(body.messages).includes('synthetic recovery garden');
     const text = active ? `Visible synthetic recovery reply ${requests.length + 1}` : 'Probe ready';
     if (active) {
       evidence.inputWithMessageId ??= JSON.stringify(body.messages).includes(
@@ -74,9 +76,12 @@ export async function verifySpentAdmission(
         held = true;
         await hold;
       }
-      if (restarted)
+      if (restarted) {
+        if (JSON.stringify(body.messages).includes('Visible synthetic recovery reply 1'))
+          evidence.resumedContextSeen = true;
         for (const marker of markers)
           if (JSON.stringify(body.messages).includes(marker)) received.add(marker);
+      }
     }
     const message = {
       id: `msg_${randomUUID()}`,
@@ -204,6 +209,7 @@ export async function verifySpentAdmission(
       daemon.settingsManager.updateGlobalSettings({ sandbox: { enabled: false } });
       hub = new MessageHub({ defaultSessionId: 'global' });
       transport = new WebSocketClientTransport({
+        createSocket: createLocalSocket,
         url: `ws://127.0.0.1:${daemon.server.port}/ws`,
         autoReconnect: false,
       });
@@ -480,31 +486,45 @@ export async function verifySpentAdmission(
     }
     evidence.afterDelivery = sample();
     evidence.messages = await read();
+    if (scenario !== 'interrupted') {
+      const inits = (await read()).filter(
+        (message) => message.type === 'system' && message.subtype === 'init'
+      );
+      assert(inits.length >= 2, 'restart must initialize the real SDK again');
+      assert.equal(new Set(inits.map((message) => message.session_id)).size, 1);
+      assert.equal(evidence.resumedContextSeen, true, 'resume must retain the previous reply');
+      evidence.resumedNativeSessionId = inits[0].session_id;
+    }
     evidence.received = [...received];
     evidence.passed = true;
   } finally {
-    releaseCoverage?.();
-    release?.();
-    if (process.env.VERIFY_EVIDENCE_DIR) {
-      await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
-      await writeFile(
-        join(
-          process.env.VERIFY_EVIDENCE_DIR,
-          scenario === 'interrupted'
-            ? `spent-admission-${kind}.json`
-            : `spent-admission-${scenario}-${kind}.json`
-        ),
-        JSON.stringify(evidence, null, 2)
-      );
-    }
-    unsubscribe();
-    QueryOptionsBuilder.prototype.build = build;
-    await transport?.close();
-    await daemon?.cleanup();
-    await new Promise<void>((resolve) => fixture.close(() => resolve()));
-    for (const [key, value] of prior) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    try {
+      releaseCoverage?.();
+      release?.();
+      if (process.env.VERIFY_EVIDENCE_DIR) {
+        await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
+        await writeFile(
+          join(
+            process.env.VERIFY_EVIDENCE_DIR,
+            scenario === 'interrupted'
+              ? `spent-admission-${kind}.json`
+              : `spent-admission-${scenario}-${kind}.json`
+          ),
+          JSON.stringify(evidence, null, 2)
+        );
+      }
+      unsubscribe();
+      QueryOptionsBuilder.prototype.build = build;
+      await transport?.close();
+      await daemon?.cleanup();
+      await new Promise<void>((resolve) => fixture.close(() => resolve()));
+      for (const [key, value] of prior) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    } finally {
+      removeRun();
+      process.off('exit', removeRun);
     }
   }
 }

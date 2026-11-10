@@ -1,4 +1,7 @@
 import type { Database } from '../sqlite-compat.ts';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
+import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { homedir } from 'node:os';
 import type { ArtifactContext } from '../../lib/artifacts/file-policy.ts';
 import type {
@@ -8,9 +11,8 @@ import type {
 import { loadRegistrationBinding } from '../../lib/artifacts/registration-binding.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
-import { NeoPublicationRepository } from './neo-publication-repository.ts';
-import { hydrateSdkMessageBodies } from './sdk-message-body-read.ts';
-import { extractVisibleText, parseSdkMessageRow } from './sdk-message-projections.ts';
+import { readPublicFileSource } from './public-file-source.ts';
+import type { OperationCaller } from '../../lib/operations/registry.ts';
 
 type Key = StoredReferenceSource['key'];
 type Text = { text: readonly string[]; contexts: ArtifactContext[] };
@@ -19,7 +21,11 @@ export class ArtifactReferenceSourceRepository {
   constructor(
     private readonly db: Database,
     private readonly daemonId: string,
-    private readonly home = homedir()
+    private readonly home = homedir(),
+    private readonly repository: (todo: NeoTodo | null, ask: NeoAsk | null) => string | null = (
+      todo,
+      ask
+    ) => neoTodoRepository(todo ?? { check: null, named: null }, neoTodoPolicies(db), { ask, todo })
   ) {}
 
   private sessionContexts(sessionId: string): ArtifactContext[] {
@@ -31,21 +37,11 @@ export class ArtifactReferenceSourceRepository {
       .all(sessionId, sessionId) as ArtifactContext[];
   }
 
-  private text(key: Key): Text | null {
-    if (key.kind === 'publication') {
-      const rows = this.db
-        .prepare('SELECT conversation_id FROM neo_publications WHERE publication_id = ? LIMIT 2')
-        .all(key.id) as { conversation_id: string }[];
-      if (rows.length !== 1) return null;
-      const publication = new NeoPublicationRepository(this.db).get(
-        rows[0].conversation_id,
-        key.id
-      );
-      if (!publication) return null;
-      const version =
-        !key.revisionId || key.revisionId === (publication.revisionId ?? publication.publicationId)
-          ? publication
-          : publication.revisions?.find((item) => item.revisionId === key.revisionId);
+  private text(key: Key, caller: OperationCaller): Text | null {
+    const source = readPublicFileSource(this.db, key, caller);
+    if (!source) return null;
+    if (source.publication) {
+      const publication = source.publication;
       const links = publication.links.flatMap<ArtifactContext>((link) =>
         link.kind === 'work'
           ? [{ kind: 'todo', id: link.id }]
@@ -65,47 +61,15 @@ export class ArtifactReferenceSourceRepository {
                 publication.askOrigin.messageId
               ) as ArtifactContext[])
           : [];
-      return version
-        ? {
-            text: [version.shortText, version.fullText].filter(
-              (part): part is string => part !== undefined
-            ),
-            contexts,
-          }
-        : null;
+      return { text: source.text, contexts };
     }
-    if (key.revisionId) return null;
-    if (key.kind === 'todo') {
-      const todo = new NeoAskTodoRepository(this.db).getTodo(key.id);
-      return todo
-        ? {
-            text: [
-              todo.title,
-              todo.doneWhen,
-              todo.instruction ?? '',
-              todo.report ?? '',
-              todo.evidence ?? '',
-              todo.blockedReason ?? '',
-              todo.nextAction ?? '',
-            ],
-            contexts: [{ kind: 'todo', id: todo.id }],
-          }
-        : null;
-    }
-    const row = this.db
-      .prepare(
-        hydrateSdkMessageBodies(
-          'SELECT session_id, rowid AS body_seq FROM sdk_messages WHERE id = ?'
-        )
-      )
-      .get(key.id) as { session_id: string; sdk_message: string } | null;
-    const message = row ? parseSdkMessageRow(row.sdk_message, 'null') : null;
-    return row && message && ['user', 'assistant', 'result'].includes(message.type)
-      ? {
-          text: [extractVisibleText(message as unknown as Record<string, unknown>)],
-          contexts: this.sessionContexts(row.session_id),
-        }
-      : null;
+    return {
+      text: source.text,
+      contexts:
+        key.kind === 'todo'
+          ? [{ kind: 'todo', id: key.id }]
+          : this.sessionContexts(source.owner.id),
+    };
   }
 
   private binding(context: ArtifactContext): ReferenceBinding | null {
@@ -127,12 +91,12 @@ export class ArtifactReferenceSourceRepository {
           }
         : null);
     return binding
-      ? { ...binding, repository: todo?.repo ?? ask?.repo ?? null, revision: { kind: 'worktree' } }
+      ? { ...binding, repository: this.repository(todo, ask), revision: { kind: 'worktree' } }
       : null;
   }
 
-  load(key: Key): StoredReferenceSource | null {
-    const source = this.text(key);
+  load(key: Key, caller: OperationCaller): StoredReferenceSource | null {
+    const source = this.text(key, caller);
     if (!source || source.contexts.length > 100) return null;
     const unique = new Map(
       source.contexts.map((context) => [`${context.kind}:${context.id}`, context])

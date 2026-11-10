@@ -1,0 +1,340 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { Logger } from '../logger.ts';
+import { decodeOapHubLine, encodeOapHubRequest, type OapHubFrame } from './oap-hub-codec.ts';
+
+type HubEvent = Extract<OapHubFrame, { kind: 'event' }>;
+type Listener = (event: HubEvent | Error) => void;
+type Pending = {
+  line: string;
+  retried: boolean;
+  timer: ReturnType<typeof setTimeout>;
+  retryTimer?: ReturnType<typeof setTimeout>;
+  resolve(value: unknown): void;
+  reject(error: Error): void;
+};
+type Dispatch =
+  | { kind: 'ignore' }
+  | { kind: 'retry'; delayMs: number }
+  | { kind: 'event'; frame: HubEvent }
+  | { kind: 'resolve'; value: unknown }
+  | { kind: 'reject'; code: string; message: string; feature?: string };
+
+export interface OapHubClientOptions {
+  command: string;
+  args: string[];
+  cwd?: string;
+  env: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+  onFailure?: (error: Error) => void;
+}
+
+export class OapHubRequestError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly feature?: string
+  ) {
+    super(message);
+    this.name = 'OapHubRequestError';
+  }
+}
+
+export function isDefiniteOapRefusal(error: unknown): error is OapHubRequestError {
+  return (
+    error instanceof OapHubRequestError &&
+    [
+      'busy',
+      'capability_degraded',
+      'invalid_request',
+      'invalid_submission',
+      'model_not_found',
+      'request_too_large',
+      'run_active',
+      'scope_mismatch',
+      'session_closed',
+      'stale_capabilities',
+      'unknown_session',
+      'unsupported_feature',
+    ].includes(error.code)
+  );
+}
+
+function decideFrame(frame: OapHubFrame, waiting: boolean, retried: boolean): Dispatch {
+  if (frame.kind === 'event') return { kind: 'event', frame };
+  if (!waiting) return { kind: 'ignore' };
+  if (frame.kind === 'response') return { kind: 'resolve', value: frame.result };
+  return frame.retryable && !retried
+    ? { kind: 'retry', delayMs: 50 }
+    : { kind: 'reject', code: frame.code, message: frame.message, feature: frame.feature };
+}
+
+const planFrame = (superpipe({})('oap.hub.dispatch') as PipelineAPI)
+  .input(['frame', 'waiting', 'retried'])
+  .pipe(decideFrame, ['frame', 'waiting', 'retried'], 'dispatch')
+  .end('dispatch') as typeof decideFrame;
+
+function decideCleanupFailure(error: Error): { kind: 'fail' } | { kind: 'warn'; code: string } {
+  return error instanceof OapHubRequestError && error.code !== 'timeout'
+    ? { kind: 'warn', code: error.code }
+    : { kind: 'fail' };
+}
+
+const planCleanupFailure = (superpipe({})('oap.hub.cleanupFailure') as PipelineAPI)
+  .input('error')
+  .pipe(decideCleanupFailure, 'error', 'decision')
+  .end('decision') as typeof decideCleanupFailure;
+
+function appendStderr(tail: Buffer, chunk: Buffer): Buffer {
+  return Buffer.from(Buffer.concat([tail, chunk]).subarray(-16_384));
+}
+
+function failureDiagnostic(message: string, stderr: Buffer) {
+  const stderrTail = stderr.toString('utf8').trim();
+  return {
+    message: stderrTail ? `${message}\nOAP hub stderr:\n${stderrTail}` : message,
+    stderrTail,
+  };
+}
+
+const planFailure = (superpipe({})('oap.hub.failure') as PipelineAPI)
+  .input(['message', 'stderr'])
+  .pipe(failureDiagnostic, ['message', 'stderr'], 'diagnostic')
+  .end('diagnostic') as typeof failureDiagnostic;
+
+function readLine(
+  buffer: string
+): { kind: 'partial' } | { kind: 'overflow' } | { kind: 'line'; line: string; remaining: string } {
+  const newline = buffer.indexOf('\n');
+  const line = newline < 0 ? buffer : buffer.slice(0, newline);
+  if (Buffer.byteLength(line, 'utf8') > 1_048_576) return { kind: 'overflow' };
+  return newline < 0
+    ? { kind: 'partial' }
+    : { kind: 'line', line, remaining: buffer.slice(newline + 1) };
+}
+
+const planLine = (superpipe({})('oap.hub.stdoutLine') as PipelineAPI)
+  .input('buffer')
+  .pipe(readLine, 'buffer', 'line')
+  .end('line') as typeof readLine;
+
+const log = new Logger('OapHubClient');
+
+function notify(listener: Listener | undefined, frame: HubEvent | Error) {
+  try {
+    listener?.(frame);
+  } catch (error) {
+    log.warn(
+      'Hub subscription listener failed',
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
+export class OapHubClient {
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private exited: Promise<void> = Promise.resolve();
+  private failure: Error | null = null;
+  private buffer = '';
+  private stderrTail: Buffer = Buffer.alloc(0);
+  private nextId = 0;
+  private readonly timeoutMs: number;
+  private readonly pending = new Map<number, Pending>();
+  private readonly listeners = new Map<number, Listener>();
+
+  constructor(private readonly options: OapHubClientOptions) {
+    this.timeoutMs = options.timeoutMs ?? 30_000;
+  }
+
+  async connect(): Promise<void> {
+    if (this.child || this.failure) throw new Error('OAP hub client connects once');
+    try {
+      const child = spawn(this.options.command, this.options.args, {
+        cwd: this.options.cwd,
+        env: this.options.env,
+        stdio: 'pipe',
+        windowsHide: true,
+      });
+      this.child = child;
+      this.exited = new Promise((resolve) => child.once('close', () => resolve()));
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => this.receive(chunk));
+      child.stderr.on('data', (chunk: Buffer) => {
+        this.stderrTail = appendStderr(this.stderrTail, chunk);
+      });
+      child.stdin.on('error', (error) => this.fail(error));
+      child.on('error', (error) => this.fail(error));
+      child.on('close', (code, signal) =>
+        this.fail(new Error(`OAP hub exited (code=${code}, signal=${signal})`))
+      );
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve);
+        child.once('error', reject);
+      });
+      if (this.failure) throw this.failure;
+    } catch (error) {
+      this.fail(error instanceof Error ? error : new Error(String(error)));
+      throw this.failure;
+    }
+  }
+
+  async request(op: string, parameters: Record<string, unknown> = {}): Promise<unknown> {
+    return this.startRequest(op, parameters).answer;
+  }
+
+  async subscribe(
+    sessionId: string,
+    listener: Listener,
+    cursor: { after?: number; run_id?: string } = {}
+  ): Promise<{ id: number; unsubscribe(): Promise<void> }> {
+    const { id, answer } = this.startRequest(
+      'events',
+      { ...cursor, session_id: sessionId },
+      listener
+    );
+    try {
+      await answer;
+    } catch (error) {
+      this.listeners.delete(id);
+      throw error;
+    }
+    let closing: Promise<void> | undefined;
+    return {
+      id,
+      unsubscribe: () => {
+        if (!this.listeners.has(id)) return Promise.resolve();
+        closing ??= this.request('unsubscribe', { subscription: id })
+          .then(() => {
+            this.listeners.delete(id);
+          })
+          .catch((error: unknown) => {
+            closing = undefined;
+            throw error;
+          });
+        return closing;
+      },
+    };
+  }
+
+  async close(): Promise<void> {
+    this.fail(new Error('OAP hub client closed'), false);
+    await this.exited;
+  }
+
+  private startRequest(op: string, parameters: Record<string, unknown>, listener?: Listener) {
+    if (this.failure) throw this.failure;
+    if (!this.child) throw new Error('OAP hub client is not connected');
+    const id = ++this.nextId;
+    const line = encodeOapHubRequest(id, op, parameters);
+    const answer = new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const waiting = this.pending.get(id);
+        if (!waiting) return;
+        this.pending.delete(id);
+        clearTimeout(waiting.retryTimer);
+        this.listeners.delete(id);
+        reject(new OapHubRequestError('timeout', `OAP hub ${op} timed out`));
+        if (listener && !this.failure)
+          void this.request('unsubscribe', { subscription: id }).catch((error: Error) => {
+            const decision = planCleanupFailure(error);
+            if (decision.kind === 'fail') this.fail(error);
+            else
+              log.warn('Hub subscription cleanup refused', {
+                subscription: id,
+                code: decision.code,
+              });
+          });
+      }, this.timeoutMs);
+      this.pending.set(id, { line, retried: false, timer, resolve, reject });
+      if (listener) this.listeners.set(id, listener);
+      this.write(line);
+    });
+    return { id, answer };
+  }
+
+  private write(line: string): void {
+    try {
+      this.child!.stdin.write(line, (error) => {
+        if (error) this.fail(error);
+      });
+    } catch (error) {
+      this.fail(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  private receive(chunk: string): void {
+    if (this.failure) return;
+    this.buffer += chunk;
+    while (!this.failure) {
+      const decision = planLine(this.buffer);
+      if (decision.kind === 'partial') return;
+      if (decision.kind === 'overflow') {
+        this.fail(new Error('OAP hub stdout line exceeds 1048576 bytes'));
+        return;
+      }
+      this.buffer = decision.remaining;
+      try {
+        this.dispatch(decodeOapHubLine(decision.line));
+      } catch (error) {
+        this.fail(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  }
+
+  private dispatch(frame: OapHubFrame): void {
+    const waiting = this.pending.get(frame.id);
+    const decision = planFrame(frame, !!waiting, waiting?.retried ?? false);
+    if (decision.kind === 'event') {
+      notify(this.listeners.get(frame.id), decision.frame);
+      return;
+    }
+    if (!waiting || decision.kind === 'ignore') return;
+    if (decision.kind === 'retry') {
+      waiting.retried = true;
+      waiting.retryTimer = setTimeout(() => {
+        if (this.pending.get(frame.id) === waiting) this.write(waiting.line);
+      }, decision.delayMs);
+      return;
+    }
+    this.pending.delete(frame.id);
+    clearTimeout(waiting.timer);
+    clearTimeout(waiting.retryTimer);
+    if (decision.kind === 'resolve') waiting.resolve(decision.value);
+    else waiting.reject(new OapHubRequestError(decision.code, decision.message, decision.feature));
+  }
+
+  private fail(error: Error, diagnostic = true): void {
+    if (this.failure) return;
+    this.failure = error;
+    if (diagnostic) {
+      const detail = planFailure(error.message, this.stderrTail);
+      Object.assign(error, detail);
+      log.error('OAP hub failed', detail.stderrTail.slice(-768), error);
+    }
+    const child = this.child;
+    this.child = null;
+    if (child?.exitCode === null && child.signalCode === null) {
+      child.stdin.end();
+      child.kill('SIGTERM');
+      const escalation = setTimeout(() => child.kill('SIGKILL'), Math.min(this.timeoutMs, 1000));
+      void this.exited.then(() => clearTimeout(escalation));
+    }
+    try {
+      this.options.onFailure?.(error);
+    } catch (cause) {
+      log.warn(
+        'Hub failure listener failed',
+        cause instanceof Error ? cause.message : String(cause)
+      );
+    }
+    for (const waiting of this.pending.values()) {
+      clearTimeout(waiting.timer);
+      clearTimeout(waiting.retryTimer);
+      waiting.reject(error);
+    }
+    for (const [id, listener] of this.listeners) if (!this.pending.has(id)) notify(listener, error);
+    this.pending.clear();
+    this.listeners.clear();
+    this.buffer = '';
+  }
+}

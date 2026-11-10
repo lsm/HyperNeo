@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Database } from '../../../src/storage/sqlite-compat';
 import { runMigration360 } from '../../../src/storage/schema/m360-workspace-projects';
 import { WorkspaceHistoryRepository } from '../../../src/storage/repositories/workspace-history-repository';
-import { createProjectFolderOperation } from '../../../src/lib/workspaces/project-folder-operation';
+import { createProjectFolderOperation } from '../../../src/lib/session/project-folder-operation';
 import { createOperationRegistry } from '../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../src/lib/operations/invoke';
 import { createFindWorkOperation } from '../../../src/lib/drivers/find-operation';

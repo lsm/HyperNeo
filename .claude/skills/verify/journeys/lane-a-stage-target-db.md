@@ -5,14 +5,12 @@ Use shared isolation and the resource guard in SKILL.md; run heavy jobs serially
 ```sh
 python3 .claude/skills/verify/lane-a-stage-target-db-run.py bun before
 python3 .claude/skills/verify/lane-a-stage-target-db-run.py bun verify
-python3 .claude/skills/verify/lane-a-stage-target-db-run.py deno verify --executable "$DENO"
 ```
 
-DENO names an existing runtime with cached imports. Every run owns fresh synthetic
-HOME/data/TMPDIR and an ephemeral non-8399 daemon. HTTP is refused and gh is a
-refusing stub. The runner retains evidence and deletes temporary daemon data after
-shutdown. Before mode restores the old selector/assignment files from origin/dev
-and restores the draft in finally; do not edit concurrently. Commit the guarded
+Every run owns fresh synthetic HOME/data/TMPDIR and an ephemeral non-8399 daemon. HTTP is
+refused and gh is a refusing stub. The runner retains evidence and deletes temporary
+daemon data after shutdown. Before mode restores the old selector/assignment files from
+origin/dev and restores the draft in finally; do not edit concurrently. Commit the guarded
 main regression before production changes.
 
 Real neo.coding.write.plan WebSocket RPCs select default and preferred targets,
@@ -38,10 +36,6 @@ absence or latency target is verified. Command duration and argument/reply sizes
 are recorded without separate queue, SQL or cloning attribution.
 
 Bind both successful runtime proofs to the committed application/helper tree:
-
-```sh
-bun --no-install --no-env-file .claude/skills/verify/lane-a-stage-target-proof-binding.ts HEAD
-```
 
 Only this journey and its evidence directory may change after the bound proof
 commit. Other source, test or helper changes require fresh committed proofs.

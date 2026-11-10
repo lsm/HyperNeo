@@ -1,4 +1,22 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
+  speech_backend_not_configured:
+    'The daemon has no speech backend configured. Ask the operator to set HYPERNEO_SPEECH_URL; reply on screen in the meantime.',
+  speech_backend_unavailable:
+    'The speech backend could not be reached or returned an unsuccessful response. Reply on screen and ask the operator to check the service before retrying.',
+  invalid_speech_backend:
+    'The daemon speech backend URL is invalid or unsupported. Ask the operator to configure a valid HTTPS base URL; loopback HTTP is supported for local services.',
+  neo_speech_not_available:
+    'Listening and playback receipts require a readable session and its connected human client. Only a bound Neo session may call neo.speech.say.',
+  speech_receipt_mismatch:
+    'The speech receipt belongs to a different request or client. Reuse a requestId only for identical speech and acknowledge only speech delivered to this client.',
+  voice_replies_off:
+    'No connected human client is listening to this session. Reply on screen instead.',
+  speech_queue_full:
+    'The connected client already has four utterances awaiting playback. Keep the remaining answer on screen instead of retrying in a loop.',
+  speech_client_disconnected:
+    'The spoken reply could not be delivered to its client. Reply on screen and wait for the human to reconnect.',
+  invalid_speech:
+    'Pass a nonempty natural spoken utterance of at most 500 characters with a stable requestId.',
   merge_receipt_changed:
     'The durable merge receipt does not match these assignments. Re-read the todo and its current-head assignments before preparing a merge.',
   head_changed_before_manual_merge:
@@ -153,6 +171,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'Only main Neo or the human can change the project tree. Ask main Neo to do it.',
   self_dependency: 'A card cannot depend on itself. Remove its own id from dependsOn.',
   session_not_found: 'No Neo session has that sessionId. Pass the id of an existing Neo session.',
+  session_unavailable:
+    'No safe Open link could be read for this exact session. Retry the same session id when its daemon or adapter is available; do not substitute another session.',
   stage_assignment_mismatch:
     'The result does not match the assigned coding actor, worker ref, PR head or acceptance contract. Submit evidence for the exact persisted assignment.',
   stale_ask_revision:

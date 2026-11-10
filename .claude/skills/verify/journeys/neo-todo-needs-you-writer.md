@@ -30,7 +30,6 @@ of `verify`, saving to another evidence directory. It records main SQL and a
 health stall over 1 s for the original synchronous claim. The wrapper saves
 JSON and logs and deletes each run's temporary daemon data immediately.
 
-Run the todo-gateway and runner tests for single-winner admission, missing and
-ineligible cards, persistence refusal, repeated incidents, worker-blocked cards
-and notification ordering. The Deno smoke exercises the same writer command.
-This slice does not move idle-reminder admission; that is the next slice.
+Run the todo-gateway and runner tests for single-winner admission, missing and ineligible
+cards, persistence refusal, repeated incidents, worker-blocked cards and notification
+ordering. This slice does not move idle-reminder admission; that is the next slice.

@@ -6,23 +6,18 @@ free memory or 25 GiB free disk; no install, simulator or live daemon is used.
 
 ```sh
 python3 .claude/skills/verify/coding-review-thread-db-run.py bun before
-python3 .claude/skills/verify/coding-review-thread-db-run.py deno before --executable "$DENO"
 python3 .claude/skills/verify/coding-review-thread-db-run.py bun verify
-python3 .claude/skills/verify/coding-review-thread-db-run.py deno verify --executable "$DENO"
 ```
 
-DENO names an existing Deno executable. Deno uses cached modules only. Each run
-owns a fresh HOME/data/TMPDIR, a fresh SQLite database and an ephemeral non-8399
-daemon. Synthetic gh refuses unknown commands; direct HTTP throws. Provider
-credentials, real GitHub, live databases, browser/model turns and Git writes are
-not involved. Raw JSON is saved before immediately removing temporary daemon
-data. The helper closes both daemon instances in finally.
+Each run owns a fresh HOME/data/TMPDIR, a fresh SQLite database and an ephemeral non-8399
+daemon. Synthetic gh refuses unknown commands; direct HTTP throws. Provider credentials,
+real GitHub, live databases, browser/model turns and Git writes are not involved. Raw JSON
+is saved before immediately removing temporary daemon data. The helper closes both daemon
+instances in finally.
 
-Before mode temporarily restores only the two connector reader files from the
-pinned dev revision, then restores the draft in finally. Do not run it alongside
-an edit, test, check or another proof. Fixture SQL and row assertions are excluded
-from the measurement window. Runtime, source head, resource guards and cleanup
-are recorded in each run.json.
+Before mode temporarily restores only the two connector reader files from the pinned dev
+revision, then restores the draft in finally. Do not run it alongside an edit, test, check
+or another proof. Fixture SQL and row assertions are excluded from the measurement window.
 
 The proof sends actual neo.coding.merge.prepare requests through the daemon's
 WebSocket operation RPC. No assignments are seeded: the production operation
@@ -53,18 +48,8 @@ coverage, rate limiting, head identity, one-winner fencing, failure history and
 production hook behavior. The shared connector target's host validation still
 precedes database/GitHub access.
 
-The latest observed.json proofBinding names one committed application tree for
-both runtime proofs and retains packages/scripts trees and helper blobs. After
-that commit only this journey and this evidence folder may change. Audit the
-final candidate explicitly:
-
-```sh
-bun --no-install --no-env-file .claude/skills/verify/coding-review-thread-proof-binding.ts HEAD
-```
-
-The audit verifies ancestry, unchanged application trees/helper blobs, both
-successful runtime proof receipts and the full post-proof change list. A source,
-test or helper change requires a new committed proof head and fresh runs.
+After that commit only this journey and this evidence folder may change. Audit the final
+candidate explicitly:
 
 
 After a base-registration conflict, retain both lanes' imports and entries and

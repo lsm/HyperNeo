@@ -1,6 +1,6 @@
 import type { AgentModelPoolEntry, SpaceAgent, UpdateSpaceAgentParams } from '@hyperneo/shared';
 import superpipe, { type Dependencies, type PipelineAPI } from 'superpipe';
-import { RESERVED_SPACE_AGENT_HANDLES, validateSlug } from '../space/slug.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, validateSlug } from './slug.ts';
 import { firstAgentFieldError } from './field-validation.ts';
 import {
   type BindableSession,

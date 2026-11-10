@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -67,7 +69,7 @@ try {
   const version = raw.prepare('SELECT payload FROM space_workflow_definition_versions WHERE workflow_id = ? AND version_hash = ?').get(workflow.id, snapshot.versionHash) as { payload: string };
   assert.equal(version.payload, snapshot.payload);
   assert.equal(createHash('sha256').update(version.payload).digest('hex'), snapshot.versionHash);
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const rpc = (method: string, data: unknown) => new Promise<Record<string, unknown>>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('Hook RPC timed out')), 15000);
@@ -116,7 +118,7 @@ try {
   await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
   const recovered = new SpaceWorkflowRunRepository(app.db.getDatabase()).getRun(startupLegacy.id);
   assert.equal(recovered?.definitionVersion, snapshot.versionHash, 'Startup must finish snapshot migration before serving RPC');
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('Restart RPC connection failed')); });
   const recoveredHooks = await rpc('spaceWorkflowRun.listHookStates', { runId: startupLegacy.id });
   assert.deepEqual(recoveredHooks.hooks, hooks, 'Restart must preserve frozen hooks rather than the edited live definition');

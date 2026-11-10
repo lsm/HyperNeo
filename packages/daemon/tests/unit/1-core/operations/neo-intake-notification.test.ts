@@ -8,8 +8,8 @@ import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { ensurePromptInTransaction as ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox.ts';
 import { createNeoIntakeOperation, neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -24,6 +24,7 @@ import type { Database } from '../../../../src/storage/database.ts';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
+import { runMigration483 } from '../../../../src/storage/schema/m483-neo-session-seen-question.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs.ts';
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts';
@@ -58,6 +59,7 @@ describe('accepted public ask notification', () => {
     runMigration313(writer);
     runMigration314(writer);
     runMigration340(writer);
+    runMigration483(writer);
     runMigration387(writer);
     sessions = new SessionRepository(writer);
     sdk = new SDKMessageRepository(writer as never);

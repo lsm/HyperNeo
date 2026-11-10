@@ -17,7 +17,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
-import { isSafeFsSupported, replaceFileWithinWorkspace } from '../../acp/acp-safe-fs.ts';
+import { isSafeFsSupported, replaceFileWithinWorkspace } from '../../safe-fs.ts';
 import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
@@ -33,13 +33,17 @@ export type HomeResult =
 type HomeSyncResult = { value: string | null } | { reason: HomeFailure };
 
 const HOME_RUNTIME_DIRS = ['.coordinators', '.claude', 'worktrees'];
+const NETWORK_TIMEOUT_MS = 30_000;
 
 export class NeoHomeRepository {
   private pending: Promise<unknown> = Promise.resolve();
   constructor(
     readonly root: string,
     private readonly projects: NeoRepository,
-    private readonly networkTimeoutMs = 30_000
+    private readonly armNetworkTimeout: (fire: () => void) => () => void = (fire) => {
+      const timer = setTimeout(fire, NETWORK_TIMEOUT_MS);
+      return () => clearTimeout(timer);
+    }
   ) {}
 
   private async git(args: string[], allowFailure = false, network = false, cwd = this.root) {
@@ -91,8 +95,8 @@ export class NeoHomeRepository {
     }
     const { child, dispose } = command;
     let timedOut = false;
-    const timer = network
-      ? setTimeout(() => {
+    const disarm = network
+      ? this.armNetworkTimeout(() => {
           timedOut = true;
           try {
             if (child.pid) process.kill(-child.pid, 'SIGKILL');
@@ -100,7 +104,7 @@ export class NeoHomeRepository {
           } catch {
             child.kill('SIGKILL');
           }
-        }, this.networkTimeoutMs)
+        })
       : undefined;
     try {
       const [text, error, code] = await Promise.all([
@@ -109,13 +113,13 @@ export class NeoHomeRepository {
         child.exited,
       ]);
       const diagnostic = timedOut
-        ? `network timed out after ${this.networkTimeoutMs}ms`
+        ? `network timed out after ${NETWORK_TIMEOUT_MS}ms`
         : error.trim();
       if (code && !allowFailure) throw new Error(`home ${args.join(' ')}: ${diagnostic}`);
       const bytes = Buffer.from(text);
       return { code, bytes, text: bytes.toString('utf8').trim(), error: diagnostic };
     } finally {
-      clearTimeout(timer);
+      disarm?.();
       await dispose();
     }
   }
@@ -209,7 +213,7 @@ export class NeoHomeRepository {
               .slice(
                 0,
                 350
-              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change by itself. Ask Neo to save the chosen version; protected documents require separate confirmation.`,
+              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full report before choosing. Your answer records a choice; it does not apply a change by itself. Ask Neo to save the chosen version; protected documents require separate confirmation.`,
             document: versions.length
               ? versions.join('\n\n────────────────\n\n')
               : `Local (${local})\n\nRemote (${remote})\n\nNo document differences; the branch histories diverge. Review the preserved histories with the human before reconciling.`,

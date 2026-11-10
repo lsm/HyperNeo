@@ -5,7 +5,7 @@ type Binding = {
   testedCodeCommit: string;
   testedGitTree: string;
   applicationTrees: { packages: string; scripts: string };
-  runs: { bun: string; deno: string };
+  runs: { bun: string };
   postProofChangePolicy: string;
 };
 const evidence = new URL(
@@ -13,7 +13,7 @@ const evidence = new URL(
   import.meta.url
 );
 
-test('retained polling proofs identify one committed application tree for both runtimes', () => {
+test('retained polling proofs identify one committed application tree for Bun', () => {
   const observed = JSON.parse(readFileSync(new URL('observed.json', evidence), 'utf8')) as {
     proofBinding?: Binding;
   };
@@ -25,7 +25,7 @@ test('retained polling proofs identify one committed application tree for both r
   expect(binding.applicationTrees.packages).toMatch(/^[a-f0-9]{40}$/);
   expect(binding.applicationTrees.scripts).toMatch(/^[a-f0-9]{40}$/);
   expect(binding.postProofChangePolicy).toBe('evidence-and-journey-only');
-  for (const runtime of ['bun', 'deno'] as const) {
+  for (const runtime of ['bun'] as const) {
     const folder = binding.runs[runtime];
     expect(folder).toMatch(new RegExp(`^${runtime}-verify(?:-\\d+)?$`));
     const run = JSON.parse(readFileSync(new URL(`${folder}/run.json`, evidence), 'utf8')) as {

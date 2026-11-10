@@ -58,6 +58,21 @@ describe('ModelsSettings — load failure surfacing', () => {
     cleanup();
   });
 
+  it('keeps fallback controls in a closed Advanced section until opened without saving', async () => {
+    vi.mocked(updateGlobalSettings).mockClear();
+    render(<ModelsSettings />);
+    await screen.findByRole('alert');
+
+    const advanced = screen.getByText('Advanced').closest('details');
+    expect(advanced).toBeTruthy();
+    expect(advanced?.open).toBe(false);
+    expect(advanced?.textContent).toContain('Default Fallback Chain');
+    expect(advanced?.textContent).toContain('Model-Specific Overrides');
+    fireEvent.click(screen.getByText('Advanced'));
+    expect(advanced?.open).toBe(true);
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     'waits for delayed discovery through the real hub, forced=%s',
     async (forced) => {
@@ -385,8 +400,9 @@ describe('ModelsSettings — load failure surfacing', () => {
       expect(mockRequest).toHaveBeenCalledTimes(3);
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
-    await new Promise((r) => setTimeout(r, 50));
+    expect(
+      (screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement).disabled
+    ).toBe(true);
     expect(mockRequest).toHaveBeenCalledTimes(3);
 
     resolveRequest({ models: [] });
@@ -410,101 +426,6 @@ describe('ModelsSettings — load failure surfacing', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(mockRequest).toHaveBeenCalledTimes(3);
     expect(screen.getByRole('alert').textContent).toContain('alpha');
-  });
-
-  it('runs a deferred force refresh, holding loading, when the allowlist save lands during an active load', async () => {
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockRejectedValue(new Error('boom'));
-
-    render(<ModelsSettings />);
-    await screen.findByRole('alert');
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(2);
-    });
-
-    const resolvers: Array<(value: { models: unknown[] }) => void> = [];
-    mockRequest.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvers.push(resolve);
-        })
-    );
-
-    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(retry.disabled).toBe(false);
-    });
-    fireEvent.click(retry);
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(3);
-    });
-
-    const refresh = screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement;
-    fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
-    await new Promise((r) => setTimeout(r, 50));
-    expect(mockRequest).toHaveBeenCalledTimes(3);
-
-    resolvers[0]({ models: [] });
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(4);
-    });
-    expect(mockRequest).toHaveBeenLastCalledWith(
-      'models.list',
-      { forceRefresh: true },
-      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
-    );
-    await waitFor(() => {
-      expect(refresh.disabled).toBe(true);
-    });
-
-    resolvers[1]({ models: [] });
-    await waitFor(() => {
-      expect(refresh.disabled).toBe(false);
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole('alert')).toBeNull();
-    });
-  });
-
-  it('disables Retry while the allowlist-save refresh is in flight and clears loading after', async () => {
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockRejectedValue(new Error('boom'));
-
-    render(<ModelsSettings />);
-    await screen.findByRole('alert');
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(2);
-    });
-
-    const resolvers: Array<(value: { models: unknown[] }) => void> = [];
-    mockRequest.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvers.push(resolve);
-        })
-    );
-
-    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(retry.disabled).toBe(false);
-    });
-    const refresh = screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement;
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
-    await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledTimes(3);
-    });
-    await waitFor(() => {
-      expect(retry.disabled).toBe(true);
-    });
-
-    resolvers[0]({ models: [] });
-    await waitFor(() => {
-      expect(refresh.disabled).toBe(false);
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole('alert')).toBeNull();
-    });
   });
 });
 
@@ -699,5 +620,269 @@ describe('ModelsSettings — default thinking beside the default model', () => {
 
     await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(select.value).toBe('think8k'));
+  });
+});
+
+describe('ModelsSettings — default fallback chain thinking', () => {
+  const settingsRef = globalSettings as { value: unknown };
+  const models = [
+    {
+      id: 'claude-opus-5',
+      display_name: 'Opus',
+      description: '',
+      provider: 'anthropic',
+      thinkingModes: 'granular',
+    },
+    {
+      id: 'claude-sonnet-5',
+      display_name: 'Sonnet',
+      description: '',
+      provider: 'anthropic',
+      thinkingModes: 'granular',
+    },
+    {
+      id: 'minimax-m3',
+      display_name: 'MiniMax M3',
+      description: '',
+      provider: 'minimax',
+      thinkingModes: 'off',
+    },
+    { id: 'custom-1', display_name: 'Custom', description: '', provider: 'custom-endpoint' },
+  ];
+  const chain = [
+    { model: 'claude-opus-5', provider: 'anthropic', thinkingLevel: 'think24k' },
+    { model: 'claude-sonnet-5', provider: 'anthropic' },
+  ];
+
+  async function open(fallbackModels: unknown[]) {
+    settingsRef.value = { model: 'claude-opus-5', modelProvider: 'anthropic', fallbackModels };
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({ models });
+    render(<ModelsSettings />);
+    await screen.findByLabelText('Fallback 1 thinking');
+    await waitFor(() => expect(screen.getByText(/Opus · /)).toBeTruthy());
+  }
+  const row = (index: number) =>
+    screen.getByLabelText(`Fallback ${index} thinking`) as HTMLSelectElement;
+
+  beforeEach(() => {
+    cleanup();
+    mockConnectionState.value = 'connected';
+    mockRequest.mockReset();
+    mockListProviderAuthStatus.mockReset().mockResolvedValue({ providers: [] });
+    vi.mocked(updateGlobalSettings)
+      .mockReset()
+      .mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    cleanup();
+    settingsRef.value = null;
+  });
+
+  it('shows each saved level, keeps unset rows on Use default and writes nothing on open', async () => {
+    await open(chain);
+
+    expect(row(1).value).toBe('think24k');
+    expect(row(2).value).toBe('');
+    expect(row(2).options[0]?.textContent).toBe('Use default');
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('saves the chosen level on its own row and leaves the others as they were', async () => {
+    await open(chain);
+
+    fireEvent.change(row(2), { target: { value: 'think8k' } });
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({
+        fallbackModels: [chain[0], { ...chain[1], thinkingLevel: 'think8k' }],
+      })
+    );
+  });
+
+  it('removes the saved level when a row goes back to Use default', async () => {
+    await open(chain);
+
+    fireEvent.change(row(1), { target: { value: '' } });
+
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    const saved = vi.mocked(updateGlobalSettings).mock.calls[0]?.[0].fallbackModels;
+    expect(saved?.[0]).toEqual({ model: 'claude-opus-5', provider: 'anthropic' });
+    expect(saved?.[1]).toEqual(chain[1]);
+  });
+
+  it('moves model, provider and thinking together when reordering', async () => {
+    await open(chain);
+
+    fireEvent.click(screen.getAllByTitle('Move down')[0] as HTMLElement);
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({ fallbackModels: [chain[1], chain[0]] })
+    );
+    await waitFor(() => expect(row(2).value).toBe('think24k'));
+    expect(row(1).value).toBe('');
+  });
+
+  it('offers what the row model supports and keeps an unsupported saved level with a warning', async () => {
+    await open([{ model: 'minimax-m3', provider: 'minimax', thinkingLevel: 'think32k' }]);
+
+    expect(row(1).value).toBe('think32k');
+    expect([...row(1).options].map((option) => option.value)).toEqual(['', 'off', 'think32k']);
+    expect(screen.getByText(/not supported by this model/)).toBeTruthy();
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('says when a row model has no known thinking support', async () => {
+    await open([{ model: 'custom-1', provider: 'custom-endpoint' }]);
+
+    expect(screen.getByText(/support for this model is unknown/)).toBeTruthy();
+    expect(row(1).options.length).toBe(8);
+  });
+
+  it('puts the row back when the save fails', async () => {
+    vi.mocked(updateGlobalSettings).mockRejectedValue(new Error('offline'));
+    await open(chain);
+
+    fireEvent.change(row(1), { target: { value: 'think8k' } });
+
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(row(1).value).toBe('think24k'));
+  });
+});
+
+describe('ModelsSettings — override fallback thinking', () => {
+  const settingsRef = globalSettings as { value: unknown };
+  const models = [
+    {
+      id: 'claude-opus-5',
+      display_name: 'Opus',
+      description: '',
+      provider: 'anthropic',
+      thinkingModes: 'granular',
+    },
+    {
+      id: 'claude-sonnet-5',
+      display_name: 'Sonnet',
+      description: '',
+      provider: 'anthropic',
+      thinkingModes: 'granular',
+    },
+    {
+      id: 'minimax-m3',
+      display_name: 'MiniMax M3',
+      description: '',
+      provider: 'minimax',
+      thinkingModes: 'off',
+    },
+  ];
+  const key = 'anthropic/claude-opus-5';
+  const other = { 'anthropic/claude-sonnet-5': [{ model: 'minimax-m3', provider: 'minimax' }] };
+  const chain = [
+    { model: 'claude-sonnet-5', provider: 'anthropic', thinkingLevel: 'think24k' },
+    { model: 'minimax-m3', provider: 'minimax' },
+  ];
+
+  async function edit(overrideChain: unknown[] = chain) {
+    settingsRef.value = {
+      model: 'claude-opus-5',
+      modelProvider: 'anthropic',
+      modelFallbackMap: { [key]: overrideChain, ...other },
+    };
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({ models });
+    render(<ModelsSettings />);
+    await waitFor(() => expect(screen.getByText(/Opus · /)).toBeTruthy());
+    fireEvent.click(screen.getAllByTitle('Edit')[0] as HTMLElement);
+    await screen.findByLabelText('Override fallback 1 thinking');
+  }
+  const row = (index: number) =>
+    screen.getByLabelText(`Override fallback ${index} thinking`) as HTMLSelectElement;
+  const save = () => fireEvent.click(screen.getByText('Save'));
+
+  beforeEach(() => {
+    cleanup();
+    mockConnectionState.value = 'connected';
+    mockRequest.mockReset();
+    mockListProviderAuthStatus.mockReset().mockResolvedValue({ providers: [] });
+    vi.mocked(updateGlobalSettings)
+      .mockReset()
+      .mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    cleanup();
+    settingsRef.value = null;
+  });
+
+  it('shows each saved level and writes nothing on open', async () => {
+    await edit();
+
+    expect(row(1).value).toBe('think24k');
+    expect(row(2).value).toBe('');
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('saves the chosen level on Save and leaves other overrides alone', async () => {
+    await edit();
+
+    fireEvent.change(row(1), { target: { value: 'think8k' } });
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+    save();
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({
+        modelFallbackMap: {
+          [key]: [{ ...chain[0], thinkingLevel: 'think8k' }, chain[1]],
+          ...other,
+        },
+      })
+    );
+  });
+
+  it('drops an edit on Cancel', async () => {
+    await edit();
+
+    fireEvent.change(row(1), { target: { value: 'think8k' } });
+    fireEvent.click(screen.getByText('Cancel'));
+    fireEvent.click(screen.getAllByTitle('Edit')[0] as HTMLElement);
+
+    await screen.findByLabelText('Override fallback 1 thinking');
+    expect(row(1).value).toBe('think24k');
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('keeps each level with its model when reordering', async () => {
+    await edit();
+
+    fireEvent.click(screen.getAllByTitle('Move down')[0] as HTMLElement);
+    await waitFor(() => expect(row(2).value).toBe('think24k'));
+    save();
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({
+        modelFallbackMap: { [key]: [chain[1], chain[0]], ...other },
+      })
+    );
+  });
+
+  it('removes the saved level when a row goes back to Use default', async () => {
+    await edit();
+
+    fireEvent.change(row(1), { target: { value: '' } });
+    save();
+
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    const saved = vi.mocked(updateGlobalSettings).mock.calls[0]?.[0].modelFallbackMap;
+    expect(saved?.[key]?.[0]).toEqual({ model: 'claude-sonnet-5', provider: 'anthropic' });
+  });
+
+  it('keeps an unsupported saved level with a warning', async () => {
+    await edit([{ model: 'minimax-m3', provider: 'minimax', thinkingLevel: 'think32k' }]);
+
+    expect(row(1).value).toBe('think32k');
+    expect([...row(1).options].map((option) => option.value)).toEqual(['', 'off', 'think32k']);
+    expect(screen.getByText(/not supported by this model/)).toBeTruthy();
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
   });
 });

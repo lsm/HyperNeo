@@ -1,7 +1,7 @@
 // @ts-nocheck
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { sessionStore } from '../session-store';
+import { SessionStore, sessionStore } from '../session-store';
 import { Logger } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
@@ -105,6 +105,23 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
 
   afterEach(async () => {
     await sessionStore.select(null);
+  });
+
+  it('keeps session state and reconnect recovery without loading the transcript', async () => {
+    const store = new SessionStore({ transcript: false });
+    await store.select('session-1');
+    expect(hub.subscribeCalls).toHaveLength(0);
+    expect(store.sessionState.value).not.toBeNull();
+    const before = lifecycleHub.request.mock.calls.filter(([m]) => m === 'state.session').length;
+    hub.fireConnection('reconnecting');
+    expect(store.isRecovering.value).toBe(true);
+    hub.fireConnection('connected');
+    await vi.waitFor(() => expect(store.isRecovering.value).toBe(false));
+    expect(lifecycleHub.request.mock.calls.filter(([m]) => m === 'state.session').length).toBe(
+      before + 1
+    );
+    expect(hub.subscribeCalls).toHaveLength(0);
+    await store.destroy();
   });
 
   it('traces received row IDs and the exact guard that discards each delta without message contents', async () => {

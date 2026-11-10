@@ -8,15 +8,17 @@ import {
   type SpaceTaskStatus,
 } from '@hyperneo/shared';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
-import { useImageDropZone, useResolvedSpaceTask } from '../../hooks';
-import { getTaskStatusConfig } from '../../lib/task-status';
-import { pushOverlayHistory, pushOverlayHistoryForPendingAgent } from '../../lib/router';
-import { currentSpaceIdSignal } from '../../lib/signals';
+import type { FileDropHandler } from '../../hooks';
+import type { TaskComposerTarget } from './useTargetSessionContext.ts';
+import { useImageDropZone } from '../../hooks';
+import { useResolvedSpaceTask } from './useResolvedSpaceTask';
+import { getTaskStatusConfig } from '../../lib/space-task-status';
+import { pushOverlayHistory, pushOverlayHistoryForPendingAgent } from '../../lib/space-router';
+import { currentSpaceIdSignal } from '../../lib/space-signals';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
-import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
+import { resolveActiveTaskBanner } from '../../lib/space-task-banner.ts';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { EditTaskModal } from './EditTaskModal';
@@ -29,6 +31,7 @@ import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskHeaderMeta } from './TaskHeaderMeta';
 import { TaskReadyPanel } from './TaskReadyPanel';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
+import { spaceVoiceScope } from './space-nav.tsx';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { TaskRunComposer } from './TaskRunComposer';
@@ -38,7 +41,7 @@ import {
   dropStatusOnlyStarts,
   filterDirectAttemptTargets,
   getTransitionActions,
-} from '../../lib/task-actions';
+} from '../../lib/space-task-actions';
 import { useRunHookStates } from './use-run-hook-states.ts';
 
 interface SpaceTaskPaneProps {
@@ -481,7 +484,7 @@ export function SpaceTaskPane({
   const activitySummary = getTaskStatusConfig(task.status).label;
   const resolvedBanner = resolveActiveTaskBanner(
     task,
-    hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[]
+    hookSummaries as unknown as import('../../lib/space-task-banner').HookBannerSummary[]
   );
   const activeBanner =
     hasWorkflowHooks && hookFetchError && _runId && resolvedBanner === null
@@ -1111,7 +1114,7 @@ export function SpaceTaskPane({
             <VoiceSurfaceContext.Provider
               value={{
                 surfaceId: 'primary',
-                spaceId: spaceId ?? null,
+                scopeId: spaceVoiceScope(spaceId ?? null),
                 taskId: task.id,
               }}
             >

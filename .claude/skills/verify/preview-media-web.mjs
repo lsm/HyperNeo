@@ -21,16 +21,14 @@ if (phase === 'seed') {
   writeFileSync(join(run, 'workspace', 'oversized.png'), big);
   process.exit(0);
 }
+const historical = (input) => JSON.parse(execFileSync('bun', [join(verify, 'legacy-attachment-fixture.ts'), run, JSON.stringify(input)], { env: { HOME: join(run, 'home'), NODE_ENV: 'test', HYPERNEO_DATA_DIR: join(run, 'data'), TMPDIR: run, PATH: process.env.PATH }, encoding: 'utf8' }));
 const rpc = (name, input) => {
   const out = execFileSync('bun', [join(verify, 'rpc.ts'), name, JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8' });
   const reply = JSON.parse(out).reply; assert(!reply.error, out); return reply.value ?? reply;
 };
-const svgResult = rpc('artifact.file.register', { requestId: 'media-svg-refusal', context: { kind: 'todo', id: 'todo' }, path: 'drawing.svg', title: 'Synthetic SVG' });
-assert.equal(svgResult.accepted, false); assert.equal(svgResult.reason, 'unsupported_type');
-writeFileSync(join(run, 'evidence', 'svg-registration.json'), JSON.stringify(svgResult));
 const ids = {};
 for (const name of ['report.json', 'large.log', 'chart.png', 'oversized.png']) {
-  const result = rpc('artifact.file.register', { requestId: `media-${name}`, context: { kind: 'todo', id: 'todo' }, path: name, title: name });
+  const result = historical({ requestId: `media-${name}`, context: { kind: 'todo', id: 'todo' }, path: name, title: name });
   assert(result.accepted, JSON.stringify(result)); ids[name] = result.artifact.artifactId;
 }
 const { chromium } = createRequire(import.meta.url)('playwright');

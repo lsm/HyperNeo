@@ -1,10 +1,10 @@
 # Provider RPC persistence on the writer
 
-Run `lane-c-provider-rpc-writes.ts` in a fresh synthetic run with Bun and Deno,
-NODE_ENV=test, HOME=<run>/home and HYPERNEO_DATA_DIR=<run>/data, under env -i.
-No provider turn, HTTP mock, UI, real credentials or live restart is needed.
-The helper owns an ephemeral daemon port and rejects port 8399. It seeds only
-disabled synthetic providers with authType=none and stops its own job processor.
+Run `lane-c-provider-rpc-writes.ts` in a fresh synthetic run with Bun, NODE_ENV=test,
+HOME=<run>/home and HYPERNEO_DATA_DIR=<run>/data, under env -i. No provider turn, HTTP
+mock, UI, real credentials or live restart is needed. The helper owns an ephemeral daemon
+port and rejects port 8399. It seeds only disabled synthetic providers with authType=none
+and stops its own job processor.
 
 Drive providers.create/update/setDefault/test/delete over the real WebSocket.
 The main connection rejects all provider-record INSERT/UPDATE/DELETE statements.

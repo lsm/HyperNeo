@@ -12,7 +12,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import {
   createInactivityOperations,
   DEFAULT_INACTIVITY_THRESHOLD_MS,
-} from '../../../../src/lib/agents/inactivity-operations';
+} from '../../../../../space/src/agents/inactivity-operations';
 import type { OperationCaller, OperationDefinition } from '../../../../src/lib/operations/registry';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';

@@ -24,6 +24,7 @@
     "main.ts",
     "../shared/src/**/*",
     "../prompts/src/**/*",
+    "../space/src/**/*",
     "research-context-info.ts"
   ],
   "exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts"]

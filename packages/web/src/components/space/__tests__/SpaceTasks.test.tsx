@@ -37,8 +37,8 @@ const mockCurrentSpaceTasksFilterTabSignal = signal<string>('active');
 filterTabBridge.signal = mockCurrentSpaceTasksFilterTabSignal;
 idBridge.signal = mockCurrentSpaceIdSignal;
 
-vi.mock('../../../lib/signals', async (importOriginal) => {
-  const actual = await importOriginal();
+vi.mock('../../../lib/space-signals', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../lib/space-signals')>();
   return {
     ...actual,
     get currentSpaceTasksFilterTabSignal() {
@@ -49,7 +49,17 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
     },
   };
 });
+vi.mock('../../../lib/signals', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+  };
+});
 
+vi.mock('../../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/router')),
+}));
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));
@@ -105,7 +115,7 @@ vi.mock('../../../lib/utils', () => ({
 
 mockTasks = signal<SpaceTask[]>([]);
 
-import { isActiveTask } from '../../../lib/task-filters';
+import { isActiveTask } from '../../../lib/space-task-filters';
 import { SpaceTasks, TAB_PREDICATES } from '../SpaceTasks';
 
 function makeTask(

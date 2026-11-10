@@ -17,12 +17,16 @@ vi.mock('../../../lib/space-store', () => ({
     fetchEvolutionScope: vi.fn(async () => null),
   },
 }));
+vi.mock('../../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/router')),
+}));
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceGoals,
   navigateToSpaceEvolve: vi.fn(),
 }));
 
-import { currentSpaceGoalIdSignal } from '../../../lib/signals';
+import { currentSpaceGoalIdSignal } from '../../../lib/space-signals';
 import { TaskHeaderMeta } from '../TaskHeaderMeta';
 
 function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {

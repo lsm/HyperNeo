@@ -6,7 +6,7 @@ import type {
   SessionRuntimeSettingsSnapshot,
   RuntimeSettingsPatch,
 } from '../../storage/repositories/session-runtime-settings-write.ts';
-import { providerIdentityClears, snapshotProcessingStatus } from '../agent/model-switch-handler.ts';
+import { snapshotProcessingStatus } from '../agent/model-switch-handler.ts';
 import { getAvailableModels, isCuratedOutModel } from '../model-service.ts';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -160,16 +160,11 @@ async function applySettings(
     if (!switched.success)
       return { reason: { ok: false, reason: switched.error ?? 'model_switch_failed' } as Failure };
   } else {
-    const clears =
-      input.model !== undefined || input.provider !== undefined
-        ? providerIdentityClears(current.provider ?? inferProviderForModel(current.model), provider)
-        : {};
     if (
       (await deps.commit(snapshot, {
         model: input.model !== undefined || input.provider !== undefined ? model : undefined,
         provider: input.model !== undefined || input.provider !== undefined ? provider : undefined,
         thinkingLevel,
-        ...clears,
       })) !== 'won'
     )
       return { reason: { ok: false, reason: 'session_settings_changed' } as Failure };

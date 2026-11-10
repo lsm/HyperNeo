@@ -17,7 +17,7 @@ import {
   registerDirectOutcomeJobs,
   DIRECT_TASK_OUTCOME,
 } from '../../../../src/lib/tasks/direct-outcome-jobs';
-import { DIRECT_TASK_PARK_BUDGET } from '../../../../src/lib/tasks/park-budget';
+import { DIRECT_TASK_PARK_BUDGET } from '../../../../src/lib/job-handlers/park-budget';
 import {
   requestDirectTaskFinalization,
   type DirectFinalizationInput,

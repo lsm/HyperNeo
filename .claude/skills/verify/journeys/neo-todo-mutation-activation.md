@@ -17,13 +17,12 @@ claim to move those existing observations off main. The held-lock edit has no
 successor; the separate operation unit contract verifies successor ordering.
 Runner start/stop observation reads remain for the later approved runner slice.
 
-The synthetic WAL lock must delay the public edit receipt and table events
-without freezing health/read RPCs. After release, both receipt and public card
-contain the whole report, and the normal `neo.changed` publication arrives.
-An unanswered card refuses close; a late SQL failure rolls back remove and card
-pruning; a settled ask remains an unchanged successful no-op. None of those
-attempts may emit a new successful-work notice. No provider or external GitHub
-request is allowed. Required Deno smoke repeats the same public-door journey.
+The synthetic WAL lock must delay the public edit receipt and table events without
+freezing health/read RPCs. After release, both receipt and public card contain the whole
+report, and the normal `neo.changed` publication arrives. An unanswered card refuses
+close; a late SQL failure rolls back remove and card pruning; a settled ask remains an
+unchanged successful no-op. None of those attempts may emit a new successful-work notice.
+No provider or external GitHub request is allowed.
 
 Unit operation contracts cover stop failures, a changed check/new card during
 stop, after-commit successor dispatch and refreshed successor receipts. Run

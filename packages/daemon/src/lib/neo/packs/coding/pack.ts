@@ -1,3 +1,12 @@
+import { createCodingIssueTracker, planCodingIssueHome } from './issue-tracker.ts';
+import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
+import { listPackPreferences } from '../../preference-operations.ts';
+import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
+import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
+import { createCodingRetryMergeOperation } from './retry-merge-operation.ts';
+import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
+import { checkCodingPrApproved } from './pr-approved.ts';
+import { withCodingMergeContext } from './merge-context.ts';
 import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { createCodingPrFileOperation } from './pr-file-operation.ts';
@@ -8,7 +17,6 @@ import { createCodingGithubReadOperation } from './github-read-operation.ts';
 import type { NeoRefStateReader } from './ask-prs.ts';
 import { createCodingRefReader } from './ref-reader.ts';
 import { listNeoGithub, type NeoGithubLister } from './github-query.ts';
-import { createCodingClaudeOwnerReader } from './claude-pr-owners.ts';
 import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
 import type { NeoPack, NeoPackBrief } from '../../pack-contract.ts';
@@ -24,14 +32,17 @@ import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } fr
 import { type NeoWorkPrReader } from './work-prs.ts';
 import { wakeCodingUnownedPrs } from './pr-unowned.ts';
 import { recordCodingSmoke } from './delivery-facts.ts';
+import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
+import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stage-preferences.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
-  describe: 'Software work in git repositories: pull requests, CI, review and merging.',
-  guidance: NEO_PACK_CODING_INSTRUCTIONS,
+  describe:
+    'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge. Multi-PR work uses one PR per todo, chained with after; name each opened PR with neo.todo.edit addUrls.',
+  skill: 'coding-pack',
 };
 
 export function createCodingPack(deps: {
@@ -43,27 +54,55 @@ export function createCodingPack(deps: {
   prLedger: CodingPrLedgerRepository;
   prSweep: CodingPrSweepRepository;
   prEvents: CodingPrEventRepository;
-  prSweepDeps: CodingSweepDeps;
+  prSweepDeps: Omit<CodingSweepDeps, 'host'>;
   projectRepos: () => string[];
   readLedgerRepo?: CodingLedgerRead;
-  readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
 }): NeoPack & {
+  readMergeFacts: typeof readCodingDaemonMergeFacts;
+  decideMerge: typeof decideCodingDaemonMerge;
   recordSmoke: typeof recordCodingSmoke;
   prepareMerge: typeof prepareCodingMerge;
   review: typeof runCodingReview;
 } {
-  const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
+  const workerContext = (text: string) =>
+    withCodingMergeContext(text, deps.prLedger.policyContext(text, deps.projectRepos()));
+  const notificationContext = async (text: string) =>
+    withCodingMergeContext(text, await deps.prLedger.policyContextCurrent(text));
+  const prSweepDeps: CodingSweepDeps = {
+    host: process.env.GH_HOST ?? 'github.com',
+    tell: async (ref, key, text, pr) =>
+      deps.prSweepDeps.tell(
+        ref,
+        key,
+        await notificationContext(text),
+        pr && (await deps.todoPrs.readHolder(pr, ref))
+      ),
+    human: async (key, text) => (await deps.prSweepDeps.human?.(key, text)) ?? false,
+    wake: async (key, text) => deps.prSweepDeps.wake(key, await notificationContext(text)),
+  };
+  const mergeSweep = createCodingDaemonMergeSweep(
+    deps.database,
+    deps.prLedger,
+    deps.prEvents,
+    prSweepDeps
+  );
   const todos = createCodingTodoPack(
     deps.todoPrs,
     deps.readPrs,
     (url) => deps.prLedger.stateOf(url),
-    deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts)
+    deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),
+    (url) => checkCodingPrApproved(url, (repo) => deps.prLedger.policy(repo))
   );
+  const trackerOwners = () => new NeoAskTodoRepository(deps.database());
   return {
     ...CODING_PACK_BRIEF,
+    readMergeFacts: readCodingDaemonMergeFacts,
+    decideMerge: decideCodingDaemonMerge,
     recordSmoke: recordCodingSmoke,
     prepareMerge: prepareCodingMerge,
     operations: [
+      createCodingHumanMergeOperation(),
+      createCodingRetryMergeOperation(deps.database, deps.prLedger),
       createCodingWritePlanOperation(deps.database),
       createCodingPrFileOperation(deps.database),
       createCodingGithubReadOperation({
@@ -74,7 +113,33 @@ export function createCodingPack(deps: {
           (async (args) => ({ data: await listNeoGithub(args), at: new Date().toISOString() })),
       }),
     ],
+    tracker: createCodingIssueTracker({
+      repositories: (askId, todoId) => deps.todoPrs.trackerRepositories(askId, todoId),
+      createdAt: (marker) => {
+        const [, kind, id] = marker.split(':');
+        if (!id) return null;
+        return (
+          (kind === 'ask' ? trackerOwners().getAsk(id) : trackerOwners().getTodo(id))?.createdAt ??
+          null
+        );
+      },
+      enabled: (repo) =>
+        listPackPreferences(deps.database(), 'coding').find(
+          (preference) =>
+            preference.key === 'mirror_issues' &&
+            preference.scope.kind === 'repo' &&
+            planCodingIssueHome([{ repo: preference.scope.key }]) === repo
+        )?.value === true,
+    }),
     preferences: {
+      mirror_issues: {
+        label: { en: 'Mirror plans to GitHub Issues', 'zh-Hans': '把计划同步到 GitHub Issues' },
+        valueLabels: {},
+        scope: 'repo',
+        type: { kind: 'boolean' },
+        default: false,
+        ask: 'Mirror plans and their todos to GitHub Issues in this private repository?',
+      },
       watchedRepos: {
         label: { en: 'Watched repositories', 'zh-Hans': '关注的仓库' },
         valueLabels: {},
@@ -94,6 +159,28 @@ export function createCodingPack(deps: {
         type: { kind: 'boolean' },
         default: true,
         ask: 'Require author model and harness provenance and a different reviewer model? Until answered, this is on without saving a preference.',
+      },
+      allowNoChecksMerge: {
+        label: { en: 'Allow merging without checks', 'zh-Hans': '允许无检查合并' },
+        valueLabels: {
+          true: { en: 'Allow for this repository', 'zh-Hans': '允许本仓库' },
+          false: { en: 'Hand off to the human', 'zh-Hans': '交给人类合并' },
+        },
+        scope: 'repo',
+        type: { kind: 'boolean' },
+        default: false,
+        ask: 'Allow zero-required-check merges without a review bot in this repository? Only an explicit repository setting enables this; all other merge gates still apply.',
+      },
+      mergeBy: {
+        label: { en: 'Merge executor', 'zh-Hans': '合并执行者' },
+        valueLabels: {
+          owner: { en: 'PR owner', 'zh-Hans': 'PR 负责人' },
+          daemon: { en: 'Daemon', 'zh-Hans': '守护进程' },
+        },
+        scope: 'repo',
+        type: { kind: 'enum', values: ['owner', 'daemon'] },
+        default: 'owner',
+        ask: 'Who should merge eligible PRs? Owner is the default; daemon squash-merges eligible PRs after fresh gates pass.',
       },
       mergePolicy: {
         label: { en: 'Merge policy', 'zh-Hans': '合并规则' },
@@ -127,7 +214,7 @@ export function createCodingPack(deps: {
         scope: 'repo',
         type: { kind: 'globs' },
         default: [],
-        ask: 'Which paths or labels require human sign-off?',
+        ask: 'Which path globs or labels require human sign-off? Use label:human-merge for an explicit label; bare names also match labels.',
       },
     },
     prepareExecution: prepareCodingExecution,
@@ -141,25 +228,23 @@ export function createCodingPack(deps: {
     },
     readFacts: todos.readFacts,
     judge: todos.judge,
-    observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
     sweep: async (now) => {
-      await deps.prLedger.write('observeSessions', await readClaudeOwners(), now);
-      await deliverCodingPrEvents(deps.prEvents, [], deps.prSweepDeps);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now
       );
-      await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
+      await mergeSweep(now);
+      await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);
       await deliverCodingHealth(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
-        deps.prSweepDeps.wake,
+        prSweepDeps.wake,
         now
       );
-      await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);
-      await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
+      await wakeCodingUnownedPrs(deps.prEvents, prSweepDeps.wake, now);
+      await sweepCodingPrs(deps.prSweep, prSweepDeps, now);
     },
     stats: async (now) => ({
       'ready to merge >1h': (await deps.prLedger.read('list')).filter(
@@ -179,7 +264,9 @@ export function createCodingPack(deps: {
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
-    workerBrief: withCodingWorkerProvenance,
-    workGoal: withCodingWorkGoal,
+    workerStartBrief: withCodingWorkerStartBrief,
+    workerBrief: (instruction, identity) =>
+      withCodingWorkerProvenance(workerContext(instruction), identity),
+    workGoal: (instruction, goal) => workerContext(withCodingWorkGoal(instruction, goal)),
   };
 }

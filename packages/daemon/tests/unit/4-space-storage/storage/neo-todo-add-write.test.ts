@@ -53,7 +53,7 @@ describe('Whole todo-add writer', () => {
     const op = DB_OPS.get('neo.todoAddWrites') as DbOp<object, Receipt> | undefined;
     expect(op).toBeDefined();
     if (!op) throw new Error('Whole todo-add command unavailable');
-    return gateway.run(op, { askId: 'ask', todoId: id, draft: input, now: 10, split: false });
+    return gateway.run(op, { askId: 'ask', todoId: id, draft: input, now: 10 });
   };
   test('commits target, complete instruction and one shared start question', async () => {
     const input = { ...draft(), instruction: '完整工作 🦊\n'.repeat(20000) };
@@ -67,6 +67,26 @@ describe('Whole todo-add writer', () => {
     ]);
     expect(new NeoTodoSessionRepository(db).get('one')).toMatchObject(input.target);
     expect(changes).toContain('neo_questions');
+  });
+  test('different repositories commit to the same ask without creating children', async () => {
+    const first = await add('one', { ...draft(), named: { repository: 'synthetic/first' } });
+    const second = await add('two', { ...draft(), named: { repository: 'synthetic/second' } });
+    expect(first).toMatchObject({
+      ok: true,
+      todo: { askId: 'ask' },
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      todo: { askId: 'ask' },
+    });
+    expect(
+      db.prepare('SELECT todo_id, repo FROM pack_coding_todos ORDER BY todo_id').all()
+    ).toEqual([
+      { todo_id: 'one', repo: 'github.com/synthetic/first' },
+      { todo_id: 'two', repo: 'github.com/synthetic/second' },
+    ]);
+    expect(store.getAsk('ask')?.status).toBe('open');
+    expect(store.listChildAsks('ask')).toEqual([]);
   });
   test('late question failure rolls back todo, target and all notifications', async () => {
     db.exec(
@@ -98,15 +118,6 @@ describe('Whole todo-add writer', () => {
       start: 'one',
       todo: { state: 'todo' },
     });
-    expect(store.listQuestions('ask')).toEqual([]);
-  });
-  test('bind records an existing worker atomically without a start card', async () => {
-    const ref = { adapter: 'hyperneo', id: 'existing-worker' };
-    expect(await add('one', { ...draft(), target: { verb: 'bind', ref } })).toMatchObject({
-      ok: true,
-      todo: { state: 'doing', startedAt: 10 },
-    });
-    expect(new NeoTodoSessionRepository(db).readRef('one')).toEqual(ref);
     expect(store.listQuestions('ask')).toEqual([]);
   });
   test('unsupported check refuses without side effects', async () => {

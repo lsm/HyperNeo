@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { HookActionMeta } from '../hooks/hook-engine.ts';
 import { wrapHandlerWithHooks } from '../hooks/hook-engine.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { jsonResult, type ToolResult } from '../space/tools/tool-result.ts';
+import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
 import type { AgentMessageResult } from './routing-gates.ts';
 import {
   admitNodeCaller,

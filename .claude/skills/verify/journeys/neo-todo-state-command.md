@@ -47,7 +47,6 @@ lag below 1 s. Its affected write still exceeds 250 ms: report the failure
 explicitly. This phase drives the command directly; snapshot reads observe
 the committed result. Queue, SQL and clone stages are not separately timed.
 
-Run the focused state-writer parity cases, existing recompute tests and Deno
-command smoke after resource holds lift. Parity covers done/failed/blocked,
-human authority, closed asks, removed work, next candidates, pruning and full
-reports. Live admission and automatic dispatch proof belongs to later wiring.
+Parity covers done/failed/blocked, human authority, closed asks, removed work, next
+candidates, pruning and full reports. Live admission and automatic dispatch proof belongs
+to later wiring.

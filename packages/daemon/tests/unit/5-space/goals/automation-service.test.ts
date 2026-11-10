@@ -7,7 +7,7 @@ import {
   requireAutomationThreshold,
   requireNoActiveAutomationReview,
   requireUnlockedAutomation,
-} from '../../../../src/lib/job-handlers/goal-automation-execute-admission';
+} from '../../../../../space/src/job-handlers/goal-automation-execute-admission';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
@@ -15,12 +15,12 @@ import { GOAL_AUTOMATION_EXECUTE } from '../../../../src/lib/job-queue-constants
 import {
   handleGoalAutomationExecute,
   type GoalAutomationExecutePayload,
-} from '../../../../src/lib/job-handlers/goal-automation-execute.handler';
+} from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
 import {
   GoalAutomationService,
   externalEventTriggerKey,
-} from '../../../../src/lib/goals/automation-service';
-import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service';
+} from '../../../../../space/src/goals/automation-service';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import { GoalAutomationCursorRepository } from '../../../../src/storage/repositories/goal-automation-cursor-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
@@ -29,11 +29,9 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository';
-import {
-  validateGoalAutomationSelfNagPolicy,
-  syncGoalAutomationSelfNagScheduleForScope,
-} from '../../../../src/lib/rpc-handlers';
-import { mergeEvolutionPolicy } from '../../../../src/lib/evolution/scope-service';
+import { validateGoalAutomationSelfNagPolicy } from '../../../../../space/src/evolution/evolution-policy-validation';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../../space/src/goals/automation-schedule-sync';
+import { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-service';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import { createSpaceTables } from '../../helpers/space-test-db';
 

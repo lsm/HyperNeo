@@ -7,18 +7,25 @@ export const STALLED_ASK_AFTER_MS = 2 * 60 * 60 * 1000;
 const REPEAT_AFTER_MS = 4 * 60 * 60 * 1000;
 const log = new Logger('neo-stalled-asks');
 
+export const neoStalledAskNote = (ask: { id: string; title: string; finished: number }) =>
+  `Ask: ${ask.title} (${ask.id})\n${
+    ask.finished
+      ? 'All todos are finished: write the outcome with neo.ask.settle, or add the next todo.'
+      : 'This ask has nothing in progress. Add the next todo, or settle it.'
+  }`;
+
 export const wakeStalledAsks = (superpipe({})('neo-stalled-ask-wake') as PipelineAPI)
   .input(['store', 'tell', 'now'])
   .pipe(
     async (store: NeoAskTodoRepository, tell: NeoService['deliverForward'], now: number) => {
-      for (const ask of store.listStalledAsks(now - STALLED_ASK_AFTER_MS, now - REPEAT_AFTER_MS)) {
+      for (const ask of store.listStalledAsks(
+        now - STALLED_ASK_AFTER_MS,
+        now - REPEAT_AFTER_MS,
+        false,
+        true
+      )) {
         try {
-          await tell(
-            ask.sessionId,
-            ask.wakeKey,
-            `Ask: ${ask.title} (${ask.id})\nThis ask has nothing in progress. Add the next todo, or settle it.`,
-            ask.sessionId
-          );
+          await tell(ask.sessionId, ask.wakeKey, neoStalledAskNote(ask), ask.sessionId);
           store.recordStalledAskWake(ask.id, now);
         } catch (error) {
           log.warn(`Stalled ask ${ask.id} wake pending`, error);

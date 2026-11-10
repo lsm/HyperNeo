@@ -591,27 +591,6 @@ export function keepsRoutingEnv(
   return !!preserveUserSettings && userValue !== undefined && value === userValue;
 }
 
-export function getUserConfiguredAnthropicEnv(): Record<string, string> {
-  const snapshot: Record<string, string> = {};
-  const entries: Array<[string, string | undefined]> = [
-    ['ANTHROPIC_BASE_URL', userConfiguredBaseUrl],
-    ['ANTHROPIC_MODEL', userConfiguredAnthropicModel],
-    ['CLAUDE_CODE_SUBAGENT_MODEL', userConfiguredSubagentModel],
-    ['ENABLE_TOOL_SEARCH', userConfiguredToolSearch],
-    ['API_TIMEOUT_MS', userConfiguredApiTimeout],
-    ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
-    ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],
-    ['ANTHROPIC_DEFAULT_OPUS_MODEL', userConfiguredDefaultOpusModel],
-    ['ANTHROPIC_CUSTOM_HEADERS', userConfiguredCustomHeaders],
-    ['ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN],
-    ['CLAUDE_CODE_OAUTH_TOKEN', process.env.CLAUDE_CODE_OAUTH_TOKEN],
-  ];
-  for (const [key, value] of entries) {
-    if (value !== undefined) snapshot[key] = value;
-  }
-  return snapshot;
-}
-
 export function getProviderService(): ProviderService {
   if (!(globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY]) {
     (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] = new ProviderService();

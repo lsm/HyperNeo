@@ -21,7 +21,7 @@ import type { SessionManager } from '../session/session-manager.ts';
 import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
 import { readTaskCore } from '../../storage/tasks/task-reader.ts';
 import { listTasksWithSpaceFields, spaceTaskBatchReader } from './list-tasks-with-space-fields.ts';
-import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
+import { createSpaceOperationCatalog } from './catalog-operations.ts';
 import type { OperationDefinition, OperationRegistry } from '../operations/registry.ts';
 import { createSpaceTaskMetadataEditor, type SpaceTaskMetadataDependencies } from './metadata.ts';
 import {
@@ -116,7 +116,7 @@ export function createSpaceOperationRegistryProvider(
 ) {
   let registry: OperationRegistry | undefined;
   return () =>
-    (registry ??= createDatabaseOperationCatalog(
+    (registry ??= createSpaceOperationCatalog(
       database,
       jobQueue,
       {

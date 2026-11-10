@@ -17,8 +17,8 @@ import {
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../../lib/runtime-capabilities.ts';
 import { downloadBundle } from './export-import-utils.ts';
-import { navigateToSpaces } from '../../lib/router.ts';
-import { currentSpaceSettingsTabSignal, type SpaceSettingsTab } from '../../lib/signals.ts';
+import { navigateToSpaces } from '../../lib/space-router.ts';
+import { currentSpaceSettingsTabSignal, type SpaceSettingsTab } from '../../lib/space-signals.ts';
 import { Button } from '../ui/Button.tsx';
 import { AUTONOMY_LEVELS } from '../../lib/space-constants.ts';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary.tsx';

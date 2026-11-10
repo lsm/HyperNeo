@@ -6,7 +6,6 @@ import {
   removeProviderFromRegistry,
   syncProviderToRegistry,
 } from '../../../../src/lib/providers/provider-sync';
-import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 import {
   getProviderCatalogEpoch,
   getProviderCatalogModels,
@@ -37,11 +36,10 @@ describe('provider config sync', () => {
     resetProviderRegistry();
   });
 
-  it('parses valid command and model configuration', () => {
+  it('parses valid model configuration', () => {
     expect(
       parseProviderConfig(
         JSON.stringify({
-          command: 'devin acp',
           models: [
             { id: 'model-a', name: 'Model A' },
             { id: 'model-b', name: 42 },
@@ -51,22 +49,16 @@ describe('provider config sync', () => {
         })
       )
     ).toEqual({
-      command: 'devin acp',
       models: [{ id: 'model-a', name: 'Model A' }, { id: 'model-b' }],
     });
   });
 
   it('keeps an explicitly empty models list distinct from absent models', () => {
-    expect(parseProviderConfig(JSON.stringify({ command: 'devin acp', models: [] }))).toEqual({
-      command: 'devin acp',
+    expect(parseProviderConfig(JSON.stringify({ models: [] }))).toEqual({
       models: [],
     });
-    expect(parseProviderConfig(JSON.stringify({ command: 'devin acp' }))).toEqual({
-      command: 'devin acp',
-    });
-    expect(parseProviderConfig(JSON.stringify({ command: 'devin acp', models: null }))).toEqual({
-      command: 'devin acp',
-    });
+    expect(parseProviderConfig(JSON.stringify({}))).toEqual({});
+    expect(parseProviderConfig(JSON.stringify({ models: null }))).toEqual({});
     expect(parseProviderConfig(undefined)).toEqual({});
   });
 
@@ -77,53 +69,6 @@ describe('provider config sync', () => {
 
   it('falls back to empty configuration for malformed JSON', () => {
     expect(parseProviderConfig('{invalid')).toEqual({});
-  });
-
-  it('applies persisted ACP command and models to the registered provider', async () => {
-    const provider = new AcpProvider({}, async () => {});
-    getProviderRegistry().register(provider);
-    const record = {
-      id: 'acp-record',
-      providerId: 'acp',
-      displayName: 'ACP Agent',
-      kind: 'built_in',
-      authType: 'none',
-      isEnabled: true,
-      isDefault: false,
-      sortOrder: 0,
-      configJson: JSON.stringify({ command: 'devin acp', models: [{ id: 'model-a' }] }),
-      healthStatus: 'unknown',
-      createdAt: 1,
-      updatedAt: 1,
-    } satisfies ProviderRecord;
-
-    await syncProviderToRegistry(record);
-
-    expect(provider.getAcpCommand()).toBe('devin acp');
-    expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['model-a']);
-  });
-
-  it('applies an empty models curation as no visible models', async () => {
-    const provider = new AcpProvider({}, async () => {});
-    getProviderRegistry().register(provider);
-    const record = {
-      id: 'acp-record',
-      providerId: 'acp',
-      displayName: 'ACP Agent',
-      kind: 'built_in',
-      authType: 'none',
-      isEnabled: true,
-      isDefault: false,
-      sortOrder: 0,
-      configJson: JSON.stringify({ command: 'devin acp', models: [] }),
-      healthStatus: 'unknown',
-      createdAt: 1,
-      updatedAt: 1,
-    } satisfies ProviderRecord;
-
-    await syncProviderToRegistry(record);
-
-    expect(provider.getCachedModels()).toEqual([]);
   });
 
   it('stores curation for providers without a provider-specific setter', async () => {

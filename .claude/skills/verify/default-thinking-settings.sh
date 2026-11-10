@@ -26,4 +26,4 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 [[ "$ready" == true ]]
-node .claude/skills/verify/default-thinking-settings.mjs "$PORT" "$RUN"
+HYPERNEO_DATA_DIR="$RUN/data" node ".claude/skills/verify/${VERIFY_SETTINGS_PROOF:-default-thinking-settings.mjs}" "$PORT" "$RUN"

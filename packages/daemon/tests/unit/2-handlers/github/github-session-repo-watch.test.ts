@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
 import { SESSION_EVENT_SCOPE } from '../../../../src/lib/external-events/session-external-event-store';
-import { githubRepoOfTopic } from '../../../../src/lib/external-events/subscription-operations';
+import { githubRepoOfTopic } from '../../../../src/lib/external-events/session-event-operations';
 import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { runMigration329 } from '../../../../src/storage/schema/m329-session-event-subscriptions';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 let extension: GitHubEventExtension | null = null;
 afterEach(async () => {
@@ -24,7 +27,7 @@ async function started(
     fetchImpl: (async () => new Response('[]', { status: 200 })) as unknown as typeof fetch,
   });
   extension = created;
-  const config = new ExternalEventExtensionConfigStore(db);
+  const config = createExternalEventConfigStore(db);
   await config.setGlobalConfig('github', {
     source: 'github',
     globallyEnabled: true,
@@ -44,6 +47,72 @@ function freshDb(): BunDatabase {
   runMigrations(db, () => {});
   return db;
 }
+
+describe('polling without the Space event tables', () => {
+  test('a completed check run on a watched PR does not fail the poll', async () => {
+    const db = freshDb();
+    db.exec('DROP TABLE space_external_event_deliveries; DROP TABLE space_external_events');
+    const pull = {
+      number: 8,
+      state: 'open',
+      title: 'Synthetic',
+      merged: false,
+      mergeable: true,
+      html_url: 'https://github.com/acme/widgets/pull/8',
+      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      head: { sha: 'a'.repeat(40), ref: 'synthetic' },
+      base: { ref: 'dev' },
+      user: { login: 'author', type: 'User' },
+    };
+    const checkRun = {
+      id: 555,
+      name: 'ci',
+      status: 'completed',
+      conclusion: 'failure',
+      head_sha: 'a'.repeat(40),
+      html_url: 'https://github.com/acme/widgets/runs/555',
+      started_at: new Date(Date.now() + 60_000).toISOString(),
+      completed_at: new Date(Date.now() + 60_000).toISOString(),
+      pull_requests: [{ number: 8 }],
+    };
+    const urls: string[] = [];
+    const created = new GitHubEventExtension(db, 'token', {
+      getPollIntervalMs: () => 60_000,
+      fetchImpl: (async (url: string) => {
+        urls.push(url);
+        const body = url.includes('/check-runs')
+          ? { total_count: 1, check_runs: [checkRun] }
+          : /\/pulls\?/.test(url)
+            ? [pull]
+            : /\/pulls\/8$/.test(url)
+              ? pull
+              : url.endsWith('/user')
+                ? { login: 'self' }
+                : [];
+        return new Response(JSON.stringify(body), { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+    extension = created;
+    const config = createExternalEventConfigStore(db);
+    await config.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { polling: true },
+    });
+    await created.start({
+      publisher: { publish: async (event) => ({ outcome: 'published', eventId: event.id }) },
+      config,
+      onSourceConfigChanged() {},
+    });
+    await created.watchSessionRepo('acme', 'widgets');
+    await created.pollOnce();
+    expect(urls.some((url) => url.includes('/check-runs'))).toBe(true);
+    const [watched] = created.repo.listPollingRepos(SESSION_EVENT_SCOPE);
+    expect(watched.pollCursor?.lastPollError ?? null).toBeNull();
+    expect(watched.pollCursor?.lastPartialPollError ?? null).toBeNull();
+  });
+});
 
 describe('watchSessionRepo', () => {
   test('watches a repo for sessions with polling on and webhooks off, once', async () => {
@@ -72,7 +141,7 @@ describe('watchSessionRepo', () => {
       fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
     });
     extension = created;
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await created.start({
       publisher: { publish: async (event) => ({ outcome: 'published', eventId: event.id }) },
       config,
@@ -95,6 +164,45 @@ describe('watchSessionRepo', () => {
     expect(extension.repo.listPollingRepos(SESSION_EVENT_SCOPE).map((row) => row.repo)).toEqual([
       'widgets',
     ]);
+  });
+
+  test('checks the repo through gh when the daemon has no token', async () => {
+    const bin = mkdtempSync(join(tmpdir(), 'hyperneo-gh-watch-'));
+    const saved = {
+      PATH: process.env.PATH,
+      GH_TOKEN: process.env.GH_TOKEN,
+      GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+    };
+    writeFileSync(
+      join(bin, 'gh'),
+      `#!/bin/sh\nprintf 'HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n{}'\n`
+    );
+    chmodSync(join(bin, 'gh'), 0o700);
+    process.env.PATH = `${bin}:${saved.PATH}`;
+    delete process.env.GH_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    try {
+      extension = new GitHubEventExtension(freshDb(), undefined, { getPollIntervalMs: () => 0 });
+      expect(await extension.watchSessionRepo('acme', 'widgets')).toBeNull();
+      extension = new GitHubEventExtension(freshDb(), undefined, {
+        getPollIntervalMs: () => 0,
+        credentialStore: {
+          get: async () => {
+            throw new Error('store unavailable');
+          },
+        } as unknown as NonNullable<
+          ConstructorParameters<typeof GitHubEventExtension>[2]
+        >['credentialStore'],
+      });
+      expect(await extension.watchSessionRepo('acme', 'widgets')).toStartWith(
+        'The daemon could not start watching acme/widgets:'
+      );
+    } finally {
+      for (const [key, value] of Object.entries(saved))
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      rmSync(bin, { recursive: true });
+    }
   });
 
   test('answers that the token cannot read a repo GitHub hides from it, and keeps the watch', async () => {
@@ -160,7 +268,7 @@ describe('the first poll of a session watch', () => {
       fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
     });
     extension = github;
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,
@@ -221,7 +329,7 @@ describe('the first poll of a session watch', () => {
       fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
     });
     extension = github;
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,

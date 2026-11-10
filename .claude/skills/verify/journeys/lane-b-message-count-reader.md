@@ -1,8 +1,7 @@
 # Transcript counts use one reader snapshot
 
-Run `lane-b-message-count-reader.ts` through `proof-run.sh` in a fresh synthetic
-source daemon, then repeat with `VERIFY_PROOF_RUNTIME=deno`. No provider, model,
-credential, GUI or external HTTP is involved; the helper owns an ephemeral port.
+No provider, model, credential, GUI or external HTTP is involved; the helper owns an
+ephemeral port.
 
 Seed consumed and enqueued inputs, a top-level reply, a child reply, hidden system
 metadata and a result through production writers. The actual `message.count`

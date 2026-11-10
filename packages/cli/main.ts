@@ -1,10 +1,7 @@
 #!/usr/bin/env bun
 import { isSessionCommand } from './src/session-cli-commands.ts';
 
-if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
-  const { startAcpMcpProxy } = await import('@hyperneo/daemon/lib/acp/mcp-proxy-entry');
-  startAcpMcpProxy(process.argv.slice(3));
-} else if (isSessionCommand(process.argv[2])) {
+if (isSessionCommand(process.argv[2])) {
   const { runSessionCommand } = await import('./src/session-cli.ts');
   process.exit(await runSessionCommand(process.argv.slice(2)));
 } else {

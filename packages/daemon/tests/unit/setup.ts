@@ -58,6 +58,11 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
 
 import { configureLogger, LogLevel } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../src/lib/providers/registry';
+import { registerSchemaExtension } from '../../src/storage/schema/extensions';
+import { SPACE_SCHEMA } from '../../src/storage/schema/space-schema';
+
+process.env.HYPERNEO_SPACE ??= 'on';
+registerSchemaExtension(SPACE_SCHEMA);
 
 process.env.NODE_ENV = 'test';
 
@@ -88,7 +93,6 @@ process.env.DEEPSEEK_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.KIMI_API_KEY = '';
 process.env.MOONSHOT_API_KEY = '';
-process.env.HYPERNEO_ACP_COMMAND = '';
 
 delete process.env.ENABLE_TOOL_SEARCH;
 delete process.env.ANTHROPIC_MODEL;

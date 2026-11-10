@@ -1,3 +1,4 @@
+import { createAuthenticatedTestSocket } from '../../helpers/websocket-helpers.ts';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -23,7 +24,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 
   function createWebSocket(baseUrl: string): WebSocket {
     const wsUrl = baseUrl.replace('http://', 'ws://');
-    return new WebSocket(`${wsUrl}/ws`);
+    return createAuthenticatedTestSocket(`${wsUrl}/ws`);
   }
 
   async function waitForWebSocketState(ws: WebSocket, state: number): Promise<void> {

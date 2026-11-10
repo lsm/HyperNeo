@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
-  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   deliveryConsumptionTimeoutOrDefault,
   type DriveTurnOutcome,
   deliverMessage,
@@ -1019,11 +1018,6 @@ describe('deliveryConsumptionTimeoutOrDefault — timeout validation', () => {
     expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
     expect(deliveryConsumptionTimeoutOrDefault(-1)).toBe(30_000);
     expect(deliveryConsumptionTimeoutOrDefault(Number.NaN)).toBe(30_000);
-  });
-
-  it('exposes the ACP consumption timeout constant for ACP providers', () => {
-    expect(ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS).toBe(12 * 60 * 1000);
-    expect(MESSAGE_DELIVERY_PARK_MS).toBe(5_000);
   });
 });
 

@@ -6,7 +6,6 @@ import type {
   SessionGoalDraft,
   SessionGoalPatch,
 } from '@hyperneo/shared/types/session-goal';
-import type { SpaceGoalEventSource } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SessionSchedule } from './session-schedule-repository.ts';
@@ -73,7 +72,6 @@ export class SessionGoalRepository {
   create(
     ownerSessionId: string,
     draft: SessionGoalDraft,
-    _source: SpaceGoalEventSource,
     now: number,
     changed?: (goal: SessionGoal) => void
   ): SessionGoal {
@@ -112,7 +110,6 @@ export class SessionGoalRepository {
   update(
     goal: SessionGoal,
     patch: SessionGoalPatch,
-    _source: SpaceGoalEventSource,
     now: number,
     changed?: (goal: SessionGoal) => void
   ): SessionGoal {

@@ -24,11 +24,9 @@ must not acquire an interrupted flag. Repeated, missing and competing recovery
 calls must produce at most one transition. The build sends no Neo event or
 worker dispatch, and recovery admission/state SQL must not execute on main.
 
-Units also cover current todo/done/blocked/failed/removed/closed-unverified
-states, failure escalation and the existing settled-ask removal policy. Run
-these alongside runner/state-writer and recovery controls, then the full check.
-The required Deno smoke executes this same helper; mark local Deno unverified
-if it is unavailable rather than claiming a local pass.
+Units also cover current todo/done/blocked/failed/removed/closed-unverified states,
+failure escalation and the existing settled-ask removal policy. Run these alongside
+runner/state-writer and recovery controls, then the full check.
 
 The helper closes its transport and daemon in finally and writes
 `todo-start-recovery.json`. The wrapper saves evidence and removes the fresh

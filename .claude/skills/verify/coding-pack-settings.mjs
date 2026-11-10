@@ -26,10 +26,47 @@ const seeded = list();
 const evidence = { head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), seeded, observations: [] };
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
+let page;
 try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: 'en-US' });
+  page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: 'en-US' });
+  const pair = JSON.parse(execFileSync('bun', ['packages/cli/main.ts', 'pair', '--name', 'Synthetic settings browser'], {
+    env: { HOME: `${run}/home`, PATH: process.env.PATH, TMPDIR: run, NODE_ENV: 'test', HYPERNEO_DATA_DIR: `${run}/data`, HYPERNEO_SESSION_DOOR: `${run}/data/session-door.sock` }, encoding: 'utf8',
+  }));
+  const paired = await page.request.post(`http://127.0.0.1:${port}/pair`, { headers: { origin: `http://127.0.0.1:${port}` }, data: { code: pair.code, name: 'Synthetic settings browser' } });
+  assert.equal(paired.status(), 200);
+  assert(!('credential' in await paired.json()), 'Browser pairing uses an HttpOnly cookie');
   await page.goto(`http://127.0.0.1:${port}/settings`);
-  await page.getByRole('button', { name: 'Coding pack', exact: true }).click();
+  await page.getByRole('button', { name: 'Pack settings', exact: true }).click();
+  const delegation = page.getByRole('region', { name: 'Delegation preferences', exact: true });
+  await delegation.getByRole('combobox', { name: 'Who signs in?', exact: true }).waitFor();
+  const delegationList = () => rpc('pack.preferences.list', { pack: 'delegation' }).preferences;
+  assert.deepEqual(delegationList(), []);
+  assert.equal(await delegation.getByRole('combobox').count(), 6);
+  const payment = delegation.getByRole('combobox', { name: 'Who completes payments?', exact: true });
+  assert.equal(await payment.inputValue(), '');
+  await payment.selectOption('fillStop');
+  await delegation.getByText('Saved', { exact: true }).waitFor();
+  assert.deepEqual(delegationList().map(({ scope, key, value, setBy }) => ({ scope, key, value, setBy })), [{ scope: global, key: 'payment', value: 'fillStop', setBy: 'human' }]);
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('select[aria-label="Who completes payments?"]')?.value === 'fillStop');
+  evidence.delegationSaved = delegationList();
+  await delegation.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${run}/evidence/delegation-settings-1280.png`, fullPage: true, animations: 'disabled' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await delegation.scrollIntoViewIfNeeded();
+  assert.deepEqual(await delegation.evaluate(element => [...element.querySelectorAll('select')].filter(child => { const box = child.getBoundingClientRect(); return box.x < 0 || box.right > innerWidth + 1; }).map(child => child.getAttribute('aria-label'))), []);
+  await page.screenshot({ path: `${run}/evidence/delegation-settings-390.png`, fullPage: true, animations: 'disabled' });
+  rpc('rpc:settings.global.update', { updates: { language: 'zh-Hans' } });
+  await page.reload();
+  const chinese = page.getByRole('region', { name: '委托偏好', exact: true });
+  await chinese.getByRole('combobox', { name: '需要我操作时用什么设备？', exact: true }).waitFor();
+  assert.equal(await chinese.getByRole('option', { name: '只发到我的手机', exact: true }).count(), 1);
+  await chinese.scrollIntoViewIfNeeded();
+  evidence.delegationBilingualMobile = true;
+  await page.screenshot({ path: `${run}/evidence/delegation-settings-zh-390.png`, fullPage: true, animations: 'disabled' });
+  rpc('rpc:settings.global.update', { updates: { language: 'en' } });
+  await page.reload();
+  await page.setViewportSize({ width: 1280, height: 1000 });
   const section = page.getByRole('region', { name: 'Coding pack settings', exact: true });
   const state = (label) => section.getByRole('group', { name: label, exact: true }).locator('[data-state]');
   const merge = section.getByRole('combobox', { name: 'Merge policy', exact: true });
@@ -147,8 +184,13 @@ try {
   assert.deepEqual(get(global, 'watchedRepos').value, []);
   evidence.emptyWatchListSurvivesReload = true;
   evidence.final = list();
-  console.log('PASS: Coding settings starts with no watches, saves/removes instance watches with readback and reload, refuses invalid values, preserves repository policies and fits at 1280/390 px.');
+  console.log('PASS: Delegation settings save/readback/reload and bilingual phone controls pass. Coding settings starts with no watches, saves/removes instance watches with readback and reload, refuses invalid values, preserves repository policies and fits at 1280/390 px.');
 } finally {
+  if (page) {
+    evidence.pageUrl = page.url();
+    evidence.pageText = (await page.locator('body').innerText().catch(() => '')).slice(0, 3000);
+    await page.screenshot({ path: `${run}/evidence/settings-final.png`, fullPage: true }).catch(() => {});
+  }
   writeFileSync(`${run}/evidence/coding-pack-settings.json`, JSON.stringify(evidence, null, 2));
   await browser.close();
 }

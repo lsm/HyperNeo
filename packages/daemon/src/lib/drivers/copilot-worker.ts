@@ -1,13 +1,19 @@
+import { workInput } from './work-messages.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { CopilotClient, RuntimeConnection, type SessionEvent } from '@github/copilot-sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
-import { buildAcpSafeEnv } from '../acp/acp-command.ts';
+import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import type { WorkDelivery } from './types.ts';
 export class CopilotModelUnavailableError extends Error {}
+export const COPILOT_CLI_VERSION = '1.0.105';
 type WorkInputReceipt = NonNullable<WorkDelivery['receipt']>;
 
 type InputState = {
+  at?: number;
+  text?: string;
+  human?: boolean;
+  endedAt?: number;
   state: 'pending' | 'observed';
   interactionId?: string;
   replyReport: string;
@@ -39,9 +45,20 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
     case 'user.message': {
       const { messageId, interactionId } = event.data;
       if (!messageId) break;
-      const input = next.inputs[messageId];
-      if (input.state === 'observed') break;
-      next.inputs = { ...next.inputs, [messageId]: { ...input, state: 'observed', interactionId } };
+      const input = Object.hasOwn(next.inputs, messageId) ? next.inputs[messageId] : undefined;
+      if (input?.state === 'observed') break;
+      const at = Date.parse(event.timestamp);
+      next.inputs = {
+        ...next.inputs,
+        [messageId]: {
+          ...(input ?? { replyReport: '', replyAvailability: 'incomplete' }),
+          state: 'observed',
+          interactionId,
+          at,
+          text: workInput(at, event.data.content)?.text ?? '',
+          human: input?.human ?? true,
+        },
+      };
       if (!['failed', 'needs_you', 'stopped'].includes(next.status)) next.status = 'running';
       break;
     }
@@ -72,6 +89,7 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
           if (input.state === 'observed' && input.replyReport && !input.outcome) {
             input.replyAvailability = 'complete';
             input.outcome = 'done';
+            input.endedAt = Date.parse(event.timestamp);
           }
         next.status = Object.values(next.inputs).every((input) => input.outcome)
           ? 'done'
@@ -86,11 +104,15 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
       break;
   }
   if (next.status === 'stopped' || next.status === 'failed')
-    for (const input of Object.values(next.inputs)) if (!input.outcome) input.outcome = next.status;
+    for (const input of Object.values(next.inputs))
+      if (!input.outcome) {
+        input.outcome = next.status;
+        input.endedAt = Date.parse(event.timestamp);
+      }
   return next;
 }
 
-const applyEvent = (superpipe({})('copilot-worker-event') as PipelineAPI)
+export const projectCopilotEvent = (superpipe({})('copilot-worker-event') as PipelineAPI)
   .input(['state', 'event'])
   .pipe(projectEvent, ['state', 'event'], 'state')
   .end('state') as (state: WorkerState, event: SessionEvent) => WorkerState;
@@ -112,13 +134,8 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   const client = new CopilotClient({
     connection: RuntimeConnection.forStdio({
       path: config.cliPath,
-      args: [
-        '--no-remote',
-        '--no-remote-export',
-        '--disable-builtin-mcps',
-        '--no-custom-instructions',
-      ],
-      env: { ...buildAcpSafeEnv(config.env), ...workerWorkEnvironment(config.cwd) },
+      args: ['--no-remote', '--no-remote-export', '--no-custom-instructions'],
+      env: { ...buildSafeProcessEnv(config.env), ...workerWorkEnvironment(config.cwd) },
     }),
     mode: 'empty',
     baseDirectory: config.stateDirectory,
@@ -234,7 +251,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
             : undefined;
       seen.set(event.id, inputId);
       seen.set(messageKey, inputId);
-      state = applyEvent(state, event);
+      state = projectCopilotEvent(state, event);
       prune();
       if (['done', 'failed', 'stopped'].includes(state.status)) terminal.resolve();
     };
@@ -286,6 +303,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
             ...state.inputs,
             [inputId]: {
               state: 'pending',
+              human: false,
               replyReport: '',
               replyAvailability: 'incomplete',
             },
@@ -324,6 +342,35 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
           Object.entries(state.inputs).filter(([id]) => submitted.has(id))
         ),
       });
+    },
+    async rename(name: string) {
+      requireOpen();
+      await bounded(session.rpc.name.set({ name }), timeoutMs);
+    },
+    async withdraw(inputId: string) {
+      requireOpen();
+      const { items } = await bounded(session.rpc.queue.pendingItems(), timeoutMs);
+      const item = items.find((entry) => entry.messageId === inputId);
+      if (!item) return false;
+      let removed: boolean;
+      try {
+        ({ removed } = await bounded(session.rpc.queue.removeAt({ id: item.id }), timeoutMs));
+      } catch (error) {
+        state.status = 'unreachable';
+        throw error;
+      }
+      const input = Object.hasOwn(state.inputs, inputId) ? state.inputs[inputId] : undefined;
+      if (removed && input && !input.outcome) {
+        input.outcome = 'stopped';
+        if (
+          ['queued', 'running'].includes(state.status) &&
+          Object.values(state.inputs).every((entry) => entry.outcome)
+        )
+          state.status = 'done';
+        prune();
+        if (state.status === 'done') terminal.resolve();
+      }
+      return removed;
     },
     async abort() {
       requireOpen();

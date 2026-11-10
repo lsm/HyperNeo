@@ -28,5 +28,4 @@ requeue through the existing pipeline stages.
 
 Failing reproduction commit: `1db121714`. After the fix, the same watchdog
 journey observes both kickoff and follow-up in attempt 2 and ends with
-`consumed=2`, `deferred=0`. ACP remains a separately labelled passing
-characterization in `acp-retry-baseline.md`; no ACP production fix is claimed.
+`consumed=2`, `deferred=0`.

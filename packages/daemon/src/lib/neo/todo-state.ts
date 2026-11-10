@@ -1,4 +1,4 @@
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoJudgement } from './pack-contract.ts';
@@ -9,10 +9,33 @@ export interface TodoStateFacts {
   askOpen: boolean;
   questionOpen: boolean;
   answerPending?: boolean;
+  triagePending?: boolean;
   dispatched: boolean;
   live: string | null;
   change: NeoTodoPatch;
   judgement: NeoTodoJudgement;
+}
+
+export const NEO_TODO_STALLED_CARD_TAIL =
+  ' has nobody working on it, and HyperNeo cannot restart it on its own. Where should it continue, or should it close?';
+
+export const isNeoTodoStalledCard = (text: string) => text.endsWith(NEO_TODO_STALLED_CARD_TAIL);
+
+export const neoQuestionCoversTodo = (
+  question: Pick<NeoQuestion, 'state' | 'todoId' | 'kind' | 'startTodos'>,
+  todo: Pick<NeoTodo, 'id'>
+) =>
+  question.state === 'open' &&
+  (!question.todoId || question.todoId === todo.id) &&
+  (question.kind !== 'start' || !!question.startTodos?.includes(todo.id));
+
+export function neoTodoAwaitsHuman(
+  todo: Pick<NeoTodo, 'id'>,
+  questions: readonly Pick<NeoQuestion, 'state' | 'todoId' | 'kind' | 'startTodos' | 'text'>[]
+): boolean {
+  return questions.some(
+    (question) => !isNeoTodoStalledCard(question.text) && neoQuestionCoversTodo(question, todo)
+  );
 }
 
 export interface TodoStateDecision {
@@ -28,16 +51,22 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     judgement.state !== 'done' &&
     change.state !== 'removed' &&
     facts.askOpen &&
-    (facts.questionOpen || facts.answerPending)
+    (facts.questionOpen ||
+      facts.answerPending ||
+      (facts.triagePending && !Object.keys(change).length))
   )
     return {
-      patch: {
-        ...change,
-        state: 'blocked',
-        blockedBy: 'needs-human',
-        blockedReason: todo.blockedReason,
-        nextAction: todo.nextAction,
-      },
+      patch: Object.fromEntries(
+        Object.entries({
+          ...change,
+          state: 'blocked',
+          blockedBy: 'needs-human',
+          blockedReason: todo.blockedReason,
+          nextAction: todo.nextAction,
+        }).filter(
+          ([key, value]) => Object.keys(change).length || value !== todo[key as keyof NeoTodo]
+        )
+      ) as NeoTodoPatch,
       startNext: null,
     };
   let patch = { ...change };
@@ -70,12 +99,17 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     else if (
       !Object.keys(change).length &&
       !['done', 'closed_unverified', 'failed'].includes(todo.state) &&
-      !(todo.state === 'blocked' && ['failure', 'stalled', 'held'].includes(todo.blockedBy ?? ''))
+      !(
+        todo.state === 'blocked' &&
+        ['failure', 'stalled', 'held', 'check', 'environment'].includes(todo.blockedBy ?? '')
+      )
     ) {
       if (
         facts.questionOpen &&
-        !facts.dispatched &&
-        (todo.state === 'todo' || todo.blockedBy === 'question')
+        (todo.blockedBy === 'question' ||
+          (facts.dispatched
+            ? todo.state === 'doing' && ['done', 'stopped'].includes(facts.live ?? '')
+            : todo.state === 'todo'))
       )
         patch = {
           ...patch,

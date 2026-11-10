@@ -1,22 +1,37 @@
 import { escapeRawHtmlBlocks, hasCodeBlock, renderPlainText } from './markdown-escape.ts';
 export { renderPlainText } from './markdown-escape.ts';
 import { render } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { systemState } from '../../lib/state.ts';
+import { ownerPathLabels } from '../../lib/owner-path-label.ts';
 import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
 import { decideMarkdownImage, isNavigatableHref } from './markdown-image.ts';
 import { LruCache } from '../../lib/lru-cache.ts';
 import { decideArtifactImage, decideArtifactLink } from '../../lib/artifact-link-policy.ts';
-import { markPreviewReferences } from './markdown-references.ts';
+import { demoteLocalFileLinks, markPreviewReferences } from './markdown-references.ts';
 import { attachQuoteCopyButtons } from './markdown-quote-copy.tsx';
 
 interface MarkdownRendererProps {
   content: string;
   class?: string;
   artifactLinks?: boolean;
+  demoteLinks?: boolean;
+  pendingContent?: string;
+  bare?: boolean;
   references?: readonly string[];
   onReference?: (reference: string) => void;
+  referenceHome?: string | null;
+}
+
+function demoteAnchorLinks(container: HTMLElement) {
+  container.querySelectorAll('a').forEach((anchor) => {
+    const span = document.createElement('span');
+    span.setAttribute('data-demoted-link', '');
+    while (anchor.firstChild) span.appendChild(anchor.firstChild);
+    anchor.replaceWith(span);
+  });
 }
 
 type MarkdownModules = {
@@ -469,9 +484,15 @@ export default function MarkdownRenderer({
   content,
   class: className,
   artifactLinks = false,
+  demoteLinks = false,
+  pendingContent,
+  bare = false,
   references,
   onReference,
+  referenceHome,
 }: MarkdownRendererProps) {
+  const home = referenceHome === undefined ? systemState.value?.homeDirectory : referenceHome;
+  const labels = useMemo(() => ownerPathLabels(content, home), [content, home]);
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayOwner = useRef({});
   const referenceHandler = useRef(onReference);
@@ -519,6 +540,7 @@ export default function MarkdownRenderer({
     if (html == null || !containerRef.current) return;
     const container = containerRef.current;
     container.innerHTML = html;
+    if (demoteLinks) demoteAnchorLinks(container);
 
     const handleImageActivate = (event: Event) => {
       if (event instanceof MouseEvent && event.type === 'auxclick' && event.button !== 1) return;
@@ -535,7 +557,8 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleImageActivate);
     container.addEventListener('auxclick', handleImageActivate);
 
-    markPreviewReferences(container, JSON.parse(referenceKey));
+    if (references) demoteLocalFileLinks(container);
+    markPreviewReferences(container, JSON.parse(referenceKey), labels);
     const handleReference = (event: Event) => {
       if (event instanceof KeyboardEvent && event.key !== 'Enter') return;
       const target = event.target instanceof Element ? event.target : null;
@@ -549,14 +572,16 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleReference);
     container.addEventListener('keydown', handleReference);
 
-    const copyMounts = [
-      ...attachQuoteCopyButtons(container),
-      ...attachCodeBlockCopyButtons(container),
-    ];
+    const copyMounts = bare
+      ? []
+      : [
+          ...attachQuoteCopyButtons(container, codeBlockCopyGutter),
+          ...attachCodeBlockCopyButtons(container),
+        ];
 
     let mermaidCancelled = false;
     const mermaidMounts: Array<HTMLElement> = [];
-    if (!artifactLinks)
+    if (!artifactLinks && !bare)
       renderMermaidBlocks(containerRef.current, mermaidMounts, () => mermaidCancelled).catch(
         () => undefined
       );
@@ -592,7 +617,11 @@ export default function MarkdownRenderer({
       });
       mermaidCancelled = true;
     };
-  }, [html, theme, artifactLinks, referenceKey]);
+  }, [html, theme, artifactLinks, demoteLinks, bare, referenceKey, labels]);
 
-  return <div ref={containerRef} class={`prose ${className || ''}`} />;
+  return (
+    <div ref={containerRef} class={`prose ${className || ''}`}>
+      {html == null ? pendingContent : null}
+    </div>
+  );
 }

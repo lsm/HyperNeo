@@ -234,15 +234,21 @@ export class NeoDriverSessionRows {
     startedAt?: number,
     link?: string,
     observed: Pick<NeoWorkDriverReceipt, 'model' | 'effort'> = {},
-    target?: unknown
+    target?: unknown,
+    identityOnly = false
   ): void {
     this.db
       .prepare(
         `UPDATE ${this.table}
-          SET ref = ?1, started_at = ?2, link = ?3, actual_model = ?4, actual_effort = ?5,
-            sent_receipt = CASE WHEN ref IS ?1 THEN sent_receipt ELSE NULL END,
+          SET ref = CASE WHEN ?8 THEN ref ELSE ?1 END,
+            started_at = CASE WHEN ?8 THEN started_at ELSE ?2 END,
+            link = CASE WHEN ?8 THEN link ELSE ?3 END, actual_model = ?4, actual_effort = ?5,
+            sent_receipt = CASE WHEN ?8 OR ref IS ?1 THEN sent_receipt ELSE NULL END,
             target = COALESCE(?7, target)
-          WHERE ${this.key} = ?6`
+          WHERE ${this.key} = ?6 AND (NOT ?8 OR (
+            COALESCE(json_extract(ref, '$.id'), json_extract(target, '$.ref.id')) = json_extract(?1, '$.id') AND
+            COALESCE(json_extract(ref, '$.adapter'), json_extract(target, '$.ref.adapter')) = json_extract(?1, '$.adapter') AND
+            COALESCE(json_extract(ref, '$.daemon'), json_extract(target, '$.ref.daemon')) IS json_extract(?1, '$.daemon')))`
       )
       .run(
         JSON.stringify(ref),
@@ -251,7 +257,8 @@ export class NeoDriverSessionRows {
         observed.model ?? null,
         observed.effort ?? null,
         id,
-        target ? JSON.stringify(target) : null
+        target ? JSON.stringify(target) : null,
+        Number(identityOnly)
       );
   }
 

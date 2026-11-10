@@ -147,12 +147,6 @@ export function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | unde
 const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
   saveGlobalSettings: { table: 'global_settings' },
   updateGlobalSettings: { table: 'global_settings' },
-  createInboxItem: { table: 'inbox_items' },
-  updateInboxItemStatus: { table: 'inbox_items' },
-  dismissInboxItem: { table: 'inbox_items' },
-  blockInboxItem: { table: 'inbox_items' },
-  deleteInboxItem: { table: 'inbox_items' },
-  deleteInboxItemsForRepository: { table: 'inbox_items' },
 };
 
 export function createReactiveDatabase(db: Database): ReactiveDatabase {

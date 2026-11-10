@@ -12,38 +12,18 @@ import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
 import './lib/default-commands.ts';
-import {
-  currentSessionIdSignal,
-  currentSpaceAgentHandleSignal,
-  currentSpaceIdSignal,
-  currentSpaceSessionIdSignal,
-  currentSpaceSettingsTabSignal,
-  currentSpaceTaskIdSignal,
-  currentSpaceViewModeSignal,
-  currentSpaceTasksFilterTabSignal,
-  navSectionSignal,
-} from './lib/signals.ts';
+import { currentSessionIdSignal, navSectionSignal } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
 import { sessionStore } from './lib/session-store.ts';
 import {
   initializeRouter,
   navigateToSession,
-  navigateToHome,
   navigateToSessions,
-  navigateToSpacesPage,
-  navigateToSpace,
-  navigateToSpaceConfigure,
-  navigateToSpaceGoals,
-  navigateToSpaceMemories,
-  navigateToSpaceEvolve,
-  navigateToSpaceTasks,
-  navigateToSpaceAgent,
-  navigateToSpaceSession,
-  navigateToSpaceTask,
   navigateToSettings,
 } from './lib/router.ts';
 import { deriveAppExpectedPath } from './lib/app-routing.ts';
+import { extensionNav } from './lib/web-extensions.ts';
 
 export function App() {
   useViewportSafety();
@@ -77,8 +57,7 @@ export function App() {
 
         disposeSelection = effect(() => {
           const sessionId = currentSessionIdSignal.value;
-          const spaceSessionId = currentSpaceSessionIdSignal.value;
-          if (spaceSessionId) return;
+          if (extensionNav().some((nav) => nav.holdsSessionSelection())) return;
           sessionStore.select(sessionId);
         });
 
@@ -94,60 +73,23 @@ export function App() {
 
     const disposeRouting = effect(() => {
       const sessionId = currentSessionIdSignal.value;
-      const spaceId = currentSpaceIdSignal.value;
-      const spaceSessionId = currentSpaceSessionIdSignal.value;
-      const spaceTaskId = currentSpaceTaskIdSignal.value;
-      const spaceAgentHandle = currentSpaceAgentHandleSignal.value;
-      const spaceViewMode = currentSpaceViewModeSignal.value;
-      const spaceConfigureTab = currentSpaceSettingsTabSignal.value;
-      const spaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
       const navSection = navSectionSignal.value;
-      const currentPath = window.location.pathname;
+      const extensionRoute = extensionNav().flatMap((nav) => nav.currentRoute() ?? [])[0];
       const expectedPath = deriveAppExpectedPath({
         sessionId,
-        spaceId,
-        spaceSessionId,
-        spaceTaskId,
-        spaceAgentHandle,
-        spaceViewMode,
-        spaceConfigureTab,
-        spaceTasksFilterTab,
+        extensionPath: extensionRoute?.path ?? null,
         navSection,
       });
 
-      if (currentPath !== expectedPath) {
+      if (window.location.pathname !== expectedPath) {
         if (sessionId) {
           navigateToSession(sessionId, true);
-        } else if (spaceTaskId && spaceId) {
-          navigateToSpaceTask(spaceId, spaceTaskId, true);
-        } else if (spaceId && spaceViewMode === 'agents') {
-          navigateToSpaceAgent(spaceId, spaceAgentHandle ?? true, true);
-        } else if (spaceSessionId && spaceId) {
-          navigateToSpaceSession(spaceId, spaceSessionId, true);
-        } else if (spaceId && spaceViewMode === 'goals') {
-          navigateToSpaceGoals(spaceId, true);
-        } else if (spaceId && spaceViewMode === 'memories') {
-          navigateToSpaceMemories(spaceId, true);
-        } else if (spaceId && spaceViewMode === 'forge') {
-          navigateToSpaceEvolve(spaceId, true);
-        } else if (spaceId && spaceViewMode === 'tasks') {
-          navigateToSpaceTasks(spaceId, undefined, true);
-        } else if (spaceId && spaceViewMode === 'configure') {
-          navigateToSpaceConfigure(
-            spaceId,
-            spaceConfigureTab !== 'general' ? spaceConfigureTab : undefined,
-            true
-          );
-        } else if (spaceId) {
-          navigateToSpace(spaceId, true);
-        } else if (navSection === 'spaces') {
-          navigateToSpacesPage(true);
-        } else if (navSection === 'chats') {
-          navigateToSessions(true);
+        } else if (extensionRoute) {
+          extensionRoute.open();
         } else if (navSection === 'settings') {
           navigateToSettings(true);
         } else {
-          navigateToHome(true);
+          navigateToSessions(true);
         }
       }
     });

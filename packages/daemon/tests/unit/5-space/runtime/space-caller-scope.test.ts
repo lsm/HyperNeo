@@ -4,7 +4,7 @@ import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import {
   createSpaceCallerScopeResolver,
   type SpaceCallerScopeDependencies,
-} from '../../../../src/lib/space/runtime/space-caller-scope';
+} from '../../../../src/lib/session-resolution/space-caller-scope';
 
 function session(
   id: string,

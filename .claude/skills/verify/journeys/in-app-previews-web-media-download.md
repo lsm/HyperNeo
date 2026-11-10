@@ -1,5 +1,11 @@
 # Web image, JSON, log previews and complete downloads (slice 17)
 
+C3 update: local registration is retired. These helpers seed synthetic historical
+attachment rows/blobs directly via legacy-attachment-fixture.ts; any registration
+wording below describes the historical data, not a currently available API.
+New working files use source-bound live reads. No production snapshots are created.
+
+
 Build web, then use the shared isolated launch/doctor/stop setup in SKILL.md.
 Use a new RUN directory and an unused port other than 8399. No live data or
 headed GUI. NODE_PATH must locate Playwright; VERIFY_BROWSER may point to its
@@ -16,8 +22,8 @@ node .claude/skills/verify/preview-media-web.mjs web "$RUN" 9397
 .claude/skills/verify/doctor.sh 9397 "$RUN" > "$RUN/evidence/doctor.txt"
 ```
 
-The script registers synthetic JSON, a raster PNG, a pixel-limit PNG and a large
-log through the real operations. At 1280 and 390 widths, open the actual Neo
+The script seeds historical JSON, raster PNG, pixel-limit PNG and large log
+fixtures, then reads them through real operations. At 1280 and 390 widths, open the actual Neo
 preview panel: observe formatted escaped JSON, Copy visible, image fit/original
 size, oversized image refusal without decoding, and bounded log head/tail with
 exact omitted-byte count. Download complete file must produce the original log's
@@ -46,5 +52,5 @@ A second injected error during Download must preserve the loaded JSON and show
 an inline Retry download. Retry must save the exact original bytes. Screenshots
 capture both states at both widths; the original red UI output is retained.
 Typed authorization refusals still clear the preview (component/client tests).
-The helper also proves the current daemon rejects SVG registration with
-unsupported_type; this slice claims raster previews only, with no SVG Source.
+SVG registration is retired along with the local registration operation. This
+legacy-reader journey claims raster previews only, with no SVG Source.

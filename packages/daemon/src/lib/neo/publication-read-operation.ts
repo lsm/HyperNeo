@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -6,12 +7,12 @@ import type { NeoRepository } from '../../storage/repositories/neo-repository.ts
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { NeoPublicationSchema } from './publication.ts';
+import { NeoPublicationOutputObject, publicationTextRule } from './publication.ts';
 
-export const NeoStoredPublicationSchema = NeoPublicationSchema.extend({
+export const NeoStoredPublicationSchema = NeoPublicationOutputObject.extend({
   sequence: z.number().int().positive(),
   createdAt: z.iso.datetime(),
-});
+}).superRefine(publicationTextRule);
 
 export const NeoConversationPageShape = z
   .object({
@@ -113,11 +114,13 @@ export const readNeoPublicationPage = (superpipe({})('neo-publication-read') as 
   ledger: NeoPublicationRepository
 ) => Result;
 
-export function createNeoPublicationReadOperation(ledger: NeoPublicationRepository) {
+export function createNeoPublicationReadOperation(
+  ledger: NeoPublicationRepository,
+  present: (items: NeoPublication[]) => Promise<NeoPublication[]> = async (items) => items
+) {
   return defineOperation({
     name: 'neo.publication.read',
-    description:
-      'Read one bounded ascending page of authored Neo replies and full details for the current public conversation. Use nextAfter for the next page or later updates, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence; this never reads SDK transcripts or starts a query.',
+    description: neoToolDescription('neo.publication.read'),
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationPageInput,
     resultSchema: z.union([
@@ -129,6 +132,9 @@ export function createNeoPublicationReadOperation(ledger: NeoPublicationReposito
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),
-    execute: async (page, caller) => ledger.readPageCurrent(page, caller),
+    execute: async (page, caller) => {
+      const result = await ledger.readPageCurrent(page, caller);
+      return result.ok ? { ...result, items: await present(result.items) } : result;
+    },
   });
 }

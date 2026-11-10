@@ -232,21 +232,9 @@ export async function setDefaultProvider(id: string): Promise<{ success: boolean
   return await hub.request<{ success: boolean }>('providers.setDefault', { id });
 }
 
-export async function fetchAcpModels(
-  id: string,
-  command?: string
-): Promise<{ models: Array<{ id: string; name?: string }> }> {
-  const hub = getHubOrThrow();
-  return await hub.request<{ models: Array<{ id: string; name?: string }> }>(
-    'providers.fetchAcpModels',
-    { id, command },
-    { timeout: 30000 }
-  );
-}
-
 export async function listProviderRemoteModels(
   id: string,
-  options?: { command?: string; baseUrl?: string; force?: boolean }
+  options?: { baseUrl?: string; force?: boolean }
 ): Promise<{ models: Array<{ id: string; name?: string }> }> {
   const hub = getHubOrThrow();
   return await hub.request<{ models: Array<{ id: string; name?: string }> }>(

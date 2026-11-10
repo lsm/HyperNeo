@@ -1,10 +1,8 @@
 # Ordinary reminder creation commits on the writer
 
-Run `lane-b-session-schedule-create.ts` through `proof-run.sh` with Bun, then with
-`VERIFY_PROOF_RUNTIME=deno` and the cached runtime on PATH. The helper owns a fresh
-synthetic daemon, an ephemeral non-8399 port, disposable HOME/data and native DB
-workers. GitHub commands use a refusing local stub. There is no provider/model
-turn, credential or external HTTP access.
+The helper owns a fresh synthetic daemon, an ephemeral non-8399 port, disposable HOME/data
+and native DB workers. GitHub commands use a refusing local stub. There is no
+provider/model turn, credential or external HTTP access.
 
 Call the actual `schedule.session.create` operation over WebSocket. Cold and
 concurrent requests must return active schedules whose wake job and pending-job

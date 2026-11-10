@@ -246,6 +246,10 @@ describe('CommandRegistry', () => {
 });
 
 describe('categoryLabel', () => {
+  it('shows an extension category as written', () => {
+    expect(categoryLabel('Spaces')).toBe('Spaces');
+  });
+
   it('returns readable labels for each category', () => {
     expect(categoryLabel('session')).toBe('Sessions');
     expect(categoryLabel('navigation')).toBe('Navigation');

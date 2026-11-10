@@ -5,25 +5,20 @@ checkout and installed runtimes, with one heavy job at a time.
 
 ```sh
 python3 .claude/skills/verify/coding-merge-receipt-db-run.py bun before
-python3 .claude/skills/verify/coding-merge-receipt-db-run.py deno before --executable "$DENO"
 python3 .claude/skills/verify/coding-merge-receipt-db-run.py bun verify
-python3 .claude/skills/verify/coding-merge-receipt-db-run.py deno verify --executable "$DENO"
-bun --no-install --no-env-file .claude/skills/verify/coding-merge-receipt-proof-binding.ts HEAD
 ```
 
-DENO names an existing runtime. Imports are cached-only. The runner refuses
-insufficient memory or disk, creates a fresh synthetic HOME/data/TMPDIR, saves
-evidence and immediately removes temporary daemon data. Before mode restores
-only merge-gates.ts and delivery-facts.ts from origin/dev, restoring the draft
-in finally; never edit or run another job concurrently. The failing bound-writer
+Imports are cached-only. The runner refuses insufficient memory or disk, creates a fresh
+synthetic HOME/data/TMPDIR, saves evidence and immediately removes temporary daemon data.
+Before mode restores only merge-gates.ts and delivery-facts.ts from origin/dev, restoring
+the draft in finally; never edit or run another job concurrently. The failing bound-writer
 regression is committed before the implementation.
 
-The proof owns a real daemon and public WebSocket operation.invoke connection
-on an ephemeral non-8399 port. A local gh fixture supplies only synthetic PR
-reads, reviews, checks and threads; it refuses unknown commands. The fixture
-uses an existing Bun executable even when the daemon runs on Deno. Direct HTTP
-throws. No credentials, live database, installed Desktop, model or browser is
-involved. No real merge, actor dispatch or deployment is attempted.
+The proof owns a real daemon and public WebSocket operation.invoke connection on an
+ephemeral non-8399 port. A local gh fixture supplies only synthetic PR reads, reviews,
+checks and threads; it refuses unknown commands. Direct HTTP throws. No credentials, live
+database, installed Desktop, model or browser is involved. No real merge, actor dispatch
+or deployment is attempted.
 
 Production neo.coding.merge.prepare must refuse missing Verify, pending/failing
 CI, stale or negative bot review, unresolved findings, applicable absent human

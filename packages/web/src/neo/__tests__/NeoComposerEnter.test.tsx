@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
@@ -167,7 +167,7 @@ describe('NeoComposer Enter behavior', () => {
   ])('puts the send hint in the focused input placeholder (coarse=%s)', (coarse, hint) => {
     setPointerCoarse(coarse);
     const { textarea } = renderComposer();
-    fireEvent.focus(textarea());
+    act(() => textarea().focus());
     expect(document.querySelector('textarea')!.getAttribute('placeholder')).toContain(hint);
     const status = document.querySelector('[role="status"]') as HTMLElement;
     expect(status.className).toContain('hidden');
@@ -185,7 +185,7 @@ describe('NeoComposer Enter behavior', () => {
   it('keeps the send button labeled and keyboard reachable', () => {
     setPointerCoarse(true);
     const { textarea } = renderComposer();
-    fireEvent.focus(textarea());
+    act(() => textarea().focus());
     const button = screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement;
     expect(button.tagName).toBe('BUTTON');
     expect(button.getAttribute('type')).toBe('submit');

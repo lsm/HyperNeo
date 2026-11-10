@@ -7,12 +7,12 @@ import type {
   SpaceWorkspace,
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
-import { setupSpaceHandlers } from '../../../../src/lib/rpc-handlers/space-handlers';
+import { setupSpaceHandlers } from '../../../../../space/src/rpc/space-handlers';
 import {
   WorkspaceRegistrationError,
   WorkspaceRemovalBlockedError,
 } from '../../../../src/lib/workspaces/workspace-manager';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -24,7 +24,7 @@ import type {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import type { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 type SummaryTask = SpaceTask & { descriptionTruncated?: boolean; resultTruncated?: boolean };

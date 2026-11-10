@@ -43,6 +43,8 @@ for (const [suite, filter] of suites) {
           'bun',
           [
             'test',
+            '--preload',
+            './tests/unit/setup.ts',
             ...(fail ? ['--preload', preload] : []),
             join(daemonRoot, 'tests/unit', suite),
             '--test-name-pattern',

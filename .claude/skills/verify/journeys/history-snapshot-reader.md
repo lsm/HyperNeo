@@ -1,9 +1,7 @@
 # Legacy history snapshots use the gateway read lane
 
-Run `history-snapshot-reader.ts` through the shared `proof-run.sh` wrapper with a
-fresh evidence directory. Run the same helper with `VERIFY_PROOF_RUNTIME=deno`
-for native Deno acceptance. No model, external HTTP, real HOME/database or port
-8399 is used.
+Run `history-snapshot-reader.ts` through the shared `proof-run.sh` wrapper with a fresh
+evidence directory. No model, external HTTP, real HOME/database or port 8399 is used.
 
 The helper seeds complete ordinary text, a tool parent/child and task metadata
 with tied timestamps through production writers. It waits for startup body copying

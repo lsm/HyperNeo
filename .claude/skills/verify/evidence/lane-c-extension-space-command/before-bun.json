@@ -1,0 +1,15 @@
+{
+  "publicSpaceSetterActivated": false,
+  "mainGuardSelfCheckPassed": true,
+  "commandFailure": "Error: Unknown write DB op: extension.space.config.write",
+  "mainSqlAttempts": 0,
+  "metrics": [],
+  "runtime": "Bun 1.4.3 macOS arm64",
+  "exitCode": 1,
+  "expectedFailure": "Native worker rejects unregistered extension.space.config.write",
+  "unitContracts": {
+    "mergedHelperPassed": 1,
+    "missingCommandFailed": 5
+  },
+  "temporaryDaemonDataRemoved": true
+}

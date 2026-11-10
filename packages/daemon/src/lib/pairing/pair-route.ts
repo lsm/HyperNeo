@@ -2,16 +2,19 @@ import { DEVICE_COOKIE } from './upgrade-auth.ts';
 import { z } from 'zod';
 import type { DevicePairingRepository } from '../../storage/repositories/device-pairing-repository.ts';
 import type { PairingLimiter } from './pairing-limiter.ts';
+import { PAIR_HOLD_MS, type PairWaits } from './pair-waits.ts';
 
 const PairRequest = z.object({
   code: z.string().trim().min(1).max(40),
   name: z.string().trim().min(1).max(80),
+  requestId: z.string().trim().min(16).max(80).optional(),
 });
 
 export interface PairRouteDeps {
   readonly repo: DevicePairingRepository;
   readonly limiter: PairingLimiter;
   readonly now: () => number;
+  readonly waits: PairWaits;
 }
 
 const MAX_BODY_BYTES = 4 * 1024;
@@ -67,14 +70,18 @@ function answerPaired(
   paired: { device: { id: string; kind: string }; credential: string }
 ): Response {
   const origin = req.headers.get('origin');
-  const device = { deviceId: paired.device.id, kind: paired.device.kind };
-  if (!origin) return answer(200, { ...device, credential: paired.credential });
+  const device = {
+    deviceId: paired.device.id,
+    kind: paired.device.kind,
+  };
+  if (!origin || paired.device.kind === 'agent')
+    return answer(200, { ...device, credential: paired.credential });
   const response = answer(200, device);
   response.headers.set('set-cookie', deviceCookie(paired.credential, origin));
   return response;
 }
 
-export function createPairRoute({ repo, limiter, now }: PairRouteDeps) {
+export function createPairRoute({ repo, limiter, now, waits }: PairRouteDeps) {
   return async (req: Request): Promise<Response> => {
     if (req.method !== 'POST') return answer(405, { error: 'method_not_allowed' });
     const admitted = limiter.admit(now());
@@ -90,15 +97,22 @@ export function createPairRoute({ repo, limiter, now }: PairRouteDeps) {
       limiter.fail(now());
       return answer(400, { error: 'invalid_request' });
     }
-    const at = now();
-    const { paired, awaitingApproval } = await repo.redeemAsync(
-      parsed.data.code,
-      parsed.data.name,
-      at
-    );
+    let at = now();
+    let outcome = await repo.redeemAsync(parsed.data, at);
+    const { hold } = outcome;
+    if (
+      hold &&
+      (await waits.hold(hold.codeId, Math.min(PAIR_HOLD_MS, hold.expiresAt - at), req.signal))
+    ) {
+      at = now();
+      outcome = await repo.redeemAsync(parsed.data, at);
+    }
+    const { paired, awaitingApproval, usedElsewhere, refusal } = outcome;
     if (paired) return answerPaired(req, paired);
     if (awaitingApproval) return answer(403, { error: 'awaiting_approval' });
     limiter.fail(at);
-    return answer(401, { error: 'invalid_code' });
+    return usedElsewhere
+      ? answer(409, { error: 'code_used_elsewhere' })
+      : answer(401, { error: refusal ?? 'invalid_code' });
   };
 }

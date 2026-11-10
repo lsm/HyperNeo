@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { BACKGROUND_TASK_METADATA_SQL } from '../../../../src/lib/live-query/queries/messages';
-import { readSpaceStartReceipt } from '../../../../src/lib/drivers/space-adapter';
+import { readSpaceStartReceipt } from '../../../../../space/src/drivers/space-adapter';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
 import { Database } from '../../../../src/storage/sqlite-compat';

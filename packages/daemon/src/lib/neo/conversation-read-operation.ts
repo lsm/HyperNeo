@@ -1,7 +1,9 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { presentNeoPreviewAsk } from './preview-context.ts';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { NeoConversationWakeSchema } from '../../storage/repositories/neo-conversation-wake-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -39,7 +41,9 @@ export function createNeoConversationReadOperation(
   repo: NeoRepository,
   ledger: NeoConversationReader,
   present: (message: NeoSessionMessage) => Promise<NeoSessionMessage> = async (message) => message,
-  database?: Database
+  database?: Database,
+  presentPublications: (items: NeoPublication[]) => Promise<NeoPublication[]> = async (items) =>
+    items
 ) {
   const read = (superpipe({})('neo-conversation-read') as PipelineAPI)
     .input(['page', 'caller'])
@@ -122,13 +126,20 @@ export function createNeoConversationReadOperation(
   ]);
   return defineOperation({
     name: 'neo.conversation.read',
-    description:
-      'Read the recorded human and Neo conversation, with the messages root Neo exchanged with other sessions (role session; RPC callers are served the ones Neo sent plus system-forwarded worker batches, each marked kind session or worker-batch so clients hide worker batches from the human), oldest first within each page. With no cursor, returns the newest page. Use nextBefore as before for older history, or nextAfter as after for newer entries. Human words and attachment references come from the immutable intake record; each human ask carries the same daemon-computed messageStatus as neo.conversation.asks.read. Neo replies and revision history come from the publication ledger. Session messages come from message.send records and separately released worker batches; batch disclosures project text only. Scheduled wakes appear as role wake with their summary and attributed additions. Only the current public conversation is readable; SDK transcripts and raw internal notes are excluded.',
+    description: neoToolDescription('neo.conversation.read'),
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationReadInput,
     resultSchema,
     execute: async (page, caller) => {
       const result = await read(page, caller);
+      const publications = new Map(
+        (result.ok
+          ? await presentPublications(
+              result.items.flatMap((item) => (item.role === 'neo' ? [item.publication] : []))
+            )
+          : []
+        ).map((item) => [item.publicationId, item])
+      );
       return result.ok
         ? {
             ...result,
@@ -138,7 +149,9 @@ export function createNeoConversationReadOperation(
                   ? { ...item, message: await present(item.message) }
                   : item.role === 'human' && database
                     ? { ...item, ask: await presentNeoPreviewAsk(item.ask, database, caller) }
-                    : item
+                    : item.role === 'neo'
+                      ? { ...item, publication: publications.get(item.publication.publicationId)! }
+                      : item
               )
             ),
           }

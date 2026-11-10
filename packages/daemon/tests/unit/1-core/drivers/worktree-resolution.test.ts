@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { vi } from 'vitest';
-import { gitWorktreeProject } from '../../../../src/lib/drivers/acp-agent-adapter.ts';
+import { gitWorktreeProject } from '../../../../src/lib/drivers/worktree-project.ts';
 import { EventLoopActivity } from '../../../../src/lib/event-loop-activity.ts';
 import { findLocally } from '../../../../src/lib/drivers/find-operation.ts';
 import { delayedWorktree, syntheticCodex } from '../../../helpers/worktree-delay.ts';
@@ -36,7 +36,8 @@ describe('Codex discovery with delayed worktree storage', () => {
       expect(groups).toHaveLength(1);
       expect(groups[0].place.folder).toBe(fixture.project);
       expect(groups[0].work[0].ref.id).toBe('thread');
-      expect(groups[0].work[0].place.folder).toBe(fixture.folder);
+      expect(groups[0].work[0].place.folder).toBe(fixture.project);
+      expect(groups[0].work[0].execution?.directory).toBe(fixture.folder);
       expect(maxLagMs).toBeLessThan(250);
       const names = activity.drain().entries.map((entry) => entry.name);
       for (const phase of [

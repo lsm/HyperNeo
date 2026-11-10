@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, SpaceLongHorizonAgentEventSubscription } from '@hyperneo/shared';
-import { setupSpaceAgentSubscriptionHandlers } from '../../../../src/lib/rpc-handlers/space-agent-subscription-handlers';
+import { setupSpaceAgentSubscriptionHandlers } from '../../../../../space/src/rpc/space-agent-subscription-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';

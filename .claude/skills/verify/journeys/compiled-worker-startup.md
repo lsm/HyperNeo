@@ -49,6 +49,12 @@ bun .claude/skills/verify/compiled-worker-startup.ts dist/bin/hyperneo-windows-x
 The child uses its own HOME/USERPROFILE, DB, data directory and temporary files.
 Keep build.json, daemon.log and cleanup.json. Do not use the human's daemon.
 
+The WS probe uses the isolated daemon's owner-only local credential file. On
+Windows the daemon creates an ACL restricted to the current OS user before
+writing the token. The helper warms the ACL cache, grants Everyone read access to the disposable
+credential with icacls, verifies that its changed identity is rejected, and restores
+the private ACL. Reconnects of an unchanged file reuse only the ACL verdict.
+
 ## Compiled fixture timeout regression
 
 The fixture's outer test budget is 50 seconds: 10 for source execution, 30 for

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { fstatSync, read } from 'node:fs';
 import { promisify } from 'node:util';
 import type { ArtifactReadResult } from '@hyperneo/shared/types/artifact-file';
+import { VIDEO_MAX_BYTES } from '@hyperneo/shared/types/video-container';
 import type { StoredArtifactFile } from '../../storage/repositories/artifact-file-read-repository.ts';
 import { withStoredArtifactDescriptor } from '../runtime-artifact-open.ts';
 
@@ -15,6 +16,8 @@ export async function readArtifactChunk(
   const unavailable = { accepted: false as const, reason: 'unavailable' as const };
   const result = await withStoredArtifactDescriptor(root, row.sha256, async (fd, initial) => {
     if (initial.size !== row.byte_length || offset > initial.size) return unavailable;
+    if (JSON.parse(row.receipt).artifact.kind === 'video' && initial.size > VIDEO_MAX_BYTES)
+      return { accepted: false as const, reason: 'size_limit' as const };
     const hash = createHash('sha256');
     const chunk = Buffer.alloc(Math.min(maxBytes, initial.size - offset));
     const buffer = Buffer.alloc(256 * 1024);

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { ArtifactFileRepository } from '../../../packages/daemon/src/storage/repositories/artifact-file-repository.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
-import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import { readBoundGitBlob } from '../../../packages/daemon/src/lib/artifacts/git-blob.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
@@ -64,17 +64,17 @@ const concurrentInput = { ...input, requestId: randomUUID() };
 const concurrent = await Promise.all([call('artifact.reference.resolve', concurrentInput), call('artifact.reference.resolve', concurrentInput)]);
 assert(concurrent[0].accepted); assert.deepEqual(concurrent[0], concurrent[1]);
 const beforeRaces = count();
-const moved = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, undefined, async (target) => {
+const moved = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, async (target) => {
  const blob = await readBoundGitBlob(target); writeFileSync(join(root, 'pr.json'), JSON.stringify({ ...originalPr, headRefOid: 'd'.repeat(40) })); return blob;
 })]);
 assert.deepEqual(await call('artifact.reference.resolve', { ...selection, requestId: randomUUID() }, moved), unavailable); assert.equal(count(), beforeRaces);
 writeFileSync(join(root, 'pr.json'), JSON.stringify(originalPr));
 
-const changing = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, undefined, async (target) => {
+const changing = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, async (target) => {
  const blob = await readBoundGitBlob(target); source('removed during Git lookup'); return blob;
 })]);
 assert.deepEqual(await call('artifact.reference.resolve', { ...input, requestId: randomUUID() }, changing), unavailable); assert.equal(count(), beforeRaces); source();
-const revoked = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, undefined, async (target) => {
+const revoked = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, async (target) => {
  const blob = await readBoundGitBlob(target); db.prepare(`UPDATE neo_todo_sessions SET ref = ? WHERE todo_id='todo'`).run(JSON.stringify({ adapter: 'hyperneo', id: 'replacement' })); return blob;
 })]);
 assert.deepEqual(await call('artifact.reference.resolve', { ...input, requestId: randomUUID() }, revoked), unavailable); assert.equal(count(), beforeRaces);
@@ -91,7 +91,7 @@ const fixtures = structuredClone(originalFixtures); const tree = Object.keys(fix
 fixtures[tree].tree[0].mode = '120000'; writeFileSync(join(root, 'git-fixtures.json'), JSON.stringify(fixtures));
 assert.deepEqual(await call('artifact.reference.resolve', { ...input, requestId: randomUUID() }), unavailable); assert.equal(count(), beforeRaces);
 writeFileSync(join(root, 'git-fixtures.json'), JSON.stringify(originalFixtures));
-const local = await createArtifactRegistration(() => db, data, join(root, 'home')).execute({ requestId: 'local', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Local snapshot' }, human) as { accepted: boolean; artifact: { artifactId: string } }; assert(local.accepted);
+const local = await legacyAttachmentFixture(() => db, data, join(root, 'home')).execute({ requestId: 'local', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Local snapshot' }, human) as { accepted: boolean; artifact: { artifactId: string } }; assert(local.accepted);
 assert.deepEqual((await call('artifact.file.get', { artifactId: local.artifact.artifactId })).metadata.revision, { kind: 'worktree' });
 const legacy = new ArtifactFileRepository(db).save({ kind: 'todo', id: 'todo' }, 'legacy', 'legacy', hash, { ...first.artifact, artifactId: randomUUID() } as Parameters<ArtifactFileRepository['save']>[4], JSON.stringify({ adapter: 'hyperneo', id: 'worker' }), 'docs/report.md');
 assert.equal((await call('artifact.file.get', { artifactId: legacy.artifact.artifactId })).metadata.revision, undefined);

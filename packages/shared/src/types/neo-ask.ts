@@ -1,5 +1,5 @@
 import type { WorkerIdentity } from './worker-identity.ts';
-import type { ArtifactProjection } from './artifact-file.ts';
+import type { ArtifactProjection, ArtifactRef, PublicHandoffReference } from './artifact-file.ts';
 
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
@@ -8,11 +8,11 @@ export interface NeoAsk {
   id: string;
   goalId?: string | null;
   projectId: string | null;
-  repo: string | null;
   parentId: string | null;
   sessionId: string;
   originMessageId: string | null;
   title: string;
+  topic: string | null;
   request: string;
   status: NeoAskStatus;
   outcome: string | null;
@@ -44,6 +44,7 @@ export type NeoTodoBlocker =
   | 'failure'
   | 'question'
   | 'needs-human'
+  | 'environment'
   | 'stalled'
   | 'held';
 
@@ -57,7 +58,6 @@ export interface NeoTodo extends ArtifactProjection {
   check: NeoTodoCheck | null;
   instruction: string | null;
   named: Record<string, unknown> | null;
-  repo: string | null;
   state: NeoTodoState;
   reason: string | null;
   blockedReason: string | null;
@@ -73,6 +73,8 @@ export interface NeoTodo extends ArtifactProjection {
   updatedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
+  approvedAt: number | null;
+  approvalQuestionId: string | null;
 }
 
 export type NeoQuestionKind = 'yesno' | 'choice' | 'reply' | 'start';
@@ -92,7 +94,19 @@ export interface NeoQuestionSource extends WorkerIdentity {
   link: string | null;
 }
 
-export interface NeoQuestion extends ArtifactProjection {
+export interface NeoAnswerProvenance {
+  words: string;
+  via: string;
+  viaName: string;
+  where: string;
+  when: string;
+  at: number;
+}
+
+export interface NeoQuestion {
+  answerProvenance?: NeoAnswerProvenance;
+  readonly artifacts?: readonly (ArtifactRef | PublicHandoffReference)[];
+  retireWhen?: NeoTodoCheck;
   sourceSession?: NeoQuestionSource;
   todoId?: string | null;
   document?: string | null;

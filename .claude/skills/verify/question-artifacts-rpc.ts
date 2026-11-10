@@ -1,3 +1,5 @@
+import { Database as FixtureDatabase } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import assert from 'node:assert/strict';
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,6 +19,7 @@ if (phase === 'seed') {
   ], { env: process.env, stdout: 'inherit', stderr: 'inherit' });
   assert.equal(await child.exited, 0);
 } else {
+  const historical = (input: Parameters<ReturnType<typeof legacyAttachmentFixture>['execute']>[0]) => { const fixtureDb = new FixtureDatabase(join(root, 'data/daemon.db')); try { return legacyAttachmentFixture(() => fixtureDb, join(root, 'data')).execute(input); } finally { fixtureDb.close(); } };
   const rpc = async (name: string, input: unknown) => {
     const child = Bun.spawn([
       process.execPath,
@@ -31,7 +34,7 @@ if (phase === 'seed') {
   };
   const evidence = join(root, 'evidence', 'question-artifacts.json');
   const saved = phase === 'capture' ? null : JSON.parse(readFileSync(evidence, 'utf8'));
-  const registered = saved?.registered ?? await rpc('artifact.file.register', {
+  const registered = saved?.registered ?? await historical({
     requestId: 'question-report', context: { kind: 'todo', id: 'todo' },
     path: 'report.md', title: 'Synthetic review report',
   });

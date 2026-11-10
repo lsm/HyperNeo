@@ -126,21 +126,6 @@ describe('ObservedToolInventory', () => {
     expect(inventory.snapshot().state).toBe('observed');
   });
 
-  it('does not certify ACP attachments even when init-like data is supplied', () => {
-    const inventory = new ObservedToolInventory();
-    const token = new QueryAttemptRegistry().allocate();
-    inventory.begin(token, 'acp');
-    inventory.captureInit(token, init);
-    inventory.captureStatus(token, [{ name: 'browser', status: 'connected' }]);
-    expect(inventory.snapshot()).toEqual({
-      state: 'unverified',
-      tools: [],
-      skills: [],
-      plugins: [],
-      mcpServers: [],
-    });
-  });
-
   it('distinguishes missing status tools from an explicitly empty tool list', () => {
     const inventory = new ObservedToolInventory();
     const token = new QueryAttemptRegistry().allocate();

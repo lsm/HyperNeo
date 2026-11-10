@@ -1,3 +1,4 @@
+import { CodingReviewHandoff, codingAssignmentReads } from './review-merge-hold-worker.ts';
 import { codingStageTargetReads } from './stage-target-db.ts';
 import { planCodingStageTarget } from './stage-preferences.ts';
 import { CodingPrLedgerRepository } from './pr-ledger.ts';
@@ -76,6 +77,19 @@ export class CodingAssignmentsRepository {
         CodingAssignment.parse(JSON.parse(row.value_json)),
       ])
     );
+  }
+
+  async reviewHoldsCurrent(url: string, head: string) {
+    const rows = await gatewayFor(this.db).call(
+      codingAssignmentReads,
+      'reviewHolds',
+      githubUrlKey(url),
+      head
+    );
+    return rows.map((row) => ({
+      ...row,
+      assignment: CodingReviewHandoff.safeParse(JSON.parse(row.assignment)).data ?? null,
+    }));
   }
 
   record(todoId: string, stage: Stage, input: CodingAssignment): boolean {

@@ -100,7 +100,7 @@ describe('activated ask settlement', () => {
       2
     );
   };
-  const settle = (status: 'done' | 'dropped' = 'done') =>
+  const settle = (status: 'done' | 'dropped' = 'dropped') =>
     ops
       .find((op) => op.name === 'neo.ask.settle')!
       .execute(
@@ -127,19 +127,18 @@ describe('activated ask settlement', () => {
       },
       3
     );
-  const split = () =>
+  const reopen = () =>
     ops
       .find((op) => op.name === 'neo.ask.open')!
       .execute(
         { title: 'Work', request: 'Keep work', todos: [] },
         { source: 'mcp', role: 'neo', sessionId: 'neo' }
       ) as Promise<Receipt>;
-  const makeSplit = () => {
+  const historicalChild = () => {
     db.prepare('DELETE FROM neo_todos WHERE id=?').run('first');
     store.openAsk({
       id: 'child',
       parentId: 'ask',
-      repo: 'github.com/fixture/child',
       title: 'Child',
       request: 'Child work',
       projectId: null,
@@ -164,6 +163,42 @@ describe('activated ask settlement', () => {
     );
   };
 
+  test.each(['rpc', 'mcp'] as const)(
+    '%s done refuses unfinished work before stopping any worker',
+    async (source) => {
+      question();
+      const before = snapshot();
+      const result = await ops
+        .find((op) => op.name === 'neo.ask.settle')!
+        .execute(
+          { askId: 'ask', status: 'done', outcome: 'Too soon' },
+          { source, principal: 'local', role: 'neo', sessionId: 'neo' }
+        );
+      expect(result).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('todos_unfinished:'),
+      });
+      expect(snapshot()).toEqual(before);
+      expect(effects).toEqual([]);
+    }
+  );
+
+  test('an unexplained legacy removal can settle dropped without certifying done', async () => {
+    store.updateTodo(store.getTodo('first')!, { state: 'removed', reason: null }, 3);
+    const before = snapshot();
+    expect(await settle('done')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('settle dropped'),
+    });
+    expect(snapshot()).toEqual(before);
+    expect(effects).toEqual([]);
+    expect(await settle('dropped')).toMatchObject({
+      ok: true,
+      ask: { status: 'dropped' },
+      todos: [{ state: 'removed', reason: null }],
+    });
+  });
+
   test('current admission, sweeps and receipts avoid the main repository', async () => {
     const report = store.getTodo('first')!.report;
     vi.spyOn(store, 'getAsk').mockImplementation(() => {
@@ -173,7 +208,7 @@ describe('activated ask settlement', () => {
       throw new Error('Main settlement sweep');
     });
     const result = await settle();
-    expect(result).toMatchObject({ ok: true, todos: [{ state: 'closed_unverified', report }] });
+    expect(result).toMatchObject({ ok: true, todos: [{ state: 'removed', report }] });
     expect(effects).toEqual(['stop:first', 'changed']);
   });
 
@@ -192,6 +227,9 @@ describe('activated ask settlement', () => {
     '%s stop failure leaves work open with its partial-stop diagnostic',
     async (status) => {
       seed('second');
+      if (status === 'done')
+        for (const todo of store.listTodos('ask'))
+          store.updateTodo(todo, { state: 'done', evidence: 'Observed' }, 3);
       sessions.recordRef('first', { adapter: 'hyperneo', id: 'worker' }, 2);
       onStop = async (todo) => (todo.id === 'second' ? 'stop_failed: offline' : null);
       const before = snapshot(),
@@ -208,25 +246,20 @@ describe('activated ask settlement', () => {
     }
   );
 
-  test('current unfinished work and a late bound worker survive in the committed receipt', async () => {
+  test('a todo added during stops prevents done without publishing a settlement', async () => {
+    store.updateTodo(store.getTodo('first')!, { state: 'done', evidence: 'Observed' }, 3);
     onStop = async () => {
       seed('late');
-      sessions.recordRef('late', { adapter: 'hyperneo', id: 'late-worker' }, 3);
       onStop = async () => null;
       return null;
     };
-    const result = await settle();
-    expect(result).toMatchObject({
-      ok: true,
-      todos: [
-        { id: 'first', state: 'closed_unverified' },
-        { id: 'late', state: 'closed_unverified' },
-      ],
-    });
-    expect(result.ok && result.records?.[0]).toContain('late (late)');
-    expect(effects).toEqual(['stop:first', 'changed', 'stop:late']);
+    const result = await settle('done');
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('late (late)') });
+    expect(store.getAsk('ask')?.status).toBe('open');
+    expect(store.getTodo('first')?.state).toBe('done');
+    expect(store.getTodo('late')?.state).toBe('doing');
+    expect(effects).toEqual(['stop:first']);
   });
-
   test('a replacement binding is cleaned up after commit', async () => {
     sessions.recordRef('first', { adapter: 'hyperneo', id: 'prior-worker' }, 2);
     beforeWrite = () => {
@@ -253,7 +286,7 @@ describe('activated ask settlement', () => {
       expect(await Promise.race([atWrite.then(() => 'write'), pending.then(() => 'early')])).toBe(
         'write'
       );
-      expect(store.getAsk('ask')!.status).toBe('done');
+      expect(store.getAsk('ask')!.status).toBe('dropped');
       expect(effects).toEqual(['stop:first']);
     } finally {
       release();
@@ -298,28 +331,26 @@ describe('activated ask settlement', () => {
     expect(effects).toEqual(['stop:first']);
   });
 
-  test('split-parent settlement retains child reports and cards and announces once', async () => {
-    makeSplit();
+  test('reopening a parent leaves it open and retains historical child reports and cards', async () => {
+    historicalChild();
     const child = store.getTodo('child-work'),
       card = store.getQuestion('child-card');
-    expect(await split()).toMatchObject({
+    expect(await reopen()).toMatchObject({
       ok: true,
-      ask: { status: 'done' },
+      ask: { status: 'open' },
       todos: [{ id: 'child-work', report: child!.report }],
     });
     expect(store.getTodo('child-work')).toEqual(child);
     expect(store.getQuestion('child-card')).toEqual(card);
-    expect(effects).toEqual(['changed']);
-    await split();
-    expect(effects).toEqual(['changed']);
+    expect(effects).toEqual([]);
+    await reopen();
+    expect(effects).toEqual([]);
   });
 
-  test('a split parent gaining root work before commit remains open', async () => {
-    makeSplit();
-    beforeWrite = () => {
-      seed('root-late');
-    };
-    expect(await split()).toMatchObject({ ok: true, ask: { status: 'open' } });
+  test('reopening a historical parent retains its own work', async () => {
+    historicalChild();
+    seed('root-late');
+    expect(await reopen()).toMatchObject({ ok: true, ask: { status: 'open' } });
     expect(store.getTodo('root-late')!.state).toBe('doing');
     expect(effects).toEqual([]);
   });

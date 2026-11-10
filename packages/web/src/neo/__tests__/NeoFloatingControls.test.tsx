@@ -15,6 +15,7 @@ beforeEach(async () => {
   vi.doMock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
   vi.doMock('../../lib/state.ts', () => ({
     connectionState: { value: 'connected', subscribe: () => () => {} },
+    systemState: { value: null },
     reconnectAttemptCount: { value: 0, subscribe: () => () => {} },
   }));
   vi.doMock('../NeoComposer.tsx', () => ({

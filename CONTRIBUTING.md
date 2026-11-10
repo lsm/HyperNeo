@@ -63,7 +63,7 @@ This project uses `dev` as the sole integration and release branch:
 - Do not run `bun test` from the repository root; this monorepo blocks it intentionally.
 - Run the full quality suite before submitting a PR: `bun run check`
 - For daemon unit shards: `./scripts/test-daemon.sh`
-- For targeted daemon tests: `cd packages/daemon && bun test ./tests/unit/some-test.test.ts`
+- For targeted daemon unit tests: `cd packages/daemon && NODE_ENV=test node_modules/.bin/vitest run tests/unit/some-test.test.ts`
 - For web tests: `cd packages/web && bunx vitest run`
 
 ### Commit Messages
@@ -153,7 +153,7 @@ bun run check
 ./scripts/test-daemon.sh
 
 # Or run targeted daemon tests package-locally
-(cd packages/daemon && bun test ./tests/unit/some-test.test.ts)
+(cd packages/daemon && NODE_ENV=test node_modules/.bin/vitest run tests/unit/some-test.test.ts)
 ```
 
 ### Environment Variables

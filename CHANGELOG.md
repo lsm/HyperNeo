@@ -4,6 +4,185 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.56.2] - 2026-11-09
+
+- Refresh Neo's prompt and notify it when a pack setting changes (#10295).
+- CI: fall back to the pinned Bun package when the GitHub download fails (#10309).
+- Keep coding todo sends in their worker repository, including renamed GitHub repositories (#10283, #10301).
+- Guide multi-PR work through dependent todos and attach unclaimed worker PRs to their sole coding todo (#10285, #10297).
+- Ship coding guidance as an SDK skill and finish composer interaction behavior (#10292, #10291).
+- Release transcription slots and fallback upload resources when requests are cancelled (#10299, #10303).
+
+## [0.56.1] - 2026-11-08
+
+Includes the changes listed under 0.56.0.
+
+- Avoid database-lock failures during concurrent task completion (#10287).
+
+## [0.56.0] - 2026-11-08
+
+### Neo and workers
+
+- Keep open plans through context compaction and refuse completion while todos remain unfinished (#10100, #10103, #10108, #10153).
+- Recover unavailable Codex threads with saved context and archive them through the owned app-server (#10206, #10256).
+- Add opt-in OAP session transport with owned hub processes, tool events and recovery handling (#10128, #10134, #10136, #10169).
+- Attach verified worker handoffs to cards and preview their artifacts (#10207, #10212).
+
+### Web and voice
+
+- Consolidate settings into Preferences, Connections & Services, and Sessions & Harness; expose model-specific thinking and delegation preferences (#10050, #10066, #10070, #10078, #10085).
+- Show card topics and filter cards by topic (#10218, #10223, #10227).
+- Preserve quotes, attachment placement and scroll position while messages update (#10058, #10059, #10075, #10079).
+- Use Opus for web voice uploads and retry busy speech backends within the deadline (#10140, #10221).
+
+### Pairing and security
+
+- Add pairing QR codes, two-way human confirmation and terminal approval controls (#10234, #10242, #10248).
+- Distinguish denied, expired and already-used pairing codes, and wait for pending approval (#10225, #10230, #10244, #10246, #10264).
+- Keep the daemon data directory private to its owner (#10238).
+
+## [0.55.2] - 2026-11-06
+
+The v0.55.1 tag was never published: its desktop build failed on a wrong lockfile entry. This release carries the same changes.
+
+### Web
+
+- Web sessions load 50 messages at a time, and older ones through load-more (#10044).
+- The Neo page keeps its input box when a session's raw transcript is too large to load (#10042).
+- Sent photos show above the words, and sent text files show as cards (#10038, #10040).
+
+### Neo and workers
+
+- Sign-in, verification codes, forms, payment and commitments are now shared human preferences that every pack and worker follows; each defaults to the most cautious choice and Neo asks once when it first matters (#10036).
+- A started todo waits for its unfinished prerequisites (#10022).
+- Worker turn records no longer stop advancing after a compaction replays old timestamps (#10025).
+
+## [0.55.0] - 2026-11-06
+
+### Before upgrading
+
+- Space is off by default, and compiled builds do not include it (#9915 and related moves). A compiled daemon started with `HYPERNEO_SPACE=on` exits with a clear error.
+- ACP support and the OpenCode worker are removed (#9981, #10002). Copilot sessions are now discovered through its SDK.
+
+### Neo and workers
+
+- Neo is the default web entry and the only writer of human cards; cards that break the card rules are refused (#9888, #9890, #9902, #9930, #9946).
+- A todo's pull requests are placed by the worker turn that produced them (#9892, #9995, #10005).
+- Worker names and status sync into the DB, so readers no longer ask each worker live, which removes most event-loop stalls (#9926, #9937, #9960, #9980, #9999).
+- Copy card links as Markdown, and read them with an origin-bound read-only agent credential (#9867, #9906).
+
+## [0.54.0] - 2026-11-04
+
+### Before upgrading
+
+- WebSocket clients now require paired credentials (#9582). Pair every existing push relay **before upgrading** with `hyperneo pair --kind relay`; otherwise its pushes stop. Updating the daemon does not pair a relay automatically.
+
+### Neo and workers
+
+- Listen to the active composer's session and speak brief worker replies, while preserving Neo's explicit speech (#9638, #9563, #9554).
+- Invite paired Neo contacts and exchange text with them (#9612, #9619, #9625).
+- Report local worker-client health, reuse workers by resolved configuration and reconcile answers by exact input identity (#9550, #9522, #9235).
+- Preserve merge retry budgets while CI is pending; hand zero-check PRs to the human by default unless explicitly opted in (#9627, #9603).
+
+### Files and architecture
+
+- Keep file references live, recognize paths beside Chinese text, preserve question quotes and limit Open to worker sessions (#9566, #9644, #9541, #9636).
+- Separate Space extensions from daemon/web core and move GitHub polling decisions onto DB workers (#9578, #9580, #9584, #9608, #9656, #9658).
+- Upgrade Claude Agent SDK to 0.3.316 (#9552).
+
+### API compatibility
+
+- Compared with v0.53.0, phone-used operations have **0 breaking, 1 risky, 2 safe** changes. Seven phone push payloads gain their first recorded schemas; historical payload compatibility is not asserted.
+- Risky: `artifact.reference.resolve` adds `{accepted:false, reason:"client_upgrade_required", detail:string}`. Phone source checks `accepted` before decoding and treats unknown refusal reasons as `ArtifactRefused`; current file cards call `file.reference.read` instead.
+- Non-phone breaking: `artifact.file.register` is removed. `work.start` input `message` now has explicit `maxLength:100000`; the old source enforced a 20000-character body limit through a refinement, so this is not simply a shorter input limit. Neither operation is called by the audited phone sources.
+- Another non-phone risk: `work.read` can return `claude-desktop` and `copilot-cli` adapters. The full API report is included with release evidence.
+
+## [0.53.0] - 2026-11-02
+
+### Google connections
+
+- Manage Google accounts in Connections settings and refresh grants through the daemon lifecycle (#9487, #9485).
+- Search Gmail, read bounded threads and prepare unsent MIME drafts through MCP (#9488, #9491, #9492).
+- Read bounded Calendar pages through MCP (#9493).
+
+### Neo replies and files
+
+- Open the session named in a Neo publication using the existing session links (#9499, #9501).
+- Read current text and media from authorized file references, preview path links and show current-file cards in replies (#9505, #9507, #9509, #9511, #9513).
+
+### Fixes
+
+- Reject publication links that cannot be saved (#9497).
+- Cap root Neo Bash commands at two minutes and explain timeout handoffs (#9495).
+- Keep phone Work dialog titles inside the viewport (#9503).
+- Retry failed daemon merge attempts with a durable limit (#9484).
+
+## [0.52.0] - 2026-10-30
+
+### Todo follow-through
+
+- Remind Neo about each stalled todo, and daily about check-only todos; keep delivery reminders concise (#9436, #9450, #9430).
+- Record a worker's final-line blocker and let Neo triage human blockers before asking the human (#9447, #9479).
+- Retire Neo questions once their pack checks pass (#9441).
+
+### Coding and PR merges
+
+- Merge coding PRs from the daemon once saved merge policy and approval hold; isolate unreadable PRs in merge sweeps (#9432, #9444, #9457, #9454, #9475).
+- Include saved merge facts in coding context (#9460).
+
+### Voice
+
+- Resume voice streams after a client disconnects, and accept Opus input for resumable streams (#9424, #9453).
+
+### Fixes
+
+- Route Claude sends by verified receiver ownership (#9473).
+- Reclaim only scratch directories the daemon positively owns; keep SDK backup directory access during startup (#9439, #9452).
+- Find unloaded cards in web Work search; distinguish report documents from home versions (#9413, #9481).
+- Clean temporary directories owned by test fixtures (#9428).
+
+### Groundwork
+
+- Google connections: isolated status and credentials, identity checks during code exchange, one-use loopback consent and human lifecycle operations (#9470, #9476, #9477, #9482); shared account connections design (#8623).
+- Move GitHub watched-repository, polling, filter and Space-enable persistence onto the DB writer (#9395, #9398, #9400, #9402, #9404, #9406, #9408, #9410, #9412, #9417, #9420, #9422, #9426).
+
+## [0.51.0] - 2026-10-28
+
+### Voice replies
+
+- Add spoken Neo replies for the opted-in client and session; cancel pending speech on disconnect without replaying it on reconnect (#9298).
+- Stream spoken reply audio from the daemon, and keep spoken replies from repeating what is already on screen (#9369, #9388).
+- Queue Send while transcription is pending (#9261).
+- Use explicit batch/live ASR endpoints; move recording storage and tool recovery writes off the daemon main thread (#9209, #9214, #9222).
+
+### Quote Markdown and conversations
+
+- Render quote excerpts as Markdown, preserve the browser context menu and improve message touch targets, folding and long-message readability (#9300, #9116, #9238, #9227, #9243).
+- Attribute publications to the human input being processed; bind new todos and questions to its ask (#9293, #9338).
+- Search Chinese card/message text, rank Work results and open references at the exact item (#9152, #9248, #9273).
+
+### Todo status and scheduling
+
+- Keep human-waiting todos waiting, and block completion when a required check is unmet (#9292, #9343).
+- Follow through on idle workers, start dependency-ready steps under caps, and support holds and priorities (#9154, #9164, #9166, #9158, #9170, #9178, #9184, #9186).
+- Show open questions in Work snapshots and collapsed cards; restore folding for completed todos and collect history in one dialog (#9226, #9205, #9239, #9253).
+
+### Database writer work
+
+- Revoke paired devices and observe connected-device revocations without blocking the daemon; move pairing approval, redemption, creation and human reset work to DB workers (#9302, #9304, #9270, #9278, #9295, #9315).
+- Move session reminders, schedules, workspaces, GitHub inbox delivery, publication pages, turn vectors and coding-ledger operations through DB workers (#9143, #9252, #9266, #9228, #9215, #9321, #9325, #9247, #9208, #9218, #9244).
+- Route global and Space extension configuration, GitHub Space settings and watched-repository reads through DB writers (#9377, #9379, #9381, #9383, #9385, #9389, #9391, #9393).
+
+### Agent fixes
+
+- Hold stalled streams until the network returns instead of failing the turn; let the query failure latch expire and park deliveries while it holds (#9375, #9371).
+- Show the real dead-letter reason instead of a fixed kickoff banner (#9373).
+- Pin the Copilot worker to SDK 1.0.28 / CLI 1.0.105 (#9353).
+- Bound stream silence while tool calls are open; surface deferred restart, reconciliation and terminal query failures (#9284, #9285, #9110).
+- Preserve model capacity across auto-compaction, stop old queries before fallback and bound repeated delivery parks (#9341, #9134, #9283).
+- Prevent overlapping Desktop-owned sends, expose worker work locations and reuse idle workers at the same place (#9245, #9105, #9345).
+- Fail the required CI gate when a required job is cancelled (#9311).
+
 ## [0.50.0] - 2026-10-27
 
 ### Added
@@ -365,7 +544,6 @@ Patch release: v0.44.0 never reached npm because its Windows build failed.
 - **Workflow runtime hardening**: Durable workflow definition versions and external-event subscriptions; runtime-agnostic spawn seam and universal-read dispatcher; Coder-Only default workflow for unpinned tasks; workflow dead-loop detection.
 - **Session delivery hardening**: Session FIFO delivery, ensure-session/worker admission pipelines, stuck-initialization delivery refusal, per-call wait caps, stale queue recovery, model-switch duplicate-delivery prevention, and recoverable provider auto-reset/retry.
 - **Provider and model updates**: Model discovery for DeepSeek, GLM/Z.ai, Kimi, MiniMax, Ollama, OpenRouter, and ACP with persisted cache and reconciliation, force refresh, curated-first last-good fallback, and failure diagnostics; GPT-5.6 Codex, Kimi K3 256K with vision and granular thinking levels, and GLM-5.3 Flash catalog routing; restored Copilot SDK embedded startup and dynamic model listing.
-- **Dual runtime**: Bun and Deno support seams and documentation for the daemon.
 
 ### Changed
 

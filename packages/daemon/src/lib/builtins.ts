@@ -1,3 +1,5 @@
+import { NEO_PACK_SKILLS } from '@hyperneo/prompts';
+
 export interface BuiltinMcpServer {
   name: string;
   description: string;
@@ -112,4 +114,14 @@ export const BUILTIN_SKILLS: readonly BuiltinSkill[] = [
     enabled: true,
     spaceOnly: true,
   },
+  ...Object.values(NEO_PACK_SKILLS).map(
+    (skill): BuiltinSkill => ({
+      kind: 'builtin-command',
+      name: skill.name,
+      displayName: `Neo ${skill.name}`,
+      description: skill.description,
+      commandName: skill.name,
+      enabled: false,
+    })
+  ),
 ] as const;

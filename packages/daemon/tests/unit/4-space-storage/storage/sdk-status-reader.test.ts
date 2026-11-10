@@ -251,9 +251,9 @@ test('reader projections change only returned pages, never original or full-outp
       undefined,
       undefined,
       undefined,
-      capSdkMessage
+      capSdkMessage('projected-page')
     );
-    expect(projected.messages).toEqual(original.messages.map(capSdkMessage));
+    expect(projected.messages).toEqual(original.messages.map(capSdkMessage('projected-page')));
     expect(projected.messages[0]).toMatchObject({ output_capped: true });
     expect(
       repo.getSDKMessages(
@@ -263,7 +263,7 @@ test('reader projections change only returned pages, never original or full-outp
         undefined,
         undefined,
         undefined,
-        capSdkMessage
+        capSdkMessage('projected-page')
       )
     ).toEqual(projected);
     const status = repo.getUserMessagesByStatus('projected-page', 'consumed', 1, 'asc', (m) => ({
@@ -594,6 +594,17 @@ test('a memory daemon can read an external file off main and close that reader',
   const rows = { roots: [], folders: [], threads: [] };
   worker.reply(worker.requests[0], rows);
   expect(await snapshot).toEqual(rows);
+  await reader.close();
+  expect(worker.stopped).toBe(true);
+});
+
+test('a memory daemon can read Claude session files off main', async () => {
+  const worker = new TestWorker();
+  const reader = new SDKStatusReader(':memory:', () => worker as unknown as Worker);
+  const records = reader.readClaudeRecords('/synthetic-sessions');
+  worker.onmessage?.({ data: { ready: true } } as MessageEvent<SDKStatusReply>);
+  worker.reply(worker.requests[0], []);
+  expect(await records).toEqual([]);
   await reader.close();
   expect(worker.stopped).toBe(true);
 });

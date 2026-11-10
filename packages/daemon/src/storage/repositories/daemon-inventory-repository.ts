@@ -3,10 +3,12 @@ import type {
   DaemonInventoryPage,
 } from '@hyperneo/shared/types/daemon-snapshot';
 import type { Database } from '../sqlite-compat.ts';
+import { schemaTableExists } from '../schema/extensions.ts';
 
 const SOURCES = [
   {
     kind: 'session',
+    table: 'sessions',
     query: `SELECT id, title AS name, status, last_active_at AS updatedAt,
       COALESCE(main_repo_path, json_extract(metadata, '$.executionProjectPath'), workspace_path) AS workspacePath,
       space_id AS spaceId, parent_id AS parentSessionId FROM sessions`,
@@ -14,6 +16,7 @@ const SOURCES = [
   },
   {
     kind: 'space',
+    table: 'spaces',
     query: `SELECT id, name, CASE WHEN status = 'archived' THEN status
       WHEN stopped = 1 THEN 'stopped' WHEN paused = 1 THEN 'paused' ELSE status END AS status,
       updated_at AS updatedAt, workspace_path AS workspacePath FROM spaces`,
@@ -21,6 +24,7 @@ const SOURCES = [
   },
   {
     kind: 'task',
+    table: 'space_tasks',
     query: `SELECT id, title AS name, status, updated_at AS updatedAt,
       workspace_path AS workspacePath, space_id AS spaceId, archived_at AS archivedAt,
       workflow_run_id AS workflowRunId, task_agent_session_id AS sessionId,
@@ -29,30 +33,35 @@ const SOURCES = [
   },
   {
     kind: 'agent',
+    table: 'space_long_horizon_agents',
     query: `SELECT id, display_name AS name, status, updated_at AS updatedAt,
       space_id AS spaceId, session_id AS sessionId FROM space_long_horizon_agents`,
     visible: "status != 'archived'",
   },
   {
     kind: 'workflow',
+    table: 'space_workflows',
     query: `SELECT id, name, CASE WHEN disabled = 1 THEN 'disabled' ELSE 'enabled' END AS status,
       updated_at AS updatedAt, space_id AS spaceId FROM space_workflows`,
     visible: '1 = 1',
   },
   {
     kind: 'workflow_run',
+    table: 'space_workflow_runs',
     query: `SELECT id, title AS name, status, updated_at AS updatedAt,
       space_id AS spaceId, workflow_id AS workflowId FROM space_workflow_runs`,
     visible: '1 = 1',
   },
   {
     kind: 'goal',
+    table: 'space_goals',
     query: `SELECT id, title AS name, status, updated_at AS updatedAt,
       workspace_path AS workspacePath, space_id AS spaceId FROM space_goals`,
     visible: "status != 'archived'",
   },
   {
     kind: 'evolution_scope',
+    table: 'evolution_scopes',
     query: `SELECT id, name, NULL AS status, updated_at AS updatedAt,
       space_id AS spaceId, space_goal_id AS goalId, parent_scope_id AS evolutionScopeId
       FROM evolution_scopes`,
@@ -108,10 +117,16 @@ function entryFromRow(row: InventoryRow): DaemonInventoryEntry {
   };
 }
 
+const SPACE_OWNED_SESSION = `OR EXISTS (SELECT 1 FROM direct_task_session_provenance p WHERE p.session_id = s.id)
+        OR EXISTS (SELECT 1 FROM node_executions e WHERE e.agent_session_id = s.id)
+        OR EXISTS (SELECT 1 FROM space_long_horizon_agents a
+          WHERE a.session_id = s.id OR a.session_id = s.parent_id)`;
+
 export class DaemonInventoryRepository {
   constructor(private readonly db: Database) {}
 
   readSession(sessionId: string): SessionInspectionRecord | null {
+    const spaceOwned = schemaTableExists(this.db, 'spaces') ? SPACE_OWNED_SESSION : '';
     return (
       (this.db
         .prepare(`SELECT s.id, s.title AS name, s.status,
@@ -127,10 +142,7 @@ export class DaemonInventoryRepository {
           OR json_type(s.session_context, '$.taskId') IS NOT NULL
           OR json_type(s.session_context, '$.roomId') IS NOT NULL
           OR json_type(s.session_context, '$.lobbyId') IS NOT NULL ELSE 1 END
-        OR EXISTS (SELECT 1 FROM direct_task_session_provenance p WHERE p.session_id = s.id)
-        OR EXISTS (SELECT 1 FROM node_executions e WHERE e.agent_session_id = s.id)
-        OR EXISTS (SELECT 1 FROM space_long_horizon_agents a
-          WHERE a.session_id = s.id OR a.session_id = s.parent_id)) AS scopeOwned,
+        ${spaceOwned}) AS scopeOwned,
       EXISTS (SELECT 1 FROM neo_session_bindings b WHERE b.session_id = s.id OR b.session_id = s.parent_id) AS neoBound
       FROM sessions s WHERE s.id = ? LIMIT 1`)
         .get(sessionId) as SessionInspectionRecord | null) ?? null
@@ -147,7 +159,8 @@ export class DaemonInventoryRepository {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50)
       throw new Error('Invalid inventory limit');
     return this.db.transaction(() =>
-      SOURCES.map(({ kind, query, visible }) => {
+      SOURCES.map(({ kind, table, query, visible }) => {
+        if (!schemaTableExists(this.db, table)) return { kind, total: 0, entries: [] };
         const from = `FROM (${query}) WHERE ${includeArchived ? '1 = 1' : visible}`;
         const count = this.db.prepare(`SELECT COUNT(*) AS total ${from}`).get() as {
           total: number;

@@ -8,12 +8,11 @@ import { IconButton } from '../components/ui/IconButton.tsx';
 import { InfoRow, InfoSection } from '../components/ui/InfoRow.tsx';
 import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunningToolUseIds.ts';
 import { useSessionRename } from '../hooks/useSessionRename.ts';
-import { navigateToSpaceAgent } from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { conversationTitle } from '../lib/session-sidebar-status.ts';
 import type { InspectorSection } from '../lib/signals.ts';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
-import { spaceStore } from '../lib/space-store.ts';
+import { shellExtensions } from '../lib/web-extensions.ts';
 import { connectionState } from '../lib/state.ts';
 import { cn } from '../lib/utils.ts';
 
@@ -164,29 +163,24 @@ function Section({ title, children }: { title: string; children: preact.Componen
 }
 
 function SessionSection({ session, readonly }: { session: Session; readonly: boolean }) {
-  const agent = spaceStore.agents.value.find((candidate) => candidate.sessionId === session.id);
+  const agent = shellExtensions().flatMap(
+    (extension) => extension.sessionAgent(session.id) ?? []
+  )[0];
   const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title ?? '');
   const isConnected = connectionState.value === 'connected';
-  const spaceSlug = spaceStore.space.value?.slug ?? null;
 
   if (agent) {
     return (
       <div data-testid="inspector-agent-card">
         <Section title="Agent">
-          <InfoRow label="Name" value={agent.displayName} />
-          <InfoRow label="Handle" value={`@${agent.handle}`} />
-          <InfoRow label="Status" value={agent.status} />
-          {agent.autonomyLevel && <InfoRow label="Autonomy" value={`L${agent.autonomyLevel}`} />}
-          {agent.model && <InfoRow label="Model" value={agent.model} />}
-          {agent.thinkingLevel && <InfoRow label="Thinking" value={agent.thinkingLevel} />}
-          {spaceSlug && (
+          {agent.rows.map((row) => (
+            <InfoRow key={row.label} label={row.label} value={row.value} />
+          ))}
+          {agent.openSettings && (
             <button
               type="button"
               class="mt-3 rounded-md border border-line px-3 py-1.5 text-xs text-fg-soft transition hover:bg-fill hover:text-fg"
-              onClick={() => {
-                rightPanelTargetSignal.value = null;
-                navigateToSpaceAgent(spaceSlug);
-              }}
+              onClick={agent.openSettings}
               data-testid="inspector-open-agent"
             >
               Agent settings

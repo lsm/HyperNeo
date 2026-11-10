@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -22,7 +24,7 @@ globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typ
 const app = await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});
 assert.notEqual(app.server.port,8399);
 const hub = new MessageHub({defaultSessionId:'global'});
-const transport = new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});
+const transport = new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});
 hub.registerTransport(transport);
 const db = app.db.getDatabase(), store = new NeoAskTodoRepository(db);
 const prepare = db.prepare.bind(db), replay = app.db.gateway.onChanges;
@@ -41,7 +43,7 @@ try {
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
   store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Atomic work',request:'Keep full work',createdAt:1});
   const check={pack:'coding',kind:'pr_merged',params:{urls:[]}};
-  for(const id of ['first','peer']) store.addTodo(id,'ask',{title:id,doneWhen:'Merged',check,instruction:null,named:null},1);
+  for(const id of ['first','peer']) store.addTodo(id,'ask',{ approvedAt: 1,title:id,doneWhen:'Merged',check,instruction:null,named:null},1);
   const before=await visible(), text='Committed full report 🦊\n'.repeat(20000).trim();
   await hub.request('system.health',{});
   db.exec('BEGIN IMMEDIATE'); held=true; record=true;

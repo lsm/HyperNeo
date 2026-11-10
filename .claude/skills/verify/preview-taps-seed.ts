@@ -27,9 +27,9 @@ if (phase === 'seed') {
   assert(rootSession?.startsWith('neo:'));
   const db = new Database(join(root, 'data', 'daemon.db'));
   const text = [
-    'The layout notes are in `notes.md`, and the design PR is https://github.com/lsm/HyperNeo/pull/42.',
+    `The layout notes are in \`${join(root, 'workspace', 'notes.md')}\`, and the design PR is https://github.com/lsm/HyperNeo/pull/42.`,
     '',
-    'I attached the notes as a file too; notes.md also sits in the worktree.',
+    `I attached the notes as a file too; ${join(root, 'workspace', 'notes.md')} also sits in the worktree.`,
   ].join('\n');
   const result = new NeoPublicationRepository(db).append({
     conversationId: rootSession.slice(4),

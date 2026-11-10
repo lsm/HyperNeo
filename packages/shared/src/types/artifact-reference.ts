@@ -1,6 +1,7 @@
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
+import { PREVIEWABLE_FILE_EXTENSIONS } from './artifact-file.ts';
 
 export type PreviewReferenceCandidate =
   | { kind: 'local'; reference: string; path: string }
@@ -13,6 +14,7 @@ interface Node {
   url?: string;
   identifier?: string;
   children?: Node[];
+  position?: { start?: { offset?: number }; end?: { offset?: number } };
 }
 
 const markdown = unified().use(remarkParse).use(remarkGfm);
@@ -41,9 +43,38 @@ function candidate(reference: string, explicit: boolean): PreviewReferenceCandid
     if (url.host || url.search || url.hash || /%(?!20)/i.test(url.pathname)) return null;
     path = url.pathname.replace(/%20/gi, ' ');
   } else if (reference.includes(':') || /[?#]/.test(reference)) return null;
-  return documentPath.test(path) && !/[;$|&<>`]/.test(path) && (explicit || !/\s/.test(path))
+  return (documentPath.test(path) ||
+    ((explicit || path.startsWith('/') || path.startsWith('~/')) && /\.[\w-]+$/.test(path))) &&
+    !/[;$|&<>`]/.test(path) &&
+    (explicit || !/\s/.test(path))
     ? { kind: 'local', reference, path }
     : null;
+}
+
+const pathStops = new Set([...',;:\'"!?()[]{}<>`|，。；：、！？（）【】《》「」“”']);
+
+function plainPaths(token: string): string[] {
+  const paths: string[] = [];
+  for (let i = 0; i < token.length; ) {
+    const previous = token[i - 1] ?? '';
+    const start =
+      (token[i] === '/' && token[i + 1] !== '/') || (token[i] === '~' && token[i + 1] === '/');
+    if (
+      !start ||
+      /[A-Za-z0-9_.\/~-]/.test(previous) ||
+      (previous === ':' && /[A-Za-z0-9]/.test(token[i - 2] ?? ''))
+    ) {
+      i++;
+      continue;
+    }
+    let end = i;
+    while (end < token.length && !pathStops.has(token[end])) end++;
+    const span = token.slice(i, end);
+    const match = /^(.*\.[A-Za-z0-9_-]+)/.exec(span);
+    if (match && !span.endsWith('/')) paths.push(match[1]);
+    i = Math.max(end, i + 1);
+  }
+  return paths;
 }
 
 export function previewReferenceCandidates(text: string): PreviewReferenceCandidate[] {
@@ -80,7 +111,8 @@ export function previewReferenceCandidates(text: string): PreviewReferenceCandid
     if (node.type === 'text') {
       for (const token of (node.value ?? '').split(/\s+/)) {
         const path = token.replace(/^[('"“]+|[),.!?;:'"”]+$/g, '');
-        add(path, false);
+        if (!path.startsWith('/') && !path.startsWith('~/')) add(path, false);
+        for (const reference of plainPaths(token)) add(reference, false);
       }
     }
     for (const child of node.children ?? []) walk(child);
@@ -88,4 +120,51 @@ export function previewReferenceCandidates(text: string): PreviewReferenceCandid
   collect(tree);
   walk(tree);
   return result.size <= 256 ? [...result.values()] : [];
+}
+
+export function previewLinkedReferenceCandidates(text: string): PreviewReferenceCandidate[] {
+  return previewReferenceCandidates(text).filter(
+    (item) =>
+      item.kind !== 'local' ||
+      ((item.path.startsWith('/') || item.path.startsWith('~/')) &&
+        (!item.reference.startsWith('file:') || item.reference.startsWith('file:/')) &&
+        PREVIEWABLE_FILE_EXTENSIONS.has(item.path.split('.').at(-1)?.toLowerCase() ?? ''))
+  );
+}
+
+export function previewLinkedReferenceSpans(
+  text: string
+): { start: number; end: number; reference: string }[] {
+  const references = previewLinkedReferenceCandidates(text)
+    .filter((item) => item.kind === 'local')
+    .map((item) => item.reference)
+    .sort((a, b) => b.length - a.length);
+  if (!references.length) return [];
+  const escaped = references.map((ref) => ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(
+    `(?<![A-Za-z0-9_./~-])(?<![A-Za-z0-9]:)(${escaped.join('|')})(?![A-Za-z0-9_/-]|[.~]+[A-Za-z0-9_/-])`,
+    'g'
+  );
+  const spans: { start: number; end: number; reference: string }[] = [];
+  function walk(node: Node) {
+    if (
+      ['code', 'html', 'image', 'imageReference', 'linkReference', 'definition'].includes(node.type)
+    )
+      return;
+    if (node.type === 'link' && (!node.url || !references.includes(node.url))) return;
+    if (['text', 'inlineCode', 'link'].includes(node.type)) {
+      const start = node.position?.start?.offset;
+      const end = node.position?.end?.offset;
+      if (start !== undefined && end !== undefined) {
+        for (const match of text.slice(start, end).matchAll(pattern)) {
+          const offset = start + match.index;
+          spans.push({ start: offset, end: offset + match[0].length, reference: match[0] });
+        }
+      }
+      return;
+    }
+    for (const child of node.children ?? []) walk(child);
+  }
+  walk(markdown.parse(text));
+  return spans;
 }

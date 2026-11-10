@@ -1,14 +1,14 @@
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import {
-  ExternalEventStore,
-  ExternalEventValidationError,
-} from '../../../../src/lib/external-events/external-event-store';
+import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
+import { ExternalEventValidationError } from '../../../../src/lib/external-events/event-validation';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import { externalEventSweeps } from '../../../../src/storage/repositories/space-external-event-sweep-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
 let store: ExternalEventStore;
+const sweeps = () => new externalEventSweeps.Repository(db);
 
 const SPACE_ID = 'sp-evt';
 const EVENT_A: ExternalEvent = {
@@ -739,25 +739,16 @@ describe('markPendingDeliveriesFailedBefore', () => {
   }
 
   test('expires pending deliveries on events past the cutoff and rolls up the event', () => {
-    const hookCalls: Array<{ eventId: string; deliveryKey: string; reason: string | null }> = [];
-    store.setDeliveryTerminalHook((event) =>
-      hookCalls.push({
-        eventId: event.eventId,
-        deliveryKey: event.deliveryKey,
-        reason: event.reason,
-      })
-    );
     store.store(EVENT_A);
     store.registerExpectedDelivery('evt-a', 'dk-1', TARGET);
     store.registerExpectedDelivery('evt-a', 'dk-2', TARGET);
     store.registerExpectedDelivery('evt-a', 'dk-3', TARGET);
     store.markDeliveryMailboxAccepted('evt-a', 'dk-3');
-    hookCalls.length = 0;
 
     const now = Date.now();
     ageEvent('evt-a', now - 400_000);
 
-    const expired = store.markPendingDeliveriesFailedBefore(now - 300_000, new Set(), now);
+    const expired = sweeps().markPendingDeliveriesFailedBefore(now - 300_000, new Set(), now);
 
     expect(expired).toEqual([
       { eventId: 'evt-a', deliveryKey: 'dk-1' },
@@ -773,10 +764,6 @@ describe('markPendingDeliveriesFailedBefore', () => {
     });
     expect(store.getDelivery('evt-a', 'dk-3')!.state).toBe('delivered');
     expect(store.getById('evt-a')!.state).toBe('failed');
-    expect(hookCalls).toEqual([
-      { eventId: 'evt-a', deliveryKey: 'dk-1', reason: 'ttl_expired' },
-      { eventId: 'evt-a', deliveryKey: 'dk-2', reason: 'ttl_expired' },
-    ]);
   });
 
   test('through the gateway, reports each expired delivery to the hook exactly once', async () => {
@@ -803,7 +790,7 @@ describe('markPendingDeliveriesFailedBefore', () => {
     store.store(EVENT_A);
     store.registerExpectedDelivery('evt-a', 'dk-1', TARGET);
 
-    const expired = store.markPendingDeliveriesFailedBefore(Date.now() - 300_000, new Set());
+    const expired = sweeps().markPendingDeliveriesFailedBefore(Date.now() - 300_000, new Set());
 
     expect(expired).toEqual([]);
     expect(store.getDelivery('evt-a', 'dk-1')!.state).toBe('pending');
@@ -818,7 +805,7 @@ describe('markPendingDeliveriesFailedBefore', () => {
     const now = Date.now();
     ageEvent('evt-a', now - 400_000);
 
-    const expired = store.markPendingDeliveriesFailedBefore(
+    const expired = sweeps().markPendingDeliveriesFailedBefore(
       now - 300_000,
       new Set(['dk-in-flight']),
       now
@@ -839,7 +826,7 @@ describe('markPendingDeliveriesFailedBefore', () => {
     store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'ttl_expired' });
     expect(store.getById('evt-a')!.state).toBe('published');
 
-    const expired = store.markPendingDeliveriesFailedBefore(Date.now() - 300_000, new Set());
+    const expired = sweeps().markPendingDeliveriesFailedBefore(Date.now() - 300_000, new Set());
 
     expect(expired).toEqual([]);
     expect(store.getById('evt-a')!.state).toBe('failed');
@@ -858,7 +845,7 @@ describe('markPendingDeliveriesFailedBefore', () => {
       ageEvent(event.id, now - 400_000);
     }
 
-    const expired = store.markPendingDeliveriesFailedBefore(now - 300_000, new Set(), now);
+    const expired = sweeps().markPendingDeliveriesFailedBefore(now - 300_000, new Set(), now);
 
     expect(expired).toHaveLength(1200);
     expect(store.getById('evt-bulk-0')!.state).toBe('failed');

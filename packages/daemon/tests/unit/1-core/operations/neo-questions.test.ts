@@ -13,6 +13,10 @@ import type { OperationCaller } from '../../../../src/lib/operations/registry.ts
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
 
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo-a', role: 'neo' };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -71,12 +75,33 @@ function setup(
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
-    (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
+    (await ops[name].execute(
+      ops[name].inputSchema.parse(
+        name === 'neo.question.ask' ? { retireWhen: pendingTodoCheck, ...(input as object) } : input
+      ),
+      caller
+    )) as Receipt;
   const asked = async (input: Record<string, unknown>) => {
     const receipt = await call('neo.question.ask', { askId: 'ask', ...input });
     if (!receipt.ok) throw new Error(receipt.reason);
     return receipt.question;
   };
+  const seeded = (text: string, todoId?: string) =>
+    store.askQuestion(
+      crypto.randomUUID(),
+      'ask',
+      {
+        text,
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        ...(todoId ? { todoId } : {}),
+      },
+      1
+    );
   const daemonStart = (startTodos: string[], text = 'Start these?') =>
     store.askQuestion(
       crypto.randomUUID(),
@@ -92,10 +117,55 @@ function setup(
       },
       1
     );
-  return { db, store, call, asked, daemonStart, told, started, refused, fix, rows };
+  return { db, store, call, asked, daemonStart, seeded, told, started, refused, fix, rows };
 }
 
 describe('neo.question operations', () => {
+  test('retains an owner-verified HTML handoff and refuses altered references without replacing the card', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'question-handoff-')));
+    const previous = process.env.HYPERNEO_DATA_DIR;
+    process.env.HYPERNEO_DATA_DIR = dir;
+    const h = setup();
+    try {
+      const drafts = join(dir, 'handoffs', 'worker', 'drafts');
+      mkdirSync(drafts, { recursive: true });
+      writeFileSync(join(drafts, 'report.html'), '<h1>Synthetic</h1>');
+      const snapshot = await publishHandoff(dir, 'worker', 'report.html');
+      if (snapshot.kind !== 'published') throw new Error('publish failed');
+      const reference = publicHandoffReference(snapshot.reference);
+      const ask = (artifact: typeof reference, replaces?: string) =>
+        h.call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Review this report?',
+          artifacts: [artifact],
+          ...(replaces ? { replaces } : {}),
+        });
+      const foreign = { ...reference, daemonId: '00000000-0000-4000-8000-000000000000' };
+      expect(await ask(foreign)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('invalid_artifact_reference:'),
+      });
+      expect(h.store.listQuestions('ask')).toHaveLength(0);
+      const accepted = await ask(reference);
+      if (!accepted.ok) throw new Error(accepted.reason);
+      expect(accepted.question.artifacts).toEqual([reference]);
+      expect(JSON.stringify(accepted)).not.toContain(dir);
+      expect(h.store.getQuestion(accepted.question.id)?.artifacts).toEqual([reference]);
+      chmodSync(snapshot.reference.path, 0o600);
+      writeFileSync(snapshot.reference.path, 'tampered');
+      expect(await ask(reference, accepted.question.id)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('invalid_artifact_reference:'),
+      });
+      expect(h.store.getQuestion(accepted.question.id)?.state).toBe('open');
+    } finally {
+      h.db.close();
+      if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;
+      else process.env.HYPERNEO_DATA_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test('refuses a second todo question explicitly and accepts an explicit replacement', async () => {
     const h = setup();
     try {
@@ -110,7 +180,7 @@ describe('neo.question operations', () => {
       const refused = await h.call('neo.question.ask', distinct);
       expect(refused).toMatchObject({
         ok: false,
-        reason: expect.stringMatching(/^todo_question_open:/),
+        reason: expect.stringMatching(/^card_open:/),
       });
       expect(h.store.listQuestions('ask')).toHaveLength(1);
       expect(h.store.getQuestion(first.id)).toMatchObject({
@@ -140,7 +210,7 @@ describe('neo.question operations', () => {
       expect(results.filter((result) => result.ok)).toHaveLength(1);
       expect(results.find((result) => !result.ok)).toMatchObject({
         ok: false,
-        reason: expect.stringMatching(/^todo_question_open:/),
+        reason: expect.stringMatching(/^card_open:/),
       });
       expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
     } finally {
@@ -196,11 +266,11 @@ describe('neo.question operations', () => {
 
   test('refuses an unreadable source without opening or replacing a question', async () => {
     const { asked, call, store } = setup();
-    const original = await asked({ kind: 'reply', text: 'Keep this question' });
+    const original = await asked({ kind: 'reply', text: 'Keep this question?' });
     const refused = await call('neo.question.ask', {
       askId: 'ask',
       kind: 'reply',
-      text: 'New worker output',
+      text: 'New worker output?',
       replaces: original.id,
       sourceSession: { adapter: 'codex-desktop', id: 'missing' },
     });
@@ -266,22 +336,14 @@ describe('neo.question operations', () => {
           if (!result.ok) throw new Error(result.reason);
           joinedId = result.todo.id;
         } else {
-          store.openAsk({
-            id: 'other',
-            sessionId: 'neo-a',
-            projectId: null,
-            originMessageId: null,
-            title: 'Other work',
-            request: 'Other work',
-            createdAt: 1,
-          });
           const todo = store.addTodo(
-            'moved',
-            'other',
+            'recorded',
+            'ask',
             { ...draft, doneWhen: 'Observed result' },
             1
           );
-          joinedId = store.moveTodo(todo, 'ask', '', 2).id;
+          store.joinStartQuestion(todo, 2);
+          joinedId = todo.id;
         }
         expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
           ok: true,
@@ -301,13 +363,14 @@ describe('neo.question operations', () => {
   test('keeps the explicitly focused session on the ask after card retirement', async () => {
     const { asked, call, store } = setup();
     const sourceSession = { adapter: 'codex-desktop', id: 'discussion' };
-    const ordinary = await asked({ kind: 'reply', text: 'Ordinary report', sourceSession });
+    const ordinary = await asked({ kind: 'reply', text: 'Ordinary report?', sourceSession });
     expect(store.getAsk('ask')).not.toHaveProperty('focusedSession');
     const ready = await asked({
       kind: 'reply',
-      text: 'Prepared discussion',
+      text: 'Prepared discussion?',
       sourceSession,
       focused: true,
+      replaces: ordinary.id,
     });
     const captured = ready.sourceSession;
     expect(store.getAsk('ask')).toMatchObject({ focusedSession: captured });
@@ -315,7 +378,7 @@ describe('neo.question operations', () => {
     await call('neo.question.retire', { questionId: ordinary.id, reason: 'Superseded' });
     await asked({
       kind: 'reply',
-      text: 'Unrelated worker',
+      text: 'Unrelated worker?',
       sourceSession: { ...sourceSession, id: 'other' },
     });
     expect(store.getAsk('ask')).toMatchObject({ focusedSession: captured });
@@ -330,7 +393,7 @@ describe('neo.question operations', () => {
         await call('neo.question.ask', {
           askId: 'ask',
           kind: 'reply',
-          text: 'Ready',
+          text: 'Ready?',
           focused: true,
           sourceSession,
         })
@@ -368,9 +431,15 @@ describe('neo.question operations', () => {
     );
     const ordinary = await asked({
       kind: 'reply',
-      text: 'No single worker produced this question',
+      text: 'No single worker produced this question?',
     });
     expect(ordinary).not.toHaveProperty('sourceSession');
+  });
+
+  test('keeps the full detail in document while the card text stays short', async () => {
+    const { asked } = setup();
+    const card = await asked({ kind: 'reply', text: 'Which one?', document: 'Long detail' });
+    expect(card).toMatchObject({ text: 'Which one?', document: 'Long detail' });
   });
 
   test('keeps registered artifact references on the question card', async () => {
@@ -395,7 +464,7 @@ describe('neo.question operations', () => {
         await call('neo.question.ask', {
           askId: 'ask',
           kind: 'reply',
-          text: 'Review',
+          text: 'Review?',
           artifacts: [changed],
         })
       ).toMatchObject({
@@ -406,7 +475,7 @@ describe('neo.question operations', () => {
     expect(store.listQuestions('ask')).toHaveLength(0);
     const question = await asked({
       kind: 'reply',
-      text: 'Please review the attached report.',
+      text: 'Please review the attached report.?',
       artifacts: [artifact],
     });
     expect(question).toMatchObject({ artifacts: [artifact] });
@@ -420,7 +489,7 @@ describe('neo.question operations', () => {
         {
           askId: 'ask',
           kind: 'reply',
-          text: 'Foreign caller',
+          text: 'Foreign caller?',
           artifacts: [artifact],
         },
         { ...owner, sessionId: 'other' }
@@ -702,25 +771,11 @@ describe('NeoAskTodoRepository start question pruning', () => {
     expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: ['t2'] });
   });
 
-  test('a todo started elsewhere or moved to another ask leaves it, and a moved one is asked there', () => {
+  test('a todo started elsewhere leaves its unstarted peer on the start card', () => {
     const { store, fix, rows } = setup();
     startQuestion(store, [fix.id, rows.id]);
     store.claimStart(fix, 2);
-    expect(store.getQuestion('q-start')?.startTodos).toEqual(['t2']);
-    store.openAsk({
-      id: 'other',
-      projectId: null,
-      sessionId: 'neo-a',
-      originMessageId: 'm2',
-      title: 'Other',
-      request: 'Other',
-      createdAt: 1,
-    });
-    store.moveTodo(rows, 'other', 'lsm/other', 3);
-    expect(store.getQuestion('q-start')).toMatchObject({ state: 'retired', startTodos: [] });
-    expect(store.listQuestions('other')).toMatchObject([
-      { kind: 'start', state: 'open', startTodos: ['t2'], text: 'Start "Todo rows"?' },
-    ]);
+    expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: [rows.id] });
   });
 
   test('once every todo it lists is done or removed, it is retired and the ask stops waiting', () => {
@@ -802,6 +857,25 @@ describe('neoQuestionAnsweredNote', () => {
 });
 
 describe('neo.question.retire and replaces', () => {
+  test('a card on a todo waiting for the human closes only with its todo', async () => {
+    const { store, call, asked, fix: todo } = setup();
+    const card = await asked({ kind: 'reply', text: 'Approve the merge?', todoId: todo.id });
+    store.updateTodo(
+      store.getTodo(todo.id)!,
+      { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Awaiting approval' },
+      Date.now()
+    );
+    expect(await call('neo.question.retire', { questionId: card.id, reason: 'merged' })).toEqual({
+      ok: false,
+      reason: expect.stringContaining('todo_waiting'),
+    });
+    expect(store.getQuestion(card.id)?.state).toBe('open');
+    store.updateTodo(store.getTodo(todo.id)!, { state: 'removed' }, Date.now());
+    expect(
+      await call('neo.question.retire', { questionId: card.id, reason: 'merged' })
+    ).toMatchObject({ ok: true, question: { state: 'retired' } });
+  });
+
   test('Neo retires a moot open question with its reason, and the ask stops waiting', async () => {
     const { store, call, asked } = setup();
     const moot = await asked({ kind: 'reply', text: 'Allow a placeholder key?' });
@@ -850,6 +924,7 @@ describe('neo.question.retire and replaces', () => {
         .filter((q) => q.state === 'open')
         .map((q) => q.id)
     ).toEqual([next.id]);
+    store.retireQuestion(next, 'next case', null, 4);
     const again = await call('neo.question.ask', {
       askId: 'ask',
       kind: 'reply',
@@ -947,6 +1022,7 @@ describe('question reference gates warn or omit instead of refusing', () => {
         kind: 'reply',
         text: 'Only stale?',
         replyTo: [stale],
+        replaces: mixed.ok ? mixed.question.id : undefined,
       });
       expect(onlyStale).toMatchObject({ ok: true, question: { state: 'open', replyTo: [] } });
       expect(store.listQuestions('ask')).toHaveLength(2);
@@ -1004,8 +1080,8 @@ describe('todo-owned question cards', () => {
     const h = setup();
     try {
       const bound = await h.asked({ kind: 'reply', text: 'Which rows?', todoId: h.fix.id });
-      const other = await h.asked({ kind: 'reply', text: 'Which style?', todoId: h.rows.id });
-      const general = await h.asked({ kind: 'reply', text: 'Anything else?' });
+      const other = h.seeded('Which style?', h.rows.id);
+      const general = h.seeded('Anything else?');
       expect(bound).toMatchObject({ todoId: h.fix.id });
       h.store.updateTodo(h.fix, { state: 'failed' }, 3);
       expect(h.store.getQuestion(bound.id)?.state).toBe('open');
@@ -1021,7 +1097,7 @@ describe('todo-owned question cards', () => {
     const h = setup();
     try {
       const gone = await h.asked({ kind: 'reply', text: 'Gone?', todoId: h.fix.id });
-      const done = await h.asked({ kind: 'reply', text: 'Done?', todoId: h.rows.id });
+      const done = h.seeded('Done?', h.rows.id);
       h.db.prepare('DELETE FROM neo_todos WHERE id = ?').run(h.fix.id);
       h.db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(h.rows.id);
       await h.store.recompute(
@@ -1050,7 +1126,7 @@ describe('todo-owned question cards', () => {
         createdAt: 1,
       });
       h.store.updateTodo(h.fix, { state: 'removed' }, 3);
-      h.store.moveTodo(h.rows, 'foreign', '/synthetic/repo', 3);
+      h.db.prepare('UPDATE neo_todos SET ask_id = ? WHERE id = ?').run('foreign', h.rows.id);
       for (const todoId of ['unknown', h.fix.id, h.rows.id]) {
         const result = await h.call('neo.question.ask', {
           askId: 'ask',
@@ -1063,6 +1139,7 @@ describe('todo-owned question cards', () => {
           records: [expect.stringContaining('todo_closed:')],
         });
         expect(result.ok ? (result.question.todoId ?? null) : false).toBeNull();
+        if (result.ok) h.store.retireQuestion(result.question, 'next case', null, 4);
       }
     } finally {
       h.db.close();

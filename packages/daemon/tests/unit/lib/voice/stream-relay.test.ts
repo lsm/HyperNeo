@@ -16,7 +16,7 @@ import {
   voiceStreamRoute,
   voiceStreamTls,
 } from '../../../../src/lib/voice/stream-relay';
-import { createInThreadAsrRelay } from '../../../../src/lib/voice/asr-relay';
+import { createInThreadAsrRelay, type AsrRelay } from '../../../../src/lib/voice/asr-relay';
 import type { VoiceTranscribeOutcome } from '../../../../src/lib/voice/transcribe-pipeline';
 import recorded from './fixtures/wlk-deepgram.json';
 
@@ -142,6 +142,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
   let logs: StructuredLogEvent[];
   let unsubscribe: () => void;
   let connections: URL[];
+  const relays = new Set<AsrRelay>();
 
   beforeEach(async () => {
     logs = [];
@@ -177,6 +178,8 @@ describe('VoiceStream against a stub Deepgram server', () => {
   });
 
   afterEach(() => {
+    for (const relay of relays) relay.close();
+    relays.clear();
     unsubscribe();
     return new Promise((resolve) => server.close(resolve));
   });
@@ -195,7 +198,11 @@ describe('VoiceStream against a stub Deepgram server', () => {
       return { action: 'transcribed', text: 'batch text' };
     },
     push: (text: VoiceStreamText) => pushed.push(text),
-    createRelay: createInThreadAsrRelay,
+    createRelay: (open: Parameters<typeof createInThreadAsrRelay>[0]) => {
+      const relay = createInThreadAsrRelay(open);
+      relays.add(relay);
+      return relay;
+    },
   });
 
   const start = async (overrides: Partial<VoiceSettings> = {}) => {
@@ -570,7 +577,13 @@ describe('VoiceStream against a stub Deepgram server', () => {
     onAudio = (socket) => socket.terminate();
     const { stream } = await start();
     stream.write(new Uint8Array([1, 0]));
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await vi.waitFor(() =>
+      expect(logs.find((event) => event.message === 'voice.asr.close')?.metadata).toMatchObject({
+        streamId: 's1',
+        code: 1006,
+        reason: 'abnormal_closure',
+      })
+    );
     stream.write(new Uint8Array([2, 0]));
     expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
     expect([...Buffer.from(batches[0], 'base64').subarray(44)]).toEqual([1, 0, 2, 0]);

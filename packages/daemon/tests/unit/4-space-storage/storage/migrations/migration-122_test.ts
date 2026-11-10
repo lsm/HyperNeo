@@ -102,7 +102,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
 
     test('sdk_messages new derived-column indexes exist', () => {
       expect(indexExists(db, 'idx_sdk_messages_parent_tool_use_id')).toBe(true);
-      expect(indexExists(db, 'idx_sdk_messages_renderable_terminal')).toBe(true);
     });
 
     test('legacy task_session_map table has been dropped', () => {

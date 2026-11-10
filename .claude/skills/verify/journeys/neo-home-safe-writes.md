@@ -1,18 +1,16 @@
 # Home writes through late symlink swaps
 
-Read shared SKILL.md setup first. Run the metadata-only native filesystem proof
-with the shared wrapper, once under Bun and once under pinned Deno:
+Read shared SKILL.md setup first.
 
 ```bash
 PROOF=.claude/skills/verify/neo-home-safe-files.ts
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE/bun" "$PROOF"
-VERIFY_PROOF_RUNTIME=deno bash .claude/skills/verify/proof-run.sh "$EVIDENCE/deno" "$PROOF"
 ```
 
 The helper changes a leaf or parent in a microtask after a directory handle has
 opened. Writes must stay on that handle, leaf replacement/deletion must not follow
 a link, and parent-link deletion must fail without changing the outside sentinel.
-It also checks exact binary bytes, a document above the ACP text limit, mode
+It also checks exact binary bytes, a document above 4 MiB, mode
 preservation and actual EACCES/ENAMETOOLONG errors. During the parent swap the
 outside file has mode 0666 and the home file 0640: the home replacement must keep
 0640, deriving metadata from the pinned directory. Inspect the saved JSON and logs.
@@ -33,7 +31,6 @@ the requested bytes, including on dev before the dirty-home refusal is removed.
 Inspect `evidence/neo-home-write-races.json`. No model, provider, real remote or
 credentials are used. Stop the owned daemon and preserve evidence before cleanup.
 
-Directory-handle enforcement applies on macOS/Linux, including WSL2, under Bun
-and Deno. Native Windows keeps its existing human RPC path. Neo runs without an
-additional SDK OS sandbox; this journey verifies the daemon's home-write boundary,
-not an SDK filesystem policy.
+Directory-handle enforcement applies on macOS/Linux, including WSL2, under Bun. Native
+Windows keeps its existing human RPC path. Neo runs without an additional SDK OS sandbox;
+this journey verifies the daemon's home-write boundary, not an SDK filesystem policy.

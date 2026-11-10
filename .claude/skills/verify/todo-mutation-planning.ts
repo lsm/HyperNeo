@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -24,7 +26,7 @@ globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typ
 const app = await createDaemonApp({config: getConfig({port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db')}), verbose: false});
 assert.notEqual(app.server.port, 8399);
 const hub = new MessageHub({defaultSessionId: 'global'});
-const transport = new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});
+const transport = new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});
 hub.registerTransport(transport);
 const db = app.db.getDatabase(), store = new NeoAskTodoRepository(db), prepare = db.prepare.bind(db);
 let recording = false, mainSql = 0, announcements = 0;
@@ -47,10 +49,10 @@ try {
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
   store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Planning only',request:'Preserve the card',createdAt:1});
   const check = {pack:'coding',kind:'pr_merged',params:{urls:[]}};
-  const first = store.addTodo('first','ask',{title:'Original title',doneWhen:'Merged',check,instruction:'Continue',named:null},1);
+  const first = store.addTodo('first','ask',{ approvedAt: 1,title:'Original title',doneWhen:'Merged',check,instruction:'Continue',named:null},1);
   const text = 'Complete stored report 🦊\n'.repeat(20000).trim();
   store.updateTodo(first,{report:text},2);
-  store.addTodo('peer','ask',{title:'Peer',doneWhen:'Merged',check:{...check,params:{urls:['https://github.com/synthetic/planning/pull/1']}},instruction:null,named:null},1);
+  store.addTodo('peer','ask',{ approvedAt: 1,title:'Peer',doneWhen:'Merged',check:{...check,params:{urls:['https://github.com/synthetic/planning/pull/1']}},instruction:null,named:null},1);
   store.askQuestion('card','ask',{text:'Start?',kind:'start',options:null,multiple:false,yesLabel:null,noLabel:null,startTodos:['first']},3);
   store.askQuestion('reply','ask',{kind:'reply',todoId:'first',text:'Answer before completion',options:null,multiple:false,yesLabel:null,noLabel:null},3);
   const before = await visible();

@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "macOS": {
+      "files": {
+        "MacOS/cua-driver": "binaries/cua-driver",
+        "Resources/cua-driver-LICENSE": "binaries/cua-driver-LICENSE",
+        "Resources/cua-driver-THIRD_PARTY_NOTICES.md": "binaries/cua-driver-THIRD_PARTY_NOTICES.md"
+      }
+    }
+  }
+}

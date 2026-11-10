@@ -1016,7 +1016,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
   });
 
   describe('hasMoreMessages (pagination inference)', () => {
-    const LIMIT = 200;
+    const LIMIT = 50;
 
     beforeEach(async () => {
       await sessionStore.select(null);
@@ -1070,7 +1070,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
       await sessionStore.select('session-1');
       const subId = hub.subscriptionId!;
 
-      const rows: SDKMessage[] = Array(50)
+      const rows: SDKMessage[] = Array(LIMIT - 1)
         .fill(null)
         .map((_, i) => ({
           uuid: `msg-${i}`,
@@ -1081,6 +1081,148 @@ describe('SessionStore - Comprehensive Coverage', () => {
       hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows });
 
       expect(sessionStore.hasMoreMessages.value).toBe(false);
+    });
+
+    const windowRows = (from: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        id: `row-${from + i}`,
+        uuid: `msg-${from + i}`,
+        type: 'text',
+        timestamp: from + i,
+      })) as unknown as SDKMessage[];
+
+    it('turns true when a short session grows past the window', async () => {
+      const hub = installLiveQueryHubCapturing();
+      await sessionStore.select('session-1');
+      const subscriptionId = hub.subscriptionId!;
+      hub.fire('liveQuery.snapshot', { subscriptionId, rows: windowRows(0, LIMIT - 1) });
+      expect(sessionStore.hasMoreMessages.value).toBe(false);
+
+      hub.fire('liveQuery.delta', {
+        subscriptionId,
+        added: windowRows(LIMIT - 1, 1),
+        rowCount: LIMIT,
+      });
+      hub.fire('liveQuery.delta', {
+        subscriptionId,
+        added: windowRows(LIMIT, 1),
+        removed: windowRows(0, 1),
+        rowCount: LIMIT,
+      });
+
+      expect(sessionStore.hasMoreMessages.value).toBe(true);
+    });
+
+    it('keeps loaded older rows when a new message slides the window', async () => {
+      const hub = installLiveQueryHubCapturing();
+      await sessionStore.select('session-1');
+      const subscriptionId = hub.subscriptionId!;
+      hub.fire('liveQuery.snapshot', { subscriptionId, rows: windowRows(100, LIMIT) });
+      sessionStore.prependMessages(windowRows(50, LIMIT));
+
+      hub.fire('liveQuery.delta', {
+        subscriptionId,
+        added: windowRows(100 + LIMIT, 1),
+        removed: windowRows(100, 1),
+        rowCount: LIMIT,
+      });
+
+      const ids = sessionStore.sdkMessages.value.map((row) => (row as { id?: string }).id);
+      expect(ids).toContain('row-100');
+      expect(ids).toHaveLength(2 * LIMIT + 1);
+    });
+
+    it('removes rewound rows when older rows refill a full window', async () => {
+      const hub = installLiveQueryHubCapturing();
+      await sessionStore.select('session-1');
+      const subscriptionId = hub.subscriptionId!;
+      hub.fire('liveQuery.snapshot', { subscriptionId, rows: windowRows(100, LIMIT) });
+      sessionStore.prependMessages(windowRows(50, LIMIT));
+
+      hub.fire('liveQuery.delta', {
+        subscriptionId,
+        added: windowRows(97, 3),
+        removed: windowRows(100 + LIMIT - 3, 3),
+        rowCount: LIMIT,
+      });
+
+      const ids = sessionStore.sdkMessages.value.map((row) => (row as { id?: string }).id);
+      expect(ids).not.toContain(`row-${100 + LIMIT - 1}`);
+    });
+
+    it('removes a deleted newest row when a new row arrives in the same delta', async () => {
+      const hub = installLiveQueryHubCapturing();
+      await sessionStore.select('session-1');
+      const subscriptionId = hub.subscriptionId!;
+      hub.fire('liveQuery.snapshot', { subscriptionId, rows: windowRows(100, LIMIT) });
+      sessionStore.prependMessages(windowRows(50, LIMIT));
+
+      hub.fire('liveQuery.delta', {
+        subscriptionId,
+        added: windowRows(100 + LIMIT, 1),
+        removed: windowRows(100 + LIMIT - 1, 1),
+        rowCount: LIMIT,
+      });
+
+      const ids = sessionStore.sdkMessages.value.map((row) => (row as { id?: string }).id);
+      expect(ids).not.toContain(`row-${100 + LIMIT - 1}`);
+    });
+
+    it('removes a filtered oldest row when an older row refills the window', async () => {
+      const hub = installLiveQueryHubCapturing();
+      await sessionStore.select('session-1');
+      const subscriptionId = hub.subscriptionId!;
+      hub.fire('liveQuery.snapshot', { subscriptionId, rows: windowRows(100, LIMIT) });
+      sessionStore.prependMessages(windowRows(50, LIMIT));
+
+      hub.fire('liveQuery.delta', {
+        subscriptionId,
+        added: [...windowRows(99, 1), ...windowRows(100 + LIMIT, 1)],
+        removed: windowRows(100, 2),
+        rowCount: LIMIT,
+      });
+
+      const ids = sessionStore.sdkMessages.value.map((row) => (row as { id?: string }).id);
+      expect(ids).not.toContain('row-100');
+    });
+
+    it('stays false after history is exhausted until a row really slides out', async () => {
+      const hub = installLiveQueryHubCapturing();
+      await sessionStore.select('session-1');
+      const subscriptionId = hub.subscriptionId!;
+      const rows = windowRows(0, LIMIT);
+      hub.fire('liveQuery.snapshot', { subscriptionId, rows });
+      mockHub.request.mockResolvedValueOnce({ sdkMessages: [], hasMore: false });
+      await sessionStore.loadOlderMessages(0);
+      expect(sessionStore.hasMoreMessages.value).toBe(false);
+
+      hub.fire('liveQuery.delta', { subscriptionId, updated: [rows[LIMIT - 1]], rowCount: LIMIT });
+      expect(sessionStore.hasMoreMessages.value).toBe(false);
+
+      hub.fire('liveQuery.delta', {
+        subscriptionId,
+        added: windowRows(LIMIT, 1),
+        removed: windowRows(0, 1),
+        rowCount: LIMIT,
+      });
+      expect(sessionStore.hasMoreMessages.value).toBe(true);
+    });
+
+    it('still removes a deleted row after older rows were loaded', async () => {
+      const hub = installLiveQueryHubCapturing();
+      await sessionStore.select('session-1');
+      const subscriptionId = hub.subscriptionId!;
+      hub.fire('liveQuery.snapshot', { subscriptionId, rows: windowRows(100, LIMIT) });
+      sessionStore.prependMessages(windowRows(50, LIMIT));
+
+      hub.fire('liveQuery.delta', {
+        subscriptionId,
+        removed: windowRows(120, 1),
+        rowCount: LIMIT - 1,
+      });
+
+      const ids = sessionStore.sdkMessages.value.map((row) => (row as { id?: string }).id);
+      expect(ids).not.toContain('row-120');
     });
 
     it('is true when the snapshot fills the limit exactly', async () => {
@@ -1209,7 +1351,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
       expect(result.hasMore).toBe(false);
     });
 
-    it('should use default limit of 100', async () => {
+    it('should use default limit of 50', async () => {
       mockHub.request.mockResolvedValue({ sdkMessages: [] });
 
       await sessionStore.select('session-1');
@@ -1218,7 +1360,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       expect(mockHub.request).toHaveBeenCalledWith(
         'message.sdkMessages',
-        expect.objectContaining({ limit: 100 })
+        expect.objectContaining({ limit: 50 })
       );
     });
 

@@ -10,7 +10,7 @@ import {
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import type { NodeExecution } from '@hyperneo/shared';
 import type { OperationCaller } from '../operations/registry.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 import { isActiveSessionInSpace, type SpaceTaskMetadataDependencies } from './metadata.ts';
 import type { SpaceTaskManager } from './task-manager.ts';

@@ -6,7 +6,7 @@ import type {
   ExternalEventDeliveryRecord,
   ExternalEventRecord,
 } from '../../../../src/lib/external-events/types';
-import { buildImmediateEventMessageUuid } from '../../../../src/lib/external-events/immediate-delivery-pipeline';
+import { buildImmediateEventMessageUuid } from '../../../../src/lib/external-events/event-delivery-rules';
 import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   persistAndAppend,

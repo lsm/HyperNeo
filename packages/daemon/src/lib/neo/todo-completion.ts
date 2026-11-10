@@ -16,6 +16,20 @@ export async function readNeoTodoCompletion(
   return rule ? rule.check(todo) : null;
 }
 
+export function requireNeoTodoCloseStarted<T extends { todo: NeoTodo }>(
+  plan: T,
+  result: NeoTodoCheckResult | null
+): Gate<T> {
+  if (result?.done || plan.todo.startedAt !== null) return { value: plan };
+  return {
+    reason: {
+      ok: false,
+      reason:
+        'todo_not_started: it never started and its check has not passed, so it cannot be done; nothing changed. To cancel or replace it use neo.todo.remove.',
+    },
+  };
+}
+
 export function requireNeoTodoMayFinish<T extends { todo: NeoTodo; patch?: NeoTodoPatch }>(
   plan: T,
   result: NeoTodoCheckResult | null
@@ -28,10 +42,13 @@ export function requireNeoTodoMayFinish<T extends { todo: NeoTodo; patch?: NeoTo
       ...plan,
       patch: {
         ...plan.patch,
-        state: 'closed_unverified',
-        reason: result?.failed
+        state: 'blocked',
+        finishedAt: null,
+        blockedBy: 'check',
+        blockedReason: result?.failed
           ? `check_failed: ${result.failed}`
-          : `check_unmet: ${check ? `${check.pack}.${check.kind}` : 'outcome'} has not passed.`,
+          : `check_unmet: ${check ? `"${plan.todo.doneWhen ?? `${check.pack}.${check.kind}`}"` : 'outcome'} has not passed.`,
+        nextAction: 'It finishes when its check passes; fix a wrong check with neo.todo.edit.',
       },
     },
   };

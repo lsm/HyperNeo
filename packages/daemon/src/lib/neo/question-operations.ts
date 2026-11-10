@@ -1,5 +1,9 @@
+import { neoToolDescription } from '@hyperneo/prompts';
+import { coreTodoPolicy } from './core-todo-checks.ts';
+import { planNeoTodoDraft, type NeoTodoPolicy } from './todo-operations.ts';
 import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
-import { neoTodoStalledCard } from './todo-runner.ts';
+import { isNeoTodoStalledCard } from './todo-state.ts';
+import { openHumanCard, replaceHumanCard, requireHumanCard } from './human-card.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
@@ -21,11 +25,15 @@ import type {
 import { requireLocalUser, isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
-import { requireNeoOpenAsk } from './todo-operations.ts';
-import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
+import { TodoCheck, requireNeoOpenAsk } from './todo-operations.ts';
+import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
+import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
+import { readCardArtifactFacts, unverifiedCardArtifact } from './card-artifact-admission.ts';
+import { PublicHandoffReference } from '../handoffs/outbox.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
 
 const ReportLine = z
   .string()
@@ -44,6 +52,75 @@ const WorkerQuestion = z.strictObject({
     .min(1)
     .refine((text) => text.trim().length > 0),
 });
+
+export const expectedReportLanguage = (configured: LanguageSetting | undefined) =>
+  configured === 'system' || !configured
+    ? Intl.DateTimeFormat().resolvedOptions().locale.startsWith('zh')
+      ? 'zh-Hans'
+      : 'en'
+    : configured;
+
+export function stageNeoWorkerQuestion(
+  store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  ref: WorkRef,
+  raw: unknown,
+  language: LanguageSetting | undefined,
+  staged: (todo: NeoTodo, question: StagedWorkerQuestion, reportId: string) => void
+): { ok: true } | Rejection {
+  const parsed = WorkerQuestion.safeParse(raw);
+  if (!parsed.success)
+    return { ok: false, reason: 'invalid_report: use a short title and 2–6 short options.' };
+  const { todoId, ...question } = parsed.data;
+  const expected = expectedReportLanguage(language);
+  if (question.language !== expected)
+    return { ok: false, reason: `report_language: provide the card in ${expected}.` };
+  const now = Date.now();
+  return store.inTransaction(() => {
+    const todo = store.getTodo(todoId),
+      assigned = sessions.readRef(todoId),
+      dispatchId = sessions.inputs.list(todoId).at(-1)?.id ?? '';
+    if (
+      !todo ||
+      store.getAsk(todo.askId)?.status !== 'open' ||
+      !['doing', 'blocked'].includes(todo.state) ||
+      assigned?.adapter !== ref.adapter ||
+      assigned.id !== ref.id ||
+      assigned.daemon !== ref.daemon
+    )
+      return {
+        ok: false,
+        reason: 'report_assignment: choose a current todo assigned to this worker.',
+      };
+    const blocked = store.updateTodo(
+      todo,
+      {
+        state: 'blocked',
+        blockedBy: 'needs-human',
+        blockedReason: question.title,
+        nextAction:
+          question.language === 'zh-Hans'
+            ? 'Neo 需要回复工人,或把问题转给人。'
+            : 'Neo must answer the worker or relay the question to the human.',
+        report: question.report,
+      },
+      now
+    );
+    const reportId = neoDerivedId(JSON.stringify([dispatchId, question.title, question.options]));
+    sessions.recordNudge(todoId, {
+      ...(sessions.readNudge(todoId) ?? { since: now, nudges: 0 }),
+      blockerReport: {
+        id: reportId,
+        dispatchId,
+        at: now,
+        triagedAt: blocked.updatedAt,
+      },
+      workerQuestion: question,
+    });
+    staged(blocked, question, reportId);
+    return { ok: true };
+  });
+}
 
 export function createNeoWorkerQuestionWriter(
   store: NeoAskTodoRepository,
@@ -66,13 +143,7 @@ export function createNeoWorkerQuestionWriter(
     )
     .pipe(
       (input: z.infer<typeof WorkerQuestion>) => {
-        const configured = language();
-        const expected =
-          configured === 'system' || !configured
-            ? Intl.DateTimeFormat().resolvedOptions().locale.startsWith('zh')
-              ? 'zh-Hans'
-              : 'en'
-            : configured;
+        const expected = expectedReportLanguage(language());
         return input.language === expected
           ? { value: input }
           : fail(`report_language: provide the card in ${expected}.`);
@@ -80,6 +151,7 @@ export function createNeoWorkerQuestionWriter(
       'outcome',
       'result:outcome'
     )
+    .pipe((input: z.infer<typeof WorkerQuestion>) => input, 'outcome', 'input')
     .pipe(
       async (ref: WorkRef) => {
         const source = await readSource(ref);
@@ -91,7 +163,7 @@ export function createNeoWorkerQuestionWriter(
           : fail('source_session_unavailable: no readable reporting worker.');
       },
       'ref',
-      'result:source'
+      'result:outcome'
     )
     .pipe(
       (input: z.infer<typeof WorkerQuestion>, ref: WorkRef, source: NeoQuestionSource) => {
@@ -115,13 +187,26 @@ export function createNeoWorkerQuestionWriter(
           const open = store
             .listQuestions(todo.askId)
             .find((q) => q.todoId === todo.id && q.state === 'open');
-          const daemonCard = open?.text === neoTodoStalledCard(todo);
+          const daemonCard = !!open && isNeoTodoStalledCard(open.text);
           if (open && daemonCard)
             store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
           const existing = daemonCard ? null : open;
+          const allowed = existing
+            ? null
+            : requireHumanCard(
+                { text: input.title, kind: 'choice' as const },
+                store.listQuestions(todo.askId),
+                null,
+                language()
+              );
+          if (allowed && 'reason' in allowed) {
+            rejection = allowed.reason.reason;
+            return null;
+          }
           const card =
             existing ??
-            store.askQuestion(
+            openHumanCard(
+              store,
               crypto.randomUUID(),
               todo.askId,
               {
@@ -158,7 +243,7 @@ export function createNeoWorkerQuestionWriter(
           ? { ok: true as const, question }
           : { ok: false as const, reason: rejection };
       },
-      ['outcome', 'ref', 'source'],
+      ['input', 'ref', 'outcome'],
       'outcome'
     )
     .endAsync('outcome') as (ref: WorkRef, raw: unknown) => Promise<QuestionReceipt | Rejection>;
@@ -180,22 +265,41 @@ const Confirmation = z.object({
     .length(64)
     .regex(/^[a-f0-9]+$/),
 });
-const Artifacts = z.array(ArtifactRefSchema).max(16).readonly().optional();
+const Artifacts = z
+  .array(z.union([ArtifactRefSchema, PublicHandoffReference]))
+  .max(16)
+  .readonly()
+  .optional();
+const QuestionOutputArtifacts = z
+  .array(z.union([ArtifactRefSchema, PublicHandoffReference]))
+  .max(16)
+  .readonly()
+  .optional();
+const questionPolicies = () => [{ id: 'core', todos: coreTodoPolicy }];
 const Asked = {
+  retireWhen: TodoCheck.optional().describe(
+    'Pack check that retires this card when satisfied. Defaults to the linked todo check; required without a linked todo check.'
+  ),
   focused: z.boolean().optional(),
   sourceSession: WorkRefSchema.optional(),
   artifacts: Artifacts,
+  document: Text.optional().describe('Full detail shown apart from the short card text.'),
   todoId: Text.optional().describe(
-    'One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.'
+    'The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.'
   ),
-  askId: Text,
+  askId: Text.optional().describe(
+    'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.'
+  ),
+  input: Text.optional().describe(
+    'The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
+  ),
   text: Text,
   replyTo: z.array(z.uuid()).max(100).optional(),
   replaces: Text.optional(),
   confirm: Confirmation.optional(),
 };
 
-const Ask = z.discriminatedUnion('kind', [
+const AskKinds = z.discriminatedUnion('kind', [
   z.object({ ...Asked, kind: z.literal('yesno'), noLabel: Text, yesLabel: Text }),
   z.object({
     ...Asked,
@@ -208,6 +312,7 @@ const Ask = z.discriminatedUnion('kind', [
     askId: Text,
     text: Text,
     kind: z.literal('start'),
+    retireWhen: Asked.retireWhen,
     sourceSession: Asked.sourceSession,
     focused: Asked.focused,
     artifacts: Artifacts,
@@ -215,8 +320,26 @@ const Ask = z.discriminatedUnion('kind', [
     replyTo: Asked.replyTo,
   }),
 ]);
+const Ask = AskKinds.refine((input) => input.askId || ('input' in input && input.input), {
+  message: 'Pass input for a human request, or askId for follow-up work.',
+}).refine((input) => ('todoId' in input && input.todoId) || input.retireWhen, {
+  message: 'retireWhen is required without a linked todo; supply {pack, kind, params}.',
+  path: ['retireWhen'],
+});
+
+type Bound = z.infer<typeof Ask> & { askId: string };
 
 const Retire = z.object({ questionId: Text, reason: Text });
+const Relay = z
+  .object({
+    todoId: Text.optional(),
+    session: Text.optional().describe('The notice key of a session with no todo.'),
+    title: ReportLine,
+    options: z.array(ReportLine).min(2).max(6),
+  })
+  .refine((input) => !input.todoId !== !input.session, {
+    message: 'Pass todoId, or session for a session with no todo.',
+  });
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
 const Resolve = Answer.extend({
@@ -248,11 +371,12 @@ const AnswerDelivery = z.object({
 });
 
 export const NeoQuestionSchema = z.object({
+  retireWhen: TodoCheck.optional(),
   sourceSession: WorkerIdentitySchema.extend({
     provider: z.string(),
     link: z.string().nullable(),
   }).optional(),
-  artifacts: Artifacts,
+  artifacts: QuestionOutputArtifacts,
   todoId: z.string().nullable().optional(),
   document: z.string().nullable().optional(),
   replyTo: z.array(z.uuid()).optional(),
@@ -268,6 +392,16 @@ export const NeoQuestionSchema = z.object({
   confirm: Confirmation.nullable().optional(),
   state: z.enum(['open', 'answered', 'retired']),
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
+  answerProvenance: z
+    .object({
+      words: z.string(),
+      via: z.string(),
+      viaName: z.string(),
+      where: z.string(),
+      when: z.string(),
+      at: z.number(),
+    })
+    .optional(),
   answeredBy: z.enum(['button', 'chat']).nullable(),
   answeredAt: z.number().nullable(),
   retiredReason: z.string().nullable(),
@@ -285,6 +419,7 @@ const QuestionReadResult = z.union([
       kind: true,
       state: true,
       answer: true,
+      answerProvenance: true,
       answeredAt: true,
       retiredReason: true,
       confirm: true,
@@ -293,6 +428,7 @@ const QuestionReadResult = z.union([
       todoId: true,
       artifacts: true,
       sourceSession: true,
+      retireWhen: true,
     }),
     answeredByHuman: z.boolean(),
     resolvedByAgent: z.boolean(),
@@ -308,6 +444,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
     kind,
     state,
     answer,
+    answerProvenance,
     answeredAt,
     retiredReason,
     confirm,
@@ -316,6 +453,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
     todoId,
     artifacts,
     sourceSession,
+    retireWhen,
   } = question;
   return {
     ok: true,
@@ -325,12 +463,14 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
       kind,
       state,
       answer,
+      ...(answerProvenance ? { answerProvenance } : {}),
       answeredAt,
       retiredReason,
       confirm,
       document,
       ...(artifacts ? { artifacts } : {}),
       ...(sourceSession ? { sourceSession } : {}),
+      ...(retireWhen ? { retireWhen } : {}),
       ...(replyTo ? { replyTo } : {}),
       ...(todoId ? { todoId } : {}),
     },
@@ -360,7 +500,8 @@ export function planNeoQuestion(
   questions: readonly NeoQuestion[],
   input: z.infer<typeof Ask>,
   todo?: NeoTodo | null,
-  sourceSession?: NeoQuestionSource
+  sourceSession?: NeoQuestionSource,
+  policies: readonly NeoTodoPolicy[] = questionPolicies()
 ): Gate<QuestionPlan> {
   if (input.focused && !sourceSession)
     return fail('source_session_unavailable: focused discussion needs one readable session.');
@@ -372,14 +513,30 @@ export function planNeoQuestion(
     !['done', 'closed_unverified', 'removed'].includes(todo.state)
       ? requestedTodoId
       : undefined;
+  if (!input.retireWhen && (!todoId || !todo?.check))
+    return fail(
+      'retire_when_required: no linked todo check; supply retireWhen {pack, kind, params}.'
+    );
+  let checkRecords: string[] | undefined;
+  if (input.retireWhen) {
+    const checked = planNeoTodoDraft(
+      { check: input.retireWhen, instruction: todoId ? todo!.instruction : null },
+      policies
+    );
+    if ('reason' in checked) return checked;
+    checkRecords = checked.value.records;
+  }
   const records =
     requestedTodoId && !todoId
       ? {
           records: [
+            ...(checkRecords ?? []),
             'todo_closed: the todo reference is not current; this question is recorded on the ask without linking that todo.',
           ],
         }
-      : {};
+      : checkRecords
+        ? { records: checkRecords }
+        : {};
   const confirm = input.confirm ?? null;
   if (confirm) {
     if (input.kind !== 'yesno')
@@ -390,9 +547,11 @@ export function planNeoQuestion(
       return fail('confirmation_body: show the exact home path and SHA-256 in the question text.');
   }
   const draft: NeoQuestionDraft = {
+    ...(input.retireWhen ? { retireWhen: input.retireWhen } : {}),
     text: input.text,
     ...(sourceSession ? { sourceSession } : {}),
     ...(input.artifacts ? { artifacts: input.artifacts } : {}),
+    ...('document' in input && input.document ? { document: input.document } : {}),
     ...(todoId ? { todoId } : {}),
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     kind: input.kind,
@@ -503,20 +662,47 @@ export function createNeoQuestionOperations(
   ) => NeoCardReplyContext | null = () => null,
   publicationChanged: (conversationId: string) => void = () => {},
   deliverAnswers: (questionId: string) => Promise<void> = async () => {},
-  standingRules: () => readonly string[] = () => []
+  standingRules: () => readonly string[] = () => [],
+  inputs: NeoInputReads = noNeoInputReads,
+  policies: () => readonly NeoTodoPolicy[] = questionPolicies,
+  relay: (
+    input: z.infer<typeof Relay>,
+    caller: OperationCaller
+  ) => Promise<unknown> = async () => ({
+    ok: false,
+    reason: 'no_worker_question: this todo has no worker question to relay.',
+  }),
+  language: () => LanguageSetting | undefined = () => undefined
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Ask>, caller: OperationCaller) => ({
+      (input: z.infer<typeof Ask>, caller: OperationCaller) =>
+        resolveNeoInputAsk(store, inputs, caller, input, input.text),
+      ['input', 'caller'],
+      'binding'
+    )
+    .pipe(
+      (binding: Awaited<ReturnType<typeof resolveNeoInputAsk>>) =>
+        'reason' in binding ? binding : { value: null },
+      'binding',
+      'result:outcome'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Ask>,
+        caller: OperationCaller,
+        binding: { value: { askId: string } }
+      ) => ({
         ...input,
+        askId: binding.value.askId,
         replyTo: input.replyTo?.filter((id) => receivedHumanInput(caller, id)),
       }),
-      ['input', 'caller'],
+      ['input', 'caller', 'binding'],
       'input'
     )
     .pipe(
-      (input: z.infer<typeof Ask>, caller: OperationCaller) => {
+      (input: Bound, caller: OperationCaller) => {
         const context = replyContext(caller, input.replyTo, input.askId);
         return {
           context,
@@ -545,24 +731,27 @@ export function createNeoQuestionOperations(
       'reply',
       'result:outcome'
     )
+    .pipe((input: Bound) => requireNeoOpenAsk(store.getAsk(input.askId)), 'input', 'result:outcome')
     .pipe(
-      (input: z.infer<typeof Ask>) => requireNeoOpenAsk(store.getAsk(input.askId)),
-      'input',
-      'result:outcome'
+      (input: z.infer<typeof Ask>, caller: OperationCaller) =>
+        readCardArtifactFacts(input.artifacts ?? [], caller, artifact),
+      ['input', 'caller'],
+      'artifactFacts'
     )
     .pipe(
-      (owned: NeoAsk, input: z.infer<typeof Ask>, caller: OperationCaller) => {
-        const unknown = unregisteredArtifact(
-          input.artifacts ?? [],
-          (input.artifacts ?? []).map((ref) => artifact(ref.artifactId, caller))
-        );
+      (
+        owned: NeoAsk,
+        input: z.infer<typeof Ask>,
+        facts: Awaited<ReturnType<typeof readCardArtifactFacts>>
+      ) => {
+        const unknown = unverifiedCardArtifact(input.artifacts ?? [], facts);
         return unknown
           ? fail(
               `invalid_artifact_reference: artifact "${unknown.artifactId}" is not one you can attach as given.`
             )
           : { value: owned };
       },
-      ['outcome', 'input', 'caller'],
+      ['outcome', 'input', 'artifactFacts'],
       'result:outcome'
     )
     .pipe(
@@ -577,7 +766,8 @@ export function createNeoQuestionOperations(
           store.listQuestions(owned.id),
           input,
           'todoId' in input && input.todoId ? store.getTodo(input.todoId) : null,
-          source ?? undefined
+          source ?? undefined,
+          policies()
         );
       },
       ['outcome', 'input'],
@@ -613,16 +803,17 @@ export function createNeoQuestionOperations(
       ): QuestionReceipt | Rejection => {
         let reason = 'question_closed: the question to replace is no longer open.';
         const question = store.writeCardReply(reply.context, reply.mutationId, () => {
-          const conflict =
-            plan.draft.todoId &&
-            store
-              .listQuestions(plan.ask.id)
-              .find(
-                (q) =>
-                  q.todoId === plan.draft.todoId && q.state === 'open' && q.id !== plan.replaced?.id
-              );
-          if (conflict) {
-            reason = `todo_question_open: this todo already has open question ${conflict.id}; use replaces to change it explicitly.`;
+          const card =
+            plan.draft.kind === 'start'
+              ? null
+              : requireHumanCard(
+                  plan.draft,
+                  store.listQuestions(plan.ask.id),
+                  plan.replaced,
+                  language()
+                );
+          if (card && 'reason' in card) {
+            reason = card.reason.reason;
             return null;
           }
           if (plan.reworded) {
@@ -634,15 +825,16 @@ export function createNeoQuestionOperations(
               Date.now(),
               plan.draft.replyTo,
               plan.draft.artifacts,
-              plan.draft.sourceSession
+              plan.draft.sourceSession,
+              plan.draft.retireWhen
             );
             const question = store.getQuestion(id);
             return question?.state === 'open' ? question : null;
           }
           const id = reply.mutationId;
           return plan.replaced
-            ? store.replaceQuestion(plan.replaced, id, plan.draft, Date.now())
-            : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
+            ? replaceHumanCard(store, plan.replaced, id, plan.draft, Date.now())
+            : openHumanCard(store, id, plan.ask.id, plan.draft, Date.now());
         });
         if (question && reply.context) publicationChanged(reply.context.conversationId);
         return question
@@ -683,6 +875,18 @@ export function createNeoQuestionOperations(
         if (question.state !== 'open') return { reason: { ok: true, question } };
         const open = requireNeoOpenAsk(store.getAsk(question.askId));
         return 'reason' in open ? open : { value: question };
+      },
+      'outcome',
+      'result:outcome'
+    )
+    .pipe(
+      (question: NeoQuestion): Gate<NeoQuestion> => {
+        const todo = question.todoId ? store.getTodo(question.todoId) : null;
+        return todo?.state === 'blocked' && todo.blockedBy === 'needs-human'
+          ? fail(
+              'todo_waiting: this card is what its todo waits on. Settle the todo first: neo.todo.remove when it is no longer needed, neo.todo.continue to send its worker on, or neo.question.ask with replaces to ask differently. Finished work needs nothing: its passing check closes both.'
+            )
+          : { value: question };
       },
       'outcome',
       'result:outcome'
@@ -845,7 +1049,7 @@ export function createNeoQuestionOperations(
                 .map((todo) => todo!.title);
               return held.length
                 ? [
-                    `${store.getTodo(id)?.title ?? id} waits for held steps: ${held.join(', ')}. Ask the human whether to release them (neo.todo.edit hold: null).`,
+                    `${store.getTodo(id)?.title ?? id} waits for held steps: ${held.join(', ')}. Ask the human whether to release them (neo.todo.hold reason: null).`,
                   ]
                 : [];
             }),
@@ -865,8 +1069,7 @@ export function createNeoQuestionOperations(
   return [
     defineOperation({
       name: 'neo.question.resolve',
-      description:
-        'Resolve an open worker card from a cited saved standing rule or earlier human answer owned by this Neo. Retires the card, stores the answer and citation, and uses its existing worker delivery/hold path. Neo or the local user on its behalf may call this. This is agent resolution, never human approval; start and confirmation cards are refused. source is {kind:"rule",text} with the exact saved text or {kind:"answer",questionId} for a human-answered card. Leave the card open when neither source applies.',
+      description: neoToolDescription('neo.question.resolve'),
       inputSchema: Resolve,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -874,8 +1077,7 @@ export function createNeoQuestionOperations(
     }),
     defineOperation({
       name: 'neo.question.ask',
-      description:
-        'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, closed unverified, removed or gone. If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed, return a todo_closed record and open the question on the ask without linking that todo. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are omitted. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step; a closed question id is ignored and the new question opens on its own. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
+      description: neoToolDescription('neo.question.ask'),
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -883,17 +1085,23 @@ export function createNeoQuestionOperations(
     }),
     defineOperation({
       name: 'neo.question.retire',
-      description:
-        'Retire an open question on an ask you own when it no longer needs an answer, with the reason in one short sentence. It leaves the open questions and shows in Details as no longer needed. An already closed question comes back unchanged.',
+      description: neoToolDescription('neo.question.retire'),
       inputSchema: Retire,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => retire(input, caller),
     }),
     defineOperation({
+      name: 'neo.question.relay',
+      description: neoToolDescription('neo.question.relay'),
+      inputSchema: Relay,
+      resultSchema: QuestionResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => (await relay(input, caller)) as QuestionReceipt | Rejection,
+    }),
+    defineOperation({
       name: 'neo.question.get',
-      description:
-        "Read one of Neo's questions to the human by id: its text, state, answer and optional home path/hash binding. answeredByHuman is true only when the human answered it, by button or in their own chat; use it to check a decision another session reports. resolvedByAgent marks a cited Neo resolution, whose durable citation is in retiredReason; it is never human approval.",
+      description: neoToolDescription('neo.question.get'),
       inputSchema: Get,
       resultSchema: QuestionReadResult,
       policy: { safetyClass: 'read' },
@@ -906,8 +1114,7 @@ export function createNeoQuestionOperations(
     }),
     defineOperation({
       name: 'neo.question.answer',
-      description:
-        "The human's answer to an open question: no or yes, the chosen options, their words, or the todos to start. The answer goes to the ask's Neo session.",
+      description: neoToolDescription('neo.question.answer'),
       inputSchema: Answer,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'human_only' },

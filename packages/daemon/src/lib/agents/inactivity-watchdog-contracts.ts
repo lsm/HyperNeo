@@ -1,5 +1,5 @@
 import { AGENT_INACTIVITY_NAG } from '@hyperneo/prompts';
-import type { SpaceManager } from '../space/managers/space-manager';
+import type { Space } from '@hyperneo/shared';
 import type {
   SpaceAgentInactivityClaimRepository,
   SpaceAgentInactivityConfigRepository,
@@ -32,7 +32,7 @@ export interface InactivityWatchdogDeps {
   configRepo: SpaceAgentInactivityConfigRepository;
   claimRepo: SpaceAgentInactivityClaimRepository;
   agentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById' | 'listBySpaceId'>;
-  spaceManager: Pick<SpaceManager, 'getSpace'>;
+  spaceManager: { getSpace(spaceId: string): Promise<Space | null> };
   scannerToken: string;
   now?: () => number;
   deliveryTimeoutMs?: number;

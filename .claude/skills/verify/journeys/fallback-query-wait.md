@@ -10,7 +10,8 @@ The helper starts an ephemeral real daemon and uses public message.send,
 session.get and message.sdkMessages RPCs. Its scripted SDK consumes the original
 human prompt, emits an ordinary top-level rate-limit result, then leaves its
 stream open. The configured fallback must switch from Haiku to Sonnet and produce
-FALLBACK_RECOVERED for that same prompt without another human message. The fixture
+FALLBACK_RECOVERED for that same prompt without another human message. The fallback
+entry's saved thinking level must be on the recovered session. The fixture
 writes its own synthetic SDK transcript so normal resume validation still runs.
 It refuses external HTTP and supplies its provider credential only in the fresh
 DB; there is no model listener, credential file, browser, live daemon or port 8399.
@@ -27,6 +28,10 @@ daemon in finally; the wrapper saves evidence and removes HOME/data immediately.
 The online convo regression invokes the same helper in a scrubbed temporary home.
 This verifies the RPC/SDK lifecycle with a scripted provider; upstream model
 behavior, browser rendering and deployment remain unverified.
+
+Repeat with --override before the run directory: a model-specific override for the
+source model then wins, and the session must end with the override row's level. Without
+the flag the override belongs to another model, so the default chain's level must win.
 
 Repeat with --cancel before the run directory (the wrapper forwards arguments).
 That case cancels through session.cancelRateLimitRetry while recovery is pending,

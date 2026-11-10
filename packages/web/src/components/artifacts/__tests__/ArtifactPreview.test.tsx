@@ -52,6 +52,32 @@ afterEach(() => {
 });
 
 describe('ArtifactPreview', () => {
+  it('cancels a pending video transfer when its preview closes', async () => {
+    const metadata = meta(undefined, 'video', 600000);
+    metadata.metadata.sourcePath = 'clip.mp4';
+    let finish!: (value: unknown) => void;
+    request.mockImplementation(async (_method, params) =>
+      params.name === 'artifact.file.get'
+        ? metadata
+        : new Promise((resolve) => {
+            finish = resolve;
+          })
+    );
+    const { unmount } = render(<ArtifactPreview artifactId="a1" onBack={() => {}} />);
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    unmount();
+    await act(async () => {
+      finish({
+        ...chunk,
+        data: Buffer.alloc(262144).toString('base64'),
+        nextOffset: 262144,
+        byteLength: 600000,
+        complete: false,
+      });
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it('shows the header facts and the rendered Markdown, then its source', async () => {
     reply(
       meta({ kind: 'commit', repository: 'r', commitSha: '0123456789abcdef', blobSha: 'b' }),

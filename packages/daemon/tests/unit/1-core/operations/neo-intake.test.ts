@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { Session } from '@hyperneo/shared';
+import { subscribeToStructuredLogs, type Session, type StructuredLogEvent } from '@hyperneo/shared';
 import {
   admitNeoIntake,
+  neoIntakeMessage,
   createNeoIntakeOperation,
   requireNeoIntakeTarget,
   requireNeoRootTarget,
 } from '../../../../src/lib/neo/intake.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -31,6 +32,19 @@ const target = { id: input.sessionId, status: 'active' as const, config: {} };
 const binding = { sessionId: input.sessionId, projectId: null, kind: 'neo' as const };
 
 describe('Neo intake gates', () => {
+  test.each(['live_voice', 'dictation', 'text'] as const)(
+    'intake keeps %s as source without freezing reply speech',
+    (inputMode) => {
+      for (const speech of [true, false, undefined]) {
+        const message = neoIntakeMessage({ ...input, inputMode, speech });
+        expect(JSON.stringify(message.message.content)).toContain(`[input: ${inputMode}]`);
+        expect(JSON.stringify(message.message.content)).not.toContain('speech:');
+        expect(JSON.stringify(message.message.content)).not.toContain('neo.speech.say');
+        expect(JSON.stringify(message.message.content)).not.toContain('[listening:');
+        expect(message.humanContent).toEqual([{ type: 'text', text: input.content }]);
+      }
+    }
+  );
   test.each([
     { source: 'mcp', role: 'neo', sessionId: input.sessionId },
     { source: 'rpc' },
@@ -107,6 +121,26 @@ describe('durable Neo intake operation', () => {
       caller
     );
   }
+  test('timestamps one accepted live input without its content or duplicate retries', async () => {
+    const logs: StructuredLogEvent[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.message === 'voice.input.accepted') logs.push(event);
+    });
+    try {
+      const voice = { ...input, inputMode: 'live_voice', speech: true };
+      await invoke(voice);
+      await invoke(voice);
+      expect(logs).toHaveLength(1);
+      expect(logs[0].metadata).toMatchObject({
+        sessionId: input.sessionId,
+        messageId: input.requestId,
+        atMs: expect.any(Number),
+      });
+      expect(JSON.stringify(logs)).not.toContain(input.content);
+    } finally {
+      unsubscribe();
+    }
+  });
   test('an archived root session rejects the ask before any write', async () => {
     sessions.set(input.sessionId, { ...target, status: 'archived' as never });
     const registry = createOperationRegistry([createNeoIntakeOperation(db, repo)]);
@@ -124,6 +158,7 @@ describe('durable Neo intake operation', () => {
         repo,
         installedPacks: () => [],
         packOperations: [],
+        speech: { operations: [] },
       } as unknown as NeoService)
     );
     expect(registry.get('neo.message.send')?.policy?.safetyClass).toBe('human_only');

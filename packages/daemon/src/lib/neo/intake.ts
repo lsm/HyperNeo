@@ -1,3 +1,5 @@
+import { neoToolDescription } from '@hyperneo/prompts';
+import { snapshotNeoCardQuote } from './card-quote.ts';
 import type { UUID } from 'node:crypto';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -24,6 +26,7 @@ import type { NeoRepository } from '../../storage/repositories/neo-repository.ts
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { NeoReplyRefSchema } from './conversation-ask.ts';
 import { neoImageSize } from './image-size.ts';
 import { neoLocalTimeLine } from './local-time.ts';
@@ -51,6 +54,8 @@ const Input = z
       .optional(),
     replyTo: NeoReplyRefSchema.optional(),
     previewContext: NeoPreviewContextSchema.optional(),
+    speech: z.boolean().optional(),
+    inputMode: z.enum(['text', 'dictation', 'live_voice']).optional(),
   })
   .superRefine((input, context) => {
     const projected = toMailboxMessage({
@@ -127,7 +132,8 @@ export function neoIntakeMessage(
   const previewFact = previewContext
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
-  const facts = [identifier, localTime, fact, previewFact].flatMap((text) =>
+  const sourceFact = input.inputMode ? `[input: ${input.inputMode}]` : null;
+  const facts = [identifier, localTime, fact, previewFact, sourceFact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
   );
   return {
@@ -201,10 +207,18 @@ export function neoReplySnapshot(
   replyTo: NeoReplyTo | undefined,
   publication: NeoPublication | null,
   quoted: NeoConversationAsk | null,
-  stored: NeoConversationAsk | null
+  stored: NeoConversationAsk | null,
+  reply: NeoReply | null = null
 ): NeoReplyTo | undefined {
-  if (replyTo?.kind !== 'message') return replyTo;
   if (stored) return stored.replyTo;
+  if (replyTo?.kind !== 'message')
+    return (
+      replyTo &&
+      snapshotNeoCardQuote(
+        replyTo,
+        reply?.question?.text ?? reply?.todo?.title ?? reply?.ask?.title
+      )
+    );
   const text = publication
     ? publication.shortText?.trim() || publication.fullText.trim()
     : quoted
@@ -264,7 +278,8 @@ async function persistNeoIntake(
   message: ReturnType<typeof neoIntakeMessage>,
   session: Target,
   db: Database,
-  conversationId: string
+  conversationId: string,
+  liveVoice: boolean
 ): Promise<IntakeResult> {
   const receipt = await new NeoConversationAskRepository(db.getDatabase()).acceptPrompt(
     conversationId,
@@ -273,6 +288,12 @@ async function persistNeoIntake(
     db.getSDKMessageRepo(),
     db.getJobQueueRepo()
   );
+  if (liveVoice && receipt.accepted && receipt.created)
+    voiceDiagnostic('voice.input.accepted', {
+      sessionId: session.id,
+      messageId: message.uuid,
+      atMs: Date.now(),
+    });
   return receipt.accepted
     ? {
         ok: true,
@@ -428,12 +449,13 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     (
       input: IntakeInput,
       publication: NeoPublication | null,
-      asks: { quoted: NeoConversationAsk | null; stored: NeoConversationAsk | null }
+      asks: { quoted: NeoConversationAsk | null; stored: NeoConversationAsk | null },
+      reply: NeoReply | null
     ): IntakeInput => {
-      const replyTo = neoReplySnapshot(input.replyTo, publication, asks.quoted, asks.stored);
+      const replyTo = neoReplySnapshot(input.replyTo, publication, asks.quoted, asks.stored, reply);
       return replyTo ? { ...input, replyTo } : input;
     },
-    ['input', 'publication', 'asks'],
+    ['input', 'publication', 'asks', 'reply'],
     'input'
   )
   .pipe(
@@ -489,9 +511,20 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     'message'
   )
   .pipe(
-    (message: ReturnType<typeof neoIntakeMessage>, root: IntakeTarget, db: Database) =>
-      persistNeoIntake(message, root.target, db, root.conversationId),
-    ['message', 'root', 'db'],
+    (
+      message: ReturnType<typeof neoIntakeMessage>,
+      root: IntakeTarget,
+      db: Database,
+      input: IntakeInput
+    ) =>
+      persistNeoIntake(
+        message,
+        root.target,
+        db,
+        root.conversationId,
+        input.inputMode === 'live_voice'
+      ),
+    ['message', 'root', 'db', 'input'],
     'receipt'
   )
   .pipe(
@@ -529,8 +562,7 @@ export function createNeoIntakeOperation(
 ) {
   return defineOperation({
     name: 'neo.message.send',
-    description:
-      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. replyTo {kind, id} quotes a question, todo, ask (work card) or message: every message and reply goes to the one Neo session, and a reply to a question is recorded as its answer, except a start question, where a reply is only a remark and the question stays open. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
+    description: neoToolDescription('neo.message.send'),
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },

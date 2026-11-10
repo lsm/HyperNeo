@@ -13,12 +13,11 @@ unrelated reminders retain their complete Unicode bodies.
 Missing and required-ID errors remain unchanged. Two concurrent deletes have
 exactly one success and one missing-reminder error.
 
-An injected DELETE failure must preserve the reminder and counts. Both the
-existence read and DELETE must be absent from the daemon main connection during
-deletion. Run and commit the failing baseline before wiring; its behavior checks
-pass and the final SQL assertion fails. Repeat under supported Deno with
-VERIFY_PROOF_RUNTIME=deno. Shared setup and cleanup remain in SKILL.md and
-proof-run.sh, which preserves RPC replies and captured SQL.
+An injected DELETE failure must preserve the reminder and counts. Both the existence read
+and DELETE must be absent from the daemon main connection during deletion. Run and commit
+the failing baseline before wiring; its behavior checks pass and the final SQL assertion
+fails. Shared setup and cleanup remain in SKILL.md and proof-run.sh, which preserves RPC
+replies and captured SQL.
 
 Run reminder RPC, repository, operation and fire-handler suites. This covers
 hard deletion through the RPC only; reminder creation, cancellation, scheduling,

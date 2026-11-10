@@ -1,0 +1,1 @@
+export const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;

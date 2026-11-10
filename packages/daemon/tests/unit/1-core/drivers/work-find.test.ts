@@ -304,6 +304,7 @@ describe('skipSpaceQuery', () => {
       reason: [],
     });
     const adapter = createHyperneoAdapter({
+      readTurnFacts: async () => [],
       readTurnEnds: async () => {
         throw new Error('read turn reports');
       },
@@ -403,6 +404,7 @@ describe('hyperneo adapter against the sessions table', () => {
     for (let n = 0; n < 600; n++)
       closed.run(`x${n}`, `2026-10-05T00:00:${String(n % 60).padStart(2, '0')}.${n}Z`);
     const adapter = createHyperneoAdapter({
+      readTurnFacts: async () => [],
       readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
@@ -415,6 +417,7 @@ describe('hyperneo adapter against the sessions table', () => {
 
   test('groups its own sessions by project root and adds folders from workspace history', async () => {
     const adapter = createHyperneoAdapter({
+      readTurnFacts: async () => [],
       readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
@@ -795,5 +798,34 @@ describe('Claude history identity refresh', () => {
     expect(reads).toBe(1);
     await findLocally([adapter], query);
     expect(reads).toBe(2);
+  });
+});
+
+describe('work.find execution location', () => {
+  test('preserves the worker cwd alongside the project folder through result validation', async () => {
+    const project = group('laptop', '/focus/dolmen', 'codex-desktop', 1);
+    const execution = { machine: 'laptop', directory: '/codex/worktrees/abc/dolmen' };
+    const registry = createOperationRegistry([
+      createFindWorkOperation({
+        adapters: () => [
+          {
+            id: 'codex-desktop',
+            capabilities: ['find'],
+            find: () => [{ ...project, work: [{ ...project.work[0], execution }] }],
+          },
+        ],
+        remote: { list: () => [], invoke: async () => ({}) },
+      }),
+    ]);
+    const outcome = await invokeOperation(
+      registry,
+      'work.find',
+      { localOnly: true },
+      { source: 'rpc' }
+    );
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      value: { places: [{ work: [{ place: { folder: '/focus/dolmen' }, execution }] }] },
+    });
   });
 });

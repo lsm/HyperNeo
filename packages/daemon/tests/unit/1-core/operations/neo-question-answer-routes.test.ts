@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -163,6 +164,27 @@ test('upgrade recovers held historical answers once without changing their prove
   }
 });
 
+test('the card write refuses a second card on the ask, however the relay got there', async () => {
+  const f = await fixture();
+  try {
+    const todo = f.store.addTodo(
+      'second',
+      'ask',
+      { title: 'Second', doneWhen: 'Built', instruction: null, check: null, named: null },
+      2
+    );
+    new NeoTodoSessionRepository(f.db).bind(todo.id, f.source, 2);
+    f.store.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
+    expect(await f.write(f.source, { ...f.report, todoId: todo.id })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('card_open'),
+    });
+    expect(f.store.listQuestions('ask')).toHaveLength(1);
+  } finally {
+    f.db.close();
+  }
+});
+
 test('a failed route write rolls back the new card and its needs-human hold', async () => {
   const f = await fixture();
   try {
@@ -174,6 +196,7 @@ test('a failed route write rolls back the new card and its needs-human hold', as
     );
     new NeoTodoSessionRepository(f.db).bind(todo.id, f.source, 2);
     f.store.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
+    f.store.retireQuestion(f.store.listQuestions('ask')[0], 'next case', null, 2);
     f.db.exec(
       "CREATE TRIGGER refuse_route BEFORE UPDATE ON neo_questions WHEN NEW.worker_answers_json IS NOT NULL BEGIN SELECT RAISE(ABORT, 'synthetic route failure'); END"
     );
@@ -205,7 +228,8 @@ test('startup does not turn a later manual replacement into a worker report', as
           todoId: 'todo',
           sourceSession: f.source,
           kind: 'reply',
-          text: 'A manual clarification',
+          text: 'A manual clarification?',
+          retireWhen: pendingTodoCheck,
           replaces: f.question.id,
         },
         { source: 'rpc' }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { spyOn } from 'bun:test';
@@ -9,6 +9,7 @@ import { createArtifactCaptureStore } from '../../../packages/daemon/src/lib/art
 const root = realpathSync(resolve(process.argv[2] ?? ''));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(root, 'home'));
+mkdirSync(join(root, 'evidence'), { recursive: true });
 if (process.argv[3] === 'crash') {
   const source = join(root, 'crash-source');
   mkdirSync(source);
@@ -20,7 +21,7 @@ if (process.argv[3] === 'crash') {
     if (String(args[0]).includes('/staging/')) {
       const write = handle.writeFile.bind(handle);
       handle.writeFile = async (...chunks) => {
-        await write(...chunks);
+        await write(Buffer.from(chunks[0] as Uint8Array).subarray(0, 256 * 1024));
         await handle.sync();
         writeFileSync(join(root, 'crash-ready'), 'partial bytes synced');
         await Bun.sleep(30000);
@@ -29,7 +30,7 @@ if (process.argv[3] === 'crash') {
     }
     return handle;
   });
-  await store.capture(source, ['partial.bin']);
+  await store.capture(Buffer.alloc(800000, 91));
   throw new Error('crash fixture unexpectedly committed');
 }
 const source = join(root, 'workspace');
@@ -39,38 +40,35 @@ writeFileSync(join(source, 'report.bin'), bytes);
 const hash = createHash('sha256').update(bytes).digest('hex');
 const directory = join(root, 'artifacts');
 const store = await createArtifactCaptureStore(directory);
-const receipt = await store.capture(source, ['report.bin']);
+const receipt = await store.capture(bytes);
 assert.deepEqual(receipt, { accepted: true, sha256: hash, byteLength: bytes.length });
 const blob = join(directory, 'blobs', hash);
 assert(readFileSync(blob).equals(bytes));
 assert(readFileSync(join(source, 'report.bin')).equals(bytes));
 assert.equal(statSync(blob).mode & 0o222, 0);
-writeFileSync(join(root, 'outside.bin'), 'SYNTHETIC OUTSIDE SENTINEL');
-symlinkSync(join(root, 'outside.bin'), join(source, 'outside-link'));
-assert.deepEqual(await store.capture(source, ['outside-link']), { accepted: false, reason: 'unsafe_path' });
 const inode = statSync(blob).ino;
-assert.deepEqual(await store.capture(source, ['report.bin']), receipt);
+assert.deepEqual(await store.capture(bytes), receipt);
 assert.equal(statSync(blob).ino, inode);
 assert.equal((await store.inspect()).retainedBytes, bytes.length);
 assert.equal((await store.inspect()).entries.filter((entry) => entry.area === 'staging').length, 0);
 writeFileSync(join(source, 'empty.bin'), Buffer.alloc(0));
-assert.deepEqual(await store.capture(source, ['empty.bin']), { accepted: true, sha256: createHash('sha256').digest('hex'), byteLength: 0 });
+assert.deepEqual(await store.capture(Buffer.alloc(0)), { accepted: true, sha256: createHash('sha256').digest('hex'), byteLength: 0 });
 const quota = await createArtifactCaptureStore(join(root, 'quota'), { artifactBytes: bytes.length, retainedBytes: bytes.length + 1 });
 writeFileSync(join(source, 'second.bin'), Buffer.alloc(bytes.length, 33));
-const parallel = await Promise.all([quota.capture(source, ['report.bin']), quota.capture(source, ['second.bin'])]);
+const parallel = await Promise.all([quota.capture(bytes), quota.capture(Buffer.alloc(bytes.length, 33))]);
 assert.equal(parallel.filter((value) => value.accepted).length, 1);
 assert.equal(parallel.filter((value) => !value.accepted && value.reason === 'quota_full').length, 1);
 assert.equal((await quota.inspect()).reservedBytes, 0);
 assert.equal((await quota.inspect()).retainedBytes, bytes.length);
 assert.equal((await quota.inspect()).warning, true);
 const limited = await createArtifactCaptureStore(join(root, 'limited'), { artifactBytes: 1 });
-assert.deepEqual(await limited.capture(source, ['report.bin']), { accepted: false, reason: 'size_limit', actualBytes: bytes.length, limitBytes: 1 });
+assert.deepEqual(await limited.capture(bytes), { accepted: false, reason: 'size_limit', actualBytes: bytes.length, limitBytes: 1 });
 assert.equal((await limited.inspect()).entries.length, 0);
 const concurrent = await createArtifactCaptureStore(join(root, 'concurrent'));
 const originalUnlink = fs.unlink;
 const delayed = spyOn(fs, 'unlink').mockImplementation(async (path) => { await Bun.sleep(30); return originalUnlink(path); });
 let identical;
-try { identical = await Promise.allSettled([concurrent.capture(source, ['report.bin']), concurrent.capture(source, ['report.bin'])]); }
+try { identical = await Promise.allSettled([concurrent.capture(bytes), concurrent.capture(bytes)]); }
 finally { delayed.mockRestore(); }
 assert(identical.every((result) => result.status === 'fulfilled' && result.value.accepted), 'concurrent identical captures must deduplicate');
 assert.equal((await concurrent.inspect()).retainedBytes, bytes.length);
@@ -78,7 +76,7 @@ assert.equal((await concurrent.inspect()).retainedBytes, bytes.length);
 const interruptedDirectory = join(root, 'interrupted-commit');
 const interrupted = await createArtifactCaptureStore(interruptedDirectory);
 const failUnlink = spyOn(fs, 'unlink').mockRejectedValue(new Error('synthetic interrupted commit'));
-try { await assert.rejects(interrupted.capture(source, ['report.bin']), /synthetic interrupted commit/); }
+try { await assert.rejects(interrupted.capture(bytes), /synthetic interrupted commit/); }
 finally { failUnlink.mockRestore(); }
 const interruptedBlob = join(interruptedDirectory, 'blobs', hash);
 assert.equal(statSync(interruptedBlob).nlink, 2);
@@ -87,28 +85,29 @@ const retainedStage = interruptedState.entries.find((entry) => entry.area === 's
 assert(retainedStage);
 const retryStore = await createArtifactCaptureStore(interruptedDirectory, { retainedBytes: bytes.length * 2 });
 for (let attempt = 0; attempt < 3; attempt++) {
-  assert.deepEqual(await retryStore.capture(source, ['report.bin']), receipt, 'interrupted linked commit must allow identical recapture');
+  assert.deepEqual(await retryStore.capture(bytes), receipt, 'interrupted linked commit must allow identical recapture');
   assert.deepEqual(await retryStore.inspect(), { ...interruptedState, limitBytes: bytes.length * 2, warning: false });
   assert(readFileSync(join(interruptedDirectory, 'staging', retainedStage.name)).equals(bytes));
 }
 assert.equal(statSync(interruptedBlob).nlink, 2);
 assert(readFileSync(interruptedBlob).equals(bytes));
 await fs.link(interruptedBlob, join(interruptedDirectory, 'staging', 'unexpected-third-link'));
-await assert.rejects(retryStore.capture(source, ['report.bin']), /artifact_blob_conflict/);
+await assert.rejects(retryStore.capture(bytes), /artifact_blob_conflict/);
 assert(readFileSync(interruptedBlob).equals(bytes));
 
 const corruptDirectory = join(root, 'corrupt');
 const corrupt = await createArtifactCaptureStore(corruptDirectory);
-assert((await corrupt.capture(source, ['report.bin'])).accepted);
+assert((await corrupt.capture(bytes)).accepted);
 const corruptBlob = join(corruptDirectory, 'blobs', hash);
 chmodSync(corruptBlob, 0o600);
 const tampered = Buffer.alloc(bytes.length, 2);
 writeFileSync(corruptBlob, tampered);
-await assert.rejects(corrupt.capture(source, ['report.bin']), /artifact_blob_conflict/);
+await assert.rejects(corrupt.capture(bytes), /artifact_blob_conflict/);
 assert(readFileSync(corruptBlob).equals(tampered));
 const originalOpen = fs.open;
 const faultStore = await createArtifactCaptureStore(join(root, 'faults'));
-assert((await faultStore.capture(source, ['report.bin'])).accepted);
+assert((await faultStore.capture(bytes)).accepted);
+const callerBytes = Buffer.from(bytes);
 let changed = false;
 const mutate = spyOn(fs, 'open').mockImplementation(async (...args) => {
   const handle = await originalOpen(...args);
@@ -116,16 +115,17 @@ const mutate = spyOn(fs, 'open').mockImplementation(async (...args) => {
     const write = handle.writeFile.bind(handle);
     handle.writeFile = async (...chunks) => {
       await write(...chunks);
-      if (!changed) { changed = true; await fs.writeFile(join(source, 'report.bin'), 'changed during capture'); }
+      if (!changed) { changed = true; callerBytes.fill(0); }
     };
   }
   return handle;
 });
-try { assert.deepEqual(await faultStore.capture(source, ['report.bin']), { accepted: false, reason: 'source_changed' }); }
+try { assert.deepEqual(await faultStore.capture(callerBytes), receipt); }
 finally { mutate.mockRestore(); }
 assert(readFileSync(join(root, 'faults', 'blobs', hash)).equals(bytes));
 const pending = await faultStore.inspect();
-assert(pending.entries.some((entry) => entry.area === 'staging' && entry.byteLength > 0));
+assert.equal(pending.entries.filter((entry) => entry.area === 'staging').length, 0);
+assert(!callerBytes.equals(bytes));
 writeFileSync(join(source, 'report.bin'), bytes);
 const diskFull = spyOn(fs, 'open').mockImplementation(async (...args) => {
   const handle = await originalOpen(...args);
@@ -138,11 +138,11 @@ const diskFull = spyOn(fs, 'open').mockImplementation(async (...args) => {
   }
   return handle;
 });
-try { await assert.rejects(faultStore.capture(source, ['report.bin']), /synthetic disk full/); }
+try { await assert.rejects(faultStore.capture(bytes), /synthetic disk full/); }
 finally { diskFull.mockRestore(); }
 const afterFault = await faultStore.inspect();
 assert.equal(afterFault.reservedBytes, 0);
-assert(afterFault.entries.filter((entry) => entry.area === 'staging').length >= 2);
+assert(afterFault.entries.some((entry) => entry.area === 'staging' && entry.byteLength === bytes.length));
 assert(readFileSync(join(root, 'faults', 'blobs', hash)).equals(bytes));
 const reopened = await createArtifactCaptureStore(join(root, 'faults'));
 assert.equal((await reopened.inspect()).retainedBytes, afterFault.retainedBytes);
@@ -150,7 +150,7 @@ assert.deepEqual((await reopened.inspect()).entries, afterFault.entries);
 const crashRoot = join(root, 'crash');
 mkdirSync(join(crashRoot, 'home'), { recursive: true });
 const beforeCrash = await createArtifactCaptureStore(join(crashRoot, 'artifacts'));
-assert((await beforeCrash.capture(source, ['report.bin'])).accepted);
+assert((await beforeCrash.capture(bytes)).accepted);
 const child = Bun.spawn([process.execPath, resolve(import.meta.path), crashRoot, 'crash'], {
   cwd: root, env: { PATH: process.env.PATH, HOME: join(crashRoot, 'home'), NODE_ENV: 'test' }, stdout: 'ignore', stderr: 'pipe',
 });
@@ -175,11 +175,11 @@ assert(recoveredState.entries.some((entry) => entry.area === 'staging' && entry.
 assert.equal(recoveredState.retainedBytes, bytes.length + 256 * 1024 + linkedBytes.length);
 assert(readFileSync(join(crashRoot, 'artifacts', 'blobs', hash)).equals(bytes));
 const recoveredQuota = await createArtifactCaptureStore(join(crashRoot, 'artifacts'), { retainedBytes: recoveredState.retainedBytes + 1 });
-assert.deepEqual(await recoveredQuota.capture(source, ['report.bin']), { accepted: false, reason: 'quota_full' });
+assert.deepEqual(await recoveredQuota.capture(bytes), { accepted: false, reason: 'quota_full' });
 renameSync(source, `${source}.retained-fixture`);
 assert(readFileSync(blob).equals(bytes));
-const evidence = { exactBytes: true, deduplicated: true, quotaReserved: true, sourceChangeRefused: true,
+const evidence = { exactBytes: true, deduplicated: true, quotaReserved: true, callerMutationIsolated: true,
   interruptionsRetained: true, restartPreserved: true, byteLength: bytes.length, sha256: hash,
   actualProcessCrash: true, interruptedCommitRetried: true, storedExcessLinksRefused: true, sharedInodeCountedOnce: true, recovery: recoveredState, priorFaults: await reopened.inspect() };
-writeFileSync(join(root, 'capture-evidence.json'), JSON.stringify(evidence, null, 2));
+writeFileSync(join(root, 'evidence/capture-evidence.json'), JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence));

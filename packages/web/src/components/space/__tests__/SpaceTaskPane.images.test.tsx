@@ -40,6 +40,10 @@ vi.mock('../../../lib/router', () => ({
   navigate: vi.fn(),
 }));
 
+vi.mock('../../../lib/space-signals', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/signals')),
+}));
 vi.mock('../../../lib/signals', async (importOriginal) => {
   const actual = await importOriginal();
   return {

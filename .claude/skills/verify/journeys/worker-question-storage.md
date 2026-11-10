@@ -12,7 +12,7 @@ A Chinese title and options, original report, and validated worker source must
 survive storage. Ten simultaneous repeats must reuse one open card. A foreign
 worker must be refused.
 Asking a distinct question through `neo.question.ask` on the same todo must
-return `todo_question_open`, retaining the original card. Worker repeats still
+return `card_open`, retaining the original card. Worker repeats still
 reuse the card; explicit replacement is covered by the operation tests.
 After stopping and reopening that daemon's own DB,
 routine activity and a completion judgement must leave the todo blocked with

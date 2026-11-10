@@ -54,20 +54,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
     } catch {}
   }, HOOK_TIMEOUT_MS);
 
-  test('fresh DB has short_id column on tasks', () => {
-    runMigrations(db, () => {});
-    createTables(db);
-
-    expect(columnExists(db, 'tasks', 'short_id')).toBe(true);
-  });
-
-  test('fresh DB has short_id column on goals', () => {
-    runMigrations(db, () => {});
-    createTables(db);
-
-    expect(columnExists(db, 'goals', 'short_id')).toBe(true);
-  });
-
   test('fresh DB has short_id_counters table with correct schema', () => {
     runMigrations(db, () => {});
     createTables(db);
@@ -76,16 +62,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
     expect(columnExists(db, 'short_id_counters', 'entity_type')).toBe(true);
     expect(columnExists(db, 'short_id_counters', 'scope_id')).toBe(true);
     expect(columnExists(db, 'short_id_counters', 'counter')).toBe(true);
-  });
-
-  test('room-scoped composite unique indexes exist for tasks and goals short_id', () => {
-    runMigrations(db, () => {});
-    createTables(db);
-
-    expect(indexExists(db, 'idx_tasks_room_short_id')).toBe(true);
-    expect(indexExists(db, 'idx_goals_room_short_id')).toBe(true);
-    expect(indexExists(db, 'idx_tasks_short_id')).toBe(false);
-    expect(indexExists(db, 'idx_goals_short_id')).toBe(false);
   });
 
   test('existing DB without short_id gets columns added by migration', () => {
@@ -183,136 +159,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
       db.exec(
         `INSERT INTO short_id_counters (entity_type, scope_id, counter) VALUES ('goal', 'room-1', 1)`
       );
-    }).not.toThrow();
-  });
-
-  test('tasks short_id unique index allows multiple NULLs', () => {
-    runMigrations(db, () => {});
-    createTables(db);
-
-    db.exec(
-      `INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-uuid-1', 'Test Room', 1000, 1000)`
-    );
-
-    db.exec(`
-			INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at)
-			VALUES
-				('task-uuid-1', 'room-uuid-1', 'Task 1', '', 'pending', 'normal', 1000, 1000),
-				('task-uuid-2', 'room-uuid-1', 'Task 2', '', 'pending', 'normal', 1001, 1001)
-		`);
-
-    const rows = db
-      .prepare(`SELECT short_id FROM tasks WHERE id IN ('task-uuid-1', 'task-uuid-2')`)
-      .all() as Array<{ short_id: string | null }>;
-    expect(rows.every((r) => r.short_id === null)).toBe(true);
-  });
-
-  test('tasks short_id unique index rejects duplicate non-null values within the same room', () => {
-    runMigrations(db, () => {});
-    createTables(db);
-
-    db.exec(
-      `INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-uuid-1', 'Test Room', 1000, 1000)`
-    );
-
-    db.exec(`
-			INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at, short_id)
-			VALUES ('task-uuid-1', 'room-uuid-1', 'Task 1', '', 'pending', 'normal', 1000, 1000, 't-1')
-		`);
-
-    expect(() => {
-      db.exec(`
-				INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at, short_id)
-				VALUES ('task-uuid-2', 'room-uuid-1', 'Task 2', '', 'pending', 'normal', 1001, 1001, 't-1')
-			`);
-    }).toThrow();
-  });
-
-  test('tasks short_id unique index allows same short_id value in different rooms', () => {
-    runMigrations(db, () => {});
-    createTables(db);
-
-    db.exec(`
-			INSERT INTO rooms (id, name, created_at, updated_at) VALUES
-				('room-uuid-1', 'Room 1', 1000, 1000),
-				('room-uuid-2', 'Room 2', 1000, 1000)
-		`);
-
-    db.exec(`
-			INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at, short_id)
-			VALUES ('task-uuid-1', 'room-uuid-1', 'Task 1', '', 'pending', 'normal', 1000, 1000, 't-1')
-		`);
-
-    expect(() => {
-      db.exec(`
-				INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at, short_id)
-				VALUES ('task-uuid-2', 'room-uuid-2', 'Task 2', '', 'pending', 'normal', 1001, 1001, 't-1')
-			`);
-    }).not.toThrow();
-  });
-
-  test('goals short_id unique index allows multiple NULLs', () => {
-    runMigrations(db, () => {});
-    createTables(db);
-
-    db.exec(
-      `INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-uuid-1', 'Test Room', 1000, 1000)`
-    );
-
-    db.exec(`
-			INSERT INTO goals (id, room_id, title, description, status, created_at, updated_at)
-			VALUES
-				('goal-uuid-1', 'room-uuid-1', 'Goal 1', '', 'active', 1000, 1000),
-				('goal-uuid-2', 'room-uuid-1', 'Goal 2', '', 'active', 1001, 1001)
-		`);
-
-    const rows = db
-      .prepare(`SELECT short_id FROM goals WHERE id IN ('goal-uuid-1', 'goal-uuid-2')`)
-      .all() as Array<{ short_id: string | null }>;
-    expect(rows.every((r) => r.short_id === null)).toBe(true);
-  });
-
-  test('goals short_id unique index rejects duplicate non-null values within the same room', () => {
-    runMigrations(db, () => {});
-    createTables(db);
-
-    db.exec(
-      `INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-uuid-1', 'Test Room', 1000, 1000)`
-    );
-
-    db.exec(`
-			INSERT INTO goals (id, room_id, title, description, status, created_at, updated_at, short_id)
-			VALUES ('goal-uuid-1', 'room-uuid-1', 'Goal 1', '', 'active', 1000, 1000, 'g-1')
-		`);
-
-    expect(() => {
-      db.exec(`
-				INSERT INTO goals (id, room_id, title, description, status, created_at, updated_at, short_id)
-				VALUES ('goal-uuid-2', 'room-uuid-1', 'Goal 2', '', 'active', 1001, 1001, 'g-1')
-			`);
-    }).toThrow();
-  });
-
-  test('goals short_id unique index allows same short_id value in different rooms', () => {
-    runMigrations(db, () => {});
-    createTables(db);
-
-    db.exec(`
-			INSERT INTO rooms (id, name, created_at, updated_at) VALUES
-				('room-uuid-1', 'Room 1', 1000, 1000),
-				('room-uuid-2', 'Room 2', 1000, 1000)
-		`);
-
-    db.exec(`
-			INSERT INTO goals (id, room_id, title, description, status, created_at, updated_at, short_id)
-			VALUES ('goal-uuid-1', 'room-uuid-1', 'Goal 1', '', 'active', 1000, 1000, 'g-1')
-		`);
-
-    expect(() => {
-      db.exec(`
-				INSERT INTO goals (id, room_id, title, description, status, created_at, updated_at, short_id)
-				VALUES ('goal-uuid-2', 'room-uuid-2', 'Goal 2', '', 'active', 1001, 1001, 'g-1')
-			`);
     }).not.toThrow();
   });
 

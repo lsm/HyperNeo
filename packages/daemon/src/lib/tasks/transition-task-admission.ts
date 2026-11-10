@@ -10,7 +10,7 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { TaskCoreSchema } from './get-operation.ts';
 import type { StandaloneTaskStatus } from './standalone-lifecycle.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import { admitSpaceTaskMutation, resolveSpaceTaskOwner } from './metadata.ts';
 import type { DirectFinalizationInput } from './finalize-direct-attempt.ts';
 import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';

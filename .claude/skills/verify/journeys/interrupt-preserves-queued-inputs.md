@@ -1,11 +1,15 @@
 ## A user interrupt ends the current turn and preserves queued inputs
 
 Set `PROOF=.claude/skills/verify/interrupt-queued-inputs.ts` and use the
-**In-process RPC proofs** setup in SKILL.md. Ports 8000 and 8001 must be free.
+**In-process RPC proofs** setup in SKILL.md. The helper selects two ephemeral
+loopback ports and sets the synthetic provider's VERIFY_MOCK_PORT itself; it
+does not connect to a pre-existing proxy or require ports 8000 and 8001.
 
 The helper starts an isolated daemon on an ephemeral port, with a fresh HOME,
 DB and WebSocket client. The installed SDK talks only to local mock HTTP
-servers. The first model request is held open to represent an active turn.
+servers; external registry MCP servers are disabled through RPC. The first
+tool-capable model request is held open to represent an active
+turn; auxiliary title requests cannot satisfy this barrier or replay assertions.
 The helper seeds three synthetic enqueued inputs while it runs: two with
 pending delivery jobs and one orphan row. It invokes the same
 `client.interrupt` RPC as the user, waits for `agent.interrupted`, and records

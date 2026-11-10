@@ -1,5 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { isIPv6 } from 'node:net';
+import { DatabaseLock } from '../storage/database-lock.ts';
 import { BUILD_METADATA } from './build-metadata.ts';
 import { getDataDir } from './data-dir.ts';
 
@@ -14,9 +16,9 @@ export interface RuntimeDescriptor {
 
 const LOOPBACK_HOSTS = new Set(['0.0.0.0', '::', '::0', '']);
 
-function dialableHost(bindHost: string): string {
+export function dialableHost(bindHost: string): string {
   if (LOOPBACK_HOSTS.has(bindHost)) return '127.0.0.1';
-  if (bindHost === '::1') return '[::1]';
+  if (isIPv6(bindHost)) return `[${bindHost}]`;
   return bindHost;
 }
 
@@ -35,11 +37,19 @@ function isProcessAlive(pid: number): boolean {
 
 function readDescriptorPid(path: string): number | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<RuntimeDescriptor>;
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<RuntimeDescriptor> | number;
+    if (typeof parsed === 'number') return parsed;
     return typeof parsed.pid === 'number' ? parsed.pid : undefined;
   } catch {
     return undefined;
   }
+}
+
+export function hasOtherRuntimeOwner(dataDir: string = getDataDir()): boolean {
+  const path = descriptorFilePath(dataDir);
+  return [readDescriptorPid(`${path}.owner.lock`), readDescriptorPid(path)].some(
+    (pid) => pid !== undefined && pid !== process.pid && isProcessAlive(pid)
+  );
 }
 
 export function writeRuntimeDescriptor(
@@ -58,21 +68,26 @@ export function writeRuntimeDescriptor(
     startedAt: Date.now(),
   };
 
-  const existingPid = readDescriptorPid(path);
-  if (existingPid !== undefined && existingPid !== process.pid && isProcessAlive(existingPid)) {
-    return () => {};
-  }
-
+  const lock = new DatabaseLock(`${path}.owner`);
   try {
+    lock.acquire();
+    if (hasOtherRuntimeOwner(dataDir)) {
+      lock.release();
+      return () => {};
+    }
     mkdirSync(dirname(path), { recursive: true });
     const staging = `${path}.${process.pid}.staging`;
     writeFileSync(staging, `${JSON.stringify(descriptor)}\n`, 'utf8');
     renameSync(staging, path);
   } catch {
+    lock.release();
     return () => {};
   }
 
-  return () => removeRuntimeDescriptor(path, process.pid);
+  return () => {
+    removeRuntimeDescriptor(path, process.pid);
+    lock.release();
+  };
 }
 
 function removeRuntimeDescriptor(path: string, pid: number): void {

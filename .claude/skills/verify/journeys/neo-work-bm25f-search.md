@@ -23,14 +23,18 @@ unigrams/bigrams form its terms. Full bodies are read when a nonempty search
 begins, then indexed once for that feed revision; later query changes must not
 cause more reads. Request, report, evidence, outcome, question and Chinese-only terms
 must find their exact card even when the initial summary omitted that body.
-Search covers the loaded Work feed, including any history pages already loaded.
+The client ranker covers the loaded Work feed, including history pages already
+loaded. Server search additionally hydrates matching unloaded cards; verify that
+path with neo-work-unloaded-search.md.
 Import verifySearchRequest from neo-search-request-web.mjs and run it at both
 widths with phase after. Words and CJK text present only in the original request
 or a question answer must find the ask. Preserve separate before proofs showing
 No matching work. For the answer-only baseline pass queries:['answercipher736','回答']
 to verifySearchRequest, because request matching was already fixed at that point.
-The useNeoWorkSearch result boundary can later use neo.ask.search without
-changing the search controls or ranked result rendering.
+The useNeoWorkSearch result boundary calls neo.ask.search once per settled query
+and appends distinct unloaded asks after the existing locally ranked matches.
+Further server pages require Load more search results. Unloaded hydration is
+limited to four concurrent reads and cached while search stays open.
 
 Require No matching work for an unmatched query, with no stale cards. Escape
 clears search and restores all cards without closing the mobile Work sheet.

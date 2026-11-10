@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -30,7 +31,7 @@ try {
   raw.prepare('DELETE FROM job_queue WHERE queue = ?').run(JOB_QUEUE_CLEANUP);
   const job = app.jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: 0 });
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
   hub.registerTransport(transport);
   await transport.initialize();
   evidence.health = await hub.request('system.health', {});

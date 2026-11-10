@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -31,7 +33,7 @@ try {
   const create = (name: string) => workflows.createWorkflow({ spaceId: space.id, name, nodes: [{ id: crypto.randomUUID(), name: 'Start', agents: [] }] });
   const disposable = create('Disposable'), blocked = create('Executable'), protectedWorkflow = create('Other-space refusal');
   const active = new SpaceWorkflowRunRepository(raw).createRun({ spaceId: space.id, workflowId: blocked.id, title: 'Taskless executable run' });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const rpc = (method: string, data: unknown) => new Promise<Record<string, unknown>>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error(`RPC timeout: ${method}`)), 15000);

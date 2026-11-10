@@ -10,12 +10,13 @@ import {
 } from '../../lib/artifact-preview-client.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { t } from '../../lib/i18n/index.ts';
-import { copyToClipboard } from '../../lib/utils.ts';
 import { connectionState } from '../../lib/state.ts';
+import { copyToClipboard } from '../../lib/utils.ts';
 import MarkdownRenderer, { clearArtifactRenderCache } from '../chat/MarkdownRenderer.tsx';
 import { ArtifactDownload } from './ArtifactDownload.tsx';
 import { ArtifactHtmlDocument } from './ArtifactHtmlDocument.tsx';
 import { ArtifactHtmlSource } from './ArtifactHtmlSource.tsx';
+import { ArtifactVideo } from './ArtifactVideo.tsx';
 import { ArtifactImage } from './ArtifactImage.tsx';
 
 type Shown = ArtifactPreviewState | { state: 'loading' };
@@ -27,6 +28,7 @@ export const KIND_LABELS = {
   json: 'JSON',
   log: 'Log',
   text: 'Text',
+  video: 'Video',
 };
 
 export const formatBytes = (bytes: number) =>
@@ -47,6 +49,7 @@ export function artifactStateMessage(state: Exclude<Shown['state'], 'ready'>) {
         loading: 'artifact.loading',
         daemon_unavailable: 'artifact.daemonUnavailable',
         needs_update: 'artifact.needsUpdate',
+        client_update: 'artifact.clientUpdate',
         revoked: 'artifact.revoked',
         forbidden: 'artifact.forbidden',
         unsupported: 'artifact.unsupported',
@@ -142,13 +145,15 @@ export function ArtifactPreview({
     }
     setShown({ state: 'loading' });
     let current = true;
+    const controller = new AbortController();
     connectionManager
       .getHub()
-      .then((hub) => readArtifactPreview(hub, artifactId))
+      .then((hub) => readArtifactPreview(hub, artifactId, controller.signal))
       .catch((): ArtifactPreviewState => ({ state: 'daemon_unavailable' }))
       .then((next) => current && setShown(next));
     return () => {
       current = false;
+      controller.abort();
     };
   }, [artifactId, connected, lost]);
 
@@ -193,12 +198,14 @@ export function ArtifactPreview({
         }
         onBack={full ? onBack : undefined}
       >
-        {full && ((shown.state === 'ready' && !shown.image) || shown.state === 'html_source') && (
-          <div class="flex gap-1">
-            {toggle('preview', t('artifact.preview'))}
-            {toggle('source', t('artifact.source'))}
-          </div>
-        )}
+        {full &&
+          ((shown.state === 'ready' && !shown.image && !shown.video) ||
+            shown.state === 'html_source') && (
+            <div class="flex gap-1">
+              {toggle('preview', t('artifact.preview'))}
+              {toggle('source', t('artifact.source'))}
+            </div>
+          )}
         {full && metadata && (
           <ArtifactDownload
             key={artifactId}
@@ -216,11 +223,13 @@ export function ArtifactPreview({
           <ArtifactHtmlSource metadata={shown.metadata} onUnavailable={setShown} />
         ) : shown.state !== 'ready' ? (
           <p class="text-sm text-fg-muted" role="status">
-            {shown.state === 'limit' && metadata?.artifact.kind === 'image'
-              ? t('artifact.imageLimit')
-              : !full && shown.state === 'html_source'
-                ? t('artifact.htmlPreviewUnavailable')
-                : artifactStateMessage(shown.state)}
+            {shown.state === 'limit' && metadata?.artifact.kind === 'video'
+              ? t('artifact.videoLimit')
+              : shown.state === 'limit' && metadata?.artifact.kind === 'image'
+                ? t('artifact.imageLimit')
+                : !full && shown.state === 'html_source'
+                  ? t('artifact.htmlPreviewUnavailable')
+                  : artifactStateMessage(shown.state)}
           </p>
         ) : shown.html ? (
           mode === 'preview' ? (
@@ -228,6 +237,8 @@ export function ArtifactPreview({
           ) : (
             <ArtifactHtmlSource metadata={shown.metadata} onUnavailable={setShown} />
           )
+        ) : shown.video ? (
+          <ArtifactVideo blob={shown.video} title={shown.metadata.artifact.title} />
         ) : shown.image ? (
           <ArtifactImage blob={shown.image} title={shown.metadata.artifact.title} />
         ) : mode === 'preview' && shown.metadata.artifact.kind === 'markdown' ? (

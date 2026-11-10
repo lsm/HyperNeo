@@ -13,6 +13,7 @@ import {
   neoAskEntryState,
   neoSnapshotAskEntries,
   neoTodoStatusLine,
+  neoWorkCounts,
   projectNeoAskEntries,
 } from '../../../../src/lib/neo/ask-entries.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -22,11 +23,9 @@ import {
 } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import {
-  fitNeoSnapshotBudget,
-  neoSnapshotOmitted,
-} from '../../../../src/lib/neo/snapshot-compact.ts';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+
+import { NEO_TODO_STALLED_CARD_TAIL } from '../../../../src/lib/neo/todo-state.ts';
+import { todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
 
 const todo = (patch: Partial<NeoTodo>): NeoTodo =>
   ({
@@ -40,6 +39,49 @@ const todo = (patch: Partial<NeoTodo>): NeoTodo =>
   }) as NeoTodo;
 const ask = (status: NeoAsk['status'] = 'open') => ({ status }) as NeoAsk;
 const question = (state: NeoQuestion['state']) => ({ state }) as NeoQuestion;
+
+describe('human-facing completion conditions', () => {
+  test('keeps custom wording on a todo with an assigned evidence check', () => {
+    const original = todo({
+      askId: 'ask',
+      doneWhen: 'The human has reviewed the summary.',
+      check: { pack: 'core', kind: 'evidence', params: { path: todoEvidenceFile('t') } },
+    });
+    const [entry] = projectNeoAskEntries(
+      [{ id: 'ask', status: 'open' } as NeoAsk],
+      { todos: [original], questions: [], links: new Map() },
+      []
+    );
+    expect(entry.todos[0].doneWhen).toBe(original.doneWhen);
+  });
+
+  test.each(['assigned', 'external', 'different-todo', 'different-pack', 'no-check'])(
+    'projects %s evidence without changing the stored completion',
+    (kind) => {
+      const path = todoEvidenceFile(kind === 'different-todo' ? 'other' : 't');
+      const original = todo({
+        askId: 'ask',
+        doneWhen: `File ${path} exists.`,
+        check:
+          kind === 'no-check'
+            ? null
+            : {
+                pack: kind === 'different-pack' ? 'custom' : 'core',
+                kind: 'evidence',
+                params: { path: kind === 'external' ? '/results/report.md' : path },
+              },
+      });
+      const [entry] = projectNeoAskEntries(
+        [{ id: 'ask', status: 'open' } as NeoAsk],
+        { todos: [original], questions: [], links: new Map() },
+        []
+      );
+      expect(entry.todos[0].doneWhen).toBe(kind === 'assigned' ? '' : original.doneWhen);
+      expect(entry.todos[0].check).toEqual(original.check);
+      expect(original.doneWhen).toContain(path);
+    }
+  );
+});
 
 function facts(store: NeoAskTodoRepository, sessions: NeoTodoSessionRepository, asks: NeoAsk[]) {
   const ids = asks.map((ask) => ask.id);
@@ -100,6 +142,19 @@ describe('neoTodoStatusLine', () => {
         null
       )
     ).toEqual(coded('Session reported; checking', 'todo.checking'));
+  });
+
+  test('a todo blocked on its check reads as waiting, without the words written for Neo', () => {
+    const blocked = {
+      state: 'blocked' as const,
+      blockedReason: 'check_unmet: "Merged" has not passed.',
+    };
+    expect(neoTodoStatusLine(todo({ ...blocked, blockedBy: 'check' }), [], null)).toEqual(
+      coded('Waiting for its result', 'todo.waitingResult')
+    );
+    expect(
+      neoTodoStatusLine(todo({ ...blocked, blockedBy: 'needs-human' }), [], null).status
+    ).toContain('check_unmet');
   });
 
   test('the pack line wins over the core state', () => {
@@ -434,77 +489,6 @@ describe('projectNeoAskEntries todo order and done todos', () => {
   });
 });
 
-describe('fitNeoSnapshotBudget with todoAsks', () => {
-  test('drops settled asks and trims todo text instead of dropping the field', () => {
-    const entry = (id: string, status: NeoAsk['status']) => ({
-      ask: {
-        id,
-        projectId: null,
-        sessionId: 'neo',
-        originMessageId: null,
-        title: id,
-        request: 'r'.repeat(2000),
-        status,
-        outcome: null,
-        createdAt: 1,
-        updatedAt: 1,
-        settledAt: null,
-      },
-      state: 'doing' as const,
-      todos: [
-        {
-          ...todo({ id: `${id}-t`, state: 'doing' }),
-          askId: id,
-          position: 0,
-          doneWhen: 'Merged',
-          check: null,
-          instruction: 'i'.repeat(4000),
-          named: null,
-          replacedBy: null,
-          addedAfterStart: false,
-          createdAt: 1,
-          updatedAt: 1,
-          startedAt: 1,
-          finishedAt: null,
-          status: '在做',
-          link: null,
-          remoteLink: null,
-        },
-      ],
-      doneCount: 0,
-      questions: [],
-    });
-    const snapshot: NeoSnapshot = {
-      ok: true,
-      sessionId: 'neo',
-      projects: [],
-      todoAsks: [
-        ...Array.from({ length: 20 }, (_, index) => entry(`open-${index}`, 'open')),
-        entry('settled', 'done'),
-      ],
-    };
-    const fitted = fitNeoSnapshotBudget(snapshot, 40_000);
-    expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(40_000);
-    expect(fitted.todoAsks?.length).toBeGreaterThan(0);
-    expect(fitted.todoAsks?.some((item) => item.ask.id === 'settled')).toBe(false);
-    expect(fitted.todoAsks?.[0].todos[0].instruction?.length).toBeLessThanOrEqual(300);
-    const dropped = 21 - (fitted.todoAsks?.length ?? 0);
-    expect(neoSnapshotOmitted(fitted, snapshot).omitted).toEqual({ asks: dropped });
-    if (dropped > 1) expect(fitted.trimmed).toContain('this is not every open ask');
-  });
-
-  test('omitted also counts the asks the listing left out', () => {
-    const listed: NeoSnapshot = {
-      ok: true,
-      sessionId: 'neo',
-      projects: [],
-      todoAsks: [],
-      omitted: { asks: 4 },
-    };
-    expect(neoSnapshotOmitted(listed, listed).omitted).toEqual({ asks: 4 });
-  });
-});
-
 describe('neoSafeSessionLink', () => {
   test('keeps app and same-origin links and refuses scripts and other hosts', () => {
     expect(neoSafeSessionLink('/session/w', false)).toBe('/session/w');
@@ -591,69 +575,83 @@ describe('NeoTodoSessionRepository.readLinks', () => {
   });
 });
 
-describe('fitNeoSnapshotBudget with packRows', () => {
-  test('halves pack rows to fit instead of dropping the asks', () => {
-    const snapshot: NeoSnapshot = {
-      ok: true,
-      sessionId: 'neo',
-      projects: [],
-      packRows: [
-        {
-          pack: 'coding',
-          rows: Array.from({ length: 100 }, (_, index) => ({
-            pr: `lsm/hyperneo#${index}`,
-            title: 't'.repeat(400),
-            state: 'waiting_review',
-          })),
-        },
-      ],
-    };
-    snapshot.packRows?.push({ ...snapshot.packRows[0], pack: 'other' });
-    const fitted = fitNeoSnapshotBudget(snapshot, 20_000);
-    expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(20_000);
-    expect(fitted.packRows?.[1].rows.length).toBe(fitted.packRows?.[0].rows.length);
-    expect(fitted.packRows?.[0].rows.length).toBeGreaterThan(0);
-    expect(fitted.packRows?.[0].rows.length).toBeLessThan(100);
-    expect(fitted.packRows?.[0].rows[0].pr).toBe('lsm/hyperneo#0');
+describe('neoWorkCounts', () => {
+  test('counts a todo waiting on a cancelled prerequisite once', () => {
+    const stalled = { id: 'both', askId: 'a', state: 'blocked', blockedBy: 'stalled' } as const;
+    expect(neoWorkCounts([stalled], [], [{ id: 'both' }, { id: 'waiting' }])).toEqual({
+      needsYou: 0,
+      neoUnhandled: 2,
+    });
   });
 
-  test("keeps an open todo's PR rows while it halves the other rows and the asks", () => {
-    const rows = (count: number, todoId?: string) =>
-      Array.from({ length: count }, (_, index) => ({
-        pr: `lsm/hyperneo#${todoId ? 1000 + index : index}`,
-        title: 't'.repeat(80),
-        state: 'waiting_review',
-        ...(todoId ? { todoId } : {}),
-      }));
-    const ask = (n: number) =>
-      ({
-        ask: { id: `ask-${n}`, title: 'Ship', request: 'r'.repeat(5_000), status: 'open' },
-        state: 'doing',
-        todos: Array.from({ length: 20 }, (_, index) => ({
-          id: `todo-${n}-${index}`,
-          title: 'Fix',
-          doneWhen: 'Merged',
-          status: 's'.repeat(2_000),
-        })),
-        questions: [],
-      }) as unknown as NeoAskEntry;
-    const snapshot: NeoSnapshot = {
-      ok: true,
-      sessionId: 'neo',
-      projects: [],
-      todoAsks: Array.from({ length: 40 }, (_, n) => ask(n)),
-      packRows: [{ pack: 'coding', rows: [...rows(3, 'todo-0-0'), ...rows(100)] }],
+  test('counts open asks by who holds them, across projects and past the list limit', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const draft = { doneWhen: 'Merged', check: null, instruction: 'Do', named: null };
+    const ask = (
+      id: string,
+      blockedBy: NeoTodo['blockedBy'],
+      cards: number,
+      cardTodo: string | null = null,
+      text = 'Which one?'
+    ) => {
+      store.openAsk({
+        id,
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: id,
+        request: id,
+        createdAt: 1,
+      });
+      const row = store.addTodo(`${id}-t`, id, { ...draft, title: id }, 1);
+      if (blockedBy) store.updateTodo(row, { state: 'blocked', blockedBy }, 2);
+      for (let card = 0; card < cards; card += 1)
+        store.askQuestion(
+          `${id}-q${card}`,
+          id,
+          {
+            text,
+            kind: 'reply',
+            options: null,
+            multiple: false,
+            noLabel: null,
+            yesLabel: null,
+            startTodos: null,
+            todoId: cardTodo,
+          },
+          2
+        );
     };
-    const halved = fitNeoSnapshotBudget({ ...snapshot, todoAsks: [ask(0)] }, 20_000);
-    expect(halved.packRows?.[0].rows.filter((row) => row.todoId).length).toBe(3);
-    expect(halved.packRows?.[0].rows.length).toBeLessThan(103);
-    const trimmed = fitNeoSnapshotBudget(snapshot, 20_000);
-    expect(trimmed.todoAsks?.length).toBeLessThan(40);
-    expect(trimmed.packRows?.[0].rows.filter((row) => row.todoId).map((row) => row.pr)).toEqual([
-      'lsm/hyperneo#1000',
-      'lsm/hyperneo#1001',
-      'lsm/hyperneo#1002',
-    ]);
+    ask('two-cards', null, 2);
+    ask('carded', 'needs-human', 1, 'carded-t');
+    ask('needs-neo', 'needs-human', 0);
+    ask('stalled', 'stalled', 0);
+    ask('environment', 'environment', 0);
+    ask('stalled-carded', 'stalled', 1, 'stalled-carded-t', `T${NEO_TODO_STALLED_CARD_TAIL}`);
+    ask('held', 'held', 0);
+    ask('check', 'check', 0);
+    ask('running', null, 0);
+    ask('settled', 'needs-human', 1);
+    store.addTodo('other-todo', 'carded', { ...draft, title: 'Other' }, 1);
+    store.updateTodo(
+      store.getTodo('other-todo')!,
+      { state: 'blocked', blockedBy: 'needs-human' },
+      2
+    );
+    store.settleAsk(store.getAsk('settled')!, 'dropped', 'Not needed', 3);
+    const { openWork } = store.snapshot(undefined, 1, true);
+    expect(neoWorkCounts(openWork.todos, openWork.questions, openWork.awaitingNeo)).toEqual({
+      needsYou: 3,
+      neoUnhandled: 4,
+    });
+    const scoped = store.snapshot('another-project', 1, true).openWork;
+    expect(neoWorkCounts(scoped.todos, scoped.questions, scoped.awaitingNeo)).toEqual({
+      needsYou: 3,
+      neoUnhandled: 4,
+    });
   });
 });
 

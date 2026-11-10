@@ -1,5 +1,11 @@
 # Registered documents on Neo question cards
 
+C3 update: local registration is retired. These helpers seed synthetic historical
+attachment rows/blobs directly via legacy-attachment-fixture.ts; any registration
+wording below describes the historical data, not a currently available API.
+New working files use source-bound live reads. No production snapshots are created.
+
+
 Build web, then use a fresh synthetic run with its own HOME/data/DB. No provider
 or model turn is needed; the ordinary verify launcher may still own its mock.
 

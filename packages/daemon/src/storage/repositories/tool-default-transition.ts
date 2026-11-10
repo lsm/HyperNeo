@@ -7,7 +7,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { ChangeRecorder, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
-import { SpaceRepository } from './space-repository.ts';
+import { schemaTableExists } from '../schema/extensions.ts';
 import { McpEnablementRepository } from './mcp-enablement-repository.ts';
 import {
   captureToolPreferenceRow,
@@ -65,9 +65,10 @@ function capture(db: Database, request: ToolDefaultTransition) {
     ? [captureToolPreferenceRow(db, { table: 'spaces', id: request.spaceId })]
     : [
         global,
-        ...new SpaceRepository(db)
-          .listSpaces(true)
-          .map((space) => captureToolPreferenceRow(db, { table: 'spaces', id: space.id })),
+        ...(schemaTableExists(db, 'spaces')
+          ? (db.prepare('SELECT id FROM spaces ORDER BY updated_at DESC').all() as { id: string }[])
+          : []
+        ).map((space) => captureToolPreferenceRow(db, { table: 'spaces', id: space.id })),
       ];
   const sources =
     request.spaceId && request.edits.some((edit) => edit.selected === null)

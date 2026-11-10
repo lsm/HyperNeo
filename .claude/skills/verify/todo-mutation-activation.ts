@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -21,7 +23,7 @@ globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typ
 const app = await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});
 assert.notEqual(app.server.port,8399);
 const hub = new MessageHub({defaultSessionId:'global'});
-const transport = new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});
+const transport = new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});
 hub.registerTransport(transport);
 const db = app.db.getDatabase(), store = new NeoAskTodoRepository(db);
 const prepare = db.prepare.bind(db), replay = app.db.gateway.onChanges;
@@ -42,7 +44,7 @@ try {
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
   store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Atomic work',request:'Keep full work',createdAt:1});
   const check={pack:'core',kind:'evidence',params:{path:join(run,'not-created')}};
-  store.addTodo('first','ask',{title:'first',doneWhen:'Merged',check,instruction:null,named:null},1);
+  store.addTodo('first','ask',{ approvedAt: 1,title:'first',doneWhen:'Merged',check,instruction:null,named:null},1);
   const before=await visible(), text='Committed full report 🦊\n'.repeat(20000).trim();
   await hub.request('system.health',{});
   db.exec('BEGIN IMMEDIATE'); held=true; record=true;
@@ -66,7 +68,7 @@ try {
   result.notificationsAfterCommit=true;
   result.fullReport={bytes:Buffer.byteLength(text),sha256:createHash('sha256').update(text).digest('hex')};
   const prior=events;
-  store.addTodo('peer','ask',{title:'peer',doneWhen:'Pending evidence',check,instruction:null,named:null},3);
+  store.addTodo('peer','ask',{ approvedAt: 1,title:'peer',doneWhen:'Pending evidence',check,instruction:null,named:null},3);
   store.askQuestion('reply','ask',{kind:'reply',todoId:'peer',text:'Answer first',options:null,multiple:false,yesLabel:null,noLabel:null},4);
   const withCard=await visible();
   const blocked=await commit({kind:'close',todoId:'peer',reason:'Finished'});

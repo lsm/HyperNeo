@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { createPairWaits } from '../../../../src/lib/pairing/pair-waits.ts';
 import { describe, expect, test } from 'bun:test';
 import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter.ts';
 import { createPairRoute } from '../../../../src/lib/pairing/pair-route.ts';
@@ -27,9 +29,10 @@ function setup(start = 1_000_000) {
   const clock = { now: () => now, advance: (ms: number) => (now += ms) };
   const repo = new DevicePairingRepository(db);
   const limiter = createPairingLimiter();
-  const route = createPairRoute({ repo, limiter, now: clock.now });
+  const route = createPairRoute({ waits: createPairWaits(), repo, limiter, now: clock.now });
   const revoked: string[] = [];
   const ops = createDevicePairingOperations({
+    waits: createPairWaits(),
     repo: () => repo,
     limiter,
     now: clock.now,
@@ -39,12 +42,12 @@ function setup(start = 1_000_000) {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  const pair = async (code: string, name = 'Phone') => {
+  const pair = async (code: string, name = 'Phone', requestId?: string) => {
     const response = await route(
       new Request('http://127.0.0.1/pair', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code, name }),
+        body: JSON.stringify({ code, name, ...(requestId ? { requestId } : {}) }),
       })
     );
     return { status: response.status, body: (await response.json()) as Record<string, any> };
@@ -62,6 +65,78 @@ const door: OperationCaller = { source: 'mcp', principal: 'session-door', sessio
 const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
 
 describe('device pairing', () => {
+  test('an agent code cannot use the first-human pairing bootstrap', async () => {
+    const { db, call } = setup();
+    try {
+      expect(await call('device.pair.create', { kind: 'agent' }, door)).toMatchObject({
+        ok: false,
+        reason: NO_HUMAN_DEVICE,
+      });
+    } finally {
+      db.close();
+    }
+  });
+  test('remote agent pairing waits for a human and cannot issue or approve codes', async () => {
+    const { db, call, pair, repo } = setup();
+    try {
+      const first = await call('device.pair.create', { kind: 'human' }, door);
+      const phone = await pair(first.code);
+      const made = await call('device.pair.create', { kind: 'agent' }, door);
+      expect(made).toMatchObject({ ok: true, approval: 'pending' });
+      expect((await pair(made.code)).status).toBe(403);
+      const reader: OperationCaller = {
+        source: 'rpc',
+        principal: 'local',
+        device: { deviceId: 'agent', kind: 'agent' },
+      };
+      expect((await call('device.pair.create', { kind: 'human' }, reader)).ok).toBe(false);
+      expect((await call('device.pair.approve', { codeId: made.codeId }, reader)).ok).toBe(false);
+      expect(
+        (
+          await call(
+            'device.pair.approve',
+            { codeId: made.codeId },
+            pairedHuman(phone.body.deviceId)
+          )
+        ).ok
+      ).toBe(true);
+      const paired = await pair(made.code);
+      expect(paired.body.kind).toBe('agent');
+      expect(paired.body).not.toHaveProperty('origin');
+      expect(repo.listDevices().find((device) => device.kind === 'agent')).toBeDefined();
+    } finally {
+      db.close();
+    }
+  });
+  test('remote agent redemption leaves public-origin recording to the pairing client', async () => {
+    const { db, repo } = setup();
+    try {
+      const route = createPairRoute({
+        waits: createPairWaits(),
+        repo,
+        limiter: createPairingLimiter(),
+        now: () => 1_000_000,
+      });
+      const made = repo.createCode('agent', null, true, 1_000_000);
+      const response = await route(
+        new Request('http://127.0.0.1:9283/pair', {
+          method: 'POST',
+          headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'daemon.example' },
+          body: JSON.stringify({ code: made.code, name: 'Remote reader' }),
+        })
+      );
+      expect(response.status).toBe(200);
+      const paired = await response.json();
+      expect(paired).toMatchObject({
+        kind: 'agent',
+        credential: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      });
+      expect(paired).not.toHaveProperty('origin');
+    } finally {
+      db.close();
+    }
+  });
+
   test('a code pairs one device once, with the kind fixed when the code was made', async () => {
     const { db, call, pair } = setup();
     const made = await call('device.pair.create', { kind: 'relay', name: 'Push relay' }, door);
@@ -119,7 +194,15 @@ describe('device pairing', () => {
     });
     const pending = await call('device.pair.pending', {}, pairedHuman(laptop.body.deviceId));
     expect(pending.pending).toEqual([
-      { id: next.codeId, kind: 'human', name: null, expiresAt: next.expiresAt },
+      {
+        id: next.codeId,
+        kind: 'human',
+        name: null,
+        requestedName: 'Agent',
+        twoWay: false,
+        phoneConfirmed: false,
+        expiresAt: next.expiresAt,
+      },
     ]);
     expect(JSON.stringify(pending)).not.toContain(next.code);
     expect(await call('device.pair.approve', { codeId: next.codeId }, agent)).toMatchObject({
@@ -143,16 +226,149 @@ describe('device pairing', () => {
     ).toEqual({
       ok: true,
     });
-    expect((await pair(next.code, 'Phone')).status).toBe(200);
+    expect((await pair(next.code, 'Agent')).status).toBe(200);
     db.close();
   });
 
-  test('only an active paired human can see codes waiting for Allow', async () => {
+  test('a later requester voids the code, and both requesters then hear it was used elsewhere', async () => {
+    const { db, call, pair } = setup();
+    const laptop = await pair(
+      (await call('device.pair.create', { kind: 'human' }, door)).code,
+      'Laptop'
+    );
+    const owner = pairedHuman(laptop.body.deviceId);
+    const next = await call('device.pair.create', { kind: 'human' }, door);
+    expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(403);
+    expect((await call('device.pair.pending', {}, owner)).pending[0].requestedName).toBe('Tablet');
+    expect(await pair(next.code, 'Tablet', 'later-request-id-0002')).toEqual({
+      status: 409,
+      body: { error: 'code_used_elsewhere' },
+    });
+    expect((await call('device.pair.pending', {}, owner)).pending).toEqual([]);
+    expect(await pair(next.code, 'Tablet', 'first-request-id-0001')).toEqual({
+      status: 409,
+      body: { error: 'code_used_elsewhere' },
+    });
+    expect(await call('device.pair.approve', { codeId: next.codeId }, owner)).toMatchObject({
+      ok: false,
+    });
+    db.close();
+  });
+
+  test('after Allow only the first requester gets a credential, and only once', async () => {
+    const { db, repo, call, pair } = setup();
+    const laptop = await pair(
+      (await call('device.pair.create', { kind: 'human' }, door)).code,
+      'Laptop'
+    );
+    const owner = pairedHuman(laptop.body.deviceId);
+    const next = await call('device.pair.create', { kind: 'human' }, door);
+    expect((await pair(next.code, 'Tablet', 'first-request-id-0001')).status).toBe(403);
+    expect(await call('device.pair.approve', { codeId: next.codeId }, owner)).toEqual({ ok: true });
+    const intruder = await pair(next.code, 'Tablet', 'later-request-id-0002');
+    expect(intruder).toEqual({ status: 409, body: { error: 'code_used_elsewhere' } });
+    expect(repo.listDevices().map((device) => device.name)).toEqual(['Laptop']);
+
+    const again = await call('device.pair.create', { kind: 'human' }, door);
+    expect((await pair(again.code, 'Tablet', 'first-request-id-0003')).status).toBe(403);
+    await call('device.pair.approve', { codeId: again.codeId }, owner);
+    const first = await pair(again.code, 'Tablet', 'first-request-id-0003');
+    expect(first.status).toBe(200);
+    expect(first.body.credential).toBeString();
+    expect((await pair(again.code, 'Tablet', 'first-request-id-0003')).status).toBe(401);
+    expect(repo.listDevices().map((device) => device.name)).toEqual(['Laptop', 'Tablet']);
+    db.close();
+  });
+
+  test('a denied code leaves the list, can never pair, and leaves other codes Allowable', async () => {
+    const { db, call, pair } = setup();
+    try {
+      const first = await call('device.pair.create', { kind: 'human' }, human);
+      const laptop = await pair(first.code, 'Laptop');
+      const owner = pairedHuman(laptop.body.deviceId);
+      const denied = await call('device.pair.create', { kind: 'human' }, door);
+      const allowed = await call('device.pair.create', { kind: 'human' }, door);
+
+      for (const caller of [agent, door, human, pairedHuman('phone')])
+        expect((await call('device.pair.deny', { codeId: denied.codeId }, caller)).ok).toBe(false);
+      expect(await pair(denied.code)).toMatchObject({
+        status: 403,
+        body: { error: 'awaiting_approval' },
+      });
+
+      expect(await call('device.pair.deny', { codeId: denied.codeId }, owner)).toEqual({
+        ok: true,
+      });
+      expect((await call('device.pair.pending', {}, owner)).pending).toEqual([
+        {
+          id: allowed.codeId,
+          kind: 'human',
+          name: null,
+          requestedName: null,
+          twoWay: false,
+          phoneConfirmed: false,
+          expiresAt: allowed.expiresAt,
+        },
+      ]);
+      expect(await pair(denied.code)).toMatchObject({
+        status: 401,
+        body: { error: 'code_denied' },
+      });
+      expect(await call('device.pair.approve', { codeId: denied.codeId }, owner)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('not_pending'),
+      });
+      expect(await call('device.pair.deny', { codeId: denied.codeId }, owner)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('not_pending'),
+      });
+
+      expect(await call('device.pair.approve', { codeId: allowed.codeId }, owner)).toEqual({
+        ok: true,
+      });
+      expect((await pair(allowed.code, 'Phone')).status).toBe(200);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a code already approved or used cannot be denied', async () => {
+    const { db, call, pair } = setup();
+    try {
+      const first = await call('device.pair.create', { kind: 'human' }, human);
+      const laptop = await pair(first.code, 'Laptop');
+      const owner = pairedHuman(laptop.body.deviceId);
+      const notPending = { ok: false, reason: expect.stringContaining('not_pending') };
+      const approved = await call('device.pair.create', { kind: 'human' }, owner);
+      expect(approved.approval).toBe('approved');
+      expect(await call('device.pair.deny', { codeId: approved.codeId }, owner)).toMatchObject(
+        notPending
+      );
+      expect((await pair(approved.code, 'Phone')).status).toBe(200);
+      expect(await call('device.pair.deny', { codeId: approved.codeId }, owner)).toMatchObject(
+        notPending
+      );
+      expect(await call('device.pair.deny', { codeId: 'missing' }, owner)).toMatchObject(
+        notPending
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test('with terminal approval off, only an active paired human can see codes waiting for Allow', async () => {
     const h = setup();
     try {
       const first = await h.call('device.pair.create', { kind: 'human' }, door);
       const phone = await h.pair(first.code);
       await h.call('device.pair.create', { kind: 'human', name: 'Not this device' }, door);
+      const terminal: OperationCaller = {
+        ...door,
+        device: { deviceId: 'local-rpc:terminal', kind: 'human' },
+      };
+      expect((await h.call('device.pair.pending', {}, terminal)).pending).toHaveLength(1);
+      expect((await h.call('device.pair.pending', {}, human)).ok).toBe(false);
+      await h.call('device.pair.terminal_approval.set', { enabled: false }, door);
       for (const caller of [human, door, agent, pairedHuman('missing')])
         expect((await h.call('device.pair.pending', {}, caller)).ok).toBe(false);
       expect(
@@ -270,9 +486,42 @@ describe('device pairing', () => {
     db.close();
   });
 
+  test('redeeming an agent code in a browser retains the existing device cookie', async () => {
+    const { db, repo } = setup();
+    try {
+      const route = createPairRoute({
+        waits: createPairWaits(),
+        repo,
+        limiter: createPairingLimiter(),
+        now: () => 1_000_000,
+      });
+      const made = repo.createCode('agent', null, true, 1_000_000);
+      const response = await route(
+        new Request('https://daemon.example/pair', {
+          method: 'POST',
+          headers: { origin: 'https://daemon.example', cookie: 'hyperneo_device=existing-human' },
+          body: JSON.stringify({ code: made.code, name: 'Reader' }),
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get('set-cookie')).toBeNull();
+      expect(await response.json()).toMatchObject({
+        kind: 'agent',
+        credential: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('a browser gets its credential only as an HttpOnly cookie, Secure when its page is HTTPS', async () => {
     const { db, repo } = setup();
-    const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: () => 1_000_000 });
+    const route = createPairRoute({
+      waits: createPairWaits(),
+      repo,
+      limiter: createPairingLimiter(),
+      now: () => 1_000_000,
+    });
     const redeem = async (origin: string) => {
       const made = repo.createCode('human', null, true, 1_000_000);
       const response = await route(
@@ -293,7 +542,7 @@ describe('device pairing', () => {
       ['HttpOnly', 'Max-Age=34560000', 'Path=/', 'SameSite=Strict', 'Secure'].sort()
     );
     expect(
-      touchDevice.run(db, {
+      await gatewayFor(db).run(touchDevice, {
         credential: cookie.slice('hyperneo_device='.length, cookie.indexOf(';')),
         host: 'h',
         now: 1,
@@ -305,7 +554,7 @@ describe('device pairing', () => {
 
   test('a paired human or the CLI reads the unpaired connections seen, newest first', async () => {
     const { db, call, pair, repo } = setup();
-    recordUnpaired.run(db, {
+    await gatewayFor(db).run(recordUnpaired, {
       seen: {
         client: 'native',
         origin: null,
@@ -315,7 +564,7 @@ describe('device pairing', () => {
       },
       now: 1_000,
     });
-    recordUnpaired.run(db, {
+    await gatewayFor(db).run(recordUnpaired, {
       seen: {
         client: 'browser',
         origin: 'https://evil.example',
@@ -374,7 +623,7 @@ describe('device pairing', () => {
 
   test('a paired human or the CLI reads the requests Origin/Host checks would refuse', async () => {
     const { db, call, pair, repo } = setup();
-    recordWouldRefuse.run(db, {
+    await gatewayFor(db).run(recordWouldRefuse, {
       seen: { reason: 'host_not_allowed', kind: 'ws', host: 'mac.ts.net', origin: null },
       now: 5,
     });
@@ -429,7 +678,12 @@ describe('device pairing', () => {
   test('an oversized or malformed pairing body is refused unread and counts against the limit', async () => {
     const { db, call, clock } = setup();
     const repo = new DevicePairingRepository(db);
-    const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: clock.now });
+    const route = createPairRoute({
+      waits: createPairWaits(),
+      repo,
+      limiter: createPairingLimiter(),
+      now: clock.now,
+    });
     const post = (body: string) =>
       route(new Request('http://127.0.0.1/pair', { method: 'POST', body }));
     expect((await post('x'.repeat(1_000_000))).status).toBe(413);

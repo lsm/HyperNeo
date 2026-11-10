@@ -1,7 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createCodingClaudeOwnerReader } from '../../../../src/lib/neo/packs/coding/claude-pr-owners.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   CODING_LEDGER_KEEP_MS,
@@ -12,7 +11,6 @@ import {
   planCodingLedgerRead,
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
-import type { NeoSessionFacts } from '../../../../src/lib/neo/pack-contract.ts';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -141,6 +139,30 @@ describe('planCodingLedgerRead', () => {
       expect(
         state(files(['packages/daemon/src/app.ts']), ['docs/design/**', 'label:needs-human'])
       ).toBe('waiting_human');
+    }
+  );
+
+  test.each(['review_bot', 'ci_only'] as const)(
+    'checks actual labels for %s signoff',
+    (mergePolicy) => {
+      const state = (names: string[], hasNextPage = false) =>
+        planCodingLedgerRead(
+          response([
+            node(1, {
+              files: { nodes: [{ path: 'src/app.ts' }], pageInfo: { hasNextPage: false } },
+              labels: { nodes: names.map((name) => ({ name })), pageInfo: { hasNextPage } },
+              reviews: {
+                nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }],
+              },
+            }),
+          ]),
+          0,
+          () => ({ mergePolicy, reviewBot: 'bot', humanSignoff: ['label:human-*'] })
+        )?.rows[0].state;
+      expect(state([])).toBe('approved_green');
+      expect(state(['bug'])).toBe('approved_green');
+      expect(state(['human-merge'])).toBe('waiting_human');
+      expect(state([], true)).toBe('waiting_human');
     }
   );
 
@@ -403,9 +425,10 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
       '{}',
       ref ? JSON.stringify(ref) : null
     );
-    db.prepare(
-      "INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES (?, ?, 'branch', 1)"
-    ).run(todo, url);
+    db.prepare('UPDATE neo_todos SET check_json = ? WHERE id = ?').run(
+      JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [url] } }),
+      todo
+    );
   };
 
   test('takes the owner from the open todo that claims the PR, and leaves an unclaimed PR unassigned', async () => {
@@ -453,13 +476,8 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
       VALUES ('live', 'ask', 0, 'T', 'D', 'doing', 1, 1)`);
     const todoPrs = new CodingTodoPrRepository(db);
     const url = (n: number) => `https://github.com/lsm/hyperneo/pull/${n}`;
-    todoPrs.claim(
-      'live',
-      [
-        { url: url(1), claim: 'named' },
-        { url: url(2), claim: 'branch' },
-      ],
-      1
+    db.prepare("UPDATE neo_todos SET check_json = ? WHERE id = 'live'").run(
+      JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [url(1)] } })
     );
     todoPrs.record('live', [{ url: url(1), state: 'OPEN', checks: 'passing', review: 'none' }], 1);
     const coding = createCodingPack({
@@ -536,182 +554,6 @@ describe('codingLedgerArgs', () => {
   });
 });
 
-describe('CodingPrLedgerRepository.observeSessions', () => {
-  const facts = (
-    ref: { adapter: string; id: string },
-    more: Partial<NeoSessionFacts> = {}
-  ): NeoSessionFacts => ({
-    ref,
-    status: 'running',
-    lastActivityAt: 1,
-    remotes: [],
-    branches: [],
-    openedPrs: [],
-    ...more,
-  });
-  const owners = (db: Database) =>
-    db.prepare('SELECT number, owner FROM pack_coding_pr_ledger ORDER BY number').all();
-
-  test('a Claude commenter link does not claim a PR it did not create', async () => {
-    const { db, ledger } = setup();
-    await reconcile(ledger, ['lsm/a'], async () => response([node(4)]), 100);
-    ledger.observeSessions(
-      [
-        facts(
-          { adapter: 'claude-desktop', id: 'commenter' },
-          {
-            linkedPrs: [{ url: 'https://github.com/lsm/a/pull/4' }],
-            linkedPrsWindow: true,
-          }
-        ),
-      ],
-      101
-    );
-    expect(owners(db)).toEqual([{ number: 4, owner: null }]);
-    db.close();
-  });
-
-  test('keeps actual opened-PR evidence when a Claude session has no sidebar list', async () => {
-    const { db, ledger } = setup();
-    const ref = { adapter: 'claude-desktop', id: 'legacy-opener' };
-    await reconcile(ledger, ['lsm/a'], async () => response([node(4)]), 100);
-    ledger.observeSessions([facts(ref, { openedPrs: ['https://github.com/lsm/a/pull/4'] })], 101);
-    expect(owners(db)).toEqual([{ number: 4, owner: JSON.stringify(ref) }]);
-    db.close();
-  });
-
-  test('a no-sidebar creation sweep preserves watcher-opened PRs across repeated observations', async () => {
-    const { db, ledger } = setup();
-    const root = mkdtempSync(join(tmpdir(), 'claude-owner-ledger-'));
-    const scope = join(root, 'sessions/account/scope');
-    const project = join(root, 'projects/-synthetic');
-    mkdirSync(scope, { recursive: true });
-    mkdirSync(project, { recursive: true });
-    const ref = { adapter: 'claude-desktop', id: 'local_one' };
-    const pr = (number: number) => `https://github.com/lsm/a/pull/${number}`;
-    writeFileSync(
-      join(scope, 'local_one.json'),
-      JSON.stringify({ sessionId: ref.id, cliSessionId: 'one', cwd: '/synthetic' })
-    );
-    writeFileSync(
-      join(project, 'one.jsonl'),
-      JSON.stringify({
-        type: 'user',
-        toolUseResult: { gitOperation: { pr: { action: 'created', number: 5, url: pr(5) } } },
-      }) + '\n'
-    );
-    const read = createCodingClaudeOwnerReader(
-      join(root, 'sessions'),
-      join(root, 'projects'),
-      async () => ({ remotes: ['git@github.com:lsm/a.git'] })
-    );
-    try {
-      await reconcile(ledger, ['lsm/a'], async () => response([node(4), node(5)]), 100);
-      for (const now of [101, 103]) {
-        ledger.observeSessions([facts(ref, { openedPrs: [pr(4)] })], now);
-        ledger.observeSessions(await read(), now + 1);
-        expect(owners(db)).toEqual([
-          { number: 4, owner: JSON.stringify(ref) },
-          { number: 5, owner: JSON.stringify(ref) },
-        ]);
-      }
-    } finally {
-      db.close();
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('an app link owns its PR before a branch match, and the first owner keeps it', async () => {
-    const { db, ledger } = setup();
-    const opener = { adapter: 'claude-desktop', id: 'opener' };
-    const worker = { adapter: 'hyperneo', id: 'worker' };
-    await reconcile(ledger, ['lsm/a'], async () => response([node(1), node(2), node(3)]), 100);
-    ledger.observeSessions(
-      [
-        facts(opener, {
-          linkedPrs: [{ url: 'https://github.com/LSM/a/pull/1', own: true }],
-          linkedPrsWindow: true,
-          branches: ['b1'],
-        }),
-      ],
-      101
-    );
-    ledger.observeSessions(
-      [
-        facts(worker, {
-          lastActivityAt: 5,
-          remotes: ['git@github.com:lsm/a.git'],
-          branches: ['b1', 'b2'],
-          openedPrs: ['https://github.com/lsm/a/pull/1'],
-        }),
-      ],
-      102
-    );
-    expect(owners(db)).toEqual([
-      { number: 1, owner: JSON.stringify(opener) },
-      { number: 2, owner: JSON.stringify(worker) },
-      { number: 3, owner: null },
-    ]);
-    db.close();
-  });
-
-  test('a session the app marks as the PR author wins over a more recent session that only linked it', async () => {
-    const { db, ledger } = setup();
-    const author = { adapter: 'claude-desktop', id: 'author' };
-    const reviewer = { adapter: 'claude-desktop', id: 'reviewer' };
-    const url = 'https://github.com/lsm/a/pull/1';
-    await reconcile(ledger, ['lsm/a'], async () => response([node(1)]), 100);
-    ledger.observeSessions(
-      [
-        facts(reviewer, { lastActivityAt: 9, linkedPrs: [{ url }], linkedPrsWindow: true }),
-        facts(author, {
-          lastActivityAt: 1,
-          linkedPrs: [{ url, own: true }],
-          linkedPrsWindow: true,
-        }),
-      ],
-      101
-    );
-    expect(owners(db)).toEqual([{ number: 1, owner: JSON.stringify(author) }]);
-    db.close();
-  });
-
-  test('a PR leaving the capped Claude list stays linked; a dismissal or a removed Codex row unlinks', async () => {
-    const { db, ledger } = setup();
-    const claude = { adapter: 'claude-desktop', id: 'c' };
-    const codex = { adapter: 'codex-desktop', id: 'x' };
-    await reconcile(ledger, ['lsm/a'], async () => response([node(1), node(2)]), 100);
-    const pr = (n: number) => `https://github.com/lsm/a/pull/${n}`;
-    ledger.observeSessions(
-      [
-        facts(claude, { linkedPrs: [{ url: pr(1), own: true }], linkedPrsWindow: true }),
-        facts(codex, { linkedPrs: [{ url: pr(2) }] }),
-      ],
-      101
-    );
-    ledger.observeSessions(
-      [facts(claude, { linkedPrs: [], linkedPrsWindow: true, openedPrs: [pr(2)] })],
-      102
-    );
-    expect(owners(db)).toEqual([
-      { number: 1, owner: JSON.stringify(claude) },
-      { number: 2, owner: JSON.stringify(codex) },
-    ]);
-    ledger.observeSessions(
-      [
-        facts(claude, { linkedPrs: [{ url: pr(1), dismissed: true }], linkedPrsWindow: true }),
-        facts(codex, { linkedPrs: [] }),
-      ],
-      103
-    );
-    expect(owners(db)).toEqual([
-      { number: 1, owner: null },
-      { number: 2, owner: null },
-    ]);
-    db.close();
-  });
-});
-
 describe('reconcileCodingPrLedger renamed repos', () => {
   test('rows kept under a repo alias are dropped once GitHub answers with another name', async () => {
     const { db, ledger } = setup();
@@ -728,33 +570,6 @@ describe('reconcileCodingPrLedger renamed repos', () => {
       200
     );
     expect(ledger.list().map((row) => [row.repo, row.number])).toEqual([['lsm/hyperneo', 7577]]);
-    db.close();
-  });
-});
-
-describe('CodingPrLedgerRepository.pruneSessions', () => {
-  test('forgets sessions not seen for the keep window, and keeps the owner they gave', async () => {
-    const { db, ledger } = setup();
-    const ref = { adapter: 'hyperneo', id: 's' };
-    await reconcile(ledger, ['lsm/a'], async () => response([node(1)]), 1);
-    ledger.observeSessions(
-      [
-        {
-          ref,
-          status: 'idle',
-          lastActivityAt: 1,
-          remotes: ['https://github.com/lsm/a'],
-          branches: ['b1'],
-          openedPrs: [],
-        },
-      ],
-      1
-    );
-    await reconcile(ledger, ['lsm/a'], async () => response([node(1)]), CODING_LEDGER_KEEP_MS + 2);
-    expect(db.prepare('SELECT ref FROM pack_coding_session_facts').all()).toEqual([]);
-    expect(db.prepare('SELECT owner FROM pack_coding_pr_ledger').get()).toEqual({
-      owner: JSON.stringify(ref),
-    });
     db.close();
   });
 });
@@ -1021,6 +836,8 @@ test('ledger reads repo preferences before same-pack global fallback', () => {
         .run(pack, scope ? 'repo' : 'global', scope, key, JSON.stringify(value));
     save('other', '', 'mergePolicy', 'ci_only');
     expect(ledger.policy('x/x')).toEqual({
+      allowNoChecksMerge: false,
+      mergeBy: 'owner',
       mergePolicy: undefined,
       reviewBot: undefined,
       humanSignoff: undefined,
@@ -1031,11 +848,15 @@ test('ledger reads repo preferences before same-pack global fallback', () => {
     save('coding', 'X/X', 'mergePolicy', 'human');
     save('coding', 'X/X', 'humanSignoff', []);
     expect(ledger.policy('x/x')).toEqual({
+      allowNoChecksMerge: false,
+      mergeBy: 'owner',
       mergePolicy: 'human',
       reviewBot: 'global-bot',
       humanSignoff: [],
     });
     expect(ledger.policy('y/y')).toEqual({
+      allowNoChecksMerge: false,
+      mergeBy: 'owner',
       mergePolicy: 'review_bot',
       reviewBot: 'global-bot',
       humanSignoff: ['global/**'],

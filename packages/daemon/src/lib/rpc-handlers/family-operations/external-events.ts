@@ -1,76 +1,22 @@
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import { createAgentSubscriptionOperations } from '../../external-events/agent-subscription-operations.ts';
-import { createExternalEventOperations } from '../../external-events/operations.ts';
-import { createSubscriptionOperations } from '../../external-events/subscription-operations.ts';
+import { createSessionEventOperations } from '../../external-events/session-event-operations.ts';
+import { SessionExternalEventStore } from '../../external-events/session-external-event-store.ts';
+import { MAILBOX_LANE } from '../../mailbox/enqueue.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
-import type { FamilyOperationContext } from './context.ts';
 import { SessionEventSubscriptionRepository } from '../../../storage/repositories/session-event-subscription-repository.ts';
+import type { FamilyOperationContext } from './context.ts';
 
-export function registerExternalEventOperations(
-  context: FamilyOperationContext
+export function registerSessionEventOperations(
+  context: Pick<FamilyOperationContext, 'deps' | 'sessionSpace'>
 ): OperationDefinition[] {
-  return [
-    ...createExternalEventOperations({
-      eventStore: context.deps.externalEventStore,
-      getSession: (sessionId) => context.deps.db.getSession(sessionId),
-      taskRepo: context.spaceTaskRepo,
-      nodeExecutionRepo: context.nodeExecutionRepo,
-      longHorizonAgentRepo: context.longHorizonAgentRepo,
-      hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
-      resolveDirectWorker: context.resolveDirectWorker,
-    }),
-    ...createAgentSubscriptionOperations({
-      subscriptionRepo: context.spaceAgentSubscriptionRepo,
-      refreshSubscription: (spaceId, subscriptionId) =>
-        context.spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
-      removeSubscription: (spaceId, subscriptionId) =>
-        context.spaceRuntimeService.removeLongHorizonSubscription(spaceId, subscriptionId),
-      auditLogRepo: new McpAuditLogRepository(context.deps.db.getDatabase()),
-      getSession: (sessionId) => context.deps.db.getSession(sessionId),
-      taskRepo: context.spaceTaskRepo,
-      nodeExecutionRepo: context.nodeExecutionRepo,
-      longHorizonAgentRepo: context.longHorizonAgentRepo,
-      hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
-      resolveDirectWorker: context.resolveDirectWorker,
-    }),
-    ...createSubscriptionOperations({
-      subscriptionRepo: context.spaceAgentSubscriptionRepo,
-      refreshSubscription: (spaceId, subscriptionId) =>
-        context.spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
-      removeSubscription: (spaceId, subscriptionId) =>
-        context.spaceRuntimeService.removeLongHorizonSubscription(spaceId, subscriptionId),
-      auditLogRepo: new McpAuditLogRepository(context.deps.db.getDatabase()),
-      registerSubscription: (slot, topicPattern) =>
-        context.spaceRuntimeService.registerSubscription(
-          slot.workflowRunId,
-          slot.taskId,
-          slot.nodeId,
-          slot.agentName,
-          topicPattern
-        ),
-      unregisterSubscription: (slot, topicPattern) =>
-        context.spaceRuntimeService.unregisterSubscription(
-          slot.workflowRunId,
-          slot.taskId,
-          slot.nodeId,
-          slot.agentName,
-          topicPattern
-        ),
-      sessionSubscriptions: context.spaceSessionEventSubscriptionRepo,
-      unscopedSessionSubscriptions: new SessionEventSubscriptionRepository(
-        context.deps.db.getDatabase()
-      ),
-      watchSessionRepo: context.deps.watchSessionRepo,
-      refreshSessionSubscription: (spaceId, subscriptionId) =>
-        context.spaceRuntimeService.refreshSessionSubscription(spaceId, subscriptionId),
-      listRunSubscriptions: (workflowRunId, spaceId, nodeId) =>
-        context.spaceRuntimeService.listSubscriptions(workflowRunId, spaceId, nodeId),
-      getSession: (sessionId) => context.deps.db.getSession(sessionId),
-      taskRepo: context.spaceTaskRepo,
-      nodeExecutionRepo: context.nodeExecutionRepo,
-      longHorizonAgentRepo: context.longHorizonAgentRepo,
-      hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
-      resolveDirectWorker: context.resolveDirectWorker,
-    }),
-  ];
+  if (context.sessionSpace) return [];
+  const { db, jobQueue, watchSessionRepo } = context.deps;
+  return createSessionEventOperations({
+    subscriptions: new SessionEventSubscriptionRepository(db.getDatabase()),
+    events: new SessionExternalEventStore(db.getDatabase()),
+    getSession: (sessionId) => db.getSession(sessionId),
+    deliveryJob: (messageUuid) => jobQueue.getLatestByPayload(MAILBOX_LANE, { messageUuid }),
+    sendStatus: (sessionId, messageUuid) =>
+      db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid)?.sendStatus ?? null,
+    watchSessionRepo,
+  });
 }

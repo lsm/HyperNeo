@@ -1,3 +1,5 @@
+import { linkMessageImages } from './message-image-link.ts';
+
 export const MESSAGE_OUTPUT_CAP_CHARS = 16 * 1024;
 const WHOLE_STRING_CHARS = 64;
 const SMALL_FIELDS_AFTER_BUDGET = 64;
@@ -149,6 +151,7 @@ export function capMessageOutput<T extends Json>(message: T, limit = MESSAGE_OUT
   };
 }
 
-export function capSdkMessage<T>(message: T): T {
-  return capMessageOutput(message as unknown as Json) as unknown as T;
-}
+export const capSdkMessage =
+  (sessionId: string | null) =>
+  <T>(message: T): T =>
+    linkMessageImages(capMessageOutput(message as unknown as Json), sessionId) as unknown as T;

@@ -1,5 +1,5 @@
 import type { AgentModelPoolEntry, SpaceAgentAutonomyLevel } from '@hyperneo/shared';
-import { validateSlug } from '../space/slug.ts';
+import { validateSlug } from './slug.ts';
 import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from './template-synthesis.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from './worker-long-horizon-mapper.ts';
 import {

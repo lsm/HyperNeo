@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { pairMessageCopyBrowser } from './neo-whole-message-copy-web.mjs';
 
 const [port, run, phase = 'after'] = process.argv.slice(2);
 assert(port && run && port !== '8399');
@@ -10,6 +11,7 @@ const rpc = (name, input = {}) => JSON.parse(execFileSync('bun', ['.claude/skill
   env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8',
 })).reply;
 const opened = rpc('neo.open');
+rpc('rpc:settings.global.update', { updates: { language: 'system' } });
 assert(opened.ok);
 const conversationId = opened.sessionId.slice(4);
 const quote = (s) => `'${String(s).replaceAll("'", "''")}'`;
@@ -29,13 +31,14 @@ if (phase === 'seed-only') {
 }
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
+const pair = rpc('device.pair.create', { kind: 'human', name: 'Synthetic quote browser' });
+const storageState = await pairMessageCopyBrowser(browser, { pairBase: `http://127.0.0.1:${port}`, pairCode: pair.code });
 const results = [];
 try {
   for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
     const language = width === 390 ? 'zh-CN' : 'en-US';
     const copyLabel = width === 390 ? '复制引用' : 'Copy quote';
-    const copiedLabel = width === 390 ? '已复制' : 'Copied';
-    const context = await browser.newContext({ viewport: { width, height: 1000 }, locale: language, hasTouch: width === 390, permissions: ['clipboard-read', 'clipboard-write'] });
+    const context = await browser.newContext({ storageState, viewport: { width, height: 1000 }, locale: language, hasTouch: width === 390, permissions: ['clipboard-read', 'clipboard-write'] });
     const page = await context.newPage();
     await page.addInitScript((theme) => localStorage.setItem('theme', theme), theme);
     await page.goto(`http://127.0.0.1:${port}/neo`);
@@ -43,18 +46,19 @@ try {
     await body.locator('blockquote').first().waitFor();
     await body.locator('.hljs-keyword').first().waitFor();
     await body.locator('.katex').waitFor();
-    const buttons = body.getByRole('button', { name: copyLabel, exact: true });
+    const buttons = body.locator('blockquote > div.absolute > button');
     const count = await buttons.count();
     assert.equal(count, phase === 'before' ? 0 : 3);
     if (phase !== 'before') {
+      assert.equal(await body.getByRole('button', { name: copyLabel, exact: true }).count(), count);
       await buttons.first().focus();
       await page.keyboard.press('Enter');
-      await buttons.first().getByText(copiedLabel).waitFor();
+      await body.getByRole('button', { name: 'Copied!', exact: true }).waitFor();
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `Hello friend and team.\n\nSecond paragraph.\n\n${code}\n\n${formula}\n\nNested reply.`);
       if (width === 390) await buttons.nth(1).tap(); else await buttons.nth(1).click();
       await page.waitForFunction(async () => await navigator.clipboard.readText() === 'Nested reply.');
       await page.waitForTimeout(1600);
-      assert.equal(await body.getByText(copiedLabel, { exact: true }).count(), 0);
+      assert.equal(await body.getByRole('button', { name: 'Copied!', exact: true }).count(), 0);
       const geometry = await body.locator('blockquote').evaluateAll((quotes) => quotes.map((quote) => {
         const button = quote.querySelector('button').getBoundingClientRect();
         const bounds = quote.getBoundingClientRect();
@@ -63,9 +67,11 @@ try {
         const text = range.getBoundingClientRect();
         return { button: button.toJSON(), quote: bounds.toJSON(), text: text.toJSON(), padding: getComputedStyle(quote).paddingTop, background: getComputedStyle(quote).backgroundColor };
       }));
+      const reference = await body.getByRole('button', { name: 'Copy code', exact: true }).boundingBox();
       for (const { button, quote, text } of geometry) {
         assert(button.x >= text.right && button.right <= quote.right + 1);
-        assert(button.width >= 44 && button.height >= 44);
+        assert.equal(button.width, reference.width);
+        assert.equal(button.height, reference.height);
       }
       results.push({ theme, width, language, count, geometry, clipboard: 'plain text with paragraphs', keyboard: true, touch: width === 390 });
     } else results.push({ theme, width, language, count });

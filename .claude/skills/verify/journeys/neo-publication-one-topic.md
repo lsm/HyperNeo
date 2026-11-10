@@ -13,15 +13,26 @@ The model publishes two labelled topics under a short summary, then each topic
 separately. All three receipts must be accepted and all three messages must appear
 in the publication reader, including the complete bundled message.
 
-A fourth SDK call supplies a valid project link together with missing/legacy links,
-an unknown reply id and an invented artifact. Its text must be delivered with only
-the valid project link; omitted ids must not claim a human answer.
+The SDK send with requestId `references` supplies a valid project link, an unknown reply id and an
+invented artifact; the whole send must be rejected without reserving the requestId.
+Earlier work-kind and unknown-project attempts also fail, and a corrected send
+reuses that requestId to deliver the valid project link. Discovered tool guidance
+must say that only project links are accepted and unknown projects reject the send.
 
-A fifth SDK call uses `operations.describe` for `neo.publication.publish`. Its
-description must explicitly say that non-project and unavailable links are omitted.
-The fourth call includes both legacy `work` and `consultation` links, so the
-discovered guidance and the stored message must agree. The helper records the
-description in `observed.json` before asserting it, including on failure.
+For the link admission regression, use the actual daemon/MCP and human RPC reader
+without a model subprocess (no mock-port preflight is needed):
+
+```bash
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/publication-links.ts
+```
+
+This helper rejects work/consultation links at the schema, rejects a mixed list
+containing an unknown project with a named error, then confirms the human reader
+has no publication. Correcting the same requestId delivers the valid project link;
+a retry leaves exactly one publication. The helper closes its ephemeral daemon
+and socket in finally. On the test-first commit it records the silently dropped
+link and fails. An SDK subprocess startup timeout is inconclusive; this narrower
+MCP/RPC proof does not claim model-turn execution or GUI rendering.
 
 Save `observed.json`, `evidence.json` and the proof log outside the run directory,
 then delete the synthetic run. A refused bundle is a failure. After rollout, read

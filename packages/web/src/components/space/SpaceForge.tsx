@@ -34,8 +34,14 @@ import { EvidenceTab } from './SpaceForgeEvidence.tsx';
 import { MetricsTab } from './SpaceForgeMetrics.tsx';
 import { ActiveLessonsTab } from './SpaceForgeLessons.tsx';
 import { EpisodesTab } from './SpaceForgeEpisodes.tsx';
-import { currentSpaceScopeIdSignal, rightPanelTargetSignal } from '../../lib/signals';
+import { rightPanelTargetSignal } from '../../lib/signals';
+import { currentSpaceScopeIdSignal } from '../../lib/space-signals';
 import { spaceStore } from '../../lib/space-store';
+
+function isScopePanelOpen(): boolean {
+  const target = rightPanelTargetSignal.value;
+  return target?.type === 'extension' && target.panel === 'scope';
+}
 
 interface SpaceForgeProps {
   spaceId: string;
@@ -599,7 +605,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
   useEffect(() => {
     return () => {
       currentSpaceScopeIdSignal.value = null;
-      if (rightPanelTargetSignal.value?.type === 'scope') rightPanelTargetSignal.value = null;
+      if (isScopePanelOpen()) rightPanelTargetSignal.value = null;
     };
   }, [spaceId]);
 
@@ -610,7 +616,12 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 
   const openScope = (scopeId: string) => {
     currentSpaceScopeIdSignal.value = scopeId;
-    rightPanelTargetSignal.value = { type: 'scope', spaceId, scopeId };
+    rightPanelTargetSignal.value = {
+      type: 'extension',
+      panel: 'scope',
+      owner: spaceId,
+      item: scopeId,
+    };
   };
 
   const handleCreated = (scope: EvolutionScope) => {

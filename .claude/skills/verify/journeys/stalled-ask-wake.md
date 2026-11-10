@@ -13,6 +13,9 @@ no wake for settled/questioned asks, no duplicate from overlapping refreshes,
 and a repeat only after four more hours. It restarts its own daemon once and
 checks that the cooldown survives. The note names its ask and says:
 “This ask has nothing in progress. Add the next todo, or settle it.”
+An ask whose todos all finished is told at once instead, with “All todos are
+finished: write the outcome with neo.ask.settle, or add the next todo.”; the unit
+tests in `neo-stalled-asks.test.ts` cover that case.
 
 Retain `evidence/result.json` and daemon output. The unit contracts additionally
 cover waiting/doing/blocked/done todos, a recent ask, archived/deleted recipients and failed handoff retry. Neither a failed handoff nor a failed wake query may block session watching; a watcher failure must not suppress the wake.

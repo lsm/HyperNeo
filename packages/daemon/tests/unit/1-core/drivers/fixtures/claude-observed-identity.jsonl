@@ -1,0 +1,4 @@
+{"type": "assistant", "uuid": "observed", "timestamp": "2026-10-28T16:28:30Z", "requestedModel": "claude-opus-5-5", "effort": "medium", "perTurnEffort": "medium", "message": {"role": "assistant", "model": "claude-opus-5-5", "content": [{"type": "text", "text": "PR body: Agent: claude-opus-5-5 (effort: low) via Claude Code"}], "stop_reason": "end_turn"}}
+{"type": "user", "effort": "low", "message": {"model": "fake-user-model", "content": "effort: low"}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "content": "{\"effort\":\"low\",\"model\":\"fake-tool-model\"}"}]}}
+{"type": "tool", "effort": "low", "message": {"model": "fake-tool-model", "content": "effort: low"}}

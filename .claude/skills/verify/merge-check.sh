@@ -14,11 +14,11 @@ INSERT INTO neo_project_workspaces (alias, project_id)
 INSERT INTO neo_asks (id, session_id, project_id, title, request, status, repo, created_at, updated_at)
   VALUES ('ask-merge', '$ROOT', 'project:web-copy', 'Tidy the header', 'Tidy the header', 'done',
     'github.com/verify-test/web', $NOW_MS, $NOW_MS);
-INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, repo, created_at, updated_at)
-  VALUES ('todo-merge', 'ask-merge', 1, 'Tidy the header', 'Header tidied', 'done',
-    'github.com/verify-test/other', $NOW_MS, $NOW_MS);"
+INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at)
+  VALUES ('todo-merge', 'ask-merge', 1, 'Tidy the header', 'Header tidied', 'done', $NOW_MS, $NOW_MS);
+INSERT INTO pack_coding_todos (todo_id, repo) VALUES ('todo-merge', 'github.com/verify-test/other');"
 VERIFY_PORT=${VERIFY_PORT:?set VERIFY_PORT} bun "$(dirname "$0")/rpc.ts" neo.projects.reorganize '{"apply":true}' \
   > "$RUN/evidence/merge-reorganize.json"
 sqlite3 -readonly "$DB" "SELECT 'merge', source_id, target_id FROM neo_project_merges;
 SELECT 'ask', id, project_id, repo FROM neo_asks WHERE id = 'ask-merge';
-SELECT 'todo', id, repo FROM neo_todos WHERE id = 'todo-merge';"
+SELECT 'todo', todo_id, repo FROM pack_coding_todos WHERE todo_id = 'todo-merge';"

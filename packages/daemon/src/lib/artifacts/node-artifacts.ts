@@ -6,7 +6,7 @@ import {
 } from '@hyperneo/shared';
 import { z } from 'zod';
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
-import { jsonResult, type ToolResult } from '../space/tools/tool-result.ts';
+import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
 
 export const SaveArtifactSchema = z.object({
   shape: z

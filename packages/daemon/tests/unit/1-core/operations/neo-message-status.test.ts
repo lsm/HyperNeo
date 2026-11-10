@@ -1,9 +1,10 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { MessageSendStatus } from '@hyperneo/shared/types/message-delivery';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -174,7 +175,13 @@ test('a publication answers exactly its explicit consumed ids; asking back does 
   expect(
     await invoke(
       'neo.question.ask',
-      { askId: 'work', kind: 'reply', text: 'Which draft?', replyTo: [ids[1]] },
+      {
+        retireWhen: pendingTodoCheck,
+        askId: 'work',
+        kind: 'reply',
+        text: 'Which draft?',
+        replyTo: [ids[1]],
+      },
       neo
     )
   ).toMatchObject({ value: { ok: true } });

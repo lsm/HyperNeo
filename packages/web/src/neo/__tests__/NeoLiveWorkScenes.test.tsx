@@ -48,6 +48,12 @@ vi.mock('../NeoConversation.tsx', () => ({
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 
 beforeEach(() => {
+  vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+    request: vi.fn(async (_method: string, params: { name: string }) => {
+      if (params.name === 'neo.ask.search') return { ok: true, results: [] };
+      throw new Error('Synthetic unavailable');
+    }),
+  } as never);
   connectionState.value = 'connected';
   vi.stubGlobal('matchMedia', () => ({ matches: true }));
   vi.stubGlobal(
@@ -61,11 +67,126 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  localStorage.removeItem('neo:topic-filter');
 });
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
 
 describe('Work search input and retry', () => {
+  it.each(['to do', 'ok?'])(
+    'keeps short local query %s usable without a false server error',
+    async (query) => {
+      locale.value = 'en';
+      const request = vi.fn(async (_method: string, params: { name: string }) => {
+        if (params.name === 'neo.ask.search')
+          throw Object.assign(new Error('query_too_short'), { code: 'INVALID_PARAMS' });
+        return { schedules: [] };
+      });
+      vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+      const { model } = mount();
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: { ...model.value.snapshot, todoAsks: [testAskEntry('short', query)] },
+        };
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+      fireEvent.input(screen.getByRole('searchbox'), { target: { value: query } });
+      await screen.findByRole('heading', { name: query, exact: true });
+      await waitFor(() => expect(screen.queryByText('Searching work…')).toBeNull());
+      expect(
+        screen.queryByText('Could not search work. Close and reopen search to retry.')
+      ).toBeNull();
+    }
+  );
+  it('clears the search and filters when a card topic is tapped in the results', async () => {
+    locale.value = 'en';
+    const request = vi.fn(async (_method: string, params: { name: string }) => {
+      if (params.name === 'neo.ask.search')
+        throw Object.assign(new Error('query_too_short'), { code: 'INVALID_PARAMS' });
+      return { schedules: [] };
+    });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    const protocol = testAskEntry('protocol', 'to do protocol');
+    protocol.ask.topic = 'OAP';
+    const inbox = testAskEntry('inbox', 'to do inbox');
+    inbox.ask.topic = '邮件';
+    const { model, container } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: { ...model.value.snapshot, todoAsks: [protocol, inbox] },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'to do' } });
+    await screen.findByRole('heading', { name: 'to do protocol', exact: true });
+    expect(container.querySelector('[data-topic-chips]')).toBeNull();
+    const card = container.querySelector('[data-ask="protocol"]') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: 'OAP' }));
+    await waitFor(() => expect(container.querySelector('[data-topic-chips]')).toBeTruthy());
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('');
+    expect(screen.getByRole('button', { name: 'OAP 1' }).getAttribute('aria-pressed')).toBe('true');
+    expect(
+      [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'))
+    ).toEqual(['protocol']);
+  });
+  it('shows the topic of a result with no loaded card as disabled', async () => {
+    locale.value = 'en';
+    const remote = testAskEntry('remote', 'remote protocol', { state: 'done' });
+    remote.ask.topic = 'OAP';
+    const request = vi.fn(async (_method: string, params: { name: string }) => {
+      if (params.name === 'neo.ask.search')
+        return { ok: true, results: [{ askId: remote.ask.id }], nextCursor: null };
+      if (params.name === 'neo.ask.read') return { ok: true, entry: remote };
+      return { schedules: [] };
+    });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    const { container } = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'remote protocol' } });
+    await screen.findByRole('heading', { name: 'remote protocol', exact: true });
+    const card = container.querySelector('[data-ask="remote"]') as HTMLElement;
+    const topic = within(card).getByRole('button', { name: 'OAP' }) as HTMLButtonElement;
+    expect(topic.disabled).toBe(true);
+    fireEvent.click(topic);
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('remote protocol');
+    expect(container.querySelector('[data-ask="remote"]')).toBeTruthy();
+    expect(localStorage.getItem('neo:topic-filter')).toBeNull();
+  });
+  it('finds an unloaded Chinese card beyond the first server page', async () => {
+    locale.value = 'en';
+    const old = testAskEntry('old-page-two', '网页修两处', { state: 'done' });
+    const request = vi.fn(
+      async (_method: string, params: { name: string; input: { cursor?: string } }) => {
+        if (params.name === 'neo.ask.search')
+          return params.input.cursor
+            ? {
+                ok: true,
+                results: [{ askId: old.ask.id }, { askId: old.ask.id }],
+                nextCursor: null,
+              }
+            : {
+                ok: true,
+                results: Array.from({ length: 50 }, () => ({ askId: 'waiting' })),
+                nextCursor: '50',
+              };
+        if (params.name === 'neo.ask.read') return { ok: true, entry: old };
+        return { schedules: [] };
+      }
+    );
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    const { container } = mount();
+    expect(container.querySelector('[data-ask="old-page-two"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: '网页修两处' } });
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Load more search results', exact: true })
+    );
+    await screen.findByRole('heading', { name: '网页修两处' });
+    expect(container.querySelectorAll('[data-ask="old-page-two"]')).toHaveLength(1);
+  });
   it.each([{ isComposing: true }, { keyCode: 229 }])(
     'keeps the CJK query when Escape dismisses composition: %j',
     (composition) => {
@@ -93,7 +214,9 @@ describe('Work search input and retry', () => {
       .mockRejectedValueOnce(new Error('Synthetic unavailable'))
       .mockReturnValue(pending);
     const request = vi.fn((_method: string, input: { name: string }) =>
-      input.name === 'neo.ask.read' ? read() : Promise.resolve({ schedules: [] })
+      input.name === 'neo.ask.read'
+        ? read()
+        : Promise.resolve({ ok: true, results: [], schedules: [] })
     );
     const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
     try {
@@ -143,6 +266,8 @@ function mount(publicMode = true, empty = false) {
       updatedAt: 1,
     })),
     work: [],
+    needsYou: empty ? 0 : 1,
+    neoUnhandled: 0,
     todoAsks: empty
       ? []
       : [testAskEntry('waiting', 'Fictional execution proposal', { state: 'waiting' })],
@@ -197,7 +322,9 @@ describe('Neo public work scenes', () => {
       .mockRejectedValueOnce(new Error('History unavailable'))
       .mockResolvedValue({ ok: true, entries: [old], nextCursor: null });
     const request = vi.fn((_method: string, input: { name: string }) =>
-      input.name === 'neo.ask.history' ? history() : Promise.resolve({ schedules: [] })
+      input.name === 'neo.ask.history'
+        ? history()
+        : Promise.resolve({ ok: true, results: [], schedules: [] })
     );
     const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
     try {
@@ -325,6 +452,45 @@ describe('Neo public work scenes', () => {
     expect(screen.getByRole('region', { name: 'Needs your attention' })).toBeTruthy();
   });
 
+  it('reads the daemon counts instead of judging the loaded asks', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const { model } = mount();
+    const set = (counts: { needsYou?: number; neoUnhandled?: number }) =>
+      act(() => {
+        model.value = { ...model.value, snapshot: { ...model.value.snapshot, ...counts } };
+      });
+    set({ needsYou: 4, neoUnhandled: 2 });
+    expect(screen.getByRole('button', { name: /^Your work, 4 need/, hidden: true })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Needs your attention · 4' })).toBeTruthy();
+    expect(screen.getByText('Neo has 2 still to handle')).toBeTruthy();
+    set({ needsYou: 4, neoUnhandled: 0 });
+    expect(screen.queryByText(/still to handle/)).toBeNull();
+  });
+
+  it('keeps a blocked ask with no card out of the human list', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const { model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          needsYou: 0,
+          neoUnhandled: 1,
+          todoAsks: [
+            testAskEntry('blocked', 'Blocked work', {
+              state: 'doing',
+              todos: [testTodo('b', { state: 'blocked' })],
+            }),
+          ],
+        },
+      };
+    });
+    expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Your work', hidden: true })).toBeTruthy();
+    expect(screen.getByText('Neo has 1 still to handle')).toBeTruthy();
+  });
+
   it('shows no pending check banner and only work scene groups in legacy mode', () => {
     const { container } = mount(false);
     expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
@@ -433,7 +599,7 @@ describe('card reply notice navigation', () => {
             nextOffset: offset === 0 ? 20 : null,
           };
         }
-        return { schedules: [] };
+        return { ok: true, results: [], schedules: [] };
       }
     );
     const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
@@ -518,7 +684,7 @@ describe('card reply notice navigation', () => {
         ? new Promise((resolve) => {
             finish = resolve;
           })
-        : Promise.resolve({ schedules: [] })
+        : Promise.resolve({ ok: true, results: [], schedules: [] })
     );
     const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
     try {
@@ -548,7 +714,9 @@ describe('card reply notice navigation', () => {
       });
       const read = vi.fn(() => pending);
       const request = vi.fn((_method: string, params: { name: string }) =>
-        params.name === 'neo.ask.read' ? read() : Promise.resolve({ schedules: [] })
+        params.name === 'neo.ask.read'
+          ? read()
+          : Promise.resolve({ ok: true, results: [], schedules: [] })
       );
       const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
       try {

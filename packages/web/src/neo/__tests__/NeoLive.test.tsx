@@ -113,6 +113,41 @@ describe('Neo MVP controls', () => {
     );
     expect(onDraft).not.toHaveBeenCalled();
   });
+  it('captures words with their quote before send and restores the quote on refusal', async () => {
+    let refuse!: () => void;
+    sendMessage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          refuse = () => resolve({ ok: false, reason: 'Synthetic refusal' });
+        })
+    );
+    const quote = { author: 'Neo' as const, text: 'Which lamp?', anchor: 'lamp' };
+    render(
+      <NeoComposer
+        store={makeStore()}
+        sessionId="neo"
+        draft="The blue one"
+        onDraft={vi.fn()}
+        onTranscript={vi.fn()}
+        onError={vi.fn()}
+        onSend={sendMessage}
+        quote={quote}
+      />
+    );
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+    vi.spyOn(input, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 300, 300, 52));
+    vi.spyOn(document.querySelector('[data-quote-bar]')!, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(20, 220, 300, 64)
+    );
+    fireEvent.submit(input.form!);
+    expect(document.querySelector('form [data-quote-bar]')).toBeNull();
+    expect(sendMessage).toHaveBeenCalledWith(
+      { sessionId: 'neo', text: 'The blue one', images: [], quote },
+      { x: 20, y: 220, width: 300, height: 132 }
+    );
+    refuse();
+    await waitFor(() => expect(screen.getByText('Which lamp?')).toBeTruthy());
+  });
   it('does not erase text typed while an earlier message is being accepted', async () => {
     let accept: () => void = () => {};
     sendMessage.mockImplementationOnce(

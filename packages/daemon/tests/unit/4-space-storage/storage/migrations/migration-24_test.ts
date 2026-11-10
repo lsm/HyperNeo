@@ -100,26 +100,6 @@ describe('Migration 24: rename failed → needs_attention', () => {
     expect(cancelledTask.status).toBe('cancelled');
   }, 15000);
 
-  test('updated constraint accepts needs_attention but rejects failed', () => {
-    runMigrations(db, () => {});
-
-    const now = Date.now();
-
-    expect(() => {
-      db.exec(`
-				INSERT INTO tasks (id, room_id, title, description, status, created_at)
-				VALUES ('t-ok', 'room-1', 'Task', 'desc', 'needs_attention', ${now})
-			`);
-    }).not.toThrow();
-
-    expect(() => {
-      db.exec(`
-				INSERT INTO tasks (id, room_id, title, description, status, created_at)
-				VALUES ('t-bad', 'room-1', 'Task', 'desc', 'failed', ${now})
-			`);
-    }).toThrow();
-  });
-
   test('is idempotent when run on already-migrated database', () => {
     runMigrations(db, () => {});
     expect(() => runMigrations(db, () => {})).not.toThrow();

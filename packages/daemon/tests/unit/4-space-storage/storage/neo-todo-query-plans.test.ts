@@ -4,11 +4,6 @@ import {
   todoPlan,
   todoQueries,
 } from '../../../../../../.claude/skills/verify/todo-query-plans.ts';
-import {
-  CODING_TODO_WINDOW_QUERY,
-  CodingTodoPrRepository,
-  type CodingTodoWindow,
-} from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { runMigration456 } from '../../../../src/storage/schema/m456-neo-todo-query-indexes.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -60,37 +55,6 @@ describe('Neo todo query plans at observed row counts', () => {
       expect(
         todoPlan(db, todoQueries.list, ['a0']).some((detail) => detail.includes('TEMP B-TREE'))
       ).toBe(false);
-    } finally {
-      db.close();
-    }
-  });
-
-  test('PR attribution windows keep strict later starts and null bounds', () => {
-    const db = syntheticTodoDb();
-    try {
-      const repo = new CodingTodoPrRepository(db);
-      for (const id of [...Array.from({ length: 1213 }, (_, i) => `t${i}`), 'missing']) {
-        const expected = (db.prepare(todoQueries.window).get(id) as CodingTodoWindow | null) ?? {
-          start: null,
-          end: null,
-        };
-        expect(repo.window(id)).toEqual(expected);
-      }
-      expect(repo.window('t48')).toEqual({ start: 24, end: 32 });
-      expect(repo.window('t0')).toEqual({ start: null, end: null });
-      expect(repo.window('t1000')).toEqual({ start: 500, end: null });
-    } finally {
-      db.close();
-    }
-  });
-
-  test('session windows use the ref index without a correlated subquery', () => {
-    const db = syntheticTodoDb();
-    try {
-      const plan = todoPlan(db, CODING_TODO_WINDOW_QUERY, ['t48']);
-      expect(plan.some((detail) => detail.includes('CORRELATED'))).toBe(false);
-      expect(plan.some((detail) => detail.includes('idx_neo_todo_sessions_ref'))).toBe(true);
-      expect(plan.some((detail) => /^SCAN (other|next)\b/.test(detail))).toBe(false);
     } finally {
       db.close();
     }

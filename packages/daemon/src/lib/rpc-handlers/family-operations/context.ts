@@ -1,49 +1,34 @@
+import type { NeoWorkerNameSource } from '../../neo/worker-name.ts';
 import type { createClaudeInboxDriver } from '../../drivers/claude-inbox-driver.ts';
 import type { createClaudeDesktopModsDriver } from '../../drivers/claude-desktop-mods-driver.ts';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
-import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
-import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-identity.ts';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
-import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
-import type {
-  SpaceAgentInactivityClaimRepository,
-  SpaceAgentInactivityConfigRepository,
-} from '../../../storage/repositories/space-agent-inactivity-repository.ts';
-import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
-import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
-import type { SpaceSessionEventSubscriptionRepository } from '../../../storage/repositories/space-session-event-subscription-repository.ts';
-import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
-import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
-import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import type { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository.ts';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
-import type { EvolutionEpisodeService } from '../../evolution/episode-service.ts';
-import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
-import type { GoalAutomationService } from '../../goals/automation-service.ts';
-import type { SpaceGoalService } from '../../goals/service.ts';
-import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
-import type { ScheduleService } from '../../schedule/schedule-service.ts';
-import type { SpaceRuntimeService } from '../../space/runtime/space-runtime-service.ts';
-import type { TaskAgentManager } from '../../space/runtime/task-agent-manager.ts';
-import type { SpaceTaskManager } from '../../tasks/task-manager.ts';
-import type { CodingArtifactProfile } from '../../workflows/coding-artifact-profile.ts';
-import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import type { RPCHandlerDependencies } from '../index.ts';
 import type { SessionScheduler } from '../../scheduler/session-schedules.ts';
 import type { NeoPack } from '../../neo/pack-contract.ts';
+import type { WorkAdapter } from '../../drivers/types.ts';
+import type { DaemonAdapterHost } from '../../extensions/contract.ts';
+import type { Session, Space } from '@hyperneo/shared';
+import type { AgentSession } from '../../agent/agent-session.ts';
+import type { OperationCallerRole } from '../../operations/registry.ts';
+
+export interface SessionSpacePort {
+  sessionSpaceId(session: Session): string | undefined;
+  resolveRole(session: Session): OperationCallerRole;
+  getSpace(spaceId: string): Promise<Space | null>;
+  addSession(spaceId: string, sessionId: string): Promise<unknown>;
+  attachTools(sessionId: string): Promise<void>;
+  liveSession(sessionId: string): AgentSession | undefined;
+  isRuntimeSettingsPreparing(sessionId: string): boolean;
+}
 
 export interface FamilyOperationContext {
+  readonly workerNameSource?: (read: NeoWorkerNameSource) => void;
+  readonly driverHealthNotice?: (id: string, text: string) => Promise<boolean>;
   readonly driverCleanup?: (() => Promise<void>)[];
   readonly sessionScheduler: SessionScheduler;
   readonly goalMandateChange?: (ref: string, revision: string | null) => Promise<string | null>;
   readonly neoPacks: () => readonly NeoPack[];
+  readonly extensionAdapters?: (host: DaemonAdapterHost) => readonly WorkAdapter[];
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;
   readonly claudeDesktopMods?: ReturnType<typeof createClaudeDesktopModsDriver>;
   readonly executionPreparations?: () => readonly {
@@ -51,39 +36,5 @@ export interface FamilyOperationContext {
     prepareExecution?: WorkExecutionPreparation;
   }[];
   readonly deps: RPCHandlerDependencies;
-  readonly spaceRuntimeService: SpaceRuntimeService;
-  readonly taskAgentManager: TaskAgentManager;
-  readonly spaceTaskManagerFactory: (spaceId: string) => SpaceTaskManager;
-  readonly spaceTaskRepo: SpaceTaskRepository;
-  readonly nodeExecutionRepo: NodeExecutionRepository;
-  readonly longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
-  readonly spaceAgentRepo: SpaceAgentRepository;
-  readonly spaceAgentGoalScopeRepo: SpaceAgentGoalScopeRepository;
-  readonly spaceAgentTemplateRepo: SpaceAgentTemplateRepository;
-  readonly spaceAgentTemplateManager: SpaceAgentTemplateManager;
-  readonly spaceAgentReminderRepo: SpaceAgentReminderRepository;
-  readonly spaceAgentSubscriptionRepo: SpaceAgentSubscriptionRepository;
-  readonly hasDirectWorkerProvenance: (sessionId: string) => boolean;
-  readonly resolveDirectWorker: (sessionId: string) => DirectTaskWorkerIdentity | null;
-  readonly spaceSessionEventSubscriptionRepo: SpaceSessionEventSubscriptionRepository;
-  readonly spaceAgentInactivityConfigRepo: SpaceAgentInactivityConfigRepository;
-  readonly spaceAgentInactivityClaimRepo: SpaceAgentInactivityClaimRepository;
-  readonly spaceGoalService: SpaceGoalService;
-  readonly spaceGoalRepo: SpaceGoalRepository;
-  readonly spaceGoalEventRepo: SpaceGoalEventRepository;
-  readonly goalAutomationService: GoalAutomationService;
-  readonly evolutionScopeService: EvolutionScopeService;
-  readonly evolutionEpisodeService: EvolutionEpisodeService;
-  readonly scheduleService: ScheduleService;
-  readonly taskScheduleRepo: TaskScheduleRepository;
-  readonly spaceWorkflowRepo: SpaceWorkflowRepository;
-  readonly spaceWorkflowRunRepo: SpaceWorkflowRunRepository;
-  readonly spaceWorkflowManager: SpaceWorkflowManager;
-  readonly artifactRepo: WorkflowRunArtifactRepository;
-  readonly artifactProfile: CodingArtifactProfile;
-  readonly channelCycleRepo: ChannelCycleRepository;
-  readonly replyRoutingRegistry: ReplyRoutingRegistry;
-  readonly archiveAgentSessions?: (
-    agent: SpaceLongHorizonAgent
-  ) => Promise<{ ok: true } | { ok: false; message: string }>;
+  readonly sessionSpace?: SessionSpacePort;
 }

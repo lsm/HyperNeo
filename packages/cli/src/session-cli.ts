@@ -1,7 +1,29 @@
 import { SESSION_CLI_USAGE } from './session-cli-commands.ts';
 import { request } from 'node:http';
+import { dirname, join } from 'node:path';
 import { sessionDoorPath } from '@hyperneo/daemon/lib/messaging/session-door';
+import { readLocalCredential } from '@hyperneo/daemon/lib/pairing/local-credential';
 import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
+import { readCard } from './read-card.ts';
+import { spawnProcess } from '@hyperneo/daemon/lib/runtime-spawn';
+import { runPairQr } from './pair-qr.ts';
+
+const TAILSCALE = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
+
+async function tailscale(args: string[]): Promise<unknown> {
+  for (const command of TAILSCALE) {
+    try {
+      const child = spawnProcess([command, ...args], {
+        stdout: 'pipe',
+        stderr: 'ignore',
+        env: { ...(process.env as Record<string, string>), TERM: process.env.TERM || 'dumb' },
+      });
+      const text = await new Response(child.stdout).text();
+      if ((await child.exited) === 0) return JSON.parse(text);
+    } catch {}
+  }
+  return null;
+}
 
 type Env = Record<string, string | undefined>;
 
@@ -19,6 +41,26 @@ export function planSessionCommand(
   sender: string
 ): { value: { name: string; input: unknown } } | { reason: string } {
   const [command, target, ...rest] = args;
+  if (command === 'relay') {
+    const [whereFlag, where, whenFlag, when, separator, ...words] = rest;
+    return target &&
+      whereFlag === '--where' &&
+      where?.trim() &&
+      whenFlag === '--when' &&
+      when?.trim() &&
+      separator === '--' &&
+      words.join(' ').trim()
+      ? {
+          value: {
+            name: 'neo.question.relayAnswer',
+            input: { questionId: target, where, when, words: words.join(' ') },
+          },
+        }
+      : {
+          reason:
+            'relay_incomplete: use relay <questionId> --where <place> --when <time> -- <exact words>.',
+        };
+  }
   if (command === 'send' && target && rest[0] === '--kind') {
     const kind = WORKER_REPORT_KINDS.find((value) => value === rest[1]);
     const text = rest.slice(2).join(' ');
@@ -66,10 +108,16 @@ function planPairCommand(
   return { value: { name: 'device.pair.create', input } };
 }
 
-function post(socketPath: string, body: unknown): Promise<{ status: number; body: unknown }> {
+async function post(socketPath: string, body: unknown): Promise<{ status: number; body: unknown }> {
+  const credential = await readLocalCredential(join(dirname(socketPath), 'local-rpc.credential'));
   return new Promise((resolve, reject) => {
     const call = request(
-      { socketPath, path: '/', method: 'POST', headers: { 'content-type': 'application/json' } },
+      {
+        socketPath,
+        path: '/',
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${credential}` },
+      },
       (response) => {
         const chunks: Buffer[] = [];
         response.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -87,6 +135,7 @@ function post(socketPath: string, body: unknown): Promise<{ status: number; body
 }
 
 export async function runSessionCommand(args: string[], env: Env = process.env): Promise<number> {
+  if (args[0] === 'read') return readCard(args.slice(1), env.HYPERNEO_DATA_DIR);
   const sender = resolveSender(env) ?? (args[0] === 'pair' || args[0] === 'devices' ? 'cli' : null);
   if (!sender) {
     console.error(
@@ -94,12 +143,27 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     );
     return 1;
   }
+  const door = env.HYPERNEO_SESSION_DOOR ?? sessionDoorPath();
+  if (args[0] === 'pair' && args.includes('--qr'))
+    return runPairQr(args.slice(1), {
+      call: async (name, input) => {
+        const reply = await post(door, { sender, name, input }).catch((error: Error) => ({
+          body: { error: `the HyperNeo daemon is not reachable at ${door}: ${error.message}` },
+        }));
+        const { kind, value, error, message } = reply.body as Record<string, unknown>;
+        return kind === 'completed' ? value : { ok: false, reason: error ?? message ?? kind };
+      },
+      tailscale,
+      ask: async (question) => prompt(question) ?? '',
+      print: (text) => console.log(text),
+      now: Date.now,
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
   const plan = planSessionCommand(args, sender);
   if ('reason' in plan) {
     console.error(plan.reason);
     return 1;
   }
-  const door = env.HYPERNEO_SESSION_DOOR ?? sessionDoorPath();
   const reply = await post(door, { sender, ...plan.value }).catch((error: Error) => ({
     status: 0,
     body: { error: `the HyperNeo daemon is not reachable at ${door}: ${error.message}` },
@@ -115,6 +179,10 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     return 1;
   }
   const value = outcome.value as { kind?: string; ok?: boolean; reason?: string; health?: string };
+  if (args[0] === 'relay' && value.ok === false) {
+    console.error(value.reason);
+    return 1;
+  }
   console.log(JSON.stringify(value, null, 2));
   return value.kind === 'rejected' || value.ok === false || value.health === 'fail' ? 1 : 0;
 }

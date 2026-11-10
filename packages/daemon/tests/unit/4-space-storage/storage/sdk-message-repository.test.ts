@@ -2177,6 +2177,35 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getDeliveryContent', () => {
+    it('exposes synthetic identity for submitted messages, including legacy system origins', () => {
+      for (const [uuid, extra, origin] of [
+        ['agent', { isSynthetic: true }, undefined],
+        ['legacy-system', {}, 'system'],
+        ['legacy-human', { isSynthetic: false }, 'human'],
+      ] as const) {
+        repository.saveUserMessage(
+          'session-1',
+          { ...createUserMessage(uuid, uuid), ...extra } as SDKMessage,
+          'submitted',
+          origin
+        );
+      }
+      expect(repository.getSDKMessages('session-1').messages).toHaveLength(0);
+      expect(repository.getDeliveryContent('session-1', 'agent')).toMatchObject({
+        sendStatus: 'submitted',
+        isSynthetic: true,
+      });
+      expect(repository.getDeliveryContent('session-1', 'legacy-system')).toMatchObject({
+        sendStatus: 'submitted',
+        isSynthetic: true,
+      });
+      expect(repository.getDeliveryContent('session-1', 'legacy-human')).not.toHaveProperty(
+        'isSynthetic'
+      );
+    });
+  });
+
   describe('saveUserMessage', () => {
     it('should save user message with consumed status by default', () => {
       const message = createUserMessage('Test message');
@@ -2877,24 +2906,6 @@ describe('SDKMessageRepository', () => {
       expect(reopened).toBe(id);
       expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued').length).toBe(1);
       expect(repository.getUserMessageIdsByStatus('session-1', 'consumed').length).toBe(0);
-    });
-
-    it('leaves submitted (ACP, pending acceptance) and failed rows alone', () => {
-      repository.saveUserMessage(
-        'session-1',
-        createUserMessage('acp prompt', 'uuid-submitted'),
-        'submitted'
-      );
-      repository.saveUserMessage(
-        'session-1',
-        createUserMessage('already dead', 'uuid-failed'),
-        'failed'
-      );
-
-      expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-submitted')).toBeNull();
-      expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-failed')).toBeNull();
-      expect(repository.getUserMessageIdsByStatus('session-1', 'submitted').length).toBe(1);
-      expect(repository.getUserMessageIdsByStatus('session-1', 'failed').length).toBe(1);
     });
 
     it('returns null when the uuid is unknown', () => {

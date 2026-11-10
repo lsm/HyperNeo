@@ -1,3 +1,10 @@
+import { neoAskInputReads, neoAskInputWrites } from '../repositories/neo-ask-input-worker.ts';
+import { neoTrackerReads, neoTrackerWrites } from '../repositories/neo-tracker-mirror.ts';
+import { gitHubWatchPollingWrite } from '../repositories/github-watch-polling-write.ts';
+import { gitHubWatchedConfigWrite } from '../repositories/github-watched-config-write.ts';
+import { gitHubWatchedRepoRead } from '../repositories/github-watched-repo-read.ts';
+import { peerReads, peerWrites } from '../repositories/neo-peer-repository.ts';
+import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
 import {
@@ -52,19 +59,28 @@ import { codingTodoPrReads } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { neoTodoReads, neoTodoWrites } from '../repositories/neo-ask-todo-repository.ts';
 import { SDK_MESSAGE_TRANSACTIONS } from '../repositories/sdk-message-transactions.ts';
 import { neoWakeQueueWrite } from '../repositories/neo-wake-queue-repository.ts';
-import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
+import { externalEventSweeps } from '../repositories/space-external-event-sweep-repository.ts';
 import {
   ingestSessionEvent,
   readLatestSessionPrState,
 } from '../../lib/external-events/session-external-event-store.ts';
 import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
+import { workSessionWrites } from '../repositories/work-session-repository.ts';
 import { claudeDesktopOutboxWrites } from '../repositories/claude-desktop-outbox-repository.ts';
 import { codingLedgerReads, codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
 import { codingAssignmentWrites } from '../../lib/neo/packs/coding/assignments.ts';
+import {
+  codingAssignmentReads,
+  codingHandoffWrites,
+} from '../../lib/neo/packs/coding/review-merge-hold-worker.ts';
 import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
+import { codingTurnPrReads } from '../../lib/neo/packs/coding/turn-prs.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
+import { codingTodoStorageWrites } from '../../lib/neo/packs/coding/todo-storage.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
+  enrollLocalDevice,
+  deviceKindByCredential,
   recordUnpaired,
   recordWouldRefuse,
   touchDevice,
@@ -94,6 +110,7 @@ import {
   recordNeoSessionMessage,
   sentDuringTurn,
 } from '../repositories/neo-session-message-repository.ts';
+import { recordWorkTurns } from '../repositories/work-turn-repository.ts';
 import {
   acceptWorkDeliveryInput,
   recordWorkDeliveryOutcome,
@@ -112,6 +129,10 @@ import { cancelRateLimitDelivery } from '../repositories/rate-limit-cancel-write
 import { claimOwnedInputWithdrawal } from '../repositories/owned-input-withdrawal-write.ts';
 import type { DbOp } from './db-op.ts';
 import { credentialStoreWrites } from '../repositories/credential-store-writes.ts';
+import {
+  googleConnectionReads,
+  googleConnectionWrites,
+} from '../repositories/google-connections-worker.ts';
 import { enqueueSessionDelivery } from '../repositories/session-delivery-enqueue-write.ts';
 import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
 import { providerRpcWrites } from '../repositories/provider-rpc-writes.ts';
@@ -148,8 +169,37 @@ import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
 import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db.ts';
 import { neoPublicationPageWrites } from '../repositories/neo-publication-page-db.ts';
-import { pairingApproveWrite } from '../repositories/pairing-approve-write.ts';
+import {
+  pairingApproveWrite,
+  pairingDenyWrite,
+  pairingTerminalApprovalWrites,
+} from '../repositories/pairing-approve-write.ts';
 import { pairingRedeemWrite } from '../repositories/pairing-redeem-write.ts';
+import { pairingCodeCreateWrites } from '../repositories/pairing-code-create-write.ts';
+import { pairingRevokeWrites } from '../repositories/pairing-revoke-write.ts';
+import { connectedDeviceReads } from '../repositories/connected-device-read.ts';
+import { pairingStateReads } from '../repositories/pairing-state-read.ts';
+import { humanDeviceResetWrites } from '../repositories/human-device-reset-write.ts';
+import { humanDeviceResetReads } from '../repositories/human-device-reset-read.ts';
+import { workspaceHistoryRemoveWrites } from '../repositories/workspace-history-remove-write.ts';
+import { workspaceHistoryUpsertWrites } from '../repositories/workspace-history-upsert-write.ts';
+import { artifactIdentityWrites } from '../repositories/artifact-file-identity-write.ts';
+import { artifactFileRowWrites } from '../repositories/artifact-file-row-write.ts';
+import { globalExtensionConfigWrites } from '../repositories/global-extension-config-write.ts';
+import { globalExtensionConfigReads } from '../repositories/global-extension-config-read.ts';
+import {
+  spaceExtensionConfigReads,
+  enabledSpaceExtensionConfigReads,
+} from '../repositories/space-extension-config-read.ts';
+import { spaceExtensionConfigWrites } from '../repositories/space-extension-config-write.ts';
+import { gitHubSpaceEnabledWrites } from '../repositories/github-space-enabled-write.ts';
+import { gitHubFilterWrites } from '../repositories/github-filter-write.ts';
+import { gitHubPollingWrites } from '../repositories/github-polling-enabled-write.ts';
+
+import {
+  gitHubPollingCapabilityReads,
+  gitHubPollingTimerReads,
+} from '../repositories/github-polling-usage-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -188,13 +238,20 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     reserveNeoHomeProjects,
     neoTodoSessionReads,
     neoTodoSessionWrites,
+    neoStallReminderWrite,
     codingTodoPrReads,
+    neoAskInputReads,
+    neoAskInputWrites,
     neoTodoReads,
+    neoTrackerReads,
+    neoTrackerWrites,
     neoTodoWrites,
     sdkMessageWrites,
     neoWakeQueueWrite,
     ...SDK_MESSAGE_TRANSACTIONS,
     recordWouldRefuse,
+    enrollLocalDevice,
+    deviceKindByCredential,
     touchDevice,
     recordUnpaired,
     jobQueueWrites,
@@ -202,6 +259,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     jobQueueReads,
     parkDeliveryJob,
     externalEventSweeps,
+    workSessionWrites,
     messageSearchIndexWrites,
     cleanupJobs,
     ingestSessionEvent,
@@ -216,10 +274,14 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     editStandaloneTaskWithDependencies,
     codingLedgerReads,
     codingLedgerWrites,
+    codingAssignmentReads,
+    codingHandoffWrites,
     codingAssignmentWrites,
     codingTodoPrWrites,
+    codingTodoStorageWrites,
     codingDeliveryWrites,
     codingSweepReads,
+    codingTurnPrReads,
     codingSweepWrites,
     claudeDesktopOutboxWrites,
     recordOperationRefusal,
@@ -235,6 +297,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sentDuringTurn,
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
+    recordWorkTurns,
     jobEnqueueWrites,
     enqueueMailboxAdmission,
     cancelRateLimitDelivery,
@@ -243,6 +306,10 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     releaseRateLimitDeliveries,
     providerRpcWrites,
     credentialStoreWrites,
+    peerReads,
+    peerWrites,
+    googleConnectionReads,
+    googleConnectionWrites,
     enqueueSessionDelivery,
     jobStaleReclaimWrites,
     mailboxExpiryReads,
@@ -276,6 +343,31 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingLedgerPollReads,
     neoPublicationPageWrites,
     pairingApproveWrite,
+    pairingDenyWrite,
+    pairingTerminalApprovalWrites,
     pairingRedeemWrite,
+    pairingCodeCreateWrites,
+    pairingRevokeWrites,
+    connectedDeviceReads,
+    pairingStateReads,
+    humanDeviceResetWrites,
+    humanDeviceResetReads,
+    workspaceHistoryRemoveWrites,
+    workspaceHistoryUpsertWrites,
+    artifactIdentityWrites,
+    artifactFileRowWrites,
+    globalExtensionConfigWrites,
+    globalExtensionConfigReads,
+    spaceExtensionConfigReads,
+    enabledSpaceExtensionConfigReads,
+    spaceExtensionConfigWrites,
+    gitHubSpaceEnabledWrites,
+    gitHubFilterWrites,
+    gitHubPollingWrites,
+    gitHubPollingCapabilityReads,
+    gitHubPollingTimerReads,
+    gitHubWatchedRepoRead,
+    gitHubWatchedConfigWrite,
+    gitHubWatchPollingWrite,
   ].map((op) => [op.name, op])
 );

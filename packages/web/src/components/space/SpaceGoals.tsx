@@ -1,9 +1,10 @@
 import type { SpaceGoal, SpaceGoalEvent, SpaceGoalStatus, SpaceTask } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/goal-status';
-import { navigateToSpaceTask } from '../../lib/router';
-import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../lib/signals';
+import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/space-goal-status';
+import { navigateToSpaceTask } from '../../lib/space-router';
+import { rightPanelTargetSignal } from '../../lib/signals';
+import { currentSpaceGoalIdSignal } from '../../lib/space-signals';
 import { spaceStore } from '../../lib/space-store';
 import { cn, getRelativeTime } from '../../lib/utils';
 import {
@@ -13,6 +14,11 @@ import {
   getRecurringGoalActivityStatus,
 } from './goal-display-utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
+
+function isGoalPanelOpen(): boolean {
+  const target = rightPanelTargetSignal.value;
+  return target?.type === 'extension' && target.panel === 'goal';
+}
 
 interface SpaceGoalsProps {
   spaceId: string;
@@ -476,7 +482,7 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
   useEffect(() => {
     return () => {
       currentSpaceGoalIdSignal.value = null;
-      if (rightPanelTargetSignal.value?.type === 'goal') rightPanelTargetSignal.value = null;
+      if (isGoalPanelOpen()) rightPanelTargetSignal.value = null;
     };
   }, [spaceId]);
 
@@ -496,7 +502,12 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
 
   const openGoal = (goalId: string) => {
     currentSpaceGoalIdSignal.value = goalId;
-    rightPanelTargetSignal.value = { type: 'goal', spaceId, goalId };
+    rightPanelTargetSignal.value = {
+      type: 'extension',
+      panel: 'goal',
+      owner: spaceId,
+      item: goalId,
+    };
   };
 
   return (

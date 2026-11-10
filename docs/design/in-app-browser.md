@@ -51,7 +51,6 @@ This distinction decides which option below is viable.
 |--------|--------|----------------|------------|----------|
 | **1. Lite injection harness** | Tauri OS webview + `initialization_script`, no CDP | ✅ all OS webviews | Low–medium (hits injection ceiling) | Medium |
 | **2. Playwright + CDP screencast** ✅ SELECTED | Headless Chromium, frames streamed into the UI | ✅ (Chromium is uniform) | High | High (see prerequisites) |
-| **3. Full CDP on embedded browser** | CEF / `deno desktop` CEF backend | Partial | High | High + depends on unexposed CDP |
 
 ### Option 1 — Lite injection harness (no CDP)
 
@@ -87,22 +86,6 @@ cross-origin page; a single page cannot manage tabs or downloads.
 Keep a real Chromium driven by Playwright over CDP (robust, trusted input, real
 screenshots, multi-context) and stream its pixels into a normal web component in
 the UI. See [Selected Approach](#selected-approach-cdp-screencast) below.
-
-### Option 3 — Full CDP on an embedded browser (CEF / `deno desktop`)
-
-Bundle a Chromium directly (CEF, or the CEF backend of `deno desktop`) and drive
-it via CDP. Feasible in principle — CEF is Chromium and supports
-`--remote-debugging-port` — **but** the documented `deno desktop` CEF API does
-not expose CDP, a remote-debugging port, or programmatic CDP access (only
-`bindings.<name>()` and `executeJs`). So a faithful browser-use on that surface
-is gated on Deno Desktop adding a CDP API. Bundling CEF separately also largely
-defeats the small-binary rationale of Tauri's OS webview.
-
-| Pros | Cons |
-|------|------|
-| Consistent rendering (full Chromium) | `deno desktop` CEF doesn't expose CDP today |
-| No separate browser process | ~150 MB framework; heavy |
-| | Non-portable unless you bundle Chromium everywhere |
 
 ### Why Option 2
 

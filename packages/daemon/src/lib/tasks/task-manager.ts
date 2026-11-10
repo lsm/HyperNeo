@@ -83,7 +83,6 @@ import { spaceTaskLaneFor } from '../../storage/db-gateway/db-gateway.ts';
 import { SpaceWorktreeRepository } from '../../storage/repositories/space-worktree-repository.ts';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { Logger } from '../logger.ts';
-import type { EvolutionScopeService } from '../evolution/scope-service.ts';
 import { arraysEqual } from '../utils/array-utils.ts';
 
 export type TaskExecutionPointers = Pick<
@@ -104,7 +103,9 @@ export class SpaceTaskManager {
     private db: BunDatabase,
     private spaceId: string,
     private reactiveDb?: ReactiveDatabase,
-    private evolutionScopeService?: EvolutionScopeService,
+    private evolutionScopeService?: {
+      captureCompletedTaskEvidence(params: { taskId: string }): unknown;
+    },
     private onTaskReopened?: (taskId: string) => void,
     private onTerminalTransition?: (taskId: string, fromStatus: SpaceTaskStatus) => void,
     private resolveWorkspacePath?: WorkspacePathResolver,
@@ -313,7 +314,7 @@ export class SpaceTaskManager {
           this.onTerminalTransition?.(taskId, task.status);
         }
         return result;
-      })();
+      }, 'immediate')();
       this.reactiveDb?.commitTransaction();
     } catch (err) {
       this.reactiveDb?.abortTransaction();

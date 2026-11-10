@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -102,7 +103,7 @@ try {
   const beforeHash = bodies(); evidence.storedBodyHashBefore = beforeHash;
   raw.exec('CREATE TABLE synthetic_shutdown_writer(value INTEGER); INSERT INTO synthetic_shutdown_writer VALUES(0)');
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
+  transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
   const page = (sessionId: string, extra: Record<string, number> = {}) => hub.request<Page>('message.sdkMessages', { sessionId, limit: 2, ...extra });
   writer = new SQLite(app.db.getDbPath()); writer.exec('PRAGMA busy_timeout=5000'); writer.exec('BEGIN IMMEDIATE'); writer.prepare('UPDATE synthetic_shutdown_writer SET value=value+1').run();
   const counters = () => ({ outside: (raw.prepare('SELECT value FROM synthetic_shutdown_writer').get() as { value: number }).value, inside: (writer!.prepare('SELECT value FROM synthetic_shutdown_writer').get() as { value: number }).value });

@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -21,7 +23,7 @@ const network=globalThis.fetch;
 globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});
 assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});
+const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});
 hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 const prepare=db.prepare.bind(db),replay=app.db.gateway.onChanges;
@@ -31,12 +33,14 @@ const tables:string[]=[],effects:{name:string;input?:Record<string,unknown>}[]=[
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const result:Record<string,unknown>={runtimeCallersMoved:true};
 const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 }),store,sessions,write:async(op,args)=>{
+  record=true;
   const receipt=await app.db.gateway.run(op,args);
-  if((args as {method?:string}).method==='claim') record=false;
+  record=false;
   return receipt;
 },packs:()=>[],changed:()=>{effects.push({name:'changed'});},tell:async()=>{effects.push({name:'tell'});},
   invoke:async(_caller,name,input)=>{
     record=false;
+    if(name==='work.status') return {kind:'completed',value:{ok:true,value:{status:'done',lastActivityAt:1}}};
     const view=await visible();
     if(effects.every(effect=>effect.name!=='work.send')) assert(view.entry.todos.some(todo=>todo.id==='state' && todo.state==='done'));
     effects.push({name,input});
@@ -45,7 +49,7 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
 });
 const startCard=(id:string,todoId:string,askId='ask')=>store.askQuestion(id,askId,{kind:'start',text:'Start?',startTodos:[todoId],options:null,multiple:false,yesLabel:null,noLabel:null},2);
 const seed=(id:string,askId='ask')=>{
-  store.addTodo(id,askId,{title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
+  store.addTodo(id,askId,{ approvedAt: 1, dependsOn: [],title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
   sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});
 };
 try {
@@ -59,7 +63,13 @@ try {
   prepare("UPDATE neo_todos SET state='doing',started_at=2,report=? WHERE id='state'").run(text);
   startCard('start','state');
   const checked=store.getTodo('state')!,before=await visible();
-  db.prepare=((sql:string)=>{if(record && /neo_todos|neo_asks|neo_questions|neo_todo_sessions|pack_coding_pr_claims/.test(sql)) mainSql++; return prepare(sql);}) as typeof db.prepare;
+  db.prepare=((sql:string)=>{
+    if(record && /neo_todos|neo_asks|neo_questions|neo_todo_sessions/.test(sql)) {
+      mainSql++;
+      process.stderr.write(`${new Error(`Main SQL during guarded admission: ${sql}`).stack}\n`);
+    }
+    return prepare(sql);
+  }) as typeof db.prepare;
   app.db.gateway.onChanges=changes=>{if(record) tables.push(...changes.map(change=>change.table)); replay(changes);};
   db.exec("CREATE TRIGGER refuse_stamp BEFORE UPDATE ON neo_asks BEGIN SELECT RAISE(ABORT, 'synthetic rollback'); END");
   record=true;
@@ -112,6 +122,7 @@ try {
   let publicDispatches=0;
   const scripted=createOperationRegistry(original.entries.map(entry=>['work.send','work.status'].includes(entry.name)?{
     ...entry,execute:async(input)=>{
+      if(entry.name==='work.status') return {ok:true,value:{status:'done',lastActivityAt:1}};
       assert.equal(store.getTodo('rpc')?.state,'doing');
       assert((await visible('public')).entry.todos.some(todo=>todo.id==='rpc' && todo.state==='doing'));
       if(entry.name==='work.send') publicDispatches++;

@@ -5,13 +5,12 @@ import { Logger } from '../logger.ts';
 import type {
   MessageHub,
   LiveQuerySubscribeRequest,
-  LiveQuerySnapshotEvent,
-  LiveQueryDeltaEvent,
   LiveQuerySubscribeResponse,
   LiveQueryUnsubscribeRequest,
   LiveQueryUnsubscribeResponse,
 } from '@hyperneo/shared';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query.ts';
+import type { ClientEventData } from '../operations/client-event-schemas.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { NAMED_QUERY_REGISTRY } from '../live-query/registry.ts';
 import {
@@ -27,6 +26,7 @@ import {
   SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT,
 } from '../live-query/queries/compact-task-messages.ts';
 import type { NamedQuery } from '../live-query/types.ts';
+import { schemaTableExists } from '../../storage/schema/extensions.ts';
 import { ensureTaskMessageRows } from '../../storage/schema/task-message-rows.ts';
 import { MessageHubHandlerError, ErrorCode, createEventMessage } from '@hyperneo/shared';
 import { SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS } from '../live-query/queries/task-message-window.ts';
@@ -98,10 +98,10 @@ export function setupLiveQueryHandlers(
     mapResult: () => readSessionListMetadata(db),
   });
 
-  const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
   const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
-  const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
-  const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
+  const stmtSpace = schemaTableExists(db, 'spaces')
+    ? db.prepare('SELECT id FROM spaces WHERE id = ?')
+    : undefined;
   const stmtSession = readMessageFeed
     ? undefined
     : db.prepare('SELECT id FROM sessions WHERE id = ?');
@@ -142,13 +142,7 @@ export function setupLiveQueryHandlers(
         throw new Error(`Unauthorized: session group "${groupId}" not found`);
       }
       if (group.group_type === 'task') {
-        const task = stmtTask.get(group.ref_id) as { room_id: string } | null;
-        if (!task) {
-          throw new Error(`Unauthorized: task "${group.ref_id}" not found`);
-        }
-        if (!stmtRoom.get(task.room_id)) {
-          throw new Error(`Unauthorized: room "${task.room_id}" not found`);
-        }
+        throw new Error(`Unauthorized: task "${group.ref_id}" not found`);
       }
     } else if (
       queryName === 'spaceTaskActivity.byTask' ||
@@ -195,7 +189,7 @@ export function setupLiveQueryHandlers(
       queryName === 'spaceWorkspaces.bySpace'
     ) {
       const spaceId = params[0] as string;
-      if (!stmtSpace.get(spaceId)) {
+      if (!stmtSpace?.get(spaceId)) {
         throw new Error(`Unauthorized: space "${spaceId}" not found`);
       }
     } else if (MESSAGE_FEED_QUERIES.has(queryName)) {
@@ -307,7 +301,7 @@ export function setupLiveQueryHandlers(
         let message: ReturnType<typeof createEventMessage>;
 
         if (diff.type === 'snapshot') {
-          const eventData: LiveQuerySnapshotEvent = {
+          const eventData: ClientEventData<'liveQuery.snapshot'> = {
             subscriptionId,
             rows: applyMapRows(diff.rows),
             version: diff.version,
@@ -319,7 +313,7 @@ export function setupLiveQueryHandlers(
             sessionId,
           });
         } else {
-          const eventData: LiveQueryDeltaEvent = {
+          const eventData: ClientEventData<'liveQuery.delta'> = {
             subscriptionId,
             added: diff.added ? applyMapRows(diff.added) : undefined,
             removed: diff.removed ? applyMapRows(diff.removed) : undefined,

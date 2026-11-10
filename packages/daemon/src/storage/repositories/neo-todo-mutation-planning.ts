@@ -1,5 +1,7 @@
 import {
   neoTodoDependencyRefusal,
+  NEO_TODO_CANCELLED_DEPENDENCY,
+  neoTodoCancelledDependencies,
   planNeoTodoDependencies,
 } from '../../lib/neo/todo-dependencies.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -8,6 +10,7 @@ import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
+  neoTodoPlaceRefusal,
   planNeoTodoDraft,
   planNeoTodoEdit,
   planNeoTodoClose,
@@ -23,7 +26,7 @@ import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-reposito
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 
 type Input =
-  | ({ kind: 'edit' } & Parameters<typeof planNeoTodoEdit>[1])
+  | ({ kind: 'edit'; workerRemotes?: readonly string[] } & Parameters<typeof planNeoTodoEdit>[1])
   | ({ kind: 'close' } & Parameters<typeof planNeoTodoClose>[1])
   | ({ kind: 'remove' } & Parameters<typeof planNeoTodoRemove>[2]);
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -128,6 +131,28 @@ class NeoTodoMutationPlanner {
       )
       .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
       .pipe(
+        (plan: Plan, input: Input) => {
+          if (input.kind !== 'edit') return { value: plan };
+          const draft = {
+            ...plan.todo,
+            check: input.check ?? plan.todo.check,
+            target: input.target,
+          };
+          const ask = todos.getAsk(plan.todo.askId);
+          const placeless = neoTodoPlaceRefusal(draft, this.policies, {
+            ask,
+            todo: plan.todo,
+            edit: true,
+            workerRemotes: input.workerRemotes,
+          });
+          return placeless
+            ? { reason: { ok: false as const, reason: placeless } }
+            : { value: plan };
+        },
+        ['outcome', 'input'],
+        'result:outcome'
+      )
+      .pipe(
         (plan: Plan, input: Input) =>
           input.kind === 'edit' &&
           input.target &&
@@ -147,11 +172,10 @@ class NeoTodoMutationPlanner {
         (plan: Plan) => {
           const after = plan.patch.dependsOn;
           if (!after) return { value: plan };
-          const dependsOn = planNeoTodoDependencies(
-            todos.listFamilyTodos(plan.todo.askId),
-            plan.todo.id,
-            after
-          );
+          const family = todos.listFamilyTodos(plan.todo.askId);
+          if (neoTodoCancelledDependencies(family, plan.todo.id).length)
+            return { reason: { ok: false as const, reason: NEO_TODO_CANCELLED_DEPENDENCY } };
+          const dependsOn = planNeoTodoDependencies(family, plan.todo.id, after);
           return typeof dependsOn === 'string'
             ? { reason: { ok: false as const, reason: neoTodoDependencyRefusal(dependsOn) } }
             : { value: { ...plan, patch: { ...plan.patch, dependsOn } } };

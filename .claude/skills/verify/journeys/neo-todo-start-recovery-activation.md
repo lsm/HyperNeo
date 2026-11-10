@@ -34,9 +34,7 @@ doing without an interruption flag. The activation must keep the starting
 Set check outside the writer; no database-only predicate replaces it. Other
 runner controls retain completed, blocked, removed and late-bound decisions.
 
-Run focused runner/recovery/state suites and the full check. The required Deno
-smoke executes the same helper; label local Deno unverified if unavailable.
-The helper closes its daemon and transport in finally, writes
-`todo-start-recovery-activation.json`, and the wrapper saves evidence before
-removing temporary synthetic HOME/data. No live daemon, real provider, browser,
-real worker dispatch or latency-target pass is claimed.
+Run focused runner/recovery/state suites and the full check. The helper closes its daemon
+and transport in finally, writes `todo-start-recovery-activation.json`, and the wrapper
+saves evidence before removing temporary synthetic HOME/data. No live daemon, real
+provider, browser, real worker dispatch or latency-target pass is claimed.

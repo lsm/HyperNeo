@@ -9,7 +9,7 @@ import {
   createDirectTaskWorkerResolver,
   requireDirectTaskWorkerIdentity,
 } from '../../../../src/lib/tasks/direct-task-worker-identity';
-import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/space/runtime/space-mcp-session-policy';
+import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/session-resolution/space-mcp-session-policy';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
 

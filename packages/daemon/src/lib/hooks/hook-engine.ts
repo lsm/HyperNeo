@@ -12,7 +12,7 @@ import { Logger } from '../logger.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationCaller, OperationRegistry } from '../operations/registry.ts';
 import { isRateLimitError } from '../session/rate-limit-detector.ts';
-import { jsonResult } from '../space/tools/tool-result.ts';
+import { jsonResult } from '../tools/tool-result.ts';
 import { scheduleRetryableAction } from './hook-binding.ts';
 import type { HookExecutor } from './hook-executor.ts';
 import {

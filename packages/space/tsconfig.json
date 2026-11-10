@@ -1,0 +1,14 @@
+{
+  "extends": "../daemon/tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../daemon/src/*"],
+      "@hyperneo/prompts": ["../prompts/src/mod.ts"],
+      "@hyperneo/prompts/*": ["../prompts/src/*"],
+      "@hyperneo/shared": ["../shared/src/mod.ts"],
+      "@hyperneo/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

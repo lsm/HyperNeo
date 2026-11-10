@@ -33,6 +33,10 @@ vi.mock('../../lib/space-store', () => ({
     },
   },
 }));
+vi.mock('../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../lib/router')),
+}));
 vi.mock('../../lib/router', () => ({
   navigateToSpaceAgent: (...args: unknown[]) => mockNavigateToSpaceAgent(...args),
 }));
@@ -58,6 +62,10 @@ import {
   extractLatestTodos,
   formatDate,
 } from '../SessionInspector';
+import { spaceWebExtension } from '../../lib/space-web-extension';
+import { registerWebExtension } from '../../lib/web-extensions';
+
+registerWebExtension('space', spaceWebExtension);
 
 function session(overrides: Partial<Session> = {}): Session {
   return {

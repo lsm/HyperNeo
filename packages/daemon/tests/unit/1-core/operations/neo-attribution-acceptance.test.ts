@@ -2,7 +2,7 @@ import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { createSpaceAdapter } from '../../../../src/lib/drivers/space-adapter.ts';
+import { createSpaceAdapter } from '../../../../../space/src/drivers/space-adapter.ts';
 import type { WorkDelivery } from '../../../../src/lib/drivers/types.ts';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns.ts';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work.ts';

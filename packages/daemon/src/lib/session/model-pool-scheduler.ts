@@ -5,7 +5,7 @@ import type {
   AgentModelPoolEntry,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
-import { TransientSpawnError } from '../workflows/node-execution-validation.ts';
+import { TransientSpawnError } from './transient-spawn-error.ts';
 
 const SPAWN_GRACE_MS = 15_000;
 

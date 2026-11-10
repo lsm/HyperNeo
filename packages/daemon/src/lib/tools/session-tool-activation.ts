@@ -50,7 +50,7 @@ export function createSessionToolActivationOperation(deps: Dependencies) {
     name: 'session.tools.setChoice',
     policy: { safetyClass: 'human_only', caller: 'local_user' },
     description:
-      'Save one tool choice for this session and apply supported MCP changes to its current query. Return observed application status or an explicit restart requirement. Never interrupt automatically; ACP attachment is unverified.',
+      'Save one tool choice for this session and apply supported MCP changes to its current query. Return observed application status or an explicit restart requirement. Never interrupt automatically.',
     inputSchema: Input,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),

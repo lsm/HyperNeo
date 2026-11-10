@@ -45,7 +45,7 @@ describe('artifact capture storage', () => {
         exactBytes: true,
         deduplicated: true,
         quotaReserved: true,
-        sourceChangeRefused: true,
+        callerMutationIsolated: true,
         interruptionsRetained: true,
         restartPreserved: true,
         actualProcessCrash: true,
@@ -57,25 +57,18 @@ describe('artifact capture storage', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
-  test('cannot stage source bytes without an available descriptor backend', async () => {
-    if (process.versions.bun) {
-      expect(admitArtifactStorage(201, limits, 0, 0)).toMatchObject({
-        accepted: false,
-        reason: 'size_limit',
-      });
-      return;
-    }
+  test('does not stage bytes when durable directory sync fails', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-unavailable-')));
     const unavailableDirectories = spyOn(fs, 'open').mockRejectedValue(
       new Error('unsupported directory sync')
     );
     try {
       const store = await createArtifactCaptureStore(join(root, 'artifacts'));
-      expect(await store.capture('/synthetic', ['report.bin'])).toEqual({
-        accepted: false,
-        reason: 'safe_open_unavailable',
-      });
+      await expect(store.capture(Buffer.from('Synthetic immutable bytes'))).rejects.toThrow(
+        'unsupported directory sync'
+      );
       expect((await store.inspect()).entries).toEqual([]);
+      expect((await store.inspect()).reservedBytes).toBe(0);
     } finally {
       unavailableDirectories.mockRestore();
       rmSync(root, { recursive: true, force: true });

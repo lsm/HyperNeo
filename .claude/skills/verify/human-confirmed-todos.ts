@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -59,7 +61,7 @@ try {
       return { ok: true, value: { delivered: true, ref, status: 'running', lastActivityAt: 1 } };
     } } : entry
   )));
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WebSocket failed')); });
   for (const [index, kind, chat, answer, state] of [
     [0, 'yesno', false, 'yes', 'todo'],
@@ -72,16 +74,16 @@ try {
     const askId = `ask-${index}`, id = `approval-${index}`, questionId = `question-${index}`, next = `next-${index}`;
     store.openAsk({ id: askId, sessionId: owner, projectId: null, originMessageId: null,
       title: 'Synthetic approval', request: 'Confirm and advance', createdAt: 1 });
-    const approval = store.addTodo(id, askId, { title: 'Human decides', doneWhen: 'Human confirms', instruction: null, named: null,
+    const approval = store.addTodo(id, askId, { approvedAt: 1, title: 'Human decides', doneWhen: 'Human confirms', instruction: null, named: null,
       check: { pack: 'core', kind: 'human_confirmed', params: { questionId } } }, 1);
     store.askQuestion(questionId, askId, { text: 'Approve synthetic work?', kind,
       options: kind === 'choice' ? ['Keep everything', 'Delete the approved synthetic leftovers'] : null,
       multiple: false, noLabel: 'No', yesLabel: 'Yes', startTodos: null, todoId: id }, 2);
-    store.addTodo(next, askId, { title: 'Run the next synthetic step', doneWhen: 'Synthetic output exists',
+    store.addTodo(next, askId, { approvedAt: 1, title: 'Run the next synthetic step', doneWhen: 'Synthetic output exists',
       instruction: 'Record a synthetic successor dispatch; delete nothing.', named: null,
       check: { pack: 'core', kind: 'evidence', params: { path: join(run, next) } } }, 3);
     sessions.create(next, { verb: 'send', ref: { adapter: 'hyperneo', id: next } });
-    store.updateTodo(approval, { state }, 4);
+    store.updateTodo(approval, { state, ...(state === 'closed_unverified' ? { startedAt: 4 } : {}) }, 4);
     assert.equal(store.getTodo(id)?.state, state);
     const receipt = chat
       ? await rpc('neo.message.send', { sessionId: owner, requestId: crypto.randomUUID(), content: answer,
@@ -92,7 +94,7 @@ try {
     let view: { todos: NeoTodo[] };
     do {
       view = (await rpc('neo.ask.read', { askId })).entry as { todos: NeoTodo[] };
-      if (view.todos.find(todo => todo.id === next)?.state === 'doing') break;
+      if (view.todos.find(todo => todo.id === next)?.state === 'doing' && dispatches.includes(next)) break;
       assert(Date.now() < deadline, 'Answer must finish the queued todo and start its successor without a scheduled refresh');
       await new Promise(done => setTimeout(done, 10));
     } while (true);

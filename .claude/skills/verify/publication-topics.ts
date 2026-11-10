@@ -6,7 +6,7 @@ import { resolveSDKCliPath } from '../../../packages/daemon/src/lib/agent/sdk-cl
 import { Database } from '../../../packages/daemon/src/storage/database.ts';
 import { createReactiveDatabase } from '../../../packages/daemon/src/storage/reactive-database.ts';
 import { InternalEventBus } from '../../../packages/daemon/src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { MessageQueue } from '../../../packages/daemon/src/lib/agent/message-queue.ts';
 import { QueryRunner } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { createNeoPublicationOperation } from '../../../packages/daemon/src/lib/neo/publication-operation.ts';
@@ -20,13 +20,15 @@ const STEPS = [
   { requestId: 'bundled', shortText: 'environments can only be created by you in Desktop', fullText: `${DESKTOP}\n\n${QLARK}`, links: [] },
   { requestId: 'desktop', shortText: 'Claude Desktop 环境: only you can create environments', fullText: DESKTOP, links: [] },
   { requestId: 'qlark', shortText: 'qlark 长听写开关 is now off by default', fullText: QLARK, links: [] },
-  { requestId: 'references', shortText: 'Delivery survives unavailable references', fullText: 'The report is ready.',
-    links: [{ kind: 'project', id: 'garden', label: 'Garden' }, { kind: 'project', id: 'missing', label: 'Missing' }, { kind: 'work', id: 'old', label: 'Old' }, { kind: 'consultation', id: 'old-consultation', label: 'Old consultation' }],
+  { requestId: 'references', shortText: 'Delivery preserves valid project references', fullText: 'The report is ready.',
+    links: [{ kind: 'project', id: 'garden', label: 'Garden' }],
     replyTo: ['10000000-0000-4000-8000-000000000088'],
-    artifacts: [{ daemonId: '30000000-0000-4000-8000-000000000001', artifactId: 'missing', title: 'Missing', kind: 'html', byteLength: 100 }],
   },
 ];
 const COMMANDS = [
+  { name: 'neo.publication.publish', input: { requestId: 'references', shortText: 'Invalid work', fullText: 'Must not be saved.', links: [{ kind: 'work', id: 'old', label: 'Old' }] } },
+  { name: 'neo.publication.publish', input: { requestId: 'references', shortText: 'Invalid project', fullText: 'Must not be saved.', links: [{ kind: 'project', id: 'missing', label: 'Missing' }] } },
+  { name: 'neo.publication.publish', input: { ...STEPS[3], artifacts: [{ daemonId: '30000000-0000-4000-8000-000000000001', artifactId: 'missing', title: 'Missing', kind: 'html', byteLength: 100 }] } },
   ...STEPS.map((input) => ({ name: 'neo.publication.publish', input })),
   { name: 'operations.describe', input: { name: 'neo.publication.publish' } },
 ];
@@ -117,15 +119,19 @@ try {
     if (event.type === 'result') break;
   }
   const published = neo.publications.list(conversation) ?? [];
-  const described = JSON.parse(JSON.parse(receipts[4] ?? '[]')[0]?.text ?? '{}');
+  const described = JSON.parse(JSON.parse(receipts[7] ?? '[]')[0]?.text ?? '{}');
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, published, described }, null, 2));
   assert.equal(described.found, true);
-  assert.match(described.description, /non-project and unavailable links are omitted/i);
-  assert.match(JSON.parse(receipts[0] ?? '[]')[0]?.text ?? '', /"accepted"\s*:\s*true/);
+  assert.match(described.description, /only project links.*unknown project.*reject/i);
+  assert.match(receipts[0], /invalid_input/);
+  assert.match(receipts[1], /unknown_project/);
+  assert.match(receipts[1], /missing/);
+  assert.match(receipts[2], /invalid_artifact_reference/);
+  assert.match(JSON.parse(receipts[3] ?? '[]')[0]?.text ?? '', /"accepted"\s*:\s*true/);
   assert.deepEqual(published.map((p) => p.fullText), [`${DESKTOP}\n\n${QLARK}`, DESKTOP, QLARK, 'The report is ready.']);
   assert.deepEqual(published[3].links, [{ kind: 'project', id: 'garden', label: 'Garden' }]);
   assert.deepEqual(published[3].replyTo, []);
-  assert.deepEqual(published[3].artifacts, []);
+  assert.equal(published[3].artifacts, undefined);
   writeFileSync(join(run, 'evidence/evidence.json'), JSON.stringify({ actualSdkMcp: true, bundledAccepted: true, receipt: receipts[0], published, described }, null, 2));
   console.log(join(run, 'evidence/evidence.json'));
 } finally {

@@ -1,6 +1,7 @@
-import type { ArtifactProjection } from './artifact-file.ts';
+import type { ArtifactRef, PublicHandoffReference } from './artifact-file.ts';
 
 import type { NeoInputOrigin } from './neo-message.ts';
+import type { NeoQuestionSource } from './neo-ask.ts';
 
 export interface NeoCardReply {
   readonly sourceMessageIds: readonly string[];
@@ -19,13 +20,16 @@ export interface NeoPublicationRevision {
   readonly revisionId: string;
   readonly shortText?: string;
   readonly fullText: string;
+  readonly session?: string;
+  readonly sessionSource?: NeoQuestionSource | null;
   readonly createdAt: string;
   readonly producerInput?: NeoInputOrigin;
   readonly askOrigin?: NeoInputOrigin;
   readonly awaiting?: string;
 }
 
-export interface NeoPublicationInput extends ArtifactProjection {
+export interface NeoPublicationInput {
+  readonly artifacts?: readonly (ArtifactRef | PublicHandoffReference)[];
   readonly cardReply?: NeoCardReply;
   readonly conversationId: string;
   readonly publicationId: string;
@@ -34,6 +38,7 @@ export interface NeoPublicationInput extends ArtifactProjection {
   readonly shortText?: string;
   readonly verbatim?: true;
   readonly fullText: string;
+  readonly session?: string;
   readonly links: readonly NeoPublicationLink[];
   readonly triggerId?: string;
   readonly replyTo?: readonly string[];
@@ -50,6 +55,7 @@ export interface NeoPublicationInput extends ArtifactProjection {
 }
 
 export interface NeoPublication extends NeoPublicationInput {
+  readonly sessionSource?: NeoQuestionSource | null;
   readonly sequence: number;
   readonly createdAt: string;
 }

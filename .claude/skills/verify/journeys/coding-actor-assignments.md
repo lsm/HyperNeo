@@ -19,9 +19,11 @@ The actual `neo.coding.assign`/`neo.coding.result` operations are driven over
 WebSocket RPC, with their normal registration/admission and real assignment/head
 repositories. Only the external `work.start` harness boundary is replaced by a
 synthetic harness using the real start schemas and production coding checkout
-preparation. Its fake adapter names cannot launch native apps if that fixture
+preparation with the isolated worker-sandbox preference set to always. Ordinary
+reusable worktrees are covered separately by the worker-owned-worktrees journey.
+Its fake adapter names cannot launch native apps if that fixture
 replacement fails. The fixture really fetches/pins the PR head, reads the complete
-trusted role contract and observes clean Git status before acknowledging a start.
+trusted role contract both from the brief and the private clone and observes clean Git status before acknowledging a start.
 It does not execute model turns or exercise OS sandbox enforcement.
 
 Observe `evidence/actor-assignments.json` and `gh.jsonl`:

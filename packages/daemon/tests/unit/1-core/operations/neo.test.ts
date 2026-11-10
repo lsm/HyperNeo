@@ -12,8 +12,8 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { neoCoordinatorBinding } from '../../../../src/lib/neo/session-policy.ts';
 import { neoFolderPath } from '../../../../src/lib/neo/folder.ts';
 import {
@@ -81,6 +81,7 @@ describe('Neo MVP', () => {
       getGlobalSettings: () => real.getGlobalSettings(),
       getSession: (id: string) => (active.has(id) ? { id } : null),
       getJobQueueRepo: () => queue,
+      skills: { findAll: () => [] },
       getSDKMessageRepo: () => ({
         getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
         listQueuedInputs: () => [],
@@ -140,6 +141,76 @@ describe('Neo MVP', () => {
       sessionId,
     };
   }
+  test('publication Open reuses card session link resolution for exact adapter ids', async () => {
+    sessions.getOperationRegistry = () =>
+      createOperationRegistry([
+        defineOperation({
+          name: 'work.status',
+          description: 'Synthetic native session',
+          inputSchema: z.unknown(),
+          resultSchema: z.unknown(),
+          execute: ({ ref }: { ref: { adapter: string; id: string } }) => ({
+            ok: true,
+            value: {
+              ref,
+              title: 'Exact session',
+              place: { machine: 'synthetic', name: 'Synthetic' },
+              status: 'running',
+              lastActivityAt: 1,
+              link:
+                ref.adapter === 'codex-desktop'
+                  ? `codex://threads/${ref.id}`
+                  : `claude://claude.ai/epitaxy/${ref.id}`,
+            },
+          }),
+        }),
+      ]);
+    for (const [adapter, id, link] of [
+      ['codex-desktop', 'thread', 'codex://threads/thread'],
+      ['claude-desktop', 'session', 'claude://claude.ai/epitaxy/session'],
+    ]) {
+      const result = await invoke('neo.session.link', { session: `${adapter}:${id}` });
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: { id, adapter, name: 'Exact session', link },
+      });
+    }
+    expect(
+      await invoke(
+        'neo.session.link',
+        { session: 'codex-desktop:thread' },
+        { source: 'mcp', sessionId: 'ordinary', role: 'worker' }
+      )
+    ).toMatchObject({ kind: 'completed', value: { ok: false } });
+  });
+
+  test('publication Open includes local Neo and Space sessions outside the worker inventory', async () => {
+    const original = db.getSession.bind(db);
+    db.getSession = (id: string) =>
+      id === 'neo:published' || id === 'space-session'
+        ? {
+            ...createTestSession(id),
+            title: 'Published local session',
+            type: id.startsWith('neo:') ? 'general' : 'space_task_agent',
+          }
+        : original(id);
+    for (const session of ['neo:published', 'space-session']) {
+      expect(await invoke('neo.session.link', { session })).toMatchObject({
+        kind: 'completed',
+        value: {
+          id: session,
+          adapter: 'hyperneo',
+          name: 'Published local session',
+          link: `/session/${session}`,
+        },
+      });
+    }
+    expect(await invoke('neo.session.link', { session: 'missing' })).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'session_unavailable' },
+    });
+  });
+
   test('opening is idempotent, independent of project creation and creates ordinary sessions with a Neo prompt', async () => {
     const ids = await Promise.all([service.open(), service.open(), service.open()]);
     expect(new Set(ids).size).toBe(1);
@@ -317,6 +388,13 @@ describe('Neo MVP', () => {
     ).toEqual([
       'neo.project.move',
       'neo.project.section',
+      'neo.question.relayAnswer',
+      'neo.peer.accept',
+      'neo.peer.invite',
+      'neo.peer.list',
+      'neo.peer.remove',
+      'neo.peer.send',
+      'neo.speech.say',
       'neo.project.forget',
       'neo.message.send',
       'neo.projects.reorganize',
@@ -337,8 +415,10 @@ describe('Neo MVP', () => {
       'neo.todo.add',
       'neo.todo.bind',
       'neo.todo.edit',
+      'neo.todo.hold',
       'neo.todo.remove',
       'neo.todo.continue',
+      'neo.todo.proceed',
       'neo.todo.retry',
       'neo.todo.close',
       'neo.ask.search',
@@ -346,17 +426,22 @@ describe('Neo MVP', () => {
       'neo.ask.doneTodos',
       'neo.ask.open',
       'neo.ask.outcome',
+      'neo.ask.topic',
       'neo.ask.settle',
       'neo.question.resolve',
       'neo.question.ask',
       'neo.question.retire',
+      'neo.question.relay',
       'neo.question.get',
       'neo.question.answer',
       'neo.open',
       'neo.restart',
       'neo.rule.save',
+      'neo.session.link',
       'neo.session.mute',
       'neo.session.track',
+      'neo.coding.merge.human',
+      'neo.coding.merge.retry',
       'neo.coding.write.plan',
       'neo.coding.pr.file',
       'neo.github.read',

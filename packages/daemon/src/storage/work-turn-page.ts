@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { HandoffReference } from '../lib/handoffs/outbox.ts';
+import { schemaTableExists } from './schema/extensions.ts';
 import {
   isMessageSearchIndexEligible,
   MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS,
@@ -46,13 +47,18 @@ interface Row {
   timestamp: string;
   sdk_message: string;
 }
-const SCOPE = `session_id=? AND parent_tool_use_id IS NULL AND COALESCE(internal_compaction_turn,0)=0
-  AND message_type IN ('user','assistant','result') AND (message_type!='user' OR COALESCE(send_status,'consumed') IN ('consumed','failed'))
-  AND NOT EXISTS (SELECT 1 FROM space_tasks st WHERE st.id=sdk_messages.task_id
+function workTurnScope(spaceTasks: boolean): string {
+  const taskFilter = spaceTasks
+    ? `AND NOT EXISTS (SELECT 1 FROM space_tasks st WHERE st.id=sdk_messages.task_id
     AND (st.status='archived' OR (st.status IN (${TERMINAL_SPACE_TASK_STATUSES.map((status) => `'${status}'`).join(',')})
-      AND COALESCE(st.completed_at,st.updated_at)<?)))
+      AND COALESCE(st.completed_at,st.updated_at)<?)))`
+    : '';
+  return `session_id=? AND parent_tool_use_id IS NULL AND COALESCE(internal_compaction_turn,0)=0
+  AND message_type IN ('user','assistant','result') AND (message_type!='user' OR COALESCE(send_status,'consumed') IN ('consumed','failed'))
+  ${taskFilter}
   AND NOT EXISTS (SELECT 1 FROM sdk_message_replacements r WHERE r.session_id=sdk_messages.session_id
     AND r.target_uuid=COALESCE(sdk_messages.sdk_uuid,sdk_messages.id) AND r.source_message_id!=sdk_messages.id)`;
+}
 
 function text(row: Row): string {
   const body = parseSdkMessageRow(row.sdk_message, 'synthesize');
@@ -94,6 +100,8 @@ export function readWorkTurnPage(
     .get(sessionId) as MessageSearchEligibilityRow | undefined;
   if (!session) return readWorkTurns(db, sessionId, around, before, after);
   if (!isMessageSearchIndexEligible(session, now)) return null;
+  const spaceTasks = schemaTableExists(db, 'space_tasks');
+  const scope = workTurnScope(spaceTasks);
   const select = (
     condition: string,
     args: (number | string)[],
@@ -104,13 +112,13 @@ export function readWorkTurnPage(
       .prepare(
         hydrateSdkMessageBodies(
           `SELECT seq AS body_seq,id,message_type,timestamp FROM sdk_messages INDEXED BY idx_sdk_messages_parent_tool_use_id
-      WHERE ${SCOPE} AND seq>? AND seq<=? AND ${condition} ORDER BY seq ${descending ? 'DESC' : 'ASC'} LIMIT ?`,
+      WHERE ${scope} AND seq>? AND seq<=? AND ${condition} ORDER BY seq ${descending ? 'DESC' : 'ASC'} LIMIT ?`,
           `body_selection.body_seq ${descending ? 'DESC' : 'ASC'}`
         )
       )
       .all(
         sessionId,
-        now - MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS,
+        ...(spaceTasks ? [now - MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS] : []),
         window?.afterSeq ?? 0,
         window?.throughSeq ?? Number.MAX_SAFE_INTEGER,
         ...args,

@@ -27,6 +27,7 @@ describe('HyperNeo todo reply attribution', () => {
   };
   const status = async (input = receipt, extra = {}) => {
     const adapter = createHyperneoAdapter({
+      readTurnFacts: async () => [],
       readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       ...extra,
@@ -82,6 +83,7 @@ describe('HyperNeo todo reply attribution', () => {
     const turnEnds = [{ id: 'worker-result', at: 20000, startedAt: 10000, message: report }];
     const calls: unknown[] = [];
     const detail = await status(receipt, {
+      readTurnFacts: async () => [],
       readTurnEnds: async (id: string, since: number) => {
         calls.push([id, since]);
         await Promise.resolve();
@@ -95,6 +97,7 @@ describe('HyperNeo todo reply attribution', () => {
   test('reader failure rejects status instead of repeating the read on main', async () => {
     await expect(
       status(receipt, {
+        readTurnFacts: async () => [],
         readTurnEnds: async () => {
           throw new Error('reader unavailable');
         },

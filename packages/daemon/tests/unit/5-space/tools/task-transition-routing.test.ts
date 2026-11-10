@@ -4,7 +4,7 @@ import {
   routeTaskTarget,
   routeTaskUpdate,
   type TaskUpdateRoutingInput,
-} from '../../../../src/lib/space/tools/task-transition-routing.ts';
+} from '../../../../src/lib/tasks/task-transition-routing.ts';
 
 function baseInput(overrides: Partial<TaskUpdateRoutingInput> = {}): TaskUpdateRoutingInput {
   return {

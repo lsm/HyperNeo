@@ -149,7 +149,7 @@ describe('SessionRepository session incarnation evidence', () => {
 
   test('keeps insertion identity private in every generic SQL scope', () => {
     expect(getExcludedTableNames()).toContain('session_incarnations');
-    for (const scope of ['global', 'room', 'space'] as const)
+    for (const scope of ['global', 'space'] as const)
       expect(getAccessibleTableNames(scope)).not.toContain('session_incarnations');
   });
 });

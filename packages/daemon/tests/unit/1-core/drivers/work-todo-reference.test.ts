@@ -53,6 +53,30 @@ describe('Neo work todo reference', () => {
         ? { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' }
         : { ref, message: 'New work' };
 
+    test(`${name} accepts an open-ask reference and trusted internal dispatch`, async () => {
+      const { registry, delivered } = fixture();
+      for (const [caller, request] of [
+        [neo, { ...input, todoId: 'open-todo' }],
+        [
+          { ...neo, source: 'internal' },
+          name === 'work.start' ? input : { ...input, notice: true },
+        ],
+        [{ source: 'rpc' }, input],
+      ] as const) {
+        expect(await invokeOperation(registry, name, request, caller)).toMatchObject({
+          kind: 'completed',
+          value: { ok: true },
+        });
+      }
+      expect(delivered).toHaveLength(3);
+      const tracked = await invokeOperation(registry, name, { ...input, todoId: 'open-todo' }, neo);
+      expect(tracked.kind === 'completed' && tracked.value).not.toHaveProperty('records');
+    });
+  }
+  describe('work.start', () => {
+    const name = 'work.start';
+    const input = { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' };
+
     test(`${name} records a missing Neo MCP todo reference without blocking delivery`, async () => {
       const { registry, delivered } = fixture();
       const call = createOperationMcpHandler(registry, () => neo);
@@ -94,26 +118,10 @@ describe('Neo work todo reference', () => {
       );
       expect(delivered).toHaveLength(1);
     });
+  });
 
-    test(`${name} accepts an open-ask reference and trusted internal dispatch`, async () => {
-      const { registry, delivered } = fixture();
-      for (const [caller, request] of [
-        [neo, { ...input, todoId: 'open-todo' }],
-        [{ ...neo, source: 'internal' }, input],
-        [{ source: 'rpc' }, input],
-      ] as const) {
-        expect(await invokeOperation(registry, name, request, caller)).toMatchObject({
-          kind: 'completed',
-          value: { ok: true },
-        });
-      }
-      expect(delivered).toHaveLength(3);
-      const tracked = await invokeOperation(registry, name, { ...input, todoId: 'open-todo' }, neo);
-      expect(tracked.kind === 'completed' && tracked.value).not.toHaveProperty('records');
-    });
-  }
   test.each(['steer', 'queue'] as const)(
-    'work.send mode %s records a missing todo',
+    'work.send mode %s delivers for an open todo',
     async (mode) => {
       const { registry, adapter, delivered } = fixture();
       adapter.capabilities.push('steer');
@@ -121,12 +129,12 @@ describe('Neo work todo reference', () => {
       const reply = await invokeOperation(
         registry,
         'work.send',
-        { ref, message: 'Follow-up', mode },
+        { ref, message: 'Follow-up', mode, todoId: 'open-todo' },
         neo
       );
       expect(reply).toMatchObject({
         kind: 'completed',
-        value: { ok: true, records: [expect.stringContaining('todo_required:')] },
+        value: { ok: true },
       });
       expect(delivered).toEqual(['Follow-up']);
     }
@@ -144,7 +152,7 @@ describe('Neo work todo reference', () => {
     expect(delivered).toEqual([]);
   });
 
-  test('remote records survive forwarding alongside the local bookkeeping record', async () => {
+  test('remote records survive forwarding', async () => {
     const { deps } = fixture();
     const registry = createOperationRegistry(
       createWorkVerbOperations({
@@ -162,7 +170,7 @@ describe('Neo work todo reference', () => {
     const reply = await invokeOperation(
       registry,
       'work.send',
-      { ref: { ...ref, daemon: 'remote' }, message: 'Follow-up' },
+      { ref: { ...ref, daemon: 'remote' }, message: 'Follow-up', todoId: 'open-todo' },
       neo
     );
     expect(reply).toMatchObject({
@@ -170,7 +178,7 @@ describe('Neo work todo reference', () => {
       value: {
         ok: true,
         value: { delivered: false, queuedSubmissionId: 'queued' },
-        records: ['remote_note: retained', expect.stringContaining('todo_required:')],
+        records: ['remote_note: retained'],
       },
     });
   });

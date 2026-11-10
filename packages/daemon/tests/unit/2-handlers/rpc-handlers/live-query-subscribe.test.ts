@@ -226,21 +226,6 @@ function createDb() {
   return db;
 }
 
-function insertRoom(db: BunDatabase, roomId: string) {
-  const now = Date.now();
-  db.exec(
-    `INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test Room', ${now}, ${now})`
-  );
-}
-
-function insertTask(db: BunDatabase, taskId: string, roomId: string) {
-  const now = Date.now();
-  db.exec(
-    `INSERT OR IGNORE INTO tasks (id, room_id, title, description, status, priority, task_type, created_at, updated_at)
-		 VALUES ('${taskId}', '${roomId}', 'Test Task', '', 'pending', 'normal', 'coding', ${now}, ${now})`
-  );
-}
-
 function insertSessionGroup(
   db: BunDatabase,
   groupId: string,
@@ -289,8 +274,6 @@ describe('setupLiveQueryHandlers', () => {
     engine = new LiveQueryEngine(db, reactiveDb);
     setup = createMockSetup();
     setupLiveQueryHandlers(setup.hub, engine, db);
-    insertRoom(db, roomId);
-    insertTask(db, taskId, roomId);
   });
 
   afterEach(() => {
@@ -510,8 +493,8 @@ describe('setupLiveQueryHandlers', () => {
     ).rejects.toThrow('Unauthorized');
   });
 
-  test('subscribe sessionGroupMessages.byGroup: group with missing task rejected', async () => {
-    insertSessionGroup(db, 'grp-1', 'nonexistent-task', 'task');
+  test('subscribe sessionGroupMessages.byGroup: task group rejected', async () => {
+    insertSessionGroup(db, 'grp-1', taskId, 'task');
     await expect(
       setup.callHandler('liveQuery.subscribe', {
         queryName: 'sessionGroupMessages.byGroup',
@@ -519,36 +502,6 @@ describe('setupLiveQueryHandlers', () => {
         subscriptionId: 'sub-1',
       })
     ).rejects.toThrow('Unauthorized');
-  });
-
-  test('subscribe sessionGroupMessages.byGroup: task with missing room rejected', async () => {
-    const orphanTask = 'orphan-task-1';
-    const missingRoom = 'missing-room-1';
-    const now = Date.now();
-    db.exec(
-      `INSERT INTO tasks (id, room_id, title, description, status, priority, task_type, created_at, updated_at)
-			 VALUES ('${orphanTask}', '${missingRoom}', 'Orphan Task', '', 'pending', 'normal', 'coding', ${now}, ${now})`
-    );
-    insertSessionGroup(db, 'grp-2', orphanTask, 'task');
-
-    await expect(
-      setup.callHandler('liveQuery.subscribe', {
-        queryName: 'sessionGroupMessages.byGroup',
-        params: ['grp-2'],
-        subscriptionId: 'sub-1',
-      })
-    ).rejects.toThrow('Unauthorized');
-  });
-
-  test('subscribe sessionGroupMessages.byGroup: valid legacy task group allowed', async () => {
-    insertSessionGroup(db, 'grp-valid', taskId, 'task');
-    const result = await setup.callHandler('liveQuery.subscribe', {
-      queryName: 'sessionGroupMessages.byGroup',
-      params: ['grp-valid'],
-      subscriptionId: 'sub-msg',
-    });
-    expect(result).toEqual({ ok: true });
-    expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
   });
 
   test('subscribe sessionGroupMessages.byGroup: non-task group_type allowed without task lookup', async () => {
@@ -927,6 +880,28 @@ describe('setupLiveQueryHandlers', () => {
     reactiveDb.notifyChange('sessions', { sessionId: 'h2' });
     await new Promise((r) => setTimeout(r, 200));
     expect(metadataOf(setup.sentMessages.length - 1)).toEqual({ totalCount: 2, archivedCount: 0 });
+  });
+});
+
+describe('setupLiveQueryHandlers with Space tables absent', () => {
+  test('sets up and rejects Space-scoped subscriptions as not found', async () => {
+    const db = new BunDatabase(':memory:');
+    createTables(db);
+    const engine = new LiveQueryEngine(
+      db,
+      createReactiveDatabase({ getDatabase: () => db } as never)
+    );
+    const setup = createMockSetup();
+    setupLiveQueryHandlers(setup.hub, engine, db);
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceWorkspaces.bySpace',
+        params: ['space-1'],
+        subscriptionId: 'sub-off',
+      })
+    ).rejects.toThrow('Unauthorized: space "space-1" not found');
+    engine.dispose();
+    db.close();
   });
 });
 

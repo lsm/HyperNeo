@@ -27,6 +27,7 @@ const submission = () => ({
   messageId: randomUUID(),
   inputId: randomUUID(),
   text: '调查 "文件"\n原样发送',
+  fromMode: 'prompting' as const,
 });
 type Deps = Parameters<typeof submitClaudeInboxMessage>[3];
 

@@ -1,0 +1,140 @@
+import type { NodeExecutionRepository } from '../../../daemon/src/storage/repositories/node-execution-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../daemon/src/storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import {
+  hasRuntimeWorkerOperations,
+  isWorkflowSubSessionIdentity,
+} from '../../../daemon/src/lib/session/sub-session-identity.ts';
+import type { SessionManager } from '../../../daemon/src/lib/session-manager.ts';
+import type { SpaceRuntimeService } from './space-runtime-service.ts';
+import type { TaskAgentManager } from './task-agent-manager.ts';
+import { resolveAgentSessionId } from '../../../daemon/src/lib/session-resolution/long-term-agent-session.ts';
+import {
+  type SessionResolutionDeps,
+  workerTaskPhaseOf,
+} from '../../../daemon/src/lib/session-resolution/deps.ts';
+import {
+  resolveLiveSession,
+  sessionUnavailable,
+} from '../../../daemon/src/lib/session-resolution/session-lookup.ts';
+
+export interface DefaultSessionResolutionServices {
+  sessionManager: SessionManager;
+  taskAgentManager?: TaskAgentManager;
+  spaceRuntimeService: SpaceRuntimeService;
+  nodeExecutionRepo: NodeExecutionRepository;
+  taskRepo: SpaceTaskRepository;
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
+}
+
+export function createDefaultSessionResolutionDeps(
+  services: DefaultSessionResolutionServices
+): SessionResolutionDeps {
+  const { sessionManager, taskAgentManager, spaceRuntimeService, nodeExecutionRepo, taskRepo } =
+    services;
+
+  const requireTaskAgentManager = (): TaskAgentManager => {
+    if (!taskAgentManager)
+      throw new Error('TaskAgentManager unavailable for worker session resolution');
+    return taskAgentManager;
+  };
+
+  return {
+    getSession: (sessionId) => resolveLiveSession(sessionId, sessionManager, taskAgentManager),
+
+    async rehydrateSubSession(sessionId) {
+      const restored = await requireTaskAgentManager().rehydrateSubSessionById(sessionId);
+      if (restored === null) return null;
+      const data = restored.getSessionData();
+      if (sessionUnavailable(data.status)) return null;
+      if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeWorkerOperations(data.config)) {
+        return null;
+      }
+      return restored;
+    },
+
+    agentSessionId: (spaceId, agentId) =>
+      resolveAgentSessionId(services.longHorizonAgentRepo, spaceId, agentId),
+
+    async ensureLongTermAgent(spaceId, agentId) {
+      const outcome = await spaceRuntimeService.ensureAgentSession(spaceId, agentId);
+      return typeof outcome === 'string' ? null : outcome;
+    },
+
+    isAgentTargetLifecycleEligible(spaceId, agentId) {
+      return spaceRuntimeService.isAgentTargetLifecycleEligible(spaceId, agentId);
+    },
+
+    listWorkerExecutions(target) {
+      const workflowRunId = taskRepo.getTask(target.taskId)?.workflowRunId;
+      if (workflowRunId == null) return [];
+      return nodeExecutionRepo
+        .listByWorkflowRun(workflowRunId)
+        .filter((execution) => execution.agentName === target.agentName)
+        .filter(
+          (execution) =>
+            target.workflowNodeId === undefined ||
+            execution.workflowNodeId === target.workflowNodeId
+        )
+        .map((execution) => ({
+          sessionId: execution.agentSessionId,
+          status: execution.status,
+        }));
+    },
+
+    readWorkerTaskPhase(taskId) {
+      const task = taskRepo.getTask(taskId);
+      if (task === null) return 'terminal';
+      const postApprovalSessionId = task.postApprovalSessionId ?? null;
+      const hasDurablePostApprovalWorker =
+        task.status === 'done' && postApprovalSessionId === null
+          ? requireTaskAgentManager().getPostApprovalWorkerSession(taskId) !== null
+          : false;
+      return workerTaskPhaseOf(
+        task.status,
+        postApprovalSessionId,
+        hasDurablePostApprovalWorker,
+        task.postApprovalBlockedReason ?? null
+      );
+    },
+
+    async getTaskSpaceId(taskId) {
+      return taskRepo.getTask(taskId)?.spaceId ?? null;
+    },
+
+    activateTaskAgent(target) {
+      return requireTaskAgentManager().ensureWorkflowNodeActivationForAgent(
+        target.taskId,
+        target.agentName,
+        {
+          workflowNodeId: target.workflowNodeId,
+          reopenReason: target.reopenReason,
+          reopenBy: target.reopenBy,
+        }
+      );
+    },
+
+    async spawnPostApprovalWorker(taskId, agentName, workflowNodeId) {
+      const spaceId = taskRepo.getTask(taskId)?.spaceId;
+      if (spaceId === undefined) return null;
+      const result = await spaceRuntimeService
+        .retryPostApprovalDispatch(spaceId, taskId)
+        .catch(() => null);
+      if (result === null || !('postApprovalSessionId' in result)) return null;
+      const recorded = requireTaskAgentManager().getPostApprovalWorkerSession(taskId);
+      if (
+        recorded === null ||
+        recorded.sessionId !== result.postApprovalSessionId ||
+        recorded.agentName !== agentName ||
+        (workflowNodeId !== undefined && recorded.nodeId !== workflowNodeId)
+      ) {
+        return null;
+      }
+      return result.postApprovalSessionId;
+    },
+
+    getPostApprovalWorkerSession(taskId) {
+      return requireTaskAgentManager().getPostApprovalWorkerSession(taskId);
+    },
+  };
+}

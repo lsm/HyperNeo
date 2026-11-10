@@ -1,33 +1,63 @@
+import { PREVIEWABLE_FILE_EXTENSIONS } from '@hyperneo/shared/types/artifact-file';
 import { t } from '../../lib/i18n/index.ts';
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-function mark(element: Element, reference: string) {
+function mark(element: Element, reference: string, label = reference) {
   element.setAttribute('data-preview-reference', reference);
   if (element.tagName === 'A') return;
   element.setAttribute('role', 'link');
   element.setAttribute('tabindex', '0');
-  element.setAttribute('aria-label', t('artifact.openNamed', { name: reference }));
+  element.setAttribute('aria-label', t('artifact.openNamed', { name: label }));
 }
 
-export function markPreviewReferences(container: HTMLElement, references: readonly string[]) {
-  if (references.length === 0) return;
-  const wanted = new Set(references);
+export function demoteLocalFileLinks(container: HTMLElement) {
   container.querySelectorAll('a[href]').forEach((anchor) => {
     const href = anchor.getAttribute('href') ?? '';
-    if (wanted.has(href)) mark(anchor, href);
+    const local = /^(?:\/(?!\/)|~\/|file:)([^?#]*\.([\w-]+))([?#].*)?$/.exec(href);
+    if (!local || (!local[3] && PREVIEWABLE_FILE_EXTENSIONS.has(local[2].toLowerCase()))) return;
+    const span = document.createElement('span');
+    span.append(...anchor.childNodes);
+    anchor.replaceWith(span);
+  });
+}
+
+export function markPreviewReferences(
+  container: HTMLElement,
+  references: readonly string[],
+  labels: ReadonlyMap<string, { path: string; label: string }> = new Map()
+) {
+  if (references.length === 0 && labels.size === 0) return;
+  const clickable = new Set(references);
+  const wanted = new Set([...references, ...labels.keys()]);
+  const apply = (element: Element, reference: string) => {
+    const display = labels.get(reference);
+    if (display && (element.textContent === reference || element.textContent === display.path)) {
+      let text: Node = element;
+      while (text.childNodes.length === 1) text = text.firstChild!;
+      if (text.nodeType === Node.TEXT_NODE) {
+        element.setAttribute('data-original-reference', element.textContent);
+        text.textContent = display.label;
+      }
+    }
+    if (clickable.has(reference)) mark(element, reference, display?.label);
+  };
+  container.querySelectorAll('a[href]').forEach((anchor) => {
+    const href = anchor.getAttribute('href') ?? '';
+    if (wanted.has(href)) apply(anchor, href);
   });
   container.querySelectorAll('code').forEach((code) => {
     const text = code.textContent ?? '';
-    if (!code.closest('pre') && wanted.has(text)) mark(code, text);
+    if (!code.closest('pre') && wanted.has(text)) apply(code, text);
   });
-  const pattern = new RegExp(
-    `(?<=(?:^|\\s)[('"“]*)(${[...wanted]
-      .sort((a, b) => b.length - a.length)
-      .map(escape)
-      .join('|')})(?=[),.!?;:'"”]*(?:\\s|$))`,
-    'g'
-  );
+  const patterns = [...wanted]
+    .sort((a, b) => b.length - a.length)
+    .map((reference) =>
+      reference.startsWith('/') || reference.startsWith('~/')
+        ? `(?<![A-Za-z0-9_./~-])(?<![A-Za-z0-9]:)${escape(reference)}(?![A-Za-z0-9_/-]|[.~]+[A-Za-z0-9_/-])`
+        : `(?<=(?:^|\\s)[('"“]*)${escape(reference)}(?=[),.!?;:'"”]*(?:\\s|$))`
+    );
+  const pattern = new RegExp(`(${patterns.join('|')})`, 'g');
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) =>
       node.parentElement?.closest('a, code, pre, [data-preview-reference]')
@@ -43,9 +73,9 @@ export function markPreviewReferences(container: HTMLElement, references: readon
       ...parts.map((part, index) => {
         if (index % 2 === 0) return part;
         const span = document.createElement('span');
-        span.className = 'preview-reference';
+        if (clickable.has(part)) span.className = 'preview-reference';
         span.textContent = part;
-        mark(span, part);
+        apply(span, part);
         return span;
       })
     );

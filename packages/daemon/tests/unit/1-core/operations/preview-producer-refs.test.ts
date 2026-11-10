@@ -87,7 +87,7 @@ describe('producer artifact references on todo evidence', () => {
   test('a ticked todo shows the registered reference after it is read back', async () => {
     expect(await edit({ artifacts: [ref] })).toMatchObject({
       kind: 'completed',
-      value: { ok: true, todo: { state: 'closed_unverified', artifacts: [ref] } },
+      value: { ok: true, todo: { state: 'blocked', blockedBy: 'check', artifacts: [ref] } },
     });
     expect(new NeoAskTodoRepository(db).getTodo('todo')?.artifacts).toEqual([ref]);
   });

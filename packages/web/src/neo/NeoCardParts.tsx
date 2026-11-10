@@ -1,5 +1,6 @@
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
 import { providerLogoColor } from '../lib/provider-brand.ts';
+import { t } from '../lib/i18n/index.ts';
 import type { NeoSessionKind } from './work-driver.ts';
 
 export const neoCardClass = 'neo-arrive rounded-2xl border border-line bg-surface p-4 shadow-sm';
@@ -51,5 +52,36 @@ export function NeoSessionMark({ kind }: { kind: NeoSessionKind | null }) {
     <span class="flex shrink-0" style={{ color: providerLogoColor(provider) }}>
       <ProviderLogo provider={provider} class="h-3.5 w-3.5" />
     </span>
+  );
+}
+
+export function NeoSessionOpen({
+  kind,
+  label,
+  onOpen,
+  disabled,
+  busy,
+  title,
+}: {
+  kind: NeoSessionKind | null;
+  label: string;
+  onOpen: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      class={`${neoSecondaryClass} disabled:cursor-not-allowed disabled:opacity-50`}
+      aria-label={label}
+      onClick={onOpen}
+      disabled={disabled}
+      aria-busy={busy || undefined}
+      title={title}
+    >
+      <NeoSessionMark kind={kind} />
+      {t('todo.open')}
+    </button>
   );
 }

@@ -3,7 +3,7 @@ import {
   createSubscriptionOperations,
   type SubscriptionDependencies,
   type SubscriptionSlot,
-} from '../../../../src/lib/external-events/subscription-operations';
+} from '../../../../../space/src/external-events/subscription-operations';
 import type { OperationCaller, OperationDefinition } from '../../../../src/lib/operations/registry';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';

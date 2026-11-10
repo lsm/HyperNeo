@@ -82,9 +82,7 @@ try {
   const sid='synthetic-live';
   const scoped='space:proof-space:body-proof';
   current.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,'Body scope proof',?,datetime('now'),datetime('now'),'active','{}','{}')").run(scoped,run);
-  current.prepare("INSERT INTO rooms(id,name,created_at,updated_at) VALUES ('body-room','Body proof',1,1)").run();
-  current.prepare("INSERT INTO tasks(id,room_id,title,description,created_at) VALUES ('body-task','body-room','Body proof','Synthetic group',1)").run();
-  current.prepare("INSERT INTO session_groups(id,ref_id,created_at) VALUES ('body-group','body-task',1)").run();
+  current.prepare("INSERT INTO session_groups(id,group_type,ref_id,created_at) VALUES ('body-group','task_pair','body-task',1)").run();
   current.prepare("INSERT INTO session_group_members(group_id,session_id,role,joined_at) VALUES ('body-group',?,'worker',1)").run(scoped);
   const prompt={type:'user',uuid:'body-input',inputKind:'human',parent_tool_use_id:null,message:{role:'user',content:[{type:'text',text:'完整报告'.repeat(4000)}]}} as SDKMessage;
   const repo=app!.db.getSDKMessageRepo();

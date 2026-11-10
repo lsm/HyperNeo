@@ -3,26 +3,11 @@ import { voiceRecorderStore } from '../../lib/voice/voice-recorder-store.ts';
 import {
   hasAdoptableComposerOnSurface,
   voiceComposerSurfaceOf,
-  voiceReturnTaskTargetSessionSignal,
 } from '../../lib/voice/voice-composer-registry.ts';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder.ts';
-import {
-  currentSessionIdSignal,
-  currentSpaceSessionIdSignal,
-  spaceOverlayPendingAgentNameSignal,
-  spaceOverlaySessionIdSignal,
-} from '../../lib/signals.ts';
-import {
-  clearOverlaySignals,
-  closeOverlayHistory,
-  createSessionPath,
-  createSpaceSessionPath,
-  createSpaceTaskPath,
-  getCurrentPath,
-  navigateToSession,
-  navigateToSpaceSession,
-  navigateToSpaceTask,
-} from '../../lib/router.ts';
+import { currentSessionIdSignal } from '../../lib/signals.ts';
+import { createSessionPath, getCurrentPath, navigateToSession } from '../../lib/router.ts';
+import { extensionNav } from '../../lib/web-extensions.ts';
 
 export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boolean }) {
   const surface = useContext(VoiceSurfaceContext);
@@ -31,17 +16,15 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     voiceRecorderStore.durationLimitHit.value ||
     voiceRecorderStore.isStarting.value;
   const recordingSessionId = voiceRecorderStore.recordingSessionId.value;
-  const recordingSpaceId = voiceRecorderStore.recordingSpaceId.value;
+  const recordingScopeId = voiceRecorderStore.recordingScopeId.value;
   const recordingTaskId = voiceRecorderStore.recordingTaskId.value;
   const primarySessionId = currentSessionIdSignal.value;
-  const spaceSessionId = currentSpaceSessionIdSignal.value;
-  const overlaySessionId = spaceOverlaySessionIdSignal.value;
-  const overlayPending = spaceOverlayPendingAgentNameSignal.value !== null;
-  const overlayOpen = overlaySessionId !== null || overlayPending;
+  const focus = extensionNav().flatMap((nav) => nav.sessionFocus() ?? [])[0];
+  const overlaySessionId = focus?.overlaySessionId ?? null;
+  const overlayOpen = focus?.overlayOpen ?? false;
   if (!inOverlay && overlayOpen) return null;
 
-  const displayedSessionId =
-    overlaySessionId ?? (overlayPending ? null : spaceSessionId) ?? primarySessionId;
+  const displayedSessionId = focus?.sessionId ?? primarySessionId;
 
   const ownerSurface = voiceComposerSurfaceOf(voiceRecorderStore.recordingOwnerId.value);
   const recordingVisibleHere =
@@ -57,31 +40,27 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
 
   const returnToRecording = () => {
     if (recordingBehindThisOverlay) {
-      closeOverlayHistory();
+      focus?.closeOverlay();
       return;
     }
-    const targetPath =
-      recordingTaskId !== null && recordingSpaceId !== null
-        ? createSpaceTaskPath(recordingSpaceId, recordingTaskId)
-        : recordingSpaceId !== null
-          ? createSpaceSessionPath(recordingSpaceId, recordingSessionId)
-          : createSessionPath(recordingSessionId);
+    const extensionReturn =
+      recordingScopeId === null
+        ? undefined
+        : extensionNav().flatMap(
+            (nav) =>
+              nav.recordingReturn(recordingScopeId, recordingSessionId, recordingTaskId) ?? []
+          )[0];
+    const targetPath = extensionReturn?.path ?? createSessionPath(recordingSessionId);
     if (overlayOpen) {
       if (getCurrentPath() === targetPath) {
-        closeOverlayHistory();
+        focus?.closeOverlay();
       } else {
-        clearOverlaySignals();
+        focus?.clearOverlay();
       }
     }
     const replace = overlayOpen;
-    if (recordingTaskId !== null && recordingSpaceId !== null) {
-      voiceReturnTaskTargetSessionSignal.value = recordingSessionId;
-      navigateToSpaceTask(recordingSpaceId, recordingTaskId, replace);
-    } else if (recordingSpaceId !== null) {
-      navigateToSpaceSession(recordingSpaceId, recordingSessionId, replace);
-    } else {
-      navigateToSession(recordingSessionId, replace);
-    }
+    if (extensionReturn) extensionReturn.open(replace);
+    else navigateToSession(recordingSessionId, replace);
   };
 
   return (

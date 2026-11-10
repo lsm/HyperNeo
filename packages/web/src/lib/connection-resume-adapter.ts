@@ -2,7 +2,7 @@ import type { ConnectionResumeEffects } from './connection-resume-pipeline';
 import { appState } from './state';
 import { globalStore } from './global-store';
 import { refreshAllSessionStores } from './session-store';
-import { spaceStore } from './space-store';
+import { shellExtensions } from './web-extensions';
 
 type ConnectionResumeOwner = Pick<ConnectionResumeEffects, 'checkHealth' | 'joinChannel'>;
 
@@ -12,10 +12,13 @@ export function createDefaultConnectionResumeEffects(
   return {
     checkHealth: () => owner.checkHealth(),
     joinChannel: (channel) => owner.joinChannel(channel),
-    getActiveSpaceId: () => spaceStore.spaceId.value,
+    extensionChannels: () =>
+      shellExtensions().flatMap((extension) => extension.activeChannel() ?? []),
     refreshSessions: refreshAllSessionStores,
     refreshApp: () => appState.refreshAll(),
     refreshGlobal: () => globalStore.refresh(),
-    refreshSpace: () => spaceStore.refresh(),
+    refreshExtensions: async () => {
+      await Promise.all(shellExtensions().map((extension) => extension.refresh()));
+    },
   };
 }

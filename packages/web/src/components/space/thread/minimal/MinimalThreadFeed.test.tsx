@@ -10,6 +10,10 @@ vi.mock('../../../chat/MarkdownRenderer.tsx', () => ({
   default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
 }));
 
+vi.mock('../../../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../../lib/router')),
+}));
 vi.mock('../../../../lib/router', () => ({
   pushOverlayHistory: mockPushOverlayHistory,
 }));

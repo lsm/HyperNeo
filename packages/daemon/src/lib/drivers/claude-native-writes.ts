@@ -1,3 +1,4 @@
+import { prepareDaemonWorkerSandbox } from './daemon-scratch.ts';
 import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -90,7 +91,7 @@ async function writeAtomic(path: string, value: unknown) {
   }
 }
 
-async function install(root: string, roots: string[]) {
+async function install(root: string, roots: string[], daemonOwned = false) {
   const siblings = (await readdir(dirname(root), { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(dirname(root), entry.name));
@@ -106,7 +107,7 @@ async function install(root: string, roots: string[]) {
       if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
     }
   }
-  await prepareWorkerSandbox(root);
+  await (daemonOwned ? prepareDaemonWorkerSandbox : prepareWorkerSandbox)(root);
   await mkdir(join(root, '.claude'), { recursive: true });
   if (!(await lstat(join(root, '.claude'))).isDirectory())
     throw new Error('Native write policy requires an in-clone .claude directory');
@@ -124,10 +125,16 @@ async function install(root: string, roots: string[]) {
   }
 }
 
-export function installClaudeNativeWrites(directory: string, roots: string[]): Promise<void> {
+export function installClaudeNativeWrites(
+  directory: string,
+  roots: string[],
+  daemonOwned = false
+): Promise<void> {
   const next = pending
     .catch(() => {})
-    .then(() => install(resolve(directory), [...new Set(roots.map((root) => resolve(root)))]));
+    .then(() =>
+      install(resolve(directory), [...new Set(roots.map((root) => resolve(root)))], daemonOwned)
+    );
   pending = next;
   return next;
 }
@@ -169,7 +176,7 @@ function withSecretDenials(
   };
 }
 
-export async function readClaudeWorkerSandbox(directory: string | undefined) {
+export async function readClaudeWorkerSandbox(directory: string | undefined, daemonOwned = false) {
   if (!directory) return null;
   const marker = await readFile(markerPath(directory), 'utf8').catch((error) => {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
@@ -180,7 +187,8 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   const existing = await readFile(settingsPath(directory), 'utf8')
     .then(JSON.parse)
     .catch(() => ({}));
-  if (existing?.sandbox?.enabled !== false) await prepareWorkerSandbox(directory);
+  if (existing?.sandbox?.enabled !== false)
+    await (daemonOwned ? prepareDaemonWorkerSandbox : prepareWorkerSandbox)(directory);
   const computed = policy(directory, roots, []);
   const before = JSON.stringify(existing);
   const upgraded = withSecretDenials(computed, existing, true);

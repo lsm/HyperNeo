@@ -9,7 +9,7 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
@@ -60,6 +60,7 @@ test('core checks stay installed with only life-admin enabled and read actual ou
     'todo',
     'ask',
     {
+      approvedAt: 1,
       title: 'Confirm result',
       doneWhen: 'Human confirms',
       instruction: null,
@@ -104,10 +105,10 @@ test('core checks stay installed with only life-admin enabled and read actual ou
 
 test('installed builtins keep identity and settings select without rebuilding them', () => {
   const installed = service.installedPacks();
-  expect(installed.map((pack) => pack.id)).toEqual(['coding', 'life-admin', 'core']);
-  expect(service.packs()).toEqual([installed[0]]);
+  expect(installed.map((pack) => pack.id)).toEqual(['coding', 'life-admin', 'delegation', 'core']);
+  expect(service.packs()).toEqual([installed[0], installed[2]]);
   db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
-  expect(service.packs()).toEqual([installed[1]]);
+  expect(service.packs()).toEqual([installed[1], installed[2]]);
   expect(service.installedPacks()[0]).toBe(installed[0]);
   expect(service.installedPacks()[1]).toBe(installed[1]);
   expect(
@@ -190,6 +191,7 @@ test.each(
       'queued',
       'ask',
       {
+        approvedAt: 1,
         title: 'Human approves the synthetic plan',
         doneWhen: 'Human confirms',
         instruction: null,
@@ -226,6 +228,7 @@ test('a queued confirmation starts its successor exactly once when the answer ar
     'first',
     'ask',
     {
+      approvedAt: 1,
       title: 'Human decides',
       doneWhen: 'Human confirms',
       instruction: null,
@@ -253,6 +256,7 @@ test('a queued confirmation starts its successor exactly once when the answer ar
     'next',
     'ask',
     {
+      approvedAt: 1,
       title: 'Next step',
       doneWhen: 'Output exists',
       instruction: 'Record a synthetic dispatch',
@@ -283,7 +287,7 @@ test('a queued confirmation starts its successor exactly once when the answer ar
           value: {
             delivered: true,
             ref: input.ref,
-            status: 'running',
+            status: name === 'work.status' ? 'done' : 'running',
             lastActivityAt: 1,
           },
         },
@@ -317,6 +321,7 @@ test('an installed legacy todo check observes reader replacements and retains it
     'todo',
     'ask',
     {
+      approvedAt: 1,
       title: 'Stage',
       doneWhen: 'Merged',
       check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
@@ -351,6 +356,7 @@ test('an installed issue judgement observes the current reader without writing t
     'todo',
     'ask',
     {
+      approvedAt: 1,
       title: 'Stage',
       doneWhen: 'Completed',
       check: { pack: 'coding', kind: 'issue_closed', params: { issue: 'synthetic/plan#1' } },

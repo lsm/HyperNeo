@@ -19,30 +19,13 @@ describe('scope-config', () => {
       const names = tableNames(config);
       expect(names).toEqual([
         'sessions',
-        'rooms',
         'spaces',
         'app_mcp_servers',
         'skills',
-        'inbox_items',
         'job_queue',
         'short_id_counters',
       ]);
-      expect(names).toHaveLength(8);
-    });
-
-    it('room scope returns the correct set of tables', () => {
-      const config = getScopeConfig('room');
-      const names = tableNames(config);
-      expect(names).toEqual([
-        'tasks',
-        'goals',
-        'mission_executions',
-        'mission_metric_history',
-        'room_github_mappings',
-        'room_mcp_enablement',
-        'room_skill_overrides',
-      ]);
-      expect(names).toHaveLength(7);
+      expect(names).toHaveLength(6);
     });
 
     it('space scope returns the correct set of tables', () => {
@@ -88,7 +71,7 @@ describe('scope-config', () => {
     });
 
     it('all table configs have a description', () => {
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         for (const table of getScopeConfig(scopeType)) {
           expect(table.description.length).toBeGreaterThan(0);
         }
@@ -103,25 +86,9 @@ describe('scope-config', () => {
       expect(sessions.blacklistedColumns).toContain('session_context');
     });
 
-    it('rooms blacklist excludes config', () => {
-      const rooms = getScopeConfig('global').find((t) => t.tableName === 'rooms')!;
-      expect(rooms.blacklistedColumns).toEqual(['config']);
-    });
-
-    it('tasks blacklist excludes restrictions (internal use)', () => {
-      const tasks = getScopeConfig('room').find((t) => t.tableName === 'tasks')!;
-      expect(tasks.blacklistedColumns).toContain('restrictions');
-    });
-
     it('app_mcp_servers blacklist excludes env', () => {
       const mcp = getScopeConfig('global').find((t) => t.tableName === 'app_mcp_servers')!;
       expect(mcp.blacklistedColumns).toEqual(['env']);
-    });
-
-    it('inbox_items blacklist excludes raw_event and security_check', () => {
-      const inbox = getScopeConfig('global').find((t) => t.tableName === 'inbox_items')!;
-      expect(inbox.blacklistedColumns).toContain('raw_event');
-      expect(inbox.blacklistedColumns).toContain('security_check');
     });
 
     it('space_workflows blacklist excludes config, gates, and channels', () => {
@@ -147,26 +114,25 @@ describe('scope-config', () => {
       expect(getBlacklistedColumns('app_mcp_servers')).toContain('env');
       expect(getBlacklistedColumns('space_long_horizon_agents')).toContain('session_id');
       expect(getBlacklistedColumns('job_queue')).toContain('payload');
-      expect(getBlacklistedColumns('tasks')).toContain('restrictions');
     });
   });
 
   describe('sensitive table exclusion', () => {
     it('auth_config is not in any scope', () => {
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         const names = getAccessibleTableNames(scopeType);
         expect(names).not.toContain('auth_config');
       }
     });
 
     it('global_tools_config is not in any scope', () => {
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         expect(getAccessibleTableNames(scopeType)).not.toContain('global_tools_config');
       }
     });
 
     it('global_settings is not in any scope', () => {
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         expect(getAccessibleTableNames(scopeType)).not.toContain('global_settings');
       }
     });
@@ -174,7 +140,6 @@ describe('scope-config', () => {
     it('sdk_messages is accessible in space scope (with session ID prefix filtering)', () => {
       expect(getAccessibleTableNames('space')).toContain('sdk_messages');
       expect(getAccessibleTableNames('global')).not.toContain('sdk_messages');
-      expect(getAccessibleTableNames('room')).not.toContain('sdk_messages');
     });
 
     it('session_groups and session_group_members are accessible in space scope only', () => {
@@ -182,18 +147,16 @@ describe('scope-config', () => {
       expect(getAccessibleTableNames('space')).toContain('session_group_members');
       expect(getAccessibleTableNames('global')).not.toContain('session_groups');
       expect(getAccessibleTableNames('global')).not.toContain('session_group_members');
-      expect(getAccessibleTableNames('room')).not.toContain('session_groups');
-      expect(getAccessibleTableNames('room')).not.toContain('session_group_members');
     });
 
     it('task_group_events is not in any scope', () => {
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         expect(getAccessibleTableNames(scopeType)).not.toContain('task_group_events');
       }
     });
 
     it('node_executions is not in any scope', () => {
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         expect(getAccessibleTableNames(scopeType)).not.toContain('node_executions');
       }
     });
@@ -207,7 +170,7 @@ describe('scope-config', () => {
     ];
 
     it('dropped tables are not in any scope config', () => {
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         const names = getAccessibleTableNames(scopeType);
         for (const table of droppedTables) {
           expect(names).not.toContain(table);
@@ -275,7 +238,7 @@ describe('scope-config', () => {
 
     it('excluded tables do not overlap with any accessible tables', () => {
       const excluded = new Set(getExcludedTableNames());
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         const accessible = getAccessibleTableNames(scopeType);
         for (const name of accessible) {
           expect(excluded.has(name)).toBe(false);
@@ -285,16 +248,6 @@ describe('scope-config', () => {
   });
 
   describe('scope filter enforcement', () => {
-    it('every room-scoped table has scopeColumn or scopeJoin', () => {
-      const unfiltered: string[] = [];
-      for (const table of getScopeConfig('room')) {
-        if (!table.scopeColumn && !table.scopeJoin) {
-          unfiltered.push(table.tableName);
-        }
-      }
-      expect(unfiltered).toEqual([]);
-    });
-
     it('every space-scoped table has scopeColumn, scopeJoin, or scopeLike', () => {
       const unfiltered: string[] = [];
       for (const table of getScopeConfig('space')) {
@@ -310,14 +263,13 @@ describe('scope-config', () => {
     it('sessions intentionally appears in both global and space scope', () => {
       expect(getAccessibleTableNames('global')).toContain('sessions');
       expect(getAccessibleTableNames('space')).toContain('sessions');
-      expect(getAccessibleTableNames('room')).not.toContain('sessions');
     });
 
     it('no table other than sessions appears in more than one scope', () => {
       const INTENTIONAL_MULTI_SCOPE = new Set(['sessions']);
 
       const allTables = new Map<string, string[]>();
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         for (const name of getAccessibleTableNames(scopeType)) {
           const existing = allTables.get(name) ?? [];
           existing.push(scopeType);
@@ -351,7 +303,7 @@ describe('scope-config', () => {
       );
 
       const accountedFor = new Set<string>();
-      for (const scopeType of ['global', 'room', 'space'] as const) {
+      for (const scopeType of ['global', 'space'] as const) {
         for (const name of getAccessibleTableNames(scopeType)) {
           accountedFor.add(name);
         }

@@ -1,0 +1,17 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "GitMainIdentitySqlAttempts": 1,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.2208330000000842,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.005249999999932697
+    }
+  ],
+  "runtime": "Bun 1.4.3",
+  "expectedFailure": "Real Git resolver RPC completes worker-backed reference planning, then Git capture initializes identity on main.",
+  "fixtureGhCalls": 0,
+  "passBeforeFix": false,
+  "temporaryDaemonDataRemoved": true
+}

@@ -1,3 +1,5 @@
+process.env.HYPERNEO_SPACE ??= 'on';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -38,7 +40,7 @@ gatewayPrototype.run=async function(op,args){if(this===ownedGateway&&op.name==='
  }return originalRun.call(this,op,args) as never;};
 const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',dbPath:path}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});assert.notEqual(app.server.port,8399);
 ownedGateway=app.db.gateway;
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db),repo=new NeoRepository(db);
 const notice=(id:string,title='Synthetic Track')=>{const ref={adapter:'hyperneo',id:`synthetic-${id}`};return {key:neoSessionKey(ref),ref,title,kind:'needs_you',at:1,link:`/session/${ref.id}`} as NeoSessionNotice;};
 const tap=(key:string)=>hub.request<{ok:boolean;reason?:string}>('operation.invoke',{name:'neo.session.track',input:{key}});

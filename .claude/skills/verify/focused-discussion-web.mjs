@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { leaveSession, sessionTitle } from './session-pane-web.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const [port, run] = process.argv.slice(2);
@@ -26,10 +27,10 @@ try {
       await page.screenshot({ path: `${run}/evidence/prepared-${width}.png`, fullPage: true, animations: 'disabled' });
       await card.getByRole('button', { name: /^Open session/ }).click();
       const pane = page.locator('.neo-session-pane');
-      await pane.getByRole('heading', { name: 'HyperNeo · Focused positioning discussion', exact: true }).waitFor();
+      await sessionTitle(page, { name: 'HyperNeo · Focused positioning discussion', exact: true }).waitFor();
       await pane.getByText(saved.report, { exact: true }).waitFor();
       await page.screenshot({ path: `${run}/evidence/session-${width}.png`, fullPage: true, animations: 'disabled' });
-      await pane.getByRole('button', { name: 'Back to Neo', exact: true }).click();
+      await leaveSession(page);
       await card.getByRole('button', { name: 'Reply in chat', exact: true }).waitFor();
     } catch (error) {
       writeFileSync(`${run}/evidence/failed-${width}.txt`, await page.locator('body').innerText());

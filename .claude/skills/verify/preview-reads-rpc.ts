@@ -1,3 +1,5 @@
+import { Database as FixtureDatabase } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
@@ -15,7 +17,8 @@ if (phase === 'seed') {
  writeFileSync(join(root, 'workspace', 'report.md'), text);
  console.log('seeded isolated read fixture');
 } else {
- const rpc = async (name: string, input: unknown) => {
+ const historical = (input: Parameters<ReturnType<typeof legacyAttachmentFixture>['execute']>[0]) => { const fixtureDb = new FixtureDatabase(join(root, 'data/daemon.db')); try { return legacyAttachmentFixture(() => fixtureDb, join(root, 'data')).execute(input); } finally { fixtureDb.close(); } };
+  const rpc = async (name: string, input: unknown) => {
   const child = Bun.spawn([process.execPath, fileURLToPath(new URL('./rpc.ts', import.meta.url)), name, JSON.stringify(input)], {
    env: { ...process.env, VERIFY_PORT: port }, stdout: 'pipe', stderr: 'inherit',
   });
@@ -23,7 +26,7 @@ if (phase === 'seed') {
   assert(!result.reply.error, JSON.stringify(result)); return result.reply.value ?? result.reply;
  };
  const evidencePath = join(root, 'evidence', 'read-rpc.json');
- const registered = phase === 'capture' ? await rpc('artifact.file.register', { requestId: 'read-rpc', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Streamed report' }) : JSON.parse(readFileSync(evidencePath, 'utf8')).registered;
+ const registered = phase === 'capture' ? await historical({ requestId: 'read-rpc', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Streamed report' }) : JSON.parse(readFileSync(evidencePath, 'utf8')).registered;
  assert(registered.accepted);
  const id = { artifactId: registered.artifact.artifactId };
  const metadata = await rpc('artifact.file.get', id); assert(metadata.accepted);

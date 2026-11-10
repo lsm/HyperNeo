@@ -4,13 +4,13 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import {
   NeoGithubQuery,
   planNeoGithubQuery,
   presentNeoGithubQuery,
 } from '../../../../src/lib/neo/packs/coding/github-query.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import { operationSignature } from '../../../../src/lib/operations/discovery.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {

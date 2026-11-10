@@ -16,7 +16,7 @@ app.server.stop();
 const root = resolve('packages/web/dist');
 const server = Bun.serve({ hostname: '127.0.0.1', port, websocket: createWebSocketHandlers(app.transport, app.sessionManager), async fetch(req, server) {
   const path = new URL(req.url).pathname;
-  const refused = app.guardRequest(req);
+  const refused = await app.guardRequest(req);
   if (refused) return refused;
   if (path.startsWith('/ws')) {
     if (server.upgrade(req, { data: { connectionSessionId: 'global', device: await app.authenticateUpgrade(req, server.requestIP(req)?.address ?? null) } })) return;

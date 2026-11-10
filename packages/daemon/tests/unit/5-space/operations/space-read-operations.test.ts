@@ -5,9 +5,9 @@ import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
-import { createSpaceReadOperations } from '../../../../src/lib/space/space-read-operations.ts';
-import type { FamilyOperationContext } from '../../../../src/lib/rpc-handlers/family-operations/context.ts';
-import { registerSpaceOperations } from '../../../../src/lib/rpc-handlers/family-operations/spaces.ts';
+import { createSpaceReadOperations } from '../../../../../space/src/space-read-operations.ts';
+import type { SpaceFamilyContext } from '../../../../../space/src/rpc/family-operations/space-context.ts';
+import { registerSpaceOperations } from '../../../../../space/src/rpc/family-operations/spaces.ts';
 
 function makeSpace(overrides: Partial<Space> & Pick<Space, 'id'>): Space {
   return {
@@ -181,16 +181,14 @@ describe('registerSpaceOperations', () => {
   test('binds space.list and space.get to the daemon SpaceManager', async () => {
     const seen: boolean[] = [];
     const context = {
-      deps: {
-        spaceManager: {
-          listSpaces: async (includeArchived: boolean) => {
-            seen.push(includeArchived);
-            return [ALPHA];
-          },
-          getSpace: async (spaceId: string) => (spaceId === ALPHA.id ? ALPHA : null),
+      spaceManager: {
+        listSpaces: async (includeArchived: boolean) => {
+          seen.push(includeArchived);
+          return [ALPHA];
         },
+        getSpace: async (spaceId: string) => (spaceId === ALPHA.id ? ALPHA : null),
       },
-    } as unknown as FamilyOperationContext;
+    } as unknown as SpaceFamilyContext;
 
     const registry = createOperationRegistry(registerSpaceOperations(context));
     expect(registry.entries.map((entry) => entry.name)).toEqual(['space.list', 'space.get']);

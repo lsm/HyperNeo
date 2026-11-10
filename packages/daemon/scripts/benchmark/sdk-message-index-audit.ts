@@ -1,3 +1,4 @@
+import '../../tests/unit/helpers/register-space-schema.ts';
 import { execFileSync } from 'node:child_process';
 import { cpus } from 'node:os';
 
@@ -70,10 +71,6 @@ const INDEXES: readonly IndexDefinition[] = [
     ddl: 'idx_sdk_messages_parent_tool_use_id(session_id, parent_tool_use_id)',
   },
   {
-    name: 'idx_sdk_messages_renderable_terminal',
-    ddl: 'idx_sdk_messages_renderable_terminal(session_id, is_renderable, is_terminal, timestamp, id)',
-  },
-  {
     name: 'idx_sdk_messages_session_subtype_parent',
     ddl: 'idx_sdk_messages_session_subtype_parent(session_id, message_subtype_norm, parent_tool_use_id)',
   },
@@ -83,7 +80,7 @@ const INDEXES: readonly IndexDefinition[] = [
   },
   {
     name: 'idx_sdk_messages_task_id',
-    ddl: 'idx_sdk_messages_task_id(task_id, timestamp)',
+    ddl: 'idx_sdk_messages_task_id(task_id, timestamp) WHERE task_id IS NOT NULL',
   },
   {
     name: 'idx_sdk_messages_task_session',
@@ -91,11 +88,11 @@ const INDEXES: readonly IndexDefinition[] = [
   },
   {
     name: 'idx_sdk_messages_task_turn',
-    ddl: 'idx_sdk_messages_task_turn(task_id, conversation_turn_index)',
+    ddl: 'idx_sdk_messages_task_turn(task_id, conversation_turn_index) WHERE task_id IS NOT NULL',
   },
   {
     name: 'idx_sdk_messages_task_session_turn',
-    ddl: 'idx_sdk_messages_task_session_turn(task_id, session_id, conversation_turn_index)',
+    ddl: 'idx_sdk_messages_task_session_turn(task_id, session_id, conversation_turn_index) WHERE task_id IS NOT NULL',
   },
 ];
 

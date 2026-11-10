@@ -5,18 +5,14 @@ checkout and installed runtimes; run each heavy job serially.
 
 ```sh
 python3 .claude/skills/verify/neo-publication-edit-db-run.py bun before
-python3 .claude/skills/verify/neo-publication-edit-db-run.py deno before --executable "$DENO"
 python3 .claude/skills/verify/neo-publication-edit-db-run.py bun verify
-python3 .claude/skills/verify/neo-publication-edit-db-run.py deno verify --executable "$DENO"
-bun --no-install --no-env-file .claude/skills/verify/neo-publication-edit-proof-binding.ts HEAD
 ```
 
-DENO identifies an existing runtime and imports are cached-only. The runner
-refuses memory below 25% or disk below 25 GiB. Every run owns a fresh synthetic
-HOME/data/TMPDIR and SQLite database. A real daemon binds an ephemeral port,
-refuses 8399, blocks real HTTP and supplies a gh stub refusing all requests.
-No credentials, live database, native Desktop, model turn or browser is used.
-Evidence is saved before immediately deleting temporary daemon data.
+The runner refuses memory below 25% or disk below 25 GiB. Every run owns a fresh synthetic
+HOME/data/TMPDIR and SQLite database. A real daemon binds an ephemeral port, refuses 8399,
+blocks real HTTP and supplies a gh stub refusing all requests. No credentials, live
+database, native Desktop, model turn or browser is used. Evidence is saved before
+immediately deleting temporary daemon data.
 
 Before mode temporarily restores publication-change-operation.ts and
 neo-publication-repository.ts from origin/dev, then restores the draft in
@@ -54,9 +50,9 @@ main. The review regression is committed before the fix and the pre-fix daemon
 run retains its failing timestamp assertion. Command elapsed times and
 argument/reply sizes are retained without separate clone/queue/SQL attribution.
 
-Run writer regression, existing publication edit and repository suites in the
-CI runner plus full checks. The evidence binding identifies one committed
-application tree for both fixed runtime proofs. After that commit only this
-journey and its evidence folder may change. The audit checks ancestry, source
-and helper blobs, successful run receipts and all post-proof edits. Any source,
-test or helper edit requires a new committed proof head and fresh Bun/Deno runs.
+Run writer regression, existing publication edit and repository suites in the CI runner
+plus full checks. The evidence binding identifies one committed application tree for both
+fixed runtime proofs. After that commit only this journey and its evidence folder may
+change. The audit checks ancestry, source and helper blobs, successful run receipts and
+all post-proof edits. Any source, test or helper edit requires a new committed proof head
+and fresh Bun runs.

@@ -23,7 +23,7 @@ import { toast } from './toast';
 import type { StructuredError } from '../types/error';
 import { resolveChatDisplayMode } from '../components/sdk/chat-display-mode.ts';
 
-const LIVE_QUERY_MESSAGE_LIMIT = 200;
+export const LIVE_QUERY_MESSAGE_LIMIT = 50;
 
 const LIVE_QUERY_RESUBSCRIBE_MAX_ATTEMPTS = 3;
 const LIVE_QUERY_RESUBSCRIBE_RETRY_DELAY_MS = 500;
@@ -144,6 +144,22 @@ export function mergeSnapshotIntoTranscript(
   return descendants.length === 0 ? merged : insertByTimestampRowid(merged, descendants);
 }
 
+function slidOutOfWindow(
+  transcript: ChatMessage[],
+  removed: ChatMessage[],
+  added: ChatMessage[],
+  rowCount: number
+): boolean {
+  if (!removed.length || !added.length || rowCount < LIVE_QUERY_MESSAGE_LIMIT) return false;
+  const windowSize = rowCount - added.length + removed.length;
+  const edge = transcript.slice(-windowSize).slice(0, removed.length);
+  const edgeIds = new Set(edge.map(rowId));
+  return (
+    removed.every((row) => edgeIds.has(rowId(row))) &&
+    added.every((row) => compareByTimestampRowid(edge[edge.length - 1], row) < 0)
+  );
+}
+
 type MessageQuery = 'messages.bySession' | 'messages.bySession.compact';
 
 function messageQueryFor(mode: ChatDisplayMode): MessageQuery {
@@ -161,9 +177,11 @@ function isThinned(message: ChatMessage): boolean {
 
 export class SessionStore {
   private readonly followDisplayMode: boolean;
+  private readonly loadsTranscript: boolean;
 
-  constructor(options: { followDisplayMode?: boolean } = {}) {
+  constructor(options: { followDisplayMode?: boolean; transcript?: boolean } = {}) {
     this.followDisplayMode = options.followDisplayMode ?? false;
+    this.loadsTranscript = options.transcript ?? true;
     activeStores.add(this);
   }
 
@@ -426,7 +444,8 @@ export class SessionStore {
           )
         : 'messages.bySession';
 
-      await this.subscribeToMessagesLiveQuery(hub, sessionId);
+      if (this.loadsTranscript) await this.subscribeToMessagesLiveQuery(hub, sessionId);
+      else this.recoverOnReconnect(hub, sessionId, null);
     } catch (err) {
       logger.error('Failed to start subscriptions:', err);
       toast.error('Failed to connect to daemon');
@@ -538,26 +557,7 @@ export class SessionStore {
     });
     this.cleanupFunctions.push(unsubError);
 
-    const unsubReconnect = hub.onConnection((state) => {
-      if (state === 'disconnected' || state === 'reconnecting') {
-        if (this.activeMessagesSubscriptionId === subscriptionId && !this.destroyed) {
-          this.beginRecovery();
-        }
-        return;
-      }
-      if (state === 'failed') {
-        if (this.activeMessagesSubscriptionId === subscriptionId) {
-          this.isRecovering.value = false;
-        }
-        return;
-      }
-      if (state !== 'connected') return;
-      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
-      this.performRecovery(hub, sessionId, subscriptionId).catch((err) => {
-        logger.warn('Session recovery on reconnect failed:', err);
-      });
-    });
-    this.cleanupFunctions.push(unsubReconnect);
+    this.recoverOnReconnect(hub, sessionId, subscriptionId);
 
     this.cleanupFunctions.push(() => {
       const activeHub = connectionManager.getHubIfConnected();
@@ -581,6 +581,33 @@ export class SessionStore {
         this.messagesLoaded.value = true;
       }
     }
+  }
+
+  private recoverOnReconnect(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    sessionId: string,
+    subscriptionId: string | null
+  ): void {
+    const unsubReconnect = hub.onConnection((state) => {
+      if (state === 'disconnected' || state === 'reconnecting') {
+        if (this.activeMessagesSubscriptionId === subscriptionId && !this.destroyed) {
+          this.beginRecovery();
+        }
+        return;
+      }
+      if (state === 'failed') {
+        if (this.activeMessagesSubscriptionId === subscriptionId) {
+          this.isRecovering.value = false;
+        }
+        return;
+      }
+      if (state !== 'connected') return;
+      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      this.performRecovery(hub, sessionId, subscriptionId).catch((err) => {
+        logger.warn('Session recovery on reconnect failed:', err);
+      });
+    });
+    this.cleanupFunctions.push(unsubReconnect);
   }
 
   private _applyMessagesSnapshot(rows: ChatMessage[], metadata?: Record<string, unknown>): void {
@@ -628,8 +655,15 @@ export class SessionStore {
 
     let next = this.sdkMessages.value.slice();
     let changed = false;
+    const windowSlid = slidOutOfWindow(
+      next,
+      (event.removed ?? []) as ChatMessage[],
+      (event.added ?? []) as ChatMessage[],
+      event.rowCount ?? 0
+    );
+    if (windowSlid && !this.hasPaginatedOlder) this._hasMoreMessages.value = true;
 
-    if (event.removed?.length) {
+    if (event.removed?.length && !(windowSlid && this.hasPaginatedOlder)) {
       const removedIds = new Set(
         (event.removed as Array<{ id?: unknown }>).map((r) => r.id).filter((id) => id != null)
       );
@@ -1079,7 +1113,7 @@ export class SessionStore {
 
   async loadOlderMessages(
     beforeTimestamp: number,
-    limit = 100,
+    limit = LIVE_QUERY_MESSAGE_LIMIT,
     sessionIdOverride?: string,
     beforeRowid?: number
   ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
