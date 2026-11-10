@@ -221,3 +221,8 @@ its own fresh validation and notice, while explicit repo opt-in still resumes
 daemon merging. A known handoff holds until a new head or relevant policy change;
 its cached fact never authorizes an automatic merge. Unit coverage also holds
 new acquisitions while reconcile is failed, cooling down or below its quota floor.
+
+Run the `linked-issue` case with the wrapper to exercise the tracker merge gate.
+An opted-in repository with no closing reference or a foreign issue reference
+must execute zero merges. Closing the mirror early must leave the coding todo
+doing. A closing reference to the parent permits one SHA-pinned merge.

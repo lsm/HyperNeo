@@ -21,6 +21,7 @@ export function readCodingMergeLocal(db: Database, input: CodingMergeLocalReques
       )
       .get(input.todoId),
     linked: new CodingTodoPrRepository(db).linked(input.todoId, input.url),
+    issueMirrors: new CodingTodoPrRepository(db).linkedIssues(input.url, input.todoId),
   };
 }
 

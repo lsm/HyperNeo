@@ -1,3 +1,5 @@
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTrackerMirrorRepository } from '../../../packages/daemon/src/storage/repositories/neo-tracker-mirror.ts';
 import { seedPrOwner } from './seed-pr-owner.ts';
 process.env.HYPERNEO_SPACE ??= 'on';
 import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
@@ -18,6 +20,7 @@ import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
+const linkedIssue = process.argv.includes('linked-issue');
 const humanWaiting=process.argv.includes('human-waiting-ci'),humanSibling=process.argv.includes('human-sibling-ci');
 const humanOwner=process.argv.includes('human-owner');
 const humanNewHead=process.argv.includes('human-new-head');
@@ -44,7 +47,7 @@ assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run
 for(const dir of ['evidence','bin'])mkdirSync(join(run,dir),{recursive:true});
 process.env.PATH=`${join(run,'bin')}:${process.env.PATH}`;
 writeFileSync(join(run,'evidence/gh.jsonl'),'');
-const pr={url,body:'',state:'OPEN',headRefOid:head,baseRefOid:'d'.repeat(40),isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',author:{login:'author'},changedFiles:1,files:[{path:'src/app.ts'}],labels:[],mergeCommit:null};
+const pr={url,closingIssuesReferences:[] as {url:string}[],body:'',state:'OPEN',headRefOid:head,baseRefOid:'d'.repeat(40),isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',author:{login:'author'},changedFiles:1,files:[{path:'src/app.ts'}],labels:[],mergeCommit:null};
 if(largeFiles){pr.changedFiles=allPaths.length;pr.files=allPaths.slice(0,100).map(path=>({path}));}
 const review={state:'APPROVED',commit_id:head,user:{login:'fixture-bot',type:'Bot'},html_url:url+'#review'};
 const publish=(extra={})=>writeFileSync(join(run,'fixture.json'),JSON.stringify({pr,reviews:[[review]],labels:[[{name:'bug'}],[{name:'human-merge'}]],...extra}));publish();
@@ -82,7 +85,7 @@ try{
  const humanNotices:string[]=[],ownerMessages:string[]=[];
  const notices:string[]=[];let deliver=true,rejectSignoff=true;
  const snapshot=()=>JSON.parse(readFileSync(join(run,'fixture.json'),'utf8'));
- const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(stoppedReady){ownerMessages.push(text);return true;}if(external&&deliver){notices.push(text);return true;}return false;},wake:async(key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return ciRetry&&deliver?neo!.wakeNeo(key,text):deliver;}},readLedgerRepo:async()=>{
+ const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>linkedIssue?[{url,state:'OPEN',checks:'passing',review:'approved',head}]:[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(stoppedReady){ownerMessages.push(text);return true;}if(external&&deliver){notices.push(text);return true;}return false;},wake:async(key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return ciRetry&&deliver?neo!.wakeNeo(key,text):deliver;}},readLedgerRepo:async()=>{
  const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:snapshot().pr.headRefOid,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:largeFiles?allPaths.slice(0,100).map(path=>({path})):[{path:'src/app.ts'}],pageInfo:{hasNextPage:largeFiles}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:head},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:((pendingLedger&&!snapshot().ciReady)||humanWaiting)?{statusCheckRollup:ciStartup?{state:'PENDING'}:null,checkSuites:{totalCount:1}}:humanSibling?{statusCheckRollup:null,checkSuites:{totalCount:0}}:{statusCheckRollup:{state:'SUCCESS'}}}]}};
  return {data:{rateLimit:{remaining:5000},repository:{nameWithOwner:'synthetic/merge',open:{pageInfo:{hasNextPage:false},nodes:terminal?[]:humanSibling?[node,{...node,number:8,isDraft:true,commits:{nodes:[{commit:{statusCheckRollup:{state:'SUCCESS'}}}]}}]:isolated?[node,{...node,number:8}]:[node]},done:{nodes:terminal?[node]:[]}}}};
  }});
@@ -90,7 +93,47 @@ try{
  const runSweep=()=>pack.sweep!(tick+=61_000);
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
  const seedStoppedBudget=async()=>{for(let i=0;i<3;i++){const[receipt]=await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:coding-sweep',at:tick+i});assert(receipt);await ledger.write('daemonMerge',{...receipt,kind:'failed',error:'The base branch policy prohibits the merge.',at:receipt.startedAt});await ledger.write('daemonMerge',{...receipt,kind:'void',at:receipt.startedAt});}};
- if(stoppedReady){
+ if (linkedIssue) {
+   const store = new NeoAskTodoRepository(db);
+   store.openAsk({ id: 'mirror-ask', projectId: null, sessionId: 'synthetic', originMessageId: null,
+     title: 'Mirrored plan', request: 'Work', createdAt: 1 });
+   store.addTodo('mirror-todo', 'mirror-ask', { title: 'Step', instruction: 'Work', named: null,
+     doneWhen: 'Merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } } }, 2, 'synthetic/merge');
+   db.prepare("UPDATE neo_todos SET state='doing' WHERE id='mirror-todo'").run();
+   assert((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/merge' },
+     key: 'mirror_issues', value: true })).ok);
+   const mirrors = new NeoTrackerMirrorRepository(db);
+   const child = { ownerKind: 'todo' as const, ownerId: 'mirror-todo', tracker: 'github-issues',
+     home: 'synthetic/merge', ref: 'synthetic/merge#21', parentRef: null, state: 'bound' as const, failures: 0, updatedAt: 3 };
+   mirrors.put(child);
+   mirrors.put({ ...child, ownerKind: 'ask', ownerId: 'mirror-ask', ref: 'synthetic/merge#20' });
+   publish({ labels: [[]] });
+   await runSweep();
+   assert.equal(mergeCalls().length, 0);
+   assert.deepEqual(await ledger.write('daemonMerge', { kind: 'list' }), []);
+   pr.closingIssuesReferences = [{ url: 'https://github.com/other/repo/issues/21' }];
+   publish({ labels: [[]] });
+   await runSweep();
+   assert.equal(mergeCalls().length, 0);
+   mirrors.put({ ...child, state: 'closed' });
+   const check = await pack.todos!.check(store.getTodo('mirror-todo')!);
+   assert.equal(check?.done, false);
+   assert.equal(store.getTodo('mirror-todo')?.state, 'doing');
+   pr.closingIssuesReferences = [{ url: 'https://github.com/synthetic/merge/issues/20' }];
+   publish({ labels: [[]] });
+   await runSweep();
+   assert.equal(mergeCalls().length, 1);
+   assert(mergeCalls()[0].includes(head));
+   await runSweep();
+   assert.equal(mergeCalls().length, 1);
+   evidence.noClosingReferenceMergeCount = 0;
+   evidence.foreignIssueMergeCount = 0;
+   evidence.earlyClosedIssueTodoState = 'doing';
+   evidence.parentClosingReferenceMergeCount = 1;
+   evidence.executorActivated = true;
+   evidence.mergeCommands = mergeCalls();
+   evidence.verified = true;
+ } else if(stoppedReady){
  seedPrOwner(db,'synthetic/merge',{adapter:'codex-desktop',id:'fixture-owner'});
  const messages=()=>db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox' ORDER BY id").all().map((row:{payload:string})=>JSON.parse(row.payload));const readyMessages=()=>messages().filter(job=>String(job.message.message.content).includes('Fresh merge gates now pass'));
  await seedStoppedBudget();publish({labels:[[]],pr:{...pr,mergeStateStatus:'BLOCKED'},zeroRequired:true});await runSweep();assert.equal(messages().filter(job=>String(job.message.message.content).includes('3 failed attempts')).length,1);assert.equal(readyMessages().length,0);

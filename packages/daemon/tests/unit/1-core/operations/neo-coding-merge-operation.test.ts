@@ -1,3 +1,4 @@
+import { NeoTrackerMirrorRepository } from '../../../../src/storage/repositories/neo-tracker-mirror.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -39,6 +40,7 @@ function fixture(bot = true) {
       url,
       body: 'Agent: gpt-6-sol (effort: high) via fixture',
       state: 'OPEN',
+      closingIssuesReferences: [] as { url: string }[],
       headRefOid: head,
       isDraft: false,
       mergeable: 'MERGEABLE',
@@ -141,7 +143,13 @@ function fixture(bot = true) {
     const result = await invoke();
     expect(result.kind).toBe('completed');
     return result.kind === 'completed'
-      ? (result.value as { accepted: boolean; head?: string; command?: string[]; reason?: string })
+      ? (result.value as {
+          accepted: boolean;
+          head?: string;
+          command?: string[];
+          reminder?: string;
+          reason?: string;
+        })
       : { accepted: false };
   };
   return {
@@ -335,4 +343,64 @@ describe('coding merge operation', () => {
     f.data.reviews.push([{ ...f.data.reviews[0][0], user: { login: 'human', type: 'User' } }]);
     expect((await f.prepare()).accepted).toBe(true);
   });
+});
+
+function mirrorForMerge(f: ReturnType<typeof fixture>) {
+  f.setting('mirror_issues', true);
+  f.stage('qa');
+  const mirrors = new NeoTrackerMirrorRepository(f.db);
+  mirrors.put({
+    ownerKind: 'todo',
+    ownerId: 'todo',
+    tracker: 'github-issues',
+    home: 'synthetic/merge',
+    ref: 'synthetic/merge#21',
+    parentRef: null,
+    state: 'bound',
+    failures: 0,
+    updatedAt: 2,
+  });
+  return mirrors;
+}
+
+test('manual admission enforces the linked issue for daemon-merged repositories', async () => {
+  const f = fixture();
+  mirrorForMerge(f);
+  f.setting('mergeBy', 'daemon');
+  expect(await f.prepare()).toMatchObject({
+    accepted: false,
+    reason: expect.stringContaining('linked_issue_required:'),
+  });
+  f.data.pr.closingIssuesReferences = [{ url: 'https://github.com/synthetic/merge/issues/21' }];
+  expect((await f.prepare()).accepted).toBe(true);
+});
+
+test('owner-merged repositories receive a reminder and retain their merge command', async () => {
+  const f = fixture();
+  mirrorForMerge(f);
+  f.setting('mergeBy', 'owner');
+  expect(await f.prepare()).toMatchObject({
+    accepted: true,
+    command: expect.any(Array),
+    reminder: expect.stringContaining('synthetic/merge#21'),
+  });
+});
+
+test('the linked issue rule stays off with the repository preference off', async () => {
+  const f = fixture();
+  mirrorForMerge(f);
+  f.setting('mergeBy', 'daemon');
+  f.setting('mirror_issues', false);
+  expect((await f.prepare()).accepted).toBe(true);
+});
+
+test('pending mirrors hold merge admission and capped missing mirrors fail open', async () => {
+  const f = fixture();
+  const mirrors = mirrorForMerge(f);
+  f.setting('mergeBy', 'daemon');
+  const row = mirrors.facts().mirrors.find((row) => row.ownerId === 'todo')!;
+  mirrors.put({ ...row, ref: null, state: 'creating', failures: 0 });
+  expect((await f.prepare()).accepted).toBe(false);
+  mirrors.put({ ...row, ref: null, state: 'creating', failures: 3 });
+  expect((await f.prepare()).accepted).toBe(true);
 });
