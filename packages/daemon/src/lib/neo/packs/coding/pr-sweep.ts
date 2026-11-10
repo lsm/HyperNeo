@@ -34,7 +34,7 @@ export type CodingSweepDeps = {
     status(
       recipient: string,
       key: string
-    ): Promise<'admitted' | 'absent' | 'in-flight' | 'unknown'>;
+    ): Promise<'admitted' | 'absent' | 'in-flight' | 'unknown' | 'recipient_gone'>;
     send(recipient: string, key: string, text: string): Promise<boolean>;
   };
   human?(key: string, text: string): Promise<boolean>;

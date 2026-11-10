@@ -216,6 +216,36 @@ try {
   assert(attempts[5].text.includes(`${repo}#7`));
   assert.equal(mailbox().length, 3);
   evidence.claimRemoval = { neverAdmittedNotified: [6, 7], admittedStillOnce: 4 };
+  const retired: unknown[] = [];
+  for (const [index, shape] of ['array', 'null', 'unbound', 'deleted'].entries()) {
+    const retiredNumber = 8 + index * 2, nextNumber = retiredNumber + 1;
+    numbers.push(retiredNumber);
+    accept = false;
+    await sweep();
+    const before = attempts.length, mailboxBefore = mailbox().length;
+    const db = app!.db.getDatabase();
+    const history = db.prepare('SELECT * FROM pack_coding_pr_unowned ORDER BY key').all();
+    const saved = JSON.parse(state().rows!);
+    const rows = shape === 'array' ? saved.rows : shape === 'null' ? null
+      : { ...saved, recipient: shape === 'deleted' ? 'synthetic-deleted-recipient' : root };
+    db.prepare('UPDATE pack_coding_pr_unowned_state SET pending_rows=?').run(rows === null ? null : JSON.stringify(rows));
+    if (shape === 'unbound') db.prepare('DELETE FROM neo_session_bindings WHERE session_id=?').run(root);
+    accept = true;
+    await sweep();
+    assert.equal(state().key, null);
+    assert.equal(attempts.length, before, `${shape} batch must not send`);
+    assert.equal(mailbox().length, mailboxBefore);
+    assert.deepEqual(db.prepare('SELECT * FROM pack_coding_pr_unowned ORDER BY key').all(), history);
+    if (shape === 'unbound') new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+    numbers.push(nextNumber);
+    await sweep();
+    assert.equal(attempts.length, before + 1);
+    assert(attempts.at(-1)!.text.includes(`${repo}#${nextNumber}`));
+    assert(!attempts.at(-1)!.text.includes(`${repo}#${retiredNumber}`));
+    assert.equal(mailbox().length, mailboxBefore + 1);
+    retired.push({ shape, retiredNumber, nextNumber, noSend: true, historyPreserved: true });
+  }
+  evidence.legacyAndOrphaned = retired;
   evidence.publicAddUrls = edited;
   evidence.verified = true;
   console.log('PASS: rejected and admitted retries keep their delivery ID across trimming and restart; claimed batches retire');

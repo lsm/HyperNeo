@@ -44,8 +44,10 @@ const wakeUnowned = (superpipe({})('coding-unowned-pr-wake') as PipelineAPI)
     async (repo: CodingPrEventRepository, now: number, delivery: CodingSweepDeps['delivery']) => {
       const pending = delivery ? await repo.pendingDeliveryLater().catch(() => null) : null;
       if (delivery && !pending) return { reason: 'receipt_unavailable' };
-      const recipient = pending?.recipient ?? delivery?.recipient() ?? null;
-      if (delivery && !recipient) return { reason: 'no_recipient' };
+      const recipient = pending?.key
+        ? (pending.recipient ?? null)
+        : (delivery?.recipient() ?? null);
+      if (delivery && !pending?.key && !recipient) return { reason: 'no_recipient' };
       const status = pending?.key
         ? pending.recipient
           ? await delivery!.status(pending.recipient, pending.key).catch(() => 'unknown' as const)

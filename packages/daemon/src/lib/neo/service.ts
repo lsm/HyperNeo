@@ -1215,6 +1215,11 @@ export class NeoService {
   deliveryStatus(sessionId: string, messageId: string) {
     try {
       if (
+        !this.db.getSession(sessionId) ||
+        this.repo.getBindingBySession(sessionId)?.kind !== 'neo'
+      )
+        return 'recipient_gone' as const;
+      if (
         this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId) ||
         this.db.getJobQueueRepo().getLatestByPayload('mailbox', {
           'to.sessionId': sessionId,

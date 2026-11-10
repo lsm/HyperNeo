@@ -52,12 +52,24 @@ for (const readOnly of [false, true]) {
         attempts.push(key);
         return accept;
       };
-      await wakeCodingUnownedPrs(repo, wake, 10);
+      await wakeCodingUnownedPrs(repo, wake, 10, {
+        recipient: () => 'neo',
+        status: async () => 'absent',
+        send: (_recipient, key, text) => wake(key, text),
+      });
       expect(attempts).toHaveLength(1);
       accept = true;
-      await wakeCodingUnownedPrs(repo, wake, 10);
+      await wakeCodingUnownedPrs(repo, wake, 10, {
+        recipient: () => 'neo',
+        status: async () => 'absent',
+        send: (_recipient, key, text) => wake(key, text),
+      });
       expect(attempts).toEqual([attempts[0], attempts[0]]);
-      await wakeCodingUnownedPrs(repo, wake, 10);
+      await wakeCodingUnownedPrs(repo, wake, 10, {
+        recipient: () => 'neo',
+        status: async () => 'absent',
+        send: (_recipient, key, text) => wake(key, text),
+      });
       expect(attempts).toHaveLength(2);
       expect(
         writer.prepare('SELECT pending_key AS key FROM pack_coding_pr_unowned_state').get()

@@ -1,9 +1,10 @@
+import { Logger } from '../../../../src/lib/logger.ts';
 import type { CodingSweepDeps } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
 import { createNeoPackPreferencesTable } from '../../../../src/storage/schema/m426-neo-pack-preferences.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { wakeCodingUnownedPrs } from '../../../../src/lib/neo/packs/coding/pr-unowned.ts';
+import { wakeCodingUnownedPrs as wakeUnowned } from '../../../../src/lib/neo/packs/coding/pr-unowned.ts';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingPrEventRepository } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
@@ -37,6 +38,27 @@ const pr = (number: number, more: Record<string, unknown> = {}) => ({
   ...more,
 });
 
+function wakeCodingUnownedPrs(...[repo, wake, now, delivery]: Parameters<typeof wakeUnowned>) {
+  return wakeUnowned(
+    repo,
+    wake,
+    now,
+    delivery ?? {
+      recipient: () => 'neo',
+      status: async () => 'absent',
+      send: (_recipient, key, text) => wake(key, text),
+    }
+  );
+}
+
+function readPending(repo: CodingPrEventRepository, now: number) {
+  return repo.pendingUnowned(now, {
+    key: repo.pendingDelivery().key,
+    recipient: 'neo',
+    status: 'absent',
+  });
+}
+
 function setup(delivery?: CodingSweepDeps['delivery']) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -68,7 +90,14 @@ function setup(delivery?: CodingSweepDeps['delivery']) {
         },
       }),
       prSweepDeps: {
-        delivery,
+        delivery: delivery ?? {
+          recipient: () => 'neo',
+          status: async () => 'absent',
+          send: async (_recipient, key, text) => {
+            wakes.push({ key, text });
+            return accepted;
+          },
+        },
         tell: async () => true,
         wake: async (key, text) => {
           wakes.push({ key, text });
@@ -193,7 +222,7 @@ describe('coding pack newly unowned PR notifications', () => {
       await turns.record(worker, [turn(url, false)]);
       await cycle([pr(1)]);
       await turns.record(worker, [turn(url, true)]);
-      expect(new CodingPrEventRepository(db).pendingUnowned(ship + 120_000)).toBeNull();
+      expect(readPending(new CodingPrEventRepository(db), ship + 120_000)).toBeNull();
     } finally {
       db.close();
     }
@@ -340,7 +369,7 @@ describe('coding pack newly unowned PR notifications', () => {
       f.accept(false);
       await f.cycle([pr(1)]);
       expect(f.wakes).toHaveLength(1);
-      const original = new CodingPrEventRepository(f.db).pendingUnowned(ship + 120_000)!;
+      const original = readPending(new CodingPrEventRepository(f.db), ship + 120_000)!;
       if (claim === 'owner') {
         f.db
           .prepare("UPDATE pack_coding_pr_ledger SET owner=? WHERE repo='synthetic/a'")
@@ -475,7 +504,7 @@ describe('coding pack newly unowned PR notifications', () => {
       f.accept(false);
       await f.cycle([pr(1)]);
       const events = new CodingPrEventRepository(f.db);
-      const original = events.pendingUnowned(ship + 120_000)!;
+      const original = readPending(events, ship + 120_000)!;
       const prepare = f.db.prepare.bind(f.db);
       const fault = spyOn(f.db, 'prepare').mockImplementation(((sql: string) => {
         if (sql.includes('WITH active AS')) throw new Error('Synthetic claim read unavailable');
@@ -576,7 +605,7 @@ describe('coding pack unowned PR persistence', () => {
     }
   });
 
-  test.each(['absent', 'admitted', 'in-flight', 'unknown'] as const)(
+  test.each(['absent', 'admitted', 'in-flight', 'unknown', 'error'] as const)(
     'claim removal after %s preserves exactly the eligible notices',
     async (status) => {
       const f = setup({
@@ -588,7 +617,7 @@ describe('coding pack unowned PR persistence', () => {
         f.accept(false);
         await f.cycle([pr(1)]);
         const events = new CodingPrEventRepository(f.db);
-        const original = events.pendingUnowned(ship + 120_000)!;
+        const original = readPending(events, ship + 120_000)!;
         f.db
           .prepare("UPDATE pack_coding_pr_ledger SET owner=? WHERE repo='synthetic/a' AND number=1")
           .run(JSON.stringify({ adapter: 'hyperneo', id: 'claimed-worker' }));
@@ -605,6 +634,7 @@ describe('coding pack unowned PR persistence', () => {
             status: async (recipient, key) => {
               expect(recipient).toBe('neo');
               expect(key).toBe(original.key);
+              if (status === 'error') throw new Error('Synthetic transient receipt error');
               return status;
             },
             send: async (recipient, key, text) => {
@@ -622,7 +652,7 @@ describe('coding pack unowned PR persistence', () => {
           expect(events.pendingDelivery().recipient).toBeUndefined();
         f.db.prepare('UPDATE pack_coding_pr_ledger SET owner=NULL').run();
         if (status === 'absent') {
-          const renewed = events.pendingUnowned(ship + 120_000)!;
+          const renewed = readPending(events, ship + 120_000)!;
           expect(renewed.text).toContain('synthetic/a#1');
           expect(renewed.text).not.toContain('synthetic/b#1');
         }
@@ -689,48 +719,83 @@ describe('coding pack unowned PR persistence', () => {
   test.each(['array', 'null', 'recipient_gone'] as const)(
     'retires %s pending without sending or releasing history, then admits unrelated work',
     async (shape) => {
-      const f = setup({ recipient: () => 'original', status: async () => 'absent', send: async () => false });
+      const f = setup({
+        recipient: () => 'original',
+        status: async () => 'absent',
+        send: async () => false,
+      });
+      const diagnostic = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
       try {
         await f.cycle([pr(1)]);
         const events = new CodingPrEventRepository(f.db);
         const original = events.pendingDelivery();
         const history = f.db.prepare('SELECT * FROM pack_coding_pr_unowned ORDER BY key').all();
         if (shape !== 'recipient_gone') {
-          const saved = f.db.prepare('SELECT pending_rows AS rows FROM pack_coding_pr_unowned_state').get() as { rows: string };
-          f.db.prepare('UPDATE pack_coding_pr_unowned_state SET pending_rows=?').run(shape === 'null' ? null : JSON.stringify(JSON.parse(saved.rows).rows));
+          const saved = f.db
+            .prepare('SELECT pending_rows AS rows FROM pack_coding_pr_unowned_state')
+            .get() as { rows: string };
+          f.db
+            .prepare('UPDATE pack_coding_pr_unowned_state SET pending_rows=?')
+            .run(shape === 'null' ? null : JSON.stringify(JSON.parse(saved.rows).rows));
         }
         const sent: string[] = [];
         const delivery = {
           recipient: () => 'replacement',
           status: async () => 'recipient_gone' as const,
-          send: async (recipient: string, _key: string, text: string) => { sent.push(recipient + text); return true; },
+          send: async (recipient: string, _key: string, text: string) => {
+            sent.push(recipient + text);
+            return true;
+          },
         };
-        await wakeCodingUnownedPrs(events, async () => { throw new Error('No fallback permitted'); }, ship + 120_000, delivery);
+        await wakeCodingUnownedPrs(
+          events,
+          async () => {
+            throw new Error('No fallback permitted');
+          },
+          ship + 120_000,
+          delivery
+        );
         expect(sent).toEqual([]);
+        expect(
+          diagnostic.mock.calls.filter(
+            ([message]) => message === 'Unowned PR pending slot retired without delivery'
+          )
+        ).toHaveLength(1);
         expect(events.pendingDelivery().key).toBeNull();
-        expect(f.db.prepare('SELECT * FROM pack_coding_pr_unowned ORDER BY key').all()).toEqual(history);
-        f.db.prepare(`INSERT INTO pack_coding_pr_ledger
+        expect(f.db.prepare('SELECT * FROM pack_coding_pr_unowned ORDER BY key').all()).toEqual(
+          history
+        );
+        f.db
+          .prepare(`INSERT INTO pack_coding_pr_ledger
           (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
-          VALUES ('synthetic/a',99,'Unrelated','work','new-head','unreviewed',20,30,?,0)`).run(ship + 60_000);
+          VALUES ('synthetic/a',99,'Unrelated','work','new-head','unreviewed',20,30,?,0)`)
+          .run(ship + 60_000);
         await wakeCodingUnownedPrs(events, async () => false, 30, delivery);
         expect(sent).toHaveLength(1);
         expect(sent[0]).toContain('replacement');
         expect(sent[0]).toContain('synthetic/a#99');
         expect(sent[0]).not.toContain('synthetic/a#1');
         expect(original.key).not.toBeNull();
-      } finally { f.db.close(); }
+      } finally {
+        diagnostic.mockRestore();
+        f.db.close();
+      }
     }
   );
 
   test('new reservations require a concrete recipient', () => {
     const f = setup();
     try {
-      f.db.prepare(`INSERT INTO pack_coding_pr_ledger
+      f.db
+        .prepare(`INSERT INTO pack_coding_pr_ledger
         (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
-        VALUES ('synthetic/a',99,'Unrelated','work','head','unreviewed',20,30,?,0)`).run(ship + 60_000);
+        VALUES ('synthetic/a',99,'Unrelated','work','head','unreviewed',20,30,?,0)`)
+        .run(ship + 60_000);
       expect(new CodingPrEventRepository(f.db).pendingUnowned(30)).toBeNull();
       expect(f.db.prepare('SELECT * FROM pack_coding_pr_unowned').all()).toEqual([]);
-    } finally { f.db.close(); }
+    } finally {
+      f.db.close();
+    }
   });
 
   test('the activation cutoff is strict and does not reset when schema is reapplied', async () => {
@@ -773,7 +838,7 @@ describe('coding pack unowned PR persistence', () => {
       createTables(db);
       db.prepare(`INSERT INTO pack_coding_pr_ledger (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
         VALUES ('synthetic/a',1,'Synthetic','b','h','unreviewed',20,20,11,0)`).run();
-      const pending = new CodingPrEventRepository(db).pendingUnowned(20);
+      const pending = readPending(new CodingPrEventRepository(db), 20);
       expect(pending?.text).toContain('synthetic/a#1');
       db.close();
       db = new Database(path);
@@ -831,7 +896,7 @@ describe('coding pack unowned PR persistence', () => {
         created_at: null,
         author_is_bot: 1,
       });
-      expect(new CodingPrEventRepository(db).pendingUnowned(1)).toBeNull();
+      expect(readPending(new CodingPrEventRepository(db), 1)).toBeNull();
     } finally {
       db.close();
     }

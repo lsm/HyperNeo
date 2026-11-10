@@ -17,7 +17,11 @@ separate acknowledgement write. After restart and a new claim, its durable admis
 second send. A later fully claimed batch retires only after proven non-admission.
 Removing those claims must notify the never-admitted PRs, while removing a claim
 from the admitted batch must preserve its once-only history. Receipt lookup uses
-the recorded original recipient and stable batch ID.
+the recorded original recipient and stable batch ID. Legacy array/null batches
+and batches with deleted or unbound recipients retire without sending, preserve
+once-only history and allow the next unrelated batch. The helper exercises all
+four shapes through the production sweep, including a real binding removal.
+Still-bound unknown or in-flight receipts retain their original batch for retry.
 
 Main-thread SQL guards cover pending-notice state and the claim lookup. Keep
 unowned-pr-claims.json and proof.log with exit status and resourcesClosed=true.
