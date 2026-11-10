@@ -686,6 +686,53 @@ describe('coding pack unowned PR persistence', () => {
     }
   });
 
+  test.each(['array', 'null', 'recipient_gone'] as const)(
+    'retires %s pending without sending or releasing history, then admits unrelated work',
+    async (shape) => {
+      const f = setup({ recipient: () => 'original', status: async () => 'absent', send: async () => false });
+      try {
+        await f.cycle([pr(1)]);
+        const events = new CodingPrEventRepository(f.db);
+        const original = events.pendingDelivery();
+        const history = f.db.prepare('SELECT * FROM pack_coding_pr_unowned ORDER BY key').all();
+        if (shape !== 'recipient_gone') {
+          const saved = f.db.prepare('SELECT pending_rows AS rows FROM pack_coding_pr_unowned_state').get() as { rows: string };
+          f.db.prepare('UPDATE pack_coding_pr_unowned_state SET pending_rows=?').run(shape === 'null' ? null : JSON.stringify(JSON.parse(saved.rows).rows));
+        }
+        const sent: string[] = [];
+        const delivery = {
+          recipient: () => 'replacement',
+          status: async () => 'recipient_gone' as const,
+          send: async (recipient: string, _key: string, text: string) => { sent.push(recipient + text); return true; },
+        };
+        await wakeCodingUnownedPrs(events, async () => { throw new Error('No fallback permitted'); }, ship + 120_000, delivery);
+        expect(sent).toEqual([]);
+        expect(events.pendingDelivery().key).toBeNull();
+        expect(f.db.prepare('SELECT * FROM pack_coding_pr_unowned ORDER BY key').all()).toEqual(history);
+        f.db.prepare(`INSERT INTO pack_coding_pr_ledger
+          (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
+          VALUES ('synthetic/a',99,'Unrelated','work','new-head','unreviewed',20,30,?,0)`).run(ship + 60_000);
+        await wakeCodingUnownedPrs(events, async () => false, 30, delivery);
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toContain('replacement');
+        expect(sent[0]).toContain('synthetic/a#99');
+        expect(sent[0]).not.toContain('synthetic/a#1');
+        expect(original.key).not.toBeNull();
+      } finally { f.db.close(); }
+    }
+  );
+
+  test('new reservations require a concrete recipient', () => {
+    const f = setup();
+    try {
+      f.db.prepare(`INSERT INTO pack_coding_pr_ledger
+        (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
+        VALUES ('synthetic/a',99,'Unrelated','work','head','unreviewed',20,30,?,0)`).run(ship + 60_000);
+      expect(new CodingPrEventRepository(f.db).pendingUnowned(30)).toBeNull();
+      expect(f.db.prepare('SELECT * FROM pack_coding_pr_unowned').all()).toEqual([]);
+    } finally { f.db.close(); }
+  });
+
   test('the activation cutoff is strict and does not reset when schema is reapplied', async () => {
     const { db, wakes, cycle } = setup();
     try {
