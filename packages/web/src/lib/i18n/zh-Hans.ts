@@ -131,6 +131,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'question.openSessionTitle': '打开会话：{name}',
   'question.document': '查看完整版本',
   'question.report': '查看完整内容',
+  'question.relayedBy': '经 {name} 转达',
   'question.readAll': '阅读全文',
   'question.reply': '在聊天里回复',
   'question.confirm': '确定',
