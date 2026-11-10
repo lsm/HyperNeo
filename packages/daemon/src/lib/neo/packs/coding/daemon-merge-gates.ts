@@ -94,13 +94,13 @@ export const decideCodingDaemonMerge = (superpipe({})('coding.decide-daemon-merg
   .pipe(requireCommitReady, 'decision', 'result:decision')
   .pipe(requireReview, ['decision', 'policy'], 'result:decision')
   .pipe(requireResolved, 'decision', 'result:decision')
+  .pipe(requireNoSignoff, ['decision', 'policy'], 'result:decision')
   .pipe(
     (facts: Facts): Gate =>
       facts.linkedIssueReason ? skip(facts.linkedIssueReason) : { value: facts },
     'decision',
     'result:decision'
   )
-  .pipe(requireNoSignoff, ['decision', 'policy'], 'result:decision')
   .pipe((facts: Facts): Decision => ({ kind: 'merge', head: facts.head }), 'decision', 'decision')
   .end('decision') as (facts: CodingDaemonMergeFacts, policy: CodingMergePolicy) => Decision;
 

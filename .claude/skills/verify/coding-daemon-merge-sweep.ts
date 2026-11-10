@@ -107,6 +107,12 @@ try{
      home: 'synthetic/merge', ref: 'synthetic/merge#21', parentRef: null, state: 'bound' as const, failures: 0, updatedAt: 3 };
    mirrors.put(child);
    mirrors.put({ ...child, ownerKind: 'ask', ownerId: 'mirror-ask', ref: 'synthetic/merge#20' });
+   publish({ labels: [[{ name: 'human-merge' }]] });
+   await runSweep();
+   await runSweep();
+   assert.equal(mergeCalls().length, 0);
+   assert(notices.some((text) => text.includes('requires human sign-off')));
+   evidence.humanSignoffWakePreserved = true;
    publish({ labels: [[]] });
    await runSweep();
    assert.equal(mergeCalls().length, 0);

@@ -25553,6 +25553,9 @@
               },
               "head": {
                 "type": "string"
+              },
+              "reminder": {
+                "type": "string"
               }
             },
             "required": [
