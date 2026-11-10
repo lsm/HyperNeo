@@ -131,10 +131,21 @@ try {
   const missingDuplicate = await invokeOperation(registry, unnamed.name, { ...unnamed.input, sessionTitle: 'Codex project 6' }, caller);
   assert.equal((missingDuplicate as {value:{ok:boolean}}).value.ok, false);
   assert.match((missingDuplicate as {value:{detail:string}}).value.detail, /already in use/);
+  const manualDuplicate = await invokeOperation(registry, 'work.rename', {
+    ref: { adapter: 'codex-desktop', id: 'synthetic' }, title: 'Codex project 2',
+  }, caller);
+  assert.deepEqual((manualDuplicate as {value:unknown}).value, {
+    ok: true, value: { renamed: true, title: 'Codex project 2' },
+  });
+  const renamedState = new Database(statePath);
+  try {
+    const occupied = renamedState.prepare("SELECT COUNT(*) AS count FROM threads WHERE name='Codex project 2' AND archived=0").get() as {count:number};
+    assert.equal(occupied.count, 2);
+  } finally { renamedState.close(); }
   assert(!checkoutFolders.includes(join(run, 'unrelated')));
   assert.equal(closed, opened);
   assert(opened >= 2);
-  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, concurrent, renamed, linked, longName, duplicate, afterDeletion, missingDuplicate, calls, checkoutFolders, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
+  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, concurrent, renamed, linked, longName, duplicate, afterDeletion, missingDuplicate, manualDuplicate, calls, checkoutFolders, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
 } finally {
   await app.cleanup();
 }

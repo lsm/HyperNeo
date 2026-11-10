@@ -52,3 +52,8 @@ when no stored title matches an explicitly supplied name.
 A live same-prefix thread whose checkout no longer resolves still occupies its
 name. The daemon proof seeds a missing-folder thread, checks the next number,
 and refuses its explicit duplicate. A resolved different Git project is excluded.
+
+The uniqueness guarantee covers starts sharing the state file and project.
+Manual work.rename accepts the requested title, including a title another live
+thread already uses. It can also race with start-time name selection. The daemon
+proof renames into an occupied title and verifies that both live rows retain it.
