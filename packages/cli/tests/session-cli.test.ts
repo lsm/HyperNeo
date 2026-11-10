@@ -61,6 +61,13 @@ describe('hyperneo send, question and build', () => {
     expect(planSessionCommand(['build', 'extra'], 'worker-1')).toHaveProperty('reason');
   });
 
+  test('reserve-restart requests the local restart reservation without extra arguments', () => {
+    expect(planSessionCommand(['reserve-restart'], 'cli')).toEqual({
+      value: { name: 'system.restart.reserve', input: {} },
+    });
+    expect(planSessionCommand(['reserve-restart', 'force'], 'cli')).toHaveProperty('reason');
+  });
+
   test('pair makes a code of the named kind, or reopens pairing after a lockout', () => {
     expect(planSessionCommand(['pair'], 'cli')).toEqual({
       value: { name: 'device.pair.create', input: { kind: 'human' } },

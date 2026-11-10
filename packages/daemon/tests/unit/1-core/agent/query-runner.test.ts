@@ -2133,6 +2133,43 @@ describe('QueryRunner', () => {
   });
 
   describe('createMessageGeneratorWrapper', () => {
+    it('does not acknowledge Neo input while processing admission is deferred', async () => {
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      setProcessingSpy.mockImplementation(() => gate);
+      const acknowledged = mock(() => {});
+      async function* messages() {
+        yield {
+          message: { uuid: 'pending', message: { content: 'task' } },
+          onSent: mock(() => {}),
+        };
+      }
+      runner = createRunner({
+        session: { ...mockSession, id: 'neo:fixture' },
+        db: {
+          ...mockDb,
+          getDatabase: () => ({ prepare: () => ({ get: () => ({ kind: 'neo' }) }) }),
+        } as unknown as Database,
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: () => messages(),
+          onMessageYielded: acknowledged,
+        } as unknown as MessageQueue,
+      });
+      const feed = runner.createMessageGeneratorWrapper(0);
+      const next = feed.next();
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(acknowledged).not.toHaveBeenCalled();
+      } finally {
+        release();
+        await next;
+        await feed.return();
+      }
+    });
+
     it('keeps a delayed prompt bound to its original query attempt', async () => {
       const onSent = mock(() => {});
       async function* messages() {

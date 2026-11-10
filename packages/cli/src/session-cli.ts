@@ -1,12 +1,12 @@
-import { SESSION_CLI_USAGE } from './session-cli-commands.ts';
 import { request } from 'node:http';
 import { dirname, join } from 'node:path';
 import { sessionDoorPath } from '@hyperneo/daemon/lib/messaging/session-door';
 import { readLocalCredential } from '@hyperneo/daemon/lib/pairing/local-credential';
-import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
-import { readCard } from './read-card.ts';
 import { spawnProcess } from '@hyperneo/daemon/lib/runtime-spawn';
+import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
 import { runPairQr } from './pair-qr.ts';
+import { readCard } from './read-card.ts';
+import { SESSION_CLI_USAGE } from './session-cli-commands.ts';
 
 const TAILSCALE = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
 
@@ -81,6 +81,8 @@ export function planSessionCommand(
     };
   if (command === 'build' && !target && !rest.length)
     return { value: { name: 'system.build', input: {} } };
+  if (command === 'reserve-restart' && !target && !rest.length)
+    return { value: { name: 'system.restart.reserve', input: {} } };
   if (command === 'pair') return planPairCommand(args.slice(1));
   if (command === 'devices' && !target) return { value: { name: 'device.list', input: {} } };
   if (command === 'devices' && target === 'reset-human' && !rest.length)
@@ -136,7 +138,8 @@ async function post(socketPath: string, body: unknown): Promise<{ status: number
 
 export async function runSessionCommand(args: string[], env: Env = process.env): Promise<number> {
   if (args[0] === 'read') return readCard(args.slice(1), env.HYPERNEO_DATA_DIR);
-  const sender = resolveSender(env) ?? (args[0] === 'pair' || args[0] === 'devices' ? 'cli' : null);
+  const sender =
+    resolveSender(env) ?? (['pair', 'devices', 'reserve-restart'].includes(args[0]) ? 'cli' : null);
   if (!sender) {
     console.error(
       'hyperneo send: no sender. Run it inside a HyperNeo, Codex or Claude Code session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID).'

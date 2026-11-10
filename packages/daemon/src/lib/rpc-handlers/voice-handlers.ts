@@ -16,6 +16,8 @@ import type { SettingsManager } from '../settings-manager.ts';
 import { VoiceStream, type VoiceStreamText } from '../voice/stream-relay.ts';
 import { createVoiceTranscribeLimiters, runVoiceTranscribe } from '../voice/transcribe-pipeline.ts';
 
+import { restartReservation } from '../system/restart-reservation.ts';
+
 interface VoiceTranscribeRequest {
   transcriptionId?: string;
   recordingId?: string;
@@ -115,6 +117,11 @@ export function expireIdleVoiceStreams(now: number): void {
     }
 }
 
+export function voiceStreamsBusy(): boolean {
+  expireIdleVoiceStreams(Date.now());
+  return startingStreams.count > 0 || voiceStreams.size > 0;
+}
+
 export function resetVoiceTranscriptionLimitsForTests(): void {
   transcriptionLimiters.activeByClient.clear();
   transcriptionLimiters.rateWindowsByClient.clear();
@@ -195,6 +202,8 @@ export function registerVoiceHandlers(
   messageHub.onRequest<{ encoding?: string; sampleRate?: number; language?: string }>(
     'voice.stream.start',
     async (data, context) => {
+      if (restartReservation.remaining())
+        throw new MessageHubHandlerError('Daemon updating; retry shortly', 'DAEMON_UPDATING');
       const encoding = data?.encoding ?? 'pcm16';
       if (!['pcm16', 'opus'].includes(encoding) || (data?.sampleRate ?? 16_000) !== 16_000)
         throw new Error('Voice streams take pcm16 or opus audio at 16000 Hz');

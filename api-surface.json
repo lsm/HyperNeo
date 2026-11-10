@@ -40936,6 +40936,9 @@
           "reason": {
             "type": "string"
           },
+          "retryable": {
+            "type": "boolean"
+          },
           "state": {
             "enum": [
               "queued",
@@ -41024,6 +41027,9 @@
           "reason": {
             "type": "string"
           },
+          "retryable": {
+            "type": "boolean"
+          },
           "state": {
             "enum": [
               "queued",
@@ -41082,6 +41088,9 @@
           "reason": {
             "type": "string"
           },
+          "retryable": {
+            "type": "boolean"
+          },
           "state": {
             "enum": [
               "queued",
@@ -41139,6 +41148,9 @@
           },
           "reason": {
             "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
           },
           "state": {
             "enum": [
@@ -52400,6 +52412,62 @@
           "health"
         ],
         "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "system.restart.reserve",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expiresAt": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "pid": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "ok",
+              "pid",
+              "expiresAt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
       }
     },
     {

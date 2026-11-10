@@ -2486,7 +2486,9 @@ export class QueryRunner {
       }
       const live = () => !this.ctx.isCleaningUp() && (liveAttempt?.() ?? true);
       await this.failures.admit(live);
-      if (notifyOnYield) await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
+      const coordinator = !!neoCoordinatorBinding(this.ctx.db, session.id);
+      if (notifyOnYield && !coordinator)
+        await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
       const promptContent = (queuedMessage.message as { content?: unknown } | undefined)?.content;
@@ -2539,6 +2541,8 @@ export class QueryRunner {
         }
       }
 
+      if (notifyOnYield && coordinator)
+        await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       logger.debug(
         `delivery-feed: yielding message to SDK transport (session=${session.id} ` +
           `uuid=${message.uuid ?? 'unknown'} queueSizeAfter=${messageQueue.size()} ` +

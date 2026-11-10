@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { vi } from 'vitest';
 import type { CallContext, GlobalSettings, MessageHub } from '@hyperneo/shared';
 import {
@@ -10,6 +10,8 @@ import {
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { asrRelayDefaults, createInThreadAsrRelay } from '../../../../src/lib/voice/asr-relay.ts';
+
+import { restartReservation } from '../../../../src/lib/system/restart-reservation.ts';
 
 type RequestHandler = (data: unknown, context?: CallContext) => Promise<unknown>;
 
@@ -1245,6 +1247,18 @@ describe('admitVoiceStreamStart', () => {
 });
 
 describe('voice stream RPC handlers', () => {
+  it('a reserved restart refuses voice starts before provider work', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({}));
+    const held = spyOn(restartReservation, 'remaining').mockReturnValue(100);
+    try {
+      await expect(handlers.get('voice.stream.start')!({})).rejects.toMatchObject({
+        code: 'DAEMON_UPDATING',
+      });
+    } finally {
+      held.mockRestore();
+    }
+  });
   const voice = {
     enabled: true,
     endpoint: 'https://example.com/v1/audio/transcriptions',
