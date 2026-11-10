@@ -25,12 +25,15 @@ export function planCodingUnclaimedPrs<Row extends CodingUnownedPr>(
 }
 
 export function planCodingUnownedNotice(
-  rows: readonly CodingUnownedPr[]
+  rows: readonly CodingUnownedPr[],
+  deliveryKey?: string
 ): CodingUnownedNotice | null {
   if (!rows.length) return null;
   const keys = rows.map(codingUnownedPrKey);
   return {
-    key: `neo-pr-unowned-batch:${createHash('sha256').update(keys.join('\n')).digest('hex')}`,
+    key:
+      deliveryKey ??
+      `neo-pr-unowned-batch:${createHash('sha256').update(keys.join('\n')).digest('hex')}`,
     text: `New pull requests observed without a known worker owner:\n${rows.map((row) => `${row.repo}#${row.number} "${row.title}" [${codingUnownedPrKey(row)}]`).join('\n')}\nCheck the current ledger before assigning an owner.`,
   };
 }

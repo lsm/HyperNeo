@@ -117,8 +117,8 @@ export class CodingPrEventRepository {
       if (pending.key && pending.rows) {
         const unclaimed = this.unclaimed(JSON.parse(pending.rows) as CodingUnownedPr[]);
         const remaining = unclaimed.filter((row) => codingRepoWatched(this.db, row.repo));
-        const notice = planCodingUnownedNotice(remaining);
-        const retained = notice ?? planCodingUnownedNotice(unclaimed);
+        const notice = planCodingUnownedNotice(remaining, pending.key);
+        const retained = notice ?? planCodingUnownedNotice(unclaimed, pending.key);
         if (retained) {
           this.db
             .prepare(
