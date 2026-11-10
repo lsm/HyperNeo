@@ -1,3 +1,4 @@
+import { createDesktopStopOperation } from '../../desktop/stop-operation.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { registerClientOperations } from './clients.ts';
 import { registerDriverOperations } from './drivers.ts';
@@ -12,6 +13,7 @@ export type { FamilyOperationContext } from './context.ts';
 
 export function collectFamilyOperations(context: FamilyOperationContext): OperationDefinition[] {
   return [
+    createDesktopStopOperation(),
     createProjectFolderOperation(context.deps.db.workspaceHistory),
     ...registerClientOperations(context),
     ...registerDriverOperations(context),

@@ -69,6 +69,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.2
+      - name: Compare native process identity with the macOS SDK and ps
+        working-directory: packages/desktop
+        run: bun test tests/runtime-process-identity.test.ts
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache Desktop Cargo dependencies
         uses: actions/cache@v5
@@ -288,7 +294,7 @@ jobs:
             esac
             if [ "$doc" = true ]; then continue; fi
             case "$f" in
-              packages/desktop/*|.github/workflows/main.yml|.github/workflows/release.yml) desktop=true ;;
+              packages/desktop/*|packages/daemon/src/lib/runtime-process-identity.ts|.github/workflows/main.yml|.github/workflows/release.yml) desktop=true ;;
             esac
             # daemon unit shards unless the file is web-only
             case "$f" in
