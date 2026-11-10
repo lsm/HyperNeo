@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { createOperationRpcHandler } from '../../../packages/daemon/src/lib/operations/rpc-adapter.ts';
+import { listOperationSummaries } from '../../../packages/daemon/src/lib/operations/discovery.ts';
 import { SettingsRepository } from '../../../packages/daemon/src/storage/repositories/settings-repository.ts';
 
 const run = resolve(process.argv[2]);
@@ -38,20 +40,37 @@ try {
   settings.updateGlobalSettings({ neo: { ...initial.neo, packs: [] } });
   assert.equal((await call('neo.github.read', {})).code, 'forbidden');
   assert.equal((await call('operations.describe', { name: 'neo.github.read' })).found, false);
-  const disabled = await call('operations.list', { all: true });
-  assert(!disabled.some((entry: { name: string }) => entry.name === 'neo.github.read'));
+  const disabled = await call('operations.list', { prefix: 'neo.github', all: true });
+  assert.deepEqual(disabled, { total: 0, names: [], next: null });
+  const index = await call('operations.list', {});
+  assert(Array.isArray(index.prefixes));
+  assert.deepEqual(await call('operations.list', { all: true }), index);
+  const rpc = createOperationRpcHandler(registry, () => ({}));
+  const human = await rpc({ name: 'operations.list', input: { all: true } }, { messageId: 'proof', sessionId: 'global', method: 'operation.invoke', timestamp: 'proof' });
+  assert.equal(JSON.stringify(human), JSON.stringify(listOperationSummaries(registry, { source: 'rpc', principal: 'local' }, true)));
+  assert(Array.isArray(human));
+  assert(human.some((entry: { name: string }) => entry.name === 'neo.github.read'));
+  evidence.push({ humanRpcCount: human.length, byteParity: true, indexBytes: Buffer.byteLength(JSON.stringify(index)) });
   const typo = await call('neo.github.readd', {});
   assert(!typo.message.includes('neo.github.read,'));
   assert(!typo.message.includes('neo.github.read?'));
   settings.updateGlobalSettings({ neo: { ...initial.neo, packs: ['coding'] } });
   assert.equal((await call('operations.describe', { name: 'neo.github.read' })).found, true);
-  const enabled = await call('operations.list', { all: true });
-  assert(enabled.some((entry: { name: string }) => entry.name === 'neo.github.read'));
+  const enabled = await call('operations.list', { prefix: 'neo.github' });
+  assert.deepEqual(enabled, { total: 1, names: ['neo.github.read'], next: null });
+  const first = await call('operations.list', { prefix: 'neo' });
+  assert(first.names.length <= 20);
+  if (first.next) {
+    const next = await call('operations.list', { prefix: 'neo', cursor: first.next });
+    assert(next.names.every((name: string) => name > first.next));
+    assert.equal(next.total, first.total);
+  }
+  evidence.push({ firstPageBytes: Buffer.byteLength(JSON.stringify(first)) });
   const read = await call('neo.github.read', { url: 'https://github.com/example/project/pull/1' });
   assert.notEqual(read.code, 'forbidden');
   assert.notEqual(read.code, 'invalid_input');
   assert.notEqual(read.code, 'execution_failed');
-  console.log(`PASS registry=${registry.entries.length} disabled=${disabled.length} enabled=${enabled.length}`);
+  console.log(`PASS registry=${registry.entries.length} disabled=${disabled.total} enabled=${enabled.total} humanRpc=${human.length}`);
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
   await app.cleanup();

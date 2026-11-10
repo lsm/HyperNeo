@@ -461,7 +461,7 @@ describe('session.runtimeSettings.update', () => {
 });
 
 describe('Neo discoverability', () => {
-  test('operations.list offers both runtime settings operations to a Neo caller', () => {
+  test('admission summaries include both runtime settings operations for Neo', () => {
     const h = harness();
     const registry = createOperationRegistry([...h.operations.values()]);
     const names = listOperationSummaries(registry, {

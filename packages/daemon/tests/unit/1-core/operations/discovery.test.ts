@@ -257,8 +257,13 @@ describe('operation listing by caller', () => {
     'Neo cannot bypass admission with all: true from %s',
     async (sessionId) => {
       expect(
-        await listedNames(policyFixture(), { source: 'mcp', sessionId, role: 'neo' }, { all: true })
-      ).toEqual(UNRESTRICTED);
+        await invokeOperation(
+          policyFixture(),
+          'operations.list',
+          { all: true },
+          { source: 'mcp', sessionId, role: 'neo' }
+        )
+      ).toEqual({ kind: 'completed', value: { prefixes: [] } });
     }
   );
 

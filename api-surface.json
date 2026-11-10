@@ -48032,6 +48032,14 @@
           "all": {
             "type": "boolean"
           },
+          "cursor": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "prefix": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_]*(?:\\.[a-zA-Z][a-zA-Z0-9_]*)*\\.?$",
+            "type": "string"
+          },
           "query": {
             "type": "string"
           }
@@ -48041,23 +48049,90 @@
       "name": "operations.list",
       "resultSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "items": {
-          "additionalProperties": false,
-          "properties": {
-            "description": {
-              "type": "string"
+        "anyOf": [
+          {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "description"
+              ],
+              "type": "object"
             },
-            "name": {
-              "type": "string"
-            }
+            "type": "array"
           },
-          "required": [
-            "name",
-            "description"
-          ],
-          "type": "object"
-        },
-        "type": "array"
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "prefixes": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "count": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "prefix": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "prefix",
+                        "count"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "prefixes"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "names": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 20,
+                    "type": "array"
+                  },
+                  "next": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "total": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "total",
+                  "names",
+                  "next"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        ]
       }
     },
     {

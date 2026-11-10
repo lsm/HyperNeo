@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAdvertisedToProfile } from '../tools/session-tool-profiles.ts';
 import { z } from 'zod';
+import { compactNeoDiscovery, CompactDiscoverySchema } from './neo-discovery.ts';
 import { isOperationAdmitted } from './invoke.ts';
 import {
   enabledOperationPacks,
@@ -12,7 +13,15 @@ import {
 
 const SummarySchema = z.object({ name: z.string(), description: z.string() });
 const ListInputSchema = z
-  .object({ all: z.boolean().optional(), query: z.string().optional() })
+  .object({
+    all: z.boolean().optional(),
+    query: z.string().optional(),
+    prefix: z
+      .string()
+      .regex(/^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)*\.?$/)
+      .optional(),
+    cursor: z.string().min(1).optional(),
+  })
   .default({});
 const DescriptionSchema = z.discriminatedUnion('found', [
   z.object({
@@ -67,6 +76,36 @@ export function listOperationSummaries(
     )
     .map(({ name, description }) => ({ name, description }));
 }
+
+type ListInput = z.infer<typeof ListInputSchema>;
+function isNeoDiscovery(caller: OperationCaller): boolean {
+  return caller.source === 'mcp' && caller.role === 'neo';
+}
+function discoverySummaries(
+  registry: OperationRegistry,
+  caller: OperationCaller,
+  input: ListInput
+) {
+  return listOperationSummaries(registry, caller, isNeoDiscovery(caller) || input.all, input.query);
+}
+function renderDiscovery(
+  summaries: ReturnType<typeof listOperationSummaries>,
+  caller: OperationCaller,
+  input: ListInput
+) {
+  return isNeoDiscovery(caller)
+    ? compactNeoDiscovery(summaries, input.prefix, input.cursor)
+    : summaries;
+}
+const listOperations = (superpipe({})('list-operations') as PipelineAPI)
+  .input(['registry', 'caller', 'input'])
+  .pipe(discoverySummaries, ['registry', 'caller', 'input'], 'summaries')
+  .pipe(renderDiscovery, ['summaries', 'caller', 'input'], 'listing')
+  .end('listing') as (
+  registry: OperationRegistry,
+  caller: OperationCaller,
+  input: ListInput
+) => ReturnType<typeof renderDiscovery>;
 
 export function findDescribedOperation(
   registry: OperationRegistry,
@@ -192,9 +231,8 @@ export function createDiscoveryOperations(
       description:
         'List operations available to this caller and advertised by the session tool profile. Pass { all: true } to include eligible operations omitted from the default list. Pass { query } with keywords to keep only operations whose name or description contains every word. Caller and pack restrictions apply even with all: true.',
       inputSchema: ListInputSchema,
-      resultSchema: z.array(SummarySchema),
-      execute: async ({ all, query }, caller) =>
-        listOperationSummaries(getRegistry(), caller, all, query),
+      resultSchema: z.union([z.array(SummarySchema), CompactDiscoverySchema]),
+      execute: async (input, caller) => listOperations(getRegistry(), caller, input),
     }),
     defineOperation({
       name: 'operations.describe',
