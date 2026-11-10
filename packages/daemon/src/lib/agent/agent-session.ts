@@ -582,30 +582,6 @@ export class AgentSession
       this.taskNotificationRequeryEpisode.escalation !== 'none';
     this.taskNotificationRequeryEpisodeToken = this.taskNotificationRequeryEpisode?.episode ?? 0;
 
-    const closesRequeryEpisodeForTask = (data: { taskId?: string }) => {
-      if (
-        data.taskId &&
-        this.session.context?.taskId &&
-        data.taskId !== this.session.context.taskId
-      )
-        return;
-      this.closeTaskNotificationRequeryEpisode();
-    };
-    this.deliveryErrorSubs.push(
-      this.internalEventBus.subscribe('space.task.unblocked', closesRequeryEpisodeForTask, {
-        subscriberName: 'AgentSession.requeryEpisodeTaskUnblocked',
-      })
-    );
-    this.deliveryErrorSubs.push(
-      this.internalEventBus.subscribe('space.task.completed', closesRequeryEpisodeForTask, {
-        subscriberName: 'AgentSession.requeryEpisodeTaskCompleted',
-      })
-    );
-    this.deliveryErrorSubs.push(
-      this.internalEventBus.subscribe('space.task.failed', closesRequeryEpisodeForTask, {
-        subscriberName: 'AgentSession.requeryEpisodeTaskFailed',
-      })
-    );
     this.deliveryErrorSubs.push(
       this.internalEventBus.subscribe(
         'space.workflowRun.reopened',

@@ -3,6 +3,7 @@ import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
+  advanceTaskNotificationRequeryEpisode,
   buildTaskNotificationRequeryEscalationEvent,
   isTopLevelHollowTaskNotificationResult,
   resolveTaskNotificationRequery,
@@ -232,6 +233,38 @@ describe('task-notification requery policy', () => {
     });
   });
 
+  describe('advanceTaskNotificationRequeryEpisode', () => {
+    it('closes the episode when a consuming success resets it', () => {
+      const advanced = advanceTaskNotificationRequeryEpisode(
+        openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS),
+        { kind: 'result', message: buildRealSuccessResult() }
+      );
+      expect(advanced.decision).toEqual({ action: 'reset' });
+      expect(advanced.episode.closed).toBe(true);
+    });
+
+    it('closes the episode on the close signal without bumping a closed prior', () => {
+      const open = advanceTaskNotificationRequeryEpisode(openRequeryEpisode(2), {
+        kind: 'close',
+      });
+      expect(open.episode).toMatchObject({ episode: 1, closed: true });
+
+      const alreadyClosed = { ...openRequeryEpisode(2), closed: true };
+      const again = advanceTaskNotificationRequeryEpisode(alreadyClosed, { kind: 'close' });
+      expect(again.episode).toBe(alreadyClosed);
+    });
+
+    it('opens a fresh episode after a closed one', () => {
+      const closed = { ...openRequeryEpisode(5), closed: true };
+      const advanced = advanceTaskNotificationRequeryEpisode(closed, {
+        kind: 'result',
+        message: buildHollowTaskNotificationResult(),
+      });
+      expect(advanced.episode).toMatchObject({ episode: 2, attempts: 0, closed: false });
+      expect(advanced.decision.action).toBe('requery');
+    });
+  });
+
   describe('taskNotificationRequeryDelayMs', () => {
     it('follows the default backoff ladder', () => {
       expect(taskNotificationRequeryDelayMs(0)).toBe(500);
@@ -447,6 +480,25 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(continueCalls()).toBe(4);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('closes a self-recovered episode so the next hollow fault gets a fresh budget', async () => {
+    for (let i = 0; i < TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS; i++) {
+      await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+      await settleRequery();
+      await agentSession.onSDKMessage(buildRealSuccessResult());
+      await settleRequery();
+    }
+    expect(continueCalls()).toBe(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
+    expect(needsAttentionPublishes()).toBe(0);
+    expect(agentSession.getSessionData().metadata.taskNotificationRequeryEpisode).toMatchObject({
+      closed: true,
+    });
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS + 1);
     expect(needsAttentionPublishes()).toBe(0);
   });
 
