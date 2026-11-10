@@ -359,16 +359,23 @@ export function registerVoiceHandlers(
 
   messageHub.onRequest<{ streamId: string }>('voice.stream.stop', async (data, context) => {
     const stream = ownedStream(data?.streamId, context);
-    const result = await stream.stop();
-    const owned = voiceStreams.get(data.streamId);
-    if (owned) owned.touchedAt = Date.now();
-    if (!('error' in result) || !result.retryable) deleteVoiceStream(data.streamId);
-    if ('error' in result)
-      throw new MessageHubHandlerError(
-        result.error,
-        result.error === 'Incomplete Opus packet' ? 'VOICE_STREAM_INCOMPLETE_OPUS' : 'HANDLER_ERROR'
-      );
-    return result;
+    activeTranscriptions.count++;
+    try {
+      const result = await stream.stop();
+      const owned = voiceStreams.get(data.streamId);
+      if (owned) owned.touchedAt = Date.now();
+      if (!('error' in result) || !result.retryable) deleteVoiceStream(data.streamId);
+      if ('error' in result)
+        throw new MessageHubHandlerError(
+          result.error,
+          result.error === 'Incomplete Opus packet'
+            ? 'VOICE_STREAM_INCOMPLETE_OPUS'
+            : 'HANDLER_ERROR'
+        );
+      return result;
+    } finally {
+      activeTranscriptions.count--;
+    }
   });
 
   messageHub.onRequest<{ streamId: string }>('voice.stream.cancel', async (data, context) => {
