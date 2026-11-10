@@ -197,7 +197,7 @@ class WorkerDrivers(unittest.TestCase):
         self.assertFalse(self.call('status')['ok'])
         result = self.call('stop')
         self.assertFalse(result['ok'], result)
-        self.assertIn('stop_unconfirmed', result['error'])
+        self.assertEqual(result['error'], 'stop_unconfirmed: driver process identity changed')
         self.assertTrue(alive(driver['pid']))
         self.assertTrue((self.lifecycle() / 'stopped').exists())
 
@@ -278,6 +278,22 @@ class WorkerDrivers(unittest.TestCase):
         self.assertTrue(result['ok'], result)
         self.assertFalse(alive(driver['pid']))
         self.assertFalse(Path(driver['socket']).exists())
+
+    def test_latch_at_response_check_stops_the_started_driver(self):
+        self.assertTrue(self.call('fixture-latch-on-response')['ok'])
+        result = self.call('start', workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        record = json.loads((self.lifecycle() / 'driver.json').read_text())
+        self.pids.append(record['pid'])
+        self.assertFalse(alive(record['pid']))
+        self.assertFalse(Path(record['socket']).exists())
+        self.assertTrue((self.lifecycle() / 'stopped').exists())
+
+    def test_status_and_unknown_actions_do_not_create_records(self):
+        for worker in ('unknown-a', 'unknown-b'):
+            self.assertTrue(self.call('status', worker)['ok'])
+            self.assertFalse(self.call('unknown-action', worker)['ok'])
+        self.assertFalse((self.root / 'desktop/workers').exists())
 
     def test_two_workers_get_two_drivers_and_two_sockets(self):
         first, second = self.start(), self.start('worker-b')

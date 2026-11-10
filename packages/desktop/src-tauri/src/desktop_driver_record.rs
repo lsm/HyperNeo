@@ -21,21 +21,23 @@ pub(super) struct Record {
     socket: PathBuf,
 }
 
-pub(super) fn directory(base: &Path, worker: &str) -> Result<PathBuf> {
+pub(super) fn directory(base: &Path, worker: &str, create: bool) -> Result<PathBuf> {
     let workers = base.join("workers");
     let directory = workers.join(worker);
     for path in [&workers, &directory] {
-        DirBuilder::new()
-            .mode(0o700)
-            .create(path)
-            .or_else(|error| {
-                if error.kind() == std::io::ErrorKind::AlreadyExists {
-                    Ok(())
-                } else {
-                    Err(error)
-                }
-            })?;
-        File::open(path.parent().ok_or("Invalid record directory")?)?.sync_all()?;
+        if create {
+            DirBuilder::new()
+                .mode(0o700)
+                .create(path)
+                .or_else(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        Ok(())
+                    } else {
+                        Err(error)
+                    }
+                })?;
+            File::open(path.parent().ok_or("Invalid record directory")?)?.sync_all()?;
+        }
         let metadata = path.symlink_metadata()?;
         if !metadata.is_dir()
             || metadata.uid() != unsafe { libc::geteuid() }
@@ -124,7 +126,7 @@ fn identity(pid: u32) -> Result<Identity> {
         )
     };
     if read != size || info.pbi_pid != pid || info.pbi_uid != unsafe { libc::geteuid() } {
-        return Err("stop_unconfirmed: driver process identity unavailable".into());
+        return Err("driver process identity unavailable".into());
     }
     Ok(Identity {
         seconds: info.pbi_start_tvsec,
@@ -153,7 +155,7 @@ pub(super) fn verify(directory: &Path, pid: u32, socket: &Path) -> Result<()> {
         .read_to_end(&mut bytes)?;
     let record: Record = serde_json::from_slice(&bytes)?;
     if record.pid != pid || record.socket != socket || record.started_at != identity(pid)? {
-        return Err("stop_unconfirmed: driver process identity changed".into());
+        return Err("driver process identity changed".into());
     }
     Ok(())
 }

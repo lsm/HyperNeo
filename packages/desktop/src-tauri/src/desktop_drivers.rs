@@ -29,6 +29,8 @@ use tokio::{
 #[cfg(test)]
 static FAIL_NEXT_ACCEPT: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
+static LATCH_ON_RESPONSE: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
 pub(crate) fn inject_accept_failure() {
     FAIL_NEXT_ACCEPT.store(true, Ordering::Relaxed);
 }
@@ -236,13 +238,21 @@ impl Drivers {
             return Err("Invalid worker identifier".into());
         }
         #[cfg(test)]
+        if request.action == "fixture-latch-on-response" {
+            LATCH_ON_RESPONSE.store(true, Ordering::Relaxed);
+            return Ok(json!({"armed": true}));
+        }
+        #[cfg(test)]
         if request.action == "fixture-slots" {
             let slots = self.workers.lock().await;
             return Ok(
                 json!({"count": slots.len(), "references": slots.get(&request.worker).map(Arc::strong_count).unwrap_or(0)}),
             );
         }
-        let directory = record::directory(&self.records, &request.worker)?;
+        let directory = self.records.join("workers").join(&request.worker);
+        if matches!(request.action.as_str(), "start" | "stop") {
+            record::directory(&self.records, &request.worker, true)?;
+        }
         if request.action == "stop" {
             record::latch(&directory)?;
         }
@@ -432,12 +442,35 @@ impl Drivers {
             Some(worker) => {
                 let connection = worker.host.connection();
                 if let Some(connection) = &connection {
-                    record::ensure_enabled(&directory)?;
-                    record::verify(
-                        &directory,
-                        connection.pid,
-                        std::path::Path::new(&connection.socket_path),
-                    )?;
+                    #[cfg(test)]
+                    if request.action == "start" && LATCH_ON_RESPONSE.swap(false, Ordering::Relaxed)
+                    {
+                        record::latch(&directory)?;
+                    }
+                    let valid = record::directory(&self.records, &request.worker, false)
+                        .and_then(|_| record::ensure_enabled(&directory))
+                        .and_then(|_| {
+                            record::verify(
+                                &directory,
+                                connection.pid,
+                                std::path::Path::new(&connection.socket_path),
+                            )
+                        });
+                    if let Err(error) = valid {
+                        if request.action == "start" {
+                            worker
+                                .host
+                                .clone()
+                                .stop()
+                                .await
+                                .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                            record::verify_gone(
+                                connection.pid,
+                                std::path::Path::new(&connection.socket_path),
+                            )?;
+                        }
+                        return Err(error);
+                    }
                 }
                 json!({"state": format!("{:?}", worker.host.state()).to_lowercase(), "pid": connection.as_ref().map(|c| c.pid), "socket": connection.map(|c| c.socket_path)})
             }
