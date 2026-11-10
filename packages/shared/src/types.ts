@@ -365,6 +365,12 @@ export interface SessionMetadata {
     error: string;
     failed: boolean;
   };
+  taskNotificationRequeryEpisode?: {
+    episode: number;
+    attempts: number;
+    escalation: 'none' | 'pending' | 'done';
+    closed: boolean;
+  };
   executionProjectPath?: string;
   pendingAutoCompactPercent?: number | null;
   messageCount: number;

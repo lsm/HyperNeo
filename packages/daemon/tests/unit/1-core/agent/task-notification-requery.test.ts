@@ -9,12 +9,20 @@ import {
   TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
   TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
   taskNotificationRequeryDelayMs,
+  type TaskNotificationRequeryEpisode,
 } from '../../../../src/lib/agent/task-notification-requery';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
+
+function openRequeryEpisode(
+  attempts: number,
+  escalation: TaskNotificationRequeryEpisode['escalation'] = 'none'
+): TaskNotificationRequeryEpisode {
+  return { episode: 1, attempts, escalation, closed: false };
+}
 
 const ZERO_USAGE = {
   input_tokens: 0,
@@ -319,7 +327,16 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     const db = {
       getDatabase: mock(() => ({ prepare: mock(() => ({ get: mock(() => null) })) })),
       getSession: mock(() => session),
-      updateSession: mock(() => {}),
+      updateSession: mock(async (_id: string, updates: { metadata?: unknown }) => {
+        const partial = updates.metadata as Record<string, unknown> | undefined;
+        if (!partial) return;
+        const merged = { ...(session.metadata ?? {}) } as Record<string, unknown>;
+        for (const [key, value] of Object.entries(partial)) {
+          if (value === undefined || value === null) delete merged[key];
+          else merged[key] = value;
+        }
+        session.metadata = merged as unknown as Session['metadata'];
+      }),
       saveSDKMessage: mock(() => true),
       getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
       getUserMessageIdsByStatus: mock(() => []),
@@ -433,6 +450,36 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(needsAttentionPublishes()).toBe(0);
   });
 
+  it('five failures escalate once, and later failures still hold after a restart', async () => {
+    for (let i = 0; i < TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS + 1; i++) {
+      await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+      await settleRequery();
+    }
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(agentSession.getSessionData().metadata.taskNotificationRequeryEpisode).toMatchObject({
+      attempts: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+      escalation: 'done',
+    });
+
+    const restarted = createRequerySession({
+      context: { spaceId: 'space-1', taskId: 'task-1' },
+      metadata: { ...agentSession.getSessionData().metadata },
+    });
+    try {
+      armLiveQuery(restarted);
+      await restarted.onSDKMessage(buildHollowTaskNotificationResult());
+      await settleRequery();
+      expect(continueCalls()).toBe(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
+      expect(needsAttentionPublishes()).toBe(1);
+    } finally {
+      (
+        restarted as unknown as { clearTaskNotificationRequeryTimer: () => void }
+      ).clearTaskNotificationRequeryTimer();
+      restarted.queryPromise = null;
+      restarted.messageQueue.stop();
+    }
+  });
+
   it('escalates to the needs-attention channel when the budget is exhausted', async () => {
     for (let i = 0; i < TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS; i++) {
       await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
@@ -494,8 +541,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   it('preserves retry backoff when a hollow result is deferred to session_state_changed: idle', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '50';
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = 2;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(2);
 
     await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
     await agentSession.stateManager.setProcessing('prior-turn', 'initializing');
@@ -531,8 +580,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   it('drops a pending continuation when the query is replaced before idle', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '1';
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = 2;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(2);
 
     await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
     await agentSession.stateManager.setProcessing('prior-turn', 'initializing');
@@ -549,9 +600,12 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await settleRequery();
     expect(continueCalls()).toBe(0);
     expect(
-      (agentSession as unknown as { taskNotificationRequeryAttempts: number })
-        .taskNotificationRequeryAttempts
-    ).toBe(0);
+      (
+        agentSession as unknown as {
+          taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+        }
+      ).taskNotificationRequeryEpisode
+    ).toMatchObject({ attempts: 2, closed: false });
   });
 
   it('ignores delivery jobs whose messages were already consumed when detecting follow-ups', async () => {
@@ -695,8 +749,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   it('escalates instead of exceeding the budget when a held episode is flushed', async () => {
     activeDeliveryUuids.add('queued-follow-up-uuid');
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -822,8 +878,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     agentSession.queryPromise = null;
     agentSession.messageQueue.stop();
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -952,8 +1010,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   it('surfaces a session error when the needs-attention event has no subscriber', async () => {
     publishSpy.mockImplementation(async () => ({ delivered: 0, failures: [] }));
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -1056,8 +1116,11 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(0);
     expect(needsAttentionPublishes()).toBe(0);
     expect(
-      (agentSession as unknown as { taskNotificationRequeryAttempts: number })
-        .taskNotificationRequeryAttempts
+      (
+        agentSession as unknown as {
+          taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+        }
+      ).taskNotificationRequeryEpisode?.attempts
     ).toBe(0);
   });
 
@@ -1069,8 +1132,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       return { delivered: 1, failures: [] };
     });
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -1129,8 +1194,11 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(
-      (agentSession as unknown as { taskNotificationRequeryAttempts: number })
-        .taskNotificationRequeryAttempts
+      (
+        agentSession as unknown as {
+          taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+        }
+      ).taskNotificationRequeryEpisode?.attempts
     ).toBe(1);
 
     agentSession.queryPromise = null;
@@ -1142,16 +1210,21 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     ).handleCircuitBreakerTrip('error loop', 'too many consecutive errors');
 
     expect(
-      (agentSession as unknown as { taskNotificationRequeryAttempts: number })
-        .taskNotificationRequeryAttempts
-    ).toBe(0);
+      (
+        agentSession as unknown as {
+          taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+        }
+      ).taskNotificationRequeryEpisode
+    ).toMatchObject({ closed: false });
   });
 
   it('re-parks a scheduled retry when the SDK turns busy during the backoff', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = 1;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(1);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -1218,8 +1291,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       holder.resolve = resolve;
     });
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -1235,8 +1310,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   it('latches the SDK-busy protocol before awaiting message subscribers', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = 1;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(1);
     const originalHandler = (agentSession.messageHandler as unknown as { handleMessage: unknown })
       .handleMessage;
     const holder: { release?: () => void } = {};
@@ -1283,8 +1360,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       }
     );
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -1303,8 +1382,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       }
     ).lifecycleManager = { ensureQueryStarted };
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = 1;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(1);
     const holder: { resolve?: () => void } = {};
     agentSession.queryPromise = new Promise<void>((resolve) => {
       holder.resolve = resolve;
@@ -1355,8 +1436,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       return { delivered: 1, failures: [] };
     });
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -1375,8 +1458,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       return { delivered: 1, failures: [] };
     });
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -1465,8 +1550,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       return originalHandleError(...args);
     };
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -1496,9 +1583,12 @@ describe('AgentSession task-notification requery (incident replay)', () => {
 
     await agentSession.cleanup();
     expect(
-      (agentSession as unknown as { taskNotificationRequeryAttempts: number })
-        .taskNotificationRequeryAttempts
-    ).toBe(0);
+      (
+        agentSession as unknown as {
+          taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+        }
+      ).taskNotificationRequeryEpisode
+    ).toMatchObject({ closed: false });
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(needsAttentionPublishes()).toBe(0);
@@ -1606,8 +1696,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       agentSession as unknown as { incrementQueryGeneration: () => number }
     ).incrementQueryGeneration();
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = 1;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(1);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -1649,8 +1741,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       }
     );
     (
-      agentSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      agentSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -1731,8 +1825,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(0);
 
     (
-      detachedSession as unknown as { taskNotificationRequeryAttempts: number }
-    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+      detachedSession as unknown as {
+        taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+      }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
     await detachedSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(

@@ -272,10 +272,12 @@ import {
 } from './session-config-handler.ts';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
 import {
+  advanceTaskNotificationRequeryEpisode,
   buildTaskNotificationRequeryEscalationEvent,
-  resolveTaskNotificationRequery,
   TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
-  TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+  type TaskNotificationRequeryDecision,
+  type TaskNotificationRequeryEpisode,
+  type TaskNotificationRequerySignal,
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
 
@@ -450,7 +452,8 @@ export class AgentSession
 
   private lastTerminalError: { error: StructuredError; at: number } | null = null;
 
-  private taskNotificationRequeryAttempts = 0;
+  private taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null = null;
+  private taskNotificationRequeryEpisodeWrites: Promise<void> = Promise.resolve();
   private taskNotificationRequeryExhausted = false;
   private taskNotificationRequeryTimer: ReturnType<typeof setTimeout> | null = null;
   private taskNotificationRequeryPending = false;
@@ -569,6 +572,59 @@ export class AgentSession
           this.outstandingToolUseIds.delete(data.toolUseId);
         },
         { subscriberName: 'AgentSession.stallWatchdogToolResult' }
+      )
+    );
+
+    this.taskNotificationRequeryEpisode = session.metadata.taskNotificationRequeryEpisode ?? null;
+    this.taskNotificationRequeryExhausted =
+      this.taskNotificationRequeryEpisode !== null &&
+      !this.taskNotificationRequeryEpisode.closed &&
+      this.taskNotificationRequeryEpisode.escalation !== 'none';
+    this.taskNotificationRequeryEpisodeToken = this.taskNotificationRequeryEpisode?.episode ?? 0;
+
+    const closesRequeryEpisodeForTask = (data: { taskId?: string }) => {
+      if (
+        data.taskId &&
+        this.session.context?.taskId &&
+        data.taskId !== this.session.context.taskId
+      )
+        return;
+      this.closeTaskNotificationRequeryEpisode();
+    };
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe('space.task.unblocked', closesRequeryEpisodeForTask, {
+        subscriberName: 'AgentSession.requeryEpisodeTaskUnblocked',
+      })
+    );
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe('space.task.completed', closesRequeryEpisodeForTask, {
+        subscriberName: 'AgentSession.requeryEpisodeTaskCompleted',
+      })
+    );
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe('space.task.failed', closesRequeryEpisodeForTask, {
+        subscriberName: 'AgentSession.requeryEpisodeTaskFailed',
+      })
+    );
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'space.workflowRun.reopened',
+        (data) => {
+          if (!this.session.context?.spaceId || data.spaceId !== this.session.context.spaceId)
+            return;
+          this.closeTaskNotificationRequeryEpisode();
+        },
+        { subscriberName: 'AgentSession.requeryEpisodeRunReopened' }
+      )
+    );
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'message.persisted',
+        (data) => {
+          if (data.sessionId !== this.session.id) return;
+          this.closeTaskNotificationRequeryEpisode();
+        },
+        { subscriberName: 'AgentSession.requeryEpisodeHumanRetry' }
       )
     );
     this.settingsManager = new SettingsManager(
@@ -747,6 +803,14 @@ export class AgentSession
     if (this.runtimeOptions.autoReplayPendingMessages ?? true) {
       this.scheduleInitialPendingMessageReplay();
       void this.reconcileStrandedDeliveries();
+    }
+
+    if (
+      this.taskNotificationRequeryEpisode &&
+      !this.taskNotificationRequeryEpisode.closed &&
+      this.taskNotificationRequeryEpisode.escalation === 'pending'
+    ) {
+      void this.escalateTaskNotificationRequeryExhaustion();
     }
 
     this.reconcilerProvisioned = this.runtimeOptions.autoReplayPendingMessages ?? true;
@@ -2228,13 +2292,8 @@ export class AgentSession
     ).parent_tool_use_id;
     if (parentToolUseId !== null && parentToolUseId !== undefined) return;
     this.taskNotificationRequeryContinueMessageId = null;
-    const decision = resolveTaskNotificationRequery({
-      message,
-      attempts: this.taskNotificationRequeryAttempts,
-      exhausted: this.taskNotificationRequeryExhausted,
-      followUpQueued: this.hasQueuedFollowUpDelivery(),
-    });
-    if (decision.action === 'reset') {
+    const { decision } = this.advanceTaskNotificationRequery({ kind: 'result', message });
+    if (decision.action === 'reset' || decision.action === 'issue') {
       this.resetTaskNotificationRequery();
       return;
     }
@@ -2244,7 +2303,7 @@ export class AgentSession
         this.clearTaskNotificationRequeryTimer();
         this.taskNotificationRequeryPending = true;
         this.taskNotificationRequeryPendingDelayMs = taskNotificationRequeryDelayMs(
-          this.taskNotificationRequeryAttempts
+          this.taskNotificationRequeryEpisode?.attempts ?? 0
         );
         this.attachTaskNotificationRequerySettlementWatcher();
       }
@@ -2334,14 +2393,54 @@ export class AgentSession
     this.taskNotificationRequeryTimer = null;
   }
 
+  private persistTaskNotificationRequeryEpisode(
+    episode: TaskNotificationRequeryEpisode
+  ): Promise<void> {
+    this.taskNotificationRequeryEpisode = episode;
+    this.taskNotificationRequeryExhausted = !episode.closed && episode.escalation !== 'none';
+    this.session.metadata.taskNotificationRequeryEpisode = episode;
+    const write = this.taskNotificationRequeryEpisodeWrites.then(() =>
+      this.db
+        .updateSession(this.session.id, {
+          metadata: { taskNotificationRequeryEpisode: episode } as Session['metadata'],
+        })
+        .then(() => undefined)
+    );
+    this.taskNotificationRequeryEpisodeWrites = write.catch((error) => {
+      this.logger.warn(
+        `task-notification requery: failed to persist episode for session ${this.session.id}: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    });
+    return this.taskNotificationRequeryEpisodeWrites;
+  }
+
+  private advanceTaskNotificationRequery(signal: TaskNotificationRequerySignal): {
+    episode: TaskNotificationRequeryEpisode;
+    decision: TaskNotificationRequeryDecision;
+  } {
+    const prior = this.taskNotificationRequeryEpisode;
+    const advanced = advanceTaskNotificationRequeryEpisode(prior, signal, {
+      followUpQueued: signal.kind === 'result' ? this.hasQueuedFollowUpDelivery() : false,
+    });
+    if (advanced.decision.action !== 'reset' || (prior !== null && !prior.closed)) {
+      void this.persistTaskNotificationRequeryEpisode(advanced.episode);
+    }
+    return advanced;
+  }
+
+  private closeTaskNotificationRequeryEpisode(): void {
+    const prior = this.taskNotificationRequeryEpisode;
+    if (!prior || prior.closed) return;
+    void this.persistTaskNotificationRequeryEpisode({ ...prior, closed: true });
+  }
+
   resetTaskNotificationRequery(): void {
     this.clearTaskNotificationRequeryTimer();
     const continueMessageId = this.taskNotificationRequeryContinueMessageId;
     if (continueMessageId) {
       this.messageQueue.remove(continueMessageId);
     }
-    this.taskNotificationRequeryAttempts = 0;
-    this.taskNotificationRequeryExhausted = false;
     this.taskNotificationRequeryPending = false;
     this.taskNotificationRequeryPendingDelayMs = null;
     this.taskNotificationRequeryInterruptionGeneration = null;
@@ -2431,12 +2530,6 @@ export class AgentSession
       this.scheduleTaskNotificationRequery(1000);
       return;
     }
-    if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
-      this.clearTaskNotificationRequeryTimer();
-      this.taskNotificationRequeryExhausted = true;
-      void this.escalateTaskNotificationRequeryExhaustion();
-      return;
-    }
     if (!this.messageQueue.isRunning() || !this.queryPromise) {
       if (!this.messageQueue.isRunning() && this.queryPromise) {
         this.scheduleTaskNotificationRequery(200);
@@ -2490,18 +2583,26 @@ export class AgentSession
           `task-notification requery: could not restart the dead query for session ` +
             `${this.session.id}: ${error instanceof Error ? error.message : String(error)}`
         );
-        this.taskNotificationRequeryAttempts += 1;
         this.handleTaskNotificationRequeryFailure();
         return;
       }
     }
-    this.taskNotificationRequeryAttempts += 1;
+    const issueGate = this.advanceTaskNotificationRequery({ kind: 'attempt-issued' });
+    if (issueGate.decision.action === 'escalate') {
+      this.clearTaskNotificationRequeryTimer();
+      this.taskNotificationRequeryExhausted = true;
+      void this.escalateTaskNotificationRequeryExhaustion();
+      return;
+    }
+    if (issueGate.decision.action !== 'issue') {
+      return;
+    }
     this.taskNotificationRequeryPending = false;
     this.taskNotificationRequeryPendingDelayMs = null;
-    const attempt = this.taskNotificationRequeryAttempts;
+    const attempt = issueGate.episode.attempts;
     this.logger.warn(
       `task-notification requery: turn ended on a hollow task-notification result; ` +
-        `issuing bare-continue follow-up turn ${attempt}/${TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS} ` +
+        `issuing bare-continue follow-up turn ${attempt}/5 ` +
         `for session ${this.session.id}`
     );
     const continueMessageId = generateUUID();
@@ -2544,32 +2645,39 @@ export class AgentSession
     this.taskNotificationRequeryBusyInterruptGeneration = null;
     this.taskNotificationRequeryPending = true;
     this.taskNotificationRequeryPendingDelayMs = taskNotificationRequeryDelayMs(
-      this.taskNotificationRequeryAttempts
+      this.taskNotificationRequeryEpisode?.attempts ?? 0
     );
     this.flushPendingTaskNotificationRequery();
   }
 
   private handleTaskNotificationRequeryFailure(): void {
     if (this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()) return;
-    if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+    const { decision } = this.advanceTaskNotificationRequery({ kind: 'attempt-failed' });
+    if (decision.action === 'escalate') {
       this.taskNotificationRequeryExhausted = true;
       void this.escalateTaskNotificationRequeryExhaustion();
       return;
     }
-    this.scheduleTaskNotificationRequery(
-      taskNotificationRequeryDelayMs(this.taskNotificationRequeryAttempts)
-    );
+    if (decision.action === 'requery') {
+      this.scheduleTaskNotificationRequery(decision.delayMs);
+    }
   }
 
   private async escalateTaskNotificationRequeryExhaustion(): Promise<void> {
-    const attempts = this.taskNotificationRequeryAttempts;
+    const episode = this.taskNotificationRequeryEpisode;
+    if (!episode || episode.closed) return;
     const episodeToken = this.taskNotificationRequeryEpisodeToken;
+    if (episode.escalation === 'pending') {
+      await this.taskNotificationRequeryEpisodeWrites;
+    }
+    const attempts = episode.attempts;
     const event = buildTaskNotificationRequeryEscalationEvent({
       sessionId: this.session.id,
       spaceId: this.session.context?.spaceId,
       taskId: this.session.context?.taskId,
       workflowRunId: this.db.spaceSessions?.workflowRunIdForSession(this.session.id),
       attempts,
+      episode: episode.episode,
       timestamp: new Date().toISOString(),
     });
     if (!event) {
@@ -2579,6 +2687,7 @@ export class AgentSession
           'recoverable session error'
       );
       await this.surfaceTaskNotificationRequeryExhaustionError(attempts, episodeToken);
+      this.finishTaskNotificationRequeryEscalation(episode);
       return;
     }
     this.logger.warn(
@@ -2601,6 +2710,7 @@ export class AgentSession
         );
         await this.surfaceTaskNotificationRequeryExhaustionError(attempts, episodeToken);
       }
+      this.finishTaskNotificationRequeryEscalation(episode);
     } catch (error) {
       if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
       if (payload?.handledBySpaceService) {
@@ -2609,6 +2719,7 @@ export class AgentSession
             `${event.spaceId} despite a partial publish failure: ` +
             `${error instanceof Error ? error.message : String(error)}`
         );
+        this.finishTaskNotificationRequeryEscalation(episode);
         return;
       }
       this.logger.warn(
@@ -2616,6 +2727,17 @@ export class AgentSession
           `${error instanceof Error ? error.message : String(error)}`
       );
       await this.surfaceTaskNotificationRequeryExhaustionError(attempts, episodeToken);
+      this.finishTaskNotificationRequeryEscalation(episode);
+    }
+  }
+
+  private finishTaskNotificationRequeryEscalation(episode: TaskNotificationRequeryEpisode): void {
+    if (
+      this.taskNotificationRequeryEpisode === episode &&
+      episode.escalation === 'pending' &&
+      !episode.closed
+    ) {
+      void this.persistTaskNotificationRequeryEpisode({ ...episode, escalation: 'done' });
     }
   }
 

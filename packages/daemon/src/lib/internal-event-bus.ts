@@ -386,6 +386,7 @@ export interface SpaceWorkflowRunNeedsAttentionEvent {
   taskId: string;
   reason: string;
   retriesExhausted: number;
+  episode?: number;
   timestamp: string;
   handledBySpaceService?: boolean;
 }
