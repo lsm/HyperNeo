@@ -47,6 +47,7 @@ import {
 } from '../../../../src/lib/providers/provider-failure-store';
 import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider';
 import { COPILOT_ANTHROPIC_MODELS } from '../../../../src/lib/providers/anthropic-copilot/models';
+import { DeepSeekProvider } from '../../../../src/lib/providers/deepseek-provider';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 
 describe('Model Service', () => {
@@ -98,6 +99,39 @@ describe('Model Service', () => {
     resetProviderRegistry();
     resetProviderFactory();
     resetProviderFailureStore();
+  });
+
+  it('advertises no DeepSeek models when curation contains only a retired discovery ID', async () => {
+    const fetchImpl = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'deepseek-v4-pro', context_window: 262144 }],
+          })
+        )
+    ) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    const curated = [{ id: 'deepseek-flash' }];
+    provider.setCuratedModels(curated);
+    const registry = getProviderRegistry();
+    registry.register(provider);
+    registry.setCuratedModels(provider.id, curated);
+    const discovered = await provider.getModels();
+    expect(discovered.map((model) => model.id)).toEqual(['deepseek-v4-pro']);
+    setModelsCache(new Map([['global', discovered]]));
+    expect(getAvailableModels('global').filter((model) => model.provider === provider.id)).toEqual(
+      []
+    );
+    const { refreshModels } = await import('../../../../src/lib/model-service');
+    await refreshModels(undefined, { forceRemote: true });
+    expect(getAvailableModels('global').filter((model) => model.provider === provider.id)).toEqual(
+      []
+    );
+    registry.setCuratedModels(provider.id, [{ id: 'deepseek-pro' }]);
+    await refreshModels(undefined, { forceRemote: true });
+    expect(
+      getAvailableModels('global').find((model) => model.id === 'deepseek-v4-pro')?.contextWindow
+    ).toBe(262144);
   });
 
   describe('stranded-provider retry tracking', () => {

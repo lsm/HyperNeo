@@ -148,29 +148,33 @@ export class DeepSeekProvider implements Provider {
     if (!apiKey) return this.mergeCuratedModels(DeepSeekProvider.MODELS);
     let models: ModelInfo[];
     try {
-      const discovered = await this.listRemoteModels();
-      models = mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered);
+      const discovered = await this.listRemoteModels({ discoveryOnly: true });
+      models = discovered.length ? discovered : this.mergeCuratedModels(DeepSeekProvider.MODELS);
     } catch {
-      models = DeepSeekProvider.MODELS;
+      models = this.mergeCuratedModels(DeepSeekProvider.MODELS);
     }
     await this.verifyCredentials(
       DeepSeekProvider.BASE_URL,
       apiKey,
       this.getModelForTier('opus') ?? DeepSeekProvider.DEFAULT_MODEL
     );
-    return this.mergeCuratedModels(models);
+    return models;
   }
 
   setCuratedModels(models: CuratedModel[] | undefined): void {
     this.curatedModels = models;
   }
 
+  isCuratedModelVisible(modelId: string): boolean {
+    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
+    return !discovered?.length || discovered.some((model) => model.id === modelId);
+  }
+
   getCachedModels(): ModelInfo[] | null {
     const discovered = this.discoveryCache.get(this.discoveryFingerprint());
-    if (!discovered?.length && !this.curatedModels?.length) return null;
-    return this.mergeCuratedModels(
-      mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered ?? [])
-    );
+    if (discovered?.length) return discovered;
+    if (!this.curatedModels?.length) return null;
+    return this.mergeCuratedModels(DeepSeekProvider.MODELS);
   }
 
   private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
@@ -213,11 +217,19 @@ export class DeepSeekProvider implements Provider {
       this.clearModelCache();
       throw new Error('DeepSeek credentials changed during model discovery');
     }
-    const discovered = models
-      .filter((model) => this.ownsModel(model.id))
-      .map((model) => this.toRemoteModelInfo(model));
+    const remoteIds = new Set(models.map((model) => model.id.toLowerCase()));
+    const discovered = mergeDiscoveredModels(
+      [],
+      models
+        .filter((model) => this.ownsModel(model.id))
+        .filter((model) => {
+          const resolved = DeepSeekProvider.resolveModelId(model.id)!.toLowerCase();
+          return model.id.toLowerCase() === resolved || !remoteIds.has(resolved);
+        })
+        .map((model) => this.toRemoteModelInfo(model))
+    );
     this.discoveryCache.set(fingerprint, discovered);
-    if (options.discoveryOnly) return discovered;
+    if (options.discoveryOnly || discovered.length) return discovered;
     return this.mergeCuratedModels(discovered);
   }
 
