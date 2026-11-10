@@ -334,7 +334,8 @@ describe('immutable human settings proposals', () => {
   test('agents cannot answer; legacy/unbound human yes has no settings effect', async () => {
     const questionId = await propose();
     expect(await invoke('neo.question.answer', { questionId, answer: 'yes' })).toMatchObject({
-      value: { ok: false },
+      kind: 'failed',
+      code: 'forbidden',
     });
     const legacy = service.todos.askQuestion(
       'legacy',

@@ -441,7 +441,7 @@ describe('neo.preferences.set', () => {
         { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'off' },
         { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
       )
-    ).toMatchObject({ value: { ok: false, reason: 'This action needs the user.' } });
+    ).toMatchObject({ kind: 'failed', code: 'forbidden' });
     expect(
       await invoke('neo.preferences.set', {
         model: 'gone',

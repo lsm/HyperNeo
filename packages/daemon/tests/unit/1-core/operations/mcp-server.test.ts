@@ -58,7 +58,7 @@ describe('operation MCP server', () => {
           {
             name: 'operations.list',
             description:
-              'List the operations meant for this session. Pass { all: true } for the full catalog the session tool profile advertises and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
+              'List operations available to this caller and advertised by the session tool profile. Pass { all: true } to include eligible operations omitted from the default list. Pass { query } with keywords to keep only operations whose name or description contains every word. Caller and pack restrictions apply even with all: true.',
           },
           {
             name: 'operations.describe',
@@ -105,6 +105,38 @@ describe('operation MCP server', () => {
       expect(advertised).toContain('start?');
       expect(advertised).not.toContain('neo.todo.close');
     }
+  });
+
+  test('omits disabled pack operations from the Neo door briefing', () => {
+    let enabled: string[] = [];
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'neo.github.read',
+        description: 'Read a GitHub reference',
+        inputSchema: z.object({ url: z.string() }),
+        resultSchema: z.unknown(),
+        pack: { id: 'coding', enabledIds: () => enabled },
+        execute: async () => null,
+      }),
+      defineOperation({
+        name: 'neo.todo.add',
+        description: 'Add a todo',
+        inputSchema: z.object({ instruction: z.string() }),
+        resultSchema: z.unknown(),
+        execute: async () => null,
+      }),
+    ]);
+    const briefing = () =>
+      operationInvokeTool(
+        createOperationMcpServer(registry, () => ({ role: 'neo' }), undefined, 'neo')
+      ).description;
+    expect(briefing()).not.toContain('neo.github.read');
+    expect(briefing()).toContain('neo.todo.add');
+    enabled = ['coding'];
+    expect(briefing()).toContain('neo.github.read');
+    expect(briefing()).toContain('neo.todo.add');
+    enabled = [];
+    expect(briefing()).not.toContain('neo.github.read');
   });
 
   test('invokes the canonical implementation with a server-bound caller', async () => {

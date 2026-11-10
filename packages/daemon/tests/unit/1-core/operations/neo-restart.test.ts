@@ -68,7 +68,7 @@ describe('neo.restart operation', () => {
           {},
           { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
         )
-      ).toMatchObject({ value: { ok: false, reason: 'This action needs the user.' } });
+      ).toMatchObject({ kind: 'failed', code: 'forbidden' });
     } finally {
       service.dispose();
       db.close();

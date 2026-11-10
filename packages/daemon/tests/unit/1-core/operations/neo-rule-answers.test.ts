@@ -235,7 +235,8 @@ describe('human-approved standing rules', () => {
       value: { ok: false },
     });
     expect(await invoke('neo.question.answer', { questionId: id, answer: 'yes' })).toMatchObject({
-      value: { ok: false },
+      kind: 'failed',
+      code: 'forbidden',
     });
     expect(
       await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)

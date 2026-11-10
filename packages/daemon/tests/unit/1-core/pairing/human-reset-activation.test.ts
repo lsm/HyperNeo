@@ -183,10 +183,14 @@ describe('public human reset DB worker activation', () => {
       { source: 'rpc', principal: 'local', device: { deviceId: phone.device.id, kind: 'human' } },
       { source: 'mcp', role: 'neo', sessionId: 'neo:synthetic' },
     ] as OperationCaller[])
-      expect(await reset(caller)).toMatchObject({
-        kind: 'completed',
-        value: { ok: false, reason: expect.stringContaining('local_cli_only:') },
-      });
+      expect(await reset(caller)).toMatchObject(
+        caller.role === 'neo'
+          ? { kind: 'failed', code: 'forbidden' }
+          : {
+              kind: 'completed',
+              value: { ok: false, reason: expect.stringContaining('local_cli_only:') },
+            }
+      );
     expect(repo.isActiveDevice(phone.device.id)).toBe(true);
     expect(gateway.writes).toBe(0);
     expect(revoked).toEqual([]);

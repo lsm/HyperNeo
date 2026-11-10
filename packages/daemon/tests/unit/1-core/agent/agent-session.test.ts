@@ -43,6 +43,7 @@ import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
+import { operationInvokeTool } from '../../../helpers/operation-mcp';
 import type { Database } from '../../../../src/storage/database';
 import {
   createTestDb,
@@ -7471,6 +7472,37 @@ describe('AgentSession', () => {
 
       expect(agentSession.getOperationsCapabilityContribution().briefing).toContain(
         'shows this session 1 operation across 1 area: task.'
+      );
+    });
+
+    it('refreshes the cached Neo briefing after pack toggles in the same session', () => {
+      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+      const agentSession = new AgentSession(
+        createTestSession('session-op-pack-toggle'),
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+      let enabled = ['coding'];
+      const registry = createOperationRegistry([
+        {
+          ...stubOperation('neo.github.read'),
+          pack: { id: 'coding', enabledIds: () => enabled },
+        },
+      ]);
+      agentSession.setOperationRegistryProvider(() => registry);
+      agentSession.setCallerScopeResolver(() => ({ role: 'neo' }));
+      const initial = agentSession.getOperationMcpServer();
+      expect(operationInvokeTool(initial).description).toContain('neo.github.read');
+      expect(agentSession.getOperationMcpServer()).toBe(initial);
+      enabled = [];
+      const disabled = agentSession.getOperationMcpServer();
+      expect(operationInvokeTool(disabled).description).not.toContain('neo.github.read');
+      expect(agentSession.getOperationMcpServer()).toBe(disabled);
+      enabled = ['coding'];
+      expect(operationInvokeTool(agentSession.getOperationMcpServer()).description).toContain(
+        'neo.github.read'
       );
     });
 
