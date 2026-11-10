@@ -92,7 +92,9 @@ try {
   const pro = reply.models.find((model) => model.id === 'deepseek-v4-pro');
   assert.equal(pro?.display_name, 'Synthetic Updated Pro');
   assert.equal(pro.contextWindow, 262144);
-  assert(reply.models.some((model) => model.id === 'deepseek-v4-flash'));
+  assert(!reply.models.some((model) => model.id === 'deepseek-v4-flash'));
+  assert(!provider.getCachedModels()?.some((model) => model.id === 'deepseek-v4-flash'));
+  assert.equal(reply.models.length, 2);
   assert.equal(provider.getModelForTier('opus'), 'deepseek-v4-pro');
   assert.equal(provider.getModelForTier('sonnet'), 'deepseek-future');
   assert.equal(
@@ -113,5 +115,5 @@ try {
   writeFileSync(join(run, 'evidence/deepseek-discovery.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(
-  'PASS DeepSeek remote metadata, discovered tiers, fallback aliases and conservative vision'
+  'PASS authoritative DeepSeek catalog, remote metadata, discovered tiers and conservative vision'
 );

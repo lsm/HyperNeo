@@ -14,11 +14,7 @@ import type {
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 import { fetchRemoteModelList, type RemoteModel } from './shared/model-list.js';
-import {
-  mergeDiscoveredModels,
-  ProviderDiscoveryCache,
-  providerDiscoveryFingerprint,
-} from './shared/discovery-cache.js';
+import { ProviderDiscoveryCache, providerDiscoveryFingerprint } from './shared/discovery-cache.js';
 import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 export class DeepSeekProvider implements Provider {
@@ -148,17 +144,17 @@ export class DeepSeekProvider implements Provider {
     if (!apiKey) return this.mergeCuratedModels(DeepSeekProvider.MODELS);
     let models: ModelInfo[];
     try {
-      const discovered = await this.listRemoteModels();
-      models = mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered);
+      const discovered = await this.listRemoteModels({ discoveryOnly: true });
+      models = discovered.length ? discovered : this.mergeCuratedModels(DeepSeekProvider.MODELS);
     } catch {
-      models = DeepSeekProvider.MODELS;
+      models = this.mergeCuratedModels(DeepSeekProvider.MODELS);
     }
     await this.verifyCredentials(
       DeepSeekProvider.BASE_URL,
       apiKey,
       this.getModelForTier('opus') ?? DeepSeekProvider.DEFAULT_MODEL
     );
-    return this.mergeCuratedModels(models);
+    return models;
   }
 
   setCuratedModels(models: CuratedModel[] | undefined): void {
@@ -167,10 +163,9 @@ export class DeepSeekProvider implements Provider {
 
   getCachedModels(): ModelInfo[] | null {
     const discovered = this.discoveryCache.get(this.discoveryFingerprint());
-    if (!discovered?.length && !this.curatedModels?.length) return null;
-    return this.mergeCuratedModels(
-      mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered ?? [])
-    );
+    if (discovered?.length) return discovered;
+    if (!this.curatedModels?.length) return null;
+    return this.mergeCuratedModels(DeepSeekProvider.MODELS);
   }
 
   private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
@@ -217,7 +212,7 @@ export class DeepSeekProvider implements Provider {
       .filter((model) => this.ownsModel(model.id))
       .map((model) => this.toRemoteModelInfo(model));
     this.discoveryCache.set(fingerprint, discovered);
-    if (options.discoveryOnly) return discovered;
+    if (options.discoveryOnly || discovered.length) return discovered;
     return this.mergeCuratedModels(discovered);
   }
 

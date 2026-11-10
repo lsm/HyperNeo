@@ -33,7 +33,7 @@ describe('DeepSeekProvider', () => {
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.deepseek.com/models');
   });
 
-  it('prefers discovered names and context while filling missing fallback IDs', async () => {
+  it('uses nonempty discovery as the live and cached catalog', async () => {
     const fetchImpl = mock(
       async (url: string | URL | Request) =>
         new Response(
@@ -50,6 +50,7 @@ describe('DeepSeekProvider', () => {
         )
     ) as unknown as typeof fetch;
     const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    provider.setCuratedModels([{ id: 'deepseek-flash' }]);
     const models = await provider.getModels();
     expect(models.filter((model) => model.id === 'deepseek-v4-pro')).toHaveLength(1);
     expect(models.find((model) => model.id === 'deepseek-v4-pro')).toMatchObject({
@@ -60,8 +61,9 @@ describe('DeepSeekProvider', () => {
       name: 'Next Flash',
       contextWindow: 524288,
     });
-    expect(models.find((model) => model.id === 'deepseek-v4-flash')).toEqual(
-      DeepSeekProvider.MODELS[1]
+    expect(models.some((model) => model.id === 'deepseek-v4-flash')).toBe(false);
+    expect(provider.getCachedModels()?.some((model) => model.id === 'deepseek-v4-flash')).toBe(
+      false
     );
     expect(
       provider.getCachedModels()?.find((model) => model.id === 'deepseek-v4-pro')
@@ -73,6 +75,21 @@ describe('DeepSeekProvider', () => {
       '262144'
     );
     expect(provider.capabilities.vision).toBe(false);
+  });
+
+  it('excludes missing static IDs from cached discovery even when curated', async () => {
+    const fetchImpl = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'deepseek-v4-pro' }],
+          })
+        )
+    ) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    provider.setCuratedModels([{ id: 'deepseek-flash' }]);
+    await provider.listRemoteModels({ discoveryOnly: true });
+    expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['deepseek-v4-pro']);
   });
 
   it('probes a discovered model instead of requiring a retired fallback', async () => {
@@ -99,8 +116,18 @@ describe('DeepSeekProvider', () => {
     ) as unknown as typeof fetch;
     const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
     expect(await provider.getModels()).toEqual(DeepSeekProvider.MODELS);
+    provider.setCuratedModels([{ id: 'deepseek-pro' }]);
+    expect(provider.getCachedModels()).toEqual(DeepSeekProvider.MODELS);
     expect(provider.getModelForTier('opus')).toBe('deepseek-v4-pro');
     expect(provider.getModelForTier('haiku')).toBe('deepseek-v4-flash');
+  });
+
+  it('uses static fallback entries after empty discovery in live and cached catalogs', async () => {
+    const fetchImpl = mock(async () => new Response('{"data":[]}')) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    expect(await provider.getModels()).toEqual(DeepSeekProvider.MODELS);
+    provider.setCuratedModels([{ id: 'deepseek-pro' }]);
+    expect(provider.getCachedModels()).toEqual(DeepSeekProvider.MODELS);
   });
 
   it('selects tiers from discovery by ID or name without selecting fallback entries', async () => {
@@ -309,19 +336,19 @@ describe('DeepSeekProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps curated synthesis across forced discovery refreshes', async () => {
+    it('keeps nonempty forced discovery authoritative over curated fallback IDs', async () => {
       process.env.DEEPSEEK_API_KEY = 'test-key';
       const fetchImpl = installModelListFetch(
         async () =>
           new Response(JSON.stringify({ data: [{ id: 'deepseek-v4-pro' }] }), { status: 200 })
       );
       const provider = new DeepSeekProvider(process.env);
-      provider.setCuratedModels([{ id: 'deepseek-v5', name: 'DeepSeek V5' }]);
+      provider.setCuratedModels([{ id: 'deepseek-flash' }]);
 
       await provider.listRemoteModels();
       const forced = await provider.listRemoteModels({ force: true });
 
-      expect(forced.map((m) => m.id)).toEqual(['deepseek-v4-pro', 'deepseek-v5']);
+      expect(forced.map((m) => m.id)).toEqual(['deepseek-v4-pro']);
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 
