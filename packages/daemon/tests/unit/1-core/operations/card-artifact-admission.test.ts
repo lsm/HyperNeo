@@ -51,3 +51,16 @@ test('checks mixed saved and published handoffs against verified local bytes', a
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('withholds registered video from publication and card attachment admission', async () => {
+  const video = {
+    daemonId: 'd',
+    artifactId: 'video',
+    title: 'Video',
+    kind: 'video' as const,
+    byteLength: 24,
+  };
+  const caller = { source: 'mcp' as const, sessionId: 'neo', role: 'neo' as const };
+  const facts = await readCardArtifactFacts([video], caller, () => video);
+  expect(unverifiedCardArtifact([video], facts)).toEqual(video);
+});

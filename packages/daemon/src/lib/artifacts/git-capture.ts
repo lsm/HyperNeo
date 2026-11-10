@@ -1,17 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { VIDEO_MAX_BYTES, videoExtension } from '@hyperneo/shared/types/video-container';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
-import { artifactFileRowWrites } from '../../storage/repositories/artifact-file-row-write.ts';
 import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
-import type { ArtifactContext } from './file-policy.ts';
-import { loadRegistrationBinding } from './registration-binding.ts';
+import { artifactFileRowWrites } from '../../storage/repositories/artifact-file-row-write.ts';
+import type { Database } from '../../storage/sqlite-compat.ts';
 import { artifactCaptureOwner } from './capture-owner.ts';
-import { storedKind } from './stored-kind.ts';
+import type { ArtifactContext } from './file-policy.ts';
 import { readBoundGitBlob } from './git-blob.ts';
+import { loadRegistrationBinding } from './registration-binding.ts';
+import { storedKind } from './stored-kind.ts';
 
 type Plan = { repository: string; sha: string; path: string; context: ArtifactContext };
 const lanes = new WeakMap<Database, Promise<unknown>>();
@@ -37,6 +38,13 @@ export function captureGitArtifact(
       (await current()) &&
       JSON.stringify(loadRegistrationBinding(db, repo.daemonId, plan.context, home)) ===
         JSON.stringify(binding);
+    if (videoExtension(plan.path) && blob.bytes.length > VIDEO_MAX_BYTES)
+      return {
+        accepted: false as const,
+        reason: 'size_limit' as const,
+        actualBytes: blob.bytes.length,
+        limitBytes: VIDEO_MAX_BYTES,
+      };
     const snapshot = await (await artifactCaptureOwner(db, data)).capture(blob.bytes);
     if (!snapshot.accepted) return snapshot;
     if (snapshot.sha256 !== blob.sha256) return unavailable();

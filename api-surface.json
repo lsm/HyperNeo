@@ -4206,7 +4206,8 @@
                           "image",
                           "json",
                           "log",
-                          "text"
+                          "text",
+                          "video"
                         ],
                         "type": "string"
                       },
@@ -4554,7 +4555,8 @@
                         "image",
                         "json",
                         "log",
-                        "text"
+                        "text",
+                        "video"
                       ],
                       "type": "string"
                     },
@@ -4967,7 +4969,8 @@
                       "image",
                       "json",
                       "log",
-                      "text"
+                      "text",
+                      "video"
                     ],
                     "type": "string"
                   },
@@ -20166,7 +20169,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -20750,7 +20754,8 @@
                                         "image",
                                         "json",
                                         "log",
-                                        "text"
+                                        "text",
+                                        "video"
                                       ],
                                       "type": "string"
                                     },
@@ -21170,7 +21175,8 @@
                                     "image",
                                     "json",
                                     "log",
-                                    "text"
+                                    "text",
+                                    "video"
                                   ],
                                   "type": "string"
                                 },
@@ -22058,7 +22064,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -22590,7 +22597,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -23144,7 +23152,8 @@
                                       "image",
                                       "json",
                                       "log",
-                                      "text"
+                                      "text",
+                                      "video"
                                     ],
                                     "type": "string"
                                   },
@@ -23564,7 +23573,8 @@
                                   "image",
                                   "json",
                                   "log",
-                                  "text"
+                                  "text",
+                                  "video"
                                 ],
                                 "type": "string"
                               },
@@ -24251,7 +24261,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -24783,7 +24794,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -25687,7 +25699,8 @@
                       "image",
                       "json",
                       "log",
-                      "text"
+                      "text",
+                      "video"
                     ],
                     "type": "string"
                   },
@@ -27328,7 +27341,8 @@
                                           "image",
                                           "json",
                                           "log",
-                                          "text"
+                                          "text",
+                                          "video"
                                         ],
                                         "type": "string"
                                       },
@@ -30146,7 +30160,8 @@
                                         "image",
                                         "json",
                                         "log",
-                                        "text"
+                                        "text",
+                                        "video"
                                       ],
                                       "type": "string"
                                     },
@@ -30566,7 +30581,8 @@
                                     "image",
                                     "json",
                                     "log",
-                                    "text"
+                                    "text",
+                                    "video"
                                   ],
                                   "type": "string"
                                 },
@@ -32190,7 +32206,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -32671,7 +32688,8 @@
                         "image",
                         "json",
                         "log",
-                        "text"
+                        "text",
+                        "video"
                       ],
                       "type": "string"
                     },
@@ -32993,7 +33011,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -33578,7 +33597,8 @@
                                   "image",
                                   "json",
                                   "log",
-                                  "text"
+                                  "text",
+                                  "video"
                                 ],
                                 "type": "string"
                               },
@@ -34168,7 +34188,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -34508,7 +34529,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -34737,7 +34759,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -34970,7 +34993,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -35189,7 +35213,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -35460,7 +35485,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -36003,7 +36029,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -36382,7 +36409,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -36854,7 +36882,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -37278,7 +37307,8 @@
                                 "image",
                                 "json",
                                 "log",
-                                "text"
+                                "text",
+                                "video"
                               ],
                               "type": "string"
                             },
@@ -39295,7 +39325,8 @@
                                         "image",
                                         "json",
                                         "log",
-                                        "text"
+                                        "text",
+                                        "video"
                                       ],
                                       "type": "string"
                                     },
@@ -39715,7 +39746,8 @@
                                     "image",
                                     "json",
                                     "log",
-                                    "text"
+                                    "text",
+                                    "video"
                                   ],
                                   "type": "string"
                                 },
@@ -40808,7 +40840,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -41118,7 +41151,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -41509,7 +41543,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -41819,7 +41854,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -42193,7 +42229,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -42503,7 +42540,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -42877,7 +42915,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -43187,7 +43226,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -43544,7 +43584,8 @@
                     "image",
                     "json",
                     "log",
-                    "text"
+                    "text",
+                    "video"
                   ],
                   "type": "string"
                 },
@@ -43849,7 +43890,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -44159,7 +44201,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -44541,7 +44584,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -44851,7 +44895,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -45220,7 +45265,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -45530,7 +45576,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -45908,7 +45955,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -46218,7 +46266,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },
@@ -46587,7 +46636,8 @@
                             "image",
                             "json",
                             "log",
-                            "text"
+                            "text",
+                            "video"
                           ],
                           "type": "string"
                         },
@@ -46897,7 +46947,8 @@
                               "image",
                               "json",
                               "log",
-                              "text"
+                              "text",
+                              "video"
                             ],
                             "type": "string"
                           },

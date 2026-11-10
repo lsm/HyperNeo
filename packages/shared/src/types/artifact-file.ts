@@ -1,4 +1,12 @@
-export const ARTIFACT_KINDS = ['markdown', 'html', 'image', 'json', 'log', 'text'] as const;
+export const ARTIFACT_KINDS = [
+  'markdown',
+  'html',
+  'image',
+  'json',
+  'log',
+  'text',
+  'video',
+] as const;
 
 export const PREVIEWABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
   'md',
