@@ -188,6 +188,38 @@ describe('runPairQr', () => {
     expect(out.join('\n')).not.toContain('ABCDEFGH23');
   });
 
+  test.each(['', 'MRNV', '12345678', 'ABCDEFGH'])(
+    'malformed confirmation %j never consumes the pending request',
+    async (answer) => {
+      const calls: string[] = [];
+      const output: string[] = [];
+      const exit = await runPairQr(['--qr'], {
+        call: async (name) => {
+          calls.push(name);
+          if (name === 'device.pair.create')
+            return { ok: true, codeId: 'c1', code: 'ABCDEFGH23', expiresAt: 600_000 };
+          if (name === 'device.pair.pending')
+            return {
+              ok: true,
+              pending: [{ id: 'c1', requestedName: 'Phone', phoneConfirmed: true }],
+            };
+          return { ok: false, reason: 'wrong_fingerprint' };
+        },
+        tailscale: async (args) =>
+          args[0] === 'status'
+            ? { BackendState: 'Running', Self: { DNSName: 'mac.example.ts.net.' } }
+            : { TCP: { '443': {} } },
+        ask: async () => answer,
+        print: (text) => output.push(text),
+        now: () => 1,
+        sleep: async () => {},
+      });
+      expect(exit).toBe(1);
+      expect(calls).toEqual(['device.pair.create', 'device.pair.pending']);
+      expect(output.at(-1)).toContain('eight letters');
+    }
+  );
+
   test('refuses without a tailnet address and creates no code', async () => {
     const calls: string[] = [];
     const out: string[] = [];
