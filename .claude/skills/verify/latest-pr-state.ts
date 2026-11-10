@@ -27,6 +27,8 @@ copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 const path = join(run, 'data/daemon.db');
 const snapshot = (db: Database) => ({
   count: (db.prepare('SELECT count(*) AS count FROM session_external_events').get() as { count: number }).count,
+  githubCount: (db.prepare("SELECT count(*) AS count FROM session_external_events WHERE source = 'github'").get() as { count: number }).count,
+  subjectCount: (db.prepare("SELECT count(*) AS count FROM session_external_events WHERE source = 'github' AND lower(topic) >= ? AND lower(topic) < ?").get(`${subject}.`, `${subject}/`) as { count: number }).count,
   sha: createHash('sha256').update(JSON.stringify(db.prepare('SELECT rowid, * FROM session_external_events ORDER BY rowid').all())).digest('hex'),
 });
 const evidence: Record<string, unknown> = { mode };
@@ -77,6 +79,7 @@ try {
   evidence.migration = db.prepare("SELECT key FROM migration_markers WHERE key = 'migration_498'").all();
   assert(samples.every(({ plan }) => hasTopicSearches(plan)), 'both production legs must search source and indexed topic');
   assert(!hasTopicSearches(legacyPlan.map((row) => row.detail)));
+  assert.deepEqual(evidence.migration, [{ key: 'migration_498' }]);
   evidence.passed = true;
 } finally {
   await app?.cleanup();
