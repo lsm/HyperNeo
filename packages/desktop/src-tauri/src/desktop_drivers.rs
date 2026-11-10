@@ -1,3 +1,5 @@
+#[path = "desktop_driver_record.rs"]
+mod record;
 use cua_driver_sdk::{
     EmbeddedCuaDriverHost, EmbeddedDriverHostOptions, EmbeddedDriverHostState,
     EmbeddedEnvironmentVariable,
@@ -41,6 +43,7 @@ struct Drivers {
     binary: PathBuf,
     verification_path: String,
     starts_enabled: AtomicBool,
+    records: PathBuf,
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -125,6 +128,7 @@ impl Control {
             binary,
             verification_path,
             starts_enabled: AtomicBool::new(false),
+            records: directory,
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -238,6 +242,13 @@ impl Drivers {
                 json!({"count": slots.len(), "references": slots.get(&request.worker).map(Arc::strong_count).unwrap_or(0)}),
             );
         }
+        let directory = record::directory(&self.records, &request.worker)?;
+        if request.action == "stop" {
+            record::latch(&directory)?;
+        }
+        if request.action == "start" {
+            record::ensure_enabled(&directory)?;
+        }
         if !self.starts_enabled.load(Ordering::Relaxed) {
             let reason = "Driver control unavailable until worker authorization is enforced";
             return match request.action.as_str() {
@@ -265,6 +276,7 @@ impl Drivers {
         let result: Result<()> = async {
             match request.action.as_str() {
                 "start" => {
+                    let _starting = record::Starting::begin(&directory)?;
                     let app = self
                         .binary
                         .parent()
@@ -360,11 +372,39 @@ impl Drivers {
                             _directory: directory,
                         });
                     }
-                    worker.as_ref().unwrap().host.clone().start().await?;
+                    let host = worker.as_ref().unwrap().host.clone();
+                    host.clone().start().await?;
+                    let connection = host.connection().ok_or("Driver connection missing")?;
+                    if let Err(error) =
+                        record::publish(&directory, connection.pid, connection.socket_path.into())
+                            .and_then(|_| record::ensure_enabled(&directory))
+                    {
+                        host.stop().await?;
+                        return Err(error);
+                    }
                 }
                 "stop" => {
                     if let Some(worker) = worker.as_ref() {
-                        worker.host.clone().stop().await?;
+                        if let Some(connection) = worker.host.connection() {
+                            record::verify(
+                                &directory,
+                                connection.pid,
+                                std::path::Path::new(&connection.socket_path),
+                            )
+                            .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                            worker
+                                .host
+                                .clone()
+                                .stop()
+                                .await
+                                .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                            record::verify_gone(
+                                connection.pid,
+                                std::path::Path::new(&connection.socket_path),
+                            )?;
+                        } else {
+                            worker.host.clone().stop().await?;
+                        }
                     }
                     *worker = None;
                 }
@@ -391,6 +431,14 @@ impl Drivers {
         Ok(match worker.as_ref() {
             Some(worker) => {
                 let connection = worker.host.connection();
+                if let Some(connection) = &connection {
+                    record::ensure_enabled(&directory)?;
+                    record::verify(
+                        &directory,
+                        connection.pid,
+                        std::path::Path::new(&connection.socket_path),
+                    )?;
+                }
                 json!({"state": format!("{:?}", worker.host.state()).to_lowercase(), "pid": connection.as_ref().map(|c| c.pid), "socket": connection.map(|c| c.socket_path)})
             }
             None => json!({"state": "stopped", "pid": null, "socket": null}),

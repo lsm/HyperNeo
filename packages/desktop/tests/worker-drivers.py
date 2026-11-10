@@ -135,6 +135,98 @@ class WorkerDrivers(unittest.TestCase):
         print(json.dumps(dict(worker=worker, **result['result'])))
         return result['result']
 
+    def lifecycle(self, worker='worker-a'):
+        return self.root / 'desktop/workers' / worker
+
+    def test_publishes_protected_record_before_start_returns(self):
+        driver = self.start()
+        directory = self.lifecycle()
+        record = directory / 'driver.json'
+        saved = json.loads(record.read_text())
+        self.assertEqual(saved['pid'], driver['pid'])
+        self.assertEqual(saved['socket'], driver['socket'])
+        self.assertGreater(saved['startedAt']['seconds'], 0)
+        self.assertGreaterEqual(saved['startedAt']['microseconds'], 0)
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(record.stat().st_mode & 0o777, 0o600)
+        self.assertFalse((directory / 'starting').exists())
+
+    def test_stop_latch_survives_app_restart(self):
+        self.start()
+        self.assertTrue(self.call('stop')['ok'])
+        latch = self.lifecycle() / 'stopped'
+        self.assertEqual(latch.stat().st_mode & 0o777, 0o600)
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        self.process.stdout.close()
+        self.process.stderr.close()
+        self.process = subprocess.Popen(
+            [str(RUNNER), str(self.root), str(self.binary), self.path],
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
+        self.assertEqual(self.process.stdout.readline().strip(), 'ready')
+        result = self.call('start', workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        self.assertIn('stopped', result['error'])
+
+    def test_latch_is_persisted_while_start_is_in_flight(self):
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            starting = pool.submit(self.call, 'start', workDir=str(slow))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.sock.starting'))))
+            stopping = pool.submit(self.call, 'stop')
+            try:
+                wait_until(lambda: (self.lifecycle() / 'stopped').exists())
+                self.assertTrue((self.lifecycle() / 'starting').exists())
+            finally:
+                next(slow.glob('d-*/d.sock.starting')).with_suffix('.release').touch()
+            self.assertFalse(starting.result(timeout=15)['ok'])
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+        record = json.loads((self.lifecycle() / 'driver.json').read_text())
+        self.assertFalse(alive(record['pid']))
+        self.assertFalse(Path(record['socket']).exists())
+
+    def test_stop_refuses_changed_process_identity(self):
+        driver = self.start()
+        record = self.lifecycle() / 'driver.json'
+        saved = json.loads(record.read_text())
+        saved['startedAt']['microseconds'] += 1
+        record.write_text(json.dumps(saved))
+        self.assertFalse(self.call('status')['ok'])
+        result = self.call('stop')
+        self.assertFalse(result['ok'], result)
+        self.assertIn('stop_unconfirmed', result['error'])
+        self.assertTrue(alive(driver['pid']))
+        self.assertTrue((self.lifecycle() / 'stopped').exists())
+
+    def test_external_latch_survives_an_unresponsive_app(self):
+        driver = self.start()
+        self.process.send_signal(signal.SIGSTOP)
+        try:
+            record = json.loads((self.lifecycle() / 'driver.json').read_text())
+            self.assertEqual(record['pid'], driver['pid'])
+            with (self.lifecycle() / 'stopped').open('x') as latch:
+                os.fchmod(latch.fileno(), 0o600)
+                latch.flush()
+                os.fsync(latch.fileno())
+        finally:
+            self.process.send_signal(signal.SIGCONT)
+        self.assertFalse(self.call('start', workDir=str(self.work))['ok'])
+        self.assertTrue(self.call('stop')['ok'])
+        self.assertFalse(alive(driver['pid']))
+        self.assertFalse(Path(driver['socket']).exists())
+
+    def test_refuses_a_symlinked_record_directory(self):
+        outside = self.root / 'outside'
+        outside.mkdir()
+        (self.root / 'desktop/workers').symlink_to(outside, target_is_directory=True)
+        result = self.call('start', workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        self.assertFalse(list(outside.iterdir()))
+        self.assertFalse(list(self.work.glob('d-*')))
+
     def test_two_workers_get_two_drivers_and_two_sockets(self):
         first, second = self.start(), self.start('worker-b')
         self.assertNotEqual(first['pid'], second['pid'])
@@ -354,7 +446,7 @@ class WorkerDrivers(unittest.TestCase):
         self.assertTrue(self.call('stop')['ok'])
         self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
 
-    def test_queued_start_remains_tracked_after_stop(self):
+    def test_queued_start_is_refused_after_stop(self):
         queued = self.work / 'queued'
         queued.mkdir()
         hold = queued / 'hold-stop'
@@ -365,13 +457,13 @@ class WorkerDrivers(unittest.TestCase):
             stopping = pool.submit(self.call, 'stop')
             wait_until(lambda: bool(list(queued.glob('d-*/d.sock.stopping'))))
             starting = pool.submit(self.call, 'start', workDir=str(queued))
-            wait_until(lambda: self.call('fixture-slots')['result']['references'] >= 3)
+            wait_until(starting.done)
             hold.unlink()
             self.assertTrue(stopping.result(timeout=15)['ok'])
-            second = starting.result(timeout=15)['result']
-            self.pids.append(second['pid'])
-        self.assertNotEqual(first['pid'], second['pid'])
-        self.assertEqual(self.call('status')['result']['pid'], second['pid'])
+            second = starting.result(timeout=15)
+        self.assertFalse(second['ok'], second)
+        self.assertFalse(alive(first['pid']))
+        self.assertEqual(self.call('status')['result']['state'], 'stopped')
         self.assertTrue(self.call('stop')['ok'])
         self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
 
