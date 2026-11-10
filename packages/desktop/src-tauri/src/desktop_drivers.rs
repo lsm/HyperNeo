@@ -7,7 +7,10 @@ use std::{
     fs::{File, OpenOptions},
     os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::PathBuf,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex as StdMutex,
+    },
     time::Duration,
 };
 use tempfile::TempDir;
@@ -29,6 +32,7 @@ struct Drivers {
     workers: Mutex<BTreeMap<String, Arc<Mutex<Option<Worker>>>>>,
     binary: PathBuf,
     verification_path: String,
+    starts_enabled: AtomicBool,
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -44,7 +48,20 @@ pub(crate) struct Control {
     _lock: File,
 }
 impl Control {
-    pub(crate) async fn bind(
+    pub(crate) async fn setup(
+        base: PathBuf,
+        binary: PathBuf,
+        verification_path: String,
+    ) -> Option<Self> {
+        match Self::bind(base, binary, verification_path).await {
+            Ok(control) => control,
+            Err(error) => {
+                log::warn!("Desktop control unavailable: {error}");
+                None
+            }
+        }
+    }
+    async fn bind(
         base: PathBuf,
         binary: PathBuf,
         verification_path: String,
@@ -95,6 +112,7 @@ impl Control {
             workers: Mutex::new(BTreeMap::new()),
             binary,
             verification_path,
+            starts_enabled: AtomicBool::new(false),
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -138,6 +156,10 @@ impl Control {
             _lock: lock,
         }))
     }
+    #[cfg(test)]
+    pub(crate) fn enable_fixture_starts(&self) {
+        self.drivers.starts_enabled.store(true, Ordering::Relaxed);
+    }
     pub(crate) async fn shutdown(&self) {
         let task = self.task.lock().unwrap().take();
         if let Some(task) = task {
@@ -180,6 +202,16 @@ impl Drivers {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         {
             return Err("Invalid worker identifier".into());
+        }
+        if !self.starts_enabled.load(Ordering::Relaxed) {
+            let reason = "Driver control unavailable until worker authorization is enforced";
+            return match request.action.as_str() {
+                "start" => Err(reason.into()),
+                "status" | "stop" => Ok(
+                    json!({"state": "unavailable", "reason": reason, "pid": null, "socket": null}),
+                ),
+                _ => Err("Unknown Desktop control action".into()),
+            };
         }
         let slot = self
             .workers

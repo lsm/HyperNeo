@@ -189,12 +189,21 @@ class WorkerDrivers(unittest.TestCase):
         self.assertFalse(self.call('start', workDir=str(self.work))['ok'])
 
     def test_refuses_second_app_without_removing_endpoint(self):
-        second = subprocess.run(
+        second = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
             env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
-            capture_output=True, timeout=10)
-        self.assertEqual(second.returncode, 0)
-        self.assertTrue(self.call('status')['ok'])
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertTrue(select.select([second.stdout], [], [], 15)[0])
+            self.assertEqual(second.stdout.readline().strip(), 'ready')
+            self.assertTrue(self.call('status')['ok'])
+            second.send_signal(signal.SIGINT)
+            second.communicate(timeout=10)
+            self.assertEqual(second.returncode, 0)
+        finally:
+            if second.poll() is None:
+                second.kill()
+            second.communicate(timeout=10)
 
     def test_slow_worker_start_does_not_delay_another_workers_stop(self):
         driver = self.start()
@@ -235,6 +244,50 @@ class WorkerDrivers(unittest.TestCase):
             client.sendall(b'x' * 16384)
             self.assertEqual(client.recv(1), b'')
         self.assertTrue(self.call('status')['ok'])
+
+    def test_unapproved_same_user_cannot_start_or_get_driver_socket(self):
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        self.process.stdout.close()
+        self.process.stderr.close()
+        self.process = subprocess.Popen(
+            [str(RUNNER), str(self.root), str(self.binary), self.path, 'unapproved'],
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
+        self.assertEqual(self.process.stdout.readline().strip(), 'ready')
+        result = self.call('start', workDir=str(self.work))
+        if result.get('result', {}).get('pid'):
+            self.pids.append(result['result']['pid'])
+        self.assertFalse(result['ok'], result)
+        self.assertIn('authorization', result['error'])
+        self.assertFalse(self.call('start', workDir=str(self.work), fixtureEnabled=True)['ok'])
+        status = self.call('status')['result']
+        self.assertEqual(status['state'], 'unavailable')
+        self.assertIsNone(status['socket'])
+        self.assertIsNone(status['pid'])
+        self.assertFalse(list(self.work.glob('d-*')))
+
+    def test_bind_failure_allows_desktop_setup_to_continue(self):
+        base = self.root / ('long-data-directory-' + 'x' * 90)
+        base.mkdir()
+        self.assertGreaterEqual(len(str(base / 'desktop/control.sock').encode()), 104)
+        process = subprocess.Popen(
+            [str(RUNNER), str(base), str(self.binary), self.path, 'unapproved'],
+            env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test'},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertTrue(select.select([process.stdout], [], [], 15)[0])
+            self.assertEqual(process.stdout.readline().strip(), 'ready')
+            process.send_signal(signal.SIGINT)
+            _, error = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0)
+            self.assertIn('Desktop control unavailable', error)
+            self.assertFalse((base / 'desktop/control.sock').exists())
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=10)
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
