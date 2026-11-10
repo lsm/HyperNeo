@@ -102,7 +102,7 @@ export function createCopilotFind(
             (query.includeClosed || item.status !== 'stopped') &&
             (placeMatches || item.title.toLowerCase().includes(text!))
         )
-        .slice(0, 20);
+        .slice(0, query.all ? undefined : 20);
       return work.length || (placeMatches && !text) ? [{ ...group, work }] : [];
     });
   };
