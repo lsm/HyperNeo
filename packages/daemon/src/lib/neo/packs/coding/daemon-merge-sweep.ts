@@ -291,10 +291,9 @@ export function createCodingDaemonMergeSweep(
           current,
           candidate.policy,
           candidate.head,
-          await new CodingAssignmentsRepository(database()).reviewHoldsCurrent(
-            candidate.url,
-            candidate.head
-          )
+          await new CodingAssignmentsRepository(database())
+            .reviewHoldsCurrent(candidate.url, candidate.head)
+            .catch(() => [])
         )
       )
         await delivery

@@ -1,3 +1,5 @@
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
 import { CodingStageFactsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/stage-facts.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
@@ -22,7 +24,8 @@ import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
-const assignedReview = process.argv.includes('assigned-review');
+const botReviewRepro = process.argv.includes('bot-review-repro');
+const assignedReview = process.argv.includes('assigned-review') || botReviewRepro;
 const linkedCrossRepo = process.argv.includes('linked-issue-cross-repo');
 const linkedNoRow = process.argv.includes('linked-issue-no-row');
 const linkedIssue = process.argv.includes('linked-issue') || linkedNoRow || linkedCrossRepo;
@@ -117,13 +120,30 @@ try{
    stages.observeHead(url, head, tick);
    const actor = { kind: 'agent' as const, id: 'synthetic-reviewer', harness: 'hyperneo', model: 'review-model' };
    const ref = { adapter: 'hyperneo', id: actor.id };
-   assert(new CodingAssignmentsRepository(db).record(todo.id, 'review', {
-     url, head, acceptanceContract: 'contract', newDispatch: true,
-     write: { adapter: 'hyperneo', id: 'synthetic-writer' }, actor, ref,
-   }));
+   if (botReviewRepro) {
+     pr.body = 'Agent: gpt-6.1-sol (effort: medium) via Codex';
+     publish();
+     new NeoTodoSessionRepository(db).bind(todo.id, { adapter: 'hyperneo', id: 'synthetic-writer' }, tick);
+     const assigned = await invokeOperation(app.sessionManager.getOperationRegistry(), 'neo.coding.assign', {
+       todoId: todo.id, url, head, stage: 'review', acceptanceContract: 'contract', candidates: [],
+     }, { source: 'rpc', principal: 'local', role: 'neo' });
+     assert.equal(assigned.kind, 'completed');
+     const result = (assigned as { value: { ok: boolean; assignment: { bot?: string; actor?: unknown; ref?: unknown } } }).value;
+     evidence.publicAssignment = result;
+     assert(result.ok, JSON.stringify(result));
+     assert.equal(result.assignment.bot, 'fixture-bot');
+     assert.equal(result.assignment.actor, undefined);
+     assert.equal(result.assignment.ref, undefined);
+   } else {
+     assert(new CodingAssignmentsRepository(db).record(todo.id, 'review', {
+       url, head, acceptanceContract: 'contract', newDispatch: true,
+       write: { adapter: 'hyperneo', id: 'synthetic-writer' }, actor, ref,
+     }));
+   }
    const held = () => notices.filter((text) => text.includes('requires human sign-off'));
    await runSweep();
    await runSweep();
+   evidence.observedHoldWakes = held().length;
    assert.equal(held().length, 0);
    assert.equal(mergeCalls().length, 0);
    evidence.coveredHoldWakes = held().length;

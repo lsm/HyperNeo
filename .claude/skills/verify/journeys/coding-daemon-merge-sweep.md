@@ -245,3 +245,9 @@ closed todos, file sign-off and an explicit human merge policy.
 The assigned-review proof rejects this query if the daemon's main connection
 attempts it. Its registered worker-only repository owns the SQL, and the main
 thread parses returned records before applying the pure suppression predicate.
+
+`bot-review-repro` invokes the public neo.coding.assign operation with a configured
+bot. It records the returned bot-only assignment and reproduces the unmet quiet
+hold assertion. This diagnostic currently fails with two wakes instead of zero.
+The seeded agent mode does not establish coverage of an independent review
+handoff after bot review; that handoff needs its own durable signal.

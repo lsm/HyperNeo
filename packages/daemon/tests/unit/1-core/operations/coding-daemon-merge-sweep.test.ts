@@ -112,12 +112,17 @@ const spawn: SpawnFn = (args) => {
       labels: [],
       mergeCommit: state === 'MERGED' ? { oid: 'c'.repeat(40) } : null,
     };
+  const candidateUrl = args.some(
+    (arg) => arg === url.replace('/1', '/2') || arg.includes('/pulls/2/') || arg === 'number=2'
+  )
+    ? url.replace('/1', '/2')
+    : url;
   const broken =
     (fail && args.some((a) => a.includes(fail))) ||
     (hideOutcome && state === 'MERGED' && args[2] !== 'merge') ||
     (mergeFailed && args[2] === 'merge');
   return {
-    stdout: new Response(JSON.stringify(data ?? {})).body,
+    stdout: new Response(JSON.stringify(data ?? {}).replaceAll(url, candidateUrl)).body,
     stderr: new Response(mergeFailed && args[2] === 'merge' ? 'Required check still settling' : '')
       .body,
     exited: Promise.resolve(broken ? 1 : 0),
