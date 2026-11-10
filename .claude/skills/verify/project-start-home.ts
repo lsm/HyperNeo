@@ -13,7 +13,8 @@ import { NeoConversationAskRepository } from '../../../packages/daemon/src/stora
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
-const run = resolve(process.argv[2]);
+const mode = process.argv.find(arg => ['without-workspace', 'env-workspace'].includes(arg));
+const run = resolve(mode === process.argv[2] ? process.argv[3] : process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -21,14 +22,14 @@ assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
 mkdirSync(join(run, 'workspace'), { recursive: true });
-const workspaceRoot = process.argv[3] === 'without-workspace' ? undefined : join(run, 'HyperNeo-Rui');
-if (process.argv[3] === 'env-workspace') process.env.HYPERNEO_WORKSPACE_PATH = workspaceRoot;
+const workspaceRoot = mode === 'without-workspace' ? undefined : join(run, 'HyperNeo-Rui');
+if (mode === 'env-workspace') process.env.HYPERNEO_WORKSPACE_PATH = workspaceRoot;
 const expectedHome = workspaceRoot ?? join(run, 'home/HyperNeo');
 const evidence: unknown[] = [];
 const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('External HTTP is disabled'); }) as typeof fetch;
 let preview: ReturnType<typeof Bun.serve> | undefined;
-const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: process.argv[3] === 'env-workspace' ? undefined : workspaceRoot }), verbose: false });
+const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: mode === 'env-workspace' ? undefined : workspaceRoot }), verbose: false });
 try {
   await app.spaceRuntimeService.ready();
   await waitForSdkBodyCopy(app.db.getDatabase());
@@ -43,7 +44,7 @@ try {
   projects.saveProject({ id: 'project:synthetic-life', title: 'Life admin', summary: '', context: '' }, 0);
   const store = new NeoAskTodoRepository(db);
   const starts: { id: string; folder: string; title: string; mode?: string }[] = [];
-  execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'init', '-q', process.argv[3] === 'without-workspace' ? join(run, 'home') : run]);
+  execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'init', '-q', mode === 'without-workspace' ? join(run, 'home') : run]);
   assert(!existsSync(expectedHome));
   app.sessionManager.createSession = async (input) => {
     const id = crypto.randomUUID();

@@ -53,11 +53,16 @@ function userNamedPath(
   }
 }
 
+export type NeoStartPlacePolicy = (
+  todo: NeoTodo | null,
+  ask: NeoAsk | null
+) => 'explicit' | 'shared-home';
+
 export function neoStartPlace(deps: {
   db: Database;
   machine: string;
   workspaceRoot?: string;
-  repository(todo: NeoTodo | null, ask: NeoAsk | null): string | null;
+  policy: NeoStartPlacePolicy;
 }): NonNullable<WorkVerbDeps['startPlace']> {
   return (input, caller) => {
     if (caller.role !== 'neo' && input.place) return { value: { ...input, place: input.place } };
@@ -67,17 +72,17 @@ export function neoStartPlace(deps: {
     const ask =
       candidate?.sessionId === caller.sessionId && candidate?.status === 'open' ? candidate : null;
     const repo = new NeoRepository(deps.db);
-    const repository = deps.repository(todo, ask);
-    if (repository && input.place) return { value: { ...input, place: input.place } };
+    const explicit = deps.policy(todo, ask) === 'explicit';
+    if (explicit && input.place) return { value: { ...input, place: input.place } };
     const home = neoUserFolder(deps.workspaceRoot);
     const place =
       input.place ??
-      (!repository && ask ? { machine: deps.machine, folder: home, name: 'Home' } : null);
+      (!explicit && ask ? { machine: deps.machine, folder: home, name: 'Home' } : null);
     if (!place)
       return {
         reason: reject(
           'invalid_place',
-          'Choose a repository place for coding, or an open non-coding todo to use the shared home.'
+          'Choose an explicit place, or an open todo eligible for the shared home.'
         ),
       };
     const folder = place.folder;
@@ -97,7 +102,7 @@ export function neoStartPlace(deps: {
       return {
         reason: reject(
           'invalid_place',
-          'A different place requires an exact path named by the user in chat. Omit place for the shared non-coding home; never invent a folder under home.'
+          'A different place requires an exact path named by the user in chat. Omit place for the shared home; never invent a folder under home.'
         ),
       };
     if (folder && (!input.place || input.createFolder)) {
