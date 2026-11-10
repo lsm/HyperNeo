@@ -121,13 +121,7 @@ export class NeoSpeech {
       [...this.listeners.values()].some(
         (listener) =>
           !!this.hub.getRouter()?.getClientById(listener.clientId) &&
-          (listener.audio ||
-            listener.pending.size > 0 ||
-            [...this.receipts.values()].some(
-              (row) =>
-                row.clientId === listener.clientId &&
-                (row.state === 'queued' || row.state === 'playing')
-            ))
+          (listener.audio || listener.pending.size > 0)
       )
     );
   }

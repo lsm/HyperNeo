@@ -146,6 +146,18 @@ describe('spoken replies separate from publications', () => {
     }
   });
 
+  test('an old disconnected receipt cannot hold a new text-only listener', async () => {
+    await listen();
+    await say();
+    writeGate = async () => {
+      throw new Error('Synthetic cancellation write failure');
+    };
+    disconnected('phone');
+    await listen();
+    writeGate = undefined;
+    expect(speech.restartBusy()).toBe(false);
+  });
+
   test('a human input without listening carries the quick-reply note', () => {
     const loaded = {
       inputKind: 'human',
