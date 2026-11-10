@@ -15,7 +15,7 @@ import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 import { todoEvidenceFile } from '../work-locations.ts';
 import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
 import { readNeoTodoCompletion, requireNeoTodoCloseStarted } from './todo-completion.ts';
-import { resolveNeoTodoWorker, type NeoTodoControls } from './todo-operations.ts';
+import type { NeoTodoControls } from './todo-operations.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 
 type Input = Parameters<InstanceType<typeof neoTodoMutationReads.Repository>['plan']>[0];
@@ -85,7 +85,7 @@ export function wireNeoTodoMutations(
     .pipe(
       async (request: Input) => {
         if (request.kind !== 'edit' || request.target?.verb !== 'send') return { value: request };
-        const resolved = await resolveNeoTodoWorker(request.target.ref, deps.resolveTarget);
+        const resolved = await deps.resolveTarget(request.target.ref);
         return 'reason' in resolved
           ? { reason: resolved.reason }
           : {

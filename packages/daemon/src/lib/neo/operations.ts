@@ -64,7 +64,11 @@ import {
 import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import type { NeoInputReads } from './input-ask.ts';
-import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
+import {
+  createNeoTodoOperations,
+  type NeoTodoControls,
+  type NeoTodoWorkerRead,
+} from './todo-operations.ts';
 import { resolveNeoTodoTarget } from './todo-target.ts';
 import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
@@ -349,7 +353,11 @@ export function neoReorganizeRuntime(
   };
 }
 
-export function createNeoOperations(service: NeoService, identity: NeoProjectIdentityPolicy) {
+export function createNeoOperations(
+  service: NeoService,
+  identity: NeoProjectIdentityPolicy,
+  readWorker: NeoTodoWorkerRead
+) {
   const mutationGateway = gatewayFor(service.db.getDatabase());
   const messageStatuses: NeoMessageStatusPresenter = (items) =>
     readNeoMessageStatuses((refs) => service.db.getNeoMessageStatusFactsAsync(refs), items);
@@ -707,11 +715,13 @@ export function createNeoOperations(service: NeoService, identity: NeoProjectIde
   const todoControls: NeoTodoControls = {
     userFolder: service.userFolder,
     resolveTarget: (ref) =>
-      resolveNeoTodoTarget(ref, (name, input) =>
-        invokeOperation(service.sessions.getOperationRegistry(), name, input, {
-          source: 'internal',
-          role: 'neo',
-        })
+      readWorker(ref, (target) =>
+        resolveNeoTodoTarget(target, (name, input) =>
+          invokeOperation(service.sessions.getOperationRegistry(), name, input, {
+            source: 'internal',
+            role: 'neo',
+          })
+        )
       ),
     recompute: (todo, patch) => service.todoRunner.recompute(todo, patch),
     start: (todoId) => service.todoRunner.start(todoId),

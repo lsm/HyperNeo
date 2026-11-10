@@ -1,4 +1,5 @@
 import { createNeoFrontHandler } from '../neo/front-job.ts';
+import { readCodingTodoWorker } from '../neo/packs/coding/worker-read.ts';
 import { codingProjectIdentity } from '../neo/packs/coding/project-cleanup.ts';
 import { createPeerMessageRoute } from '../../routes/neo-peer-message.ts';
 import { createSessionToolActivationOperation } from '../tools/session-tool-activation.ts';
@@ -475,7 +476,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     ...(space?.familyOperations(boundFamilyContext) ?? []),
     ...deps.extensions.operations(),
     createDaemonExtensionsOperation(deps.extensions),
-    ...createNeoOperations(neoService, codingProjectIdentity),
+    ...createNeoOperations(neoService, codingProjectIdentity, readCodingTodoWorker),
     ...createNeoHomeOperations(neoService, neoHome),
     createNeoHomeGithubOperation(neoService, neoHome),
     ...createSessionScheduleOperations(sessionScheduler),

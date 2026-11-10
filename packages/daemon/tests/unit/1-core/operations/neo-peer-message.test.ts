@@ -1,3 +1,4 @@
+import { readCodingTodoWorker } from '../../../../src/lib/neo/packs/coding/worker-read.ts';
 import { codingProjectIdentity } from '../../../../src/lib/neo/packs/coding/project-cleanup.ts';
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -39,7 +40,9 @@ type PairResult = {
 };
 const call = async (name: string, input: unknown, as = caller) => {
   const result = await invokeOperation(
-    createOperationRegistry(createNeoOperations(service, codingProjectIdentity)),
+    createOperationRegistry(
+      createNeoOperations(service, codingProjectIdentity, readCodingTodoWorker)
+    ),
     name,
     input,
     as
