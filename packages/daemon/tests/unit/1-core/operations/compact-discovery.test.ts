@@ -110,6 +110,30 @@ describe('Neo compact prefix discovery', () => {
       next: null,
     });
   });
+  test('a cursor without a prefix returns the index and documents that fallback', async () => {
+    const { registry } = fixture();
+    expect(await list(registry, { cursor: 'goal.journal.append' })).toEqual(await list(registry));
+    const description = await invokeOperation(
+      registry,
+      'operations.describe',
+      { name: 'operations.list' },
+      neo
+    );
+    expect(description).toMatchObject({
+      kind: 'completed',
+      value: {
+        inputSchema: {
+          properties: {
+            cursor: {
+              description: expect.stringContaining(
+                'Without prefix, Neo returns namespace counts and ignores cursor.'
+              ),
+            },
+          },
+        },
+      },
+    });
+  });
   test('the same session discovers a pack only while it is enabled', async () => {
     const { registry, enable, disable } = fixture();
     expect(await list(registry, { prefix: 'neo.github' })).toEqual({

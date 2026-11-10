@@ -48033,7 +48033,7 @@
             "type": "boolean"
           },
           "cursor": {
-            "description": "Neo MCP only. Other callers ignore paging and keep the legacy array response.",
+            "description": "Neo MCP only. Without prefix, Neo returns namespace counts and ignores cursor. Other callers ignore paging and keep the legacy array response.",
             "minLength": 1,
             "type": "string"
           },

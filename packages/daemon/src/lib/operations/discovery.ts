@@ -24,7 +24,9 @@ const ListInputSchema = z
     cursor: z
       .string()
       .min(1)
-      .describe('Neo MCP only. Other callers ignore paging and keep the legacy array response.')
+      .describe(
+        'Neo MCP only. Without prefix, Neo returns namespace counts and ignores cursor. Other callers ignore paging and keep the legacy array response.'
+      )
       .optional(),
   })
   .default({});
