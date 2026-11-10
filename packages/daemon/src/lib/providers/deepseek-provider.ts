@@ -14,7 +14,11 @@ import type {
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 import { fetchRemoteModelList, type RemoteModel } from './shared/model-list.js';
-import { ProviderDiscoveryCache, providerDiscoveryFingerprint } from './shared/discovery-cache.js';
+import {
+  mergeDiscoveredModels,
+  ProviderDiscoveryCache,
+  providerDiscoveryFingerprint,
+} from './shared/discovery-cache.js';
 import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 export class DeepSeekProvider implements Provider {
@@ -208,9 +212,12 @@ export class DeepSeekProvider implements Provider {
       this.clearModelCache();
       throw new Error('DeepSeek credentials changed during model discovery');
     }
-    const discovered = models
-      .filter((model) => this.ownsModel(model.id))
-      .map((model) => this.toRemoteModelInfo(model));
+    const discovered = mergeDiscoveredModels(
+      [],
+      models
+        .filter((model) => this.ownsModel(model.id))
+        .map((model) => this.toRemoteModelInfo(model))
+    );
     this.discoveryCache.set(fingerprint, discovered);
     if (options.discoveryOnly || discovered.length) return discovered;
     return this.mergeCuratedModels(discovered);

@@ -26,6 +26,7 @@ const fetchImpl: typeof fetch = async (url) => {
       String(url).endsWith('/models')
         ? {
             data: [
+              { id: 'deepseek-pro', name: 'Synthetic Pro Alias' },
               { id: 'deepseek-v4-pro', name: 'Synthetic Updated Pro', context_window: 262144 },
               { id: 'deepseek-future', name: 'Synthetic Flash', context_length: 524288 },
             ],
@@ -95,6 +96,7 @@ try {
   assert(!reply.models.some((model) => model.id === 'deepseek-v4-flash'));
   assert(!provider.getCachedModels()?.some((model) => model.id === 'deepseek-v4-flash'));
   assert.equal(reply.models.length, 2);
+  assert.equal(provider.getCachedModels()?.length, 2);
   assert.equal(provider.getModelForTier('opus'), 'deepseek-v4-pro');
   assert.equal(provider.getModelForTier('sonnet'), 'deepseek-future');
   assert.equal(

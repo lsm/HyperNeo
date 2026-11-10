@@ -92,6 +92,27 @@ describe('DeepSeekProvider', () => {
     expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['deepseek-v4-pro']);
   });
 
+  it('deduplicates canonical IDs after mapping remote aliases', async () => {
+    const fetchImpl = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              { id: 'deepseek-pro', name: 'Alias Pro' },
+              { id: 'deepseek-v4-pro', name: 'Canonical Pro' },
+            ],
+          })
+        )
+    ) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+    expect((await provider.listRemoteModels()).map((model) => model.id)).toEqual([
+      'deepseek-v4-pro',
+    ]);
+    expect((await provider.getModels()).map((model) => model.id)).toEqual(['deepseek-v4-pro']);
+    expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['deepseek-v4-pro']);
+    expect(provider.getCachedModels()?.[0].name).toBe('Canonical Pro');
+  });
+
   it('probes a discovered model instead of requiring a retired fallback', async () => {
     const probes: string[] = [];
     const fetchImpl = mock(async (url: string | URL | Request, init?: RequestInit) => {
