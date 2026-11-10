@@ -139,6 +139,25 @@ describe('operation MCP server', () => {
     expect(briefing()).not.toContain('neo.github.read');
   });
 
+  test('planned resident reads and archival remain visible before family tools land', () => {
+    const names = ['work.status', 'work.read', 'neo.session.archive'];
+    const registry = createOperationRegistry(
+      names.map((name) =>
+        defineOperation({
+          name,
+          description: name,
+          inputSchema: z.object({ ref: z.string() }),
+          resultSchema: z.unknown(),
+          execute: async () => null,
+        })
+      )
+    );
+    const description = operationInvokeTool(
+      createOperationMcpServer(registry, () => ({ role: 'neo' }), undefined, 'neo')
+    ).description;
+    for (const name of names) expect(description).toContain(name);
+  });
+
   test('invokes the canonical implementation with a server-bound caller', async () => {
     const result = await call({
       name: 'example.echo',

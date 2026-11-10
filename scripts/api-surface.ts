@@ -1,3 +1,4 @@
+import { unclassifiedNeoOperations } from './neo-discovery-coverage.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -192,6 +193,9 @@ async function collect(run: string, root: string): Promise<void> {
     await app.spaceRuntimeService.ready();
     await app.jobProcessor.stop();
     const operations = app.sessionManager.getOperationRegistry().entries;
+    const unclassified = unclassifiedNeoOperations(operations);
+    if (unclassified.length)
+      throw new Error(`Unclassified Neo discovery operations: ${unclassified.join(', ')}`);
     writeFileSync(
       join(run, 'operations.json'),
       serializeApiSurface(
