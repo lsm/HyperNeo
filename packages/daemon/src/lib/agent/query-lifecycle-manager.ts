@@ -17,6 +17,10 @@ import { dirname } from 'node:path';
 import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery.ts';
 import { sessionSdkPath } from '../session/sdk-path.ts';
 import {
+  hasRuntimeWorkerOperations,
+  isWorkflowSubSessionIdentity,
+} from '../session/sub-session-identity.ts';
+import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
   migrateSDKSessionFile,
@@ -378,7 +382,11 @@ export class QueryLifecycleManager {
 
   private async gateOnMissingTranscript(caller: string): Promise<boolean> {
     const { session } = this.ctx;
-    if (!session.sdkSessionId || session.config.harness === 'codex') {
+    if (
+      !session.sdkSessionId ||
+      session.config.harness === 'codex' ||
+      (isWorkflowSubSessionIdentity(session.id) && !hasRuntimeWorkerOperations(session.config))
+    ) {
       return true;
     }
     if (await this.validateAndRepairWithMigration()) {
@@ -676,6 +684,7 @@ export class QueryLifecycleManager {
         throw new Error(resetResult.error || 'Agent query reset failed.');
       }
       if (resetResult.blocked) {
+        this.timeoutDeliveryRetryCounts.delete(messageId);
         await stateManager.setQueued(messageId);
         this.logger.info(
           `Timeout recovery for ${messageId} is blocked on sdk_resume_choice; ` +

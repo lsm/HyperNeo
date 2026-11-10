@@ -1451,6 +1451,33 @@ describe('QueryLifecycleManager', () => {
       }
     });
 
+    test('blocked timeout recovery does not consume the delivery-retry budget', async () => {
+      const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+      try {
+        process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+        const timeoutError = new Error('Queue timeout');
+        timeoutError.name = 'MessageQueueTimeoutError';
+
+        spyOn(messageQueue, 'enqueueWithId').mockImplementation(async () => {
+          mockContext.session.sdkSessionId = 'missing-sdk-session';
+          throw timeoutError;
+        });
+
+        await manager.startQueryAndEnqueue('msg-123', 'Hello');
+        await new Promise((r) => setTimeout(r, 200));
+        expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+
+        await manager.startQueryAndEnqueue('msg-123', 'Hello');
+        await new Promise((r) => setTimeout(r, 200));
+
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-msg-123'], 'failed');
+      } finally {
+        delete process.env.TEST_SDK_SESSION_DIR;
+        rmSync(tmpTestDir, { recursive: true, force: true });
+      }
+    });
+
     test('marks enqueued message failed when timeout retry fails', async () => {
       const timeoutError = new Error('Queue timeout');
       timeoutError.name = 'MessageQueueTimeoutError';
@@ -1761,6 +1788,31 @@ describe('QueryLifecycleManager', () => {
 
         expect(result.blocked).toBe(true);
         expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
+      });
+
+      test('restarts a non-resumable workflow sub-session instead of emitting an unresolvable prompt', async () => {
+        mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.restart();
+
+        expect(result.blocked).toBe(false);
+        expect(startStreamingCalled).toBe(true);
+        expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
+      });
+
+      test('still blocks a resumable workflow sub-session on the transcript gate', async () => {
+        mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
+        mockContext.session.config.workerOperations = true;
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.restart();
+
+        expect(result.blocked).toBe(true);
+        expect(startStreamingCalled).toBe(false);
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
       });
 
       test('starts anyway when the caller resolves the resume choice (skipTranscriptGuard)', async () => {
