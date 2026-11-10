@@ -1,3 +1,5 @@
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
+import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { createTestDb } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
@@ -41,4 +43,16 @@ test('missing, cross-conversation and disabled inputs cannot be claimed', () => 
   expect(inputs.claim('other', ['input'], 'front')).toBe(false);
   expect(inputs.claim('conversation', ['missing'], 'neo')).toBe(false);
   expect(inputs.claim('conversation', [], 'neo')).toBe(false);
+});
+
+test('fresh Neo tables support eligibility before migration replay', () => {
+  const sql = new Sqlite(':memory:');
+  try {
+    createNeoTables(sql);
+    const fresh = new NeoFrontInputRepository(sql);
+    fresh.accept('conversation', 'input', false);
+    expect(fresh.get('conversation', 'input')).toEqual({ eligible: false, owner: null });
+  } finally {
+    sql.close();
+  }
 });
