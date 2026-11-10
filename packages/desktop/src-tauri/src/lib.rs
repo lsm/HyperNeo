@@ -190,13 +190,15 @@ pub fn run() {
 		.manage(StartupState::default())
 		.setup(|app| {
 			#[cfg(target_os = "macos")]
-			app.manage(
-				tauri::async_runtime::block_on(desktop_drivers::Control::bind(
+			if let Some(control) = tauri::async_runtime::block_on(desktop_drivers::Control::bind(
 					runtime_descriptor_path().ok_or("Missing data directory")?.parent().unwrap().into(),
 					std::env::current_exe()?.with_file_name("cua-driver"),
 					"/usr/bin:/bin:/usr/sbin:/sbin".into(),
-				)).map_err(|error| error.to_string())?,
-			);
+			)).map_err(|error| error.to_string())? {
+				app.manage(control);
+			} else {
+				std::process::exit(0);
+			}
 			// Setup logging.
 			app.handle().plugin(
 				tauri_plugin_log::Builder::default()

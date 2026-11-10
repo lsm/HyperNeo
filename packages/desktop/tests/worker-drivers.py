@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ import unittest
 
 RUNNER = Path(sys.argv.pop(1)).resolve()
 FAKE = '''#!/usr/bin/python3
-import json, os, socket, sys, threading
+import json, os, socket, sys, threading, time
 if sys.argv[1:] == ['--version']:
     print('cua-driver 0.44.0')
     sys.exit(0)
@@ -21,6 +22,9 @@ assert '--embedded' in sys.argv
 assert '--parent-liveness-stdio' in sys.argv
 path = sys.argv[sys.argv.index('--socket') + 1]
 assert not any('API_KEY' in key for key in os.environ)
+if '/slow/' in path:
+    open(path + '.starting', 'w').close()
+    time.sleep(3)
 server = socket.socket(socket.AF_UNIX)
 server.bind(path)
 os.chmod(path, 0o600)
@@ -189,8 +193,24 @@ class WorkerDrivers(unittest.TestCase):
             [str(RUNNER), str(self.root), str(self.binary), self.path],
             env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
             capture_output=True, timeout=10)
-        self.assertNotEqual(second.returncode, 0)
+        self.assertEqual(second.returncode, 0)
         self.assertTrue(self.call('status')['ok'])
+
+    def test_slow_worker_start_does_not_delay_another_workers_stop(self):
+        driver = self.start()
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.call, 'start', 'slow-worker', workDir=str(slow))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.sock.starting'))))
+            before = time.monotonic()
+            self.assertTrue(self.call('status')['ok'])
+            self.assertTrue(self.call('stop')['ok'])
+            self.assertLess(time.monotonic() - before, 2)
+            wait_until(lambda: not alive(driver['pid']))
+            result = pending.result(timeout=15)
+            self.assertTrue(result['ok'], result)
+            self.pids.append(result['result']['pid'])
 
     def test_recovers_control_endpoint_after_app_crash(self):
         self.process.kill()

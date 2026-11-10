@@ -7,7 +7,7 @@ use std::{
     fs::{File, OpenOptions},
     os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
     time::Duration,
 };
 use tempfile::TempDir;
@@ -16,7 +16,7 @@ use tokio::{
     net::UnixListener,
     process::Command,
     sync::Mutex,
-    task::JoinHandle,
+    task::{JoinHandle, JoinSet},
     time::timeout,
 };
 
@@ -26,7 +26,7 @@ struct Worker {
     _directory: TempDir,
 }
 struct Drivers {
-    workers: BTreeMap<String, Worker>,
+    workers: Mutex<BTreeMap<String, Arc<Mutex<Option<Worker>>>>>,
     binary: PathBuf,
     verification_path: String,
 }
@@ -38,8 +38,8 @@ struct Request {
     work_dir: Option<PathBuf>,
 }
 pub(crate) struct Control {
-    drivers: Arc<Mutex<Drivers>>,
-    task: JoinHandle<()>,
+    drivers: Arc<Drivers>,
+    task: StdMutex<Option<JoinHandle<()>>>,
     socket: PathBuf,
     _lock: File,
 }
@@ -48,7 +48,7 @@ impl Control {
         base: PathBuf,
         binary: PathBuf,
         verification_path: String,
-    ) -> Result<Self> {
+    ) -> Result<Option<Self>> {
         let directory = base.join("desktop");
         std::fs::DirBuilder::new()
             .recursive(true)
@@ -77,7 +77,11 @@ impl Control {
             )
         } != 0
         {
-            return Err("Desktop control is already running".into());
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                return Ok(None);
+            }
+            return Err(error.into());
         }
         let socket = directory.join("control.sock");
         if let Ok(metadata) = socket.symlink_metadata() {
@@ -87,51 +91,72 @@ impl Control {
             std::fs::remove_file(&socket)?;
         }
         let listener = UnixListener::bind(&socket)?;
-        let drivers = Arc::new(Mutex::new(Drivers {
-            workers: BTreeMap::new(),
+        let drivers = Arc::new(Drivers {
+            workers: Mutex::new(BTreeMap::new()),
             binary,
             verification_path,
-        }));
+        });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
+            let mut requests = JoinSet::new();
             while let Ok((stream, _)) = listener.accept().await {
-                let (input, mut output) = stream.into_split();
-                let mut line = String::new();
-                let read = timeout(
-                    Duration::from_secs(3),
-                    BufReader::new(input.take(16384)).read_line(&mut line),
-                )
-                .await;
-                if !matches!(read, Ok(Ok(_))) || !line.ends_with('\n') {
-                    continue;
+                if requests.len() >= 16 {
+                    requests.join_next().await;
                 }
-                let result = match serde_json::from_str(&line) {
-                    Ok(request) => state.lock().await.request(request).await,
-                    Err(error) => Err(error.into()),
-                };
-                let response = match result {
-                    Ok(result) => json!({"ok": true, "result": result}),
-                    Err(error) => json!({"ok": false, "error": error.to_string()}),
-                };
-                let _ = timeout(
-                    Duration::from_secs(2),
-                    output.write_all(format!("{response}\n").as_bytes()),
-                )
-                .await;
+                let state = state.clone();
+                requests.spawn(async move {
+                    let (input, mut output) = stream.into_split();
+                    let mut line = String::new();
+                    let read = timeout(
+                        Duration::from_secs(3),
+                        BufReader::new(input.take(16384)).read_line(&mut line),
+                    )
+                    .await;
+                    if !matches!(read, Ok(Ok(_))) || !line.ends_with('\n') {
+                        return;
+                    }
+                    let result = match serde_json::from_str(&line) {
+                        Ok(request) => state.request(request).await,
+                        Err(error) => Err(error.into()),
+                    };
+                    let response = match result {
+                        Ok(result) => json!({"ok": true, "result": result}),
+                        Err(error) => json!({"ok": false, "error": error.to_string()}),
+                    };
+                    let _ = timeout(
+                        Duration::from_secs(2),
+                        output.write_all(format!("{response}\n").as_bytes()),
+                    )
+                    .await;
+                });
             }
         });
-        Ok(Self {
+        Ok(Some(Self {
             drivers,
-            task,
+            task: StdMutex::new(Some(task)),
             socket,
             _lock: lock,
-        })
+        }))
     }
     pub(crate) async fn shutdown(&self) {
-        self.task.abort();
-        for worker in self.drivers.lock().await.workers.values() {
-            if let Err(error) = worker.host.clone().stop().await {
-                log::error!("Driver shutdown failed: {error}");
+        let task = self.task.lock().unwrap().take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+        let slots: Vec<_> = self
+            .drivers
+            .workers
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect();
+        for slot in slots {
+            if let Some(worker) = slot.lock().await.take() {
+                if let Err(error) = worker.host.clone().stop().await {
+                    log::error!("Driver shutdown failed: {error}");
+                }
             }
         }
         let _ = std::fs::remove_file(&self.socket);
@@ -139,12 +164,14 @@ impl Control {
 }
 impl Drop for Control {
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(task) = self.task.get_mut().unwrap().take() {
+            task.abort();
+        }
         let _ = std::fs::remove_file(&self.socket);
     }
 }
 impl Drivers {
-    async fn request(&mut self, request: Request) -> Result<Value> {
+    async fn request(&self, request: Request) -> Result<Value> {
         if request.worker.is_empty()
             || request.worker.len() > 64
             || !request
@@ -154,6 +181,14 @@ impl Drivers {
         {
             return Err("Invalid worker identifier".into());
         }
+        let slot = self
+            .workers
+            .lock()
+            .await
+            .entry(request.worker.clone())
+            .or_default()
+            .clone();
+        let mut worker = slot.lock().await;
         match request.action.as_str() {
             "start" => {
                 let app = self
@@ -189,7 +224,7 @@ impl Drivers {
                 if !version.status.success() || version.stdout != b"cua-driver 0.44.0\n" {
                     return Err("Driver version validation failed".into());
                 }
-                if !self.workers.contains_key(&request.worker) {
+                if worker.is_none() {
                     let directory = tempfile::Builder::new()
                         .prefix("d-")
                         .permissions(std::fs::Permissions::from_mode(0o700))
@@ -239,26 +274,23 @@ impl Drivers {
                         no_overlay: true,
                         capture_stderr: false,
                     })?;
-                    self.workers.insert(
-                        request.worker.clone(),
-                        Worker {
-                            host,
-                            _directory: directory,
-                        },
-                    );
+                    *worker = Some(Worker {
+                        host,
+                        _directory: directory,
+                    });
                 }
-                self.workers[&request.worker].host.clone().start().await?;
+                worker.as_ref().unwrap().host.clone().start().await?;
             }
             "stop" => {
-                if let Some(worker) = self.workers.get(&request.worker) {
+                if let Some(worker) = worker.as_ref() {
                     worker.host.clone().stop().await?;
                 }
-                self.workers.remove(&request.worker);
+                *worker = None;
             }
             "status" => {}
             _ => return Err("Unknown Desktop control action".into()),
         }
-        Ok(match self.workers.get(&request.worker) {
+        Ok(match worker.as_ref() {
             Some(worker) => {
                 let connection = worker.host.connection();
                 json!({"state": format!("{:?}", worker.host.state()).to_lowercase(), "pid": connection.as_ref().map(|c| c.pid), "socket": connection.map(|c| c.socket_path)})
