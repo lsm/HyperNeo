@@ -324,11 +324,20 @@ type CodingTodoFacts = {
 export function createCodingTodoPolicy(
   repo: Pick<CodingTodoPrRepository, 'urls' | 'place'>
 ): Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'>> {
+  const places = new WeakMap<NeoTodoPolicyScope, CodingTodoPlace>();
+  const readPlace = (scope: NeoTodoPolicyScope) => {
+    let place = places.get(scope);
+    if (!place) {
+      place = repo.place(scope);
+      places.set(scope, place);
+    }
+    return place;
+  };
   const repository: NonNullable<NeoTodoPack['repository']> = (todo, scope) =>
     codingTodoRepository(
       todo,
       scope && 'todo' in scope ? [] : todo.id ? repo.urls(todo.id) : [],
-      scope && repo.place(scope)
+      scope && readPlace(scope)
     );
   return {
     repository,
@@ -353,13 +362,17 @@ export function createCodingTodoPolicy(
     refuse: (draft, _peers, scope) => {
       if (scope) {
         const candidate = { ...draft, named: draft.named ?? null };
-        const place = repo.place(scope);
+        const place = readPlace(scope);
+        const hinted = () =>
+          codingTodoRepository(candidate, candidate.id ? repo.urls(candidate.id) : [], {
+            ask: place.ask,
+            peers: place.peers,
+          });
         const name = scope.edit
-          ? (place.todo ?? repository(candidate, { ask: scope.ask }) ?? place.ask)
+          ? (place.todo ?? hinted() ?? place.ask)
           : repository(candidate, scope);
         if (draft.check?.pack === 'coding' && draft.target?.verb === 'send') {
-          const expected =
-            name ?? repository({ ...draft, named: draft.named ?? null }, { ask: scope.ask });
+          const expected = name ?? hinted();
           const remotes = scope.workerRemotes?.map(neoGitRepo).filter(Boolean) ?? [];
           if (expected && !remotes.includes(neoGitRepo(expected)))
             return `worker_repository_mismatch: todo is ${expected}, worker ${draft.target.ref.id} is in ${remotes.join(', ') || 'unknown'}; send it to a worker of ${expected} or start one there.`;

@@ -33,3 +33,9 @@ closes its transports and daemon; the wrapper saves evidence and removes its
 synthetic data. Also run ask-bookkeeping-actions.ts for placement and historical
 card persistence across database reopen. Browser and native-client rendering are
 outside this policy journey.
+
+The MCP ask.open retry also submits twenty identical recorded drafts. It must
+reuse the original todo and issue exactly three repository statements: the ask
+and distinct sibling reads once, plus the stored todo read once. Unit coverage
+changes that stored repository between operations to prove the next operation
+reads fresh facts. Each scope object represents one operation snapshot.

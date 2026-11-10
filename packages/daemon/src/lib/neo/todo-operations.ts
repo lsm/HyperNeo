@@ -280,11 +280,9 @@ export async function recordNeoTodo(
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
   const peers = todos.listTodos(ask.id);
-  const repo = neoTodoRepository(draft, packs, { ask });
-  const placeless = neoTodoPlaceRefusal(draft, packs, {
-    ask,
-    workerRemotes: input.workerRemotes,
-  });
+  const scope = { ask, workerRemotes: input.workerRemotes };
+  const repo = neoTodoRepository(draft, packs, scope);
+  const placeless = neoTodoPlaceRefusal(draft, packs, scope);
   if (placeless) return { ok: false, reason: placeless };
   const misplaced = neoEvidenceRefusal(check, repo, controls.userFolder ?? neoUserFolder());
   if (misplaced) return { ok: false, reason: misplaced };

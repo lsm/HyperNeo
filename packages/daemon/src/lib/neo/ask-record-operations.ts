@@ -23,7 +23,7 @@ import {
   requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
-import type { NeoPack } from './pack-contract.ts';
+import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
@@ -177,6 +177,7 @@ export function createNeoAskRecordOperations(
         input: z.infer<typeof Open>,
         _caller: OperationCaller
       ): Promise<AskReceipt | Rejection> => {
+        const policies = packs();
         const origin = null;
         const priorAsk = store.findAsk(sessionId, origin, input.title, goalId);
         const family = (ask: NeoAsk | null) =>
@@ -187,18 +188,26 @@ export function createNeoAskRecordOperations(
               ]
             : [];
         const recorded = family(priorAsk);
+        const readScope: NeoTodoPolicyScope = { ask: priorAsk };
+        const storedScopes = new Map<string, NeoTodoPolicyScope>();
         const recordedRow = (
           todo: (typeof input.todos)[number],
-          scope: Pick<NeoAsk, 'id'> | null = priorAsk
+          scope: NeoTodoPolicyScope = readScope
         ) => {
-          const repo = neoTodoRepository(todo, packs(), { ask: scope });
-          const stored = (item: NeoTodo) =>
-            neoTodoRepository(item, packs(), { ask: null, todo: item });
+          const repo = neoTodoRepository(todo, policies, scope);
+          const stored = (item: NeoTodo) => {
+            let itemScope = storedScopes.get(item.id);
+            if (!itemScope) {
+              itemScope = { ask: null, todo: item };
+              storedScopes.set(item.id, itemScope);
+            }
+            return neoTodoRepository(item, policies, itemScope);
+          };
           const filed = (item: NeoTodo) =>
             neoTodoRepository(
               { check: item.check, named: item.named, target: sessions.get(item.id) },
-              packs(),
-              { ask: scope }
+              policies,
+              scope
             );
           return recorded.find(
             (item) => item.title === todo.title && (stored(item) === repo || filed(item) === repo)
@@ -221,12 +230,12 @@ export function createNeoAskRecordOperations(
             const check = withAssignedEvidence(todo.check, todoEvidenceFile('pending'));
             const reason = neoEvidenceRefusal(
               check,
-              neoTodoRepository(todo, packs(), { ask: priorAsk }),
+              neoTodoRepository(todo, policies, readScope),
               controls.userFolder ?? neoUserFolder()
             );
             return reason
               ? { reason: { ok: false as const, reason } }
-              : planNeoTodoDraft({ ...todo, check }, packs());
+              : planNeoTodoDraft({ ...todo, check }, policies);
           })
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
@@ -277,7 +286,8 @@ export function createNeoAskRecordOperations(
         recorded.push(...family(ask));
         const records: string[] = [];
         const ids: (string | undefined)[] = [];
-        const rows = drafts.map((todo) => recordedRow(todo, ask));
+        const currentScope = priorAsk?.id === ask.id ? readScope : { ask };
+        const rows = drafts.map((todo) => recordedRow(todo, currentScope));
         for (const [index, todo] of drafts.entries()) {
           const row = rows[index];
           const after = todo.after?.map((ref) =>
@@ -290,7 +300,7 @@ export function createNeoAskRecordOperations(
                 controls,
                 store.getAsk(ask.id)!,
                 { ...todo, ...(after ? { after } : {}) },
-                packs()
+                policies
               )
             : todo.start && isNeoTodoStartable(row)
               ? await startNeoTodoWhenFree(store, controls, store.approveTodo(row, Date.now()))
