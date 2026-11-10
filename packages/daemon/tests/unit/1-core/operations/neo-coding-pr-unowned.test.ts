@@ -8,7 +8,10 @@ import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingPrEventRepository } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingPrSweepRepository } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
-import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import {
+  CodingTodoPrRepository,
+  createCodingTodoPolicy,
+} from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -317,6 +320,115 @@ describe('coding pack newly unowned PR notifications', () => {
       expect(wakes).toHaveLength(1);
     } finally {
       db.close();
+    }
+  });
+
+  test.each([
+    'owner',
+    'addUrls',
+    'named',
+    'single',
+    'removed',
+    'closed-ask',
+    'other-pr',
+    'other-host',
+  ] as const)('a refused batch rechecks its current claims before retry: %s', async (claim) => {
+    const f = setup();
+    try {
+      f.accept(false);
+      await f.cycle([pr(1)]);
+      expect(f.wakes).toHaveLength(1);
+      const original = f.wakes[0];
+      if (claim === 'owner') {
+        f.db
+          .prepare("UPDATE pack_coding_pr_ledger SET owner=? WHERE repo='synthetic/a'")
+          .run(JSON.stringify(worker));
+      } else {
+        const store = new NeoAskTodoRepository(f.db);
+        store.openAsk({
+          id: 'claim-ask',
+          sessionId: 'neo',
+          projectId: null,
+          originMessageId: null,
+          title: 'Claimed work',
+          request: 'Work',
+          createdAt: 1,
+        });
+        let todo = store.addTodo(
+          'claim-todo',
+          'claim-ask',
+          {
+            title: 'Claimed work',
+            doneWhen: 'Merged',
+            instruction: 'Build',
+            named: null,
+            check: {
+              pack: 'coding',
+              kind: claim === 'single' ? 'pr_approved' : 'pr_merged',
+              params: {},
+            },
+          },
+          1
+        );
+        const linked =
+          claim === 'other-pr'
+            ? 'https://github.com/synthetic/a/pull/2'
+            : claim === 'other-host'
+              ? 'https://other.example/synthetic/a/pull/1'
+              : 'https://github.com/Synthetic/A/pull/1/files#diff';
+        const check =
+          claim === 'addUrls'
+            ? createCodingTodoPolicy(new CodingTodoPrRepository(f.db)).addUrls(todo, [url])
+            : { ...todo.check!, params: claim === 'single' ? { url: linked } : { urls: [linked] } };
+        todo = store.updateTodo(todo, { check }, 2);
+        if (claim === 'removed') store.updateTodo(todo, { state: 'removed' }, 3);
+        if (claim === 'closed-ask')
+          store.settleAsk(store.getAsk('claim-ask')!, 'done', 'Closed', 3);
+        expect(
+          f.db.prepare("SELECT owner FROM pack_coding_pr_ledger WHERE repo='synthetic/a'").get()
+        ).toEqual({ owner: null });
+      }
+      const retry: { key: string; text: string }[] = [];
+      const events = new CodingPrEventRepository(f.db);
+      const send = async (key: string, text: string) => {
+        retry.push({ key, text });
+        return false;
+      };
+      await wakeCodingUnownedPrs(events, send, ship + 180_000);
+      const covered = ['owner', 'addUrls', 'named', 'single'].includes(claim);
+      expect(retry).toHaveLength(1);
+      expect(retry[0].text.includes('synthetic/a#1')).toBe(!covered);
+      expect(retry[0].text).toContain('synthetic/b#1');
+      if (!covered) expect(retry[0]).toEqual(original);
+      await wakeCodingUnownedPrs(new CodingPrEventRepository(f.db), send, ship + 240_000);
+      expect(retry[1]).toEqual(retry[0]);
+      await wakeCodingUnownedPrs(events, async () => true, ship + 300_000);
+      await wakeCodingUnownedPrs(events, send, ship + 360_000);
+      expect(retry).toHaveLength(2);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test('a fully claimed pending batch retires without another wake', async () => {
+    const f = setup();
+    try {
+      f.accept(false);
+      await f.cycle([pr(1)]);
+      expect(f.wakes).toHaveLength(1);
+      f.db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(JSON.stringify(worker));
+      await wakeCodingUnownedPrs(
+        new CodingPrEventRepository(f.db),
+        async () => {
+          throw new Error('Claimed rows must not wake Neo');
+        },
+        ship + 180_000
+      );
+      expect(
+        f.db.prepare('SELECT pending_key AS key FROM pack_coding_pr_unowned_state').get()
+      ).toEqual({ key: null });
+    } finally {
+      f.db.close();
     }
   });
 
