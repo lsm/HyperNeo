@@ -397,6 +397,7 @@ describe('coding pack newly unowned PR notifications', () => {
       await wakeCodingUnownedPrs(events, send, ship + 180_000);
       const covered = ['owner', 'addUrls', 'named', 'single'].includes(claim);
       expect(retry).toHaveLength(1);
+      expect(retry[0].key).toBe(original.key);
       expect(retry[0].text.includes('synthetic/a#1')).toBe(!covered);
       expect(retry[0].text).toContain('synthetic/b#1');
       if (!covered) expect(retry[0]).toEqual(original);

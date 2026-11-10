@@ -32,7 +32,7 @@ const evidence: Record<string, unknown> = { verified: false, ports: [] };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let service: ReturnType<typeof createNeoService> | undefined;
 let socket: WebSocket | undefined;
-let accept = false, measuring = false, now = Date.now(), numbers = [1, 2, 3];
+let accept = false, loseAck = false, measuring = false, now = Date.now(), numbers = [1, 2, 3];
 const inspect = <T>(read: () => T): T => {
   const wasMeasuring = measuring;
   measuring = false;
@@ -54,6 +54,15 @@ const open = async () => {
   await waitForSdkBodyCopy(app.db.getDatabase());
   await app.db.updateGlobalSettings({ neo: { packs: [] } });
   service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+  const execute = app.db.gateway.run.bind(app.db.gateway);
+  app.db.gateway.run = (async (operation, args) => {
+    if (loseAck && operation.name === 'coding.unowned.commands' &&
+      (args as { method: string }).method === 'acknowledge') {
+      loseAck = false;
+      throw new Error('Synthetic acknowledgement lost after admission');
+    }
+    return execute(operation, args);
+  }) as typeof app.db.gateway.run;
   const db = app.db.getDatabase(), prepare = db.prepare.bind(db);
   db.prepare = ((sql: string) => {
     assert(!(measuring && /pack_coding_pr_unowned|WITH active AS/.test(sql)), 'Claim and receipt SQL must stay off main');
@@ -147,7 +156,6 @@ try {
   assert(!attempts[1].text.includes(`${repo}#1`));
   assert(!attempts[1].text.includes(`${repo}#2`));
   assert(attempts[1].text.includes(`${repo}#3`));
-  assert.notEqual(attempts[1].key, attempts[0].key);
   const retry = attempts[1];
   await close();
   await open();
@@ -161,19 +169,40 @@ try {
   await sweep();
   assert.equal(attempts.length, 3);
   numbers = [1, 2, 3, 4, 5];
+  loseAck = true;
+  await assert.rejects(sweep(), /Synthetic acknowledgement lost after admission/);
+  assert.equal(attempts.length, 4);
+  assert.equal(mailbox().length, 2);
+  const admittedKey = attempts[3].key;
+  assert.equal(state().key, admittedKey);
+  await close();
+  await open();
+  app!.db.getDatabase().prepare('UPDATE pack_coding_pr_ledger SET owner=? WHERE repo=? AND number=4')
+    .run(JSON.stringify(ref), repo);
+  await sweep();
+  assert.equal(attempts.length, 5);
+  assert(attempts[4].text.includes(`${repo}#5`));
+  assert(!attempts[4].text.includes(`${repo}#4`));
+  assert.equal(mailbox().length, 2, 'Lost acknowledgement must not admit the remaining PR twice');
+  assert.equal(attempts[4].key, admittedKey);
+  assert.equal(mailbox().filter((entry) => entry.message.message.content.includes(`${repo}#5`)).length, 1);
+  assert.equal(state().key, null);
+  evidence.admittedCrash = { key: admittedKey, remainingPrInputs: 1, mailboxEntries: mailbox().length };
+  numbers = [1, 2, 3, 4, 5, 6, 7];
   accept = false;
   await sweep();
-  assert.equal(attempts.length, 4);
-  app!.db.getDatabase().prepare('UPDATE pack_coding_pr_ledger SET owner=? WHERE repo=? AND number IN (4,5)')
+  assert.equal(attempts.length, 6);
+  app!.db.getDatabase().prepare('UPDATE pack_coding_pr_ledger SET owner=? WHERE repo=? AND number IN (6,7)')
     .run(JSON.stringify(ref), repo);
   accept = true;
   await sweep();
-  assert.equal(attempts.length, 4);
+  assert.equal(attempts.length, 6);
   assert.equal(state().key, null);
-  assert.equal(mailbox().length, 1);
+  assert.equal(mailbox().length, 2);
+  assert.equal(attempts[1].key, attempts[0].key);
   evidence.publicAddUrls = edited;
   evidence.verified = true;
-  console.log('PASS: current owner and public addUrls claims removed; unowned retry survives restart; fully claimed batch retires');
+  console.log('PASS: rejected and admitted retries keep their delivery ID across trimming and restart; claimed batches retire');
 } finally {
   measuring = false;
   evidence.attempts = attempts;

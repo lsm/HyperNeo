@@ -11,8 +11,10 @@ and authenticated local RPC. A persisted synthetic job runs the production
 coding-pack sweep. First delivery is refused. Then a current owner claims one
 PR, and the public neo.todo.edit addUrls operation links a second PR to an
 unassigned todo. The next attempted notice must contain only the third PR.
-Its key survives daemon restart and its accepted retry reaches Neo's mailbox
-once. A later fully claimed batch must retire without another wake.
+Its original delivery ID survives trimming and daemon restart; its accepted
+retry reaches Neo's mailbox once. A second batch is admitted, then loses its
+separate acknowledgement write. After restart and a new claim, its remaining
+PR must appear in the mailbox only once. A later fully claimed batch retires.
 
 Main-thread SQL guards cover pending-notice state and the claim lookup. Keep
 unowned-pr-claims.json and proof.log with exit status and resourcesClosed=true.
