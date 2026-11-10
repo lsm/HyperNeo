@@ -1,3 +1,4 @@
+import { neoNoticeCardIds } from '../../../../src/lib/neo/covered-notice.ts';
 import { deliverNeoTurnReport } from '../../../../src/lib/neo/turn-report.ts';
 import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
 import { createDelegationPack } from '../../../../src/lib/neo/packs/delegation/pack.ts';
@@ -1501,6 +1502,7 @@ describe('neo todo runner', () => {
     'environment-uncovered',
     'restart',
     'new-owner',
+    'todo-match-only',
   ] as const)(
     'structured blocker repeats require a successful same-state receipt and live card: %s',
     async (scenario) => {
@@ -1517,7 +1519,13 @@ describe('neo todo runner', () => {
           },
           2
         );
-        const question = scenario.endsWith('uncovered') ? null : askForWorker(h, todo.id);
+        const question = scenario.endsWith('uncovered')
+          ? null
+          : askForWorker(
+              h,
+              todo.id,
+              scenario === 'todo-match-only' ? 'Another action' : 'Approval required'
+            );
         const ask = h.store.getAsk('ask')!;
         let attempts = 0;
         const delivered: string[] = [];
@@ -1528,10 +1536,7 @@ describe('neo todo runner', () => {
         };
         const send = (id: string, message: string) => {
           const current = h.store.getTodo(todo.id)!;
-          const openCardIds = h.store
-            .listQuestions('ask')
-            .filter((card) => card.state === 'open' && card.todoId === todo.id)
-            .map((card) => card.id);
+          const openCardIds = neoNoticeCardIds(current, h.store.listQuestions('ask'));
           const facts = {
             priorStatus: 'done' as const,
             state: current.state,
@@ -1562,7 +1567,11 @@ describe('neo todo runner', () => {
         if (scenario === 'closed') h.store.retireQuestion(question!, 'Resolved', null, 3);
         if (scenario === 'new-card') {
           h.store.retireQuestion(question!, 'Replaced', null, 3);
-          askForWorker(h, todo.id);
+          askForWorker(
+            h,
+            todo.id,
+            scenario === 'todo-match-only' ? 'Another action' : 'Approval required'
+          );
         }
         if (scenario === 'changed')
           h.store.updateTodo(h.store.getTodo(todo.id)!, { blockedReason: 'Another decision' }, 3);
@@ -1573,9 +1582,7 @@ describe('neo todo runner', () => {
               ? `New evidence.\nBlocked (${kind}): Approval required\r\n`
               : `Blocked (${kind}): Approval required\r\n`;
         await send('second-block', message);
-        expect(delivered).toHaveLength(
-          ['covered', 'failed', 'environment-covered', 'restart'].includes(scenario) ? 1 : 2
-        );
+        expect(delivered).toHaveLength(['covered', 'failed', 'restart'].includes(scenario) ? 1 : 2);
       } finally {
         h.db.close();
       }
@@ -3292,12 +3299,12 @@ describe('worker final-line blockers', () => {
   });
 });
 
-function askForWorker(h: ReturnType<typeof setup>, todoId: string) {
+function askForWorker(h: ReturnType<typeof setup>, todoId: string, text = 'Approve it?') {
   const question = h.store.askQuestion(
     crypto.randomUUID(),
     'ask',
     {
-      text: 'Approve it?',
+      text,
       kind: 'yesno',
       options: null,
       multiple: false,

@@ -312,6 +312,6 @@ test.each(['covered', 'unrelated'] as const)(
     await consume(0);
     clock += 24 * hour;
     await service.refreshDriverWork();
-    expect(notes()).toHaveLength(scenario === 'covered' ? 1 : 2);
+    expect(notes()).toHaveLength(2);
   }
 );

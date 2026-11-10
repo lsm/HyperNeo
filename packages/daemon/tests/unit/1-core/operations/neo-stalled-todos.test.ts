@@ -350,6 +350,7 @@ test('environment blockers remind Neo with the reason while needs-human cards st
 test.each([
   'covered',
   'start-covered',
+  'environment-start',
   'other-start',
   'ask-wide',
   'unrelated',
@@ -361,6 +362,12 @@ test.each([
   'only a delivered same-state reminder with its open card is quiet: %s',
   async (scenario) => {
     add('covered');
+    if (scenario === 'environment-start')
+      service.todos.updateTodo(
+        service.todos.getTodo('covered')!,
+        { blockedBy: 'environment', blockedReason: 'Synthetic network failure' },
+        clock
+      );
     const question = service.todos.askQuestion(
       'coverage-card',
       'ask',
@@ -401,7 +408,7 @@ test.each([
     }
     clock += 2 * hour;
     await service.refreshDriverWork();
-    expect(notes()).toHaveLength(['covered', 'start-covered'].includes(scenario) ? 1 : 2);
+    expect(notes()).toHaveLength(2);
     if (scenario === 'new-owner') expect(notes().at(-1).to.sessionId).toBe('other-neo');
     expect(service.todos.getTodo('covered')?.state).toBe('blocked');
   }
