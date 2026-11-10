@@ -62,6 +62,32 @@ describe('Neo settings writer ownership', () => {
     expect(settings.getGlobalSettings().neo?.front?.enabled).toBe(true);
   });
 
+  it('front model writes preserve concurrent switch, coordinator and permission settings', async () => {
+    await gateway.call(globalSettingsWrites, 'neoPreferences', {
+      ...preference,
+      thinkingLevel: 'off',
+    });
+    settings.updateGlobalSettings({
+      neo: { ...settings.getGlobalSettings().neo, workerPermissionMode: 'default' },
+    });
+    await Promise.all([
+      gateway.call(globalSettingsWrites, 'neoFrontModel', {
+        ...preference,
+        model: 'front',
+        thinkingLevel: 'off',
+      }),
+      gateway.call(globalSettingsWrites, 'neoFront', false),
+      gateway.call(globalSettingsWrites, 'neoRules', { add: ['Keep this rule.'] }),
+    ]);
+    expect(settings.getGlobalSettings().neo).toMatchObject({
+      preferences: preference,
+      workerPermissionMode: 'default',
+      packs: ['keep-pack'],
+      standingRules: ['Keep this rule.'],
+      front: { enabled: false, model: { ...preference, model: 'front' } },
+    });
+  });
+
   it('retains simultaneous mute and rule edits alongside a UI settings patch', async () => {
     await Promise.all([
       gateway.call(globalSettingsWrites, 'neoMute', 'first', true),

@@ -89,6 +89,7 @@ import {
   PackSettingSchema,
 } from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
+import { createNeoFrontModelOperation } from './front-model-preference.ts';
 import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
@@ -773,6 +774,7 @@ export function createNeoOperations(service: NeoService) {
       () => service.refreshPackPreferences()
     ),
     createNeoPreferenceOperation(service),
+    createNeoFrontModelOperation(service),
     ...createPackPreferenceOperations(
       service.db.getDatabase(),
       () => service.installedPacks(),
