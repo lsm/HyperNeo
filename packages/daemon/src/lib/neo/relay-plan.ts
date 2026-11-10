@@ -32,8 +32,9 @@ export function planNeoRelayAnswer(
     question.preferenceProposal
   )
     return { reason: 'direct_human_required: this card needs the human’s own action.' };
+  const words = input.words.trim();
   return {
-    answer: neoChoiceByLetter(input.words, question) ?? input.words,
+    answer: neoChoiceByLetter(words, question) ?? words,
     provenance: {
       words: input.words,
       via: input.sender,

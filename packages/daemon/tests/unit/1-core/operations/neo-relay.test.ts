@@ -99,7 +99,7 @@ test('an allowed relay uses the chat answer write and persists exact words and p
   expect(question).toMatchObject({
     state: 'answered',
     answeredBy: 'chat',
-    answer: input.words,
+    answer: input.words.trim(),
     answerProvenance: {
       words: input.words,
       via: sender,
