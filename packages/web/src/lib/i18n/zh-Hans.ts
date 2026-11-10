@@ -351,6 +351,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.clientUpdate': '请更新 HyperNeo，再从消息中重新打开文件，以预览当前内容。',
   'artifact.revoked': '你已经无法查看这个文件。',
   'artifact.forbidden': '这个引用指向预览不能打开的位置。',
+  'artifact.videoError': '这个视频无法播放。请使用 H.264/AAC 编码的 MP4。',
+  'artifact.videoLimit': '视频预览支持最大 16 MiB 的文件。',
   'artifact.unsupported': '这种格式还不能预览。',
   'artifact.limit': '这个文件超过了 {limit} 的预览上限。',
   'artifact.commit': 'commit {sha}',

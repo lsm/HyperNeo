@@ -355,6 +355,8 @@ export const en = {
     'Update HyperNeo and reopen the file from its message to preview the current file.',
   'artifact.revoked': 'This file is no longer available to you.',
   'artifact.forbidden': 'This reference points outside what the preview may open.',
+  'artifact.videoError': 'This video cannot play here. Try H.264/AAC MP4.',
+  'artifact.videoLimit': 'Video previews support files up to 16 MiB.',
   'artifact.unsupported': 'This format has no preview yet.',
   'artifact.limit': 'This file is larger than the {limit} preview limit.',
   'artifact.commit': 'commit {sha}',

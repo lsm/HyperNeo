@@ -9,6 +9,7 @@ import { connectionState } from '../../lib/state.ts';
 import { t } from '../../lib/i18n/index.ts';
 import MarkdownRenderer, { clearArtifactRenderCache } from '../chat/MarkdownRenderer.tsx';
 import { ArtifactHtmlDocument } from './ArtifactHtmlDocument.tsx';
+import { ArtifactVideo } from './ArtifactVideo.tsx';
 import { ArtifactImage } from './ArtifactImage.tsx';
 import {
   artifactStateMessage,
@@ -144,6 +145,8 @@ export function LiveFilePreview({
               ? refusal(shown.error)
               : artifactStateMessage(connected ? 'loading' : 'daemon_unavailable')}
           </p>
+        ) : file.kind === 'video' ? (
+          <ArtifactVideo blob={file.blob} title={title} />
         ) : file.kind === 'image' ? (
           <ArtifactImage blob={file.blob} title={title} />
         ) : file.kind === 'html' ? (

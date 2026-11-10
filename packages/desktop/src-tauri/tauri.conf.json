@@ -31,7 +31,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' http://localhost:9283 ws://localhost:9283; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
+      "csp": "default-src 'self' http://localhost:9283 ws://localhost:9283; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src blob:"
     },
     "trayIcon": {
       "iconPath": "icons/icon.png",
