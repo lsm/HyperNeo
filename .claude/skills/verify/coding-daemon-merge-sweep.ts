@@ -1,6 +1,5 @@
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
 import { CodingStageFactsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/stage-facts.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTrackerMirrorRepository } from '../../../packages/daemon/src/storage/repositories/neo-tracker-mirror.ts';
@@ -24,7 +23,8 @@ import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
-const botReviewRepro = process.argv.includes('bot-review-repro');
+const cancelReview = process.argv.includes('bot-review-cancel');
+const botReviewRepro = process.argv.includes('bot-review-repro') || cancelReview;
 const assignedReview = process.argv.includes('assigned-review') || botReviewRepro;
 const linkedCrossRepo = process.argv.includes('linked-issue-cross-repo');
 const linkedNoRow = process.argv.includes('linked-issue-no-row');
@@ -76,7 +76,7 @@ try{
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'global',key:''},key:'watchedRepos',value:['synthetic/merge']})).ok);
  const db=app.db.getDatabase(),ledger=new CodingPrLedgerRepository(db);
  const conversation='20000000-0000-4000-8000-000000009601',root=`neo:${conversation}`;
- if(humanDefault||ciRetry){
+ if(humanDefault||ciRetry||assignedReview){
  db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,type,config,metadata) VALUES (?,'Synthetic Neo',?,'2026-11-03','2026-11-03','active','worker','{}','{}')").run(root,run);
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  }
@@ -110,7 +110,7 @@ try{
    }) as typeof db.prepare;
    rejectSignoff = false;
    const store = new NeoAskTodoRepository(db);
-   store.openAsk({ id: 'review-ask', sessionId: 'synthetic', projectId: null,
+   store.openAsk({ id: 'review-ask', sessionId: root, projectId: null,
      originMessageId: null, title: 'Synthetic review', request: 'Review', createdAt: 1 });
    const todo = store.addTodo('review-todo', 'review-ask', { title: 'Synthetic change',
      instruction: 'Build', named: null, doneWhen: 'Merged',
@@ -120,49 +120,65 @@ try{
    stages.observeHead(url, head, tick);
    const actor = { kind: 'agent' as const, id: 'synthetic-reviewer', harness: 'hyperneo', model: 'review-model' };
    const ref = { adapter: 'hyperneo', id: actor.id };
-   if (botReviewRepro) {
-     pr.body = 'Agent: gpt-6.1-sol (effort: medium) via Codex';
-     publish();
-     new NeoTodoSessionRepository(db).bind(todo.id, { adapter: 'hyperneo', id: 'synthetic-writer' }, tick);
-     const assigned = await invokeOperation(app.sessionManager.getOperationRegistry(), 'neo.coding.assign', {
+   pr.body = 'Agent: gpt-6.1-sol (effort: medium) via Codex';
+   publish();
+   new NeoTodoSessionRepository(db).bind(todo.id, { adapter: 'hyperneo', id: 'synthetic-writer' }, tick);
+   const assignReview = async (handoff?: unknown) => {
+     const outcome = await invokeOperation(app!.sessionManager.getOperationRegistry(), 'neo.coding.assign', {
        todoId: todo.id, url, head, stage: 'review', acceptanceContract: 'contract', candidates: [],
+       ...(handoff ? { handoff } : {}),
      }, { source: 'rpc', principal: 'local', role: 'neo' });
-     assert.equal(assigned.kind, 'completed');
-     const result = (assigned as { value: { ok: boolean; assignment: { bot?: string; actor?: unknown; ref?: unknown } } }).value;
-     evidence.publicAssignment = result;
-     assert(result.ok, JSON.stringify(result));
-     assert.equal(result.assignment.bot, 'fixture-bot');
-     assert.equal(result.assignment.actor, undefined);
-     assert.equal(result.assignment.ref, undefined);
-   } else {
-     assert(new CodingAssignmentsRepository(db).record(todo.id, 'review', {
-       url, head, acceptanceContract: 'contract', newDispatch: true,
-       write: { adapter: 'hyperneo', id: 'synthetic-writer' }, actor, ref,
-     }));
-   }
+     assert.equal(outcome.kind, 'completed');
+     return (outcome as { value: { ok: boolean; assignment: { bot?: string; actor?: unknown; ref?: unknown } } }).value;
+   };
+   const result = await assignReview();
+   evidence.publicAssignment = result;
+   assert(result.ok, JSON.stringify(result));
+   assert.equal(result.assignment.bot, 'fixture-bot');
+   assert.equal(result.assignment.actor, undefined);
+   assert.equal(result.assignment.ref, undefined);
    const held = () => notices.filter((text) => text.includes('requires human sign-off'));
    await runSweep();
+   assert.equal(held().length, 1, 'Bot approval alone does not cover independent review');
+   evidence.botOnlyWakes = held().length;
+   await app.db.createSession({ id: ref.id, title: 'Synthetic reviewer', workspacePath: run,
+     createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active',
+     config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0,
+       outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+   const delivered = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.send', {
+     todoId: todo.id, ref, from: root, message: 'Review the synthetic change',
+   }, { source: 'internal', role: 'neo', sessionId: root });
+   evidence.handoffDelivery = delivered;
+   assert.equal(delivered.kind, 'completed');
+   const delivery = (delivered as { value: { ok: boolean; value: { delivered: boolean; receipt: unknown } } }).value;
+   assert(delivery.ok && delivery.value.delivered, JSON.stringify(delivered));
+   assert((await assignReview({ state: 'pending', ref, receipt: delivery.value.receipt })).ok);
+   const beforeCovered = held().length;
    await runSweep();
-   evidence.observedHoldWakes = held().length;
-   assert.equal(held().length, 0);
+   await runSweep();
+   evidence.observedHoldWakes = held().length - beforeCovered;
+   assert.equal(held().length, beforeCovered);
    assert.equal(mergeCalls().length, 0);
-   evidence.coveredHoldWakes = held().length;
+   evidence.coveredHoldWakes = held().length - beforeCovered;
    evidence.reviewReadOffMainThread = true;
-   assert(stages.record({ url, head, stage: 'review', actor, ref, verdict: 'pass',
-     acceptanceContract: 'contract', evidence: ['Synthetic review completed'] }));
-   await runSweep();
-   assert.equal(held().length, 1);
-   evidence.finishedReviewWakes = 1;
-   db.prepare("DELETE FROM pack_coding_stage_facts WHERE url=?").run(url);
    store.askQuestion('review-decision', 'review-ask', { todoId: todo.id,
      text: 'Choose next step', kind: 'reply', options: null, multiple: false,
      noLabel: null, yesLabel: null, startTodos: null }, tick);
    await runSweep();
-   assert.equal(held().length, 2);
+   assert.equal(held().length, beforeCovered + 1);
    evidence.humanDecisionWakes = 1;
+   store.retireQuestion(store.listQuestions('review-ask')[0], 'Synthetic decision resolved', null, tick);
+   await runSweep();
+   assert.equal(held().length, beforeCovered + 1);
+   const terminalState = cancelReview ? 'cancelled' : 'returned';
+   assert((await assignReview({ state: terminalState, ref })).ok);
+   await runSweep();
+   assert.equal(held().length, beforeCovered + 2);
+   evidence.retiredReviewState = terminalState;
+   evidence.finishedReviewWakes = 1;
    assert.equal(mergeCalls().length, 0);
    assert.equal(store.getTodo(todo.id)?.state, 'doing');
-   assert.equal(store.listQuestions('review-ask')[0].state, 'open');
+   assert.equal(store.listQuestions('review-ask')[0].state, 'retired');
    assert.deepEqual(await rpc('pack.preferences.list', {}), preferences);
    evidence.mergeCommands = mergeCalls();
    evidence.savedPreferencesUnchanged = true;

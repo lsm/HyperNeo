@@ -1,3 +1,5 @@
+import { CodingReviewHandoff, codingHandoffWrites } from './review-merge-hold-worker.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
 import {
   QA_SYSTEM_CONTRACT,
@@ -38,6 +40,7 @@ const Input = z.object({
   stage: z.enum(['review', 'verify']),
   candidates: z.array(CodingStageTarget).max(30),
   human: z.string().trim().min(1).optional(),
+  handoff: CodingReviewHandoff.optional(),
 });
 type Input = z.infer<typeof Input>;
 const Pr = z.object({
@@ -285,15 +288,49 @@ export function createCodingAssignmentOperation(deps: Deps) {
     description: neoToolDescription('neo.coding.assign'),
     inputSchema: Input,
     resultSchema: z.union([
-      z.object({ ok: z.literal(true), assignment: Assignment }),
+      z.object({
+        ok: z.literal(true),
+        assignment: Assignment,
+        reviewHandoff: CodingReviewHandoff.optional(),
+      }),
       z.object({ ok: z.literal(false), reason: z.string() }),
     ]),
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     execute: async (input, caller) => {
       if (running.has(input.todoId))
-        return { ok: false, reason: 'Actor assignment is already in progress for this todo.' };
+        return {
+          ok: false as const,
+          reason: 'Actor assignment is already in progress for this todo.',
+        };
       running.add(input.todoId);
       try {
+        if (input.handoff) {
+          const assignment = assignments.read(input.todoId, input.url, input.head).review;
+          if (
+            input.stage !== 'review' ||
+            !assignment?.bot ||
+            assignment.acceptanceContract !== input.acceptanceContract ||
+            isDeepStrictEqual(assignment.write, input.handoff.ref)
+          )
+            return {
+              ok: false as const,
+              reason: 'A bot assignment and an independent reviewer are required.',
+            };
+          const recorded = await gatewayFor(deps.db).call(
+            codingHandoffWrites,
+            'record',
+            input.todoId,
+            githubUrlKey(input.url),
+            input.head,
+            input.handoff
+          );
+          return recorded
+            ? { ok: true as const, assignment, reviewHandoff: input.handoff }
+            : {
+                ok: false as const,
+                reason: 'The review handoff is unaccepted, stale or already retired.',
+              };
+        }
         return await assign(input, caller);
       } finally {
         running.delete(input.todoId);

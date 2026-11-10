@@ -25250,6 +25250,61 @@
             "maxItems": 30,
             "type": "array"
           },
+          "handoff": {
+            "properties": {
+              "receipt": {
+                "properties": {
+                  "executionId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "inputId": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "executionId",
+                  "inputId"
+                ],
+                "type": "object"
+              },
+              "ref": {
+                "properties": {
+                  "adapter": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "daemon": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "adapter",
+                  "id"
+                ],
+                "type": "object"
+              },
+              "state": {
+                "enum": [
+                  "pending",
+                  "returned",
+                  "cancelled"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "ref"
+            ],
+            "type": "object"
+          },
           "head": {
             "examples": [
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -25433,6 +25488,64 @@
               "ok": {
                 "const": true,
                 "type": "boolean"
+              },
+              "reviewHandoff": {
+                "additionalProperties": false,
+                "properties": {
+                  "receipt": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "executionId": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "inputId": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "executionId",
+                      "inputId"
+                    ],
+                    "type": "object"
+                  },
+                  "ref": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "adapter": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "daemon": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "id": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "adapter",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "state": {
+                    "enum": [
+                      "pending",
+                      "returned",
+                      "cancelled"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "state",
+                  "ref"
+                ],
+                "type": "object"
               }
             },
             "required": [

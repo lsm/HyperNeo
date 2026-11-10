@@ -258,6 +258,16 @@ describe('daemon merge sweep behavior', () => {
           ...(scenario === 'bot-assignment' ? { bot: 'bot' } : { actor, ref }),
         })
       ).toBe(true);
+    if (!['no-assignment', 'bot-assignment'].includes(scenario))
+      db.prepare("INSERT INTO pack_facts(todo_id,pack,key,value_json) VALUES(?,'coding',?,?)").run(
+        todo.id,
+        `review-handoff:${url}:${assignedHead}`,
+        JSON.stringify({
+          state: scenario === 'finished-review' ? 'returned' : 'pending',
+          ref,
+          receipt: { executionId: ref.id, inputId: 'review' },
+        })
+      );
     if (scenario === 'finished-review')
       stages.record({
         url,

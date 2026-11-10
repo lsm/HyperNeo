@@ -19,11 +19,11 @@ export function codingReviewCoversMergeHold(
     handoffs.length > 0 &&
     handoffs.every(
       (handoff) =>
-        handoff.assignment?.actor?.kind === 'agent' &&
+        handoff.assignment?.state === 'pending' &&
+        handoff.assignment.receipt !== undefined &&
         handoff.state === 'doing' &&
         handoff.blockedBy === null &&
-        !handoff.questionOpen &&
-        !handoff.finished
+        !handoff.questionOpen
     )
   );
 }

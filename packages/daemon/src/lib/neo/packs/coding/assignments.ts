@@ -1,4 +1,4 @@
-import { codingAssignmentReads } from './review-merge-hold-worker.ts';
+import { CodingReviewHandoff, codingAssignmentReads } from './review-merge-hold-worker.ts';
 import { codingStageTargetReads } from './stage-target-db.ts';
 import { planCodingStageTarget } from './stage-preferences.ts';
 import { CodingPrLedgerRepository } from './pr-ledger.ts';
@@ -84,14 +84,11 @@ export class CodingAssignmentsRepository {
       codingAssignmentReads,
       'reviewHolds',
       githubUrlKey(url),
-      head,
-      key(url, head, 'review')
+      head
     );
     return rows.map((row) => ({
       ...row,
-      assignment: CodingAssignment.safeParse(JSON.parse(row.assignment)).data ?? null,
-      questionOpen: Boolean(row.questionOpen),
-      finished: Boolean(row.finished),
+      assignment: CodingReviewHandoff.safeParse(JSON.parse(row.assignment)).data ?? null,
     }));
   }
 

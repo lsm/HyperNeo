@@ -234,20 +234,16 @@ The `linked-issue-cross-repo` case keeps the bound mirror in an opted-in
 repository while its PR is in a repository with mirroring disabled. The stored
 mirror home still controls the closing-reference gate.
 
-Use `assigned-review` to exercise expected human-merge holds. The real coding
-pack reads a durable Review assignment for the current todo/head through its
-SQLite worker. Two sweeps emit no sign-off wake while the assignment is pending.
-Recording the review result restores the wake; a pending human question also
-restores it. Each held case executes zero merges and preserves preferences and
-the todo/question records. Unit counterparts cover missing/stale/bot assignments,
-closed todos, file sign-off and an explicit human merge policy.
+Use `assigned-review` or `bot-review-repro` for the actual public bot-then-independent
+review path. The public assign operation records bot approval separately. A real
+work.send to a synthetic manual-mode session provides an accepted receipt, which
+neo.coding.assign records as a pending independent handoff. Two sweeps then emit
+no additional sign-off wake. An open human question restores the wake while the
+handoff is pending. Resolving it restores coverage; recording the review return
+retires coverage and wakes again. Use `bot-review-cancel` for cancellation instead
+of return. No held case merges or changes preferences.
 
-The assigned-review proof rejects this query if the daemon's main connection
-attempts it. Its registered worker-only repository owns the SQL, and the main
-thread parses returned records before applying the pure suppression predicate.
-
-`bot-review-repro` invokes the public neo.coding.assign operation with a configured
-bot. It records the returned bot-only assignment and reproduces the unmet quiet
-hold assertion. This diagnostic currently fails with two wakes instead of zero.
-The seeded agent mode does not establish coverage of an independent review
-handoff after bot review; that handoff needs its own durable signal.
+The proof rejects the coverage query on the main connection. The registered
+SQLite worker owns its SQL. Focused tests preserve missing/stale/unreadable
+coverage, unaccepted or uncertain receipts, completed reviews, file sign-off and
+explicit human merge policy. Retired handoffs cannot be revived by stale retries.
