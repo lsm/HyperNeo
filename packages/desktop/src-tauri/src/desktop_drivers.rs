@@ -1,5 +1,6 @@
 use cua_driver_sdk::{
-    EmbeddedCuaDriverHost, EmbeddedDriverHostOptions, EmbeddedEnvironmentVariable,
+    EmbeddedCuaDriverHost, EmbeddedDriverHostOptions, EmbeddedDriverHostState,
+    EmbeddedEnvironmentVariable,
 };
 use serde_json::{json, Value};
 use std::{
@@ -230,6 +231,13 @@ impl Drivers {
         {
             return Err("Invalid worker identifier".into());
         }
+        #[cfg(test)]
+        if request.action == "fixture-slots" {
+            let slots = self.workers.lock().await;
+            return Ok(
+                json!({"count": slots.len(), "references": slots.get(&request.worker).map(Arc::strong_count).unwrap_or(0)}),
+            );
+        }
         if !self.starts_enabled.load(Ordering::Relaxed) {
             let reason = "Driver control unavailable until worker authorization is enforced";
             return match request.action.as_str() {
@@ -240,117 +248,146 @@ impl Drivers {
                 _ => Err("Unknown Desktop control action".into()),
             };
         }
-        let slot = self
-            .workers
-            .lock()
-            .await
-            .entry(request.worker.clone())
-            .or_default()
-            .clone();
+        let worker_id = request.worker.clone();
+        let slot = {
+            let mut slots = self.workers.lock().await;
+            if request.action != "start" && !slots.contains_key(&worker_id) {
+                return match request.action.as_str() {
+                    "status" | "stop" => {
+                        Ok(json!({"state": "stopped", "pid": null, "socket": null}))
+                    }
+                    _ => Err("Unknown Desktop control action".into()),
+                };
+            }
+            slots.entry(worker_id.clone()).or_default().clone()
+        };
         let mut worker = slot.lock().await;
-        match request.action.as_str() {
-            "start" => {
-                let app = self
-                    .binary
-                    .parent()
-                    .and_then(|p| p.parent())
-                    .and_then(|p| p.parent())
-                    .ok_or("Invalid bundled driver path")?;
-                let mut signature = Command::new("/bin/bash");
-                signature
-                    .args(["-c", include_str!("../../verify-macos-bundle.sh"), "--"])
-                    .arg(app)
-                    .arg("--driver-only")
-                    .env_clear()
-                    .env("PATH", &self.verification_path)
-                    .kill_on_drop(true);
-                if !timeout(Duration::from_secs(5), signature.output())
-                    .await
-                    .map_err(|_| "Driver signature validation timed out")??
-                    .status
-                    .success()
-                {
-                    return Err("Driver signature validation failed".into());
-                }
-                let version = timeout(
-                    Duration::from_secs(5),
-                    Command::new(&self.binary)
-                        .arg("--version")
+        let result: Result<()> = async {
+            match request.action.as_str() {
+                "start" => {
+                    let app = self
+                        .binary
+                        .parent()
+                        .and_then(|p| p.parent())
+                        .and_then(|p| p.parent())
+                        .ok_or("Invalid bundled driver path")?;
+                    let mut signature = Command::new("/bin/bash");
+                    signature
+                        .args(["-c", include_str!("../../verify-macos-bundle.sh"), "--"])
+                        .arg(app)
+                        .arg("--driver-only")
                         .env_clear()
-                        .kill_on_drop(true)
-                        .output(),
-                )
-                .await
-                .map_err(|_| "Driver version validation timed out")??;
-                if !version.status.success() || version.stdout != b"cua-driver 0.44.0\n" {
-                    return Err("Driver version validation failed".into());
+                        .env("PATH", &self.verification_path)
+                        .kill_on_drop(true);
+                    if !timeout(Duration::from_secs(5), signature.output())
+                        .await
+                        .map_err(|_| "Driver signature validation timed out")??
+                        .status
+                        .success()
+                    {
+                        return Err("Driver signature validation failed".into());
+                    }
+                    let version = timeout(
+                        Duration::from_secs(5),
+                        Command::new(&self.binary)
+                            .arg("--version")
+                            .env_clear()
+                            .kill_on_drop(true)
+                            .output(),
+                    )
+                    .await
+                    .map_err(|_| "Driver version validation timed out")??;
+                    if !version.status.success() || version.stdout != b"cua-driver 0.44.0\n" {
+                        return Err("Driver version validation failed".into());
+                    }
+                    if worker.is_none() {
+                        let directory = tempfile::Builder::new()
+                            .prefix("d-")
+                            .permissions(std::fs::Permissions::from_mode(0o700))
+                            .tempdir_in(
+                                request
+                                    .work_dir
+                                    .ok_or("workDir is required")?
+                                    .canonicalize()?,
+                            )?;
+                        let home = directory
+                            .path()
+                            .to_str()
+                            .ok_or("Invalid worker directory")?;
+                        let host =
+                            EmbeddedCuaDriverHost::with_options(EmbeddedDriverHostOptions {
+                                binary_path: self
+                                    .binary
+                                    .to_str()
+                                    .ok_or("Invalid driver path")?
+                                    .into(),
+                                host_bundle_id: "io.hyperneo.app".into(),
+                                socket_path: Some(
+                                    directory
+                                        .path()
+                                        .join("d.sock")
+                                        .to_str()
+                                        .ok_or("Invalid socket path")?
+                                        .into(),
+                                ),
+                                startup_timeout_ms: Some(10000),
+                                shutdown_timeout_ms: Some(2000),
+                                permission_mode: None,
+                                capability_manifest_path: None,
+                                approve_capability_manifest: false,
+                                session_policy_path: None,
+                                approve_session_policy: false,
+                                dangerously_bypass_approvals: false,
+                                environment: [
+                                    ("HOME", home),
+                                    ("TMPDIR", home),
+                                    ("CUA_DRIVER_RS_HOME", home),
+                                    ("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0"),
+                                    ("CUA_DRIVER_RS_UPDATE_CHECK", "0"),
+                                ]
+                                .into_iter()
+                                .map(|(name, value)| EmbeddedEnvironmentVariable {
+                                    name: name.into(),
+                                    value: value.into(),
+                                })
+                                .collect(),
+                                inherit_stderr: false,
+                                no_overlay: true,
+                                capture_stderr: false,
+                            })?;
+                        *worker = Some(Worker {
+                            host,
+                            _directory: directory,
+                        });
+                    }
+                    worker.as_ref().unwrap().host.clone().start().await?;
                 }
-                if worker.is_none() {
-                    let directory = tempfile::Builder::new()
-                        .prefix("d-")
-                        .permissions(std::fs::Permissions::from_mode(0o700))
-                        .tempdir_in(
-                            request
-                                .work_dir
-                                .ok_or("workDir is required")?
-                                .canonicalize()?,
-                        )?;
-                    let home = directory
-                        .path()
-                        .to_str()
-                        .ok_or("Invalid worker directory")?;
-                    let host = EmbeddedCuaDriverHost::with_options(EmbeddedDriverHostOptions {
-                        binary_path: self.binary.to_str().ok_or("Invalid driver path")?.into(),
-                        host_bundle_id: "io.hyperneo.app".into(),
-                        socket_path: Some(
-                            directory
-                                .path()
-                                .join("d.sock")
-                                .to_str()
-                                .ok_or("Invalid socket path")?
-                                .into(),
-                        ),
-                        startup_timeout_ms: Some(10000),
-                        shutdown_timeout_ms: Some(2000),
-                        permission_mode: None,
-                        capability_manifest_path: None,
-                        approve_capability_manifest: false,
-                        session_policy_path: None,
-                        approve_session_policy: false,
-                        dangerously_bypass_approvals: false,
-                        environment: [
-                            ("HOME", home),
-                            ("TMPDIR", home),
-                            ("CUA_DRIVER_RS_HOME", home),
-                            ("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0"),
-                            ("CUA_DRIVER_RS_UPDATE_CHECK", "0"),
-                        ]
-                        .into_iter()
-                        .map(|(name, value)| EmbeddedEnvironmentVariable {
-                            name: name.into(),
-                            value: value.into(),
-                        })
-                        .collect(),
-                        inherit_stderr: false,
-                        no_overlay: true,
-                        capture_stderr: false,
-                    })?;
-                    *worker = Some(Worker {
-                        host,
-                        _directory: directory,
-                    });
+                "stop" => {
+                    if let Some(worker) = worker.as_ref() {
+                        worker.host.clone().stop().await?;
+                    }
+                    *worker = None;
                 }
-                worker.as_ref().unwrap().host.clone().start().await?;
+                "status" => {}
+                _ => return Err("Unknown Desktop control action".into()),
             }
-            "stop" => {
-                if let Some(worker) = worker.as_ref() {
-                    worker.host.clone().stop().await?;
-                }
-                *worker = None;
-            }
-            "status" => {}
-            _ => return Err("Unknown Desktop control action".into()),
+            Ok(())
         }
+        .await;
+        if worker
+            .as_ref()
+            .is_some_and(|worker| worker.host.state() == EmbeddedDriverHostState::Stopped)
+        {
+            *worker = None;
+        }
+        if worker.is_none() {
+            let mut slots = self.workers.lock().await;
+            // The map and this request must be the only owners before removal.
+            if Arc::strong_count(&slot) == 2 {
+                slots.remove(&worker_id);
+            }
+        }
+        result?;
         Ok(match worker.as_ref() {
             Some(worker) => {
                 let connection = worker.host.connection();

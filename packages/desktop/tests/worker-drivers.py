@@ -20,6 +20,7 @@ assert sys.argv[1] == 'serve'
 assert '--embedded' in sys.argv
 assert '--parent-liveness-stdio' in sys.argv
 path = sys.argv[sys.argv.index('--socket') + 1]
+assert 'FIXTURE_PARENT_ONLY' not in os.environ
 assert not any('API_KEY' in key for key in os.environ)
 if '/slow/' in path:
     open(path + '.starting', 'w').close()
@@ -31,6 +32,11 @@ os.chmod(path, 0o600)
 server.listen()
 def parent_exit():
     sys.stdin.buffer.read()
+    hold = os.path.join(os.path.dirname(os.path.dirname(path)), 'hold-stop')
+    if os.path.exists(hold):
+        open(path + '.stopping', 'w').close()
+        while os.path.exists(hold):
+            time.sleep(0.01)
     os.unlink(path)
     os._exit(0)
 threading.Thread(target=parent_exit, daemon=True).start()
@@ -96,7 +102,7 @@ class WorkerDrivers(unittest.TestCase):
         self.path = str(self.bin) + ':/usr/bin:/bin:/usr/sbin:/sbin'
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.cleanup)
         ready = select.select([self.process.stdout], [], [], 15)[0]
@@ -191,7 +197,7 @@ class WorkerDrivers(unittest.TestCase):
     def test_refuses_second_app_without_removing_endpoint(self):
         second = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertTrue(select.select([second.stdout], [], [], 15)[0])
@@ -231,7 +237,7 @@ class WorkerDrivers(unittest.TestCase):
         self.process.stderr.close()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
@@ -252,7 +258,7 @@ class WorkerDrivers(unittest.TestCase):
         self.process.stderr.close()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path, 'unapproved'],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
@@ -274,7 +280,7 @@ class WorkerDrivers(unittest.TestCase):
         self.assertGreaterEqual(len(str(base / 'desktop/control.sock').encode()), 104)
         process = subprocess.Popen(
             [str(RUNNER), str(base), str(self.binary), self.path, 'unapproved'],
-            env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test'},
+            env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertTrue(select.select([process.stdout], [], [], 15)[0])
@@ -296,7 +302,7 @@ class WorkerDrivers(unittest.TestCase):
                 base.mkdir()
                 process = subprocess.Popen(
                     [str(RUNNER), str(base), str(self.binary), self.path, mode],
-                    env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test'},
+                    env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     self.assertTrue(select.select([process.stdout], [], [], 15)[0])
@@ -318,13 +324,66 @@ class WorkerDrivers(unittest.TestCase):
         self.process.stderr.close()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path, 'accept-error'],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
         self.assertTrue(self.call('status')['ok'])
         self.assertTrue(select.select([self.process.stderr], [], [], 2)[0])
         self.assertIn('Desktop control accept failed', self.process.stderr.readline())
+
+    def test_status_and_stop_do_not_allocate_worker_slots(self):
+        for index in range(4):
+            worker = f'absent-{index}'
+            self.assertTrue(self.call('status', worker)['ok'])
+            self.assertTrue(self.call('stop', worker)['ok'])
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+
+    def test_failed_start_releases_worker_slot(self):
+        incompatible = FAKE.replace("'contract_version': '0.8.0'", "'contract_version': 'invalid'")
+        for signature, binary in (('#!/bin/bash\nexit 1\n', FAKE), (CODESIGN, incompatible)):
+            with self.subTest(signature=signature == CODESIGN):
+                self.codesign.write_text(signature)
+                self.binary.write_text(binary)
+                self.assertFalse(self.call('start', workDir=str(self.work))['ok'])
+                self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+                self.assertFalse(list(self.work.glob('d-*')))
+
+    def test_stopping_worker_releases_its_slot(self):
+        self.start()
+        self.assertTrue(self.call('stop')['ok'])
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+
+    def test_queued_start_remains_tracked_after_stop(self):
+        queued = self.work / 'queued'
+        queued.mkdir()
+        hold = queued / 'hold-stop'
+        hold.touch()
+        first = self.call('start', workDir=str(queued))['result']
+        self.pids.append(first['pid'])
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            stopping = pool.submit(self.call, 'stop')
+            wait_until(lambda: bool(list(queued.glob('d-*/d.sock.stopping'))))
+            starting = pool.submit(self.call, 'start', workDir=str(queued))
+            wait_until(lambda: self.call('fixture-slots')['result']['references'] >= 3)
+            hold.unlink()
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+            second = starting.result(timeout=15)['result']
+            self.pids.append(second['pid'])
+        self.assertNotEqual(first['pid'], second['pid'])
+        self.assertEqual(self.call('status')['result']['pid'], second['pid'])
+        self.assertTrue(self.call('stop')['ok'])
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+
+    def test_fake_driver_rejects_inherited_parent_environment(self):
+        result = subprocess.run(
+            [str(self.binary), 'serve', '--embedded', '--parent-liveness-stdio',
+             '--socket', str(self.root / 'inherited.sock')],
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test',
+                 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FIXTURE_PARENT_ONLY', result.stderr)
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
