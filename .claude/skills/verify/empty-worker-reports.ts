@@ -41,10 +41,17 @@ const rpc = (name: string, input: unknown) =>
       clearTimeout(timer);
       reply.error ? fail(new Error(JSON.stringify(reply.error))) : done(reply.data);
     };
-    ws.send(JSON.stringify({
-      id, type: 'REQ', sessionId: 'global', method: 'operation.invoke',
-      data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0',
-    }));
+    ws.send(
+      JSON.stringify({
+        id,
+        type: 'REQ',
+        sessionId: 'global',
+        method: 'operation.invoke',
+        data: { name, input },
+        timestamp: new Date().toISOString(),
+        version: '1.0.0',
+      })
+    );
   });
 const seedSession = (id: string) =>
   app.db.createSession({
@@ -181,13 +188,20 @@ try {
             : 'Observe this worker'
           : scenario === 'meaningful'
             ? 'A new decision'
-            : scenario === 'whitespace'
-              ? '  \n'
-              : '';
+            : scenario === 'blocker'
+              ? 'Blocked (needs_human): A new decision is required'
+              : scenario === 'whitespace'
+                ? '  \n'
+                : '';
       const body =
         type === 'result'
           ? { type, uuid: id, subtype: 'success', result: text, is_error: false }
-          : { type, uuid: id, inputKind: scenario === 'human' ? 'human' : 'agent', message: { content: text } };
+          : {
+              type,
+              uuid: id,
+              inputKind: scenario === 'human' ? 'human' : 'agent',
+              message: { content: text },
+            };
       db.prepare(
         "INSERT INTO sdk_messages(id,session_id,sdk_uuid,message_type,sdk_message,timestamp,send_status,is_terminal,consumed_seq) VALUES (?,?,?,?,?,?,'consumed',?,?)"
       ).run(
@@ -206,12 +220,21 @@ try {
     assert.equal(statusResult.ok, true);
     const observedStatus = statusResult.value;
     assert.equal(observedStatus.status, 'done', `${scenario} driver status`);
-    const resultRow = db.prepare('SELECT CAST(rowid AS TEXT) AS id FROM sdk_messages WHERE id=?')
+    const resultRow = db
+      .prepare('SELECT CAST(rowid AS TEXT) AS id FROM sdk_messages WHERE id=?')
       .get(`${worker}-result`) as { id: string };
     const terminal = observedStatus.turnEnds?.find((turn) => turn.id === resultRow.id);
     assert(terminal, `${scenario} terminal result visible`);
-    assert.equal(terminal.message, scenario === 'meaningful' ? 'A new decision' :
-      scenario === 'whitespace' ? '  \n' : '');
+    assert.equal(
+      terminal.message,
+      scenario === 'meaningful'
+        ? 'A new decision'
+        : scenario === 'blocker'
+          ? 'Blocked (needs_human): A new decision is required'
+          : scenario === 'whitespace'
+            ? '  \n'
+            : ''
+    );
     await refresh();
     await new Promise((done) => setTimeout(done, 500));
     const reports = messages().filter(
