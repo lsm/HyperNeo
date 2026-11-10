@@ -435,7 +435,8 @@ function codexDesktopAdapters(
   readSnapshot: (
     statePath: string,
     includeClosed: boolean,
-    idPrefix?: string
+    idPrefix?: string,
+    fullTitles?: boolean
   ) => Promise<CodexSnapshot>,
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer
@@ -548,8 +549,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   );
   const codex = () =>
     codexDesktopAdapters(
-      (statePath, includeClosed, idPrefix) =>
-        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix),
+      (statePath, includeClosed, idPrefix, fullTitles) =>
+        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix, fullTitles),
       searchChats,
       prepareExecution
     );

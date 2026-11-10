@@ -13,8 +13,12 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 const home = join(run, 'home', '.codex');
 const folder = join(run, 'project');
+const linkedFolder = join(run, 'user-linked-worktree');
+const longFolder = join(run, 'q'.repeat(73));
 mkdirSync(home, { recursive: true });
 mkdirSync(folder, { recursive: true });
+mkdirSync(linkedFolder, { recursive: true });
+mkdirSync(longFolder, { recursive: true });
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const statePath = join(home, 'state_5.sqlite');
 const db = new Database(statePath);
@@ -39,9 +43,8 @@ mock.module('../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts',
   ...adapterModule,
   createCodexDesktopAdapter: (deps: Parameters<typeof create>[0]) => create({
     ...deps,
-    readSnapshot: undefined,
     prepareExecution: undefined,
-    gitCheckout: async () => null,
+    gitCheckout: async path => path === linkedFolder ? { repo: folder, linked: true } : null,
     appServer: async () => { throw new Error('Desktop is closed'); },
     bootstrapServer: async () => { opened++; let released = false; return ({
       call: async (method, params) => {
@@ -49,7 +52,7 @@ mock.module('../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts',
         if (concurrentMode && method === 'thread/start') {
           const id = `concurrent-${++concurrentStarts}`;
           const state = new Database(statePath);
-          try { state.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, '', '', '', folder, 'desktop', 0, 1, rollout); }
+          try { state.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, '', '', '', String(params.cwd), 'desktop', 0, 1, rollout); }
           finally { state.close(); }
           return { thread: { id } };
         }
@@ -103,9 +106,23 @@ try {
   const saved = new Database(statePath);
   try { assert.deepEqual(saved.prepare("SELECT name FROM threads WHERE id LIKE 'concurrent-%' ORDER BY id").all().map((row) => (row as { name: string }).name), titles); }
   finally { saved.close(); }
+  const state = new Database(statePath);
+  const longTitle = `Codex ${'q'.repeat(73)} 1`;
+  try {
+    state.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('linked', 'Codex project 4', '', '', linkedFolder, 'desktop', 0, 1, rollout);
+    state.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('long', longTitle, '', '', longFolder, 'desktop', 0, 1, rollout);
+  } finally { state.close(); }
+  const linked = await invokeOperation(registry, unnamed.name, unnamed.input, caller);
+  assert.equal((linked as {value:{value:{title:string}}}).value.value.title, 'Codex project 5');
+  const longInput = { ...unnamed.input, place: { machine: hostname(), folder: longFolder, name: 'Long project' } };
+  const longName = await invokeOperation(registry, unnamed.name, longInput, caller);
+  assert.equal((longName as {value:{value:{title:string}}}).value.value.title, `Codex ${'q'.repeat(73)} 2`);
+  const duplicate = await invokeOperation(registry, unnamed.name, { ...longInput, sessionTitle: longTitle }, caller);
+  assert.equal((duplicate as {value:{ok:boolean}}).value.ok, false);
+  assert.match((duplicate as {value:{detail:string}}).value.detail, /already in use/);
   assert.equal(closed, opened);
   assert(opened >= 2);
-  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, concurrent, renamed, calls, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
+  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, concurrent, renamed, linked, longName, duplicate, calls, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
 } finally {
   await app.cleanup();
 }

@@ -557,12 +557,21 @@ test('a cold reader waits for its handler before sending the accepted turn-range
   }
 });
 
-test.each([undefined, '10000000'])(
-  'external Codex snapshots share the reader with status requests (prefix=%s)',
-  async (idPrefix) => {
+test.each([
+  [undefined, false],
+  ['10000000', false],
+  [undefined, true],
+] as const)(
+  'external Codex snapshots share the reader with status requests (prefix=%s, full=%s)',
+  async (idPrefix, fullTitles) => {
     const { reader, workers } = fixture();
     const status = reader.read(args);
-    const snapshot = reader.readCodexSnapshot('/synthetic-codex.sqlite', true, idPrefix);
+    const snapshot = reader.readCodexSnapshot(
+      '/synthetic-codex.sqlite',
+      true,
+      idPrefix,
+      fullTitles
+    );
     await tick();
     workers[0].reply(workers[0].requests[0], page);
     await status;
@@ -577,6 +586,7 @@ test.each([undefined, '10000000'])(
         statePath: '/synthetic-codex.sqlite',
         includeClosed: true,
         ...(idPrefix ? { idPrefix } : {}),
+        ...(fullTitles ? { fullTitles } : {}),
       },
     });
     workers[0].reply(workers[0].requests[1], rows);

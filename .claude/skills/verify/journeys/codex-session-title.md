@@ -36,3 +36,10 @@ Explicit titles enter the same lock and are refused before thread creation if
 a live project thread already uses that title. Unit coverage races explicit
 and automatic titles. Lock contention times out after 30 seconds; existing PID
 lock recovery handles dead owners. No real Codex state or native process is used.
+
+Naming reads full stored names independently of the 80-character display title.
+The daemon proof seeds a 73-character project basename and verifies the next
+number plus explicit duplicate refusal. It also seeds a user-linked worktree
+whose recorded Git root is the main project, and verifies that its occupied
+number is counted. The Git mapping and Codex servers are synthetic boundaries;
+actual state-file reads and the daemon operation path run in the proof.

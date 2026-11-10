@@ -121,7 +121,8 @@ export interface CodexDesktopAdapterDeps {
   readSnapshot?: (
     statePath: string,
     includeClosed: boolean,
-    idPrefix?: string
+    idPrefix?: string,
+    fullTitles?: boolean
   ) => Promise<CodexSnapshot>;
   desktopSocketPath?: string;
   desktopRunning?: () => Promise<boolean>;
@@ -290,12 +291,13 @@ export function buildCodexGroups(
 
 export async function loadCodexSnapshot(
   query: FindQuery,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  fullTitles = false
 ): Promise<CodexSnapshot> {
   return runLagPhase('scanner:codex_desktop', () =>
     deps.readSnapshot
-      ? deps.readSnapshot(deps.statePath, query.includeClosed, query.idPrefix)
-      : readCodexSnapshot(deps.statePath, query.includeClosed, query.idPrefix)
+      ? deps.readSnapshot(deps.statePath, query.includeClosed, query.idPrefix, fullTitles)
+      : readCodexSnapshot(deps.statePath, query.includeClosed, query.idPrefix, fullTitles)
   );
 }
 
@@ -1166,9 +1168,18 @@ async function genericCodexSessionTitle(
 ): Promise<string> {
   const snapshot = await loadCodexSnapshot(
     { includeClosed: false, limit: Number.MAX_SAFE_INTEGER },
-    deps
+    deps,
+    true
   );
-  const folders = await resolveCodexFolders(snapshot, deps);
+  const folders = new Map<string, string>();
+  for (const folder of new Set(
+    snapshot.threads.filter((thread) => !thread.archived).map((thread) => thread.folder)
+  )) {
+    folders.set(
+      folder,
+      folder === projectFolder ? folder : ((await deps.gitCheckout(folder))?.repo ?? folder)
+    );
+  }
   const prefix = `Codex ${basename(projectFolder)} `;
   const names = new Set(
     snapshot.threads
