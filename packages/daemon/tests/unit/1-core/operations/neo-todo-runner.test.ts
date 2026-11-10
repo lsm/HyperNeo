@@ -1233,7 +1233,7 @@ describe('neo todo runner', () => {
     }
   });
 
-  test('an automatic no-todo report emits nothing', async () => {
+  test('a turn started by a notice reaches Neo once, attached to no todo', async () => {
     const h = setup(false);
     try {
       const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
@@ -1270,7 +1270,62 @@ describe('neo todo runner', () => {
       });
       await h.runner.refresh(() => {});
       await h.runner.refresh(() => {});
-      expect(h.told.filter((text) => text.includes('which CI fix do you want?'))).toEqual([]);
+      const reports = h.told.filter((text) => text.includes('which CI fix do you want?'));
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).not.toContain(todo.id);
+      expect(reports[0]).not.toContain(other.id);
+      expect(h.store.getTodo(todo.id)).toMatchObject({
+        state: before.state,
+        report: before.report,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('an empty no-todo status turn stays silent and does not reprocess', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const worker = { adapter: 'codex-desktop', id: 'shared-thread' };
+      const nudgedAt = Date.now() + 10;
+      h.sessions.recordRef(todo.id, worker, nudgedAt);
+      const nudge = await h.sessions.inputs.accept(
+        null,
+        'neo',
+        { verb: 'send', ref: worker },
+        'lsm/hyperneo#1 has failing CI.',
+        nudgedAt
+      );
+      await h.sessions.inputs.recordOutcome(nudge, { ref: worker }, nudgedAt);
+      const before = h.store.getTodo(todo.id)!;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: nudgedAt + 100,
+          turnEnds: [{ id: 'turn-1', startedAt: nudgedAt, at: nudgedAt + 100, message: '' }],
+        },
+      });
+      await h.runner.refresh(() => {});
+      const quiet = () =>
+        h.told.filter((text) => text.includes('worker ended its turn with no reply'));
+      expect(quiet()).toHaveLength(1);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: nudgedAt + 200,
+          turnEnds: [
+            { id: 'turn-1', startedAt: nudgedAt, at: nudgedAt + 100, message: '' },
+            { id: 'turn-2', startedAt: nudgedAt + 150, at: nudgedAt + 200, message: '' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(quiet()).toHaveLength(1);
       expect(h.store.getTodo(todo.id)).toMatchObject({
         state: before.state,
         report: before.report,

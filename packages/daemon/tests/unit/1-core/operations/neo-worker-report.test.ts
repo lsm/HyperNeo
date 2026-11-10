@@ -150,7 +150,7 @@ test('oversized images are rejected by input projection before either handled or
 });
 
 test.each([false, true])(
-  'a consumed worker blocker is not re-woken after the window, card-bound=%s',
+  'a consumed worker blocker stays asleep after the window only when card-bound, card-bound=%s',
   async (cardBound) => {
     const { db, service, send } = await setup();
     const now = Date.now();
@@ -184,10 +184,16 @@ test.each([false, true])(
       db.getJobQueueRepo().cleanup(Date.now());
       expect(await send(report)).toEqual(first);
       clock.mockReturnValue(now + 11 * 60_000);
-      expect(await send(report)).toEqual(first);
-      expect(
-        db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
-      ).toHaveLength(0);
+      const woken = await send(report);
+      const wakes = db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' });
+      if (cardBound) {
+        expect(woken).toEqual(first);
+        expect(wakes).toHaveLength(0);
+      } else {
+        expect(woken).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+        expect(woken).not.toEqual(first);
+        expect(wakes).toHaveLength(1);
+      }
     } finally {
       clock.mockRestore();
       service.dispose();
@@ -196,7 +202,7 @@ test.each([false, true])(
   }
 );
 
-test('a real question without a todo re-wakes Neo after the window, and new evidence reopens a blocker', async () => {
+test('a real question without a todo re-wakes Neo after the window, and an unscoped blocker re-wakes once its window passes', async () => {
   const { db, service, send } = await setup();
   const now = Date.now();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
@@ -240,10 +246,13 @@ test('a real question without a todo re-wakes Neo after the window, and new evid
     const blocker = await send(legacy);
     await consume(blocker);
     clock.mockReturnValue(now + 22 * 60_000);
-    expect(await send(legacy)).toEqual(blocker);
+    const reblocked = await send(legacy);
+    expect(reblocked).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    expect(reblocked).not.toEqual(blocker);
+    await consume(reblocked);
     const changed = await send({ ...legacy, text: 'Blocked somewhere new' });
     expect(changed).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
-    expect(changed).not.toEqual(blocker);
+    expect(changed).not.toEqual(reblocked);
   } finally {
     clock.mockRestore();
     service.dispose();
