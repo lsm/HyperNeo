@@ -398,12 +398,12 @@ export class QueryLifecycleManager {
       );
       const staleSessionId = session.sdkSessionId;
       const staleOriginPath = session.sdkOriginPath;
-      session.sdkSessionId = undefined;
-      session.sdkOriginPath = undefined;
       await db.updateSession(session.id, {
         sdkSessionId: undefined,
         sdkOriginPath: undefined,
       });
+      session.sdkSessionId = undefined;
+      session.sdkOriginPath = undefined;
       this.logger.info(
         `Cleared sdkSessionId=${staleSessionId} sdkOriginPath=${staleOriginPath} on ${session.id}`
       );

@@ -1829,6 +1829,22 @@ describe('QueryLifecycleManager', () => {
         expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
       });
 
+      test('keeps the stale sdk identity in memory when clearing it fails to persist', async () => {
+        mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        mockContext.session.sdkOriginPath = '/old/workspace';
+        updateSessionSpy.mockImplementation(async () => {
+          throw new Error('db write failed');
+        });
+        manager = new QueryLifecycleManager(mockContext);
+
+        await expect(manager.restart()).rejects.toThrow('db write failed');
+
+        expect(mockContext.session.sdkSessionId).toBe('missing-sdk-session');
+        expect(mockContext.session.sdkOriginPath).toBe('/old/workspace');
+        expect(startStreamingCalled).toBe(false);
+      });
+
       test('still blocks a resumable workflow sub-session on the transcript gate', async () => {
         mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
         mockContext.session.config.workerOperations = true;
