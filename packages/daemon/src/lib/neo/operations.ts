@@ -366,19 +366,7 @@ export function createNeoOperations(service: NeoService) {
     cursor?: z.infer<typeof HistoryCursor>
   ) {
     if (caller.source !== 'rpc') {
-      const built = await buildSnapshot(caller, requested, cursor);
-      if (!cursor) return built;
-      const { ok, sessionId, todoAsks, needsYou, neoUnhandled, omitted, more } = built;
-      return {
-        ok,
-        sessionId,
-        projects: [],
-        todoAsks,
-        needsYou,
-        neoUnhandled,
-        ...(omitted ? { omitted } : {}),
-        ...(more ? { more } : {}),
-      };
+      return buildSnapshot(caller, requested, cursor);
     }
     const key = requested ?? '';
     let pending = snapshots.get(key);
@@ -403,9 +391,6 @@ export function createNeoOperations(service: NeoService) {
       ? (service.repo.projectMerges.resolve(requested) ?? requested)
       : undefined;
     const detailed = caller.source === 'rpc';
-    const all = service.repo.listProjects();
-    const projects = all.filter((item) => !scope || item.id === scope);
-    const repositories = service.repo.repositories();
     const { asks, unlisted, openWork, facts, historyCursor } = await service.todos.read(
       'snapshot',
       scope,
@@ -463,13 +448,28 @@ export function createNeoOperations(service: NeoService) {
         ),
       }))
     );
+    const sessionId = service.defaultSessionId() ?? null;
+    const counts = neoWorkCounts(openWork.todos, openWork.questions, openWork.awaitingNeo);
+    if (!detailed && cursor) {
+      return {
+        ok: true as const,
+        sessionId,
+        projects: [],
+        todoAsks: entries.map(summarizeNeoAskEntry),
+        ...counts,
+        ...(unlisted > 0 ? { omitted: { asks: unlisted } } : {}),
+        ...(Object.keys(more).length ? { more } : {}),
+      };
+    }
+    const all = service.repo.listProjects();
+    const projects = all.filter((item) => !scope || item.id === scope);
+    const repositories = service.repo.repositories();
     const groups = await Promise.all(
       latestNeoSessionNoticeGroups(service.sessionNoticeGroups).map(async (group) => {
         const current = await notices(group.notices);
         return { ...group, ...neoSessionNoticeLine(current), notices: current };
       })
     );
-    const sessionId = service.defaultSessionId() ?? null;
     return {
       ok: true as const,
       sessionId,
@@ -516,7 +516,7 @@ export function createNeoOperations(service: NeoService) {
       preferences: service.modelPreference(),
       ...(detailed ? { packPreferences: listPackPreferences(service.db.getDatabase()) } : {}),
       todoAsks: entries.map(summarizeNeoAskEntry),
-      ...neoWorkCounts(openWork.todos, openWork.questions, openWork.awaitingNeo),
+      ...counts,
       historyCursor,
       ...(!detailed && Object.keys(more).length ? { more } : {}),
       ...(unlisted > 0 ? { omitted: { asks: unlisted } } : {}),

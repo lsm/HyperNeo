@@ -271,3 +271,24 @@ test('a fresh first page reveals an unseen ask updated ahead of the cursor', asy
   const refreshed = await snapshot();
   expect(refreshed.todoAsks![0].ask.id).toBe('index-10');
 });
+
+test.each(['workers', 'packs', 'projects'] as const)(
+  'cursor reads bypass unrelated %s lookups',
+  async (lookup) => {
+    seed(40);
+    const first = await snapshot();
+    const fail = () => {
+      throw new Error(`Unrelated ${lookup} lookup`);
+    };
+    const snapshotRows = mock(fail);
+    if (lookup === 'workers') spyOn(service, 'readWorker').mockImplementation(fail);
+    if (lookup === 'packs')
+      spyOn(service, 'packs').mockReturnValue([
+        { id: 'synthetic', describe: 'Synthetic', instructions: () => null, snapshotRows },
+      ]);
+    if (lookup === 'projects') spyOn(service.repo, 'listProjects').mockImplementation(fail);
+    const page = await snapshot(mcp, { cursor: first.more!.asks!.cursor });
+    expect(page.todoAsks).toHaveLength(10);
+    expect(snapshotRows).not.toHaveBeenCalled();
+  }
+);

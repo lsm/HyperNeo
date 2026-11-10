@@ -98,6 +98,23 @@ try {
     assert(!continuation.todoAsks.some((entry: { ask: { id: string } }) => entry.ask.id === 'ask-5'));
     assert.equal((await snapshot()).todoAsks[0].ask.id, 'ask-5');
     console.log('Fresh restart reveals updated unseen ask: true');
+    const prepare = raw.prepare.bind(raw);
+    let projectReads = 0;
+    raw.prepare = ((sql: string, options?: Parameters<typeof raw.prepare>[1]) => {
+      if (/FROM neo_concerns\s+WHERE id NOT IN/i.test(sql)) {
+        projectReads++;
+        throw new Error('Unrelated project lookup during continuation');
+      }
+      return prepare(sql, options);
+    }) as typeof raw.prepare;
+    try {
+      const guarded = await snapshot({ cursor: first.more.asks.cursor });
+      assert(guarded.todoAsks.length > 0);
+      assert.equal(projectReads, 0);
+      console.log(`Continuation unrelated project reads: ${projectReads}`);
+    } finally {
+      raw.prepare = prepare;
+    }
   } else {
     assert.equal(first.todoAsks.length, 30, 'Baseline must fail the new first-page contract');
   }
