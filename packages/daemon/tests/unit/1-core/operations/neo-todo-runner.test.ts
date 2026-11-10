@@ -1324,6 +1324,73 @@ describe('neo todo runner', () => {
     }
   );
 
+  test.each([
+    'empty',
+    'whitespace',
+    'meaningful',
+    'unknown-prior',
+    'changed-status',
+    'question',
+    'turn-question',
+    'waiting',
+    'new-block',
+  ] as const)(
+    'empty automatic reports preserve the nearest actionable case: %s',
+    async (scenario) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        if (scenario !== 'unknown-prior')
+          h.sessions.recordLive(
+            todo.id,
+            scenario === 'changed-status' ? 'running' : 'done',
+            undefined
+          );
+        if (scenario === 'question') askForWorker(h, todo.id);
+        if (scenario === 'new-block')
+          h.store.updateTodo(
+            h.store.getTodo(todo.id)!,
+            {
+              state: 'blocked',
+              blockedBy: 'needs-human',
+              blockedReason: 'A new decision is required',
+            },
+            Date.now()
+          );
+        const dispatch = h.sessions.inputs.list(todo.id)[0]!;
+        const at = dispatch.acceptedAt + 100;
+        const message =
+          scenario === 'meaningful' ? 'A new decision' : scenario === 'whitespace' ? '  \n' : '';
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: at,
+            ...(scenario === 'waiting' ? { waitingFor: 'Human approval' } : {}),
+            ...(scenario === 'turn-question'
+              ? {
+                  turnQuestion: {
+                    id: 'worker-question',
+                    at,
+                    text: 'Choose next step',
+                    actions: ['Continue'],
+                  },
+                }
+              : {}),
+            turnEnds: [{ id: 'empty-observation', at, message }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        const reports = h.told.filter((text) => text.startsWith('Worker turn report'));
+        expect(reports).toHaveLength(['empty', 'whitespace'].includes(scenario) ? 0 : 1);
+        expect(h.store.getTodo(todo.id)?.state).not.toBe('done');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test.each(['', '  Final worker message 🔬\n'.repeat(400)])(
     'relays a terminal message verbatim as a report without changing the todo result: %s',
     async (message) => {
