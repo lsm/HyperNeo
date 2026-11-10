@@ -582,12 +582,53 @@ export class AgentSession
       this.taskNotificationRequeryEpisode.escalation !== 'none';
     this.taskNotificationRequeryEpisodeToken = this.taskNotificationRequeryEpisode?.episode ?? 0;
 
+    const isThisRunRequeryEpisodeEvent = (data: { spaceId: string; runId: string }) => {
+      if (data.spaceId !== this.session.context?.spaceId) return false;
+      const boundRunId = this.db.spaceSessions?.workflowRunIdForSession(this.session.id);
+      return !boundRunId || data.runId === boundRunId;
+    };
+    const isThisTaskRequeryEpisodeEvent = (taskId: string | undefined) => {
+      const sessionTaskId = this.session.context?.taskId;
+      if (!sessionTaskId || !taskId) return false;
+      return taskId === sessionTaskId;
+    };
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'space.workflowRun.retry',
+        (data) => {
+          if (!isThisTaskRequeryEpisodeEvent(data.taskId)) return;
+          this.closeTaskNotificationRequeryEpisode();
+        },
+        { subscriberName: 'AgentSession.requeryEpisodeRunRetry' }
+      )
+    );
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'space.workflowRun.completed',
+        (data) => {
+          if (!isThisRunRequeryEpisodeEvent(data)) return;
+          this.closeTaskNotificationRequeryEpisode();
+        },
+        { subscriberName: 'AgentSession.requeryEpisodeRunCompleted' }
+      )
+    );
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'space.task.updated',
+        (data) => {
+          if (!isThisTaskRequeryEpisodeEvent(data.taskId)) return;
+          const status = data.task?.status;
+          if (status !== 'done' && status !== 'cancelled' && status !== 'stopped') return;
+          this.closeTaskNotificationRequeryEpisode();
+        },
+        { subscriberName: 'AgentSession.requeryEpisodeTaskTransition' }
+      )
+    );
     this.deliveryErrorSubs.push(
       this.internalEventBus.subscribe(
         'space.workflowRun.reopened',
         (data) => {
-          if (!this.session.context?.spaceId || data.spaceId !== this.session.context.spaceId)
-            return;
+          if (!isThisRunRequeryEpisodeEvent(data)) return;
           this.closeTaskNotificationRequeryEpisode();
         },
         { subscriberName: 'AgentSession.requeryEpisodeRunReopened' }

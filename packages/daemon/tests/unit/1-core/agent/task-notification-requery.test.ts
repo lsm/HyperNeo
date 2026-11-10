@@ -329,9 +329,14 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   let agentSession: AgentSession;
   let enqueueSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
+  let eventSubscribers: Map<string, Array<(data: Record<string, unknown>) => void>>;
   let activeDeliveryUuids: Set<string>;
   let consumedFollowUpUuids: Set<string>;
   let revokedPendingMessage: { dbId: string; uuid: string } | null;
+
+  const fireInternalEvent = (event: string, data: Record<string, unknown>): void => {
+    for (const handler of eventSubscribers.get(event) ?? []) handler(data);
+  };
 
   const settleRequery = async (): Promise<void> => {
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -405,7 +410,16 @@ describe('AgentSession task-notification requery (incident replay)', () => {
         publish: publishSpy,
         publishAsync: publishSpy,
         subscribe: mock(
-          (_: string, __: (data: unknown) => void, ___: { subscriberName: string }) => () => {}
+          (
+            event: string,
+            handler: (data: Record<string, unknown>) => void,
+            _: { subscriberName: string }
+          ) => {
+            const list = eventSubscribers.get(event) ?? [];
+            list.push(handler);
+            eventSubscribers.set(event, list);
+            return () => {};
+          }
         ),
       } as unknown as InternalEventBus<DaemonInternalEventMap>,
       mock(async () => 'test-api-key')
@@ -428,6 +442,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
 
   beforeEach(() => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '1';
+    eventSubscribers = new Map();
     activeDeliveryUuids = new Set();
     consumedFollowUpUuids = new Set();
     revokedPendingMessage = null;
@@ -530,6 +545,80 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       restarted.queryPromise = null;
       restarted.messageQueue.stop();
     }
+  });
+
+  it('closes the episode when the owning task retry is recorded', async () => {
+    const episodeOf = () =>
+      (agentSession as unknown as { taskNotificationRequeryEpisode: unknown })
+        .taskNotificationRequeryEpisode as TaskNotificationRequeryEpisode | null;
+    (
+      agentSession as unknown as { taskNotificationRequeryEpisode: unknown }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(5, 'done');
+
+    fireInternalEvent('space.workflowRun.retry', {
+      spaceId: 'space-1',
+      taskId: 'other-task',
+      runId: 'run-1',
+      originalReason: 'blocked',
+      attemptNumber: 1,
+      maxAttempts: 3,
+      timestamp: new Date().toISOString(),
+    });
+    expect(episodeOf()?.closed).toBe(false);
+
+    fireInternalEvent('space.workflowRun.retry', {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      runId: 'run-1',
+      originalReason: 'blocked',
+      attemptNumber: 1,
+      maxAttempts: 3,
+      timestamp: new Date().toISOString(),
+    });
+    expect(episodeOf()?.closed).toBe(true);
+  });
+
+  it('closes the episode on a terminal task update or the bound run completing', async () => {
+    const episodeOf = () =>
+      (agentSession as unknown as { taskNotificationRequeryEpisode: unknown })
+        .taskNotificationRequeryEpisode as TaskNotificationRequeryEpisode | null;
+    (
+      agentSession as unknown as { taskNotificationRequeryEpisode: unknown }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(5, 'done');
+
+    fireInternalEvent('space.task.updated', {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      task: { id: 'task-1', status: 'in_progress' },
+    });
+    expect(episodeOf()?.closed).toBe(false);
+
+    fireInternalEvent('space.task.updated', {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      task: { id: 'task-1', status: 'done' },
+    });
+    expect(episodeOf()?.closed).toBe(true);
+
+    (
+      agentSession as unknown as { taskNotificationRequeryEpisode: unknown }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(5, 'done');
+
+    fireInternalEvent('space.workflowRun.completed', {
+      spaceId: 'space-1',
+      runId: 'other-run',
+      status: 'done',
+      timestamp: new Date().toISOString(),
+    });
+    expect(episodeOf()?.closed).toBe(false);
+
+    fireInternalEvent('space.workflowRun.completed', {
+      spaceId: 'space-1',
+      runId: 'run-1',
+      status: 'done',
+      timestamp: new Date().toISOString(),
+    });
+    expect(episodeOf()?.closed).toBe(true);
   });
 
   it('escalates to the needs-attention channel when the budget is exhausted', async () => {

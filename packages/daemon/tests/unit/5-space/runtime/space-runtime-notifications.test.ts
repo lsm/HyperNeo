@@ -5,7 +5,10 @@ import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
-import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
+import {
+  mapNotificationEventToInternalEvent,
+  SpaceRuntime,
+} from '../../../../../space/src/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -250,6 +253,23 @@ function withSyntheticEnd(endAgentId: string): {
     agents: [{ agentId: endAgentId, name: 'end' }],
   };
 }
+
+describe('mapNotificationEventToInternalEvent', () => {
+  test('forwards the episode field on needs-attention payloads', () => {
+    const mapped = mapNotificationEventToInternalEvent({
+      kind: 'workflow_run_needs_attention',
+      spaceId: 'space-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      reason: 'budget exhausted',
+      retriesExhausted: 5,
+      episode: 2,
+      timestamp: new Date().toISOString(),
+    });
+    expect(mapped?.event).toBe('space.workflowRun.needsAttention');
+    expect(mapped?.payload).toMatchObject({ episode: 2, taskId: 'task-1', runId: 'run-1' });
+  });
+});
 
 describe('SpaceRuntime — notification events', () => {
   let db: BunDatabase;

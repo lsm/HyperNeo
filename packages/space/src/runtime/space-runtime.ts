@@ -575,6 +575,7 @@ type SpaceNotificationEvent =
       taskId: string;
       reason: string;
       retriesExhausted: number;
+      episode?: number;
       timestamp: string;
     }
   | {
@@ -614,7 +615,7 @@ function isStoredSubscriberRunId(workflowRunId: string): boolean {
   );
 }
 
-function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
+export function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
   event: keyof DaemonInternalEventMap;
   payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
 } | null {
@@ -712,6 +713,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
           taskId: event.taskId,
           reason: event.reason,
           retriesExhausted: event.retriesExhausted,
+          ...(event.episode !== undefined ? { episode: event.episode } : {}),
           timestamp: event.timestamp,
         },
       };
