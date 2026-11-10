@@ -58,10 +58,10 @@ import {
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
-import type {
-  OperationCallerRole,
-  OperationRegistry,
-  OperationRegistryProvider,
+import {
+  enabledOperationPacks,
+  type OperationRegistry,
+  type OperationRegistryProvider,
 } from '../operations/registry.ts';
 import { SettingsManager } from '../settings-manager.ts';
 import {
@@ -303,7 +303,7 @@ export class AgentSession
   readonly modelSwitchHandler: ModelSwitchHandler;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   private operationMcpServer?: ReturnType<typeof createOperationMcpServer>;
-  private operationMcpServerRole?: OperationCallerRole;
+  private operationMcpServerKey?: string;
 
   private operationRegistryProvider?: () => OperationRegistry | undefined;
   private callerScopeResolver: CallerScopeResolver = PLAIN_SESSION_SCOPE;
@@ -355,7 +355,11 @@ export class AgentSession
     inputOrigin?: () => { messageId: string } | null
   ): ReturnType<typeof createOperationMcpServer> {
     const descriptionRole = this.operationCallerIdentity().role;
-    if (!inputOrigin && this.operationMcpServer && this.operationMcpServerRole === descriptionRole)
+    const descriptionKey =
+      descriptionRole === 'neo'
+        ? JSON.stringify([descriptionRole, enabledOperationPacks(this.resolveOperationRegistry())])
+        : descriptionRole;
+    if (!inputOrigin && this.operationMcpServer && this.operationMcpServerKey === descriptionKey)
       return this.operationMcpServer;
     const server = createOperationMcpServer(
       () => this.resolveOperationRegistry(),
@@ -368,7 +372,7 @@ export class AgentSession
     );
     if (!inputOrigin) {
       this.operationMcpServer = server;
-      this.operationMcpServerRole = descriptionRole;
+      this.operationMcpServerKey = descriptionKey;
     }
     return server;
   }

@@ -433,7 +433,6 @@ describe('Neo MVP', () => {
       'neo.open',
       'neo.rule.save',
       'neo.session.link',
-      'neo.front.set',
       'neo.session.mute',
       'neo.coding.merge.human',
       'neo.coding.merge.retry',
@@ -450,6 +449,7 @@ describe('Neo MVP', () => {
       'neo.project.save',
     ]);
     const humanOperations = [
+      'neo.front.set',
       'neo.message.send',
       'neo.draft.recover',
       'neo.preferences.set',
