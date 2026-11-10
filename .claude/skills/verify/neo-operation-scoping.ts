@@ -45,7 +45,13 @@ try {
   const index = await call('operations.list', {});
   assert(Array.isArray(index.prefixes));
   assert.deepEqual(await call('operations.list', { all: true }), index);
+  const neoListDescription = await call('operations.describe', { name: 'operations.list' });
+  assert(neoListDescription.description.includes('all: true stays compact'));
+  assert(neoListDescription.description.includes('at most 20 names'));
   const rpc = createOperationRpcHandler(registry, () => ({}));
+  const humanListDescription = await rpc({ name: 'operations.describe', input: { name: 'operations.list' } }, { messageId: 'description-proof', sessionId: 'global', method: 'operation.invoke', timestamp: 'proof' });
+  assert.equal(humanListDescription.description, registry.get('operations.list')!.description);
+  evidence.push({ humanListDescription, descriptionParity: true });
   const human = await rpc({ name: 'operations.list', input: { all: true } }, { messageId: 'proof', sessionId: 'global', method: 'operation.invoke', timestamp: 'proof' });
   assert.equal(JSON.stringify(human), JSON.stringify(listOperationSummaries(registry, { source: 'rpc', principal: 'local' }, true)));
   assert(Array.isArray(human));

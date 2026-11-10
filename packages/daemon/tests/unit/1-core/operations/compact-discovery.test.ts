@@ -207,6 +207,33 @@ describe('Neo compact prefix discovery', () => {
     const human = (await list(registry, { all: true }, { source: 'rpc' })) as { name: string }[];
     expect(human.map(({ name }) => name)).toEqual(expect.arrayContaining(names));
   });
+  test('the list description explains compact discovery to Neo and preserves other callers', async () => {
+    const { registry } = fixture();
+    const description = await invokeOperation(
+      registry,
+      'operations.describe',
+      { name: 'operations.list' },
+      neo
+    );
+    expect(description.kind).toBe('completed');
+    if (description.kind !== 'completed') throw new Error(description.message);
+    const text = (description.value as { description: string }).description;
+    expect(text).toContain('all: true stays compact');
+    expect(text).toContain('at most 20 names');
+    for (const caller of [
+      { source: 'rpc' },
+      { source: 'internal' },
+      { source: 'mcp', role: 'workflow_worker' },
+      { source: 'mcp', role: 'long_term_agent' },
+    ] as OperationCaller[]) {
+      expect(
+        await invokeOperation(registry, 'operations.describe', { name: 'operations.list' }, caller)
+      ).toMatchObject({
+        kind: 'completed',
+        value: { description: registry.get('operations.list')!.description },
+      });
+    }
+  });
   test('the published paging fields explain Neo-only behavior', async () => {
     const { registry } = fixture();
     const result = await invokeOperation(

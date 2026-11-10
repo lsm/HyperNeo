@@ -207,11 +207,17 @@ export function describeOperationSignatures(
     .join('\n');
 }
 
-export function describeOperationDefinition(operation: OperationDefinition): Description {
+export function describeOperationDefinition(
+  operation: OperationDefinition,
+  caller?: OperationCaller
+): Description {
   return {
     found: true,
     name: operation.name,
-    description: operation.description,
+    description:
+      operation.name === 'operations.list' && caller && isNeoDiscovery(caller)
+        ? 'List admitted rare operations as namespace counts. Pass { prefix, cursor? } for pages of at most 20 names. all: true stays compact. Pass { query } to filter by keywords. Use operations.describe { name } for one operation schema. Caller and pack restrictions always apply.'
+        : operation.description,
     inputSchema: z.toJSONSchema(operation.inputSchema, { io: 'input' }),
     resultSchema: z.toJSONSchema(operation.resultSchema, { io: 'output' }),
   };
@@ -220,7 +226,7 @@ export function describeOperationDefinition(operation: OperationDefinition): Des
 const describeOperation = (superpipe({})('describe-operation') as PipelineAPI)
   .input(['registry', 'name', 'caller'])
   .pipe(findDescribedOperation, ['registry', 'name', 'caller'], 'result:description')
-  .pipe(describeOperationDefinition, 'description', 'description')
+  .pipe(describeOperationDefinition, ['description', 'caller'], 'description')
   .end('description') as (
   registry: OperationRegistry,
   name: string,
