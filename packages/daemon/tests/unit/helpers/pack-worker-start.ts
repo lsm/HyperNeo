@@ -17,6 +17,7 @@ export function packWorkerStartFixture(
   db: Database,
   options: {
     hook?: boolean;
+    beforeStart?: (todo: NeoTodo) => void;
     workerNames?: NeoWorkerNameSource;
     invoke?: (name: string, input: Record<string, unknown>) => Promise<OperationOutcome>;
   } = {}
@@ -41,6 +42,7 @@ export function packWorkerStartFixture(
     Object.assign(fixture, {
       workerStartExclusions: async (todo: NeoTodo) => {
         checked.push(todo.id);
+        options.beforeStart?.(todo);
         const ids = (todo.check?.params.excludeTodoIds ?? []) as string[];
         const refs = ids.map((id) => sessions.readRef(id));
         return refs.some((ref) => !ref)
