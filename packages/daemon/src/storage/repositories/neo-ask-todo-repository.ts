@@ -30,6 +30,7 @@ import type {
   NeoAsk,
   NeoQuestion,
   NeoQuestionAnswer,
+  NeoAnswerProvenance,
   NeoTodo,
   NeoTodoCheck,
 } from '@hyperneo/shared/types/neo-ask';
@@ -158,7 +159,7 @@ export type NeoQuestionDraft = Pick<
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
-  answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
+  answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
   retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
@@ -173,6 +174,7 @@ type QuestionRow = Omit<
   | 'sourceSession'
   | 'retireWhen'
 > & {
+  answerProvenanceJson: string | null;
   retireWhenJson: string | null;
   artifactsJson: string | null;
   sourceSessionJson: string | null;
@@ -187,6 +189,7 @@ type QuestionRow = Omit<
 const parsed = <T>(json: string | null): T | null => (json ? (JSON.parse(json) as T) : null);
 
 const toQuestion = ({
+  answerProvenanceJson,
   retireWhenJson,
   confirmJson,
   replyToJson,
@@ -195,6 +198,9 @@ const toQuestion = ({
   todoId,
   ...row
 }: QuestionRow): NeoQuestion => ({
+  ...(answerProvenanceJson
+    ? { answerProvenance: JSON.parse(answerProvenanceJson) as NeoAnswerProvenance }
+    : {}),
   ...(retireWhenJson ? { retireWhen: JSON.parse(retireWhenJson) as NeoTodoCheck } : {}),
   ...row,
   ...(sourceSessionJson
@@ -1049,13 +1055,20 @@ export class NeoAskTodoRepository {
     answer: NeoQuestionAnswer,
     by: 'button' | 'chat',
     now: number,
-    approval?: { sessionId: string; messageId: string }
+    approval?: { sessionId: string; messageId: string },
+    provenance?: NeoAnswerProvenance
   ): NeoQuestion | null {
     let settingsChanged: 'rules' | 'preferences' | undefined;
     const changed = this.db.transaction(() => {
       const answered = this.changeQuestion(
         question.id,
-        { state: 'answered', answer: JSON.stringify(answer), answered_by: by, answered_at: now },
+        {
+          state: 'answered',
+          answer: JSON.stringify(answer),
+          answered_by: by,
+          answered_at: now,
+          answer_provenance_json: provenance ? JSON.stringify(provenance) : null,
+        },
         'open'
       );
       if (answered) {

@@ -54,7 +54,7 @@
     "longDescription": "HyperNeo - A powerful AI assistant for developers",
     "category": "DeveloperTool",
     "macOS": {
-      "minimumSystemVersion": "10.13",
+      "minimumSystemVersion": "13.0",
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist",
       "exceptionDomain": null,

@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 const SCRIPT = new URL('./ci-gate.sh', import.meta.url).pathname;
 
 const ALL_RESULTS = {
+  CI_GATE_RESULT_DESKTOP_RUNTIME_PATHS: 'success',
   CI_GATE_RESULT_CHECK: 'success',
   CI_GATE_RESULT_CHANGES: 'success',
   CI_GATE_RESULT_TEST_DAEMON_ONLINE: 'success',
@@ -33,6 +34,7 @@ describe('ci-gate.sh', () => {
   it('still passes when a path-filtered need was skipped', () => {
     const r = runGate({
       ...ALL_RESULTS,
+      CI_GATE_RESULT_DESKTOP_RUNTIME_PATHS: 'skipped',
       CI_GATE_RESULT_TEST_WEB: 'skipped',
       CI_GATE_RESULT_WINDOWS_COMPILED_SMOKE: 'skipped',
     });

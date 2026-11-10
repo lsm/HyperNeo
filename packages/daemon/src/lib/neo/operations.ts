@@ -1,3 +1,4 @@
+import { createNeoRelayOperations } from './relay-answer.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
 import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
@@ -717,6 +718,7 @@ export function createNeoOperations(service: NeoService) {
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [
+    ...createNeoRelayOperations(service),
     ...createPeerOperations(service),
     ...service.speech.operations,
     createNeoProjectForgetOperation(service.repo, async (repos) => {

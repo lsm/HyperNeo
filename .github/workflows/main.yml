@@ -34,6 +34,8 @@
 # actual worker sandbox sessions remain in the manual real-API workflow.
 # Web/build jobs do not need these sandbox packages.
 #
+# Desktop runtime-path fixtures run for Desktop/workflow PR changes and all non-PR CI events.
+#
 # Release is handled separately in release.yml (triggered by version tags).
 
 name: CI
@@ -59,6 +61,17 @@ permissions:
   contents: read
 
 jobs:
+  desktop-runtime-paths:
+    name: Desktop runtime paths
+    runs-on: macos-latest
+    needs: [changes]
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.desktop == 'true')
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test synthetic Mach-O bundles
+        run: python3 packages/desktop/tests/macos-rpaths.py
+
   # ============================================
   # CODE QUALITY CHECKS
   # Run on: PR to dev, push to dev
@@ -204,13 +217,14 @@ jobs:
       daemon: ${{ steps.filter.outputs.daemon }}
       online: ${{ steps.filter.outputs.online }}
       web: ${{ steps.filter.outputs.web }}
+      desktop: ${{ steps.filter.outputs.desktop }}
 
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - name: Compute daemon/online/web path filters
+      - name: Compute daemon/online/web/desktop path filters
         id: filter
         run: |
           set -euo pipefail
@@ -228,11 +242,13 @@ jobs:
             echo "daemon=true" >> "$GITHUB_OUTPUT"
             echo "online=true" >> "$GITHUB_OUTPUT"
             echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           daemon=false
           online=false
           web=false
+          desktop=false
           while IFS= read -r f; do
             # Inert docs: docs/ trees and TOP-LEVEL *.md only. Bash case globs
             # match across '/', so a bare *.md would also swallow nested
@@ -245,6 +261,9 @@ jobs:
               *.md) case "$f" in */*) ;; *) doc=true ;; esac ;;
             esac
             if [ "$doc" = true ]; then continue; fi
+            case "$f" in
+              packages/desktop/*|.github/workflows/main.yml|.github/workflows/release.yml) desktop=true ;;
+            esac
             # daemon unit shards unless the file is web-only
             case "$f" in
               packages/web/*) ;;
@@ -268,6 +287,7 @@ jobs:
           echo "daemon=$daemon" >> "$GITHUB_OUTPUT"
           echo "online=$online" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
 
   # ============================================
   # DAEMON ONLINE TESTS (Mocked credentials only)
@@ -706,12 +726,14 @@ jobs:
       - test-web
       - build
       - windows-compiled-smoke
+      - desktop-runtime-paths
 
     steps:
       - uses: actions/checkout@v6
 
       - name: Check all jobs passed
         env:
+          CI_GATE_RESULT_DESKTOP_RUNTIME_PATHS: ${{ needs.desktop-runtime-paths.result }}
           CI_GATE_RESULT_CHECK: ${{ needs.check.result }}
           CI_GATE_RESULT_CHANGES: ${{ needs.changes.result }}
           CI_GATE_RESULT_TEST_DAEMON_ONLINE: ${{ needs.test-daemon-online.result }}

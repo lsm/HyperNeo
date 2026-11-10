@@ -1,3 +1,9 @@
+import { SettingsRepository } from './settings-repository.ts';
+import { planNeoRelayAnswer, type NeoRelayInput } from '../../lib/neo/relay-plan.ts';
+import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
+import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
+import { renderAddress } from '../../lib/mailbox/address.ts';
+import { JobQueueRepository } from './job-queue-repository.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -12,6 +18,68 @@ export type NeoAskInputClaim = {
 
 class NeoAskInputs {
   constructor(private readonly db: Database) {}
+
+  relayAnswer(input: NeoRelayInput) {
+    return this.db.transaction(() => {
+      const store = new NeoAskTodoRepository(this.db);
+      const question = store.getQuestion(input.questionId);
+      const links = this.db
+        .prepare(`SELECT
+        EXISTS(SELECT 1 FROM neo_rule_proposals WHERE question_id=?) AS ruleProposal,
+        EXISTS(SELECT 1 FROM neo_pack_preference_proposals WHERE question_id=?) AS preferenceProposal`)
+        .get(input.questionId, input.questionId) as {
+        ruleProposal: number;
+        preferenceProposal: number;
+      };
+      const plan = planNeoRelayAnswer(
+        new SettingsRepository(this.db).getGlobalSettings().neo,
+        question
+          ? {
+              ...question,
+              ruleProposal: !!links.ruleProposal,
+              preferenceProposal: !!links.preferenceProposal,
+            }
+          : null,
+        input
+      );
+      if ('reason' in plan) return { reason: { ok: false, reason: plan.reason } };
+      const ask = store.getAsk(question!.askId);
+      if (!ask)
+        return { reason: { ok: false, reason: 'ask_missing: the card’s ask is unavailable.' } };
+      const answered = store.answerQuestion(
+        question!,
+        plan.answer,
+        'chat',
+        input.at,
+        undefined,
+        plan.provenance
+      );
+      if (!answered)
+        return {
+          reason: { ok: false, reason: 'question_not_open: the card was already answered.' },
+        };
+      const to = { kind: 'session' as const, sessionId: ask.sessionId };
+      const queued = enqueueMailboxEntry(
+        new JobQueueRepository(this.db),
+        createMailboxEntry({
+          to,
+          origin: renderAddress(to),
+          messageUuid: `neo-relay-answer:${question!.id}`,
+          message: {
+            type: 'user',
+            parent_tool_use_id: null,
+            inputKind: 'system',
+            neoWakeEvent: true,
+            message: {
+              content: `Relayed by ${plan.provenance.viaName}, ${input.when}, ${input.where}:\n${input.words}\n\nAnswer to card ${question!.id}: ${question!.text}`,
+            },
+          },
+        })
+      );
+      if (queued.kind === 'rejected') throw new Error(queued.reason);
+      return { value: answered.id };
+    })();
+  }
 
   owner(sessionId: string, messageId: string): string | null {
     const row = this.db
@@ -59,4 +127,5 @@ export const neoAskInputReads = defineRepositoryOp('neo.askInputs.read', 'read',
 ]);
 export const neoAskInputWrites = defineRepositoryOp('neo.askInputs.write', 'write', NeoAskInputs, [
   'claimNeoInputAsk',
+  'relayAnswer',
 ]);

@@ -8,6 +8,7 @@ set -u
 
 FAILED=0
 for job in \
+  desktop-runtime-paths \
   check \
   changes \
   test-daemon-online \
