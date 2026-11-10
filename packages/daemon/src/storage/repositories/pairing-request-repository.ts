@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import {
   decidePairingComplete,
   newBindNonce,
@@ -207,3 +208,24 @@ export class PairingRequestRepository {
     })();
   }
 }
+
+export const pairingRequestReads = defineRepositoryOp(
+  'pairing.request.read',
+  'read',
+  PairingRequestRepository,
+  ['requestStatus', 'ownerCount'] as const
+);
+
+export const pairingRequestWrites = defineRepositoryOp(
+  'pairing.request.write',
+  'write',
+  PairingRequestRepository,
+  [
+    'createRequest',
+    'bindTicket',
+    'approveRequest',
+    'denyRequest',
+    'cancelRequest',
+    'completeRequest',
+  ] as const
+);

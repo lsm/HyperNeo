@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { generateKeyPairSync, sign as edSign } from 'node:crypto';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import {
+  pairingRequestReads,
+  pairingRequestWrites,
+} from '../../../../src/storage/repositories/pairing-request-repository';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository';
-import { PairingRequestRepository } from '../../../../src/storage/repositories/pairing-request-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -20,251 +24,283 @@ const proof = (phone: ReturnType<typeof phoneKeypair>, requestId: string, nonce:
   phone.sign(`${requestId}:${nonce}`);
 
 describe('pairing v2 one-time request repository', () => {
+  let main: Database;
   let writer: Database;
-  let repo: PairingRequestRepository;
+  let gateway: DbGateway;
   let devices: DevicePairingRepository;
   let now = 1_000_000;
 
+  const call = <K extends Parameters<typeof gateway.call>[1]>(
+    method: K,
+    ...args: unknown[]
+  ): Promise<unknown> => gateway.call(pairingRequestWrites, method, ...args);
+
+  const createRequest = () =>
+    gateway.call(pairingRequestWrites, 'createRequest', now) as Promise<{
+      requestId: string;
+      ticket: string;
+      expiresAt: number;
+    }>;
+
+  const bindTicket = (ticket: string, phoneKey: string, name: string | null = null) =>
+    gateway.call(pairingRequestWrites, 'bindTicket', ticket, phoneKey, name, now) as Promise<
+      { ok: true; requestId: string; bindNonce: string; expiresAt: number } | { ok: false }
+    >;
+
+  const approveRequest = (requestId: string, approver: string) =>
+    gateway.call(pairingRequestWrites, 'approveRequest', requestId, approver, now) as Promise<
+      'approved' | 'not_pending'
+    >;
+
+  const completeRequest = (requestId: string, phoneKey: string, signature: string) =>
+    gateway.call(
+      pairingRequestWrites,
+      'completeRequest',
+      requestId,
+      phoneKey,
+      signature,
+      now
+    ) as Promise<
+      | { ok: true; deviceId: string; credential: string; owner: boolean }
+      | { ok: false; reason: string }
+    >;
+
+  const requestStatus = (requestId: string) =>
+    gateway.call(pairingRequestReads, 'requestStatus', requestId, now) as Promise<{
+      state: string;
+      expiresAt: number;
+    } | null>;
+
   beforeEach(() => {
     now = 1_000_000;
+    main = new Database(':memory:');
     writer = new Database(':memory:');
     runMigrations(writer, () => {});
     createTables(writer);
-    repo = new PairingRequestRepository(writer);
+    gateway = new DbGateway(':memory:', writer);
+    bindGateway(main, gateway);
     devices = new DevicePairingRepository(writer);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await gateway.close();
+    main.close();
     writer.close();
   });
 
-  test('a created request is pending with a 90 second expiry', () => {
-    const made = repo.createRequest(now);
+  test('a created request is pending with a 90 second expiry', async () => {
+    const made = await createRequest();
     expect(made.requestId).toBeTruthy();
     expect(made.ticket).toBeTruthy();
     expect(made.expiresAt - now).toBe(90_000);
-    expect(repo.requestStatus(made.requestId, now)).toMatchObject({ state: 'pending' });
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'pending' });
   });
 
-  test('a ticket binds once; a second scan cannot rebind it', () => {
-    const made = repo.createRequest(now);
-    const bound = repo.bindTicket(made.ticket, phoneKeypair().publicKeyB64, 'Phone A', now);
+  test('a ticket binds once; a second scan cannot rebind it', async () => {
+    const made = await createRequest();
+    const bound = await bindTicket(made.ticket, phoneKeypair().publicKeyB64, 'Phone A');
     expect(bound.ok).toBe(true);
     if (!bound.ok) return;
     expect(bound.requestId).toBe(made.requestId);
     expect(bound.bindNonce).toBeTruthy();
-    expect(repo.requestStatus(made.requestId, now)).toMatchObject({ state: 'bound' });
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'bound' });
 
-    const second = repo.bindTicket(made.ticket, phoneKeypair().publicKeyB64, 'Phone B', now);
+    const second = await bindTicket(made.ticket, phoneKeypair().publicKeyB64, 'Phone B');
     expect(second.ok).toBe(false);
   });
 
-  test('an unknown or mistyped ticket binds nothing', () => {
-    repo.createRequest(now);
-    expect(repo.bindTicket('not-a-real-ticket', phoneKeypair().publicKeyB64, null, now).ok).toBe(
-      false
-    );
+  test('an unknown or mistyped ticket binds nothing', async () => {
+    await createRequest();
+    expect((await bindTicket('not-a-real-ticket', phoneKeypair().publicKeyB64)).ok).toBe(false);
   });
 
-  test('a copied QR cannot mint a credential', () => {
-    const made = repo.createRequest(now);
-    const bound = repo.bindTicket(made.ticket, phoneKeypair().publicKeyB64, null, now);
+  test('a copied QR cannot mint a credential', async () => {
+    const made = await createRequest();
+    const bound = await bindTicket(made.ticket, phoneKeypair().publicKeyB64);
     expect(bound.ok).toBe(true);
-    expect(repo.approveRequest(made.requestId, 'local-rpc:web', now)).toBe('approved');
+    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('approved');
 
     const thief = phoneKeypair();
-    const stolen = repo.completeRequest(
+    const stolen = await completeRequest(
       made.requestId,
       thief.publicKeyB64,
-      thief.sign('anything'),
-      now
+      thief.sign('anything')
     );
     expect(stolen.ok).toBe(false);
     if (!stolen.ok) expect(stolen.reason).toBe('wrong_key');
     expect(devices.countDevices().humans).toBe(0);
   });
 
-  test('completion needs approval and proof of possession', () => {
-    const made = repo.createRequest(now);
+  test('completion needs approval and proof of possession', async () => {
+    const made = await createRequest();
     const phone = phoneKeypair();
-    const bound = repo.bindTicket(made.ticket, phone.publicKeyB64, null, now);
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
 
-    const early = repo.completeRequest(
+    const early = await completeRequest(
       made.requestId,
       phone.publicKeyB64,
-      proof(phone, made.requestId, bound.bindNonce),
-      now
+      proof(phone, made.requestId, bound.bindNonce)
     );
     expect(early.ok).toBe(false);
     if (!early.ok) expect(early.reason).toBe('not_approved');
 
-    expect(repo.approveRequest(made.requestId, 'local-rpc:web', now)).toBe('approved');
+    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('approved');
 
-    const badSignature = repo.completeRequest(
+    const badSignature = await completeRequest(
       made.requestId,
       phone.publicKeyB64,
-      proof(phone, made.requestId, 'other-nonce'),
-      now
+      proof(phone, made.requestId, 'other-nonce')
     );
     expect(badSignature.ok).toBe(false);
     if (!badSignature.ok) expect(badSignature.reason).toBe('bad_proof');
     expect(devices.countDevices().humans).toBe(0);
   });
 
-  test('an approved bound request completes once and returns a human credential', () => {
-    const made = repo.createRequest(now);
+  test('an approved bound request completes once and returns a human credential', async () => {
+    const made = await createRequest();
     const phone = phoneKeypair();
-    const bound = repo.bindTicket(made.ticket, phone.publicKeyB64, 'My Phone', now);
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64, 'My Phone');
     if (!bound.ok) throw new Error('bind failed');
-    repo.approveRequest(made.requestId, 'local-rpc:web', now);
+    await approveRequest(made.requestId, 'local-rpc:web');
 
-    const done = repo.completeRequest(
+    const done = await completeRequest(
       made.requestId,
       phone.publicKeyB64,
-      proof(phone, made.requestId, bound.bindNonce),
-      now
+      proof(phone, made.requestId, bound.bindNonce)
     );
     expect(done.ok).toBe(true);
     if (!done.ok) return;
     expect(done.credential).toBeTruthy();
     expect(done.owner).toBe(true);
     expect(devices.countDevices().humans).toBe(1);
-    expect(repo.requestStatus(made.requestId, now)).toMatchObject({ state: 'granted' });
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'granted' });
 
-    const again = repo.completeRequest(
+    const again = await completeRequest(
       made.requestId,
       phone.publicKeyB64,
-      proof(phone, made.requestId, bound.bindNonce),
-      now
+      proof(phone, made.requestId, bound.bindNonce)
     );
     expect(again.ok).toBe(false);
     if (!again.ok) expect(again.reason).toBe('used');
   });
 
-  test('an expired request cannot be bound, approved or completed', () => {
-    const made = repo.createRequest(now);
+  test('an expired request cannot be bound, approved or completed', async () => {
+    const made = await createRequest();
     now += 91_000;
-    expect(repo.bindTicket(made.ticket, phoneKeypair().publicKeyB64, null, now).ok).toBe(false);
-    expect(repo.approveRequest(made.requestId, 'local-rpc:web', now)).toBe('not_pending');
-    expect(repo.requestStatus(made.requestId, now)).toMatchObject({ state: 'expired' });
+    expect((await bindTicket(made.ticket, phoneKeypair().publicKeyB64)).ok).toBe(false);
+    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('not_pending');
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'expired' });
   });
 
-  test('an approved request that expires cannot complete', () => {
-    const made = repo.createRequest(now);
+  test('an approved request that expires cannot complete', async () => {
+    const made = await createRequest();
     const phone = phoneKeypair();
-    const bound = repo.bindTicket(made.ticket, phone.publicKeyB64, null, now);
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    repo.approveRequest(made.requestId, 'local-rpc:web', now);
+    await approveRequest(made.requestId, 'local-rpc:web');
     now += 91_000;
-    const done = repo.completeRequest(
+    const done = await completeRequest(
       made.requestId,
       phone.publicKeyB64,
-      proof(phone, made.requestId, bound.bindNonce),
-      now
+      proof(phone, made.requestId, bound.bindNonce)
     );
     expect(done.ok).toBe(false);
     if (!done.ok) expect(done.reason).toBe('expired');
   });
 
-  test('a cancelled request cannot complete, and a late approval cannot revive it', () => {
-    const made = repo.createRequest(now);
+  test('a cancelled request cannot complete, and a late approval cannot revive it', async () => {
+    const made = await createRequest();
     const phone = phoneKeypair();
-    const bound = repo.bindTicket(made.ticket, phone.publicKeyB64, null, now);
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    expect(repo.cancelRequest(made.requestId, now)).toBe(true);
-    expect(repo.requestStatus(made.requestId, now)).toMatchObject({ state: 'cancelled' });
-    expect(repo.approveRequest(made.requestId, 'local-rpc:web', now)).toBe('not_pending');
-    const done = repo.completeRequest(
+    expect(await call('cancelRequest', made.requestId, now)).toBe(true);
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'cancelled' });
+    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('not_pending');
+    const done = await completeRequest(
       made.requestId,
       phone.publicKeyB64,
-      proof(phone, made.requestId, bound.bindNonce),
-      now
+      proof(phone, made.requestId, bound.bindNonce)
     );
     expect(done.ok).toBe(false);
     if (!done.ok) expect(done.reason).toBe('cancelled');
   });
 
-  test('a denied request cannot complete', () => {
-    const made = repo.createRequest(now);
+  test('a denied request cannot complete', async () => {
+    const made = await createRequest();
     const phone = phoneKeypair();
-    const bound = repo.bindTicket(made.ticket, phone.publicKeyB64, null, now);
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    repo.approveRequest(made.requestId, 'local-rpc:web', now);
-    expect(repo.denyRequest(made.requestId, now)).toBe(true);
-    const done = repo.completeRequest(
+    await approveRequest(made.requestId, 'local-rpc:web');
+    expect(await call('denyRequest', made.requestId, now)).toBe(true);
+    const done = await completeRequest(
       made.requestId,
       phone.publicKeyB64,
-      proof(phone, made.requestId, bound.bindNonce),
-      now
+      proof(phone, made.requestId, bound.bindNonce)
     );
     expect(done.ok).toBe(false);
     if (!done.ok) expect(done.reason).toBe('denied');
   });
 
-  test('approval requires a bound ticket', () => {
-    const made = repo.createRequest(now);
-    expect(repo.approveRequest(made.requestId, 'local-rpc:web', now)).toBe('not_pending');
+  test('approval requires a bound ticket', async () => {
+    const made = await createRequest();
+    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('not_pending');
   });
 
-  test('two simultaneous first-owner approvals grant exactly one owner', () => {
-    const madeA = repo.createRequest(now);
-    const madeB = repo.createRequest(now);
+  test('two simultaneous first-owner approvals grant exactly one owner', async () => {
+    const madeA = await createRequest();
+    const madeB = await createRequest();
     const phoneA = phoneKeypair();
     const phoneB = phoneKeypair();
-    const boundA = repo.bindTicket(madeA.ticket, phoneA.publicKeyB64, null, now);
-    const boundB = repo.bindTicket(madeB.ticket, phoneB.publicKeyB64, null, now);
+    const boundA = await bindTicket(madeA.ticket, phoneA.publicKeyB64);
+    const boundB = await bindTicket(madeB.ticket, phoneB.publicKeyB64);
     if (!boundA.ok || !boundB.ok) throw new Error('bind failed');
 
-    expect(repo.approveRequest(madeA.requestId, 'local-rpc:web', now)).toBe('approved');
-    expect(repo.approveRequest(madeB.requestId, 'local-rpc:web', now)).toBe('approved');
+    expect(await approveRequest(madeA.requestId, 'local-rpc:web')).toBe('approved');
+    expect(await approveRequest(madeB.requestId, 'local-rpc:web')).toBe('approved');
 
-    const first = repo.completeRequest(
+    const first = await completeRequest(
       madeA.requestId,
       phoneA.publicKeyB64,
-      proof(phoneA, madeA.requestId, boundA.bindNonce),
-      now
+      proof(phoneA, madeA.requestId, boundA.bindNonce)
     );
     expect(first.ok).toBe(true);
-    const second = repo.completeRequest(
+    const second = await completeRequest(
       madeB.requestId,
       phoneB.publicKeyB64,
-      proof(phoneB, madeB.requestId, boundB.bindNonce),
-      now
+      proof(phoneB, madeB.requestId, boundB.bindNonce)
     );
     expect(second.ok).toBe(false);
     if (!second.ok) expect(second.reason).toBe('superseded');
     expect(devices.countDevices().humans).toBe(1);
-    expect(repo.requestStatus(madeB.requestId, now)).toMatchObject({ state: 'cancelled' });
+    expect(await requestStatus(madeB.requestId)).toMatchObject({ state: 'cancelled' });
   });
 
-  test('owner approvals after the first device do not grant owner', () => {
-    const bootstrap = repo.createRequest(now);
+  test('owner approvals after the first device do not grant owner', async () => {
+    const bootstrap = await createRequest();
     const owner = phoneKeypair();
-    const bound = repo.bindTicket(bootstrap.ticket, owner.publicKeyB64, null, now);
+    const bound = await bindTicket(bootstrap.ticket, owner.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    repo.approveRequest(bootstrap.requestId, 'local-rpc:web', now);
-    const first = repo.completeRequest(
+    await approveRequest(bootstrap.requestId, 'local-rpc:web');
+    const first = await completeRequest(
       bootstrap.requestId,
       owner.publicKeyB64,
-      proof(owner, bootstrap.requestId, bound.bindNonce),
-      now
+      proof(owner, bootstrap.requestId, bound.bindNonce)
     );
     expect(first.ok).toBe(true);
     if (!first.ok) return;
     expect(first.owner).toBe(true);
     const ownerDeviceId = devices.listDevices()[0].id;
 
-    const second = repo.createRequest(now);
+    const second = await createRequest();
     const phone = phoneKeypair();
-    const boundSecond = repo.bindTicket(second.ticket, phone.publicKeyB64, null, now);
+    const boundSecond = await bindTicket(second.ticket, phone.publicKeyB64);
     if (!boundSecond.ok) throw new Error('bind failed');
-    expect(repo.approveRequest(second.requestId, ownerDeviceId, now)).toBe('approved');
-    const done = repo.completeRequest(
+    expect(await approveRequest(second.requestId, ownerDeviceId)).toBe('approved');
+    const done = await completeRequest(
       second.requestId,
       phone.publicKeyB64,
-      proof(phone, second.requestId, boundSecond.bindNonce),
-      now
+      proof(phone, second.requestId, boundSecond.bindNonce)
     );
     expect(done.ok).toBe(true);
     if (!done.ok) return;

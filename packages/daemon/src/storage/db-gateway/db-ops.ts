@@ -6,6 +6,10 @@ import { gitHubWatchPollingWrite } from '../repositories/github-watch-polling-wr
 import { gitHubWatchedConfigWrite } from '../repositories/github-watched-config-write.ts';
 import { gitHubWatchedRepoRead } from '../repositories/github-watched-repo-read.ts';
 import { peerReads, peerWrites } from '../repositories/neo-peer-repository.ts';
+import {
+  pairingRequestReads,
+  pairingRequestWrites,
+} from '../repositories/pairing-request-repository.ts';
 import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
@@ -312,6 +316,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     credentialStoreWrites,
     peerReads,
     peerWrites,
+    pairingRequestReads,
+    pairingRequestWrites,
     googleConnectionReads,
     googleConnectionWrites,
     enqueueSessionDelivery,
