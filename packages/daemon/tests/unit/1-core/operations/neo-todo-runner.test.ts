@@ -1574,11 +1574,7 @@ describe('neo todo runner', () => {
         if (scenario === 'closed') h.store.retireQuestion(question!, 'Resolved', null, 3);
         if (scenario === 'new-card') {
           h.store.retireQuestion(question!, 'Replaced', null, 3);
-          askForWorker(
-            h,
-            todo.id,
-            scenario === 'todo-match-only' ? 'Another action' : 'Approval required'
-          );
+          askForWorker(h, todo.id, 'Approval required');
         }
         if (scenario === 'changed')
           h.store.updateTodo(h.store.getTodo(todo.id)!, { blockedReason: 'Another decision' }, 3);
