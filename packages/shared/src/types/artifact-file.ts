@@ -24,6 +24,8 @@ export const PREVIEWABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
   'jpeg',
   'gif',
   'webp',
+  'mp4',
+  'mov',
 ]);
 
 export const ARTIFACT_DEFAULT_LIMITS = {

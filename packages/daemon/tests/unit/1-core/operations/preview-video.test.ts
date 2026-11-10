@@ -19,10 +19,10 @@ function container(brand: string, compatible = brand) {
 }
 
 describe('registered video classification', () => {
-  test('advertises registered video while clickable live video awaits its player', () => {
+  test('advertises video for registered and current file previews', () => {
     expect([...ARTIFACT_KINDS]).toContain('video');
     for (const extension of ['mp4', 'mov']) {
-      expect(PREVIEWABLE_FILE_EXTENSIONS.has(extension)).toBe(false);
+      expect(PREVIEWABLE_FILE_EXTENSIONS.has(extension)).toBe(true);
       expect(liveFileByteLimit(extension)).toBe(16 * 1024 * 1024);
     }
   });

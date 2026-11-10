@@ -1,13 +1,15 @@
 import type { MessageHub } from '@hyperneo/shared';
+import { VIDEO_MAX_BYTES } from '@hyperneo/shared/types/video-container';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ArtifactPreviewTarget } from './artifact-preview-store.ts';
+import { prepareVideoBlob } from './artifact-video-client.ts';
 import { invokeOperation } from './operations.ts';
 
 type Reference = Extract<ArtifactPreviewTarget, { kind: 'reference' }>;
 type Chunk = {
   accepted: true;
   path?: string;
-  kind: 'text' | 'markdown' | 'html' | 'image';
+  kind: 'text' | 'markdown' | 'html' | 'image' | 'video';
   data: string;
   version: string;
   byteLength: number;
@@ -54,13 +56,19 @@ async function collect(hub: MessageHub, target: Reference, signal: AbortSignal) 
     if (!chunk.accepted) throw new Error(chunk.reason);
     if (target.handoff && chunk.path !== undefined) throw new Error('file_changed');
     const bytes = Uint8Array.from(atob(chunk.data), (char) => char.charCodeAt(0));
-    const limit = chunk.kind === 'image' ? 32 * 1024 * 1024 : 2 * 1024 * 1024;
+    const limit =
+      chunk.kind === 'video'
+        ? VIDEO_MAX_BYTES
+        : chunk.kind === 'image'
+          ? 32 * 1024 * 1024
+          : 2 * 1024 * 1024;
     if (chunk.byteLength > limit) throw new Error('size_limit');
     if (
       (first &&
         (chunk.version !== first.version ||
           chunk.path !== first.path ||
           chunk.kind !== first.kind ||
+          chunk.mediaType !== first.mediaType ||
           chunk.byteLength !== first.byteLength)) ||
       bytes.length > 262144 ||
       chunk.nextOffset !== offset + bytes.length ||
@@ -82,8 +90,13 @@ async function collect(hub: MessageHub, target: Reference, signal: AbortSignal) 
   }
 }
 
-async function present({ first, blob }: Awaited<ReturnType<typeof collect>>) {
-  const text = first.kind === 'image' ? '' : await blob.text();
+async function present({ first, blob }: Awaited<ReturnType<typeof collect>>, target: Reference) {
+  if (first.kind === 'video') {
+    const prepared = await prepareVideoBlob(blob, first.path ?? target.reference);
+    if ('reason' in prepared) throw new Error(prepared.reason);
+    blob = prepared.value;
+  }
+  const text = first.kind === 'image' || first.kind === 'video' ? '' : await blob.text();
   return {
     path: first.path,
     kind: first.kind,
@@ -100,7 +113,7 @@ async function present({ first, blob }: Awaited<ReturnType<typeof collect>>) {
 export const readLiveFile = (superpipe({})('read-live-file-preview') as PipelineAPI)
   .input(['hub', 'target', 'signal'])
   .pipe(collect, ['hub', 'target', 'signal'], 'loaded')
-  .pipe(present, 'loaded', 'file')
+  .pipe(present, ['loaded', 'target'], 'file')
   .endAsync('file') as (
   hub: MessageHub,
   target: Reference,

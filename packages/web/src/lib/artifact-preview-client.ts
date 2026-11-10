@@ -4,6 +4,7 @@ import {
   type ArtifactFileMetadata,
   type ArtifactReadResult,
 } from '@hyperneo/shared/types/artifact-file';
+import { VIDEO_MAX_BYTES } from '@hyperneo/shared/types/video-container';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { type ArtifactHtml, readArtifactHtml } from './artifact-html-client.ts';
 import { ArtifactReadRefusal, readMediaPreview } from './artifact-media-client.ts';
@@ -16,6 +17,7 @@ export type ArtifactPreviewState =
       text: string;
       html?: ArtifactHtml;
       image?: Blob;
+      video?: Blob;
       sourceText?: string;
       omittedBytes?: number;
     }
@@ -53,14 +55,20 @@ export async function loadArtifactMetadata(hub: MessageHub, artifactId: string) 
 }
 
 export function gatePreviewableKind(metadata: ArtifactFileMetadata): MetadataGate {
-  return ['markdown', 'html', 'image', 'json', 'log', 'text'].includes(metadata.artifact.kind)
+  return ['markdown', 'html', 'image', 'json', 'log', 'text', 'video'].includes(
+    metadata.artifact.kind
+  )
     ? { value: metadata }
     : { reason: { state: 'unsupported', metadata } };
 }
 
 export function gatePreviewLimit(metadata: ArtifactFileMetadata): MetadataGate {
-  return ['markdown', 'html'].includes(metadata.artifact.kind) &&
-    metadata.artifact.byteLength > ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes
+  return (
+    metadata.artifact.kind === 'video'
+      ? metadata.artifact.byteLength > VIDEO_MAX_BYTES
+      : ['markdown', 'html'].includes(metadata.artifact.kind) &&
+        metadata.artifact.byteLength > ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes
+  )
     ? { reason: { state: 'limit', metadata } }
     : { value: metadata };
 }
@@ -88,25 +96,29 @@ async function readText(
 }
 
 export const readArtifactPreview = (superpipe({})('artifact-preview-read') as PipelineAPI)
-  .input(['hub', 'artifactId'])
+  .input(['hub', 'artifactId', 'signal'])
   .pipe(loadArtifactMetadata, ['hub', 'artifactId'], 'result:preview')
   .pipe(gatePreviewableKind, 'preview', 'result:preview')
   .pipe(gatePreviewLimit, 'preview', 'result:preview')
   .pipe(
-    (hub: MessageHub, metadata: ArtifactFileMetadata) =>
+    (hub: MessageHub, metadata: ArtifactFileMetadata, signal?: AbortSignal) =>
       metadata.artifact.kind === 'html'
         ? readArtifactHtml(hub, metadata)
         : metadata.artifact.kind === 'markdown'
           ? readText(hub, metadata)
-          : readMediaPreview(hub, metadata).catch((error: unknown) =>
+          : readMediaPreview(hub, metadata, signal).catch((error: unknown) =>
               error instanceof ArtifactReadRefusal
                 ? refusedState(error.reason)
                 : { state: 'daemon_unavailable' as const }
             ),
-    ['hub', 'preview'],
+    ['hub', 'preview', 'signal'],
     'preview'
   )
-  .endAsync('preview') as (hub: MessageHub, artifactId: string) => Promise<ArtifactPreviewState>;
+  .endAsync('preview') as (
+  hub: MessageHub,
+  artifactId: string,
+  signal?: AbortSignal
+) => Promise<ArtifactPreviewState>;
 
 export const readArtifactSource = (superpipe({})('artifact-source-read') as PipelineAPI)
   .input(['hub', 'metadata'])

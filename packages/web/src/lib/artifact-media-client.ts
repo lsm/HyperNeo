@@ -6,6 +6,8 @@ import {
   type ArtifactReadResult,
   ARTIFACT_DEFAULT_LIMITS as limits,
 } from '@hyperneo/shared/types/artifact-file';
+import { VIDEO_MAX_BYTES } from '@hyperneo/shared/types/video-container';
+import { prepareVideoBlob } from './artifact-video-client.ts';
 import { invokeOperation } from './operations.ts';
 
 export class ArtifactReadRefusal extends Error {
@@ -45,6 +47,8 @@ export async function downloadArtifact(
   signal: AbortSignal,
   write: (bytes: Uint8Array<ArrayBuffer>) => Promise<void>
 ) {
+  if (metadata.artifact.kind === 'video' && metadata.artifact.byteLength > VIDEO_MAX_BYTES)
+    throw new ArtifactReadRefusal('size_limit');
   const hash = sha256.create();
   let offset = 0;
   do {
@@ -68,14 +72,28 @@ export async function downloadArtifact(
     throw new Error('unavailable');
 }
 
-export async function readMediaPreview(hub: MessageHub, metadata: ArtifactFileMetadata) {
+export async function readMediaPreview(
+  hub: MessageHub,
+  metadata: ArtifactFileMetadata,
+  signal = new AbortController().signal
+) {
   const { kind, byteLength } = metadata.artifact;
-  if (kind === 'image') {
-    if (byteLength > limits.imageBytes) return { state: 'limit' as const, metadata };
+  if (kind === 'image' || kind === 'video') {
+    if (byteLength > (kind === 'video' ? VIDEO_MAX_BYTES : limits.imageBytes))
+      return { state: 'limit' as const, metadata };
     const parts: Uint8Array<ArrayBuffer>[] = [];
-    await downloadArtifact(hub, metadata, new AbortController().signal, async (part) => {
+    await downloadArtifact(hub, metadata, signal, async (part) => {
       parts.push(part);
     });
+    if (kind === 'video') {
+      const prepared = await prepareVideoBlob(new Blob(parts), metadata.sourcePath);
+      return 'reason' in prepared
+        ? {
+            state: prepared.reason === 'size_limit' ? ('limit' as const) : ('unsupported' as const),
+            metadata,
+          }
+        : { state: 'ready' as const, metadata, text: '', video: prepared.value };
+    }
     const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
     const image = rasterInfo(bytes);
     if (!image || !image.width || !image.height) return { state: 'unsupported' as const, metadata };

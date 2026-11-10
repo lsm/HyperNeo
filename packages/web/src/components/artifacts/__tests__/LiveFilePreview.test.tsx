@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { connectionState } from '../../../lib/state.ts';
 import {
@@ -22,6 +22,8 @@ beforeEach(() => {
 afterEach(() => {
   act(closeArtifactPreview);
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
@@ -115,3 +117,76 @@ it('clears the displayed content on disconnect and reads the current file on rec
   await screen.findByRole('heading', { name: 'After reconnect' });
   expect(request).toHaveBeenCalledTimes(2);
 });
+
+it.each(['success', 'network', 'file_changed', 'forbidden', 'UNAUTHORIZED', 'missing'])(
+  'keeps video playback on %s download outcomes except revoked access',
+  async (outcome) => {
+    const bytes = Buffer.alloc(32);
+    bytes.writeUInt32BE(24, 0);
+    bytes.write('ftypmp42', 4);
+    bytes.write('mp42mp42', 16);
+    request.mockResolvedValue({
+      accepted: true,
+      kind: 'video',
+      data: bytes.toString('base64'),
+      version: 'a'.repeat(64),
+      byteLength: bytes.length,
+      nextOffset: bytes.length,
+      complete: true,
+    });
+    let nextUrl = 0;
+    const createUrl = vi.fn(() => `blob:video-${++nextUrl}`);
+    const revokeUrl = vi.fn();
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL = createUrl;
+        static revokeObjectURL = revokeUrl;
+      }
+    );
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    render(<ArtifactPreviewPanel />);
+    act(() => openArtifactPreview({ kind: 'reference', source, reference: 'clip.mp4' }));
+    await waitFor(() =>
+      expect(document.querySelector('video')?.getAttribute('src')).toBe('blob:video-1')
+    );
+    const video = document.querySelector('video')!;
+    video.currentTime = 5;
+    if (outcome === 'network') request.mockRejectedValue(new Error('Connection closed'));
+    else if (outcome === 'file_changed') {
+      request
+        .mockResolvedValueOnce({
+          accepted: true,
+          kind: 'video',
+          data: bytes.subarray(0, 16).toString('base64'),
+          version: 'a'.repeat(64),
+          byteLength: bytes.length,
+          nextOffset: 16,
+          complete: false,
+        })
+        .mockResolvedValue({ accepted: false, reason: outcome });
+    } else if (outcome !== 'success')
+      request.mockResolvedValue({ accepted: false, reason: outcome });
+    fireEvent.click(screen.getByRole('button', { name: 'Download complete file' }));
+    if (outcome === 'success') await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    else if (['forbidden', 'UNAUTHORIZED', 'missing'].includes(outcome)) {
+      await waitFor(() => expect(document.querySelector('video')).toBeNull());
+      expect(pause).toHaveBeenCalled();
+      expect(revokeUrl).toHaveBeenCalledWith('blob:video-1');
+      expect(download).not.toHaveBeenCalled();
+      return;
+    } else {
+      await screen.findByText('Download failed. Your preview is still open.');
+      expect(download).not.toHaveBeenCalled();
+    }
+    expect(request).toHaveBeenCalledTimes(outcome === 'file_changed' ? 3 : 2);
+    expect(document.querySelector('video')).toBe(video);
+    expect(video.getAttribute('src')).toBe('blob:video-1');
+    expect(video.currentTime).toBe(5);
+    expect(pause).not.toHaveBeenCalled();
+    expect(revokeUrl).not.toHaveBeenCalledWith('blob:video-1');
+    expect(createUrl).toHaveBeenCalledTimes(outcome === 'success' ? 2 : 1);
+  }
+);
