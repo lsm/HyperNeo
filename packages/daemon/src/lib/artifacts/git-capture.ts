@@ -39,7 +39,12 @@ export function captureGitArtifact(
       JSON.stringify(loadRegistrationBinding(db, repo.daemonId, plan.context, home)) ===
         JSON.stringify(binding);
     if (videoExtension(plan.path) && blob.bytes.length > VIDEO_MAX_BYTES)
-      return { accepted: false as const, reason: 'size_limit' as const };
+      return {
+        accepted: false as const,
+        reason: 'size_limit' as const,
+        actualBytes: blob.bytes.length,
+        limitBytes: VIDEO_MAX_BYTES,
+      };
     const snapshot = await (await artifactCaptureOwner(db, data)).capture(blob.bytes);
     if (!snapshot.accepted) return snapshot;
     if (snapshot.sha256 !== blob.sha256) return unavailable();

@@ -70,8 +70,8 @@
     ]
   },
   "coreAppend": {
-    "lines": 332,
-    "sha256": "0be75c5169dd6dfad3b652f2ae66818c395ff61b526c2dbe365a64c335c06759",
+    "lines": 340,
+    "sha256": "b30efda056e1e0919b3cdb6466971e3be4cca3e3f6cdc515f5e4bea488c672b6",
     "units": [
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
@@ -205,9 +205,9 @@
         "file": "packages/shared/src/types/artifact-file.ts",
         "name": "ARTIFACT_KINDS",
         "start": 1,
-        "end": 1,
-        "lines": 1,
-        "sha256": "f61bf1095ec0272506c5a812ac5e7a1399033f625b1089c4c63a7d4cd6de873a"
+        "end": 9,
+        "lines": 9,
+        "sha256": "3c2a35a9172375a5e7c12f547b8bcc1be256f29d20e3c417bd1155f9ac818006"
       },
       {
         "file": "packages/daemon/src/lib/handoffs/outbox.ts",
