@@ -585,7 +585,7 @@ export class AgentSession
     const isThisRunRequeryEpisodeEvent = (data: { spaceId: string; runId: string }) => {
       if (data.spaceId !== this.session.context?.spaceId) return false;
       const boundRunId = this.db.spaceSessions?.workflowRunIdForSession(this.session.id);
-      return !boundRunId || data.runId === boundRunId;
+      return boundRunId !== undefined && data.runId === boundRunId;
     };
     const isThisTaskRequeryEpisodeEvent = (taskId: string | undefined) => {
       const sessionTaskId = this.session.context?.taskId;

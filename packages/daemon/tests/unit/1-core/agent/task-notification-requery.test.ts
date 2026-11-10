@@ -330,6 +330,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   let enqueueSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
   let eventSubscribers: Map<string, Array<(data: Record<string, unknown>) => void>>;
+  let boundRunIds: Map<string, string>;
   let activeDeliveryUuids: Set<string>;
   let consumedFollowUpUuids: Set<string>;
   let revokedPendingMessage: { dbId: string; uuid: string } | null;
@@ -398,7 +399,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       })),
       spaceSessions: {
         queryStartGuard: () => undefined,
-        workflowRunIdForSession: () => 'run-1',
+        workflowRunIdForSession: (sessionId: string) => boundRunIds.get(sessionId),
       },
     } as unknown as Database;
 
@@ -443,6 +444,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   beforeEach(() => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '1';
     eventSubscribers = new Map();
+    boundRunIds = new Map([['requery-session-id', 'run-1']]);
     activeDeliveryUuids = new Set();
     consumedFollowUpUuids = new Set();
     revokedPendingMessage = null;
@@ -619,6 +621,34 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       timestamp: new Date().toISOString(),
     });
     expect(episodeOf()?.closed).toBe(true);
+  });
+
+  it('keeps the episode when an unbound session sees an unrelated run complete', async () => {
+    boundRunIds.delete('requery-session-id');
+    const episodeOf = () =>
+      (agentSession as unknown as { taskNotificationRequeryEpisode: unknown })
+        .taskNotificationRequeryEpisode as TaskNotificationRequeryEpisode | null;
+    (
+      agentSession as unknown as { taskNotificationRequeryEpisode: unknown }
+    ).taskNotificationRequeryEpisode = openRequeryEpisode(5, 'done');
+
+    fireInternalEvent('space.workflowRun.completed', {
+      spaceId: 'space-1',
+      runId: 'run-1',
+      status: 'done',
+      timestamp: new Date().toISOString(),
+    });
+    expect(episodeOf()?.closed).toBe(false);
+
+    fireInternalEvent('space.workflowRun.reopened', {
+      spaceId: 'space-1',
+      runId: 'run-1',
+      fromStatus: 'done',
+      reason: 'retry',
+      by: 'operator',
+      timestamp: new Date().toISOString(),
+    });
+    expect(episodeOf()?.closed).toBe(false);
   });
 
   it('escalates to the needs-attention channel when the budget is exhausted', async () => {
