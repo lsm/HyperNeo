@@ -3,7 +3,7 @@ import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shar
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
-import { messageTime } from '../NeoMessage.tsx';
+import { neoRelativeTime } from '../neo-time.ts';
 import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
 import * as clipboard from '../../lib/utils.ts';
@@ -105,6 +105,55 @@ const toggleAll = (app: ReturnType<typeof render>) => {
 };
 
 describe('NeoAskTodos', () => {
+  it('uses creation facts, hides row times, and shows lifecycle time only in expanded details', () => {
+    const at = Date.now() - 120_000;
+    const value = entry({
+      todos: [todo('timed', { createdAt: at, startedAt: at + 30_000, finishedAt: at + 60_000 })],
+      questions: [question('timed', { createdAt: at })],
+    });
+    value.ask.createdAt = at;
+    value.ask.updatedAt = Date.now();
+    const app = render(<NeoAskTodos entry={value} onAnswer={vi.fn()} />);
+    expect(
+      app.container
+        .querySelector('[data-ask-status]')
+        ?.parentElement?.querySelector('time')
+        ?.getAttribute('datetime')
+    ).toBe(new Date(at).toISOString());
+    expect(app.container.querySelector('[data-ask-question] time')?.getAttribute('datetime')).toBe(
+      new Date(at).toISOString()
+    );
+    const row = app.container.querySelector('[data-ask-todo]')!;
+    expect(row.querySelector('time')).toBeNull();
+    fireEvent.click(
+      within(row as HTMLElement).getByRole('button', { name: /显示详情|Show details/ })
+    );
+    expect(row.querySelector('[data-todo-details] time')?.getAttribute('datetime')).toBe(
+      new Date(at + 60_000).toISOString()
+    );
+    expect(row.textContent).toContain('完成于');
+  });
+
+  it.each([
+    { finishedAt: null, startedAt: 2_000, createdAt: 1_000, expected: 2_000 },
+    { finishedAt: NaN, startedAt: 0, createdAt: 1_000, expected: 1_000 },
+    { finishedAt: null, startedAt: null, createdAt: 0, expected: null },
+  ])('uses the next valid lifecycle fact in expanded details %o', (dates) => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('dates', { ...dates, updatedAt: Date.now() })] })}
+        onAnswer={vi.fn()}
+      />
+    );
+    const row = app.container.querySelector('[data-ask-todo]')!;
+    fireEvent.click(
+      within(row as HTMLElement).getByRole('button', { name: /显示详情|Show details/ })
+    );
+    expect(row.querySelector('time')?.getAttribute('datetime') ?? null).toBe(
+      dates.expected ? new Date(dates.expected).toISOString() : null
+    );
+  });
+
   it('omits the completion line when a start todo has an empty completion string', () => {
     locale.value = 'en';
     const app = render(
@@ -824,7 +873,7 @@ describe('NeoAskTodos', () => {
     }
   );
 
-  it('dates an answer from an earlier day and shows only the time for today', () => {
+  it('shows the creation time and a separate answered time for each answered question', () => {
     const earlier = new Date(2026, 0, 2, 9, 5).getTime();
     const today = Date.now();
     const app = render(
@@ -840,10 +889,14 @@ describe('NeoAskTodos', () => {
     );
     fireEvent.click(app.container.querySelector('[data-ask-details-toggle]')!);
     const line = (id: string) =>
-      app.baseElement.querySelector(`#neo-ref-question-${id} > p`)?.textContent ?? '';
-    expect(line('old')).toContain(messageTime(earlier)!.label);
+      app.baseElement.querySelector(`#neo-ref-question-${id}`)?.textContent ?? '';
+    expect(line('old')).toContain(neoRelativeTime(earlier, Date.now(), 'zh-Hans')!.label);
     expect(line('old')).toMatch(/1月|Jan/);
-    expect(line('new')).toContain(messageTime(today)!.label);
+    expect(line('new')).toContain(neoRelativeTime(today, Date.now(), 'zh-Hans')!.label);
+    expect(line('new')).toContain('已回答');
+    expect(
+      app.baseElement.querySelector('#neo-ref-question-new time')?.getAttribute('datetime')
+    ).toBe(new Date(1).toISOString());
   });
 
   it('lists the todos of a start question with ticks and starts only the ticked ones', () => {
@@ -1599,7 +1652,7 @@ describe('Settled question previews', () => {
       const row = view.baseElement.querySelector('#neo-ref-question-long')!;
       await waitFor(() => expect(row.textContent).toContain('A settled decision'));
       expect(row.textContent).not.toContain('Final detail');
-      expect(row.textContent!.length).toBeLessThan(450);
+      expect(row.querySelector('.neo-markdown')!.textContent!.length).toBeLessThan(350);
       expect(row.textContent).toContain(
         state === 'answered' ? 'Keep the decision' : 'No longer needed'
       );

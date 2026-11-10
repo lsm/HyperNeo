@@ -898,3 +898,54 @@
   outline: 2px solid var(--neo-markdown-quote-border);
   outline-offset: 2px;
 }
+
+.neo-time {
+  position: relative;
+  flex-shrink: 0;
+  color: var(--fg-faint);
+  font-size: 0.75rem;
+}
+.neo-time summary {
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+.neo-time summary::-webkit-details-marker {
+  display: none;
+}
+.neo-time-popover {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 100%;
+  z-index: 10;
+  display: grid;
+  gap: 0.25rem;
+  width: max-content;
+  max-width: min(18rem, 75vw);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.5rem;
+  background: var(--surface-raised);
+}
+.neo-time-line {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--fg-faint);
+}
+.neo-time-line .neo-time {
+  position: static;
+}
+.neo-time-line .neo-time-popover {
+  max-width: 100%;
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+}
+.neo-question-time {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
