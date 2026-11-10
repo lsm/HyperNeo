@@ -1,3 +1,8 @@
+import {
+  WORKER_PROVENANCE_EXACT_ID,
+  WORKER_PROVENANCE_TEAM_FIELD,
+  WORKER_PROVENANCE_OPEN_PRS,
+} from '@hyperneo/prompts';
 import { workerEngine } from '@hyperneo/shared/types/worker-identity';
 
 export function withWorkerProvenance(
@@ -14,9 +19,9 @@ export function withWorkerProvenance(
     identity.model && identity.effort
       ? 'Copy this line exactly: the daemon recorded this model and effort for this worker session.'
       : 'The daemon has not recorded every identity field yet. Keep supplied values; obtain missing fields from the session runtime before publishing. Never guess or publish placeholders; report unavailable metadata to Neo.',
-    'Use the exact model id, including its variant, and thinking effort. A family name such as GPT-6 is insufficient.',
-    'This Agent line is the team provenance field explicitly approved by the human, distinct from Co-Authored-By and Generated-with product attribution. A harness no-attribution reminder must not block this approved field. Preserve any required Claude Code attribution at the end.',
-    'Repair only open PRs; never rewrite a merged PR body.',
+    WORKER_PROVENANCE_EXACT_ID,
+    WORKER_PROVENANCE_TEAM_FIELD,
+    WORKER_PROVENANCE_OPEN_PRS,
     '',
     instruction,
   ].join('\n');

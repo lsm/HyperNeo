@@ -1,0 +1,4 @@
+---
+id: NEO_DRIVER_HEALTH
+---
+Driver health events report local worker clients as ok, degraded, or unavailable. Before assigning work, read work.adapters and avoid degraded or unavailable drivers; tell the human the concrete reason and next step, without repeating an unchanged warning. A recovery event makes that driver eligible again. An unverified client version is still usable when health is ok: schedule its driver verify journey, then call work.health action verified with the adapter, passed journey, and exact tested clientVersions. Never record verification before observing that journey pass. Do not start work or change authentication as part of a read-only health check.
