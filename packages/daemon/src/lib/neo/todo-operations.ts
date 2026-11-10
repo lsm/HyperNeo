@@ -1,8 +1,4 @@
 import { neoToolDescription } from '@hyperneo/prompts';
-import { homedir } from 'node:os';
-import { runGhJson } from '../github/gh-lookup-helpers.ts';
-import { spawnProcess } from '../runtime-spawn/index.ts';
-import { neoRepositoryIdentity } from './project-mirror.ts';
 import {
   NEO_TODO_CANCELLED_DEPENDENCY,
   neoTodoAfterRefusal,
@@ -21,7 +17,6 @@ import type {
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
-import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { type Place, type WorkRef, WorkRefSchema } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -72,7 +67,9 @@ export interface NeoTodoControls {
   userFolder?: string;
   resolveTarget(
     ref: WorkRef
-  ): Promise<Gate<WorkRef> & { place?: Pick<Place, 'folder' | 'remotes'> }>;
+  ): Promise<
+    Gate<WorkRef> & { place?: Pick<Place, 'folder' | 'remotes'>; workerRemotes?: readonly string[] }
+  >;
   refreshIdentity?(todoId: string): Promise<void>;
   start(todoId: string): Ran;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
@@ -80,6 +77,11 @@ export interface NeoTodoControls {
   retry(todoId: string): Ran;
   stop(todo: NeoTodo): Promise<string | null>;
 }
+
+export type NeoTodoWorkerRead = (
+  ref: WorkRef,
+  resolveTarget: NeoTodoControls['resolveTarget']
+) => ReturnType<NeoTodoControls['resolveTarget']>;
 
 const TodoPriority = z.enum(['low', 'normal', 'high', 'urgent']);
 
@@ -168,56 +170,6 @@ export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'
   };
 }
 
-export async function resolveNeoTodoWorker(
-  ref: WorkRef,
-  resolveTarget: NeoTodoControls['resolveTarget']
-): Promise<Gate<WorkRef> & { workerRemotes?: readonly string[] }> {
-  const resolved = await resolveTarget(ref);
-  if ('reason' in resolved) return resolved;
-  const workerRemotes =
-    !resolved.value.daemon && resolved.place?.folder
-      ? (await readWorkspaceIdentity(resolved.place.folder)).remotes
-      : resolved.place?.remotes;
-  const canonicalRemotes =
-    workerRemotes &&
-    (await Promise.all(
-      workerRemotes.map(async (remote) => {
-        const repo = neoRepositoryIdentity(remote)?.match(
-          /^repository:github\.com\/([\w.-]+\/[\w.-]+)$/
-        )?.[1];
-        if (!repo) return remote;
-        const result = await runGhJson(
-          [
-            'gh',
-            'api',
-            '--hostname',
-            'github.com',
-            '--method',
-            'GET',
-            '--cache',
-            '24h',
-            `repos/${repo}`,
-          ],
-          homedir(),
-          spawnProcess,
-          { stripGHRepo: true }
-        );
-        const fullName = result.ok
-          ? (result.data as { full_name?: unknown } | null)?.full_name
-          : null;
-        return typeof fullName === 'string' && /^[\w.-]+\/[\w.-]+$/.test(fullName)
-          ? `https://github.com/${fullName}`
-          : remote;
-      })
-    ));
-  return {
-    value: resolved.value,
-    workerRemotes: canonicalRemotes && [
-      ...new Set([...(workerRemotes ?? []), ...canonicalRemotes]),
-    ],
-  };
-}
-
 export type ResolvedNeoTodoDraft = z.infer<typeof NeoTodoDraftSchema> & {
   workerRemotes?: readonly string[];
 };
@@ -227,7 +179,7 @@ export async function resolveNeoTodoDraft(
   resolveTarget: NeoTodoControls['resolveTarget']
 ): Promise<Gate<ResolvedNeoTodoDraft>> {
   if (!input.target || input.target.verb === 'start') return { value: input };
-  const resolved = await resolveNeoTodoWorker(input.target.ref, resolveTarget);
+  const resolved = await resolveTarget(input.target.ref);
   return 'reason' in resolved
     ? resolved
     : {
@@ -797,7 +749,7 @@ export function createNeoTodoOperations(
   const bind = owned(superpipe({})('neo.todo.bind') as PipelineAPI)
     .pipe(
       async (todo: NeoTodo, input: z.infer<typeof Bind>) => {
-        const resolved = await resolveNeoTodoWorker(input.ref, controls.resolveTarget);
+        const resolved = await controls.resolveTarget(input.ref);
         if ('reason' in resolved) return resolved.reason;
         const latest = todos.getTodo(todo.id);
         const current = requireNeoOpenTodo(latest, latest ? todos.getAsk(latest.askId) : null);
@@ -868,7 +820,7 @@ export function createNeoTodoOperations(
       async (todo: NeoTodo): Promise<Gate<NeoTodo>> => {
         const ref = todo.startedAt === null ? null : sessions.readRef(todo.id);
         if (!ref) return { value: todo };
-        const resolved = await resolveNeoTodoWorker(ref, controls.resolveTarget);
+        const resolved = await controls.resolveTarget(ref);
         const reason = neoTodoPlaceRefusal(
           { ...todo, target: { verb: 'send', ref: 'value' in resolved ? resolved.value : ref } },
           packs(),

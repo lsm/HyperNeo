@@ -9,6 +9,7 @@ const draft = {
   title: 'Synthetic work',
   check: { pack: 'core', kind: 'evidence', params: {} },
   instruction: null,
+  named: null,
   target: { verb: 'send' as const, ref },
   start: false,
   priority: 'normal' as const,

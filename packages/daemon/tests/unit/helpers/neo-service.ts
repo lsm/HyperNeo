@@ -1,3 +1,4 @@
+import { readCodingTodoWorker } from '../../../src/lib/neo/packs/coding/worker-read.ts';
 import { codingProjectIdentity } from '../../../src/lib/neo/packs/coding/project-cleanup.ts';
 import { createNeoOperations as createCoreNeoOperations } from '../../../src/lib/neo/operations.ts';
 import {
@@ -15,6 +16,6 @@ export function createNeoService(...args: Parameters<typeof createBareNeoService
 export function createNeoOperations(service: NeoService) {
   return [
     ...(neoPacksExtension(service).operations?.() ?? []),
-    ...createCoreNeoOperations(service, codingProjectIdentity),
+    ...createCoreNeoOperations(service, codingProjectIdentity, readCodingTodoWorker),
   ];
 }
