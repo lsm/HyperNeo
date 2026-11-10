@@ -2922,7 +2922,7 @@ export class AgentSession
             throw new MessageDeliveryTerminalTurnError(message, 'provider_retired');
           }
           const registry = initializeProviders();
-          if (pinned || !registry.has('anthropic')) {
+          if (this.session.config.harness !== 'codex' && (pinned || !registry.has('anthropic'))) {
             await waitForOptionalProviderRegistration(registry, pinned !== undefined);
             const { provider } = await resolveAvailableQueryProvider(
               registry,
