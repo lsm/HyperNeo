@@ -1,0 +1,29 @@
+import type { CodingAssignmentsRepository } from './assignments.ts';
+import { decideCodingDaemonMerge, type CodingDaemonMergeFacts } from './daemon-merge-gates.ts';
+import type { CodingMergePolicy } from './pr-ledger.ts';
+
+export function codingReviewCoversMergeHold(
+  facts: CodingDaemonMergeFacts,
+  policy: CodingMergePolicy,
+  head: string,
+  handoffs: ReturnType<CodingAssignmentsRepository['reviewHolds']>
+): boolean {
+  return (
+    facts.ok &&
+    facts.head === head &&
+    facts.labels?.includes('human-merge') === true &&
+    decideCodingDaemonMerge(
+      { ...facts, labels: facts.labels.filter((label) => label !== 'human-merge') },
+      policy
+    ).kind === 'merge' &&
+    handoffs.length > 0 &&
+    handoffs.every(
+      (handoff) =>
+        handoff.assignment?.actor?.kind === 'agent' &&
+        handoff.state === 'doing' &&
+        handoff.blockedBy === null &&
+        !handoff.questionOpen &&
+        !handoff.finished
+    )
+  );
+}

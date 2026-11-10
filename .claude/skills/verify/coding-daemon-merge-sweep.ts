@@ -1,3 +1,5 @@
+import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
+import { CodingStageFactsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/stage-facts.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTrackerMirrorRepository } from '../../../packages/daemon/src/storage/repositories/neo-tracker-mirror.ts';
 import { seedPrOwner } from './seed-pr-owner.ts';
@@ -20,6 +22,7 @@ import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
+const assignedReview = process.argv.includes('assigned-review');
 const linkedCrossRepo = process.argv.includes('linked-issue-cross-repo');
 const linkedNoRow = process.argv.includes('linked-issue-no-row');
 const linkedIssue = process.argv.includes('linked-issue') || linkedNoRow || linkedCrossRepo;
@@ -87,7 +90,7 @@ try{
  const humanNotices:string[]=[],ownerMessages:string[]=[];
  const notices:string[]=[];let deliver=true,rejectSignoff=true;
  const snapshot=()=>JSON.parse(readFileSync(join(run,'fixture.json'),'utf8'));
- const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>linkedIssue?[{url,state:'OPEN',checks:'passing',review:'approved',head}]:[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(stoppedReady){ownerMessages.push(text);return true;}if(external&&deliver){notices.push(text);return true;}return false;},wake:async(key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return ciRetry&&deliver?neo!.wakeNeo(key,text):deliver;}},readLedgerRepo:async()=>{
+ const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>linkedIssue||assignedReview?[{url,state:'OPEN',checks:'passing',review:'approved',head}]:[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(stoppedReady){ownerMessages.push(text);return true;}if(external&&deliver){notices.push(text);return true;}return false;},wake:async(key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return ciRetry&&deliver?neo!.wakeNeo(key,text):deliver;}},readLedgerRepo:async()=>{
  const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:snapshot().pr.headRefOid,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:largeFiles?allPaths.slice(0,100).map(path=>({path})):[{path:'src/app.ts'}],pageInfo:{hasNextPage:largeFiles}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:head},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:((pendingLedger&&!snapshot().ciReady)||humanWaiting)?{statusCheckRollup:ciStartup?{state:'PENDING'}:null,checkSuites:{totalCount:1}}:humanSibling?{statusCheckRollup:null,checkSuites:{totalCount:0}}:{statusCheckRollup:{state:'SUCCESS'}}}]}};
  return {data:{rateLimit:{remaining:5000},repository:{nameWithOwner:'synthetic/merge',open:{pageInfo:{hasNextPage:false},nodes:terminal?[]:humanSibling?[node,{...node,number:8,isDraft:true,commits:{nodes:[{commit:{statusCheckRollup:{state:'SUCCESS'}}}]}}]:isolated?[node,{...node,number:8}]:[node]},done:{nodes:terminal?[node]:[]}}}};
  }});
@@ -95,7 +98,50 @@ try{
  const runSweep=()=>pack.sweep!(tick+=61_000);
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
  const seedStoppedBudget=async()=>{for(let i=0;i<3;i++){const[receipt]=await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:coding-sweep',at:tick+i});assert(receipt);await ledger.write('daemonMerge',{...receipt,kind:'failed',error:'The base branch policy prohibits the merge.',at:receipt.startedAt});await ledger.write('daemonMerge',{...receipt,kind:'void',at:receipt.startedAt});}};
- if (linkedIssue) {
+ if (assignedReview) {
+   assert(![8399, 8499].includes(app.server.port));
+   rejectSignoff = false;
+   const store = new NeoAskTodoRepository(db);
+   store.openAsk({ id: 'review-ask', sessionId: 'synthetic', projectId: null,
+     originMessageId: null, title: 'Synthetic review', request: 'Review', createdAt: 1 });
+   const todo = store.addTodo('review-todo', 'review-ask', { title: 'Synthetic change',
+     instruction: 'Build', named: null, doneWhen: 'Merged',
+     check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } } }, 2);
+   store.updateTodo(todo, { state: 'doing' }, 3);
+   const stages = new CodingStageFactsRepository(db);
+   stages.observeHead(url, head, tick);
+   const actor = { kind: 'agent' as const, id: 'synthetic-reviewer', harness: 'hyperneo', model: 'review-model' };
+   const ref = { adapter: 'hyperneo', id: actor.id };
+   assert(new CodingAssignmentsRepository(db).record(todo.id, 'review', {
+     url, head, acceptanceContract: 'contract', newDispatch: true,
+     write: { adapter: 'hyperneo', id: 'synthetic-writer' }, actor, ref,
+   }));
+   const held = () => notices.filter((text) => text.includes('requires human sign-off'));
+   await runSweep();
+   await runSweep();
+   assert.equal(held().length, 0);
+   assert.equal(mergeCalls().length, 0);
+   evidence.coveredHoldWakes = held().length;
+   assert(stages.record({ url, head, stage: 'review', actor, ref, verdict: 'pass',
+     acceptanceContract: 'contract', evidence: ['Synthetic review completed'] }));
+   await runSweep();
+   assert.equal(held().length, 1);
+   evidence.finishedReviewWakes = 1;
+   db.prepare("DELETE FROM pack_coding_stage_facts WHERE url=?").run(url);
+   store.askQuestion('review-decision', 'review-ask', { todoId: todo.id,
+     text: 'Choose next step', kind: 'reply', options: null, multiple: false,
+     noLabel: null, yesLabel: null, startTodos: null }, tick);
+   await runSweep();
+   assert.equal(held().length, 2);
+   evidence.humanDecisionWakes = 1;
+   assert.equal(mergeCalls().length, 0);
+   assert.equal(store.getTodo(todo.id)?.state, 'doing');
+   assert.equal(store.listQuestions('review-ask')[0].state, 'open');
+   assert.deepEqual(await rpc('pack.preferences.list', {}), preferences);
+   evidence.mergeCommands = mergeCalls();
+   evidence.savedPreferencesUnchanged = true;
+   evidence.verified = true;
+ } else if (linkedIssue) {
    const mirrorHome = linkedCrossRepo ? 'synthetic/mirror-a' : 'synthetic/merge';
    const store = new NeoAskTodoRepository(db);
    store.openAsk({ id: 'mirror-ask', projectId: null, sessionId: 'synthetic', originMessageId: null,

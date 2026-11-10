@@ -233,3 +233,11 @@ whose todo has no stored repository and cannot acquire a mirror row.
 The `linked-issue-cross-repo` case keeps the bound mirror in an opted-in
 repository while its PR is in a repository with mirroring disabled. The stored
 mirror home still controls the closing-reference gate.
+
+Use `assigned-review` to exercise expected human-merge holds. The real coding
+pack reads a durable Review assignment for the current todo/head through its
+SQLite worker. Two sweeps emit no sign-off wake while the assignment is pending.
+Recording the review result restores the wake; a pending human question also
+restores it. Each held case executes zero merges and preserves preferences and
+the todo/question records. Unit counterparts cover missing/stale/bot assignments,
+closed todos, file sign-off and an explicit human merge policy.
