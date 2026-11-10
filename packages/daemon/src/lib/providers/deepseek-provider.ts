@@ -217,6 +217,14 @@ export class DeepSeekProvider implements Provider {
       this.clearModelCache();
       throw new Error('DeepSeek credentials changed during model discovery');
     }
+    const contextByModel = new Map<string, number>();
+    for (const model of models) {
+      const resolved = DeepSeekProvider.resolveModelId(model.id);
+      if (!resolved || model.contextWindow === undefined) continue;
+      if (!contextByModel.has(resolved) || model.id.toLowerCase() === resolved.toLowerCase()) {
+        contextByModel.set(resolved, model.contextWindow);
+      }
+    }
     const remoteIds = new Set(models.map((model) => model.id.toLowerCase()));
     const discovered = mergeDiscoveredModels(
       [],
@@ -226,7 +234,13 @@ export class DeepSeekProvider implements Provider {
           const resolved = DeepSeekProvider.resolveModelId(model.id)!.toLowerCase();
           return model.id.toLowerCase() === resolved || !remoteIds.has(resolved);
         })
-        .map((model) => this.toRemoteModelInfo(model))
+        .map((model) =>
+          this.toRemoteModelInfo({
+            ...model,
+            contextWindow:
+              model.contextWindow ?? contextByModel.get(DeepSeekProvider.resolveModelId(model.id)!),
+          })
+        )
     );
     this.discoveryCache.set(fingerprint, discovered);
     if (options.discoveryOnly || discovered.length) return discovered;
