@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { repoNameFromRemote } from '../drivers/code-identity.ts';
 import type { Place } from '../drivers/types.ts';
 
 export type NeoWorkerNameSource = (
@@ -22,12 +23,10 @@ export function planNeoWorkerName(
     space: 'HyperNeo',
     'copilot-cli': 'Copilot',
   };
-  const repository = place?.repoName ?? place?.remotes?.[0];
+  const repository = place?.repoName ?? repoNameFromRemote(place?.remotes?.[0]);
   const project = basename(
     (repository ?? place?.folder ?? place?.name ?? 'work').replaceAll('\\', '/').replace(/\/+$/, '')
-  )
-    .replace(/\.git$/i, '')
-    .toLowerCase();
+  ).toLowerCase();
   const prefix = `${labels[adapter] ?? adapter} ${project}`;
   const names = new Set(taken);
   let number = 1;

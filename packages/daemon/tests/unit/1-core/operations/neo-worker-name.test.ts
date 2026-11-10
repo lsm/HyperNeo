@@ -22,6 +22,14 @@ describe('planNeoWorkerName', () => {
       ])
     ).toBe('Codex hyperneo 2');
   });
+  test('preserves .git in explicit repository and folder names', () => {
+    expect(planNeoWorkerName('codex-desktop', { ...place, repoName: 'Notes.git' }, [])).toBe(
+      'Codex notes.git 1'
+    );
+    expect(
+      planNeoWorkerName('codex-desktop', { ...place, folder: '/projects/Notes.git' }, [])
+    ).toBe('Codex notes.git 1');
+  });
   test('prefers the repository name to a worktree folder', () => {
     expect(
       planNeoWorkerName(
