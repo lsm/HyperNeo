@@ -1,3 +1,4 @@
+import { deliverNeoTurnReport } from '../../../../src/lib/neo/turn-report.ts';
 import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
 import { createDelegationPack } from '../../../../src/lib/neo/packs/delegation/pack.ts';
 import { createPackPreferenceOperations } from '../../../../src/lib/neo/preference-operations.ts';
@@ -1334,6 +1335,7 @@ describe('neo todo runner', () => {
     'turn-question',
     'waiting',
     'new-block',
+    'legacy-observation',
   ] as const)(
     'empty automatic reports preserve the nearest actionable case: %s',
     async (scenario) => {
@@ -1362,6 +1364,15 @@ describe('neo todo runner', () => {
         const at = dispatch.acceptedAt + 100;
         const message =
           scenario === 'meaningful' ? 'A new decision' : scenario === 'whitespace' ? '  \n' : '';
+        if (scenario === 'legacy-observation')
+          await h.sessions.turnReports.observe(
+            todo.id,
+            dispatch.id,
+            ref,
+            { status: 'done' },
+            { id: 'empty-observation', at, message },
+            'neo'
+          );
         h.setStatus({
           ok: true,
           value: {
@@ -1390,6 +1401,93 @@ describe('neo todo runner', () => {
       }
     }
   );
+
+  test('a failed actionable empty report remains retryable after idle state is recorded', async () => {
+    let failDelivery = true;
+    const h = setup(false, ':memory:', undefined, () => {
+      if (failDelivery) throw new Error('Synthetic report admission failure');
+    });
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      h.sessions.recordLive(todo.id, 'running', undefined);
+      const dispatch = h.sessions.inputs.list(todo.id)[0]!;
+      const at = dispatch.acceptedAt + 100;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at,
+          turnEnds: [{ id: 'retry-empty', at, message: '' }],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.told).toHaveLength(0);
+      h.sessions.recordLive(todo.id, 'done', undefined);
+      failDelivery = false;
+      await h.runner.refresh(() => {});
+      expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(1);
+      await h.runner.refresh(() => {});
+      expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a quiet assignment cannot acknowledge another assignment actionable retry', async () => {
+    const h = setup(false);
+    try {
+      const quiet = h.add();
+      const actionable = h.add();
+      const ask = h.store.getAsk('ask')!;
+      const turn = { id: 'shared-empty', at: Date.now() + 10, message: '' };
+      let attempts = 0;
+      const delivered: string[] = [];
+      const tell = async (_ask: unknown, _todo: unknown, text: string) => {
+        if (++attempts === 1) throw new Error('Synthetic admission failure');
+        delivered.push(text);
+      };
+      const facts = {
+        priorStatus: 'done' as const,
+        state: 'doing' as const,
+        blockedBy: null,
+        questionOpen: false,
+      };
+      const sendQuiet = () =>
+        deliverNeoTurnReport(
+          ask,
+          quiet,
+          'quiet',
+          ref,
+          { status: 'done' },
+          turn,
+          tell,
+          h.sessions.turnReports,
+          facts
+        );
+      const sendActionable = () =>
+        deliverNeoTurnReport(
+          ask,
+          actionable,
+          'actionable',
+          ref,
+          { status: 'done' },
+          turn,
+          tell,
+          h.sessions.turnReports,
+          { ...facts, priorStatus: 'running' }
+        );
+      await sendQuiet();
+      expect(attempts).toBe(0);
+      await expect(sendActionable()).rejects.toThrow('Synthetic admission failure');
+      await sendQuiet();
+      await sendActionable();
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]).toContain(`todo ${actionable.id}`);
+    } finally {
+      h.db.close();
+    }
+  });
 
   test.each(['', '  Final worker message 🔬\n'.repeat(400)])(
     'relays a terminal message verbatim as a report without changing the todo result: %s',
