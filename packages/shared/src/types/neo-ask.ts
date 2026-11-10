@@ -95,6 +95,7 @@ export interface NeoQuestionSource extends WorkerIdentity {
 }
 
 export interface NeoAnswerProvenance {
+  words: string;
   via: string;
   viaName: string;
   where: string;

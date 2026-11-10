@@ -394,6 +394,7 @@ export const NeoQuestionSchema = z.object({
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
   answerProvenance: z
     .object({
+      words: z.string(),
       via: z.string(),
       viaName: z.string(),
       where: z.string(),

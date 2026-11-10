@@ -1,4 +1,4 @@
-import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
+import { neoChoiceByLetter, type NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 import type { NeoSettings } from '@hyperneo/shared/types/settings';
 
 export type NeoRelayInput = {
@@ -33,8 +33,9 @@ export function planNeoRelayAnswer(
   )
     return { reason: 'direct_human_required: this card needs the human’s own action.' };
   return {
-    answer: input.words,
+    answer: neoChoiceByLetter(input.words, question) ?? input.words,
     provenance: {
+      words: input.words,
       via: input.sender,
       viaName: relay.name,
       where: input.where,

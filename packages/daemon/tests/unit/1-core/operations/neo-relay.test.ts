@@ -101,6 +101,7 @@ test('an allowed relay uses the chat answer write and persists exact words and p
     answeredBy: 'chat',
     answer: input.words,
     answerProvenance: {
+      words: input.words,
       via: sender,
       viaName: 'Synthetic relay',
       where: input.where,
@@ -118,6 +119,24 @@ test('an allowed relay uses the chat answer write and persists exact words and p
   expect(note).toContain(input.words);
   expect(await invoke('neo.question.relayAnswer', input)).toMatchObject({ value: { ok: false } });
   expect(service.todos.getQuestion('card')).toEqual(question);
+});
+test('a choice-letter relay maps the semantic answer and retains the exact words', async () => {
+  card({ kind: 'choice', options: ['Alpha', 'Beta'] });
+  await configure();
+  const words = '  pick B  ';
+  expect(await invoke('neo.question.relayAnswer', { ...input, words })).toMatchObject({
+    value: { ok: true },
+  });
+  const question = service.todos.getQuestion('card');
+  expect(question?.answer).toEqual(['Beta']);
+  expect(question?.answerProvenance).toMatchObject({ words });
+  const queued = db
+    .getJobQueueRepo()
+    .listActiveByPayload('mailbox', { 'to.sessionId': 'neo:relay-test' });
+  expect(queued).toHaveLength(1);
+  const note = (queued[0].payload as { message: { message: { content: string } } }).message.message
+    .content;
+  expect(note).toContain(`\n${words}\n`);
 });
 test.each(['rule', 'home', 'start', 'preference'])(
   '%s cards refuse relay without releasing a todo or writing preferences',
