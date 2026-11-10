@@ -268,6 +268,7 @@ import mdToolQuestionRelayAnswer from './neo/tools/neo.question.relayAnswer.md' 
   type: 'text',
 };
 import mdToolRelaySendersSet from './neo/tools/neo.relaySenders.set.md' with { type: 'text' };
+import mdToolRelaySendersRecent from './neo/tools/neo.relaySenders.recent.md' with { type: 'text' };
 import { buildPromptRegistry } from './loader.ts';
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
@@ -738,6 +739,7 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.speech.say.md': mdToolSpeechSay,
     'neo/tools/neo.question.relayAnswer.md': mdToolQuestionRelayAnswer,
     'neo/tools/neo.relaySenders.set.md': mdToolRelaySendersSet,
+    'neo/tools/neo.relaySenders.recent.md': mdToolRelaySendersRecent,
   })
 );
 
