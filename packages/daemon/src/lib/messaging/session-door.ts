@@ -11,6 +11,7 @@ import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
 const DOOR_OPERATIONS = new Set([
   'message.send',
   'neo.question.get',
+  'neo.question.relayAnswer',
   'system.build',
   'device.pair.create',
   'device.pair.pending',

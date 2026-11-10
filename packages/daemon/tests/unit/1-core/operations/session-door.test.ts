@@ -168,6 +168,7 @@ describe('the session door', () => {
     const allowed = new Set([
       'message.send',
       'neo.question.get',
+      'neo.question.relayAnswer',
       'system.build',
       'device.pair.create',
       'device.pair.pending',

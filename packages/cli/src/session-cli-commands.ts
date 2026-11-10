@@ -1,4 +1,6 @@
 const commands = {
+  relay:
+    '  hyperneo relay <question-id> --where <place> --when <time> -- <exact words>\n                                      Relay a human answer with its original place and time',
   read: '  hyperneo read <link>                Read a card Markdown page with the read-only agent credential',
   send: `  hyperneo send <session-id> [--kind done|blocked|question|failed] <text>
                                       Message another session; --kind marks a milestone report`,
