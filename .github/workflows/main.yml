@@ -69,7 +69,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.4.2
       - name: Compare native process identity with the macOS SDK and ps
