@@ -20,7 +20,10 @@ afterEach(() => {
   rmSync(fixture, { recursive: true, force: true });
 });
 
-const policy = createCodingTodoPolicy({ urls: () => [] });
+const policy = createCodingTodoPolicy({
+  urls: () => [],
+  place: (scope) => ({ ask: null, peers: [], ...('todo' in scope ? { todo: null } : {}) }),
+});
 const draft = {
   title: 'Synthetic coding work',
   check: { pack: 'coding', kind: 'pr_merged', params: {} },
@@ -99,7 +102,8 @@ test.each([
     };
     const reason = policy.refuse(edited, [], {
       ask: null,
-      todo: { repo: null },
+      todo: { id: 'edited' },
+      edit: true,
       workerRemotes: remotes,
     });
     if (mismatch)
