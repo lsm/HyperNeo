@@ -28,6 +28,7 @@ const report = {
   kind: 'html' as const,
   byteLength: 100,
 };
+const video = { ...report, artifactId: 'video', kind: 'video' as const };
 const caller = { source: 'mcp' as const, sessionId: root.sessionId, role: 'neo' as const };
 
 describe('Neo publication without runtime input attribution', () => {
@@ -70,7 +71,9 @@ describe('Neo publication without runtime input attribution', () => {
       speech: async () => ({ listening: 'no', spokenDelivered: false }),
       notify,
       artifact: (id, who) =>
-        id === report.artifactId && who.sessionId === root.sessionId ? report : null,
+        who.sessionId === root.sessionId
+          ? ([report, video].find((ref) => ref.artifactId === id) ?? null)
+          : null,
     });
   });
   afterEach(() => mailbox.close());
@@ -266,6 +269,22 @@ describe('Neo publication without runtime input attribution', () => {
       });
     }
   );
+
+  test('withholds registered video without poisoning an existing publication page', async () => {
+    expect(await publish({ ...draft, artifacts: [report] }, caller)).toMatchObject({
+      accepted: true,
+    });
+    const before = ledger.list(conversationId);
+    notify.mockClear();
+    expect(
+      await publish({ ...draft, requestId: 'video', artifacts: [video] }, caller)
+    ).toMatchObject({
+      accepted: false,
+      reason: 'invalid_artifact_reference',
+    });
+    expect(ledger.list(conversationId)).toEqual(before);
+    expect(notify).not.toHaveBeenCalled();
+  });
 
   test.each(['work', 'consultation'])('rejects %s links at the publish input schema', (kind) => {
     const operation = createNeoPublicationOperation(publish);

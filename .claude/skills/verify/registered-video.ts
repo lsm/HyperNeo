@@ -7,6 +7,11 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { captureGitArtifact } from '../../../packages/daemon/src/lib/artifacts/git-capture.ts';
 import { readArtifactChunk } from '../../../packages/daemon/src/lib/artifacts/read-snapshot.ts';
+import { createArtifactRefReader } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
+import {
+  readCardArtifactFacts,
+  unverifiedCardArtifact,
+} from '../../../packages/daemon/src/lib/neo/card-artifact-admission.ts';
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
@@ -135,6 +140,10 @@ try {
   const first = await capture(bytes, 'clip.mp4');
   assert(first.accepted, JSON.stringify(first));
   assert.equal(first.artifact.kind, 'video');
+  const saved = createArtifactRefReader(() => db);
+  assert.deepEqual(saved(first.artifact.artifactId, worker), first.artifact);
+  const attachmentFacts = await readCardArtifactFacts([first.artifact], worker, saved);
+  assert.deepEqual(unverifiedCardArtifact([first.artifact], attachmentFacts), first.artifact);
   const mov = await capture(movie('qt  '), 'clip.mov');
   assert(mov.accepted);
   assert.equal(mov.artifact.kind, 'video');
@@ -252,6 +261,7 @@ try {
   assert.deepEqual(await rpc('artifact.file.read', { ...id, maxBytes: 1 }), unavailable);
   const evidence = {
     registeredMp4: true,
+    publicationAndCardExposureWithheld: true,
     registeredMov: true,
     chunks: chunks.length,
     byteLength: bytes.length,

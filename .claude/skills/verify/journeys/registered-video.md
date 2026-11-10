@@ -4,4 +4,4 @@ Run `registered-video.ts` through `proof-run.sh` with pinned Bun, a scrubbed tes
 
 The existing authenticated RPC returns MP4 and modern QuickTime metadata and bounded video chunks. Verify exact reconstruction, EOF and invalid ranges, whole-snapshot corruption refusal, foreign-worker denial and authority changes during a read. The 16 MiB boundary succeeds, and an oversized capture retains no bytes. Invalid container headers are refused.
 
-This slice does not test codecs or playback. Existing clients retain their unsupported-video state until the player slices land.
+This slice does not test codecs or playback. Publication and card attachment admission withholds video references until compatible client slices land. Registration and authorized reads remain available.
