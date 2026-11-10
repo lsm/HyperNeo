@@ -1162,6 +1162,8 @@ export class NeoService {
     return this.todos.read('followedRefs');
   }
 
+  readonly enabledOperationPackIds = () => this.packs().map((pack) => pack.id);
+
   packs(): NeoPack[] {
     return neoPacks({
       builtins: this.builtinPacks,

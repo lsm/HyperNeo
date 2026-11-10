@@ -173,6 +173,10 @@ export function neoPacksExtension(service: NeoService): DaemonExtension {
     schema: (db) => {
       for (const pack of service.builtinPacks) pack.todos?.schema(db);
     },
-    operations: () => service.packOperations,
+    operations: () =>
+      service.packOperations.map((operation) => ({
+        ...operation,
+        pack: { id: 'coding', enabledIds: service.enabledOperationPackIds },
+      })),
   };
 }

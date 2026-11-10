@@ -254,11 +254,11 @@ describe('operation listing by caller', () => {
   });
 
   test.each(['neo:root', 'neo:holder'])(
-    'Neo can discover the full catalog from %s',
+    'Neo cannot bypass admission with all: true from %s',
     async (sessionId) => {
       expect(
         await listedNames(policyFixture(), { source: 'mcp', sessionId, role: 'neo' }, { all: true })
-      ).toEqual(ALL_NAMES);
+      ).toEqual(UNRESTRICTED);
     }
   );
 

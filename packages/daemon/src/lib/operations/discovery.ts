@@ -3,6 +3,7 @@ import { isAdvertisedToProfile } from '../tools/session-tool-profiles.ts';
 import { z } from 'zod';
 import { isOperationAdmitted } from './invoke.ts';
 import {
+  enabledOperationPacks,
   defineOperation,
   type OperationCaller,
   type OperationDefinition,
@@ -55,10 +56,11 @@ export function listOperationSummaries(
   all = false,
   query?: string
 ) {
+  const enabled = caller.role === 'neo' ? enabledOperationPacks(registry) : [];
   return registry.entries
     .filter(
       (entry) =>
-        isOperationAdmitted(entry, caller) &&
+        isOperationAdmitted(entry, caller, enabled) &&
         (caller.source !== 'mcp' || isAdvertisedToProfile(entry.name, caller.profile)) &&
         (all || isOperationListed(entry, caller)) &&
         matchesOperationQuery(entry, query)
@@ -68,10 +70,15 @@ export function listOperationSummaries(
 
 export function findDescribedOperation(
   registry: OperationRegistry,
-  name: string
+  name: string,
+  caller?: OperationCaller
 ): { value: OperationDefinition } | { reason: Extract<Description, { found: false }> } {
   const operation = registry.get(name);
-  return operation ? { value: operation } : { reason: { found: false, name } };
+  const enabled = caller?.role === 'neo' ? enabledOperationPacks(registry) : [];
+  return operation &&
+    (!caller || caller.role !== 'neo' || isOperationAdmitted(operation, caller, enabled))
+    ? { value: operation }
+    : { reason: { found: false, name } };
 }
 
 type JsonSchemaNode = {
@@ -141,12 +148,17 @@ export function operationSignature(
 
 export function describeOperationSignatures(
   registry: OperationRegistry,
-  names: readonly string[]
+  names: readonly string[],
+  caller?: OperationCaller
 ): string {
+  const enabled = caller?.role === 'neo' ? enabledOperationPacks(registry) : [];
   return names
     .flatMap((name) => {
       const operation = registry.get(name);
-      return operation ? [operationSignature(operation)] : [];
+      return operation &&
+        (!caller || caller.role !== 'neo' || isOperationAdmitted(operation, caller, enabled))
+        ? [operationSignature(operation)]
+        : [];
     })
     .join('\n');
 }
@@ -162,10 +174,14 @@ export function describeOperationDefinition(operation: OperationDefinition): Des
 }
 
 const describeOperation = (superpipe({})('describe-operation') as PipelineAPI)
-  .input(['registry', 'name'])
-  .pipe(findDescribedOperation, ['registry', 'name'], 'result:description')
+  .input(['registry', 'name', 'caller'])
+  .pipe(findDescribedOperation, ['registry', 'name', 'caller'], 'result:description')
   .pipe(describeOperationDefinition, 'description', 'description')
-  .end('description') as (registry: OperationRegistry, name: string) => Description;
+  .end('description') as (
+  registry: OperationRegistry,
+  name: string,
+  caller: OperationCaller
+) => Description;
 
 export function createDiscoveryOperations(
   getRegistry: () => OperationRegistry
@@ -185,7 +201,7 @@ export function createDiscoveryOperations(
       description: 'Describe an operation and its input and result schemas.',
       inputSchema: z.object({ name: z.string().min(1) }),
       resultSchema: DescriptionSchema,
-      execute: async ({ name }) => describeOperation(getRegistry(), name),
+      execute: async ({ name }, caller) => describeOperation(getRegistry(), name, caller),
     }),
   ];
 }
