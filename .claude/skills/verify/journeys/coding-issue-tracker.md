@@ -18,3 +18,18 @@ Real GitHub cross-repository sub-issue behavior remains a separate verification.
 
 A public repository fixture refuses issue creation and reaches the existing
 three-failure cap while its external issue count stays fixed.
+
+The start gate is exercised through the runner with synthetic worker dispatch.
+An enabled unbound mirror blocks explicit and queued starts with zero sends.
+Binding releases the queue. A capped missing mirror releases work with a card
+note. Worker dispatch is synthetic; the daemon and tracker subprocesses are real.
+
+An enabled adapter with no home records one failure per sweep in its creating
+row. Three failures release the hold without creating an external item.
+
+If an owner settles before a blank-home placeholder gets a home, the sweep
+retires that placeholder without contacting the tracker. Recorded-home rows
+retain marker recovery for uncertain creates.
+
+A synthetic mailbox failure rejects the missing-item note after the retry cap.
+The queued worker send must still proceed.

@@ -1,3 +1,5 @@
+import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -167,10 +169,133 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       );
       assert.equal(publicRows.length, 2);
       assert(publicRows.every((row) => row.failures === 3));
+      const sends: string[] = [],
+        notes: string[] = [];
+      let rejectNotes = false;
+      const sessions = new NeoTodoSessionRepository(app.db.getDatabase());
+      const runner = createNeoTodoRunner({
+        store,
+        sessions,
+        write: (op, args) => app.db.gateway.run(op, args),
+        packs: () => neo.packs(),
+        limits: () => ({ running: 9, perGroup: 9 }),
+        changed: () => {},
+        tell: async (_ask, _todo, note) => {
+          if (rejectNotes) throw new Error('Synthetic mailbox failure');
+          notes.push(note);
+        },
+        invoke: async (_caller, name, input) => {
+          if (name === 'work.send') sends.push(String(input.message));
+          return {
+            kind: 'completed',
+            value: { ok: true, value: { status: 'done', delivered: true, ref: input.ref } },
+          };
+        },
+      });
+      const prepareStart = (id: string) => {
+        store.updateTodo(
+          store.getTodo(id)!,
+          { instruction: 'Synthetic worker task', approvedAt: 1, dependsOn: [] },
+          Date.now()
+        );
+        sessions.create(id, { verb: 'send', ref: { adapter: 'hyperneo', id: `worker-${id}` } });
+      };
+      store.openAsk({
+        id: 'hold',
+        projectId: null,
+        sessionId: 'synthetic',
+        originMessageId: null,
+        title: 'Held plan',
+        request: 'Work',
+        createdAt: Date.now(),
+      });
+      add('held', 'example/one', 'hold');
+      prepareStart('held');
+      const held = await runner.start('held');
+      assert(!held.ok && held.reason.startsWith('tracker_pending:'));
+      await runner.fill();
+      assert.equal(sends.length, 0);
+      await neo.sweepPacks();
+      await runner.fill();
+      assert.equal(sends.length, 1);
+      prepareStart('public-child');
+      await runner.fill();
+      assert.equal(sends.length, 2);
+      assert(notes.some((note) => note.includes('Tracker item is missing')));
+      const adapter = neo.pack('coding')!.tracker!;
+      const originalHome = adapter.home;
+      const beforeNoHome = external().issues.length;
+      adapter.home = () => null;
+      store.openAsk({
+        id: 'no-home-ask',
+        projectId: null,
+        sessionId: 'synthetic',
+        originMessageId: null,
+        title: 'No home plan',
+        request: 'Work',
+        createdAt: Date.now(),
+      });
+      add('no-home', 'example/one', 'no-home-ask');
+      prepareStart('no-home');
+      for (let failures = 1; failures <= 3; failures++) {
+        await neo.sweepPacks();
+        const facts = await app.db.gateway.call(neoTrackerReads, 'facts');
+        assert.equal(facts.mirrors.find((row) => row.ownerId === 'no-home')?.failures, failures);
+        if (failures < 3) {
+          await runner.fill();
+          assert.equal(sends.length, 2);
+        }
+      }
+      await runner.fill();
+      assert.equal(sends.length, 3);
+      assert.equal(external().issues.length, beforeNoHome);
+      adapter.home = originalHome;
+      adapter.home = () => null;
+      store.openAsk({
+        id: 'retired',
+        projectId: null,
+        sessionId: 'synthetic',
+        originMessageId: null,
+        title: 'Retired plan',
+        request: 'Work',
+        createdAt: Date.now(),
+      });
+      add('retired-child', 'example/one', 'retired');
+      await neo.sweepPacks();
+      store.updateTodo(store.getTodo('retired-child')!, { state: 'removed' }, Date.now());
+      app.db.getDatabase().prepare("UPDATE neo_asks SET status='dropped' WHERE id='retired'").run();
+      adapter.home = originalHome;
+      const beforeRetire = external().issues.length;
+      await neo.sweepPacks();
+      assert.equal(external().issues.length, beforeRetire);
+      const retired = app.db
+        .getDatabase()
+        .prepare(
+          "SELECT state, ref FROM neo_tracker_mirrors WHERE owner_id IN ('retired','retired-child')"
+        )
+        .all() as { state: string; ref: string | null }[];
+      assert.equal(retired.length, 2);
+      assert(retired.every((row) => row.state === 'closed' && row.ref === null));
+      add('note-error', 'example/public', 'public');
+      prepareStart('note-error');
+      for (let attempt = 0; attempt < 3; attempt++) await neo.sweepPacks();
+      rejectNotes = true;
+      await runner.fill();
+      assert.equal(sends.length, 4);
       writeFileSync(
         join(run, 'evidence/observed.json'),
         JSON.stringify({
           parentCreateCount: 1,
+          failedNoteReleasedSends: 1,
+          retiredPlaceholderCount: 2,
+          retiredExternalCreateCount: 0,
+          noHomeFailures: 3,
+          noHomeCreateCount: 0,
+          noHomeReleasedSends: 1,
+          heldSends: 0,
+          boundSends: 1,
+          cappedSends: 1,
+          missingTrackerNote: true,
           publicCreateCount: 0,
           publicFailureCounts: publicRows.map((row) => row.failures),
           crossRepoChildren: true,

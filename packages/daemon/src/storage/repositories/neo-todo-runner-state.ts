@@ -62,7 +62,7 @@ const recompute = (superpipe({})('neo.todo.runner-state') as PipelineAPI)
 ) => State;
 
 const claim = (superpipe({})('neo.todo.claim-start-state') as PipelineAPI)
-  .input(['store', 'sessions', 'id', 'now'])
+  .input(['store', 'sessions', 'id', 'now', 'trackerHold'])
   .pipe(
     (store: NeoAskTodoRepository, sessions: NeoTodoSessionRepository, id: string) => {
       const todo = store.getTodo(id);
@@ -73,15 +73,16 @@ const claim = (superpipe({})('neo.todo.claim-start-state') as PipelineAPI)
   )
   .pipe(requireNeoTodoStartable, 'facts', 'result:outcome')
   .pipe(
-    (store: NeoAskTodoRepository, plan: Start) => {
+    (store: NeoAskTodoRepository, plan: Start, trackerHold: string | null) => {
       const reason = neoTodoStartRefusal(
         plan.todo,
         store.listFamilyTodos(plan.ask.id),
-        store.gateQuestions(plan.ask)
+        store.gateQuestions(plan.ask),
+        trackerHold
       );
       return reason ? { reason: { ok: false as const, reason } } : { value: plan };
     },
-    ['store', 'outcome'],
+    ['store', 'outcome', 'trackerHold'],
     'result:outcome'
   )
   .pipe(
@@ -99,7 +100,8 @@ const claim = (superpipe({})('neo.todo.claim-start-state') as PipelineAPI)
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
   id: string,
-  now: number
+  now: number,
+  trackerHold: string | null
 ) => Claim;
 
 class NeoTodoRunnerState {
@@ -135,8 +137,8 @@ class NeoTodoRunnerState {
   ) {
     return { ...recompute(this.store, id, check, change, now, judgement), changed: this.changed };
   }
-  claim(id: string, now: number) {
-    return { ...claim(this.store, this.sessions, id, now), changed: this.changed };
+  claim(id: string, now: number, trackerHold: string | null = null) {
+    return { ...claim(this.store, this.sessions, id, now, trackerHold), changed: this.changed };
   }
   blocker(
     todo: NeoTodo,

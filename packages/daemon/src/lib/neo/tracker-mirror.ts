@@ -55,10 +55,15 @@ export async function sweepNeoTrackerMirrors(
         for (const { row, adapter, item, action, parent, outcome } of plans) {
           const write = (change: Partial<typeof row>) =>
             gateway.call(neoTrackerWrites, 'put', { ...row, updatedAt: Date.now(), ...change });
+          if (action === 'retire') {
+            await write({ state: 'closed', failures: 0 });
+            continue;
+          }
           await write({});
           let ref = row.ref;
           try {
             if (action === 'create') {
+              if (!row.home) throw new Error('Tracker home is unavailable');
               const result =
                 planNeoTrackerRecovery(
                   row,

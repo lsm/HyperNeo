@@ -80,13 +80,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'stopContext',
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['stopContext']>>;
-  read(method: 'queueFacts'): Promise<ReturnType<NeoTodoSessionRepository['queueFacts']>>;
+  read(
+    method: 'queueFacts',
+    trackerHolds?: Record<string, string | null>
+  ): Promise<ReturnType<NeoTodoSessionRepository['queueFacts']>>;
   read(method: 'syncedActivity'): Promise<ReturnType<NeoTodoSessionRepository['syncedActivity']>>;
   read(
     method: 'syncedLive',
     ref: WorkRef
   ): Promise<ReturnType<NeoTodoSessionRepository['syncedLive']>>;
-  read(method: (typeof neoTodoSessionReads.methods)[number], key?: string | WorkRef) {
+  read(
+    method: (typeof neoTodoSessionReads.methods)[number],
+    key?: string | WorkRef | Record<string, string | null>
+  ) {
     return gatewayFor(this.db).call(
       neoTodoSessionReads,
       method,
@@ -249,7 +255,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       : null;
   }
 
-  queueFacts() {
+  queueFacts(trackerHolds: Record<string, string | null> = {}) {
     const store = new NeoAskTodoRepository(this.db);
     const asks = store.listOpenAsks();
     const todos = store.listTodosForAsks(asks.map((ask) => ask.id));
@@ -273,7 +279,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         next.state === 'todo' &&
         next.startedAt === null &&
         !(next.instruction
-          ? neoTodoStartRefusal(next, family, asked)
+          ? neoTodoStartRefusal(next, family, asked, trackerHolds[next.id])
           : neoTodoWaitReason(next, family, asked))
           ? [{ ask, next, target: this.get(next.id) }]
           : []

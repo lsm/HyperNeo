@@ -243,13 +243,14 @@ test('success resets failures', async () => {
   expect(mirrors.facts().mirrors[0]).toMatchObject({ failures: 0, state: 'bound' });
 });
 
-test('the cap log is written once', async () => {
+test.each(['lookup', 'home'])('the cap log is written once (%s)', async (failure) => {
   const warning = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
   warning.mockClear();
   try {
     adapter.find = async () => {
       throw new Error('Unavailable');
     };
+    if (failure === 'home') adapter.home = () => null;
     for (let sweep = 0; sweep < 5; sweep++) await sweepNeoTrackerMirrors(db, [adapter]);
     expect(
       warning.mock.calls.filter(([message]) => message === 'Tracker retry limit reached')
