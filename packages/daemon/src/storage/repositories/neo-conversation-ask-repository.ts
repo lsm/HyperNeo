@@ -1,3 +1,4 @@
+import { NEO_FRONT_INFERENCE } from '../../lib/job-queue-constants.ts';
 import { NeoFrontInputRepository } from './neo-front-input-worker.ts';
 import { SettingsRepository } from './settings-repository.ts';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
@@ -151,7 +152,7 @@ export function persistNeoIntakeTransaction(
       new NeoFrontInputRepository(db).accept(ask.conversationId, ask.requestId, eligible);
       if (eligible)
         jobQueue.enqueue({
-          queue: 'neo.front',
+          queue: NEO_FRONT_INFERENCE,
           payload: {
             conversationId: ask.conversationId,
             messageId: ask.requestId,
