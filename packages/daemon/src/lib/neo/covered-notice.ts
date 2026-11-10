@@ -1,31 +1,8 @@
-import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../drivers/types.ts';
 import { neoDerivedId } from './derived-id.ts';
 
-export function neoNoticeCardIds(
-  todo: Pick<NeoTodo, 'id' | 'state' | 'blockedBy' | 'blockedReason'>,
-  questions: readonly NeoQuestion[],
-  ref: WorkRef
-) {
-  return questions
-    .filter(
-      (question) =>
-        todo.state === 'blocked' &&
-        todo.blockedBy === 'needs-human' &&
-        question.state === 'open' &&
-        question.kind !== 'start' &&
-        question.todoId === todo.id &&
-        question.text === todo.blockedReason &&
-        question.sourceSession?.adapter === ref.adapter &&
-        question.sourceSession.id === ref.id &&
-        question.sourceSession.daemon === ref.daemon
-    )
-    .map((question) => question.id)
-    .sort();
-}
-
-export const skipCoveredNeoNotice = (delivered: boolean, cardOpen: boolean) =>
-  delivered && cardOpen;
+export const skipRepeatedNeoNotice = (delivered: boolean) => delivered;
 
 export function neoBlockerNotice(
   ask: NeoAsk,
@@ -34,7 +11,7 @@ export function neoBlockerNotice(
   ref: WorkRef,
   turn: { message: string; humanInput?: string; notice?: boolean },
   status: string | undefined,
-  cardIds: readonly string[] = []
+  episode?: number | null
 ) {
   const blocker = turn.message.match(/^Blocked \(needs_human\): ([^\r\n]+)(?:\r?\n)?$/);
   const focused = ask.focusedSession;
@@ -55,15 +32,13 @@ export function neoBlockerNotice(
         ask.sessionId,
         ask.id,
         todo.id,
-        dispatchId,
+        episode ?? dispatchId,
         ref,
         status,
         todo.blockedBy,
         todo.blockedReason,
         todo.nextAction,
-        cardIds,
       ])
     ),
-    covered: cardIds.length > 0,
   };
 }

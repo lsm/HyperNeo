@@ -150,7 +150,7 @@ test('oversized images are rejected by input projection before either handled or
 });
 
 test.each([false, true])(
-  'consumed report recurrence keeps card-bound=%s semantics after cleanup',
+  'a consumed worker blocker is not re-woken after the window, card-bound=%s',
   async (cardBound) => {
     const { db, service, send } = await setup();
     const now = Date.now();
@@ -184,16 +184,10 @@ test.each([false, true])(
       db.getJobQueueRepo().cleanup(Date.now());
       expect(await send(report)).toEqual(first);
       clock.mockReturnValue(now + 11 * 60_000);
-      const repeated = await send(report);
-      if (cardBound) expect(repeated).toEqual(first);
-      else {
-        expect(repeated).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
-        expect(repeated).not.toEqual(first);
-        expect(await send(report)).toEqual(repeated);
-        expect(
-          db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
-        ).toHaveLength(1);
-      }
+      expect(await send(report)).toEqual(first);
+      expect(
+        db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+      ).toHaveLength(0);
     } finally {
       clock.mockRestore();
       service.dispose();
@@ -201,6 +195,57 @@ test.each([false, true])(
     }
   }
 );
+
+test('a real question without a todo re-wakes Neo after the window, and new evidence reopens a blocker', async () => {
+  const { db, service, send } = await setup();
+  const now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+  try {
+    db.getDatabase()
+      .prepare(
+        "INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('neo','Neo','/synthetic','2026-10-25','2026-10-25','active','{}','{}')"
+      )
+      .run();
+    const consume = async (result: Awaited<ReturnType<typeof send>>) => {
+      if (result.kind !== 'completed' || result.value.kind !== 'accepted')
+        throw new Error(JSON.stringify(result));
+      const job = db.getJobQueueRepo().dequeue('mailbox')[0];
+      await db.saveUserMessage(
+        'neo',
+        {
+          type: 'user',
+          uuid: result.value.messageId,
+          session_id: 'neo',
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'synthetic' },
+        },
+        'consumed'
+      );
+      db.getJobQueueRepo().complete(job.id, {});
+    };
+    const question = { to: 'neo', kind: 'question', text: 'Which region should I use?' };
+    const first = await send(question);
+    expect(first).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    await consume(first);
+    clock.mockReturnValue(now + 11 * 60_000);
+    const repeated = await send(question);
+    expect(repeated).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    expect(repeated).not.toEqual(first);
+    await consume(repeated);
+    const { question: _question, ...legacy } = input;
+    const blocker = await send(legacy);
+    await consume(blocker);
+    clock.mockReturnValue(now + 22 * 60_000);
+    expect(await send(legacy)).toEqual(blocker);
+    const changed = await send({ ...legacy, text: 'Blocked somewhere new' });
+    expect(changed).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    expect(changed).not.toEqual(blocker);
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
 
 test.each(['dead', 'expired', 'cleaned'] as const)(
   'an undelivered %s incident wake can recover without another card',

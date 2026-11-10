@@ -745,7 +745,9 @@ export class NeoService {
             const job = jobs.getLatestByPayload('mailbox', { id: prior.mailboxId });
             const live = job && ['pending', 'processing', 'completed'].includes(job.status);
             const recent =
-              !!input.question || Date.now() - decodeUlidTimestamp(prior.mailboxId) < 10 * 60_000;
+              !!input.question ||
+              input.kind === 'blocked' ||
+              Date.now() - decodeUlidTimestamp(prior.mailboxId) < 10 * 60_000;
             if (status === 'consumed' ? recent : status !== 'failed' && live) break;
             key = `worker-question:${incident}:${prior.mailboxId}`;
           }
