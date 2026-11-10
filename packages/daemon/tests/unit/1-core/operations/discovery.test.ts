@@ -13,11 +13,12 @@ import {
   createOperationRegistry,
   defineOperation,
   type OperationCaller,
+  type OperationDefinition,
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry';
 
 const caller = { source: 'internal' as const };
-function policyFixture() {
+function policyFixture(additional: OperationDefinition[] = []) {
   let registry: OperationRegistry;
   const entries = [
     defineOperation({
@@ -52,7 +53,11 @@ function policyFixture() {
       execute: async () => ({}),
     }),
   ];
-  registry = createOperationRegistry([...entries, ...createDiscoveryOperations(() => registry)]);
+  registry = createOperationRegistry([
+    ...entries,
+    ...additional,
+    ...createDiscoveryOperations(() => registry),
+  ]);
   return registry;
 }
 
@@ -256,14 +261,25 @@ describe('operation listing by caller', () => {
   test.each(['neo:root', 'neo:holder'])(
     'Neo cannot bypass admission with all: true from %s',
     async (sessionId) => {
+      const base = policyFixture();
+      const registry = policyFixture([
+        defineOperation({ ...base.get('family.read')!, name: 'gmail.read_thread' }),
+        defineOperation({ ...base.get('family.mutate')!, name: 'gmail.search' }),
+      ]);
+      const neo: OperationCaller = { source: 'mcp', sessionId, role: 'neo' };
+      expect(await invokeOperation(registry, 'operations.list', { all: true }, neo)).toEqual({
+        kind: 'completed',
+        value: { prefixes: [{ prefix: 'gmail', count: 1 }] },
+      });
       expect(
-        await invokeOperation(
-          policyFixture(),
-          'operations.list',
-          { all: true },
-          { source: 'mcp', sessionId, role: 'neo' }
-        )
-      ).toEqual({ kind: 'completed', value: { prefixes: [] } });
+        await invokeOperation(registry, 'operations.list', { all: true, prefix: 'gmail' }, neo)
+      ).toEqual({
+        kind: 'completed',
+        value: { total: 1, names: ['gmail.read_thread'], next: null },
+      });
+      expect(await listedNames(registry, { source: 'mcp', role: 'workflow_worker' })).toContain(
+        'gmail.search'
+      );
     }
   );
 
