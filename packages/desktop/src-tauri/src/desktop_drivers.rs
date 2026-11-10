@@ -31,6 +31,8 @@ static FAIL_NEXT_ACCEPT: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 static LATCH_ON_RESPONSE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
+static FAIL_START_CLEANUP: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
 pub(crate) fn inject_accept_failure() {
     FAIL_NEXT_ACCEPT.store(true, Ordering::Relaxed);
 }
@@ -238,6 +240,11 @@ impl Drivers {
             return Err("Invalid worker identifier".into());
         }
         #[cfg(test)]
+        if request.action == "fixture-fail-start-cleanup" {
+            FAIL_START_CLEANUP.store(true, Ordering::Relaxed);
+            return Ok(json!({"armed": true}));
+        }
+        #[cfg(test)]
         if request.action == "fixture-latch-on-response" {
             LATCH_ON_RESPONSE.store(true, Ordering::Relaxed);
             return Ok(json!({"armed": true}));
@@ -286,7 +293,7 @@ impl Drivers {
         let result: Result<()> = async {
             match request.action.as_str() {
                 "start" => {
-                    let _starting = record::Starting::begin(&directory)?;
+                    let mut starting = record::Starting::begin(&directory)?;
                     let app = self
                         .binary
                         .parent()
@@ -385,11 +392,28 @@ impl Drivers {
                     let host = worker.as_ref().unwrap().host.clone();
                     host.clone().start().await?;
                     let connection = host.connection().ok_or("Driver connection missing")?;
-                    if let Err(error) =
-                        record::publish(&directory, connection.pid, connection.socket_path.into())
-                            .and_then(|_| record::ensure_enabled(&directory))
+                    if let Err(error) = record::publish(
+                        &directory,
+                        connection.pid,
+                        connection.socket_path.clone().into(),
+                    )
+                    .and_then(|_| record::ensure_enabled(&directory))
                     {
-                        host.stop().await?;
+                        starting.preserve();
+                        let _cleanup: Result<()> = async {
+                            #[cfg(test)]
+                            if FAIL_START_CLEANUP.swap(false, Ordering::Relaxed) {
+                                return Err("Fixture start cleanup failed".into());
+                            }
+                            host.stop().await?;
+                            Ok(())
+                        }
+                        .await;
+                        record::verify_gone(
+                            connection.pid,
+                            std::path::Path::new(&connection.socket_path),
+                        )?;
+                        starting.cleanup_verified();
                         return Err(error);
                     }
                 }

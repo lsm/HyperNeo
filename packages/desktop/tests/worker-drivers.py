@@ -297,6 +297,33 @@ class WorkerDrivers(unittest.TestCase):
             self.assertFalse(self.call('unknown-action', worker)['ok'])
         self.assertFalse((self.root / 'desktop/workers').exists())
 
+    def test_failed_publication_and_cleanup_preserve_incomplete_start(self):
+        directory = self.lifecycle()
+        directory.mkdir(parents=True, mode=0o700)
+        directory.parent.chmod(0o700)
+        (directory / 'driver.json').mkdir()
+        self.assertTrue(self.call('fixture-fail-start-cleanup')['ok'])
+        result = self.call('start', workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        path = next(self.work.glob('d-*/d.sock'))
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(5)
+            client.connect(str(path))
+            client.sendall(b'{"method":"metadata"}\n')
+            with client.makefile('rb') as stream:
+                pid = json.loads(stream.readline())['result']['pid']
+        self.pids.append(pid)
+        self.assertTrue(alive(pid))
+        self.assertTrue(path.is_socket())
+        print(f'combined_failure pid={pid} alive=1 socket_exists=1 incomplete_marker={int((directory / "starting").exists())}')
+        self.assertTrue((directory / 'starting').exists())
+        self.assertIn('stop_unconfirmed', result['error'])
+        retry = self.call('start', workDir=str(self.work))
+        self.assertFalse(retry['ok'], retry)
+        self.assertEqual(list(self.work.glob('d-*')), [path.parent])
+        self.assertTrue((directory / 'starting').exists())
+        print(f'publication_failed=1 cleanup_failed=1 pid={pid} socket_exists=1 incomplete_marker=1 retry_refused=1')
+
     def test_two_workers_get_two_drivers_and_two_sockets(self):
         first, second = self.start(), self.start('worker-b')
         self.assertNotEqual(first['pid'], second['pid'])

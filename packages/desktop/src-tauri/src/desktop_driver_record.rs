@@ -87,7 +87,10 @@ pub(super) fn ensure_enabled(directory: &Path) -> Result<()> {
     }
 }
 
-pub(super) struct Starting(PathBuf);
+pub(super) struct Starting {
+    path: PathBuf,
+    remove_on_drop: bool,
+}
 impl Starting {
     pub(super) fn begin(directory: &Path) -> Result<Self> {
         let path = directory.join("starting");
@@ -98,15 +101,26 @@ impl Starting {
             latch(directory)?;
             return Err("stop_unconfirmed: previous start incomplete; cleanup is required before re-enabling desktop control".into());
         }
-        let guard = Self(path);
+        let guard = Self {
+            path,
+            remove_on_drop: true,
+        };
         File::open(directory)?.sync_all()?;
         ensure_enabled(directory)?;
         Ok(guard)
     }
+    pub(super) fn preserve(&mut self) {
+        self.remove_on_drop = false;
+    }
+    pub(super) fn cleanup_verified(&mut self) {
+        self.remove_on_drop = true;
+    }
 }
 impl Drop for Starting {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir(&self.0);
+        if self.remove_on_drop {
+            let _ = std::fs::remove_dir(&self.path);
+        }
     }
 }
 
