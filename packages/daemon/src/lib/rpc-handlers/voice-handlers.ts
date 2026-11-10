@@ -104,13 +104,15 @@ export function admitVoiceStreamStart(
   return { value: [...recent, now] };
 }
 
+function voiceStreamExpired(owned: OwnedVoiceStream, now: number): boolean {
+  return owned.disconnectedAt === undefined
+    ? now - owned.touchedAt > VOICE_STREAM_IDLE_MS
+    : now - owned.disconnectedAt >= VOICE_STREAM_DISCONNECT_MS;
+}
+
 export function expireIdleVoiceStreams(now: number): void {
   for (const [id, owned] of voiceStreams)
-    if (
-      owned.disconnectedAt === undefined
-        ? now - owned.touchedAt > VOICE_STREAM_IDLE_MS
-        : now - owned.disconnectedAt >= VOICE_STREAM_DISCONNECT_MS
-    ) {
+    if (voiceStreamExpired(owned, now)) {
       owned.stream.close(
         owned.disconnectedAt === undefined ? 'idle_timeout' : 'disconnect_timeout'
       );
@@ -119,8 +121,12 @@ export function expireIdleVoiceStreams(now: number): void {
 }
 
 export function voiceStreamsBusy(): boolean {
-  expireIdleVoiceStreams(Date.now());
-  return startingStreams.count > 0 || voiceStreams.size > 0 || activeTranscriptions.count > 0;
+  const now = Date.now();
+  return (
+    startingStreams.count > 0 ||
+    activeTranscriptions.count > 0 ||
+    [...voiceStreams.values()].some((owned) => !voiceStreamExpired(owned, now))
+  );
 }
 
 export function resetVoiceTranscriptionLimitsForTests(): void {

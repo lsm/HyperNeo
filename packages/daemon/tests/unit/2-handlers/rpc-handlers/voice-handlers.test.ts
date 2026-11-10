@@ -1499,6 +1499,24 @@ describe('voice stream RPC handlers', () => {
     from.mockRestore();
   });
 
+  it('reading restart busy facts ignores expired streams without closing them', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const { streamId } = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3 * 60_000 + 1);
+    try {
+      expect(voiceStreamsBusy()).toBe(false);
+    } finally {
+      clock.mockRestore();
+    }
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' })
+    ).resolves.toEqual({ ok: true });
+  });
+
   it('an abandoned stream expires after three idle minutes', async () => {
     const { hub, handlers } = createMockMessageHub();
     registerVoiceHandlers(hub, createSettings({ voice }));
