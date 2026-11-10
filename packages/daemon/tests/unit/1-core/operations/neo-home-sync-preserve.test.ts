@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository';
+import { NeoHomeRepository } from '../../../../src/lib/neo/packs/coding/home/repository';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';

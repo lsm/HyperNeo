@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { spawnHomeCommand } from '../../../packages/daemon/src/lib/neo/home/git-environment.ts';
+import { spawnHomeCommand } from '../../../packages/daemon/src/lib/neo/packs/coding/home/git-environment.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
 
 const run = process.argv.at(-1)!;

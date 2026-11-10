@@ -1,9 +1,10 @@
+import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createNeoHomeGithubOperation } from '../../../../src/lib/neo/home/github.ts';
-import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
+import { createNeoHomeGithubOperation } from '../../../../src/lib/neo/packs/coding/home/github.ts';
+import { NeoHomeRepository } from '../../../../src/lib/neo/packs/coding/home/repository.ts';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -123,6 +124,22 @@ afterEach(async () => {
 });
 
 describe('Neo private GitHub home proposal', () => {
+  test('composition injects the coding backend into the core home operations', async () => {
+    const composition = await readFile(
+      new URL('../../../../src/lib/rpc-handlers/index.ts', import.meta.url),
+      'utf8'
+    );
+    expect(composition.includes("from '../neo/packs/coding/home/github.ts'")).toBe(true);
+    expect(composition.includes("from '../neo/packs/coding/home/repository.ts'")).toBe(true);
+    expect(composition.match(/new NeoHomeRepository\(/g)).toHaveLength(1);
+    expect(composition.includes('createNeoHomeOperations(neoService, neoHome)')).toBe(true);
+    expect(composition.includes('createNeoHomeGithubOperation(neoService, neoHome)')).toBe(true);
+    for (const name of ['github.ts', 'repository.ts', 'git-environment.ts', 'apply-choice.ts'])
+      expect(existsSync(new URL(`../../../../src/lib/neo/home/${name}`, import.meta.url))).toBe(
+        false
+      );
+  });
+
   test('publishes through gh without running home hooks and preserves configured push destinations', async () => {
     const keys = ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'];
     const previous = new Map(keys.map((key) => [key, process.env[key]]));

@@ -3,17 +3,16 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { isLocalUser } from '../../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
-import { neoFolderPath } from '../folder.ts';
 import type { NeoService } from '../service.ts';
 import { requireHomeConfirmation } from './confirmation.ts';
 import { reportHomeConflict, requireHomeChoice } from './conflicts.ts';
 import { HomeReadInput, HomeReadResult } from './read.ts';
-import { type HomeResult, NeoHomeRepository } from './repository.ts';
+import type { HomeResult, NeoHomeStore } from './store.ts';
 import { HomeSaveInput, HomeSaveResult, requireHomePath } from './save.ts';
 
 export function createNeoHomeOperations(
   service: Pick<NeoService, 'repo' | 'todos' | 'defaultSessionId'>,
-  home = new NeoHomeRepository(neoFolderPath(), service.repo)
+  home: NeoHomeStore
 ) {
   const owner = (caller: OperationCaller) =>
     isLocalUser(caller) ||

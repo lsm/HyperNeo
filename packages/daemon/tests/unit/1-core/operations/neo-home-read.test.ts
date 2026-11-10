@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
-import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
-import { homeRemoteUrl } from '../../../../src/lib/neo/home/read.ts';
+import { NeoHomeRepository } from '../../../../src/lib/neo/packs/coding/home/repository.ts';
+import { homeRemoteUrl } from '../../../../src/lib/neo/packs/coding/home/git-policy.ts';
 import {
   createOperationRegistry,
   type OperationCaller,

@@ -1,3 +1,4 @@
+import type { HomeResult } from '../../../home/store.ts';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -16,19 +17,16 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
-import { isSafeFsSupported, replaceFileWithinWorkspace } from '../../safe-fs.ts';
-import { neoDerivedId } from '../derived-id.ts';
+import type { NeoRepository } from '../../../../../storage/repositories/neo-repository.ts';
+import { isSafeFsSupported, replaceFileWithinWorkspace } from '../../../../safe-fs.ts';
+import { neoDerivedId } from '../../../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
-import type { HomeConflict, HomeFailure } from './conflicts.ts';
+import type { HomeConflict, HomeFailure } from '../../../home/conflicts.ts';
 import { spawnHomeCommand } from './git-environment.ts';
-import { type HomeReadInput, type HomeReadResult, homeRemoteUrl } from './read.ts';
-import type { HomeSavePlan, HomeSaveResult } from './save.ts';
-import { publicationLog, requireHomePath, requireHomeSave } from './save.ts';
-
-export type HomeResult =
-  | { ok: true; path: string; projects: { id: string; homePath: string }[] }
-  | { ok: false; reason: string };
+import type { HomeReadInput, HomeReadResult } from '../../../home/read.ts';
+import { homeRemoteUrl, publicationLog } from './git-policy.ts';
+import type { HomeSavePlan, HomeSaveResult } from '../../../home/save.ts';
+import { requireHomePath, requireHomeSave } from '../../../home/save.ts';
 
 type HomeSyncResult = { value: string | null } | { reason: HomeFailure };
 
