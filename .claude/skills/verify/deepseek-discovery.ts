@@ -26,8 +26,8 @@ const fetchImpl: typeof fetch = async (url) => {
       String(url).endsWith('/models')
         ? {
             data: [
-              { id: 'deepseek-v4-pro', name: 'Synthetic Updated Pro', context_window: 262144 },
-              { id: 'deepseek-pro', name: 'Synthetic Pro Alias' },
+              { id: 'deepseek-v4-pro', name: 'Synthetic Updated Pro' },
+              { id: 'deepseek-pro', name: 'Synthetic Pro Alias', context_window: 262144 },
               { id: 'deepseek-future', name: 'Synthetic Flash', context_length: 524288 },
             ],
           }

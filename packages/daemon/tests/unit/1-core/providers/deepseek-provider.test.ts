@@ -116,6 +116,43 @@ describe('DeepSeekProvider', () => {
     }
   );
 
+  it.each([false, true])(
+    'an alias with explicit context contributes it when the canonical entry omits it, reversed=%s',
+    async (reverse) => {
+      const models = [{ id: 'deepseek-pro', context_window: 262144 }, { id: 'deepseek-v4-pro' }];
+      if (reverse) models.reverse();
+      const fetchImpl = mock(
+        async () => new Response(JSON.stringify({ data: models }))
+      ) as unknown as typeof fetch;
+      const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+      expect((await provider.listRemoteModels())[0].contextWindow).toBe(262144);
+      expect((await provider.getModels())[0].contextWindow).toBe(262144);
+      expect(provider.getCachedModels()?.[0].contextWindow).toBe(262144);
+      expect(
+        provider.buildSdkConfig('deepseek-v4-pro').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      ).toBe('262144');
+    }
+  );
+
+  it.each([false, true])(
+    'a canonical entry explicit context wins when both entries state one, reversed=%s',
+    async (reverse) => {
+      const models = [
+        { id: 'deepseek-pro', context_window: 262144 },
+        { id: 'deepseek-v4-pro', context_window: 524288 },
+      ];
+      if (reverse) models.reverse();
+      const fetchImpl = mock(
+        async () => new Response(JSON.stringify({ data: models }))
+      ) as unknown as typeof fetch;
+      const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+      expect((await provider.listRemoteModels())[0].contextWindow).toBe(524288);
+      expect(
+        provider.buildSdkConfig('deepseek-v4-pro').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      ).toBe('524288');
+    }
+  );
+
   it('probes a discovered model instead of requiring a retired fallback', async () => {
     const probes: string[] = [];
     const fetchImpl = mock(async (url: string | URL | Request, init?: RequestInit) => {
