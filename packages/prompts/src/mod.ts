@@ -36,6 +36,18 @@ import mdcoordinatorVcs from './coordinator/vcs.md' with { type: 'text' };
 import mdcoordinatorVerifier from './coordinator/verifier.md' with { type: 'text' };
 import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with { type: 'text' };
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
+import mdNeoSystemPackCheck from './neo/system/pack-check.md' with { type: 'text' };
+import mdNeoSystemHumanWork from './neo/system/human-work.md' with { type: 'text' };
+import mdNeoSystemDriverHealth from './neo/system/driver-health.md' with { type: 'text' };
+import mdDriversWorkerProvenanceExactId from './drivers/worker-provenance-exact-id.md' with {
+  type: 'text',
+};
+import mdDriversWorkerProvenanceTeamField from './drivers/worker-provenance-team-field.md' with {
+  type: 'text',
+};
+import mdDriversWorkerProvenanceOpenPrs from './drivers/worker-provenance-open-prs.md' with {
+  type: 'text',
+};
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoSystemFocusedDiscussion from './neo/system/focused-discussion.md' with { type: 'text' };
 import mdneoSystemGoalCycle from './neo/system/goal-cycle.md' with { type: 'text' };
@@ -284,6 +296,12 @@ const registry: Record<string, string> = {
   'github/router-system-prompt.md': mdgithubRouterSystemPrompt,
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
   'neo/session-track.md': mdneoSessionTrack,
+  'neo/system/pack-check.md': mdNeoSystemPackCheck,
+  'neo/system/human-work.md': mdNeoSystemHumanWork,
+  'neo/system/driver-health.md': mdNeoSystemDriverHealth,
+  'drivers/worker-provenance-exact-id.md': mdDriversWorkerProvenanceExactId,
+  'drivers/worker-provenance-team-field.md': mdDriversWorkerProvenanceTeamField,
+  'drivers/worker-provenance-open-prs.md': mdDriversWorkerProvenanceOpenPrs,
   'neo/system/focused-discussion.md': mdneoSystemFocusedDiscussion,
   'neo/system/goal-cycle.md': mdneoSystemGoalCycle,
   'neo/system/quick-ack.md': mdneoSystemQuickAck,
@@ -433,6 +451,12 @@ export const {
   NEO_QUICK_ACK,
   NEO_QUICK_ACK_LISTENING,
   NEO_FOCUSED_DISCUSSION,
+  NEO_PACK_CHECK,
+  NEO_HUMAN_WORK,
+  NEO_DRIVER_HEALTH,
+  WORKER_PROVENANCE_EXACT_ID,
+  WORKER_PROVENANCE_TEAM_FIELD,
+  WORKER_PROVENANCE_OPEN_PRS,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
   NEO_STANDING_RULES,
@@ -545,3 +569,12 @@ export const NEO_PACK_SKILLS: Readonly<
 > = {
   [codingSkill.name]: { ...codingSkill, files: { 'SKILL.md': mdneoPacksCodingSkill } },
 };
+
+export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({});
+
+export function neoToolDescription(name: string): string {
+  if (!Object.hasOwn(NEO_TOOL_DESCRIPTIONS, name)) {
+    throw new Error(`Missing Neo tool description: ${name}`);
+  }
+  return NEO_TOOL_DESCRIPTIONS[name];
+}
