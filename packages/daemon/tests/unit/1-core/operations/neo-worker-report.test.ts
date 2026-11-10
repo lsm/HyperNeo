@@ -207,14 +207,18 @@ test('a real question without a todo re-wakes Neo after the window, and new evid
       )
       .run();
     const consume = async (result: Awaited<ReturnType<typeof send>>) => {
-      if (result.kind !== 'completed' || result.value.kind !== 'accepted')
-        throw new Error(JSON.stringify(result));
+      if (result.kind !== 'completed') throw new Error(JSON.stringify(result));
+      const value = result.value as {
+        kind: string;
+        messageId: `${string}-${string}-${string}-${string}-${string}`;
+      };
+      if (value.kind !== 'accepted') throw new Error(JSON.stringify(result));
       const job = db.getJobQueueRepo().dequeue('mailbox')[0];
       await db.saveUserMessage(
         'neo',
         {
           type: 'user',
-          uuid: result.value.messageId,
+          uuid: value.messageId,
           session_id: 'neo',
           parent_tool_use_id: null,
           message: { role: 'user', content: 'synthetic' },
