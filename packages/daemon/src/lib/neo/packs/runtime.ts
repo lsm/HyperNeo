@@ -159,7 +159,10 @@ export function createNeoService(...args: NeoServiceArgs) {
         defaults: NEO_DEFAULT_PACKS,
         operations: createNeoProjectTreeOperations(core.repo, (refs) =>
           configured.readRefStates(refs)
-        ),
+        ).map((operation) => ({
+          ...operation,
+          pack: { id: coding.id, enabledIds: core.enabledOperationPackIds },
+        })),
       };
     },
     ...args
@@ -173,10 +176,6 @@ export function neoPacksExtension(service: NeoService): DaemonExtension {
     schema: (db) => {
       for (const pack of service.builtinPacks) pack.todos?.schema(db);
     },
-    operations: () =>
-      service.packOperations.map((operation) => ({
-        ...operation,
-        pack: { id: 'coding', enabledIds: service.enabledOperationPackIds },
-      })),
+    operations: () => service.packOperations,
   };
 }
