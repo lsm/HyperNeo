@@ -417,9 +417,14 @@ export function registerVoiceHandlers(
 
 function ownedStream(streamId: string | undefined, context: CallContext | undefined): VoiceStream {
   const owned = streamId ? voiceStreams.get(streamId) : undefined;
-  if (!owned || owned.clientId !== (context?.clientId ?? context?.sessionId ?? 'global'))
+  const now = Date.now();
+  if (
+    !owned ||
+    owned.clientId !== (context?.clientId ?? context?.sessionId ?? 'global') ||
+    voiceStreamExpired(owned, now)
+  )
     throw new Error('Unknown voice stream');
-  owned.touchedAt = Date.now();
+  owned.touchedAt = now;
   return owned.stream;
 }
 

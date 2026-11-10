@@ -95,9 +95,21 @@ try {
   await state.setProcessing('fixture-turn');
   await refused('busy Neo turn', 'neo_busy');
   await state.setIdle();
+  const clock = Date.now;
+  let expired: { streamId: string };
+  try {
+    Date.now = () => clock() - 3 * 60_000 - 1;
+    expired = await rpc('voice.stream.start', { encoding: 'pcm16', sampleRate: 16000 });
+    await rpc('voice.stream.chunk', { ...expired, audioBase64: 'AAA=' });
+  } finally {
+    Date.now = clock;
+  }
   const clear = await reserve();
   assert.equal(clear.code, 0); assert(clear.value.ok);
   assert.equal(clear.value.pid, process.pid); assert(clear.value.expiresAt! > Date.now());
+  await assert.rejects(rpc('voice.stream.chunk', { ...expired, audioBase64: 'AAA=' }), /Unknown voice stream/);
+  await assert.rejects(rpc('voice.stream.stop', expired), /Unknown voice stream/);
+  cases.push({ name: 'expired chunk and stop refuse during the lease', restarts });
   restarts++;
   cases.push({ name: 'all clear with text-only listener and old receipt', restarts });
   await assert.rejects(rpc('voice.stream.start', {}), /updating/i);
