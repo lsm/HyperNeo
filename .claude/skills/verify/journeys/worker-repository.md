@@ -20,3 +20,10 @@ The helper stops its daemon; the wrapper retains evidence and removes test data.
 Remote status and discovery fixtures model an attached daemon whose status has no
 remotes. Its exact worker discovery remotes accept the matching repository and
 refuse mismatched or absent remotes. External daemon transport is simulated.
+
+Repository assertions use coding-owned policy facts, including a non-coding
+check changed to a coding check before worker binding. The helper emits
+`gh.log` and a sorted GitHub request multiset in `worker-repository.json`.
+Compare those requests before and after worker-reader extraction; outcomes and
+request counts must match. The shared repository identity normalizer stays in
+core while coding owns workspace Git reads and remote canonicalization.

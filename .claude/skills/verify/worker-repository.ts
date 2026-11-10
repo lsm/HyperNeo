@@ -1,6 +1,8 @@
+import { CodingTodoPrRepository, createCodingTodoPolicy } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
+import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -16,6 +18,7 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), `#!/bin/sh
+printf '%s\\n' "$*" >> "$(dirname "$0")/../evidence/gh.log"
 for arg in "$@"; do
   if [ "$arg" = repos/example/old-name ]; then
     printf '%s\\n' '{"full_name":"example/repo"}'
@@ -30,9 +33,12 @@ const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typeof fetch;
 const app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
 try {
+  await app.spaceRuntimeService.ready();
+  await waitForSdkBodyCopy(app.db.getDatabase());
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
   const db = app.db.getDatabase();
+  const coding = createCodingTodoPolicy(new CodingTodoPrRepository(db));
   const sender = 'neo:30000000-0000-4000-8000-000000000001';
   const refs = ['same', 'other', 'unknown', 'renamed', 'lookup-failed'].map((name, i) => {
     const folder = join(run, name);
@@ -104,9 +110,9 @@ try {
     const deferredAsk = `edited-${ref.id}`;
     todos.openAsk({ id: deferredAsk, sessionId: sender, projectId: null, originMessageId: null, title: 'Edited repository', request: 'Introduce a coding check later', createdAt: 1 });
     const deferred = await call('neo.todo.add', { askId: deferredAsk, title: 'Unassigned coding work', check: { pack: 'core', kind: 'evidence', params: {} } });
-    assert.equal(todos.getTodo(deferred.todo.id)!.repo, null);
+    assert.equal(coding.repository(todos.getTodo(deferred.todo.id)!, { ask: todos.getAsk(deferredAsk) }), null);
     assert.equal((await call('neo.todo.edit', { todoId: deferred.todo.id, check })).ok, true);
-    assert.equal(todos.getTodo(deferred.todo.id)!.repo, null);
+    assert.equal(coding.repository(todos.getTodo(deferred.todo.id)!, { ask: todos.getAsk(deferredAsk) }), 'github.com/example/repo');
     refusal(await call('neo.todo.bind', { todoId: deferred.todo.id, ref }));
     assert.equal(sessions.readRef(deferred.todo.id), null);
     sessions.bind(deferred.todo.id, ref, 1);
@@ -132,6 +138,9 @@ try {
     refusal(await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef }, start: true }));
   }
   assert.equal(sends, 0);
+  const requests = readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n').sort();
+  evidence.push({ githubReads: requests.length, githubRequests: requests });
+  console.log(`githubReads=${requests.length}`);
   evidence.push({ remoteLookups, sends, deliveryInputs: db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n });
   console.log(`PASS: same and renamed repositories accepted; failed lookup refused; other/unknown refused on add/edit/bind/continue; non-coding accepted; sends=${sends}; deliveryInputs=0`);
 } finally {
