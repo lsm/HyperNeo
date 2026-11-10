@@ -82,7 +82,10 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       live: Live,
       facts?: NeoTurnReportFacts
     ) => {
-      if (quiet && !observation.skip) return;
+      if (quiet) {
+        if (turn.notice) receipts.acknowledge(observation.messageId);
+        return;
+      }
       if (!observation.skip) {
         const blocker = neoBlockerNotice(
           ask,
@@ -91,10 +94,10 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
           ref,
           turn,
           live?.status,
-          facts?.openCardIds
+          facts?.blockerEpisode
         );
         const deliver = () => tell(ask, todo, text, observation.messageId, 'event');
-        if (blocker) await receipts.deliverCoveredNotice(blocker.key, blocker.covered, deliver);
+        if (blocker) await receipts.deliverNoticeOnce(blocker.key, deliver);
         else await deliver();
         receipts.acknowledge(observation.messageId);
       }

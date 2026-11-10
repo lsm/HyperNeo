@@ -1,4 +1,3 @@
-import { neoNoticeCardIds } from './covered-notice.ts';
 import type { NeoWorkerNameSource } from './worker-name.ts';
 import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
@@ -987,7 +986,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             state: reportTodo.state,
             blockedBy: reportTodo.blockedBy,
             questionOpen: questions.some((question) => neoQuestionCoversTodo(question, reportTodo)),
-            openCardIds: neoNoticeCardIds(reportTodo, questions, ref),
+            blockerEpisode: sessions.readNudge(id)?.blockerReport?.at,
           }
         );
       }

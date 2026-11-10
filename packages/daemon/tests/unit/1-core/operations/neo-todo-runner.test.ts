@@ -1,4 +1,3 @@
-import { neoNoticeCardIds } from '../../../../src/lib/neo/covered-notice.ts';
 import { deliverNeoTurnReport } from '../../../../src/lib/neo/turn-report.ts';
 import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
 import { createDelegationPack } from '../../../../src/lib/neo/packs/delegation/pack.ts';
@@ -1284,6 +1283,184 @@ describe('neo todo runner', () => {
     }
   });
 
+  test('an empty no-todo status turn stays silent and does not reprocess', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const worker = { adapter: 'codex-desktop', id: 'shared-thread' };
+      const nudgedAt = Date.now() + 10;
+      h.sessions.recordRef(todo.id, worker, nudgedAt);
+      const nudge = await h.sessions.inputs.accept(
+        null,
+        'neo',
+        { verb: 'send', ref: worker },
+        'lsm/hyperneo#1 has failing CI.',
+        nudgedAt
+      );
+      await h.sessions.inputs.recordOutcome(nudge, { ref: worker }, nudgedAt);
+      const before = h.store.getTodo(todo.id)!;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: nudgedAt + 100,
+          turnEnds: [{ id: 'turn-1', startedAt: nudgedAt, at: nudgedAt + 100, message: '' }],
+        },
+      });
+      await h.runner.refresh(() => {});
+      const quiet = () =>
+        h.told.filter((text) => text.includes('worker ended its turn with no reply'));
+      expect(quiet()).toHaveLength(1);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: nudgedAt + 200,
+          turnEnds: [
+            { id: 'turn-1', startedAt: nudgedAt, at: nudgedAt + 100, message: '' },
+            { id: 'turn-2', startedAt: nudgedAt + 150, at: nudgedAt + 200, message: '' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(quiet()).toHaveLength(1);
+      expect(h.store.getTodo(todo.id)).toMatchObject({
+        state: before.state,
+        report: before.report,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('the same blocker twice from one worker emits once; a new blocker and a completion reach Neo', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const dispatch = h.sessions.inputs.list(todo.id)[0];
+      const base = dispatch.acceptedAt + 100;
+      const turn = (n: number, message: string) => ({
+        id: `turn-${n}`,
+        at: base + n * 100,
+        message,
+      });
+      const told = (fragment: string) => h.told.filter((text) => text.includes(fragment));
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: base + 100,
+          turnEnds: [turn(1, 'Blocked (needs_human): pick a region')],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(told('pick a region')).toHaveLength(1);
+      const nudge = await h.sessions.inputs.accept(
+        todo.id,
+        'neo',
+        { verb: 'send', ref },
+        'Any update?',
+        base + 150
+      );
+      await h.sessions.inputs.recordOutcome(nudge, { ref }, base + 150);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: base + 200,
+          turnEnds: [
+            turn(1, 'Blocked (needs_human): pick a region'),
+            turn(2, 'Blocked (needs_human): pick a region'),
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(told('pick a region')).toHaveLength(1);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: base + 300,
+          turnEnds: [
+            turn(1, 'Blocked (needs_human): pick a region'),
+            turn(2, 'Blocked (needs_human): pick a region'),
+            turn(3, 'Blocked (needs_human): pick an availability zone'),
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(told('pick an availability zone')).toHaveLength(1);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: base + 400,
+          turnEnds: [
+            turn(1, 'Blocked (needs_human): pick a region'),
+            turn(2, 'Blocked (needs_human): pick a region'),
+            turn(3, 'Blocked (needs_human): pick an availability zone'),
+            turn(4, 'Deployed to us-east-1a.'),
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(told('Deployed to us-east-1a.')).toHaveLength(1);
+      expect(told('pick an availability zone')).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a recovered todo that blocks again on the same decision reaches Neo again', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const dispatch = h.sessions.inputs.list(todo.id)[0];
+      const base = dispatch.acceptedAt + 100;
+      const told = () => h.told.filter((text) => text.includes('pick a region'));
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: base + 100,
+          turnEnds: [
+            { id: 'turn-1', at: base + 100, message: 'Blocked (needs_human): pick a region' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(told()).toHaveLength(1);
+      h.store.updateTodo(h.store.getTodo(todo.id)!, { state: 'doing' }, base + 150);
+      const retry = await h.sessions.inputs.accept(
+        todo.id,
+        'neo',
+        { verb: 'send', ref },
+        'Use us-east-1.',
+        base + 150
+      );
+      await h.sessions.inputs.recordOutcome(retry, { ref }, base + 150);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: base + 300,
+          turnEnds: [
+            { id: 'turn-1', at: base + 100, message: 'Blocked (needs_human): pick a region' },
+            { id: 'turn-2', at: base + 300, message: 'Blocked (needs_human): pick a region' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(told()).toHaveLength(2);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each(['earlier', 'later', 'other-sender', 'other-recipient', 'unknown-start'])(
     'does not silence a new worker report for an unrelated send: %s',
     async (scenario) => {
@@ -1506,7 +1683,7 @@ describe('neo todo runner', () => {
     'different-source',
     'missing-source',
   ] as const)(
-    'structured blocker repeats require a successful same-state receipt and live card: %s',
+    'structured blocker repeats emit once per recipient and decision: %s',
     async (scenario) => {
       const h = setup(false);
       try {
@@ -1543,13 +1720,13 @@ describe('neo todo runner', () => {
         };
         const send = (id: string, message: string) => {
           const current = h.store.getTodo(todo.id)!;
-          const openCardIds = neoNoticeCardIds(current, h.store.listQuestions('ask'), ref);
           const facts = {
             priorStatus: 'done' as const,
             state: current.state,
             blockedBy: current.blockedBy,
-            questionOpen: openCardIds.length > 0,
-            openCardIds,
+            questionOpen: h.store
+              .listQuestions('ask')
+              .some((q) => q.state === 'open' && q.todoId === todo.id),
           };
           return deliverNeoTurnReport(
             ask,
@@ -1585,7 +1762,17 @@ describe('neo todo runner', () => {
               ? `New evidence.\nBlocked (${kind}): Approval required\r\n`
               : `Blocked (${kind}): Approval required\r\n`;
         await send('second-block', message);
-        expect(delivered).toHaveLength(['covered', 'failed', 'restart'].includes(scenario) ? 1 : 2);
+        expect(delivered).toHaveLength(
+          [
+            'changed',
+            'meaningful',
+            'new-owner',
+            'environment-covered',
+            'environment-uncovered',
+          ].includes(scenario)
+            ? 2
+            : 1
+        );
       } finally {
         h.db.close();
       }

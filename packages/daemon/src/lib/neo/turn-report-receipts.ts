@@ -1,4 +1,4 @@
-import { skipCoveredNeoNotice } from './covered-notice.ts';
+import { skipRepeatedNeoNotice } from './covered-notice.ts';
 import type { NeoTurnReportFacts } from './turn-report-plan.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -95,11 +95,8 @@ export class NeoTurnReportReceipts {
     };
   }
 
-  async deliverCoveredNotice(key: string, cardOpen: boolean, deliver: () => Promise<void>) {
-    if (
-      skipCoveredNeoNotice(this.receipts.submissionReceipt<boolean>(key, 'v2') === true, cardOpen)
-    )
-      return;
+  async deliverNoticeOnce(key: string, deliver: () => Promise<void>) {
+    if (skipRepeatedNeoNotice(this.receipts.submissionReceipt<boolean>(key, 'v2') === true)) return;
     await deliver();
     this.acknowledge(key);
   }
