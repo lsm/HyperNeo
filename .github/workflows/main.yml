@@ -726,12 +726,14 @@ jobs:
       - test-web
       - build
       - windows-compiled-smoke
+      - desktop-runtime-paths
 
     steps:
       - uses: actions/checkout@v6
 
       - name: Check all jobs passed
         env:
+          CI_GATE_RESULT_DESKTOP_RUNTIME_PATHS: ${{ needs.desktop-runtime-paths.result }}
           CI_GATE_RESULT_CHECK: ${{ needs.check.result }}
           CI_GATE_RESULT_CHANGES: ${{ needs.changes.result }}
           CI_GATE_RESULT_TEST_DAEMON_ONLINE: ${{ needs.test-daemon-online.result }}
