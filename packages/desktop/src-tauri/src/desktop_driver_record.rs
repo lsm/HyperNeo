@@ -47,12 +47,9 @@ pub(super) fn directory(base: &Path, worker: &str) -> Result<PathBuf> {
     Ok(directory)
 }
 
-fn protected_file(path: &Path, create: bool) -> Result<File> {
+fn protected_file(path: &Path) -> Result<File> {
     let file = OpenOptions::new()
         .read(true)
-        .write(create)
-        .create(create)
-        .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
     let metadata = file.metadata()?;
@@ -67,7 +64,16 @@ fn protected_file(path: &Path, create: bool) -> Result<File> {
 }
 
 pub(super) fn latch(directory: &Path) -> Result<()> {
-    protected_file(&directory.join("stopped"), true)?.sync_all()?;
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(directory.join("stopped"))
+    {
+        Ok(file) => file.sync_all()?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
     File::open(directory)?.sync_all()?;
     Ok(())
 }
@@ -83,7 +89,13 @@ pub(super) struct Starting(PathBuf);
 impl Starting {
     pub(super) fn begin(directory: &Path) -> Result<Self> {
         let path = directory.join("starting");
-        DirBuilder::new().mode(0o700).create(&path)?;
+        if let Err(error) = DirBuilder::new().mode(0o700).create(&path) {
+            if error.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(error.into());
+            }
+            latch(directory)?;
+            return Err("stop_unconfirmed: previous start incomplete; cleanup is required before re-enabling desktop control".into());
+        }
         let guard = Self(path);
         File::open(directory)?.sync_all()?;
         ensure_enabled(directory)?;
@@ -126,22 +138,17 @@ pub(super) fn publish(directory: &Path, pid: u32, socket: PathBuf) -> Result<()>
         started_at: identity(pid)?,
         socket,
     };
-    let temporary = directory.join("driver.pending");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temporary)?;
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
     file.write_all(&serde_json::to_vec(&record)?)?;
-    file.sync_all()?;
-    std::fs::rename(temporary, directory.join("driver.json"))?;
+    file.as_file().sync_all()?;
+    file.persist(directory.join("driver.json"))?;
     File::open(directory)?.sync_all()?;
     Ok(())
 }
 
 pub(super) fn verify(directory: &Path, pid: u32, socket: &Path) -> Result<()> {
     let mut bytes = Vec::new();
-    protected_file(&directory.join("driver.json"), false)?
+    protected_file(&directory.join("driver.json"))?
         .take(16384)
         .read_to_end(&mut bytes)?;
     let record: Record = serde_json::from_slice(&bytes)?;

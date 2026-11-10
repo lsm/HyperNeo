@@ -227,6 +227,58 @@ class WorkerDrivers(unittest.TestCase):
         self.assertFalse(list(outside.iterdir()))
         self.assertFalse(list(self.work.glob('d-*')))
 
+    def test_stale_start_marker_latches_worker_with_an_actionable_error(self):
+        directory = self.lifecycle()
+        directory.mkdir(parents=True, mode=0o700)
+        directory.parent.chmod(0o700)
+        (directory / 'starting').mkdir(mode=0o700)
+        result = self.call('start', workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        self.assertIn('previous start incomplete', result['error'])
+        self.assertTrue((directory / 'stopped').exists())
+        self.assertFalse(list(self.work.glob('d-*')))
+
+    def test_stale_pending_file_does_not_stop_a_healthy_driver(self):
+        driver = self.start()
+        (self.lifecycle() / 'driver.pending').write_text('interrupted publication')
+        result = self.call('start', workDir=str(self.work))
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['result']['pid'], driver['pid'])
+        self.assertTrue(alive(driver['pid']))
+
+    def test_failed_publication_removes_its_temporary_file(self):
+        directory = self.lifecycle()
+        directory.mkdir(parents=True, mode=0o700)
+        directory.parent.chmod(0o700)
+        (directory / 'driver.json').mkdir()
+        self.assertFalse(self.call('start', workDir=str(self.work))['ok'])
+        self.assertEqual([path.name for path in directory.iterdir()], ['driver.json'])
+        (directory / 'driver.json').rmdir()
+        self.start()
+
+    def test_stop_accepts_existing_malformed_latch_entries(self):
+        for worker, kind in (('worker-a', 'file'), ('worker-b', 'directory')):
+            driver = self.start(worker)
+            latch = self.lifecycle(worker) / 'stopped'
+            if kind == 'file':
+                latch.write_text('stop')
+                latch.chmod(0o644)
+            else:
+                latch.mkdir()
+            result = self.call('stop', worker)
+            self.assertTrue(result['ok'], result)
+            self.assertFalse(alive(driver['pid']))
+            self.assertFalse(Path(driver['socket']).exists())
+            self.assertFalse(self.call('start', worker, workDir=str(self.work))['ok'])
+
+    def test_stop_confirms_a_driver_that_already_exited(self):
+        driver = self.start()
+        os.kill(driver['pid'], signal.SIGKILL)
+        result = self.call('stop')
+        self.assertTrue(result['ok'], result)
+        self.assertFalse(alive(driver['pid']))
+        self.assertFalse(Path(driver['socket']).exists())
+
     def test_two_workers_get_two_drivers_and_two_sockets(self):
         first, second = self.start(), self.start('worker-b')
         self.assertNotEqual(first['pid'], second['pid'])
