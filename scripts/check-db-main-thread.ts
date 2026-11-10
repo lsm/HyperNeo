@@ -7,7 +7,7 @@ const workers = new Set([
   'lib/message-search-worker.ts',
   'lib/message-search-merge-worker.ts',
   'lib/event-loop-watchdog-worker.ts',
-  'lib/neo/project-mirror-worker.ts',
+  'lib/neo/packs/coding/project-mirror-worker.ts',
   'lib/neo/packs/coding/review-merge-hold-worker.ts',
   'lib/neo/packs/coding/unowned-claims-worker.ts',
   'storage/db-gateway/db-gateway-worker.ts',

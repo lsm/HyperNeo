@@ -22,7 +22,7 @@ import {
   workStartPreparation,
   type WorkExecutionPreparer,
 } from '../../drivers/start-preparation.ts';
-import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/project-mirror-async.ts';
+import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/packs/coding/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';

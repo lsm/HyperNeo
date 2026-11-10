@@ -1,3 +1,4 @@
+import { codingProjectIdentity } from '../neo/packs/coding/project-cleanup.ts';
 import { createPeerMessageRoute } from '../../routes/neo-peer-message.ts';
 import { createSessionToolActivationOperation } from '../tools/session-tool-activation.ts';
 import {
@@ -472,7 +473,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     ...(space?.familyOperations(boundFamilyContext) ?? []),
     ...deps.extensions.operations(),
     createDaemonExtensionsOperation(deps.extensions),
-    ...createNeoOperations(neoService),
+    ...createNeoOperations(neoService, codingProjectIdentity),
     ...createNeoHomeOperations(neoService, neoHome),
     createNeoHomeGithubOperation(neoService, neoHome),
     ...createSessionScheduleOperations(sessionScheduler),
@@ -549,7 +550,9 @@ export async function setupRPCHandlers<SpaceServices = never>(
   scheduleDriverRefresh(deps.jobQueue);
   deps.jobProcessor.register(NEO_PACK_SWEEP, () => sweepNeoPacks(deps.jobQueue, neoService));
   schedulePackSweep(deps.jobQueue, 0);
-  const reorganizeTopics = createNeoProjectsReorganizer(neoReorganizeRuntime(neoService));
+  const reorganizeTopics = createNeoProjectsReorganizer(
+    neoReorganizeRuntime(neoService, codingProjectIdentity)
+  );
   deps.jobProcessor.register(NEO_TOPICS_REORGANIZE_NIGHTLY, (job) =>
     runNeoNightlyReorganize(job, deps.jobQueue, {
       now: () => Date.now(),

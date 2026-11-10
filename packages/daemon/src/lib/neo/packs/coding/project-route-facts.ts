@@ -1,4 +1,4 @@
-import { parseGitHubRefUrl } from '../github/parse-pr-url.ts';
+import { parseGitHubRefUrl } from '../../../github/parse-pr-url.ts';
 
 export function neoRepoAlias(remote: string): string | null {
   const url = remote

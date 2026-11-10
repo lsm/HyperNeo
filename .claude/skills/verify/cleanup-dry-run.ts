@@ -1,3 +1,4 @@
+import { codingProjectFacts } from '../../../packages/daemon/src/lib/neo/packs/coding/project-cleanup.ts';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { NEO_INBOX_ID } from '../../../packages/daemon/src/lib/neo/inbox.ts';
@@ -10,7 +11,7 @@ const db = new Database(process.argv[2] ?? join(homedir(), '.hyperneo/data/daemo
 });
 const repo = new NeoRepository(db);
 const facts = repo.projectCleanupFacts();
-const plan = planNeoProjectCleanup(facts, {
+const plan = planNeoProjectCleanup(codingProjectFacts(facts), {
   pinned: new Set([NEO_INBOX_ID]),
   machine: hostname(),
   mirrored: new Set(),

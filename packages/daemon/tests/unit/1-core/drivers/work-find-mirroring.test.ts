@@ -1,8 +1,8 @@
 import { recordStartedWork } from '../../../../src/storage/work-started-sessions';
 import { expect, test } from 'bun:test';
 import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation';
-import { mirrorNeoWorkspaceProjects } from '../../../../src/lib/neo/project-mirror';
-import { mirrorNeoWorkspaceProjectsAsync } from '../../../../src/lib/neo/project-mirror-async';
+import { mirrorNeoWorkspaceProjects } from '../../../../src/lib/neo/packs/coding/project-mirror';
+import { mirrorNeoWorkspaceProjectsAsync } from '../../../../src/lib/neo/packs/coding/project-mirror-async';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';

@@ -1,14 +1,14 @@
-import { ownedNeoProjectGroups } from './owned-project-groups.ts';
-import { runtimeWorkerUrl } from '../runtime-worker-url.ts';
-import { getConfig } from '../../config.ts';
+import { ownedNeoProjectGroups } from '../../owned-project-groups.ts';
+import { runtimeWorkerUrl } from '../../../runtime-worker-url.ts';
+import { getConfig } from '../../../../config.ts';
 import {
   forwardSQLiteWorkerLog,
   type SQLiteWorkerLog,
-} from '../../storage/sqlite-worker-observability.ts';
+} from '../../../../storage/sqlite-worker-observability.ts';
 import { resolve } from 'node:path';
-import type { Database } from '../../storage/database.ts';
-import type { PlaceGroup } from '../drivers/types.ts';
-import { runLagPhase } from '../event-loop-activity.ts';
+import type { Database } from '../../../../storage/database.ts';
+import type { PlaceGroup } from '../../../drivers/types.ts';
+import { runLagPhase } from '../../../event-loop-activity.ts';
 import { mirrorNeoWorkspaceProjects } from './project-mirror.ts';
 
 const pending = new Map<string, Promise<boolean>>();
@@ -16,7 +16,7 @@ const createWorker = () =>
   new Worker(
     runtimeWorkerUrl(
       './project-mirror-worker.ts',
-      './daemon/src/lib/neo/project-mirror-worker.ts',
+      './daemon/src/lib/neo/packs/coding/project-mirror-worker.ts',
       import.meta.url
     ).toString(),
     { type: 'module' }

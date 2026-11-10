@@ -1,11 +1,11 @@
-import { ownedNeoProjectGroups } from './owned-project-groups.ts';
-import type { SQLiteQueryObservabilityOptions } from '../../storage/sqlite-query-observability.ts';
+import { ownedNeoProjectGroups } from '../../owned-project-groups.ts';
+import type { SQLiteQueryObservabilityOptions } from '../../../../storage/sqlite-query-observability.ts';
 import {
   publishSQLiteWorkerLogs,
   type SQLiteWorkerLog,
-} from '../../storage/sqlite-worker-observability.ts';
-import { Database } from '../../storage/sqlite-compat.ts';
-import type { PlaceGroup } from '../drivers/types.ts';
+} from '../../../../storage/sqlite-worker-observability.ts';
+import { Database } from '../../../../storage/sqlite-compat.ts';
+import type { PlaceGroup } from '../../../drivers/types.ts';
 import { mirrorNeoWorkspaceProjects } from './project-mirror.ts';
 
 const worker = globalThis as unknown as {

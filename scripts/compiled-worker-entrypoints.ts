@@ -3,7 +3,7 @@ export const COMPILED_WORKER_ENTRYPOINTS = [
   'packages/daemon/src/lib/event-loop-watchdog-worker.ts',
   'packages/daemon/src/lib/message-search-merge-worker.ts',
   'packages/daemon/src/lib/message-search-worker.ts',
-  'packages/daemon/src/lib/neo/project-mirror-worker.ts',
+  'packages/daemon/src/lib/neo/packs/coding/project-mirror-worker.ts',
   'packages/daemon/src/lib/voice/stream-relay-worker.ts',
   'packages/daemon/src/lib/voice/opus-input-worker.ts',
   'packages/daemon/src/storage/db-gateway/db-gateway-worker.ts',

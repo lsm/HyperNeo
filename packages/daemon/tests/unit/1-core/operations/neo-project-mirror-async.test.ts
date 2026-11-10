@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { mirrorNeoWorkspaceProjectsAsync } from '../../../../src/lib/neo/project-mirror-async';
+import { mirrorNeoWorkspaceProjectsAsync } from '../../../../src/lib/neo/packs/coding/project-mirror-async';
 
 class FixtureWorker {
   onmessage: ((event: { data: { changed: boolean } | { error: string } }) => void) | null = null;
