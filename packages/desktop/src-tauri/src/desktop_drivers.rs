@@ -1,3 +1,5 @@
+#[path = "desktop_driver_record.rs"]
+mod record;
 use cua_driver_sdk::{
     EmbeddedCuaDriverHost, EmbeddedDriverHostOptions, EmbeddedDriverHostState,
     EmbeddedEnvironmentVariable,
@@ -27,6 +29,10 @@ use tokio::{
 #[cfg(test)]
 static FAIL_NEXT_ACCEPT: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
+static LATCH_ON_RESPONSE: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+static FAIL_START_CLEANUP: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
 pub(crate) fn inject_accept_failure() {
     FAIL_NEXT_ACCEPT.store(true, Ordering::Relaxed);
 }
@@ -41,6 +47,7 @@ struct Drivers {
     binary: PathBuf,
     verification_path: String,
     starts_enabled: AtomicBool,
+    records: PathBuf,
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -125,6 +132,7 @@ impl Control {
             binary,
             verification_path,
             starts_enabled: AtomicBool::new(false),
+            records: directory,
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -232,11 +240,31 @@ impl Drivers {
             return Err("Invalid worker identifier".into());
         }
         #[cfg(test)]
+        if request.action == "fixture-fail-start-cleanup" {
+            FAIL_START_CLEANUP.store(true, Ordering::Relaxed);
+            return Ok(json!({"armed": true}));
+        }
+        #[cfg(test)]
+        if request.action == "fixture-latch-on-response" {
+            LATCH_ON_RESPONSE.store(true, Ordering::Relaxed);
+            return Ok(json!({"armed": true}));
+        }
+        #[cfg(test)]
         if request.action == "fixture-slots" {
             let slots = self.workers.lock().await;
             return Ok(
                 json!({"count": slots.len(), "references": slots.get(&request.worker).map(Arc::strong_count).unwrap_or(0)}),
             );
+        }
+        let directory = self.records.join("workers").join(&request.worker);
+        if matches!(request.action.as_str(), "start" | "stop") {
+            record::directory(&self.records, &request.worker, true)?;
+        }
+        if request.action == "stop" {
+            record::latch(&directory)?;
+        }
+        if request.action == "start" {
+            record::ensure_enabled(&directory)?;
         }
         if !self.starts_enabled.load(Ordering::Relaxed) {
             let reason = "Driver control unavailable until worker authorization is enforced";
@@ -265,6 +293,7 @@ impl Drivers {
         let result: Result<()> = async {
             match request.action.as_str() {
                 "start" => {
+                    let mut starting = record::Starting::begin(&directory)?;
                     let app = self
                         .binary
                         .parent()
@@ -360,16 +389,95 @@ impl Drivers {
                             _directory: directory,
                         });
                     }
-                    worker.as_ref().unwrap().host.clone().start().await?;
+                    let host = worker.as_ref().unwrap().host.clone();
+                    host.clone().start().await?;
+                    let connection = host.connection().ok_or("Driver connection missing")?;
+                    if let Err(error) = record::publish(
+                        &directory,
+                        connection.pid,
+                        connection.socket_path.clone().into(),
+                    )
+                    .and_then(|_| record::ensure_enabled(&directory))
+                    {
+                        starting.preserve();
+                        let _cleanup: Result<()> = async {
+                            #[cfg(test)]
+                            if FAIL_START_CLEANUP.swap(false, Ordering::Relaxed) {
+                                return Err("Fixture start cleanup failed".into());
+                            }
+                            host.stop().await?;
+                            Ok(())
+                        }
+                        .await;
+                        record::verify_gone(
+                            connection.pid,
+                            std::path::Path::new(&connection.socket_path),
+                        )?;
+                        starting.cleanup_verified();
+                        return Err(error);
+                    }
                 }
                 "stop" => {
                     if let Some(worker) = worker.as_ref() {
-                        worker.host.clone().stop().await?;
+                        if let Some(connection) = worker.host.connection() {
+                            record::verify(
+                                &directory,
+                                connection.pid,
+                                std::path::Path::new(&connection.socket_path),
+                            )
+                            .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                            worker
+                                .host
+                                .clone()
+                                .stop()
+                                .await
+                                .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                            record::verify_gone(
+                                connection.pid,
+                                std::path::Path::new(&connection.socket_path),
+                            )?;
+                        } else {
+                            worker.host.clone().stop().await?;
+                        }
                     }
                     *worker = None;
                 }
                 "status" => {}
                 _ => return Err("Unknown Desktop control action".into()),
+            }
+            if let Some(worker) = worker.as_ref() {
+                let connection = worker.host.connection();
+                if let Some(connection) = &connection {
+                    #[cfg(test)]
+                    if request.action == "start" && LATCH_ON_RESPONSE.swap(false, Ordering::Relaxed)
+                    {
+                        record::latch(&directory)?;
+                    }
+                    let valid = record::directory(&self.records, &request.worker, false)
+                        .and_then(|_| record::ensure_enabled(&directory))
+                        .and_then(|_| {
+                            record::verify(
+                                &directory,
+                                connection.pid,
+                                std::path::Path::new(&connection.socket_path),
+                            )
+                        });
+                    if let Err(error) = valid {
+                        if request.action == "start" {
+                            worker
+                                .host
+                                .clone()
+                                .stop()
+                                .await
+                                .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                            record::verify_gone(
+                                connection.pid,
+                                std::path::Path::new(&connection.socket_path),
+                            )?;
+                        }
+                        return Err(error);
+                    }
+                }
             }
             Ok(())
         }
