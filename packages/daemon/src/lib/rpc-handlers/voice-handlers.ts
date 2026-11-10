@@ -41,6 +41,7 @@ interface OwnedVoiceStream {
 const voiceStreams = new Map<string, OwnedVoiceStream>();
 const voiceStreamStarts = new Map<string, number[]>();
 const startingStreams = { count: 0 };
+const activeTranscriptions = { count: 0 };
 const STREAM_STARTS_PER_MINUTE = 10;
 const MAX_VOICE_STREAMS = 8;
 const VOICE_STREAM_IDLE_MS = 3 * 60_000;
@@ -119,7 +120,7 @@ export function expireIdleVoiceStreams(now: number): void {
 
 export function voiceStreamsBusy(): boolean {
   expireIdleVoiceStreams(Date.now());
-  return startingStreams.count > 0 || voiceStreams.size > 0;
+  return startingStreams.count > 0 || voiceStreams.size > 0 || activeTranscriptions.count > 0;
 }
 
 export function resetVoiceTranscriptionLimitsForTests(): void {
@@ -157,6 +158,8 @@ export function registerVoiceHandlers(
   messageHub.onRequest<VoiceTranscribeRequest, VoiceTranscribeResponse>(
     'voice.transcribe',
     async (data, context) => {
+      if (restartReservation.remaining())
+        throw new MessageHubHandlerError('Daemon updating; retry shortly', 'DAEMON_UPDATING');
       if (data?.transcriptionId && data.recordingId)
         throw new Error(
           'Use either recordingId for durable retries or transcriptionId for cancellation'
@@ -170,6 +173,7 @@ export function registerVoiceHandlers(
         finish = resolve;
       });
       if (key) transcriptions.set(key, { controller, finished });
+      activeTranscriptions.count++;
       try {
         return await transcribeViaPipeline(
           settingsManager,
@@ -183,6 +187,7 @@ export function registerVoiceHandlers(
           controller.signal
         );
       } finally {
+        activeTranscriptions.count--;
         if (key) transcriptions.delete(key);
         finish();
       }
