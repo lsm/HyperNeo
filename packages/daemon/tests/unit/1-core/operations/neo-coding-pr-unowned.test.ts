@@ -525,6 +525,54 @@ describe('coding pack newly unowned PR notifications', () => {
 });
 
 describe('coding pack unowned PR persistence', () => {
+  test('an admitted pending batch keeps its delivery identity after a crash and trimming', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'unowned-admission-'));
+    const path = join(root, 'synthetic.db');
+    let db = new Database(path);
+    const admitted = new Map<string, string>();
+    const attempts: { key: string; text: string }[] = [];
+    const wake = async (key: string, text: string) => {
+      attempts.push({ key, text });
+      if (!admitted.has(key)) admitted.set(key, text);
+      return true;
+    };
+    try {
+      runMigrations(db, () => {});
+      createTables(db);
+      createCodingPackTables(db, 10);
+      for (const number of [1, 2])
+        db.prepare(`INSERT INTO pack_coding_pr_ledger
+        (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
+        VALUES ('synthetic/a',?,'Synthetic','work','head','unreviewed',20,20,11,0)`).run(number);
+      const events = new CodingPrEventRepository(db);
+      const lostAck = spyOn(events, 'unownedDeliveredLater').mockRejectedValueOnce(
+        new Error('Synthetic acknowledgement lost')
+      );
+      await expect(wakeCodingUnownedPrs(events, wake, 20)).rejects.toThrow(
+        'Synthetic acknowledgement lost'
+      );
+      lostAck.mockRestore();
+      expect(admitted.size).toBe(1);
+      db.close();
+      db = new Database(path);
+      db.prepare('UPDATE pack_coding_pr_ledger SET owner=? WHERE number=1').run(
+        JSON.stringify({ adapter: 'hyperneo', id: 'claimed-worker' })
+      );
+      await wakeCodingUnownedPrs(new CodingPrEventRepository(db), wake, 30);
+      expect(attempts).toHaveLength(2);
+      expect(attempts[1].text).not.toContain('synthetic/a#1');
+      expect(attempts[1].text).toContain('synthetic/a#2');
+      expect(attempts[1].key).toBe(attempts[0].key);
+      expect(admitted.size).toBe(1);
+      expect(
+        db.prepare('SELECT pending_key AS key FROM pack_coding_pr_unowned_state').get()
+      ).toEqual({ key: null });
+    } finally {
+      db.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('the activation cutoff is strict and does not reset when schema is reapplied', async () => {
     const { db, wakes, cycle } = setup();
     try {
