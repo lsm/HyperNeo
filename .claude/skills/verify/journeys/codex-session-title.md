@@ -48,3 +48,7 @@ The naming inventory filters title candidates before resolving Git checkouts.
 An unrelated project title must cause no checkout lookup in the real operation
 proof. Focused tests count one lookup per distinct candidate folder, or zero
 when no stored title matches an explicitly supplied name.
+
+A live same-prefix thread whose checkout no longer resolves still occupies its
+name. The daemon proof seeds a missing-folder thread, checks the next number,
+and refuses its explicit duplicate. A resolved different Git project is excluded.

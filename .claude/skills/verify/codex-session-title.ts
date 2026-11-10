@@ -122,10 +122,19 @@ try {
   const duplicate = await invokeOperation(registry, unnamed.name, { ...longInput, sessionTitle: longTitle }, caller);
   assert.equal((duplicate as {value:{ok:boolean}}).value.ok, false);
   assert.match((duplicate as {value:{detail:string}}).value.detail, /already in use/);
+  const missingState = new Database(statePath);
+  try {
+    missingState.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('missing', 'Codex project 6', '', '', join(run, 'deleted-worktree'), 'desktop', 0, 1, rollout);
+  } finally { missingState.close(); }
+  const afterDeletion = await invokeOperation(registry, unnamed.name, unnamed.input, caller);
+  assert.equal((afterDeletion as {value:{value:{title:string}}}).value.value.title, 'Codex project 7');
+  const missingDuplicate = await invokeOperation(registry, unnamed.name, { ...unnamed.input, sessionTitle: 'Codex project 6' }, caller);
+  assert.equal((missingDuplicate as {value:{ok:boolean}}).value.ok, false);
+  assert.match((missingDuplicate as {value:{detail:string}}).value.detail, /already in use/);
   assert(!checkoutFolders.includes(join(run, 'unrelated')));
   assert.equal(closed, opened);
   assert(opened >= 2);
-  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, concurrent, renamed, linked, longName, duplicate, calls, checkoutFolders, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
+  writeFileSync(join(run, 'evidence', 'codex-session-title.json'), JSON.stringify({ started, generic, concurrent, renamed, linked, longName, duplicate, afterDeletion, missingDuplicate, calls, checkoutFolders, closed, boundary: 'Synthetic Codex servers; real daemon operation registry; no native Desktop or model turn' }, null, 2));
 } finally {
   await app.cleanup();
 }

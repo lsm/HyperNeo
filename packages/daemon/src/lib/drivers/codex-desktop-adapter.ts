@@ -1180,7 +1180,7 @@ async function genericCodexSessionTitle(
   for (const folder of new Set(candidates.map((thread) => thread.folder))) {
     folders.set(
       folder,
-      folder === projectFolder ? folder : ((await deps.gitCheckout(folder))?.repo ?? folder)
+      folder === projectFolder ? folder : ((await deps.gitCheckout(folder))?.repo ?? projectFolder)
     );
   }
   const names = new Set(
