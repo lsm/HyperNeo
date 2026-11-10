@@ -1,3 +1,4 @@
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -56,6 +57,7 @@ function adapter(
   folders = ['/focus/dolmen'],
   git: {
     threads?: CodexSnapshot['threads'];
+    readState?: boolean;
     root?: string;
     exit?: number;
     linked?: boolean;
@@ -68,7 +70,9 @@ function adapter(
   let closed = false;
   const instance = createCodexDesktopAdapter({
     statePath: join(namingDir, 'state.sqlite'),
-    readSnapshot: async () => ({ roots: [], folders: [], threads: git.threads ?? [] }),
+    readSnapshot: git.readState
+      ? undefined
+      : async () => ({ roots: [], folders: [], threads: git.threads ?? [] }),
     prepareExecution: git.prepareExecution,
     worktreesDir: '/codex/worktrees',
     machine: 'laptop',
@@ -745,6 +749,72 @@ describe('codex-desktop start', () => {
       expect(threads.map((thread) => thread.title)).toEqual(['Codex dolmen 1', 'Codex dolmen 2']);
     }
   );
+
+  test.each([false, true])(
+    'compares full stored session names beyond the display limit, explicit: %s',
+    async (explicit) => {
+      const folder = `/synthetic/${'x'.repeat(73)}`;
+      const title = `Codex ${'x'.repeat(73)} 1`;
+      const db = new Database(join(namingDir, 'state.sqlite'));
+      db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+      CREATE TABLE projects (id TEXT, name TEXT, updated_at_ms INTEGER);
+      CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+      db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        'existing',
+        title,
+        title,
+        '',
+        folder,
+        'desktop',
+        0,
+        1,
+        ''
+      );
+      db.close();
+      const { instance, calls } = adapter(
+        { call: async (method) => (method === 'thread/start' ? { thread: { id: 'fresh' } } : {}) },
+        [folder],
+        { readState: true }
+      );
+      const result = await instance.start!(
+        { ...request, place: { ...place, folder }, ...(explicit ? { sessionTitle: title } : {}) },
+        user
+      );
+      if (explicit) {
+        expect(result).toMatchObject({
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('already in use'),
+        });
+        expect(calls.some(([method]) => method === 'thread/start')).toBe(false);
+      } else {
+        expect(result).toMatchObject({ ok: true, value: { title: `Codex ${'x'.repeat(73)} 2` } });
+      }
+    }
+  );
+
+  test('counts a session in a user linked worktree as part of its main project', async () => {
+    const { instance } = adapter(
+      { call: async (method) => (method === 'thread/start' ? { thread: { id: 'fresh' } } : {}) },
+      undefined,
+      {
+        root: place.folder,
+        threads: [
+          {
+            id: 'linked',
+            title: 'Codex dolmen 1',
+            folder: '/user-owned/worktree',
+            archived: 0,
+            updatedAt: NOW,
+          },
+        ],
+      }
+    );
+    expect(await instance.start!(request, user)).toMatchObject({
+      ok: true,
+      value: { title: 'Codex dolmen 2' },
+    });
+  });
 
   test('an omitted session title uses the next free generic project name, never the task title', async () => {
     const { instance, calls } = adapter(
