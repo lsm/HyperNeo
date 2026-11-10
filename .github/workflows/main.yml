@@ -66,11 +66,16 @@ jobs:
     runs-on: macos-latest
     needs: [changes]
     if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.desktop == 'true')
-    timeout-minutes: 3
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
       - name: Test synthetic Mach-O bundles
         run: python3 packages/desktop/tests/macos-rpaths.py
+      - name: Build isolated embedded-host fixture
+        run: cargo build --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml
+      - name: Exercise worker drivers with a fake binary
+        run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture
 
   # ============================================
   # CODE QUALITY CHECKS

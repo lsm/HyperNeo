@@ -1,4 +1,6 @@
 mod desktop_permissions;
+#[cfg(target_os = "macos")]
+mod desktop_drivers;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -62,6 +64,10 @@ struct RuntimeDescriptor {
 }
 
 fn kill_sidecar<R: Runtime>(app: &tauri::AppHandle<R>) {
+	#[cfg(target_os = "macos")]
+	if let Some(control) = app.try_state::<desktop_drivers::Control>() {
+		tauri::async_runtime::block_on(control.shutdown());
+	}
 	if let Some(state) = app.try_state::<SidecarState>() {
 		if let Ok(mut guard) = state.child.lock() {
 			if let Some(child) = guard.take() {
@@ -183,6 +189,14 @@ pub fn run() {
 		})
 		.manage(StartupState::default())
 		.setup(|app| {
+			#[cfg(target_os = "macos")]
+			app.manage(
+				tauri::async_runtime::block_on(desktop_drivers::Control::bind(
+					runtime_descriptor_path().ok_or("Missing data directory")?.parent().unwrap().into(),
+					std::env::current_exe()?.with_file_name("cua-driver"),
+					"/usr/bin:/bin:/usr/sbin:/sbin".into(),
+				)).map_err(|error| error.to_string())?,
+			);
 			// Setup logging.
 			app.handle().plugin(
 				tauri_plugin_log::Builder::default()
