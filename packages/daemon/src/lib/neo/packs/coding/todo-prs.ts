@@ -41,6 +41,33 @@ export class CodingTodoPrRepository {
     return this.turnPrs.ownedPrs(todoId);
   }
 
+  trackerRepositories(askId: string, todoId?: string): { repo: string | null }[] {
+    return this.db
+      .prepare(`SELECT COALESCE(p.repo,
+        (SELECT repo FROM neo_asks WHERE id = ?)) AS repo
+      FROM neo_todos t LEFT JOIN pack_coding_todos p ON p.todo_id = t.id
+      WHERE t.ask_id = ? ${todoId ? 'AND t.id = ?' : ''}
+      ORDER BY t.position, t.created_at`)
+      .all(askId, askId, ...(todoId ? [todoId] : [])) as { repo: string | null }[];
+  }
+
+  place(scope: NeoTodoPolicyScope): CodingTodoPlace {
+    const repo = (sql: string, id: string | undefined) =>
+      id ? ((this.db.prepare(sql).get(id) as { repo: string | null } | null)?.repo ?? null) : null;
+    const ask = repo('SELECT repo FROM neo_asks WHERE id = ?', scope.ask?.id);
+    const peers = scope.ask
+      ? (
+          this.db
+            .prepare(`SELECT DISTINCT p.repo FROM pack_coding_todos p
+              JOIN neo_todos t ON t.id = p.todo_id WHERE t.ask_id = ? AND p.repo <> ''`)
+            .all(scope.ask.id) as { repo: string }[]
+        ).map((peer) => peer.repo)
+      : [];
+    if (!('todo' in scope)) return { ask, peers };
+    const todo = repo('SELECT repo FROM pack_coding_todos WHERE todo_id = ?', scope.todo?.id);
+    return { ask, peers, todo, start: scope.start };
+  }
+
   linked(todoId: string, url: string) {
     return this.urls(todoId).includes(codingPrKey(url) ?? url);
   }
@@ -247,15 +274,20 @@ function neoGitRepo(remote: string | undefined): string | null {
   return neoRepositoryIdentity(remote)?.slice('repository:'.length) ?? null;
 }
 
+type CodingTodoPlace = {
+  ask: string | null;
+  peers: readonly string[];
+  todo?: string | null;
+  start?: true;
+};
+
 export function codingTodoRepository(
   todo: NeoTodoRepositoryDraft,
   claimed: readonly string[] = [],
-  scope?: NeoTodoPolicyScope
+  facts?: CodingTodoPlace
 ): string | null {
-  if (scope && 'todo' in scope)
-    return scope.start
-      ? scope.todo?.repo || scope.ask?.repo || null
-      : (scope.todo?.repo ?? scope.ask?.repo ?? null);
+  if (facts && 'todo' in facts)
+    return facts.start ? facts.todo || facts.ask || null : (facts.todo ?? facts.ask ?? null);
   const issue = todo.check?.kind === 'issue_closed' && codingIssueRef(todo.check);
   if (issue) return neoGitRepo(`github.com/${issue.owner}/${issue.repo}`);
   const urls =
@@ -270,7 +302,7 @@ export function codingTodoRepository(
   if (pr) return neoGitRepo(`${pr.host}/${pr.owner}/${pr.repo}`);
   const named = todo.named?.repository;
   const place = todo.target?.verb === 'start' ? todo.target.place : null;
-  const repositories = [...new Set(scope?.peers?.flatMap((peer) => peer.repo || []) ?? [])];
+  const repositories = [...new Set(facts?.peers)];
   return (
     (typeof named === 'string'
       ? neoGitRepo(/^[\w.-]+\/[\w.-]+$/.test(named.trim()) ? `github.com/${named.trim()}` : named)
@@ -351,13 +383,22 @@ type CodingTodoFacts = {
 };
 
 export function createCodingTodoPolicy(
-  repo: Pick<CodingTodoPrRepository, 'urls'>
+  repo: Pick<CodingTodoPrRepository, 'urls' | 'place'>
 ): Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'>> {
+  const places = new WeakMap<NeoTodoPolicyScope, CodingTodoPlace>();
+  const readPlace = (scope: NeoTodoPolicyScope) => {
+    let place = places.get(scope);
+    if (!place) {
+      place = repo.place(scope);
+      places.set(scope, place);
+    }
+    return place;
+  };
   const repository: NonNullable<NeoTodoPack['repository']> = (todo, scope) =>
     codingTodoRepository(
       todo,
       scope && 'todo' in scope ? [] : todo.id ? repo.urls(todo.id) : [],
-      scope
+      scope && readPlace(scope)
     );
   return {
     repository,
@@ -381,14 +422,18 @@ export function createCodingTodoPolicy(
         : null,
     refuse: (draft, _peers, scope) => {
       if (scope) {
-        const name = repository({ ...draft, named: draft.named ?? null }, scope);
+        const candidate = { ...draft, named: draft.named ?? null };
+        const place = readPlace(scope);
+        const hinted = () =>
+          codingTodoRepository(candidate, candidate.id ? repo.urls(candidate.id) : [], {
+            ask: place.ask,
+            peers: place.peers,
+          });
+        const name = scope.edit
+          ? (place.todo ?? hinted() ?? place.ask)
+          : repository(candidate, scope);
         if (draft.check?.pack === 'coding' && draft.target?.verb === 'send') {
-          const expected =
-            name ??
-            repository(
-              { ...draft, named: draft.named ?? null },
-              { ask: scope.ask, peers: scope.peers }
-            );
+          const expected = name ?? hinted();
           const remotes = scope.workerRemotes?.map(neoGitRepo).filter(Boolean) ?? [];
           if (expected && !remotes.includes(neoGitRepo(expected)))
             return `worker_repository_mismatch: todo is ${expected}, worker ${draft.target.ref.id} is in ${remotes.join(', ') || 'unknown'}; send it to a worker of ${expected} or start one there.`;

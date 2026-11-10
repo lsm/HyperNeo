@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, jest, mock, test } from 'bun:test';
+import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { afterEach, beforeEach, expect, jest, mock, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -51,7 +52,8 @@ const tracker = (
   }
 ) =>
   createCodingIssueTracker({
-    todos: readTodos,
+    repositories: (askId, todoId) =>
+      new CodingTodoPrRepository(db).trackerRepositories(askId, todoId),
     createdAt: (marker) => {
       const [, kind, id] = marker.split(':');
       return (kind === 'ask' ? store.getAsk(id!) : store.getTodo(id!))?.createdAt ?? null;
@@ -65,6 +67,46 @@ const item = {
   body: 'Plan\n\n<!-- hyperneo:ask:ask -->',
   marker: 'hyperneo:ask:ask',
 };
+
+test.each([1, 12])('tracker home batches repository reads for %i todos', (count) => {
+  for (let i = 0; i < count; i++) add(`todo-${i}`, 'github.com/example/one');
+  const owner = { kind: 'ask' as const, ask: store.getAsk('ask')! };
+  const adapter = tracker(() => true);
+  const prepare = db.prepare.bind(db);
+  const statements: string[] = [];
+  const spy = spyOn(db, 'prepare').mockImplementation((...args) => {
+    if (/pack_coding_todos|SELECT repo FROM neo_asks/.test(args[0])) statements.push(args[0]);
+    return prepare(...args);
+  });
+  try {
+    expect(adapter.enabled(owner)).toBe(true);
+    expect(adapter.home(owner)).toBe('example/one');
+    expect(statements).toHaveLength(2);
+    expect(statements.some((sql) => sql.includes('SELECT DISTINCT'))).toBe(false);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test('tracker home preserves canonical empty and historical fallback facts', () => {
+  db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/example/history', 'ask');
+  add('empty', '');
+  add('canonical', 'github.com/example/one');
+  const inherited = store.addTodo(
+    'inherited',
+    'ask',
+    { title: 'Inherited', instruction: null, named: null, check: null, doneWhen: 'Done' },
+    ownerCreatedAt + 2
+  );
+  const ask = store.getAsk('ask')!;
+  const adapter = tracker(() => true);
+  expect(adapter.home({ kind: 'ask', ask })).toBe('example/one');
+  expect(adapter.home({ kind: 'todo', ask, todo: store.getTodo('empty')! })).toBeNull();
+  expect(adapter.home({ kind: 'todo', ask, todo: store.getTodo('canonical')! })).toBe(
+    'example/one'
+  );
+  expect(adapter.home({ kind: 'todo', ask, todo: inherited })).toBe('example/history');
+});
 
 test('preference off creates nothing', () => {
   add('one', 'github.com/example/one');

@@ -25,11 +25,11 @@ writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const root='neo:10000000-0000-4000-8000-000000000052',path=join(run,'data/daemon.db');
 const seed=new Database(path);runMigrations(seed,()=>{});createTables(seed);
 seed.exec("ALTER TABLE neo_todos ADD COLUMN repo TEXT;DELETE FROM migration_markers WHERE key='migration_492'");
-const legacy:NeoTodoStorageBoundary={project:todo=>todo,insert:(commit,[id,askId,draft,now])=>commit(id,askId,draft,now)};
+const legacy:NeoTodoStorageBoundary={insert:(commit,[id,askId,draft,now])=>commit(id,askId,draft,now)};
 const old=new NeoAskTodoRepository(seed,undefined,undefined,undefined,undefined,legacy);
 const draft={title:'Historical',doneWhen:'Observed',check:null,named:null,instruction:null};
 for(const [id,peers] of [['historical-zero',0],['historical-many',4]] as const){
- old.openAsk({id,title:id,request:'Keep historical association',sessionId:root,projectId:null,originMessageId:null,repo:'github.com/synthetic/history',createdAt:1});
+ old.openAsk({id,title:id,request:'Keep historical association',sessionId:root,projectId:null,originMessageId:null,createdAt:1});seed.prepare('UPDATE neo_asks SET repo=? WHERE id=?').run('github.com/synthetic/history',id);
  old.addTodo(id,id,draft,1);
  for(let n=0;n<peers;n++){old.addTodo(`${id}-${n}`,id,draft,1);seed.prepare('UPDATE neo_todos SET repo=? WHERE id=?').run(`github.com/synthetic/peer-${n}`,`${id}-${n}`);}
 }
@@ -56,8 +56,10 @@ async function phase(reopen:boolean){
    assert.equal(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get(id),null);
   }
   result.historicalFallbackPreserved=true;
+  const recorded=(id:string)=>(db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id=?').get(id) as {repo:string|null}|null)?.repo??null;
+  const cards=async()=>(await visible()).entry.todos.map(({id})=>({id,repo:recorded(id)})).sort((a,b)=>a.id.localeCompare(b.id));
   if(reopen){
-   const card=await visible();assert.deepEqual(card.entry.todos.map(({id,repo})=>({id,repo})).sort((a,b)=>a.id.localeCompare(b.id)),expected);
+   assert.deepEqual(await cards(),expected);
    result.reopenAndRepeatBackfill=true;return;
   }
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM pack_coding_todos').get() as {n:number}).n,4);
@@ -70,20 +72,20 @@ async function phase(reopen:boolean){
   const input=(title:string,repo?:string)=>({askId:'work',title,check:{pack:'core',kind:'evidence',params:{}},...(repo?{named:{repository:repo}}:{})});
   const call=async(name:string,input:unknown)=>{const reply=await mcp({name,input});assert(!reply.isError,JSON.stringify(reply));const receipt=JSON.parse(reply.content[0].text);assert(receipt.ok,JSON.stringify(receipt));return receipt;};
   const first=(await call('neo.todo.add',input('First','synthetic/one'))).todo as NeoTodo;
-  assert.equal(first.repo,'github.com/synthetic/one');
-  const second=(await call('neo.todo.add',input('Inherit one'))).todo as NeoTodo;assert.equal(second.repo,first.repo);
-  const third=(await call('neo.todo.add',input('Other','synthetic/two'))).todo as NeoTodo;assert.equal(third.repo,'github.com/synthetic/two');
-  const unknown=(await call('neo.todo.add',input('No guess'))).todo as NeoTodo;assert.equal(unknown.repo,null);
-  assert.equal(store.getAsk('work')?.repo,null);
+  assert.equal(recorded(first.id),'github.com/synthetic/one');assert(!('repo' in first));
+  const second=(await call('neo.todo.add',input('Inherit one'))).todo as NeoTodo;assert.equal(recorded(second.id),recorded(first.id));
+  const third=(await call('neo.todo.add',input('Other','synthetic/two'))).todo as NeoTodo;assert.equal(recorded(third.id),'github.com/synthetic/two');
+  const unknown=(await call('neo.todo.add',input('No guess'))).todo as NeoTodo;assert.equal(recorded(unknown.id),null);
+  assert.deepEqual(db.prepare('SELECT repo FROM neo_asks WHERE id=?').get('work'),{repo:null});
   const reads=[
    await method<NeoTodo>('neo.todoReads','read','getTodo',[first.id]),
    (await method<{todos:NeoTodo[]}>('neo.askSettlementReads','read','snapshot',['work'])).todos.find(t=>t.id===first.id)!,
    (await method<{todo:NeoTodo}>('neo.todoMutationReads','read','plan',[{kind:'edit',todoId:first.id,title:'Updated'},10,[]])).todo,
    (await method<{todo:NeoTodo}>('neo.todoSessionReads','read','stopContext',[first.id])).todo,
    (await method<{todo:NeoTodo}>('neo.todoRunnerWrites','write','recompute',[first.id,first.check,{},10,{state:'no_opinion'}])).todo,
-  ];assert(reads.every(todo=>todo.repo===first.repo));
-  const edited=await call('neo.todo.edit',{todoId:first.id,title:'Updated'});assert.equal(edited.todo.repo,first.repo);
-  assert.equal((await visible()).entry.todos.find(t=>t.id===first.id)?.repo,first.repo);
+  ];assert(reads.every(todo=>todo.id===first.id&&!('repo' in todo)));assert.equal(neoTodoRepository(first,neoTodoPolicies(db),{ask:{id:'work'},todo:first}),recorded(first.id));
+  const edited=await call('neo.todo.edit',{todoId:first.id,title:'Updated'});assert(!('repo' in edited.todo));assert.equal(recorded(first.id),'github.com/synthetic/one');
+  assert(!('repo' in (await visible()).entry.todos.find(t=>t.id===first.id)!));
   result.publicReceiptsAndIndependentGatewayReaders=true;result.homogeneousInheritanceAndNoDualWrites=true;
   const watched=(await call('neo.todo.add',{askId:'work',title:'Watch canonical',check:{pack:'coding',kind:'pr_merged',params:{urls:['https://github.com/synthetic/watch/pull/1']}}})).todo as NeoTodo;
   const inventory=new GitHubWatchInventory(db,new SessionEventSubscriptionRepository(db));assert(inventory.references('synthetic','watch'));assert(!inventory.references('synthetic','stale'));result.watcherUsesPackFact=true;
@@ -93,10 +95,10 @@ async function phase(reopen:boolean){
   db.exec('BEGIN IMMEDIATE');held=true;recording=true;let replied=false;
   const pending=command<{ok:true;todo:NeoTodo}>('neo.todoAddWrites','write',{askId:'work',todoId:'held',draft:{...input('Held','synthetic/held'),instruction:null,start:false,named:{repository:'synthetic/held'},check:{pack:'core',kind:'evidence',params:{path:'/synthetic/result'}}},now:Date.now()});void pending.then(()=>{replied=true;},()=>{replied=true;});
   await new Promise(done=>setTimeout(done,500));assert(!replied);assert.equal(tables.length,0);assert.deepEqual(await visible(),before);await hub.request('system.health',{});
-  db.exec('ROLLBACK');held=false;const committed=await pending;recording=false;assert.equal(committed.todo.repo,'github.com/synthetic/held');assert(tables.includes('pack_coding_todos'));result.gatewayWriterCommitBeforeReceiptUnderContention=true;
+  db.exec('ROLLBACK');held=false;const committed=await pending;recording=false;assert.equal(recorded(committed.todo.id),'github.com/synthetic/held');assert(tables.includes('pack_coding_todos'));result.gatewayWriterCommitBeforeReceiptUnderContention=true;
   listeningForFact=true;await method('coding.todoStorageWrites','write','record',[first.id,null]);await visible();assert(committedFact&&deliveredFact,'canonical fact changes must publish neo.changed after commit');listeningForFact=false;result.factUpdatesNotifyAfterCommit=true;await method('coding.todoStorageWrites','write','prepare',[]);
-  assert.equal((await visible()).entry.todos.find(t=>t.id===first.id)?.repo,null);result.explicitNullSurvivesPreparation=true;
-  expected=(await visible()).entry.todos.map(({id,repo})=>({id,repo})).sort((a,b)=>a.id.localeCompare(b.id));
+  assert.equal(recorded(first.id),null);assert.equal(neoTodoRepository(first,neoTodoPolicies(db),{ask:{id:'work'},todo:first}),null);result.explicitNullSurvivesPreparation=true;
+  expected=await cards();
  }finally{
   if(held)db.exec('ROLLBACK');recording=false;app.db.gateway.onChanges=replay;offFact();await transport.close();hub.cleanup();await app.cleanup();
  }

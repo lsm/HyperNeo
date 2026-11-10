@@ -1,10 +1,8 @@
 import { homedir } from 'node:os';
 import { z } from 'zod';
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTrackerAdapter, NeoTrackerOwner } from '../../pack-contract.ts';
 import { neoRepositoryIdentity } from '../../project-mirror.ts';
 import { readNeoTrackerMarker } from '../../tracker-mirror-plan.ts';
-import { codingTodoRepository } from './todo-prs.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn, type SpawnProcess } from '../../../runtime-spawn/index.ts';
 
@@ -20,7 +18,7 @@ const githubRepo = (repo: string | null) => {
     .replace(/^github\.com\//, '');
   return path && /^[\w.-]+\/[\w.-]+$/.test(path) ? path : null;
 };
-export const planCodingIssueHome = (todos: readonly Pick<NeoTodo, 'repo'>[]) =>
+export const planCodingIssueHome = (todos: readonly { repo: string | null }[]) =>
   todos.map((todo) => githubRepo(todo.repo)).find(Boolean) ?? null;
 const issuePath = (ref: string) => {
   const match = ref.match(/^([\w.-]+\/[\w.-]+)#([1-9]\d*)$/);
@@ -59,7 +57,7 @@ async function operation<T>(spawn: SpawnFn, action: (api: Api) => Promise<T>): P
 }
 
 export function createCodingIssueTracker(deps: {
-  todos: (askId: string) => readonly NeoTodo[];
+  repositories: (askId: string, todoId?: string) => readonly { repo: string | null }[];
   createdAt: (marker: string) => number | null;
   enabled: (repo: string) => boolean;
   spawn?: SpawnFn;
@@ -67,12 +65,10 @@ export function createCodingIssueTracker(deps: {
   const spawn = deps.spawn ?? spawnProcess;
   const home = (owner: NeoTrackerOwner) =>
     planCodingIssueHome(
-      (owner.todo ? [owner.todo] : deps.todos(owner.ask.id))
-        .map((todo) => ({ repo: codingTodoRepository(todo, [], { todo, ask: owner.ask }) }))
-        .filter((todo) => {
-          const repo = githubRepo(todo.repo);
-          return repo !== null && deps.enabled(repo);
-        })
+      deps.repositories(owner.ask.id, owner.todo?.id).filter((todo) => {
+        const repo = githubRepo(todo.repo);
+        return repo !== null && deps.enabled(repo);
+      })
     );
   return {
     id: 'github-issues',

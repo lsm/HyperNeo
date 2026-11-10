@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import type { NeoTodo, NeoTodoCheck } from '../packages/shared/src/types/neo-ask.ts';
 import { parseGitHubRefUrl } from '../packages/daemon/src/lib/github/parse-pr-url.ts';
 
-type Todo = Pick<NeoTodo, 'id' | 'askId' | 'title' | 'report' | 'repo' | 'state' | 'check'>;
+type Todo = Pick<NeoTodo, 'id' | 'askId' | 'title' | 'report' | 'state' | 'check'> & {
+  repo: string | null;
+};
 type Reference = { kind: 'pr' | 'issue'; owner: string; repo: string; number: number };
 type ReferenceKinds = Readonly<Record<string, Reference['kind']>>;
 type Edit = { todoId: string; check: NeoTodoCheck };

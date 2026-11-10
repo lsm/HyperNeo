@@ -20347,12 +20347,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -20458,7 +20452,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -20633,12 +20626,6 @@
                             "null"
                           ]
                         },
-                        "repo": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
                         "request": {
                           "type": "string"
                         },
@@ -20675,7 +20662,6 @@
                       "required": [
                         "id",
                         "projectId",
-                        "repo",
                         "parentId",
                         "sessionId",
                         "originMessageId",
@@ -21365,12 +21351,6 @@
                               "null"
                             ]
                           },
-                          "repo": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
                           "report": {
                             "type": [
                               "string",
@@ -21476,7 +21456,6 @@
                           "check",
                           "instruction",
                           "named",
-                          "repo",
                           "state",
                           "reason",
                           "blockedReason",
@@ -21975,12 +21954,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "request": {
                     "type": "string"
                   },
@@ -22017,7 +21990,6 @@
                 "required": [
                   "id",
                   "projectId",
-                  "repo",
                   "parentId",
                   "sessionId",
                   "originMessageId",
@@ -22255,12 +22227,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -22363,7 +22329,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -22521,12 +22486,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "request": {
                     "type": "string"
                   },
@@ -22563,7 +22522,6 @@
                 "required": [
                   "id",
                   "projectId",
-                  "repo",
                   "parentId",
                   "sessionId",
                   "originMessageId",
@@ -22801,12 +22759,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -22909,7 +22861,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -23069,12 +23020,6 @@
                           "null"
                         ]
                       },
-                      "repo": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
                       "request": {
                         "type": "string"
                       },
@@ -23111,7 +23056,6 @@
                     "required": [
                       "id",
                       "projectId",
-                      "repo",
                       "parentId",
                       "sessionId",
                       "originMessageId",
@@ -23801,12 +23745,6 @@
                             "null"
                           ]
                         },
-                        "repo": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
                         "report": {
                           "type": [
                             "string",
@@ -23912,7 +23850,6 @@
                         "check",
                         "instruction",
                         "named",
-                        "repo",
                         "state",
                         "reason",
                         "blockedReason",
@@ -24210,12 +24147,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "request": {
                     "type": "string"
                   },
@@ -24252,7 +24183,6 @@
                 "required": [
                   "id",
                   "projectId",
-                  "repo",
                   "parentId",
                   "sessionId",
                   "originMessageId",
@@ -24490,12 +24420,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -24598,7 +24522,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -24756,12 +24679,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "request": {
                     "type": "string"
                   },
@@ -24798,7 +24715,6 @@
                 "required": [
                   "id",
                   "projectId",
-                  "repo",
                   "parentId",
                   "sessionId",
                   "originMessageId",
@@ -25036,12 +24952,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -25144,7 +25054,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -30113,12 +30022,6 @@
                             "null"
                           ]
                         },
-                        "repo": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
                         "request": {
                           "type": "string"
                         },
@@ -30155,7 +30058,6 @@
                       "required": [
                         "id",
                         "projectId",
-                        "repo",
                         "parentId",
                         "sessionId",
                         "originMessageId",
@@ -30845,12 +30747,6 @@
                               "null"
                             ]
                           },
-                          "repo": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
                           "report": {
                             "type": [
                               "string",
@@ -30956,7 +30852,6 @@
                           "check",
                           "instruction",
                           "named",
-                          "repo",
                           "state",
                           "reason",
                           "blockedReason",
@@ -39276,12 +39171,6 @@
                             "null"
                           ]
                         },
-                        "repo": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
                         "request": {
                           "type": "string"
                         },
@@ -39318,7 +39207,6 @@
                       "required": [
                         "id",
                         "projectId",
-                        "repo",
                         "parentId",
                         "sessionId",
                         "originMessageId",
@@ -40008,12 +39896,6 @@
                               "null"
                             ]
                           },
-                          "repo": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
                           "report": {
                             "type": [
                               "string",
@@ -40119,7 +40001,6 @@
                           "check",
                           "instruction",
                           "named",
-                          "repo",
                           "state",
                           "reason",
                           "blockedReason",
@@ -41096,12 +40977,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -41179,7 +41054,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -41413,12 +41287,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -41496,7 +41364,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -41811,12 +41678,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -41894,7 +41755,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -42128,12 +41988,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -42211,7 +42065,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -42509,12 +42362,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -42592,7 +42439,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -42826,12 +42672,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -42909,7 +42749,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -43207,12 +43046,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -43290,7 +43123,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -43524,12 +43356,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -43607,7 +43433,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -44193,12 +44018,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -44276,7 +44095,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -44510,12 +44328,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -44593,7 +44405,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -44899,12 +44710,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -44982,7 +44787,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -45216,12 +45020,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -45299,7 +45097,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -45592,12 +45389,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -45675,7 +45466,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -45909,12 +45699,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -45992,7 +45776,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -46294,12 +46077,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -46377,7 +46154,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -46611,12 +46387,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -46694,7 +46464,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",
@@ -46987,12 +46756,6 @@
                       "null"
                     ]
                   },
-                  "repo": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "report": {
                     "type": [
                       "string",
@@ -47070,7 +46833,6 @@
                   "check",
                   "instruction",
                   "named",
-                  "repo",
                   "state",
                   "reason",
                   "blockedReason",
@@ -47304,12 +47066,6 @@
                         "null"
                       ]
                     },
-                    "repo": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
                     "report": {
                       "type": [
                         "string",
@@ -47387,7 +47143,6 @@
                     "check",
                     "instruction",
                     "named",
-                    "repo",
                     "state",
                     "reason",
                     "blockedReason",

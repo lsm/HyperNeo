@@ -60,7 +60,23 @@ try {
     assert.equal(result.ok, expected, JSON.stringify(result));
     return result;
   };
-  store.openAsk({ id: 'policy', title: 'Repository policy', request: 'Preserve placement', sessionId: root, projectId: null, originMessageId: null, repo: 'github.com/synthetic/ask', createdAt: 1 });
+  const retryDraft = { title: 'Recorded retry', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/retry/pull/1'] } } };
+  const retryInput = { title: 'Repository read budget', request: 'Keep the same card', todos: [retryDraft] };
+  const opened = await call('neo.ask.open', retryInput);
+  const prepare = db.prepare;
+  let repositoryStatements = 0;
+  db.prepare = (...args: Parameters<typeof prepare>) => {
+    if (/^SELECT repo FROM (neo_asks|pack_coding_todos)|^SELECT DISTINCT p.repo/.test(args[0])) repositoryStatements++;
+    return Reflect.apply(prepare, db, args);
+  };
+  try {
+    const retried = await call('neo.ask.open', { ...retryInput, todos: Array.from({ length: 20 }, () => retryDraft) });
+    assert.deepEqual(retried.todos.map((todo: { id: string }) => todo.id), [opened.todos[0].id]);
+    assert.equal(repositoryStatements, 3, 'one ask scope and one stored todo read per operation');
+    observed.repositoryStatements = repositoryStatements;
+  } finally { db.prepare = prepare; }
+  store.openAsk({ id: 'policy', title: 'Repository policy', request: 'Preserve placement', sessionId: root, projectId: null, originMessageId: null, createdAt: 1 });
+  db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/ask', 'policy');
   const check = { pack: 'core', kind: 'evidence', params: {} };
   store.addTodo('repository-context','policy',{title:'Known repository',doneWhen:'Observed',check:null,instruction:null,named:null},1,'github.com/synthetic/ask');
   const target = { verb: 'start', adapter: 'hyperneo' };
@@ -80,9 +96,10 @@ try {
     assert.equal(sessions.get(id), null);
   }
   observed.admissionPreserved = true;
-  store.openAsk({ id: 'ask-only', title: 'Historical association', request: 'Keep stored fallback', sessionId: root, projectId: null, originMessageId: null, repo: 'github.com/synthetic/history', createdAt: 1 });
+  store.openAsk({ id: 'ask-only', title: 'Historical association', request: 'Keep stored fallback', sessionId: root, projectId: null, originMessageId: null, createdAt: 1 });
+  db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/history', 'ask-only');
   const fresh = await call('neo.todo.add', { askId: 'ask-only', title: 'Fresh non-repository work', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'workspace', 'fresh.md') } } });
-  assert.equal(fresh.todo.repo, null);
+  assert.equal((db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(fresh.todo.id) as { repo: string | null }).repo, null);
   const old = store.addTodo('ask-only-stored', 'ask-only', { title: 'Stored ask-only work', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1);
   const denied = await call('neo.todo.edit', { todoId: old.id, check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'workspace', 'misplaced.md') } } }, false);
   assert(denied.reason.startsWith('evidence_in_user_folder:'));

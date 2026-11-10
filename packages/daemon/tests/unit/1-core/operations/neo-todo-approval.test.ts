@@ -317,7 +317,6 @@ describe('todo approval', () => {
         ...store.getAsk(a.askId)!,
         id: 'historical-child',
         parentId: a.askId,
-        repo: 'synthetic/second',
       });
       db.prepare('UPDATE neo_todos SET ask_id = ? WHERE id = ?').run(child.id, b.id);
       store.retireQuestions(a.askId, Date.now());

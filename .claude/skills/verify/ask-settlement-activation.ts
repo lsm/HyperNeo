@@ -48,7 +48,7 @@ type Receipt={ok:false;reason:string}|{ok:true;ask:NeoAsk;todos:NeoTodo[];record
 const settle=(askId:string,status:'done'|'dropped'='dropped')=>hub.request<Receipt>('operation.invoke',{name:'neo.ask.settle',input:{askId,status,outcome:'Explicitly ended'}});
 const visible=(askId:string)=>hub.request<{ok:true;entry:{ask:NeoAsk;todos:NeoTodo[];questions:unknown[];doneCount:number}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const stable=async(askId:string)=>{const {entry}=await visible(askId);return {ask:entry.ask,todos:entry.todos.map(({id,state,report,reason,evidence})=>({id,state,report,reason,evidence})),questions:entry.questions};};
-const ask=(id:string,parentId:string|null=null)=>store.openAsk({id,parentId,repo:parentId?'github.com/fixture/child':null,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep full work',createdAt:1});
+const ask=(id:string,parentId:string|null=null)=>store.openAsk({id,parentId,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep full work',createdAt:1});
 const seed=(id:string,askId:string,adopted=false)=>{
  store.addTodo(id,askId,{ approvedAt: 1,title:id,doneWhen:'Observed outcome',check:null,instruction:null,named:null},1);
  store.updateTodo(store.getTodo(id)!,{state:'doing',report,reason:'Prior diagnostic'},2);

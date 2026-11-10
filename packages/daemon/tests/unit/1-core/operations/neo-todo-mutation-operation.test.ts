@@ -23,6 +23,8 @@ describe('Writer-backed todo operation activation', () => {
   let duringStop: () => void;
   let stopFailure: string | null;
   let checkDone: boolean;
+  let workerRemotes: string[] | undefined;
+  let advance: () => Promise<unknown>;
   let call: (name: string, input: object, role?: 'neo' | 'direct_task_worker') => Promise<Receipt>;
   beforeEach(() => {
     db = new Database(':memory:');
@@ -34,6 +36,7 @@ describe('Writer-backed todo operation activation', () => {
     duringStop = () => {};
     stopFailure = null;
     checkDone = true;
+    workerRemotes = undefined;
     gateway.onChanges = () => {
       order.push('commit');
     };
@@ -76,6 +79,7 @@ describe('Writer-backed todo operation activation', () => {
       store.updateTodo(store.getTodo(id)!, { state: 'doing', startedAt: 3 }, 3);
       return { ok: true as const, todo: store.getTodo(id)! };
     };
+    advance = () => start('peer');
     const legacy = createNeoTodoOperations(
       store,
       new NeoTodoSessionRepository(db),
@@ -99,8 +103,8 @@ describe('Writer-backed todo operation activation', () => {
         packs: () => packs,
         artifact: () => null,
         stop,
-        resolveTarget: async (ref) => ({ value: ref }),
-        advance: () => start('peer'),
+        resolveTarget: async (ref) => ({ value: ref, place: { remotes: workerRemotes } }),
+        advance: () => advance(),
         changed: () => {
           order.push('announce');
         },
@@ -113,8 +117,8 @@ describe('Writer-backed todo operation activation', () => {
         sessionId: 'neo',
         role,
       });
-      expect(result.kind).toBe('completed');
       if (result.kind !== 'completed') throw new Error(result.message);
+      expect(result.kind).toBe('completed');
       return result.value as Receipt;
     };
   });
@@ -147,6 +151,43 @@ describe('Writer-backed todo operation activation', () => {
     expect(store.getTodo(current.id)).toEqual(current);
     expect(new NeoTodoSessionRepository(db).get(current.id)).toBeNull();
     expect(order).toEqual([]);
+  });
+
+  test('a repo-less edit inherits its sibling repository and requires a start place', async () => {
+    db.prepare('UPDATE pack_coding_todos SET repo = ? WHERE todo_id = ?').run(
+      'github.com/example/repo',
+      'peer'
+    );
+    const before = store.getTodo('first');
+    expect(
+      await call('neo.todo.edit', {
+        todoId: 'first',
+        instruction: 'Implement the change',
+        target: { verb: 'start', adapter: 'hyperneo' },
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/^place_required:/) });
+    expect(store.getTodo('first')).toEqual(before);
+    expect(new NeoTodoSessionRepository(db).get('first')).toBeNull();
+    expect(order).toEqual([]);
+  });
+
+  test('edited check clues take precedence over a historical ask repository', async () => {
+    db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/example/old', 'ask');
+    workerRemotes = ['https://github.com/example/new.git'];
+    advance = async () => undefined;
+    expect(
+      await call('neo.todo.edit', {
+        todoId: 'first',
+        instruction: 'Implement the change',
+        check: {
+          pack: 'coding',
+          kind: 'pr_merged',
+          params: { urls: ['https://github.com/example/new/pull/1'] },
+        },
+        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+      })
+    ).toMatchObject({ ok: true });
+    expect(new NeoTodoSessionRepository(db).get('first')).toMatchObject({ verb: 'send' });
   });
 
   test('edit uses the atomic command and returns the entire committed report', async () => {

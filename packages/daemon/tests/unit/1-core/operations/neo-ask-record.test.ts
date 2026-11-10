@@ -1,7 +1,7 @@
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
   createNeoAskRecordOperations,
@@ -75,7 +75,7 @@ function setup() {
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
-  return { store, goals, sessions, call, started, stopped, refuse, stopFails, onStop, ops };
+  return { db, store, goals, sessions, call, started, stopped, refuse, stopFails, onStop, ops };
 }
 
 const opening = {
@@ -95,6 +95,88 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('ask retries read each repository scope once and refresh facts on the next operation', async () => {
+    const { db, call, store } = setup();
+    const base = { title: 'Repository query budget', request: 'Reuse recorded work' };
+    const draft = {
+      title: 'Recorded work',
+      check: pendingTodoCheck,
+      named: { repository: 'synthetic/one' },
+    };
+    const opened = await call('neo.ask.open', { ...base, todos: [draft] }, turn('initial'));
+    if (!opened.ok) throw new Error(opened.reason);
+    const prepare = db.prepare.bind(db);
+    const statements: string[] = [];
+    const spy = spyOn(db, 'prepare').mockImplementation((...args) => {
+      if (/^SELECT repo FROM (neo_asks|pack_coding_todos)|^SELECT DISTINCT p.repo/.test(args[0]))
+        statements.push(args[0]);
+      return prepare(...args);
+    });
+    try {
+      for (const repository of ['synthetic/one', 'synthetic/two']) {
+        db.prepare('UPDATE pack_coding_todos SET repo = ? WHERE todo_id = ?').run(
+          `github.com/${repository}`,
+          opened.todos[0].id
+        );
+        statements.length = 0;
+        const retried = await call(
+          'neo.ask.open',
+          {
+            ...base,
+            todos: Array.from({ length: 20 }, () => ({ ...draft, named: { repository } })),
+          },
+          turn('retry')
+        );
+        expect(retried.ok).toBe(true);
+        expect(store.listTodos(opened.ask.id).map((todo) => todo.id)).toEqual([opened.todos[0].id]);
+        expect(statements).toHaveLength(3);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('ask retries keep duplicate matching stable while new sibling repositories are added', async () => {
+    const { call, store } = setup();
+    const base = { title: 'Synthetic repository work', request: 'Keep the recorded work' };
+    const opened = await call(
+      'neo.ask.open',
+      {
+        ...base,
+        todos: [
+          {
+            title: 'Repeated',
+            check: pendingTodoCheck,
+            named: { repository: 'synthetic/one' },
+          },
+        ],
+      },
+      turn('first')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    const original = opened.todos[0].id;
+    const retried = await call(
+      'neo.ask.open',
+      {
+        ...base,
+        todos: [
+          { title: 'New sibling', check: pendingTodoCheck, named: { repository: 'synthetic/two' } },
+          {
+            title: 'Repeated',
+            check: pendingTodoCheck,
+            instruction: 'Keep working',
+            target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+          },
+        ],
+      },
+      turn('retry')
+    );
+    expect(retried.ok).toBe(true);
+    const rows = store.listTodos(opened.ask.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((row) => row.title === 'Repeated').map((row) => row.id)).toEqual([original]);
+  });
+
   test('worker roles discover ask opening in the default operation list', () => {
     const { ops } = setup();
     const registry = createOperationRegistry(Object.values(ops));
@@ -271,7 +353,6 @@ describe('neo.ask.open and neo.ask.settle', () => {
       ...result.ask,
       id: 'historical-child',
       parentId: result.ask.id,
-      repo: 'github.com/verify/second',
     });
     expect(child.goalId).toBe(mine.id);
     expect(store.listGoalAsks(mine.id).map((ask) => ask.id)).toEqual(

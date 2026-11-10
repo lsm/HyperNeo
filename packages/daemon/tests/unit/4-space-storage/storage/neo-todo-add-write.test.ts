@@ -73,12 +73,18 @@ describe('Whole todo-add writer', () => {
     const second = await add('two', { ...draft(), named: { repository: 'synthetic/second' } });
     expect(first).toMatchObject({
       ok: true,
-      todo: { askId: 'ask', repo: 'github.com/synthetic/first' },
+      todo: { askId: 'ask' },
     });
     expect(second).toMatchObject({
       ok: true,
-      todo: { askId: 'ask', repo: 'github.com/synthetic/second' },
+      todo: { askId: 'ask' },
     });
+    expect(
+      db.prepare('SELECT todo_id, repo FROM pack_coding_todos ORDER BY todo_id').all()
+    ).toEqual([
+      { todo_id: 'one', repo: 'github.com/synthetic/first' },
+      { todo_id: 'two', repo: 'github.com/synthetic/second' },
+    ]);
     expect(store.getAsk('ask')?.status).toBe('open');
     expect(store.listChildAsks('ask')).toEqual([]);
   });

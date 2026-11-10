@@ -36,7 +36,7 @@ try{
  const root='neo:10000000-0000-4000-8000-000000009076';
  await app.db.createSession({id:root,title:'Synthetic settlement build',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
- const ask=(id:string,parentId:string|null=null)=>store.openAsk({id,parentId,repo:parentId?'github.com/synthetic/child':null,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep full work',createdAt:1});
+ const ask=(id:string,parentId:string|null=null)=>store.openAsk({id,parentId,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep full work',createdAt:1});
  const todo=(id:string,askId:string)=>store.addTodo(id,askId,{ approvedAt: 1,title:id,doneWhen:'Observed outcome',check:null,instruction:null,named:null},1);
  ask('ask');todo('first','ask');todo('second','ask');
  const report='Full settlement report 🦊\n'.repeat(20000).trim();

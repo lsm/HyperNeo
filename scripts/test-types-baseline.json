@@ -341,7 +341,7 @@
     "packages/daemon/tests/unit/4-space-storage/skills-manager.test.ts": 10,
     "packages/daemon/tests/unit/4-space-storage/space-agent-repository.test.ts": 1,
     "packages/daemon/tests/unit/4-space-storage/space-goal-service.test.ts": 2,
-    "packages/daemon/tests/unit/4-space-storage/storage/coding-todo-cutover.test.ts": 3,
+    "packages/daemon/tests/unit/4-space-storage/storage/coding-todo-cutover.test.ts": 2,
     "packages/daemon/tests/unit/4-space-storage/storage/coding-todo-storage-activation.test.ts": 1,
     "packages/daemon/tests/unit/4-space-storage/storage/coding-todo-storage.test.ts": 1,
     "packages/daemon/tests/unit/4-space-storage/storage/database-facade.test.ts": 7,

@@ -72,10 +72,7 @@ import { codingAssignmentWrites } from '../../lib/neo/packs/coding/assignments.t
 import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
 import { codingTurnPrReads } from '../../lib/neo/packs/coding/turn-prs.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
-import {
-  codingTodoStorageReads,
-  codingTodoStorageWrites,
-} from '../../lib/neo/packs/coding/todo-storage.ts';
+import { codingTodoStorageWrites } from '../../lib/neo/packs/coding/todo-storage.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
   enrollLocalDevice,
@@ -275,7 +272,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingLedgerWrites,
     codingAssignmentWrites,
     codingTodoPrWrites,
-    codingTodoStorageReads,
     codingTodoStorageWrites,
     codingDeliveryWrites,
     codingSweepReads,

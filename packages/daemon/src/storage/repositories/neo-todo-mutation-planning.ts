@@ -8,7 +8,6 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
-import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
   neoTodoPlaceRefusal,
@@ -140,15 +139,10 @@ class NeoTodoMutationPlanner {
             target: input.target,
           };
           const ask = todos.getAsk(plan.todo.askId);
-          const repo =
-            plan.todo.repo ??
-            neoTodoRepository(draft, this.policies, {
-              ask,
-              peers: todos.listTodos(plan.todo.askId),
-            });
           const placeless = neoTodoPlaceRefusal(draft, this.policies, {
             ask,
-            todo: { repo },
+            todo: plan.todo,
+            edit: true,
             workerRemotes: input.workerRemotes,
           });
           return placeless
