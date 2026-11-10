@@ -52,8 +52,8 @@ const tracker = (
   }
 ) =>
   createCodingIssueTracker({
-    place: (scope) => new CodingTodoPrRepository(db).place(scope),
-    todos: readTodos,
+    repositories: (askId, todoId) =>
+      new CodingTodoPrRepository(db).trackerRepositories(askId, todoId),
     createdAt: (marker) => {
       const [, kind, id] = marker.split(':');
       return (kind === 'ask' ? store.getAsk(id!) : store.getTodo(id!))?.createdAt ?? null;
@@ -86,6 +86,26 @@ test.each([1, 12])('tracker home batches repository reads for %i todos', (count)
   } finally {
     spy.mockRestore();
   }
+});
+
+test('tracker home preserves canonical empty and historical fallback facts', () => {
+  db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/example/history', 'ask');
+  add('empty', '');
+  add('canonical', 'github.com/example/one');
+  const inherited = store.addTodo(
+    'inherited',
+    'ask',
+    { title: 'Inherited', instruction: null, named: null, check: null, doneWhen: 'Done' },
+    ownerCreatedAt + 2
+  );
+  const ask = store.getAsk('ask')!;
+  const adapter = tracker(() => true);
+  expect(adapter.home({ kind: 'ask', ask })).toBe('example/one');
+  expect(adapter.home({ kind: 'todo', ask, todo: store.getTodo('empty')! })).toBeNull();
+  expect(adapter.home({ kind: 'todo', ask, todo: store.getTodo('canonical')! })).toBe(
+    'example/one'
+  );
+  expect(adapter.home({ kind: 'todo', ask, todo: inherited })).toBe('example/history');
 });
 
 test('preference off creates nothing', () => {

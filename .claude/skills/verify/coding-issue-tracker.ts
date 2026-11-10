@@ -72,6 +72,22 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
             "INSERT INTO neo_pack_preferences VALUES ('coding','repo',?,'mirror_issues','true','human',1)"
           )
           .run(repo);
+      const db = app.db.getDatabase();
+      const owner = { kind: 'ask' as const, ask: store.getAsk('ask')! };
+      const tracker = neo.pack('coding')!.tracker!;
+      const prepare = db.prepare;
+      const repositorySql: string[] = [];
+      db.prepare = (...args: Parameters<typeof prepare>) => {
+        if (/pack_coding_todos|SELECT repo FROM neo_asks/.test(args[0])) repositorySql.push(args[0]);
+        return Reflect.apply(prepare, db, args);
+      };
+      try {
+        assert(tracker.enabled(owner));
+        assert.equal(tracker.home(owner), 'example/one');
+        assert.equal(repositorySql.length, 2);
+        assert(!repositorySql.some(sql => sql.includes('SELECT DISTINCT')));
+        writeFileSync(join(run, 'evidence/tracker-home-reads.json'), JSON.stringify({ lookups: 2, statements: repositorySql.length, siblingScans: 0 }));
+      } finally { db.prepare = prepare; }
       const gateway = app.db.gateway;
       const original = gateway.run.bind(gateway);
       gateway.run = (async (op, args) => {

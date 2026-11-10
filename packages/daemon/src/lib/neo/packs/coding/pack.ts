@@ -114,8 +114,7 @@ export function createCodingPack(deps: {
       }),
     ],
     tracker: createCodingIssueTracker({
-      place: (scope) => deps.todoPrs.place(scope),
-      todos: (askId) => trackerOwners().listTodosForAsks([askId]),
+      repositories: (askId, todoId) => deps.todoPrs.trackerRepositories(askId, todoId),
       createdAt: (marker) => {
         const [, kind, id] = marker.split(':');
         if (!id) return null;

@@ -38,6 +38,16 @@ export class CodingTodoPrRepository {
     return this.turnPrs.ownedPrs(todoId);
   }
 
+  trackerRepositories(askId: string, todoId?: string): { repo: string | null }[] {
+    return this.db
+      .prepare(`SELECT COALESCE(p.repo,
+        (SELECT repo FROM neo_asks WHERE id = ?)) AS repo
+      FROM neo_todos t LEFT JOIN pack_coding_todos p ON p.todo_id = t.id
+      WHERE t.ask_id = ? ${todoId ? 'AND t.id = ?' : ''}
+      ORDER BY t.position, t.created_at`)
+      .all(askId, askId, ...(todoId ? [todoId] : [])) as { repo: string | null }[];
+  }
+
   place(scope: NeoTodoPolicyScope): CodingTodoPlace {
     const repo = (sql: string, id: string | undefined) =>
       id ? ((this.db.prepare(sql).get(id) as { repo: string | null } | null)?.repo ?? null) : null;

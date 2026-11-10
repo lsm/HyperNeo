@@ -33,3 +33,8 @@ retain marker recovery for uncertain creates.
 
 A synthetic mailbox failure rejects the missing-item note after the retry cap.
 The queued worker send must still proceed.
+
+Before the first sweep, the helper checks the actual coding tracker home selector.
+The enabled and home lookups must use two repository statements total and no
+distinct-sibling scan. Stored todo repositories and the historical ask fallback
+are read together per lookup. Retain tracker-home-reads.json.
