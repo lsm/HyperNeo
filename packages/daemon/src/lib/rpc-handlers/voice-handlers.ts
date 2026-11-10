@@ -322,7 +322,7 @@ export function registerVoiceHandlers(
           },
           audio.byteLength,
           data.offset === undefined,
-          { startedAt, decodeMs }
+          { startedAt, decodeMs, offset: data.offset }
         );
         if (refused) throw new Error(refused);
       } catch (error) {

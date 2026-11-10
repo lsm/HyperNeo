@@ -146,22 +146,32 @@ try {
     },
   });
   const pcm = await call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16000 });
-  await call('voice.stream.chunk', {
-    streamId: pcm.streamId,
-    audioBase64: Buffer.alloc(4).toString('base64'),
-  });
-  await pause(1100);
-  await call('voice.stream.chunk', {
-    streamId: pcm.streamId,
-    audioBase64: Buffer.alloc(6).toString('base64'),
-  });
+  const attempts = [
+    { attempt: 1, offset: 0, bytes: 4, delivered: true },
+    { attempt: 2, offset: 4, bytes: 6, delivered: false },
+    { attempt: 3, offset: 4, bytes: 6, delivered: true },
+    { attempt: 4, offset: 0, bytes: 4, delivered: true },
+  ];
+  for (const attempt of attempts) {
+    if (!attempt.delivered) {
+      await pause(1100);
+      continue;
+    }
+    await call('voice.stream.chunk', {
+      streamId: pcm.streamId,
+      offset: attempt.offset,
+      audioBase64: Buffer.alloc(attempt.bytes).toString('base64'),
+    });
+  }
   await call('voice.stream.cancel', { streamId: pcm.streamId });
   const fixture = await opusFixture(4);
   const opus = await call('voice.stream.start', { encoding: 'opus', sampleRate: 16000 });
   const split = fixture.boundaries[2];
-  for (const audio of [fixture.encoded.subarray(0, split), fixture.encoded.subarray(split)]) {
+  for (const offset of [0, split]) {
+    const audio = fixture.encoded.subarray(offset, offset === 0 ? split : undefined);
     await call('voice.stream.chunk', {
       streamId: opus.streamId,
+      offset,
       audioBase64: audio.toString('base64'),
     });
   }
@@ -193,8 +203,8 @@ try {
     events.find(
       (event) => event.message === 'voice.stream.close' && event.metadata.streamId === id
     )!.metadata;
-  assert.equal(close(pcm.streamId).receivedChunks, 2);
-  assert.equal(close(pcm.streamId).receivedBytes, 10);
+  assert.equal(close(pcm.streamId).receivedChunks, 3);
+  assert.equal(close(pcm.streamId).receivedBytes, 14);
   assert.equal(close(pcm.streamId).audioBytes, 10);
   assert.equal(typeof close(pcm.streamId).lastChunkAt, 'number');
   assert.equal(close(opus.streamId).receivedChunks, 2);
@@ -206,8 +216,25 @@ try {
   assert.equal(late.length, 1);
   assert(Number(late[0].metadata.gapMs) > 1000);
   const decoded = events.filter((event) => event.message === 'voice.stream.chunk.decode');
-  assert.equal(decoded.filter((event) => event.metadata.codec === 0).length, 2);
+  assert.equal(decoded.filter((event) => event.metadata.codec === 0).length, 3);
   assert.equal(decoded.filter((event) => event.metadata.codec === 1).length, 2);
+  const received = decoded.filter((event) => event.metadata.streamId === pcm.streamId);
+  const delivered = attempts.filter((attempt) => attempt.delivered);
+  assert.deepEqual(
+    received.map((event) => event.metadata.chunkSeq),
+    [1, 2, 3]
+  );
+  assert.deepEqual(
+    delivered.map((attempt) => attempt.attempt),
+    [1, 3, 4]
+  );
+  assert.deepEqual(
+    received.map((event) => [event.metadata.offset, event.metadata.bytes]),
+    delivered.map((attempt) => [attempt.offset, attempt.bytes])
+  );
+  assert.equal(late[0].metadata.offset, 4);
+  assert.equal(late[0].metadata.bytes, 6);
+  assert.equal(late[0].metadata.chunkSeq, 2);
   for (const event of [...decoded, ...late]) {
     for (const [key, value] of Object.entries(event.metadata)) {
       if (key !== 'streamId' && key !== 'argTypes')
@@ -225,6 +252,8 @@ try {
         decodeRecords: decoded.length,
         lateRecords: events.filter((event) => event.message === 'voice.stream.chunk.late').length,
         privacyPassed: true,
+        byteRangeJoinPassed: true,
+        attempts,
         events,
       },
       null,

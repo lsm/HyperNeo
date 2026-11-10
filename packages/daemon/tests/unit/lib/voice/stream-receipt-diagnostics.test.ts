@@ -53,6 +53,55 @@ describe('VoiceStream receipt diagnostics', () => {
     });
   });
 
+  test('wire byte ranges correlate arrivals across a dropped attempt and replay', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    const attempts = [
+      { attempt: 1, offset: 0, bytes: 4, delivered: true },
+      { attempt: 2, offset: 4, bytes: 6, delivered: false },
+      { attempt: 3, offset: 4, bytes: 6, delivered: true },
+      { attempt: 4, offset: 0, bytes: 4, delivered: true },
+    ];
+    for (const attempt of attempts.filter((entry) => entry.delivered)) {
+      await stream.writeInput(() => new Uint8Array(attempt.bytes), attempt.bytes, false, {
+        startedAt: Date.now(),
+        decodeMs: 0,
+        offset: attempt.offset,
+      });
+      now.mockReturnValue(Date.now() + 1001);
+    }
+    const decoded = logs.filter((event) => event.message === 'voice.stream.chunk.decode');
+    expect(decoded.map((event) => event.metadata?.chunkSeq)).toEqual([1, 2, 3]);
+    expect(decoded.map((event) => [event.metadata?.offset, event.metadata?.bytes])).toEqual([
+      [0, 4],
+      [4, 6],
+      [0, 4],
+    ]);
+    expect(
+      logs
+        .filter((event) => event.message === 'voice.stream.chunk.late')
+        .map((event) => [event.metadata?.offset, event.metadata?.bytes])
+    ).toEqual([
+      [4, 6],
+      [0, 4],
+    ]);
+  });
+
+  test('legacy and invalid wire offsets stay out of numeric diagnostics', async () => {
+    for (const offset of [undefined, -1, 0.5, NaN, Infinity]) {
+      await stream.writeInput(() => new Uint8Array(2), 2, true, {
+        startedAt: Date.now(),
+        decodeMs: 0,
+        offset,
+      });
+    }
+    const decoded = logs.filter((event) => event.message === 'voice.stream.chunk.decode');
+    expect(decoded).toHaveLength(5);
+    for (const event of decoded) {
+      expect(event.metadata).not.toHaveProperty('offset');
+      expect(event.metadata).toHaveProperty('bytes', 2);
+    }
+  });
+
   test('cancel logs bytes received before clearing', async () => {
     await stream.writeInput(() => new Uint8Array(4), 4, true);
     await stream.cancel();

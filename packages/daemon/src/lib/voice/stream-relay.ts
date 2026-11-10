@@ -344,21 +344,32 @@ export class VoiceStream {
     select: () => Uint8Array,
     size: number,
     appendEmpty: boolean,
-    timing = { startedAt: Date.now(), decodeMs: 0 }
+    timing: { startedAt: number; decodeMs: number; offset?: number } = {
+      startedAt: Date.now(),
+      decodeMs: 0,
+    }
   ): Promise<string | null> {
     const chunkSeq = ++this.receivedChunks;
+    const receipt = {
+      streamId: this.id,
+      chunkSeq,
+      bytes: size,
+      ...(typeof timing.offset === 'number' &&
+      Number.isSafeInteger(timing.offset) &&
+      timing.offset >= 0
+        ? { offset: timing.offset }
+        : {}),
+    };
     this.inputBytesReceived += size;
     this.lastChunkAt = timing.startedAt;
     if (this.queued.count === 0 && this.lastChunkFinishedAt !== null) {
       const gapMs = timing.startedAt - this.lastChunkFinishedAt;
-      if (gapMs > 1000)
-        voiceDiagnostic('voice.stream.chunk.late', { streamId: this.id, chunkSeq, gapMs });
+      if (gapMs > 1000) voiceDiagnostic('voice.stream.chunk.late', { ...receipt, gapMs });
     }
     let decodeMs = timing.decodeMs;
     const recordDecode = () =>
       voiceDiagnostic('voice.stream.chunk.decode', {
-        streamId: this.id,
-        chunkSeq,
+        ...receipt,
         codec: this.codec ? 1 : 0,
         decodeMs,
       });
