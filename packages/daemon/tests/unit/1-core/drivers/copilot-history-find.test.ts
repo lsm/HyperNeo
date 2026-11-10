@@ -20,7 +20,12 @@ import { fileURLToPath } from 'node:url';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import { createCopilotDiscovery } from '../../../../src/lib/drivers/copilot-discovery';
 import type { WorkTurnPage } from '../../../../src/storage/work-turn-page';
-import type { WorkAdapter, WorkCallContext, WorkStarted } from '../../../../src/lib/drivers/types';
+import type {
+  PlaceGroup,
+  WorkAdapter,
+  WorkCallContext,
+  WorkStarted,
+} from '../../../../src/lib/drivers/types';
 
 const createTestDirectory = testDirectories();
 
@@ -124,7 +129,7 @@ test('the full Copilot naming inventory survives the owned/external merge', asyn
       title: `Copilot copilot-project ${i}`,
       updatedAt: i + 1,
     });
-  const normal = await fixture.adapter.find({ ...query, folder: place.folder });
+  const normal: PlaceGroup[] = await fixture.adapter.find({ ...query, folder: place.folder });
   expect(normal.flatMap((group) => group.work)).toHaveLength(20);
   const naming = await createWorkerNameSource(() => [fixture.adapter], place)('copilot-cli');
   expect(naming.taken).toHaveLength(26);
