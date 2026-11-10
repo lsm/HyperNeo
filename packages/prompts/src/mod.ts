@@ -180,6 +180,28 @@ import mdmessagingReplyProtocol from './messaging/reply-protocol.md' with { type
 import mdmessagingReplyToTarget from './messaging/reply-to-target.md' with { type: 'text' };
 import mdmessagingReplyToTask from './messaging/reply-to-task.md' with { type: 'text' };
 import mdspaceOperationsDoorListing from './space/operations-door-listing.md' with { type: 'text' };
+import mdToolOpen from './neo/tools/neo.open.md' with { type: 'text' };
+import mdToolRestart from './neo/tools/neo.restart.md' with { type: 'text' };
+import mdToolRuleSave from './neo/tools/neo.rule.save.md' with { type: 'text' };
+import mdToolSessionLink from './neo/tools/neo.session.link.md' with { type: 'text' };
+import mdToolSessionMute from './neo/tools/neo.session.mute.md' with { type: 'text' };
+import mdToolSessionTrack from './neo/tools/neo.session.track.md' with { type: 'text' };
+import mdToolPackRead from './neo/tools/neo.pack.read.md' with { type: 'text' };
+import mdToolAskHistory from './neo/tools/neo.ask.history.md' with { type: 'text' };
+import mdToolSnapshot from './neo/tools/neo.snapshot.md' with { type: 'text' };
+import mdToolProjectSave from './neo/tools/neo.project.save.md' with { type: 'text' };
+import mdToolAskDoneTodos from './neo/tools/neo.ask.doneTodos.md' with { type: 'text' };
+import mdToolAskRead from './neo/tools/neo.ask.read.md' with { type: 'text' };
+import mdToolAskOpen from './neo/tools/neo.ask.open.md' with { type: 'text' };
+import mdToolAskOutcome from './neo/tools/neo.ask.outcome.md' with { type: 'text' };
+import mdToolAskTopic from './neo/tools/neo.ask.topic.md' with { type: 'text' };
+import mdToolAskSettle from './neo/tools/neo.ask.settle.md' with { type: 'text' };
+import mdToolConversationAsksRead from './neo/tools/neo.conversation.asks.read.md' with {
+  type: 'text',
+};
+import mdToolConversationImageRead from './neo/tools/neo.conversation.image.read.md' with {
+  type: 'text',
+};
 import { buildPromptRegistry } from './loader.ts';
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
@@ -570,7 +592,28 @@ export const NEO_PACK_SKILLS: Readonly<
   [codingSkill.name]: { ...codingSkill, files: { 'SKILL.md': mdneoPacksCodingSkill } },
 };
 
-export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({});
+export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze(
+  buildPromptRegistry({
+    'neo/tools/neo.open.md': mdToolOpen,
+    'neo/tools/neo.restart.md': mdToolRestart,
+    'neo/tools/neo.rule.save.md': mdToolRuleSave,
+    'neo/tools/neo.session.link.md': mdToolSessionLink,
+    'neo/tools/neo.session.mute.md': mdToolSessionMute,
+    'neo/tools/neo.session.track.md': mdToolSessionTrack,
+    'neo/tools/neo.pack.read.md': mdToolPackRead,
+    'neo/tools/neo.ask.history.md': mdToolAskHistory,
+    'neo/tools/neo.snapshot.md': mdToolSnapshot,
+    'neo/tools/neo.project.save.md': mdToolProjectSave,
+    'neo/tools/neo.ask.doneTodos.md': mdToolAskDoneTodos,
+    'neo/tools/neo.ask.read.md': mdToolAskRead,
+    'neo/tools/neo.ask.open.md': mdToolAskOpen,
+    'neo/tools/neo.ask.outcome.md': mdToolAskOutcome,
+    'neo/tools/neo.ask.topic.md': mdToolAskTopic,
+    'neo/tools/neo.ask.settle.md': mdToolAskSettle,
+    'neo/tools/neo.conversation.asks.read.md': mdToolConversationAsksRead,
+    'neo/tools/neo.conversation.image.read.md': mdToolConversationImageRead,
+  })
+);
 
 export function neoToolDescription(name: string): string {
   if (!Object.hasOwn(NEO_TOOL_DESCRIPTIONS, name)) {
