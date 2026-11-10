@@ -29,6 +29,14 @@ export type CodingSweepRow = {
 
 export type CodingSweepDeps = {
   host: string;
+  delivery?: {
+    recipient(): string | null;
+    status(
+      recipient: string,
+      key: string
+    ): Promise<'admitted' | 'absent' | 'in-flight' | 'unknown' | 'recipient_gone'>;
+    send(recipient: string, key: string, text: string): Promise<boolean>;
+  };
   human?(key: string, text: string): Promise<boolean>;
   tell(ref: WorkRef, key: string, text: string, pr?: string): Promise<boolean>;
   wake(key: string, text: string): Promise<boolean>;
