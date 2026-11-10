@@ -1,5 +1,5 @@
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
-import { afterEach, beforeEach, expect, jest, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, jest, mock, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -67,6 +67,26 @@ const item = {
   body: 'Plan\n\n<!-- hyperneo:ask:ask -->',
   marker: 'hyperneo:ask:ask',
 };
+
+test.each([1, 12])('tracker home batches repository reads for %i todos', (count) => {
+  for (let i = 0; i < count; i++) add(`todo-${i}`, 'github.com/example/one');
+  const owner = { kind: 'ask' as const, ask: store.getAsk('ask')! };
+  const adapter = tracker(() => true);
+  const prepare = db.prepare.bind(db);
+  const statements: string[] = [];
+  const spy = spyOn(db, 'prepare').mockImplementation((...args) => {
+    if (/pack_coding_todos|SELECT repo FROM neo_asks/.test(args[0])) statements.push(args[0]);
+    return prepare(...args);
+  });
+  try {
+    expect(adapter.enabled(owner)).toBe(true);
+    expect(adapter.home(owner)).toBe('example/one');
+    expect(statements).toHaveLength(2);
+    expect(statements.some((sql) => sql.includes('SELECT DISTINCT'))).toBe(false);
+  } finally {
+    spy.mockRestore();
+  }
+});
 
 test('preference off creates nothing', () => {
   add('one', 'github.com/example/one');
