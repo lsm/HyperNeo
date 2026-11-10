@@ -2677,6 +2677,7 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
       session: {
         id,
         getSessionData: () => ({ id, config: {}, status: 'active' }),
+        validateSdkTranscript: mock(async () => true),
         restart: mock(async (options?: { beforeStart?: () => void | Promise<void> }) => {
           await options?.beforeStart?.();
           calls.push('restart');
@@ -2730,6 +2731,88 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
       },
       false
     );
+  });
+
+  it('fails leave_as_is explicitly when the transcript is still missing after repair', async () => {
+    const replacement = makeResumeFake('resume-session');
+    replacement.session.getSessionData = () =>
+      ({
+        id: 'resume-session',
+        config: {},
+        status: 'active',
+        sdkSessionId: 'sdk-gone',
+      }) as never;
+    replacement.session.validateSdkTranscript = mock(async () => false);
+    const db = makeResumeDb();
+    const sessionManager = {
+      getSessionForControl: mock(async () => replacement.session),
+      getSessionAsync: mock(async () => replacement.session),
+      getDatabase: () => db,
+    } as unknown as SessionManager;
+    const messageHubData = createMockMessageHub();
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+
+    await expect(
+      messageHubData.handlers.get('session.sdkResumeChoice')!(
+        { sessionId: 'resume-session', choice: 'leave_as_is', messageUuid: 'uuid-miss' },
+        {}
+      )
+    ).rejects.toThrow('cannot resume as-is');
+
+    expect(replacement.calls).toEqual([]);
+    expect(db.updateSession).not.toHaveBeenCalled();
+    expect(db.updateHyperNeoActionMessageByUuid).toHaveBeenLastCalledWith(
+      'resume-session',
+      'uuid-miss',
+      expect.objectContaining({
+        resolved: false,
+        error: expect.stringContaining('cannot resume as-is'),
+      })
+    );
+  });
+
+  it('restarts as-is when leave_as_is repair finds the restored transcript', async () => {
+    const replacement = makeResumeFake('resume-session');
+    replacement.session.getSessionData = () =>
+      ({
+        id: 'resume-session',
+        config: {},
+        status: 'active',
+        sdkSessionId: 'sdk-restored',
+      }) as never;
+    const db = makeResumeDb();
+    const sessionManager = {
+      getSessionForControl: mock(async () => replacement.session),
+      getSessionAsync: mock(async () => replacement.session),
+      getDatabase: () => db,
+    } as unknown as SessionManager;
+    const messageHubData = createMockMessageHub();
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+
+    const result = (await messageHubData.handlers.get('session.sdkResumeChoice')!(
+      { sessionId: 'resume-session', choice: 'leave_as_is', messageUuid: 'uuid-found' },
+      {}
+    )) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expect(replacement.session.validateSdkTranscript).toHaveBeenCalledTimes(1);
+    expect(replacement.calls).toEqual(['restart', 'replay']);
   });
 
   it('reports a failed resume when the post-choice lookup finds no session', async () => {

@@ -1223,8 +1223,14 @@ export function setupSessionHandlers(
           sdkSessionId: currentData.sdkSessionId,
           sdkOriginPath: currentData.sdkOriginPath,
         };
+      } else if (!(await current.validateSdkTranscript())) {
+        throw new Error(
+          `SDK transcript for session ${targetSessionId} was not found or could not be ` +
+            'repaired — the session cannot resume as-is.'
+        );
       }
       await current.restart({
+        skipTranscriptGuard: true,
         beforeStart: async () => {
           if (!identityRollback) return;
           await db.updateSession(targetSessionId, {

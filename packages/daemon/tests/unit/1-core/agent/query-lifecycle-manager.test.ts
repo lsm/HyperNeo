@@ -1428,6 +1428,56 @@ describe('QueryLifecycleManager', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    test('keeps the message replayable when timeout reset blocks on sdk_resume_choice', async () => {
+      const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+      try {
+        process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+        const timeoutError = new Error('Queue timeout');
+        timeoutError.name = 'MessageQueueTimeoutError';
+
+        spyOn(messageQueue, 'enqueueWithId').mockImplementation(async () => {
+          mockContext.session.sdkSessionId = 'missing-sdk-session';
+          throw timeoutError;
+        });
+
+        await manager.startQueryAndEnqueue('msg-123', 'Hello');
+        await new Promise((r) => setTimeout(r, 200));
+
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.TEST_SDK_SESSION_DIR;
+        rmSync(tmpTestDir, { recursive: true, force: true });
+      }
+    });
+
+    test('blocked timeout recovery does not consume the delivery-retry budget', async () => {
+      const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+      try {
+        process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+        const timeoutError = new Error('Queue timeout');
+        timeoutError.name = 'MessageQueueTimeoutError';
+
+        spyOn(messageQueue, 'enqueueWithId').mockImplementation(async () => {
+          mockContext.session.sdkSessionId = 'missing-sdk-session';
+          throw timeoutError;
+        });
+
+        await manager.startQueryAndEnqueue('msg-123', 'Hello');
+        await new Promise((r) => setTimeout(r, 200));
+        expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+
+        await manager.startQueryAndEnqueue('msg-123', 'Hello');
+        await new Promise((r) => setTimeout(r, 200));
+
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-msg-123'], 'failed');
+      } finally {
+        delete process.env.TEST_SDK_SESSION_DIR;
+        rmSync(tmpTestDir, { recursive: true, force: true });
+      }
+    });
+
     test('marks enqueued message failed when timeout retry fails', async () => {
       const timeoutError = new Error('Queue timeout');
       timeoutError.name = 'MessageQueueTimeoutError';
@@ -1719,6 +1769,105 @@ describe('QueryLifecycleManager', () => {
     );
 
     describe('restart()', () => {
+      test('blocks on sdk_resume_choice when the transcript is missing', async () => {
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        await manager.restart();
+
+        expect(startStreamingCalled).toBe(false);
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(mockContext.queryObject).toBeNull();
+      });
+
+      test('reports blocked and releases delivery waiters when the gate stops the restart', async () => {
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.restart();
+
+        expect(result.blocked).toBe(true);
+        expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
+      });
+
+      test('restarts a non-resumable workflow sub-session fresh instead of resuming the stale id', async () => {
+        mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        mockContext.session.sdkOriginPath = '/old/workspace';
+        let sdkSessionIdAtStart: string | undefined = 'unset';
+        mockContext.startStreamingQuery = async () => {
+          sdkSessionIdAtStart = mockContext.session.sdkSessionId;
+          startStreamingCalled = true;
+        };
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.restart();
+
+        expect(result.blocked).toBe(false);
+        expect(startStreamingCalled).toBe(true);
+        expect(sdkSessionIdAtStart).toBeUndefined();
+        expect(mockContext.session.sdkSessionId).toBeUndefined();
+        expect(mockContext.session.sdkOriginPath).toBeUndefined();
+        expect(updateSessionSpy).toHaveBeenCalledWith('space:space-1:task:task-1:exec:exec-1', {
+          sdkSessionId: undefined,
+          sdkOriginPath: undefined,
+        });
+        expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
+      });
+
+      test('keeps the resume for a non-resumable workflow sub-session when the transcript exists', async () => {
+        const sdkSessionId = 'sdk-sub-session-found';
+        createSdkFile('/test/workspace', sdkSessionId);
+        mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
+        mockContext.session.sdkSessionId = sdkSessionId;
+        manager = new QueryLifecycleManager(mockContext);
+
+        await manager.restart();
+
+        expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+        expect(startStreamingCalled).toBe(true);
+        expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
+      });
+
+      test('keeps the stale sdk identity in memory when clearing it fails to persist', async () => {
+        mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        mockContext.session.sdkOriginPath = '/old/workspace';
+        updateSessionSpy.mockImplementation(async () => {
+          throw new Error('db write failed');
+        });
+        manager = new QueryLifecycleManager(mockContext);
+
+        await expect(manager.restart()).rejects.toThrow('db write failed');
+
+        expect(mockContext.session.sdkSessionId).toBe('missing-sdk-session');
+        expect(mockContext.session.sdkOriginPath).toBe('/old/workspace');
+        expect(startStreamingCalled).toBe(false);
+      });
+
+      test('still blocks a resumable workflow sub-session on the transcript gate', async () => {
+        mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
+        mockContext.session.config.workerOperations = true;
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.restart();
+
+        expect(result.blocked).toBe(true);
+        expect(startStreamingCalled).toBe(false);
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+      });
+
+      test('starts anyway when the caller resolves the resume choice (skipTranscriptGuard)', async () => {
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        await manager.restart({ skipTranscriptGuard: true });
+
+        expect(startStreamingCalled).toBe(true);
+        expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
+      });
+
       test(
         'uses worktreePath when session has worktree — preserves sdkSessionId',
         async () => {
@@ -1782,6 +1931,23 @@ describe('QueryLifecycleManager', () => {
     });
 
     describe('reset()', () => {
+      test('blocks on sdk_resume_choice when restartAfter finds a missing transcript', async () => {
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        mockContext.queryObject = {
+          interrupt: mock(async () => {}),
+        } as unknown as QueryLifecycleManagerContext['queryObject'];
+        mockContext.queryPromise = Promise.resolve();
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.reset({ restartAfter: true });
+
+        expect(result.success).toBe(true);
+        expect(result.blocked).toBe(true);
+        expect(startStreamingCalled).toBe(false);
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
+      });
+
       test(
         'uses worktreePath when session has worktree — preserves sdkSessionId',
         async () => {

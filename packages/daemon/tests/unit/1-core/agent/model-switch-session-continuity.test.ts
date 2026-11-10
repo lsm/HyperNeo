@@ -409,6 +409,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
         setIdle: setIdleSpy,
         setQueued: setQueuedSpy,
         getState: getStateSpy,
+        releaseIdleWaiters: mock(() => {}),
       } as unknown as ProcessingStateManager,
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,

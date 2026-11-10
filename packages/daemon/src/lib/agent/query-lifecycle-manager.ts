@@ -17,6 +17,10 @@ import { dirname } from 'node:path';
 import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery.ts';
 import { sessionSdkPath } from '../session/sdk-path.ts';
 import {
+  hasRuntimeWorkerOperations,
+  isWorkflowSubSessionIdentity,
+} from '../session/sub-session-identity.ts';
+import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
   migrateSDKSessionFile,
@@ -261,7 +265,10 @@ export class QueryLifecycleManager {
     }
   }
 
-  async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
+  async restart(options?: {
+    beforeStart?: () => void | Promise<void>;
+    skipTranscriptGuard?: boolean;
+  }): Promise<{ blocked: boolean }> {
     const { session, internalEventBus, messageHandler } = this.ctx;
     let reachedSuppressedIdle = false;
 
@@ -286,20 +293,15 @@ export class QueryLifecycleManager {
         await options.beforeStart();
       }
 
-      if (session.sdkSessionId && session.config.harness !== 'codex') {
-        const isValid = await this.validateAndRepairWithMigration();
-        if (!isValid) {
-          this.logger.warn(
-            `SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-              'Emitting sdk_resume_choice for user, but starting query anyway.'
-          );
-          await this.emitSdkResumeChoiceMessage();
-        }
+      if (!options?.skipTranscriptGuard && !(await this.gateOnMissingTranscript('restart'))) {
+        this.ctx.stateManager.releaseIdleWaiters();
+        return { blocked: true };
       }
 
       await this.ctx.clearModelsCache();
 
       await this.ctx.startStreamingQuery();
+      return { blocked: false };
     } catch (error) {
       if (reachedSuppressedIdle) {
         this.ctx.stateManager.releaseIdleWaiters();
@@ -309,7 +311,9 @@ export class QueryLifecycleManager {
     }
   }
 
-  async reset(options?: { restartAfter?: boolean }): Promise<{ success: boolean; error?: string }> {
+  async reset(options?: {
+    restartAfter?: boolean;
+  }): Promise<{ success: boolean; error?: string; blocked?: boolean }> {
     const { restartAfter = true } = options ?? {};
     const { session, db, messageQueue, internalEventBus, stateManager, messageHandler } = this.ctx;
 
@@ -357,18 +361,11 @@ export class QueryLifecycleManager {
 
       await this.ctx.clearModelsCache();
 
+      if (restartAfter && !(await this.gateOnMissingTranscript('reset'))) {
+        this.ctx.stateManager.releaseIdleWaiters();
+        return { success: true, blocked: true };
+      }
       if (restartAfter) {
-        if (session.sdkSessionId && session.config.harness !== 'codex') {
-          const isValid = await this.validateAndRepairWithMigration();
-          if (!isValid) {
-            this.logger.warn(
-              `SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-                'Emitting sdk_resume_choice for user, but starting query anyway.'
-            );
-            await this.emitSdkResumeChoiceMessage();
-          }
-        }
-
         await this.ctx.startStreamingQuery();
       }
 
@@ -381,6 +378,57 @@ export class QueryLifecycleManager {
       }
       return { success: false, error: errorMessage };
     }
+  }
+
+  private async gateOnMissingTranscript(caller: string): Promise<boolean> {
+    const { session, db } = this.ctx;
+    if (!session.sdkSessionId || session.config.harness === 'codex') {
+      return true;
+    }
+    if (await this.validateAndRepairWithMigration()) {
+      return true;
+    }
+    const resumeRefused =
+      isWorkflowSubSessionIdentity(session.id) && !hasRuntimeWorkerOperations(session.config);
+    if (resumeRefused) {
+      this.logger.warn(
+        `SDK session file missing/invalid for non-resumable sub-session ${session.id} ` +
+          `(sdkSessionId=${session.sdkSessionId}, ${caller}). ` +
+          'Dropping the stale sdk identity so the restart starts fresh.'
+      );
+      const staleSessionId = session.sdkSessionId;
+      const staleOriginPath = session.sdkOriginPath;
+      await db.updateSession(session.id, {
+        sdkSessionId: undefined,
+        sdkOriginPath: undefined,
+      });
+      session.sdkSessionId = undefined;
+      session.sdkOriginPath = undefined;
+      this.logger.info(
+        `Cleared sdkSessionId=${staleSessionId} sdkOriginPath=${staleOriginPath} on ${session.id}`
+      );
+      return true;
+    }
+    this.logger.warn(
+      `SDK session file missing/invalid for sdkSessionId=${session.sdkSessionId} (${caller}). ` +
+        'Emitting sdk_resume_choice action message for user.'
+    );
+    const recoveryPromptAvailable = await this.emitSdkResumeChoiceMessage();
+    if (!recoveryPromptAvailable) {
+      throw new Error(
+        `Unable to start session: SDK transcript ${session.sdkSessionId} is missing ` +
+          'and the recovery prompt could not be persisted.'
+      );
+    }
+    return false;
+  }
+
+  async validateSdkTranscript(): Promise<boolean> {
+    const { session } = this.ctx;
+    if (!session.sdkSessionId || session.config.harness === 'codex') {
+      return true;
+    }
+    return this.validateAndRepairWithMigration();
   }
 
   private async emitSdkResumeChoiceMessage(): Promise<boolean> {
@@ -489,22 +537,8 @@ export class QueryLifecycleManager {
 
     throwIfDeliveryAborted(signal);
 
-    if (session.sdkSessionId && session.config.harness !== 'codex') {
-      const isValid = await this.validateAndRepairWithMigration();
-      if (!isValid) {
-        this.logger.warn(
-          `SDK session file missing for sdkSessionId=${session.sdkSessionId}. ` +
-            'Emitting sdk_resume_choice action message for user.'
-        );
-        const recoveryPromptAvailable = await this.emitSdkResumeChoiceMessage();
-        if (!recoveryPromptAvailable) {
-          throw new Error(
-            `Unable to start session: SDK transcript ${session.sdkSessionId} is missing ` +
-              'and the recovery prompt could not be persisted.'
-          );
-        }
-        return 'blocked';
-      }
+    if (!(await this.gateOnMissingTranscript('ensureQueryStarted'))) {
+      return 'blocked';
     }
 
     await this.ctx.clearModelsCache();
@@ -674,6 +708,15 @@ export class QueryLifecycleManager {
       if (!resetResult.success) {
         throw new Error(resetResult.error || 'Agent query reset failed.');
       }
+      if (resetResult.blocked) {
+        this.timeoutDeliveryRetryCounts.delete(messageId);
+        await stateManager.setQueued(messageId);
+        this.logger.info(
+          `Timeout recovery for ${messageId} is blocked on sdk_resume_choice; ` +
+            'leaving the message enqueued for replay after the choice.'
+        );
+        return;
+      }
       await stateManager.setQueued(messageId);
       if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
         throw new Error('Agent query did not restart; message remains queued for retry.');
@@ -707,28 +750,28 @@ export class QueryLifecycleManager {
     }
   }
 
-  async restartQuery(): Promise<void> {
+  async restartQuery(): Promise<{ blocked: boolean }> {
     const { messageQueue, stateManager } = this.ctx;
 
     if (!messageQueue.isRunning() || !this.ctx.queryObject) {
-      return;
+      return { blocked: false };
     }
 
     const currentState = stateManager.getState();
     if (currentState.status === 'processing') {
       this.ctx.pendingRestartReason = 'settings.local.json';
-      return;
+      return { blocked: false };
     }
 
-    await this.restart();
+    return await this.restart();
   }
 
-  async restartWhenIdle(): Promise<void> {
+  async restartWhenIdle(): Promise<{ blocked: boolean }> {
     if (this.ctx.stateManager.getState().status !== 'idle') {
       this.ctx.pendingRestartReason = 'settings.local.json';
-      return;
+      return { blocked: false };
     }
-    await this.restartQuery();
+    return await this.restartQuery();
   }
 
   async executeDeferredRestartIfPending(): Promise<boolean> {

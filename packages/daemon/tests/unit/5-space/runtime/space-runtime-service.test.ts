@@ -886,7 +886,7 @@ describe('SpaceRuntimeService', () => {
         updateMetadata: mock(async () => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
-        restart: mock(async () => {}),
+        restart: mock(async () => ({ blocked: false })),
         getSessionData: mock(() => ({ id: 'session-1', metadata: {}, config: {} }) as Session),
       } as unknown as AgentSession;
     }
@@ -2496,7 +2496,7 @@ describe('SpaceRuntimeService', () => {
           sessionData.config = { ...sessionData.config, ...updates };
         }),
         resetQuery: mock(async () => ({ success: true })),
-        restart: mock(async () => {}),
+        restart: mock(async () => ({ blocked: false })),
         getSessionData: mock(() => sessionData),
       } as unknown as AgentSession;
       let created = existing;
@@ -3954,7 +3954,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
   test('updates provider undefined → kimi on the next wake', async () => {
     const updateConfig = mock(async () => {});
     const resetQuery = mock(async () => ({ success: true }));
-    const restart = mock(async () => {});
+    const restart = mock(async () => ({ blocked: false }));
     const stranded = {
       getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: undefined } }),
       updateConfig,
@@ -3981,6 +3981,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     const reevaluate = mock(async () => {});
     const restart = mock(async (options?: { beforeStart?: () => Promise<void> }) => {
       await options?.beforeStart?.();
+      return { blocked: false };
     });
     const session = {
       getSessionData: () => ({ config: { model: 'old-model', provider: 'kimi' } }),
