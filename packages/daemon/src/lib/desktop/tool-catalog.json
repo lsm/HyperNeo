@@ -1,0 +1,207 @@
+[
+  {
+    "name": "list_windows",
+    "description": "List windows belonging to the authorized target app.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": { "type": "string" },
+        "pid": { "type": "integer" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_window_state",
+    "description": "Read the authorized target window as accessibility content or an image after the required grants are verified. Use fresh element handles for subsequent actions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "capture_mode": { "enum": ["ax", "vision"], "type": "string" },
+        "query": { "type": "string" },
+        "max_depth": { "minimum": 1, "type": "integer" },
+        "max_elements": { "minimum": 1, "type": "integer" },
+        "max_image_dimension": { "minimum": 0, "type": "integer" },
+        "since": { "type": "string" },
+        "timeout_ms": { "default": 1000, "maximum": 120000, "minimum": 100, "type": "integer" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "required": ["pid", "window_id"]
+    }
+  },
+  {
+    "name": "launch_app",
+    "description": "Launch only the authorized target application when human input has been idle for at least 60 seconds. Arbitrary arguments, URLs and helper-process launches are refused.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "bundle_id": { "type": "string" }, "session": { "type": "string" } },
+      "additionalProperties": false,
+      "required": ["bundle_id"]
+    }
+  },
+  {
+    "name": "click",
+    "description": "Click or focus an element or point inside the authorized target window. Secure and credential surfaces are refused.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "element_token": { "pattern": "^s[0-9a-f]{8}:[0-9]+$", "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "action": { "type": "string" },
+        "button": { "enum": ["left", "right", "middle"], "type": "string" },
+        "delivery_mode": { "enum": ["background", "foreground"], "type": "string" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "double_click",
+    "description": "Double-click inside the authorized target window after target and sensitive-surface checks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "element_token": { "pattern": "^s[0-9a-f]{8}:[0-9]+$", "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "delivery_mode": { "enum": ["background", "foreground"], "type": "string" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "right_click",
+    "description": "Open a context menu inside the authorized target window after target and sensitive-surface checks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "element_token": { "pattern": "^s[0-9a-f]{8}:[0-9]+$", "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "delivery_mode": { "enum": ["background", "foreground"], "type": "string" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "drag",
+    "description": "Drag between points inside the authorized target window after target and sensitive-surface checks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "from_x": { "type": "number" },
+        "from_y": { "type": "number" },
+        "to_x": { "type": "number" },
+        "to_y": { "type": "number" },
+        "duration_ms": { "maximum": 10000, "minimum": 0, "type": "integer" },
+        "delivery_mode": { "enum": ["background", "foreground"], "type": "string" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "required": ["from_x", "from_y", "to_x", "to_y"]
+    }
+  },
+  {
+    "name": "type_text",
+    "description": "Insert ordinary text into a verified nonsecure field in the authorized target window. Credentials and fields whose safety cannot be established are refused.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "element_token": { "pattern": "^s[0-9a-f]{8}:[0-9]+$", "type": "string" },
+        "text": { "type": "string" },
+        "delivery_mode": { "enum": ["background", "foreground"], "type": "string" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "required": ["text"]
+    }
+  },
+  {
+    "name": "press_key",
+    "description": "Send a key to the authorized target window after checking the focused field and requested effect. Credential entry, clipboard shortcuts and process-launch shortcuts are refused.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "element_token": { "pattern": "^s[0-9a-f]{8}:[0-9]+$", "type": "string" },
+        "key": { "type": "string" },
+        "modifiers": { "items": { "type": "string" }, "type": "array" },
+        "delivery_mode": { "enum": ["background", "foreground"], "type": "string" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "required": ["key"]
+    }
+  },
+  {
+    "name": "set_value",
+    "description": "Set an ordinary control value in the authorized target window. Secure fields and credential values are refused.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "element_token": { "pattern": "^s[0-9a-f]{8}:[0-9]+$", "type": "string" },
+        "value": { "type": "string" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "required": ["value"]
+    }
+  },
+  {
+    "name": "scroll",
+    "description": "Scroll within the authorized target window after target and sensitive-surface checks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "element_token": { "pattern": "^s[0-9a-f]{8}:[0-9]+$", "type": "string" },
+        "direction": { "enum": ["up", "down", "left", "right"], "type": "string" },
+        "amount": { "maximum": 50, "minimum": 1, "type": "integer" },
+        "by": { "enum": ["line", "page"], "type": "string" },
+        "delivery_mode": { "enum": ["background", "foreground"], "type": "string" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "required": ["direction"]
+    }
+  },
+  {
+    "name": "zoom",
+    "description": "Inspect a cropped region of the authorized target window after the required grants and sensitive-surface checks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pid": { "type": "integer" },
+        "window_id": { "type": "integer" },
+        "x1": { "type": "number" },
+        "x2": { "type": "number" },
+        "y1": { "type": "number" },
+        "y2": { "type": "number" },
+        "session": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "required": ["window_id", "x1", "y1", "x2", "y2"]
+    }
+  }
+]

@@ -3,7 +3,9 @@ import { isSessionCommand } from './src/session-cli-commands.ts';
 
 if (isSessionCommand(process.argv[2])) {
   const { runSessionCommand } = await import('./src/session-cli.ts');
-  process.exit(await runSessionCommand(process.argv.slice(2)));
+  const code = await runSessionCommand(process.argv.slice(2));
+  if (process.argv[2] === 'desktop-mcp') process.exitCode = code;
+  else process.exit(code);
 } else {
   const [{ getConfig }, { parseArgs, getHelpText }] = await Promise.all([
     import('@hyperneo/daemon/config'),
