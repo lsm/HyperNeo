@@ -50,6 +50,7 @@ export function LiveFilePreview({
   const active = useRef<AbortController | null>(null);
   const [result, setResult] = useState<{ target: Reference; file?: File; error?: string }>();
   const [downloading, setDownloading] = useState(false);
+  const [downloadFailed, setDownloadFailed] = useState(false);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const title = target.reference.split(/[\\/]/).at(-1) || target.reference;
   const shown = connected && result?.target === target ? result : undefined;
@@ -57,7 +58,10 @@ export function LiveFilePreview({
   const load = async (download = false) => {
     const controller = active.current;
     if (!controller) return;
-    if (download) setDownloading(true);
+    if (download) {
+      setDownloading(true);
+      setDownloadFailed(false);
+    }
     try {
       const hub = await connectionManager.getHub();
       const next = await readLiveFile(hub, target, controller.signal);
@@ -72,8 +76,18 @@ export function LiveFilePreview({
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
     } catch (error) {
-      if (!controller.signal.aborted)
-        setResult({ target, error: (error as { code?: string }).code ?? (error as Error).message });
+      if (!controller.signal.aborted) {
+        const reason = (error as { code?: string }).code ?? (error as Error).message;
+        if (
+          download &&
+          file?.kind === 'video' &&
+          !['forbidden', 'FORBIDDEN', 'UNAUTHORIZED', 'missing', 'safe_open_unavailable'].includes(
+            reason
+          )
+        )
+          setDownloadFailed(true);
+        else setResult({ target, error: reason });
+      }
     } finally {
       if (!controller.signal.aborted) setDownloading(false);
     }
@@ -82,6 +96,7 @@ export function LiveFilePreview({
     setResult(undefined);
     setPendingUrl(null);
     setDownloading(false);
+    setDownloadFailed(false);
     if (!connected) return;
     const controller = new AbortController();
     active.current = controller;
@@ -110,6 +125,11 @@ export function LiveFilePreview({
           >
             {t('artifact.askNeo')}
           </button>
+        )}
+        {file && downloadFailed && (
+          <p role="status" class="text-xs text-fg-muted">
+            {t('artifact.downloadFailed')}
+          </p>
         )}
         {file && (
           <button
