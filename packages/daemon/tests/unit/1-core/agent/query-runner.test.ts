@@ -312,6 +312,53 @@ describe('QueryRunner', () => {
     return new QueryRunner(createContext(overrides));
   }
 
+  it.each([450_000, undefined])(
+    'forwards the provider window only without a session window=%s',
+    async (window) => {
+      const registry = initializeProviders();
+      const previous = registry.get('kimi');
+      if (previous) registry.unregister('kimi');
+      registry.register({
+        id: 'kimi',
+        displayName: 'Synthetic Kimi',
+        isAvailable: async () => true,
+        getAuthStatus: async () => ({ isAuthenticated: true, method: 'api_key' }),
+        ownsModel: (id: string) => id === 'kimi-session-window',
+        buildSdkConfig: () => ({
+          envVars: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000' },
+          isAnthropicCompatible: true,
+        }),
+      } as unknown as Provider);
+      try {
+        mockSession.workspacePath = null;
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-session-window';
+        Object.assign(mockSession.config, { autoCompactWindow: window });
+        const fake = {
+          close: () => {},
+          interrupt: async () => undefined,
+          [Symbol.asyncIterator]: async function* () {
+            yield { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+          },
+        } as unknown as QueryLike;
+        const factory = mock((_input: Parameters<typeof query>[0]) => fake);
+        const ctx = createContext();
+        runner = new QueryRunner(ctx, factory);
+        await runner.start();
+        await ctx.queryPromise;
+        expect(handleErrorSpy.mock.calls).toEqual([]);
+        expect(factory).toHaveBeenCalledTimes(1);
+        const options = factory.mock.calls[0][0].options;
+        expect(options?.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+          window === undefined ? '1000000' : undefined
+        );
+      } finally {
+        registry.unregister('kimi');
+        if (previous) registry.register(previous);
+      }
+    }
+  );
+
   describe('constructor', () => {
     it('should create runner with dependencies', () => {
       runner = createRunner();

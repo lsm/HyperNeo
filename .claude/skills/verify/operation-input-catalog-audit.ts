@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { mock } from 'bun:test';
 import { z } from '../../../packages/daemon/node_modules/zod/index.js';
+import { listOperationSummaries } from '../../../packages/daemon/src/lib/operations/discovery.ts';
 import { operationInputExample } from '../../../packages/daemon/src/lib/operations/input-example.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
@@ -24,6 +25,13 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 try {
   const rows = [];
   const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'synthetic', role: 'neo' }));
+  const admitted = new Set(
+    listOperationSummaries(
+      app.sessionManager.getOperationRegistry(),
+      { source: 'mcp', role: 'neo', sessionId: 'synthetic' },
+      true
+    ).map(({ name }) => name)
+  );
   for (const operation of app.sessionManager.getOperationRegistry().entries) {
     const suffix = await operationInputExample(operation.inputSchema);
     const valid = suffix !== '' && (await operation.inputSchema.safeParseAsync(JSON.parse(suffix.split('\nExample input: ')[1]))).success;
@@ -32,8 +40,8 @@ try {
       const reply = await handler({ name: operation.name, input: {} });
       refused = JSON.parse(reply.content[0].text);
       assert.equal(reply.isError, true);
-      assert.equal(refused.code, 'invalid_input');
-      assert(refused.message.endsWith(suffix) && suffix !== '', operation.name);
+      assert.equal(refused.code, admitted.has(operation.name) ? 'invalid_input' : 'forbidden', operation.name);
+      if (admitted.has(operation.name)) assert(refused.message.endsWith(suffix) && suffix !== '', operation.name);
     }
     rows.push({ name: operation.name, valid, example: suffix,
       refused,

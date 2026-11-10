@@ -6,7 +6,9 @@ if (process.argv[2] === '--hyperneo-sdk-runtime-check') {
   process.exit(0);
 } else if (isSessionCommand(process.argv[2])) {
   const { runSessionCommand } = await import('./src/session-cli.ts');
-  process.exit(await runSessionCommand(process.argv.slice(2)));
+  const code = await runSessionCommand(process.argv.slice(2));
+  if (process.argv[2] === 'desktop-mcp') process.exitCode = code;
+  else process.exit(code);
 } else {
   const [{ getConfig }, { parseArgs, getHelpText }, { startProdServer }, { version }] =
     await Promise.all([

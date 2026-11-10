@@ -167,7 +167,10 @@ export function createNeoService(...args: NeoServiceArgs) {
         defaults: NEO_DEFAULT_PACKS,
         operations: createNeoProjectTreeOperations(core.repo, (refs) =>
           configured.readRefStates(refs)
-        ),
+        ).map((operation) => ({
+          ...operation,
+          pack: { id: coding.id, enabledIds: core.enabledOperationPackIds },
+        })),
       };
     },
     ...args

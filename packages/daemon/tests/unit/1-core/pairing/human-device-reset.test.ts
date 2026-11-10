@@ -91,9 +91,16 @@ test('only the local session door resets; network callers and agent operations c
   for (const caller of [
     { source: 'rpc', principal: 'local' },
     { source: 'rpc', principal: 'local', device: { deviceId: phone.device.id, kind: 'human' } },
-    { source: 'mcp', role: 'neo', sessionId: 'neo:root' },
   ] as OperationCaller[])
     expect(await call('device.reset_human', {}, caller)).toMatchObject({ ok: false });
+  expect(
+    await invokeOperation(
+      registry,
+      'device.reset_human',
+      {},
+      { source: 'mcp', role: 'neo', sessionId: 'neo:root' }
+    )
+  ).toMatchObject({ kind: 'failed', code: 'forbidden' });
   expect(repo.isActiveDevice(phone.device.id)).toBe(true);
   expect(notices()).toHaveLength(0);
 });

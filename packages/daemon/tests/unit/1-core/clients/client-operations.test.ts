@@ -80,9 +80,13 @@ describe('client registry over RPC', () => {
   test('refuses anyone but the local user, and kinds that are not short names', async () => {
     const neo: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
     expect(await invoke('client.list', {}, neo)).toMatchObject({
-      value: { ok: false, reason: 'This action needs the user.' },
+      kind: 'failed',
+      code: 'forbidden',
     });
-    expect(await invoke('client.register', phone, neo)).toMatchObject({ value: { ok: false } });
+    expect(await invoke('client.register', phone, neo)).toMatchObject({
+      kind: 'failed',
+      code: 'forbidden',
+    });
     expect(clients.list()).toEqual([]);
     expect(await invoke('client.register', { ...phone, kind: 'x'.repeat(41) })).toMatchObject({
       kind: 'failed',

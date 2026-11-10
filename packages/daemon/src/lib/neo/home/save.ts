@@ -42,15 +42,6 @@ export function requireHomePath<T extends { path: string }>(input: T) {
     : { value: input };
 }
 
-export const publicationLog = [
-  'log',
-  '--format=raw',
-  '-m',
-  '-p',
-  '-a',
-  '--no-ext-diff',
-  '--no-textconv',
-];
 export function requireHomeSave(input: HomeSaveInput, publish = true) {
   const sensitive =
     /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/.test(input.content) ||

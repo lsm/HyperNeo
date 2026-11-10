@@ -15,6 +15,7 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   autoScroll: 'derived',
   thinkingLevel: 'derived',
   autoCompactPercent: 'carried',
+  autoCompactWindow: 'carried',
   coordinatorMode: 'derived',
   sandbox: 'derived',
   settingSources: 'derived',
@@ -64,6 +65,13 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   toolSelection: 'rejected',
   toolProfile: 'rejected',
 };
+
+export function hasExplicitAutoCompactWindow(
+  config: Pick<SessionConfig, 'autoCompactWindow'>
+): config is { autoCompactWindow: number } {
+  const window = config.autoCompactWindow;
+  return typeof window === 'number' && Number.isSafeInteger(window) && window > 0;
+}
 
 function fieldsWithPolicy(policy: CreateSessionConfigFieldPolicy): (keyof SessionConfig)[] {
   return (Object.keys(CREATE_SESSION_CONFIG_FIELD_POLICY) as (keyof SessionConfig)[]).filter(

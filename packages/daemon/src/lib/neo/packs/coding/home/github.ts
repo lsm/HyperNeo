@@ -1,13 +1,13 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { isLocalUser } from '../../operations/caller.ts';
-import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
-import { neoFolderPath } from '../folder.ts';
-import { readNeoQuestion } from '../question-operations.ts';
-import type { NeoService } from '../service.ts';
+import { isLocalUser } from '../../../../operations/caller.ts';
+import { defineOperation, type OperationCaller } from '../../../../operations/registry.ts';
+import { neoFolderPath } from '../../../folder.ts';
+import { readNeoQuestion } from '../../../question-operations.ts';
+import type { NeoService } from '../../../service.ts';
 import { NeoHomeRepository } from './repository.ts';
-import { openHumanCard } from '../human-card.ts';
+import { openHumanCard } from '../../../human-card.ts';
 
 const Input = z.union([
   z.object({ askId: z.string().min(1) }).strict(),

@@ -1545,6 +1545,65 @@ describe('QueryOptionsBuilder', () => {
     });
   });
 
+  describe('session auto-compact window', () => {
+    beforeEach(() => {
+      resetProviderRegistry();
+      const model = {
+        id: 'kimi-session-window',
+        name: 'Session window fixture',
+        provider: 'kimi',
+        alias: 'kimi-session-window',
+        family: 'kimi',
+        contextWindow: 1_000_000,
+        description: 'Synthetic model',
+        releaseDate: '',
+        available: true,
+      };
+      getProviderRegistry().register({
+        id: 'kimi',
+        displayName: 'Synthetic Kimi',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'on',
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [model],
+        ownsModel: (id: string) => id === model.id,
+        getModelForTier: () => model.id,
+        buildSdkConfig: () => ({
+          envVars: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000' },
+          isAnthropicCompatible: true,
+        }),
+      });
+      setModelsCache(new Map([['global', [model]]]));
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = model.id;
+    });
+
+    afterEach(() => {
+      resetProviderRegistry();
+      setModelsCache(new Map());
+    });
+
+    it('a session explicit auto-compact window wins over the provider window and omits the provider env var', async () => {
+      Object.assign(mockSession.config, { autoCompactWindow: 450_000 });
+      const options = await builder.build();
+      const settings = typeof options.settings === 'object' ? options.settings : undefined;
+      expect(settings?.autoCompactWindow).toBe(450_000);
+      expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    });
+
+    it('the same session without an explicit value still gets the provider window', async () => {
+      const options = await builder.build();
+      const settings = typeof options.settings === 'object' ? options.settings : undefined;
+      expect(settings?.autoCompactWindow).toBe(1_000_000);
+    });
+  });
+
   describe('subagent model env guard (CLAUDE_CODE_SUBAGENT_MODEL)', () => {
     const foreignSubagentModel = 'k3-256k';
     let savedSubagentModel: string | undefined;

@@ -956,6 +956,7 @@ export function createNeoOperations(service: NeoService) {
     ...service.installedPacks().flatMap((pack) =>
       (pack.operations ?? []).map((operation) => ({
         ...operation,
+        pack: { id: pack.id, enabledIds: service.enabledOperationPackIds },
         execute: path(operation.name, operation.execute),
       }))
     ),

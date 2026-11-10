@@ -1,3 +1,4 @@
+import { enabledOperationPacks } from './registry.ts';
 import { isLocalUser } from './caller.ts';
 import { normalizeOperationInput } from './normalize-input.ts';
 import { operationInputExample } from './input-example.ts';
@@ -32,9 +33,17 @@ function levenshtein(a: string, b: string): number {
   return previous[b.length];
 }
 
-function suggestOperationNames(registry: OperationRegistry, name: string): string[] {
+function suggestOperationNames(
+  registry: OperationRegistry,
+  name: string,
+  caller?: OperationCaller
+): string[] {
+  const enabled = caller?.role === 'neo' ? enabledOperationPacks(registry) : [];
   const requestedSegments = name.split('.');
   return registry.entries
+    .filter(
+      (entry) => !caller || caller.role !== 'neo' || isOperationAdmitted(entry, caller, enabled)
+    )
     .map((entry) => entry.name)
     .filter((candidate) => candidate !== name)
     .map((candidate) => ({
@@ -54,8 +63,12 @@ function suggestOperationNames(registry: OperationRegistry, name: string): strin
     .map(({ candidate }) => candidate);
 }
 
-function unknownOperationMessage(registry: OperationRegistry, name: string): string {
-  const suggestions = suggestOperationNames(registry, name);
+function unknownOperationMessage(
+  registry: OperationRegistry,
+  name: string,
+  caller?: OperationCaller
+): string {
+  const suggestions = suggestOperationNames(registry, name, caller);
   return suggestions.length === 0
     ? `Unknown operation: ${name}`
     : `Unknown operation: ${name}. Did you mean: ${suggestions.join(', ')}?`;
@@ -63,7 +76,8 @@ function unknownOperationMessage(registry: OperationRegistry, name: string): str
 
 export function resolveOperation(
   registry: OperationRegistry,
-  name: string
+  name: string,
+  caller?: OperationCaller
 ): Gate<OperationDefinition> {
   const operation = registry.get(name);
   return operation
@@ -72,7 +86,7 @@ export function resolveOperation(
         reason: {
           kind: 'failed',
           code: 'unknown_operation',
-          message: unknownOperationMessage(registry, name),
+          message: unknownOperationMessage(registry, name, caller),
         },
       };
 }
@@ -140,25 +154,35 @@ function isDeviceAdmitted(operation: OperationDefinition, caller: OperationCalle
 
 export function isOperationAdmitted(
   operation: OperationDefinition,
-  caller: OperationCaller
+  caller: OperationCaller,
+  enabledPacks: readonly string[] = []
 ): boolean {
+  const policy = operation.policy;
+  const neoAdmitted =
+    caller.role !== 'neo' ||
+    (policy?.safetyClass !== 'human_only' &&
+      (!policy?.roles || policy.roles.includes('neo')) &&
+      (!operation.pack || enabledPacks.includes(operation.pack.id)));
   return (
+    neoAdmitted &&
     isDeviceAdmitted(operation, caller) &&
     (operation.policy?.caller !== 'local_user' || isLocalUser(caller))
   );
 }
 
 export function admitOperationCaller(
-  prepared: PreparedOperation,
-  caller: OperationCaller
-): Gate<PreparedOperation> {
-  return isOperationAdmitted(prepared.operation, caller)
-    ? { value: prepared }
+  operation: OperationDefinition,
+  caller: OperationCaller,
+  registry: OperationRegistry
+): Gate<OperationDefinition> {
+  const enabled = caller.role === 'neo' && operation.pack ? enabledOperationPacks(registry) : [];
+  return isOperationAdmitted(operation, caller, enabled)
+    ? { value: operation }
     : {
         reason: {
           kind: 'failed',
           code: 'forbidden',
-          message: `Operation ${prepared.operation.name} is not available to this caller`,
+          message: `Operation ${operation.name} is not available to this caller`,
         },
       };
 }
@@ -206,9 +230,9 @@ export async function validateOperationResult(
 
 export const invokeOperation = (superpipe({})('invoke-operation') as PipelineAPI)
   .input(['registry', 'name', 'input', 'caller'])
-  .pipe(resolveOperation, ['registry', 'name'], 'result:invocation')
+  .pipe(resolveOperation, ['registry', 'name', 'caller'], 'result:invocation')
+  .pipe(admitOperationCaller, ['invocation', 'caller', 'registry'], 'result:invocation')
   .pipe(parseOperationInput, ['invocation', 'input'], 'result:invocation')
-  .pipe(admitOperationCaller, ['invocation', 'caller'], 'result:invocation')
   .pipe(executeOperation, ['invocation', 'caller'], 'result:invocation')
   .pipe(validateOperationResult, 'invocation', 'result:invocation')
   .endAsync('invocation') as (
