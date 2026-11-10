@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { readDesktopBinding, runDesktopMcp } from '../../../../../cli/src/desktop-mcp.ts';
 import { createDesktopMcpServer } from '../../../../src/lib/desktop/mcp-server.ts';
@@ -123,4 +124,44 @@ test('MCP registration publishes only the bounded list and routes refusals', asy
 test('CLI registration requires a single bounded worker identifier', async () => {
   for (const args of [[], ['--worker', '../escape'], ['--worker', worker, '--socket', '/other']])
     await expect(runDesktopMcp(args)).rejects.toThrow('Usage: hyperneo desktop-mcp --worker <id>');
+});
+
+test('malformed tool-call arguments still produce one sanitized audit line', async () => {
+  const audit = vi.fn();
+  const dispatch = vi.fn();
+  const server = createDesktopMcpServer(
+    createDesktopProxy({
+      binding: () => readDesktopBinding(worker),
+      dispatch,
+      audit,
+    })
+  );
+  const client = new Client({ name: 'synthetic-client', version: '1' });
+  const [serverSide, clientSide] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverSide);
+    await client.connect(clientSide);
+    await expect(
+      client.request(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'list_windows',
+            arguments: null,
+          },
+        },
+        CallToolResultSchema
+      )
+    ).rejects.toThrow();
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(audit.mock.calls[0][0])).toMatchObject({
+      decision: 'refused',
+      reason_code: 'invalid_arguments',
+      upstream_dispatched: false,
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });

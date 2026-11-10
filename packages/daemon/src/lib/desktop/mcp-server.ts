@@ -27,5 +27,27 @@ export function createDesktopMcpServer(proxy: ReturnType<typeof createDesktopPro
   server.setRequestHandler(CallToolRequestSchema, (request) =>
     proxy.call(request.params.name, request.params.arguments ?? {})
   );
+  const connect = server.connect.bind(server);
+  server.connect = (transport) => {
+    const start = transport.start.bind(transport);
+    transport.start = async () => {
+      const onmessage = transport.onmessage;
+      transport.onmessage = (message, extra) => {
+        if (
+          'method' in message &&
+          message.method === 'tools/call' &&
+          !CallToolRequestSchema.safeParse(message).success
+        ) {
+          const name = typeof message.params?.name === 'string' ? message.params.name : '';
+          void proxy.call(name, null).then(
+            () => onmessage?.(message, extra),
+            () => server.close()
+          );
+        } else onmessage?.(message, extra);
+      };
+      await start();
+    };
+    return connect(transport);
+  };
   return server;
 }
