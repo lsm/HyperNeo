@@ -70,7 +70,7 @@ export function createCodingPack(deps: {
     withCodingMergeContext(text, await deps.prLedger.policyContextCurrent(text));
   const prSweepDeps: CodingSweepDeps = {
     host: process.env.GH_HOST ?? 'github.com',
-    delivery: deps.prSweepDeps.delivery && {
+    delivery: deps.prSweepDeps?.delivery && {
       ...deps.prSweepDeps.delivery,
       send: async (recipient, key, text) =>
         deps.prSweepDeps.delivery!.send(recipient, key, await notificationContext(text)),
