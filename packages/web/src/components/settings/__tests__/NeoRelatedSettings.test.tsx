@@ -77,9 +77,9 @@ test('links to Sessions & Harness and to Coding pack settings', () => {
   expect(navigateToSettings).toHaveBeenLastCalledWith('coding-pack');
 });
 
-test('shows no merge form on the Neo page', () => {
+test('shows no inline merge controls in related settings', () => {
   settle({});
   render(<NeoModelSettings />);
-  expect(screen.getByText('Merge rules, review bot and human sign-off')).toBeTruthy();
-  expect(document.querySelectorAll('input, select, textarea')).toHaveLength(0);
+  const related = screen.getByText('Merge rules, review bot and human sign-off').closest('section');
+  expect(related?.querySelectorAll('input, select, textarea')).toHaveLength(0);
 });

@@ -121,6 +121,7 @@ export type NeoWorkerPermissionMode = (typeof NEO_WORKER_PERMISSION_MODES)[numbe
 export type NeoRuleSource = { sessionId: string; messageId: string } | { questionId: string };
 
 export interface NeoSettings {
+  front?: { enabled?: boolean; model?: NeoModelPreference };
   relaySenders?: { sender: string; name: string }[];
   standingRules?: string[];
   standingRuleSources?: Record<string, NeoRuleSource>;

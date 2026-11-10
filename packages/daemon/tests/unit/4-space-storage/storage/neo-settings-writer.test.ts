@@ -26,6 +26,42 @@ describe('Neo settings writer ownership', () => {
     db.close();
   });
 
+  it('keeps fast replies off when an older whole-Neo patch arrives', async () => {
+    settings.updateGlobalSettings({ neo: { front: { enabled: true } } });
+    const stale = settings.getGlobalSettings().neo;
+    settings.updateGlobalSettings({ neo: { ...stale, front: { enabled: false } } });
+    await gateway.call(globalSettingsWrites, 'apply', {
+      neo: { ...stale, autoDispatch: true },
+    });
+    expect(settings.getGlobalSettings().neo?.front?.enabled).toBe(false);
+  });
+
+  it('does not introduce front eligibility through a generic Neo patch', async () => {
+    await gateway.call(globalSettingsWrites, 'apply', { neo: { front: { enabled: true } } });
+    expect(settings.getGlobalSettings().neo?.front).toBeUndefined();
+  });
+
+  it('changes only the switch using the latest Neo settings', async () => {
+    settings.updateGlobalSettings({
+      neo: {
+        packs: ['new-pack'],
+        workerPermissionMode: 'default',
+        front: { enabled: true, model: { ...preference, thinkingLevel: 'off' } },
+      },
+    });
+    await gateway.call(globalSettingsWrites, 'neoFront', false);
+    expect(settings.getGlobalSettings().neo).toMatchObject({
+      packs: ['new-pack'],
+      workerPermissionMode: 'default',
+      front: { enabled: false, model: preference },
+    });
+    const stale = { neo: { front: { enabled: true } } };
+    const commit = await gateway.call(globalSettingsWrites, 'apply', stale);
+    await gateway.call(globalSettingsWrites, 'neoFront', true);
+    await gateway.call(globalSettingsWrites, 'rollback', commit);
+    expect(settings.getGlobalSettings().neo?.front?.enabled).toBe(true);
+  });
+
   it('retains simultaneous mute and rule edits alongside a UI settings patch', async () => {
     await Promise.all([
       gateway.call(globalSettingsWrites, 'neoMute', 'first', true),
