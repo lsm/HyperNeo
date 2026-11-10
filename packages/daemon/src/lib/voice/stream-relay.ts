@@ -222,6 +222,10 @@ export class VoiceStream {
   private bytes = 0;
   private codec: OpusInput | null = null;
   private encodedBytes = 0;
+  private receivedChunks = 0;
+  private inputBytesReceived = 0;
+  private lastChunkAt = 0;
+  private lastChunkFinishedAt: number | null = null;
   private inputTail: Promise<void> = Promise.resolve();
   private partialOpus = false;
   private queued = { bytes: 0, count: 0 };
@@ -336,12 +340,35 @@ export class VoiceStream {
     this.codec = await opusInputDefaults.create();
   }
 
-  writeInput(select: () => Uint8Array, size: number, appendEmpty: boolean): Promise<string | null> {
+  writeInput(
+    select: () => Uint8Array,
+    size: number,
+    appendEmpty: boolean,
+    timing = { startedAt: Date.now(), decodeMs: 0 }
+  ): Promise<string | null> {
+    const chunkSeq = ++this.receivedChunks;
+    this.inputBytesReceived += size;
+    this.lastChunkAt = timing.startedAt;
+    if (this.queued.count === 0 && this.lastChunkFinishedAt !== null) {
+      const gapMs = timing.startedAt - this.lastChunkFinishedAt;
+      if (gapMs > 1000)
+        voiceDiagnostic('voice.stream.chunk.late', { streamId: this.id, chunkSeq, gapMs });
+    }
+    let decodeMs = timing.decodeMs;
+    const recordDecode = () =>
+      voiceDiagnostic('voice.stream.chunk.decode', {
+        streamId: this.id,
+        chunkSeq,
+        codec: this.codec ? 1 : 0,
+        decodeMs,
+      });
     if (
       this.codec &&
       (this.queued.bytes + size > VOICE_MAX_AUDIO_BYTES || this.queued.count >= 128)
-    )
+    ) {
+      recordDecode();
       return Promise.resolve('Voice input queue is full; retry after pending chunks finish');
+    }
     this.queued.bytes += size;
     this.queued.count++;
     const accept = async () => {
@@ -349,7 +376,10 @@ export class VoiceStream {
       if (!audio.byteLength && !appendEmpty) return null;
       if (!this.codec) return this.write(audio);
       try {
-        const decoded = await this.codec.decode(audio);
+        const decodingAt = performance.now();
+        const decoded = await this.codec.decode(audio).finally(() => {
+          decodeMs += Math.max(0, performance.now() - decodingAt);
+        });
         const refused = decoded.pcm.byteLength ? this.write(decoded.pcm) : null;
         if (refused) throw new MessageHubHandlerError(refused, 'VOICE_STREAM_INVALID_OPUS');
         this.partialOpus = decoded.partial;
@@ -368,6 +398,8 @@ export class VoiceStream {
     const result = (this.codec ? this.inputTail.then(accept) : accept()).finally(() => {
       this.queued.bytes -= size;
       this.queued.count--;
+      recordDecode();
+      this.lastChunkFinishedAt = Date.now();
     });
     this.inputTail = result.then(
       () => {},
@@ -489,9 +521,9 @@ export class VoiceStream {
     const waiter = this.finishedWaiter;
     this.finishedWaiter = null;
     waiter?.({ ok: false, text: '' });
+    this.close('client_disconnected');
     this.chunks = [];
     this.bytes = 0;
-    this.close('client_disconnected');
     return this.stopping
       ? this.stopping.then(
           () => {},
@@ -512,6 +544,9 @@ export class VoiceStream {
       reason,
       via: this.via,
       audioBytes: this.bytes,
+      receivedChunks: this.receivedChunks,
+      receivedBytes: this.inputBytesReceived,
+      lastChunkAt: this.lastChunkAt,
       audioDurationMs: (this.bytes / (STREAM_SAMPLE_RATE * 2)) * 1000,
       durationMs: Date.now() - this.startedAt,
     });

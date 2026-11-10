@@ -305,10 +305,13 @@ export function registerVoiceHandlers(
   messageHub.onRequest<{ streamId: string; audioBase64: string; offset?: number }>(
     'voice.stream.chunk',
     async (data, context) => {
+      const startedAt = Date.now();
       const stream = ownedStream(data?.streamId, context);
       if ((data.audioBase64 ?? '').length > MAX_CHUNK_BASE64_LENGTH)
         throw new Error('Audio data exceeds the 10 MB voice input limit');
+      const decodingAt = performance.now();
       const audio = Buffer.from(data.audioBase64 ?? '', 'base64');
+      const decodeMs = Math.max(0, performance.now() - decodingAt);
       try {
         const refused = await stream.writeInput(
           () => {
@@ -318,7 +321,8 @@ export function registerVoiceHandlers(
             return tail;
           },
           audio.byteLength,
-          data.offset === undefined
+          data.offset === undefined,
+          { startedAt, decodeMs }
         );
         if (refused) throw new Error(refused);
       } catch (error) {
