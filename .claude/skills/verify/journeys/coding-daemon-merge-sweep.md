@@ -226,3 +226,6 @@ Run the `linked-issue` case with the wrapper to exercise the tracker merge gate.
 An opted-in repository with no closing reference or a foreign issue reference
 must execute zero merges. Closing the mirror early must leave the coding todo
 doing. A closing reference to the parent permits one SHA-pinned merge.
+
+The `linked-issue-no-row` case pins fail-open admission for an opted-in PR
+whose todo has no stored repository and cannot acquire a mirror row.

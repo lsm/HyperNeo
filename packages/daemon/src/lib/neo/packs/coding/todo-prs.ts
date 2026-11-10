@@ -74,10 +74,11 @@ export class CodingTodoPrRepository {
             row.tracker === 'github-issues' &&
             (row.ownerKind === 'todo' ? row.ownerId === todo.id : row.ownerId === todo.askId)
         );
+        const own = rows.find((row) => row.ownerKind === 'todo');
+        if (!own) return [];
         const refs = rows.flatMap((row) => row.ref ?? []);
         if (refs.length) return [refs];
-        const own = rows.find((row) => row.ownerKind === 'todo');
-        if (own && (own.failures >= NEO_TRACKER_FAILURE_LIMIT || own.state === 'closed')) return [];
+        if (own.failures >= NEO_TRACKER_FAILURE_LIMIT || own.state === 'closed') return [];
         return [[]];
       });
   }

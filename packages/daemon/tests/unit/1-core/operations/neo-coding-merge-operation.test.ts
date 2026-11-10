@@ -404,3 +404,26 @@ test('pending mirrors hold merge admission and capped missing mirrors fail open'
   mirrors.put({ ...row, ref: null, state: 'creating', failures: 3 });
   expect((await f.prepare()).accepted).toBe(true);
 });
+
+test.each([false, true])(
+  'an unmirrored todo fails open with a parent mirror %s',
+  async (parent) => {
+    const f = fixture();
+    const mirrors = mirrorForMerge(f);
+    f.setting('mergeBy', 'daemon');
+    f.db.prepare("DELETE FROM neo_tracker_mirrors WHERE owner_kind='todo'").run();
+    if (parent)
+      mirrors.put({
+        ownerKind: 'ask',
+        ownerId: 'ask',
+        tracker: 'github-issues',
+        home: 'synthetic/merge',
+        ref: 'synthetic/merge#20',
+        parentRef: null,
+        state: 'bound',
+        failures: 0,
+        updatedAt: 2,
+      });
+    expect((await f.prepare()).accepted).toBe(true);
+  }
+);
