@@ -64,7 +64,7 @@ try {
     for (let window = 0; window < 10; window++) {
       const result = await read(kind, input);
       assert(result);
-      if (!('items' in result)) return [...items, result];
+      assert('items' in result);
       items.push(...result.items);
       if (!result.nextCursor) return items;
       input = { cursor: result.nextCursor };
@@ -105,7 +105,12 @@ try {
     const closed = await collect(kind, { text: '文' });
     assert.equal(closed.length, 1);
     assert.equal(closed[0].id, 'record-00');
-    assert.deepEqual(closed[0], await read(kind, { id: 'record-00' }));
+    const detail = await read(kind, { id: 'record-00' });
+    assert(detail && 'id' in detail);
+    assert.equal(detail.id, closed[0].id);
+    const field = { projects: 'status', asks: 'status', cards: 'text', todos: 'blocker' } as const;
+    assert(detail[field[kind]]);
+    assert(!JSON.stringify(detail).includes('Hidden'));
     const ambiguous = await read(kind, { text: 'Shared record' });
     assert(ambiguous && 'items' in ambiguous);
     assert.equal(ambiguous.total, 10);
@@ -139,6 +144,9 @@ try {
   assert.equal(fresh.state, 'done');
   assert.equal(fresh.blocker, null);
   assert.equal((await collect('todos')).length, 29);
+  sql.prepare("DELETE FROM neo_session_bindings WHERE kind='neo'").run();
+  const unbound = await read('projects');
+  assert(unbound && 'items' in unbound);
   await assert.rejects(() =>
     app.db.gateway.run(neoFrontReads, {
       conversationId: '20000000-0000-4000-8000-000000000000',
@@ -152,6 +160,8 @@ try {
     port: app.server.port,
     observations,
     estimatesExplicit: true,
+    uniformSearchPages: true,
+    canonicalConversationOnly: true,
     tokenlessEmpty: true,
     freshRead: true,
     invalidScopeRefused: true,

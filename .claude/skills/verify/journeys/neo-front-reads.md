@@ -10,7 +10,9 @@ newest first, with immutable ID as the tiebreaker. Updates between pages must re
 every original record exactly once. Totals are explicitly approximate whenever
 `totalExact` is false. They report matches observed in this traversal. Callers must
 follow `nextCursor` even when a search window contains no matches. Candidate IDs
-support a fresh detail lookup. One- and two-character terms retain substring matches.
+support a fresh detail lookup. List and search always return paged summaries, even
+for a unique match. Only `{id}` returns a detailed record. The durable conversation
+record defines scope independently of the current coordinator binding. One- and two-character terms retain substring matches.
 Empty or tokenless searches return no results.
 
 The unit regression retains query plans and row counts over 5,024 projects. Require

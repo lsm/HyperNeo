@@ -74,7 +74,8 @@ for (const kind of kinds) {
     expect(found).toHaveLength(1);
     const detail = await read(kind, { id: 'item-00' });
     if (!detail || 'items' in detail) throw new Error('Expected detail');
-    expect(found[0]).toEqual(detail);
+    expect(found[0]).toHaveProperty('id', detail.id);
+    expect(found[0]).not.toHaveProperty('status');
     expect(JSON.stringify(found)).not.toContain('Private');
     const candidates = await read(kind, { text: 'Shared match' });
     expect(candidates).toMatchObject({ total: 10, totalExact: false });
@@ -337,5 +338,36 @@ test('short terms retain middle-of-word substrings and tokenless queries are emp
         totalExact: true,
         nextCursor: null,
       });
+  }
+});
+
+test('the durable conversation scopes reads even while its coordinator binding is absent', async () => {
+  db.getDatabase().prepare("DELETE FROM neo_session_bindings WHERE kind='neo'").run();
+  expect(await read('projects')).toMatchObject({ total: 10, totalExact: false });
+  await expect(
+    db.gateway.run(neoFrontReads, {
+      conversationId: '20000000-0000-4000-8000-000000000000',
+      kind: 'projects',
+      input: {},
+    })
+  ).rejects.toThrow('Front conversation unavailable');
+});
+
+test('unique searches keep the page shape in early, middle and final windows', async () => {
+  for (const id of ['item-23', 'item-13', 'item-00']) {
+    const sql = db.getDatabase();
+    sql.prepare('UPDATE neo_concerns SET title=? WHERE id=?').run(`Only ${id}`, id);
+    let input: Parameters<typeof read>[1] = { text: `Only ${id}` };
+    const ids: string[] = [];
+    for (let window = 0; window < 10; window++) {
+      const page = await read('projects', input);
+      expect(page).toHaveProperty('items');
+      if (!page || !('items' in page)) throw new Error('Expected page');
+      ids.push(...page.items.map((item) => item.id));
+      if (!page.nextCursor) break;
+      input = { cursor: page.nextCursor };
+    }
+    expect(ids).toEqual([id]);
+    expect(await read('projects', { id })).toMatchObject({ id, status: 'Visible status' });
   }
 });

@@ -72,8 +72,7 @@ export const neoFrontReads = defineDbOp<z.input<typeof Request>, Result>({
   run(db, request) {
     const { conversationId, kind, input } = Request.parse(request);
     const scope = db
-      .prepare(`SELECT 1 FROM neo_conversation WHERE id=? AND EXISTS
-      (SELECT 1 FROM neo_session_bindings WHERE kind='neo' AND concern_id IS NULL)`)
+      .prepare('SELECT 1 FROM neo_conversation WHERE singleton=1 AND id=?')
       .get(conversationId);
     if (!scope) throw new Error('Front conversation unavailable');
     const cursor =
@@ -127,8 +126,6 @@ export const neoFrontReads = defineDbOp<z.input<typeof Request>, Result>({
     });
     const seen = cursor?.seen ?? 0;
     const total = seen + matched.length;
-    if (text !== null && !more && seen === 0 && matched.length === 1)
-      return JSON.parse(matched[0].detail) as RecordView;
     const last = rows.at(-1);
     return {
       items: matched.map((row) => JSON.parse(row.summary) as RecordView),
