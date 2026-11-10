@@ -1,15 +1,15 @@
-import { isSessionCommand } from '../../../../../cli/src/session-cli-commands.ts';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, chmod, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { readDesktopBinding, runDesktopMcp } from '../../../../../cli/src/desktop-mcp.ts';
-import { createDesktopMcpServer } from '../../../../src/lib/desktop/mcp-server.ts';
+import { isSessionCommand } from '../../../../../cli/src/session-cli-commands.ts';
 import { createDesktopProxy } from '../../../../src/lib/desktop/mcp-proxy.ts';
+import { createDesktopMcpServer } from '../../../../src/lib/desktop/mcp-server.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 let root: string;
 let db: Database;
@@ -169,4 +169,59 @@ test('malformed tool-call arguments still produce one sanitized audit line', asy
 
 test('source and packaged entry points recognize the desktop MCP command', () => {
   expect(isSessionCommand('desktop-mcp')).toBe(true);
+});
+
+test.each(['open', 'query'])('database %s faults audit an infrastructure error', async (fault) => {
+  if (fault === 'open') vi.stubEnv('DB_PATH', join(root, 'missing.db'));
+  else db.exec('DROP TABLE neo_todo_sessions');
+  const audit = vi.fn();
+  const dispatch = vi.fn();
+  const proxy = createDesktopProxy({ binding: () => readDesktopBinding(worker), dispatch, audit });
+  await expect(readDesktopBinding(worker)).rejects.toThrow();
+  expect(await proxy.call('list_windows', { pid: 42 })).toEqual({
+    isError: true,
+    content: [{ type: 'text', text: 'driver_unavailable' }],
+  });
+  expect(audit).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(audit.mock.calls[0][0])).toMatchObject({
+    decision: 'error',
+    reason_code: 'driver_unavailable',
+    upstream_dispatched: false,
+  });
+  expect(audit.mock.calls[0][0]).not.toContain(root);
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
+test('a genuine absent opt-in remains a domain refusal', async () => {
+  db.exec('DELETE FROM neo_todos');
+  const audit = vi.fn();
+  const dispatch = vi.fn();
+  const proxy = createDesktopProxy({ binding: () => readDesktopBinding(worker), dispatch, audit });
+  expect(await proxy.call('list_windows', { pid: 42 })).toEqual({
+    isError: true,
+    content: [{ type: 'text', text: 'desktop_not_opted_in' }],
+  });
+  expect(JSON.parse(audit.mock.calls[0][0])).toMatchObject({
+    decision: 'refused',
+    reason_code: 'desktop_not_opted_in',
+    upstream_dispatched: false,
+  });
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
+test('importing the desktop entry does not discover human credentials', async () => {
+  const discoverCredentials = vi.fn();
+  vi.resetModules();
+  vi.doMock('../../../../src/lib/credential-discovery.ts', () => ({
+    usesHumanLogin: () => true,
+    discoverCredentials,
+  }));
+  try {
+    const entry = await import('../../../../../cli/src/desktop-mcp.ts');
+    expect((await entry.readDesktopBinding(worker))?.todo_id).toBe('todo');
+    expect(discoverCredentials).not.toHaveBeenCalled();
+  } finally {
+    vi.doUnmock('../../../../src/lib/credential-discovery.ts');
+    vi.resetModules();
+  }
 });
