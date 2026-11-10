@@ -1,4 +1,12 @@
 export const en = {
+  'time.justNow': 'just now',
+  'time.yesterday': 'Yesterday',
+  'time.created': 'Created',
+  'time.started': 'Started',
+  'time.finished': 'Finished',
+  'time.settled': 'Settled',
+  'time.answered': 'Answered',
+  'time.waiting': 'Awaiting your answer',
   'connections.page': 'Connections & Services',
   'connections.tabProviders': 'Providers',
   'connections.tabAccounts': 'Accounts',

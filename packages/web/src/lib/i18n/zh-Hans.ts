@@ -1,6 +1,15 @@
 import type { en } from './en.ts';
 
 export const zhHans: Record<keyof typeof en, string> = {
+  'time.justNow': '刚刚',
+  'time.yesterday': '昨天',
+  'time.created': '创建于',
+  'time.started': '开始于',
+  'time.finished': '完成于',
+  'time.settled': '结束于',
+  'time.answered': '已回答',
+  'time.waiting': '待你回答',
+
   'connections.page': '连接与服务',
   'connections.tabProviders': 'Providers',
   'connections.tabAccounts': '账号',

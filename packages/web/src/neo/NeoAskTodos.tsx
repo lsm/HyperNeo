@@ -29,8 +29,9 @@ import {
 } from './NeoCardParts.tsx';
 import { neoSessionKind } from './work-driver.ts';
 import { type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
-import { messageTime } from './NeoMessage.tsx';
-import { t } from '../lib/i18n/index.ts';
+import { NeoTime } from './NeoTime.tsx';
+import { neoRelativeTime, neoNow } from './neo-time.ts';
+import { locale, t, type MessageKey } from '../lib/i18n/index.ts';
 import { copyToClipboard } from '../lib/utils.ts';
 import {
   neoQuestionText,
@@ -190,6 +191,13 @@ function TodoRow({
   const detailId = `${anchorPrefix}neo-todo-detail-${todo.id}`;
   const detail = neoTodoDetail(todo);
   const nextAction = neoTodoNextAction(todo);
+  const lifecycle = (
+    [
+      { at: todo.finishedAt, label: 'time.finished' },
+      { at: todo.startedAt, label: 'time.started' },
+      { at: todo.createdAt, label: 'time.created' },
+    ] satisfies { at: number | null; label: MessageKey }[]
+  ).find(({ at }) => neoRelativeTime(at, neoNow.peek(), locale.peek()));
   const head = (
     <>
       <span
@@ -276,6 +284,11 @@ function TodoRow({
         )}
         {(!onToggle || expanded) && (
           <div id={detailId} data-todo-details={onToggle ? '' : undefined} class="flow-root">
+            {expanded && lifecycle && (
+              <div class="neo-time-line">
+                {t(lifecycle.label)} · <NeoTime at={lifecycle.at} label={lifecycle.label} />
+              </div>
+            )}
             <div class="contents [&>p:last-child]:inline [&>span:last-child]:inline">
               {onToggle &&
                 detail.map((text) => (
@@ -454,6 +467,10 @@ function QuestionBox({
       data-question-kind={question.kind}
       class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
     >
+      <div class="neo-time-line neo-question-time">
+        <span>{t('time.waiting')}</span>
+        <NeoTime at={question.createdAt} />
+      </div>
       {question.sourceSession?.link && onOpen && (
         <div class="mb-2 flex justify-end" data-question-source>
           <button
@@ -862,6 +879,7 @@ export function NeoAskTodos({
           <span data-status-dot aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-current" />
           <span class={weight}>{t(label)}</span>
         </span>
+        <NeoTime at={ask.createdAt} settledAt={ask.status === 'open' ? null : ask.settledAt} />
         <Dropdown
           position="right"
           items={[
@@ -1039,13 +1057,18 @@ export function NeoAskTodos({
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.answered')}>
                 {answered.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
+                    <div class="neo-time-line neo-question-time">
+                      <span>{t('ask.answered')}</span>
+                      <NeoTime at={question.createdAt} />
+                    </div>
                     <SettledQuestionBody question={question} />
-                    <p>
-                      — {neoQuestionAnswerLabel(question, todos)}
-                      {question.answeredAt
-                        ? ` · ${messageTime(question.answeredAt)?.label ?? ''}`
-                        : ''}
-                    </p>
+                    <p>— {neoQuestionAnswerLabel(question, todos)}</p>
+                    {!!neoRelativeTime(question.answeredAt, neoNow.peek(), locale.value) && (
+                      <div class="neo-time-line">
+                        {t('time.answered')} ·{' '}
+                        <NeoTime at={question.answeredAt} label="time.answered" />
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -1057,6 +1080,9 @@ export function NeoAskTodos({
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.retired')}>
                 {retired.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
+                    <div class="neo-time-line neo-question-time">
+                      <NeoTime at={question.createdAt} />
+                    </div>
                     <SettledQuestionBody question={question} />
                     <p>
                       {t('question.retired', { question: '' })}
