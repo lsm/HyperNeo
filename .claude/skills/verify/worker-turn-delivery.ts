@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -28,7 +29,7 @@ const root = 'neo:10000000-0000-4000-8000-000000008835';
 const evidence: Record<string, unknown> = { mode };
 const outbound = new RemoteDaemonRegistry();
 let peer: ReturnType<typeof Bun.serve> | undefined;
-const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+const ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`, join(run, 'data/local-rpc.credential'));
 await new Promise<void>((done, fail) => { ws.onopen = () => done(); ws.onerror = () => fail(new Error('RPC unavailable')); });
 const rpc = (name: string, input: unknown) => new Promise<any>((done, fail) => {
   const id = crypto.randomUUID();

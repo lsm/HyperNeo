@@ -1,10 +1,11 @@
+import { skipEmptyNeoTurnReport, type NeoTurnReportFacts } from './turn-report-plan.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoRunnerDeps } from './todo-runner.ts';
 import type { NeoTurnReportReceipts } from './turn-report-receipts.ts';
 
-type Live = { status: string; waitingFor?: string } | null;
+type Live = { status: string; waitingFor?: string; turnQuestion?: unknown } | null;
 type Turn = {
   id: string;
   at: number;
@@ -17,7 +18,7 @@ type Turn = {
 type Tell = NeoTodoRunnerDeps['tell'];
 
 export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as PipelineAPI)
-  .input(['ask', 'todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'tell', 'receipts'])
+  .input(['ask', 'todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'tell', 'receipts', 'facts'])
   .pipe(
     (
       todo: NeoTodo,
@@ -26,12 +27,19 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       live: Live,
       turn: Turn,
       receipts: NeoTurnReportReceipts,
-      ask: NeoAsk
-    ) => receipts.observe(todo.id, dispatchId, ref, live, turn, ask.sessionId),
-    ['todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'receipts', 'ask'],
+      ask: NeoAsk,
+      facts?: NeoTurnReportFacts
+    ) => receipts.observe(todo.id, dispatchId, ref, live, turn, ask.sessionId, facts),
+    ['todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'receipts', 'ask', 'facts'],
     'observation'
   )
   .pipe((observation: { live: Live }) => observation.live, ['observation'], 'live')
+  .pipe(
+    (turn: Turn, observation: { live: Live; facts?: NeoTurnReportFacts }) =>
+      skipEmptyNeoTurnReport(turn, observation.live, observation.facts),
+    ['turn', 'observation'],
+    'quiet'
+  )
   .pipe(
     (ask: NeoAsk, todo: NeoTodo, dispatchId: string, ref: WorkRef, live: Live, turn: Turn) => {
       const focused = ask.focusedSession;
@@ -65,15 +73,17 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       text: string,
       observation: { messageId: string; previousId: string; skip: boolean },
       tell: Tell,
-      receipts: NeoTurnReportReceipts
+      receipts: NeoTurnReportReceipts,
+      quiet: boolean
     ) => {
+      if (quiet && !observation.skip) return;
       if (!observation.skip) {
         await tell(ask, todo, text, observation.messageId, 'event');
         receipts.acknowledge(observation.messageId);
       }
       receipts.acknowledge(observation.previousId);
     },
-    ['ask', 'todo', 'text', 'observation', 'tell', 'receipts'],
+    ['ask', 'todo', 'text', 'observation', 'tell', 'receipts', 'quiet'],
     'delivered'
   )
   .endAsync('delivered') as (
@@ -84,5 +94,6 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
   live: Live,
   turn: Turn,
   tell: Tell,
-  receipts: NeoTurnReportReceipts
+  receipts: NeoTurnReportReceipts,
+  facts?: NeoTurnReportFacts
 ) => Promise<void>;

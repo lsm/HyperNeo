@@ -1,3 +1,4 @@
+import type { NeoTurnReportFacts } from './turn-report-plan.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -6,8 +7,8 @@ import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { sentDuringTurn } from '../../storage/repositories/neo-session-message-repository.ts';
 import { qualifyRemoteOrigin, renderAddress } from '../mailbox/address.ts';
 
-type Live = { status: string; waitingFor?: string } | null;
-type Observation = { live: Live; baseline: string | null };
+type Live = { status: string; waitingFor?: string; turnQuestion?: unknown } | null;
+type Observation = { live: Live; baseline: string | null; facts?: NeoTurnReportFacts };
 
 export class NeoTurnReportReceipts {
   private readonly receipts: JobQueueRepository;
@@ -35,7 +36,8 @@ export class NeoTurnReportReceipts {
       message: string;
       humanInput?: string;
     },
-    recipient: string
+    recipient: string,
+    facts?: NeoTurnReportFacts
   ) {
     const scope = [todoId, dispatchId, ref.adapter, ref.id, ref.daemon ?? null];
     const hash = neoDerivedId(
@@ -46,6 +48,7 @@ export class NeoTurnReportReceipts {
       this.receipts.submissionReceipt<Observation>(key, 'v2') ??
       this.receipts.commitSubmissionReceipt<Observation>(key, 'v2', () => ({
         live,
+        facts,
         baseline: turn.at <= this.cutoff ? hash : null,
       }));
     const previousId = neoDerivedId(
@@ -84,6 +87,7 @@ export class NeoTurnReportReceipts {
       this.acknowledge(messageId);
     return {
       live: observation.live,
+      facts: observation.facts,
       messageId,
       previousId,
       skip: this.receipts.submissionReceipt<boolean>(messageId, 'v2') === true,
