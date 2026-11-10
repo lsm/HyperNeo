@@ -47,3 +47,43 @@ test.each(['neo.missing', '__proto__', 'constructor'])(
     expect(() => prompts.neoToolDescription(name)).toThrow(`Missing Neo tool description: ${name}`);
   }
 );
+
+const extractedToolDescriptions = {
+  'operations.ts': [
+    'neo.open',
+    'neo.restart',
+    'neo.rule.save',
+    'neo.session.link',
+    'neo.session.mute',
+    'neo.session.track',
+    'neo.pack.read',
+    'neo.ask.history',
+    'neo.snapshot',
+    'neo.project.save',
+  ],
+  'ask-entries.ts': ['neo.ask.doneTodos', 'neo.ask.read'],
+  'ask-record-operations.ts': [
+    'neo.ask.open',
+    'neo.ask.outcome',
+    'neo.ask.topic',
+    'neo.ask.settle',
+  ],
+  'conversation-ask-read-operation.ts': [
+    'neo.conversation.asks.read',
+    'neo.conversation.image.read',
+  ],
+};
+
+test.each(Object.entries(extractedToolDescriptions))(
+  'every Neo tool description in %s comes from the prompts package',
+  (file, names) => {
+    const source = readFileSync(
+      new URL(`../../../../src/lib/neo/${file}`, import.meta.url),
+      'utf8'
+    );
+    for (const name of names) {
+      expect(prompts.neoToolDescription(name)).toBe(prompts.NEO_TOOL_DESCRIPTIONS[name]);
+      expect(source).toContain(`description: neoToolDescription('${name}')`);
+    }
+  }
+);

@@ -1,0 +1,4 @@
+---
+id: neo.conversation.asks.read
+---
+Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. messageStatus is computed by the daemon: received, queued, working, read, answered or failed. Only a publication explicitly citing a consumed input in replyTo marks it answered; read without a reply stays read. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence. An ask that could not be delivered also carries delivery: { state: "failed" }. With imageRefs: true, each photo comes back as { type: "image_ref", imageId, mediaType, bytes, width, height, thumbnail } instead of its full data; read the full photo with neo.conversation.image.read.

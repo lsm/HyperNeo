@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
 import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoCardSearchOperation } from './card-search-operation.ts';
@@ -878,8 +879,7 @@ export function createNeoOperations(service: NeoService) {
     ),
     defineOperation({
       name: 'neo.open',
-      description:
-        'Open the one Neo conversation; a projectId is checked and opens the same session. The bound Neo session may open itself.',
+      description: neoToolDescription('neo.open'),
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -887,8 +887,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.restart',
-      description:
-        'Give root Neo a fresh context in the same session and conversation. Its first input is a visible note with the open asks, their todos and the unanswered questions.',
+      description: neoToolDescription('neo.restart'),
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true), sessionId: z.string() })]),
       policy: { safetyClass: 'human_only' },
@@ -896,8 +895,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.rule.save',
-      description:
-        'Prefer neo.rule.ask for human confirmation first. Directly add or remove standing rules only with human approval: pass messageId from the approving human message’s [message id: ...] line. The daemon records that message reference with each added rule, so consent stays traceable; paraphrasing is allowed. The message must be a consumed human yes replying to the immutable neo.rule.ask proposal for these exact add/remove arrays in this Neo conversation; system notes and other sessions cannot authorize edits. Remove uses exact saved rule text. Already-applied approvals return the current rules without replaying the edit. Each rule may have up to 500 characters.',
+      description: neoToolDescription('neo.rule.save'),
       inputSchema: SaveRules,
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -905,8 +903,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.session.link',
-      description:
-        'Read the existing work-card source and safe Open link for an exact session id, including adapter-qualified ids. No session is started or changed.',
+      description: neoToolDescription('neo.session.link'),
       inputSchema: z.object({ session: z.string().min(1).max(500) }),
       resultSchema: z.union([
         Failure,
@@ -923,8 +920,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.session.mute',
-      description:
-        'Mute or unmute notices about a session the human started themselves. key is the notice key from snapshot.sessionNoticeGroups or sessionNotices; a muted session gets no more needs-you or failed notices until unmuted. snapshot.mutedSessions lists the muted keys.',
+      description: neoToolDescription('neo.session.mute'),
       inputSchema: SessionMute,
       resultSchema: SessionMuteResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -932,8 +928,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.session.track',
-      description:
-        'Track a session the human started themselves, from its notice: key is the notice key from snapshot.sessionNoticeGroups or sessionNotices. The tap is the human’s approval: the daemon opens an ask with one todo that follows the session from the tap on, without sending it anything, and tells Neo the askId and todoId. Neo hears when the session stops before the todo is done.',
+      description: neoToolDescription('neo.session.track'),
       inputSchema: SessionTrack,
       resultSchema: SessionTrackResult,
       policy: { safetyClass: 'human_only' },
@@ -947,8 +942,7 @@ export function createNeoOperations(service: NeoService) {
     ),
     defineOperation({
       name: 'neo.pack.read',
-      description:
-        'Read the full instructions of an installed domain pack (enabled or not), the guidance an ask names with its pack field: what work in that domain looks like and what done means there. neo.snapshot and the system prompt carry only each enabled pack’s one-line describe.',
+      description: neoToolDescription('neo.pack.read'),
       inputSchema: PackRead,
       resultSchema: PackReadResult,
       policy: { safetyClass: 'read', roles: ['neo'] },
@@ -956,8 +950,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.ask.history',
-      description:
-        'Page older finished/dropped Work summaries, twenty at a time. Pass the snapshot historyCursor as before, then nextCursor until null. Attention-needed asks stay in neo.snapshot. Open full bodies with neo.ask.read.',
+      description: neoToolDescription('neo.ask.history'),
       inputSchema: z.object({ projectId: z.string().optional(), before: HistoryCursor }),
       resultSchema: z.union([
         Failure,
@@ -991,8 +984,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.snapshot',
-      description:
-        'Read an index of durable project summaries and todo asks. MCP pages open asks thirty at a time in more.asks ({count, cursor}); pass cursor for the next page of open asks. more.working.count counts working sessions beyond the first hundred. Open details with neo.ask.read, completed todos with neo.ask.doneTodos, and older outcomes with neo.ask.history using historyCursor. Pass projectId to load that project’s full context. RPC includes every open/attention-needed ask plus the ten most recently updated finished/dropped asks; historyCursor pages older outcomes through neo.ask.history. RPC todoAsks are summaries with counts, todo states, one-line statuses and open questions with full text and answer metadata; question documents carry up to 2000 preview characters plus a truncation notice, and neo.ask.read returns the full document. Todo instructions, reports and answered or retired question details load through neo.ask.read when the card is opened. MCP todoAsks use the same summaries, ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. needsYou counts open asks with an open human card; neoUnhandled counts todos on open asks blocked on needs-human, stalled or environment with no open card for that todo, plus todos waiting on your decision after a cancelled prerequisite; both cover every open ask, whatever projectId or paging leaves out. more.asks counts remaining open asks with their continuation cursor; omitted.asks counts asks outside the underlying history window. Cursor pages contain open asks only; the initial page also includes recent finished and attention-needed asks. Each page reflects current data. If asks change during a walk, restart without cursor before answering all or none. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+      description: neoToolDescription('neo.snapshot'),
       inputSchema: SnapshotInput,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },
@@ -1000,8 +992,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.project.save',
-      description:
-        'Create a continuing context only when needed, or update an existing context with revision protection. Never one project per message. To create, omit id and pass expectedRevision 0; the daemon assigns the id and returns it, and a retry of the same call in one Neo turn returns the same project; a call outside a Neo turn always creates a new one. To update, pass the id and current revision.',
+      description: neoToolDescription('neo.project.save'),
       inputSchema: Save,
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true), project: Project })]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },

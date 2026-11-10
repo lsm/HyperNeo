@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { neoTodoAfterRefusal } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { todoEvidenceFile } from '../work-locations.ts';
@@ -473,8 +474,7 @@ export function createNeoAskRecordOperations(
   return [
     defineOperation({
       name: 'neo.ask.open',
-      description:
-        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add; give every step that needs work an instruction and target). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another. topic is the matter's short name in the human's language, 2-6 characters (家长控制, OAP, 大学申请, 邮件); reuse a topic already on an open ask and never coin a near-synonym; use 其他 when the ask belongs to no matter.",
+      description: neoToolDescription('neo.ask.open'),
       inputSchema: Open,
       resultSchema: AskResult,
       policy: {
@@ -485,8 +485,7 @@ export function createNeoAskRecordOperations(
     }),
     defineOperation({
       name: 'neo.ask.outcome',
-      description:
-        'Record the settled focused discussion outcome on an open ask owned by this Neo. Use only an explicit report from ask.focusedSession after the human says the discussion is settled, naming this ask and its decision, documents and PRs. outcome is concise Markdown with document/PR references, not inferred approval from a relayed turn. This keeps the ask and its todos open, preserves its session link and does not stop or dispatch work. Track agreed execution using existing todos and pack checks; neo.ask.settle refuses done while todos are unfinished.',
+      description: neoToolDescription('neo.ask.outcome'),
       inputSchema: Outcome,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -494,8 +493,7 @@ export function createNeoAskRecordOperations(
     }),
     defineOperation({
       name: 'neo.ask.topic',
-      description:
-        "Set or change the topic on an open ask: a short label naming the matter it belongs to. topic is the matter's short name in the human's language, 2-6 characters (家长控制, OAP, 大学申请, 邮件); reuse a topic already on an open ask and never coin a near-synonym; use 其他 when the ask belongs to no matter. Settled asks keep their topic.",
+      description: neoToolDescription('neo.ask.topic'),
       inputSchema: TopicInput,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -503,8 +501,7 @@ export function createNeoAskRecordOperations(
     }),
     defineOperation({
       name: 'neo.ask.settle',
-      description:
-        'End an ask: done when its todos are done or explicitly closed unverified, dropped when the human drops it. Unverified todos keep that label and never count as done. Done is refused while todos are unfinished. Finish them, remove them with reasons, or use dropped when abandoning the request. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
+      description: neoToolDescription('neo.ask.settle'),
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
