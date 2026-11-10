@@ -5,6 +5,11 @@ import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import {
+  matchingVideoType,
+  VIDEO_HEADER_BYTES,
+  videoExtension,
+} from '@hyperneo/shared/types/video-container';
 import { previewReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { readPublicFileSource } from '../../storage/repositories/public-file-source.ts';
@@ -69,6 +74,40 @@ export function createLiveFileRead(
       };
     return { value: { ...checked.value, owner: source.owner } };
   }
+  async function range(fd: number, offset: number, length: number) {
+    const content = Buffer.alloc(length);
+    for (let position = 0; position < length; ) {
+      const { bytesRead } = await readBytes(
+        fd,
+        content,
+        position,
+        Math.min(262144, length - position),
+        offset + position
+      );
+      if (!bytesRead) return null;
+      position += bytesRead;
+    }
+    return content;
+  }
+  async function video(fd: number, size: number, extension: string, input: Input) {
+    const header = await range(fd, 0, Math.min(size, VIDEO_HEADER_BYTES));
+    if (!header) return { reason: 'file_changed' };
+    const mediaType = matchingVideoType(header, extension);
+    if (!mediaType) return { reason: 'unsupported_type' };
+    if (input.offset > size) return { reason: 'invalid_offset' };
+    const chunk = await range(fd, input.offset, Math.min(input.maxBytes, size - input.offset));
+    if (!chunk) return { reason: 'file_changed' };
+    return {
+      value: {
+        kind: 'video' as const,
+        mediaType,
+        byteLength: size,
+        nextOffset: input.offset + chunk.length,
+        complete: input.offset + chunk.length === size,
+        data: chunk.toString('base64'),
+      },
+    };
+  }
   async function bytes(
     plan: { root: string; relativePath: string; owner: unknown },
     input: Input,
@@ -88,18 +127,21 @@ export function createLiveFileRead(
         const version = fileVersion(initial);
         if (input.version && input.version !== version) return refusal('file_changed');
         if (size > limit) return refusal('size_limit');
-        const content = Buffer.alloc(size);
-        for (let position = 0; position < content.length; ) {
-          const { bytesRead } = await readBytes(
-            fd,
-            content,
-            position,
-            Math.min(262144, content.length - position),
-            position
-          );
-          if (!bytesRead) return refusal('file_changed');
-          position += bytesRead;
+        if (videoExtension(extension)) {
+          const prepared = await video(fd, size, extension, input);
+          if (fileVersion(fstatSync(fd, { bigint: true })) !== version)
+            return refusal('file_changed');
+          return 'reason' in prepared
+            ? refusal(prepared.reason)
+            : {
+                accepted: true as const,
+                path: resolve(plan.root, plan.relativePath),
+                version,
+                ...prepared.value,
+              };
         }
+        const content = await range(fd, 0, size);
+        if (!content) return refusal('file_changed');
         if (fileVersion(fstatSync(fd, { bigint: true })) !== version)
           return refusal('file_changed');
         const prepared = prepareLiveFileContent(content, extension);
@@ -149,7 +191,7 @@ export function createLiveFileRead(
   return defineOperation({
     name: 'file.reference.read',
     description:
-      'Paired-human current text/Markdown, sanitized HTML or raster image read from an exact reference in a readable stored source. No registration or copy. Successful reads include the owning daemon’s absolute path for ordinary question text. Returns at most 256 KiB decoded bytes from text/HTML of at most 2 MiB or raster images of at most 32 MiB/16 million pixels; HTML is sanitized before chunking and must render in an opaque-origin sandbox, without scripts or automatic external assets; continue with nextOffset and version. Reopen without version for current content. A changed version requires discarding partial bytes and reopening.',
+      'Paired-human current text/Markdown, sanitized HTML, raster image or video read from an exact reference in a readable stored source. No registration or copy. Successful reads include the owning daemon’s absolute path for ordinary question text. Returns at most 256 KiB decoded bytes from text/HTML of at most 2 MiB, raster images of at most 32 MiB/16 million pixels or MP4/modern QuickTime video of at most 16 MiB. Video reads validate a bounded matching container header and requested range through the same anchored descriptor. HTML is sanitized before chunking and must render in an opaque-origin sandbox, without scripts or automatic external assets. Continue with nextOffset and version. Reopen without version for current content. A changed version requires discarding partial bytes and reopening.',
     inputSchema,
     resultSchema: z.union([
       z.strictObject({
@@ -168,8 +210,17 @@ export function createLiveFileRead(
       z.strictObject({
         accepted: z.literal(true),
         path: z.string(),
-        kind: z.enum(['text', 'markdown', 'html', 'image']),
-        mediaType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']).optional(),
+        kind: z.enum(['text', 'markdown', 'html', 'image', 'video']),
+        mediaType: z
+          .enum([
+            'image/png',
+            'image/jpeg',
+            'image/gif',
+            'image/webp',
+            'video/mp4',
+            'video/quicktime',
+          ])
+          .optional(),
         width: z.number().int().positive().optional(),
         height: z.number().int().positive().optional(),
         scriptsRemoved: z.boolean().optional(),
