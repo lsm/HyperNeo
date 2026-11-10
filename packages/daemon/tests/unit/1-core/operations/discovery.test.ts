@@ -93,7 +93,7 @@ describe('shared operation discovery', () => {
         {
           name: 'operations.list',
           description:
-            'List the operations meant for this session. Pass { all: true } for the full catalog the session tool profile advertises and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
+            'List operations available to this caller and advertised by the session tool profile. Pass { all: true } to include eligible operations omitted from the default list. Pass { query } with keywords to keep only operations whose name or description contains every word. Caller and pack restrictions apply even with all: true.',
         },
         {
           name: 'operations.describe',
