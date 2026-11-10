@@ -1,3 +1,4 @@
+import { neoBlockerNotice } from './covered-notice.ts';
 import { skipEmptyNeoTurnReport, type NeoTurnReportFacts } from './turn-report-plan.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../drivers/types.ts';
@@ -74,16 +75,45 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       observation: { messageId: string; previousId: string; skip: boolean },
       tell: Tell,
       receipts: NeoTurnReportReceipts,
-      quiet: boolean
+      quiet: boolean,
+      turn: Turn,
+      dispatchId: string,
+      ref: WorkRef,
+      live: Live,
+      facts?: NeoTurnReportFacts
     ) => {
       if (quiet && !observation.skip) return;
       if (!observation.skip) {
-        await tell(ask, todo, text, observation.messageId, 'event');
+        const blocker = neoBlockerNotice(
+          ask,
+          todo,
+          dispatchId,
+          ref,
+          turn,
+          live?.status,
+          facts?.openCardIds
+        );
+        const deliver = () => tell(ask, todo, text, observation.messageId, 'event');
+        if (blocker) await receipts.deliverCoveredNotice(blocker.key, blocker.covered, deliver);
+        else await deliver();
         receipts.acknowledge(observation.messageId);
       }
       receipts.acknowledge(observation.previousId);
     },
-    ['ask', 'todo', 'text', 'observation', 'tell', 'receipts', 'quiet'],
+    [
+      'ask',
+      'todo',
+      'text',
+      'observation',
+      'tell',
+      'receipts',
+      'quiet',
+      'turn',
+      'dispatchId',
+      'ref',
+      'live',
+      'facts',
+    ],
     'delivered'
   )
   .endAsync('delivered') as (

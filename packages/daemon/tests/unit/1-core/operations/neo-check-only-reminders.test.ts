@@ -286,3 +286,32 @@ test('holding a todo also cancels deferred input after mailbox history is purged
   });
   expect(db.getSDKMessageRepo().getUserSendStatus('neo', entry.messageUuid)).toBe('failed');
 });
+
+test.each(['covered', 'unrelated'] as const)(
+  'a todo-linked card preserves actionable daily reminders: %s',
+  async (scenario) => {
+    add('queued');
+    service.todos.askQuestion(
+      'queued-choice',
+      'ask',
+      {
+        text: 'Choose the queued work',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todoId: scenario === 'covered' ? 'queued' : 'busy',
+      },
+      clock
+    );
+    clock += 24 * hour;
+    await service.refreshDriverWork();
+    expect(notes()).toHaveLength(1);
+    await consume(0);
+    clock += 24 * hour;
+    await service.refreshDriverWork();
+    expect(notes()).toHaveLength(2);
+  }
+);

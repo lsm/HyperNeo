@@ -346,3 +346,67 @@ test('environment blockers remind Neo with the reason while needs-human cards st
   expect(JSON.stringify(notes()[0])).toContain('Synthetic DNS failure');
   expect(JSON.stringify(notes()[0])).toContain('retry or escalate');
 });
+
+test.each([
+  'covered',
+  'start-covered',
+  'environment-start',
+  'other-start',
+  'ask-wide',
+  'unrelated',
+  'closed',
+  'changed',
+  'failed',
+  'new-owner',
+] as const)('todo-linked cards preserve actionable reminder delivery: %s', async (scenario) => {
+  add('covered');
+  if (scenario === 'environment-start')
+    service.todos.updateTodo(
+      service.todos.getTodo('covered')!,
+      { blockedBy: 'environment', blockedReason: 'Synthetic network failure' },
+      clock
+    );
+  const question = service.todos.askQuestion(
+    'coverage-card',
+    'ask',
+    {
+      text: 'Choose the next action',
+      kind: scenario.includes('start') ? 'start' : 'reply',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      startTodos: scenario.includes('start')
+        ? [scenario === 'other-start' ? 'busy' : 'covered']
+        : null,
+      todoId:
+        scenario === 'ask-wide' || scenario.includes('start')
+          ? null
+          : scenario === 'unrelated'
+            ? 'busy'
+            : 'covered',
+    },
+    clock
+  );
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(1);
+  await consume(0, scenario === 'failed' ? 'failed' : 'consumed');
+  if (scenario === 'new-owner') {
+    db.getDatabase().exec(`INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata)
+        SELECT 'other-neo',title,type,workspace_path,created_at,last_active_at,status,config,metadata FROM sessions WHERE id='neo';
+        UPDATE neo_asks SET session_id='other-neo' WHERE id='ask'`);
+  }
+  if (scenario === 'closed') service.todos.retireQuestion(question, 'Resolved', null, clock);
+  if (scenario === 'changed') {
+    clock++;
+    service.todos.commitState('covered', { blockedReason: 'A different blocker' }, clock, {
+      state: 'no_opinion',
+    });
+  }
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(2);
+  if (scenario === 'new-owner') expect(notes().at(-1).to.sessionId).toBe('other-neo');
+  expect(service.todos.getTodo('covered')?.state).toBe('blocked');
+});
