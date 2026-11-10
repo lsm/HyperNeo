@@ -41,7 +41,7 @@ import type { SessionManager } from '../../../../src/lib/session/session-manager
 import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
-const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
+const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' };
 const startTarget: NeoDriverTarget = { verb: 'start', adapter: 'codex-desktop', place };
 
 test('worker delivery guidance uses a live owning-daemon path instead of requiring registration', () => {
@@ -95,7 +95,7 @@ describe('driverWorkCall', () => {
     });
     expect(result.input.title).toBe('Codex dolmen 2');
   });
-  test('a todo title never becomes a worker title', () => {
+  test('a local todo title never becomes a worker title', () => {
     const result = driverWorkCall(startTarget, work);
     expect(result.input.title).toBe('Codex dolmen 1');
     expect(result.input.title).not.toBe(work.title);

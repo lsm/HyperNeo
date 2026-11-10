@@ -446,7 +446,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       target.verb === 'start' ? target.adapter : target.ref.adapter,
       target.verb === 'send'
     );
-    const names = deps.workerNames?.();
+    const localStart = target.verb === 'start' && !target.place?.daemon;
+    const names = localStart ? deps.workerNames?.() : undefined;
     const deliver = async () => {
       const call = driverWorkCall(
         target,

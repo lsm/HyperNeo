@@ -125,6 +125,7 @@ try {
   assert.deepEqual(names, ['HyperNeo project 1', 'HyperNeo project 2']);
   const description = world.operations.find((op) => op.name === 'neo.todo.add')!.description;
   assert(description.includes('target.name'));
+  assert(description.includes('local starts'));
   assert(!description.includes('use work.rename after starting'));
   writeFileSync(
     join(run, 'evidence/worker-names.json'),

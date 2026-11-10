@@ -123,7 +123,13 @@ export function driverWorkCall(
           place: target.place,
           title:
             target.name ??
-            planNeoWorkerName(target.adapter, target.place ?? naming?.place, naming?.taken ?? []),
+            (target.place?.daemon
+              ? work.title
+              : planNeoWorkerName(
+                  target.adapter,
+                  target.place ?? naming?.place,
+                  naming?.taken ?? []
+                )),
           message,
           ...(target.createFolder ? { createFolder: true } : {}),
           ...(target.model ? { model: target.model } : {}),
