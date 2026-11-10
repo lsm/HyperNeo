@@ -29231,6 +29231,58 @@
                   }
                 ]
               },
+              "more": {
+                "additionalProperties": false,
+                "properties": {
+                  "asks": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cursor": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "updatedAt",
+                          "id"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "cursor"
+                    ],
+                    "type": "object"
+                  },
+                  "working": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "count"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
               "mutedSessions": {
                 "items": {
                   "type": "string"
@@ -30938,9 +30990,6 @@
                   "type": "object"
                 },
                 "type": "array"
-              },
-              "trimmed": {
-                "type": "string"
               },
               "wakes": {
                 "items": {
@@ -38237,6 +38286,22 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "default": {},
         "properties": {
+          "cursor": {
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "updatedAt",
+              "id"
+            ],
+            "type": "object"
+          },
           "projectId": {
             "minLength": 1,
             "type": "string"
@@ -38328,6 +38393,58 @@
                     "type": "null"
                   }
                 ]
+              },
+              "more": {
+                "additionalProperties": false,
+                "properties": {
+                  "asks": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "cursor": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "updatedAt",
+                          "id"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "cursor"
+                    ],
+                    "type": "object"
+                  },
+                  "working": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "count"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
               },
               "mutedSessions": {
                 "items": {
@@ -40036,9 +40153,6 @@
                   "type": "object"
                 },
                 "type": "array"
-              },
-              "trimmed": {
-                "type": "string"
               },
               "wakes": {
                 "items": {

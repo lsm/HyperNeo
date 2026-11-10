@@ -1,4 +1,4 @@
-# Retain every open plan through compact snapshots
+# Retain open plans through snapshot indexes
 
 Use SKILL.md shared pinned runtime, dependency and resource setup. From the
 owned checkout, run this metadata-only proof with the shared wrapper.
@@ -14,10 +14,10 @@ asks, 480 unfinished steps and 12 questions, with no domain checks or configured
 domain client. A refusing executable records any attempted domain-client call.
 No provider or model turn is needed for this data-projection slice.
 
-The ordinary RPC snapshot contains all 12 owners. The same snapshot through the
-agent MCP door exceeds the normal budget, so it must omit details while retaining
-all 12 open owners. Instrumentation must observe zero target-table reads on the
-main connection during both snapshot and gateway plan reads. The new read must
+The ordinary RPC snapshot contains all 12 owners. The agent MCP snapshot retains
+all 12 open owners with card summaries and open questions. Snapshot text has no
+byte budget. Instrumentation must observe zero target-table reads on the main
+connection during both snapshot and gateway plan reads. The new read must
 return 12 asks, 480 family steps and 12 questions. The fitted digest must keep all
 12 headers, naming neo.ask.read and each owner's id for omitted steps. A full
 compact-source digest includes the last owner and an unchanged prompt emits no
@@ -34,10 +34,10 @@ Mandatory owner headers take priority over the requested budget when even the
 headers alone exceed it. Unit tests pin this floor as well as UTF-8 byte sizing,
 question counts, prerequisite/hold readiness, change-only context and closures.
 The same proof also seeds a legacy two-generation family. The gateway must
-return each step once. The real compact response must retain some step details
+return each step once. The fitted per-turn plan digest must retain some step details
 within its byte budget. Detail admission measures the serialized objects and
 array separators, including the omission guidance, rather than digest text.
-Run snapshot-compact, ask-entry/pack-row retention, the refusal-catalog audit
+Run snapshot-index, ask-entry summaries, the refusal-catalog audit
 and the storage reader-worker regression, then
 check:neo-pack-imports and check:db-main-thread. New core files contain no domain
 vocabulary. Per-turn SDK delivery and streaming-hook behavior belong to 7-B.

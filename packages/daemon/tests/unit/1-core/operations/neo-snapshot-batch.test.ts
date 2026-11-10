@@ -364,7 +364,7 @@ test.each([3, 4, 20, 21])(
     expect(
       mcp.todoAsks.every((entry) => entry.todos.length === (doneCount <= 3 ? doneCount : 0))
     ).toBe(true);
-    expect(mcp.trimmed).toBeUndefined();
+    expect(mcp).not.toHaveProperty('trimmed');
     expect(mcp.omitted).toBeUndefined();
     expect(Buffer.byteLength(JSON.stringify(mcp), 'utf8')).toBeLessThan(40_000);
     expect(rpc.todoAsks).toHaveLength(10);

@@ -185,7 +185,8 @@ describe('human-approved standing rules', () => {
           value: { ok: true },
         });
       }
-      expect(await invoke('neo.snapshot', {})).toMatchObject({
+      expect(await invoke('neo.snapshot', {})).not.toHaveProperty('value.standingRuleSources');
+      expect(await invoke('neo.snapshot', {}, human)).toMatchObject({
         value: { standingRuleSources: { [edit.add[0]]: { questionId } } },
       });
     }
