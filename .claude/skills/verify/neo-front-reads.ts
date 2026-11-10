@@ -34,42 +34,60 @@ try {
     const text = i === 0 ? 'Archived 中文事项' : `Shared record ${i}`;
     sql
       .prepare(
-        `INSERT INTO neo_concerns(id,title,summary,context,revision,created_at,updated_at) VALUES (?,?,'Visible summary','Hidden context',1,0,10)`
+        `INSERT INTO neo_concerns(id,title,summary,context,revision,created_at,updated_at) VALUES (?,?,'Visible summary','Hidden context',1,?,10)`
       )
-      .run(id, text);
+      .run(id, text, (i * 7) % 31);
     sql
       .prepare(
-        `INSERT INTO neo_asks(id,session_id,title,request,status,outcome,created_at,updated_at) VALUES (?,'synthetic',?,'Hidden request',?,'Visible outcome',0,10)`
+        `INSERT INTO neo_asks(id,session_id,title,request,status,outcome,created_at,updated_at) VALUES (?,'synthetic',?,'Hidden request',?,'Visible outcome',?,10)`
       )
-      .run(id, text, i === 0 ? 'done' : 'open');
+      .run(id, text, i === 0 ? 'done' : 'open', (i * 7) % 31);
     sql
       .prepare(
-        `INSERT INTO neo_todos(id,ask_id,position,title,done_when,state,blocked_reason,created_at,updated_at) VALUES (?,?,0,?,'Synthetic completion',?,'Visible blocker',0,10)`
+        `INSERT INTO neo_todos(id,ask_id,position,title,done_when,state,blocked_reason,created_at,updated_at) VALUES (?,?,0,?,'Synthetic completion',?,'Visible blocker',?,10)`
       )
-      .run(id, id, text, i === 0 ? 'done' : 'todo');
+      .run(id, id, text, i === 0 ? 'done' : 'todo', (i * 7) % 31);
     sql
       .prepare(
-        `INSERT INTO neo_questions(id,ask_id,text,kind,state,options,created_at) VALUES (?,?,?,'choice',?,'["One","Two"]',10)`
+        `INSERT INTO neo_questions(id,ask_id,text,kind,state,options,created_at) VALUES (?,?,?,'choice',?,'["One","Two"]',?)`
       )
-      .run(id, id, text, i === 0 ? 'answered' : 'open');
+      .run(id, id, text, i === 0 ? 'answered' : 'open', (i * 7) % 31);
   }
   const read = (
     kind: 'projects' | 'asks' | 'cards' | 'todos',
     input: Parameters<typeof neoFrontReads.run>[1]['input'] = {}
   ) => app.db.gateway.run(neoFrontReads, { conversationId, kind, input });
+  type Kind = Parameters<typeof read>[0];
+  type Item = Exclude<Awaited<ReturnType<typeof read>>, { items: unknown } | null>;
+  async function collect(kind: Kind, input: Parameters<typeof read>[1] = {}) {
+    const items: Item[] = [];
+    for (let window = 0; window < 10; window++) {
+      const result = await read(kind, input);
+      assert(result);
+      if (!('items' in result)) return [...items, result];
+      items.push(...result.items);
+      if (!result.nextCursor) return items;
+      input = { cursor: result.nextCursor };
+    }
+    throw new Error('Incomplete traversal');
+  }
   for (const kind of ['projects', 'asks', 'cards', 'todos'] as const) {
-    const expected = kind === 'projects' ? 31 : 30;
-    const ids = [];
-    let input = {};
-    let pages = 0;
+    const expectedIds = Array.from({ length: 31 }, (_, i) => i)
+      .filter((i) => kind === 'projects' || i !== 0)
+      .sort((a, b) => ((b * 7) % 31) - ((a * 7) % 31))
+      .map((i) => `record-${String(i).padStart(2, '0')}`);
+    const ids: string[] = [];
+    let input: Parameters<typeof read>[1] = {};
+    let windows = 0;
     do {
       const page = await read(kind, input);
       assert(page && 'items' in page);
-      assert.equal(page.total, expected);
       assert(page.items.length <= 10);
       ids.push(...page.items.map((item) => item.id));
-      pages++;
-      if (pages === 1) {
+      assert.equal(page.total, ids.length);
+      assert.equal(page.totalExact, false);
+      windows++;
+      if (windows === 1) {
         const table = {
           projects: 'neo_concerns',
           asks: 'neo_asks',
@@ -77,35 +95,42 @@ try {
           todos: 'neo_todos',
         }[kind];
         const timestamp = kind === 'cards' ? 'answered_at' : 'updated_at';
-        sql.prepare(`UPDATE ${table} SET ${timestamp}=100 WHERE id='record-20'`).run();
-        sql.prepare(`UPDATE ${table} SET ${timestamp}=-1 WHERE id='record-29'`).run();
+        sql.prepare(`UPDATE ${table} SET ${timestamp}=100 WHERE id=?`).run(expectedIds[10]);
+        sql.prepare(`UPDATE ${table} SET ${timestamp}=-1 WHERE id=?`).run(page.items[0].id);
       }
       input = page.nextCursor ? { cursor: page.nextCursor } : {};
       if (!page.nextCursor) break;
-    } while (pages < 10);
-    assert.equal(ids.length, expected);
-    assert.equal(new Set(ids).size, expected);
-    const closed = await read(kind, { text: '中文事项' });
-    assert(closed && 'id' in closed);
-    assert.equal(closed.id, 'record-00');
-    assert.deepEqual(closed, await read(kind, { id: 'record-00' }));
+    } while (windows < 10);
+    assert.deepEqual(ids, expectedIds);
+    const closed = await collect(kind, { text: '文' });
+    assert.equal(closed.length, 1);
+    assert.equal(closed[0].id, 'record-00');
+    assert.deepEqual(closed[0], await read(kind, { id: 'record-00' }));
     const ambiguous = await read(kind, { text: 'Shared record' });
     assert(ambiguous && 'items' in ambiguous);
-    assert.equal(ambiguous.total, 30);
-    assert.equal(ambiguous.items.length, 10);
-    assert(ambiguous.nextCursor);
-    const next = await read(kind, { cursor: ambiguous.nextCursor });
-    assert(next && 'items' in next);
-    assert.equal(next.total, 30);
+    assert.equal(ambiguous.total, 10);
+    assert.equal(ambiguous.totalExact, false);
+    const allMatches = await collect(kind, { text: 'Shared record' });
+    assert.equal(allMatches.length, 30);
+    for (const text of ['!!!', '']) {
+      assert.deepEqual(await read(kind, { text }), {
+        items: [],
+        total: 0,
+        totalExact: true,
+        nextCursor: null,
+      });
+    }
     assert.equal(await read(kind, { id: 'missing' }), null);
     assert(!JSON.stringify(closed).includes('Hidden'));
     observations.push({
       kind,
-      pages,
-      total: expected,
-      searchedClosed: true,
+      windows,
+      records: ids.length,
+      newestFirst: true,
       midPageEdit: true,
-      searchTotal: ambiguous.total,
+      shortSubstring: true,
+      firstEstimatedTotal: ambiguous.total,
+      searchMatches: allMatches.length,
     });
   }
   sql.prepare("UPDATE neo_todos SET state='done',blocked_reason=NULL WHERE id='record-01'").run();
@@ -113,9 +138,7 @@ try {
   assert(fresh && 'state' in fresh);
   assert.equal(fresh.state, 'done');
   assert.equal(fresh.blocker, null);
-  const latest = await read('todos');
-  assert(latest && 'items' in latest);
-  assert.equal(latest.total, 29);
+  assert.equal((await collect('todos')).length, 29);
   await assert.rejects(() =>
     app.db.gateway.run(neoFrontReads, {
       conversationId: '20000000-0000-4000-8000-000000000000',
@@ -128,6 +151,8 @@ try {
     head: process.argv[2],
     port: app.server.port,
     observations,
+    estimatesExplicit: true,
+    tokenlessEmpty: true,
     freshRead: true,
     invalidScopeRefused: true,
     switchOff: true,

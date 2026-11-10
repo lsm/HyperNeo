@@ -2,18 +2,23 @@
 
 Build web for the checkout, then run `neo-front-reads.ts` through `proof-run.sh`
 with the pinned Bun runtime and the checkout head as its argument. The helper
-starts an isolated daemon on an ephemeral port with a synthetic HOME and database.
-It stops job processing before seeding records and uses the registered read gateway.
+starts an isolated daemon with a synthetic HOME and database, stops job processing,
+and exercises the registered read gateway.
 
-Require every project, ask, card and todo page to contain at most ten summaries,
-with a full total and immutable-ID continuation. Editing an unseen record between
-pages must retain every original record exactly once. Search must find the closed record
-outside the first page, return details for a unique match, and count all ambiguous
-matches before limiting candidates. The unit regression log also retains query plans
-for full-text, one-character and tokenless reads over 5,024 projects, requiring FTS
-indexes for terms and an indexed ID seek with LIMIT for tokenless continuation. The second status read must reflect a changed
-todo. Unknown conversation scope must fail, and fast replies must remain off.
+Pages visit at most ten candidates plus one lookahead. Creation time orders records
+newest first, with immutable ID as the tiebreaker. Updates between pages must retain
+every original record exactly once. Totals are explicitly approximate whenever
+`totalExact` is false. They report matches observed in this traversal. Callers must
+follow `nextCursor` even when a search window contains no matches. Candidate IDs
+support a fresh detail lookup. One- and two-character terms retain substring matches.
+Empty or tokenless searches return no results.
 
-Retain `observed.json`, the proof log and the wrapper exit status. The four kinds
-must report 31, 30, 30 and 30 listed records, and 30 search matches each. This proves
-the internal read contract used by the later front integration.
+The unit regression retains query plans and row counts over 5,024 projects. Require
+an indexed `(created_at,id)` seek, no sorting scan, no aggregate count, and at most
+11 returned candidates per statement. Long-term FTS probes must use a fixed row ID.
+
+Retain `observed.json`, the proof log and the wrapper status. Traversals must produce
+31 projects and 30 active asks, cards and todos in creation order, with 30 search
+matches per reader. Verify a middle-of-word short substring, explicit estimate
+flags, empty tokenless results, fresh todo status, invalid-scope rejection and the
+default-off switch. The wrapper removes its temporary data after retaining evidence.

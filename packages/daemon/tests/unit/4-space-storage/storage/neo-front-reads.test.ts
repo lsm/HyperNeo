@@ -44,41 +44,46 @@ const read = (
   input: Parameters<typeof neoFrontReads.run>[1]['input'] = {}
 ) => db.gateway.run(neoFrontReads, { conversationId, kind, input });
 
+type Item = Exclude<Awaited<ReturnType<typeof read>>, { items: unknown } | null>;
+async function collect(kind: (typeof kinds)[number], input: Parameters<typeof read>[1] = {}) {
+  const items: Item[] = [];
+  for (let page = 0; page < 1000; page++) {
+    const result = await read(kind, input);
+    if (!result) return items;
+    if (!('items' in result)) return [...items, result];
+    items.push(...result.items);
+    if (!result.nextCursor) return items;
+    input = { cursor: result.nextCursor };
+  }
+  throw new Error('Pagination did not finish');
+}
+
 for (const kind of kinds) {
-  test(`${kind} lists every visible active item with bounded stable pages and totals`, async () => {
-    const expected = kind === 'projects' ? 24 : 23;
-    const ids: string[] = [];
-    let input = {};
-    do {
-      const page = await read(kind, input);
-      expect(page).toHaveProperty('total', expected);
-      if (!page || !('items' in page)) throw new Error('Expected page');
-      expect(page.items.length).toBeLessThanOrEqual(10);
-      ids.push(...page.items.map((item) => item.id));
-      input = page.nextCursor ? { cursor: page.nextCursor } : {};
-      if (!page.nextCursor) break;
-    } while (ids.length <= expected);
-    expect(ids.length).toBe(expected);
-    expect(new Set(ids).size).toBe(expected);
+  test(`${kind} lists every visible active item with bounded stable pages and explicit estimates`, async () => {
+    const first = await read(kind);
+    expect(first).toMatchObject({ total: 10, totalExact: false });
+    const items = await collect(kind);
+    const ids = items.map((item) => item.id);
+    expect(ids.length).toBe(kind === 'projects' ? 24 : 23);
+    expect(new Set(ids).size).toBe(ids.length);
     expect(ids[0]).toBe('item-23');
   });
 
-  test(`${kind} searches beyond page one and includes closed records with unique details`, async () => {
-    const found = await read(kind, { text: '中文记录' });
-    expect(found).toMatchObject({ id: 'item-00' });
-    expect(found).toEqual(await read(kind, { id: 'item-00' }));
+  test(`${kind} searches cover every window and include closed records with unique details`, async () => {
+    const found = await collect(kind, { text: '中文记录' });
+    expect(found).toHaveLength(1);
+    const detail = await read(kind, { id: 'item-00' });
+    if (!detail || 'items' in detail) throw new Error('Expected detail');
+    expect(found[0]).toEqual(detail);
     expect(JSON.stringify(found)).not.toContain('Private');
     const candidates = await read(kind, { text: 'Shared match' });
-    expect(candidates).toHaveProperty('total', 23);
+    expect(candidates).toMatchObject({ total: 10, totalExact: false });
     if (!candidates || !('items' in candidates)) throw new Error('Expected candidates');
     expect(candidates.items).toHaveLength(10);
     expect(candidates.items[0]).not.toHaveProperty('blocker');
     expect(candidates.items[0]).not.toHaveProperty('text');
-    expect(await read(kind, { text: 'not-present' })).toMatchObject({
-      items: [],
-      total: 0,
-      nextCursor: null,
-    });
+    expect(await collect(kind, { text: 'Shared match' })).toHaveLength(23);
+    expect(await collect(kind, { text: 'not-present' })).toEqual([]);
     expect(await read(kind, { id: 'missing' })).toBeNull();
   });
 }
@@ -109,7 +114,7 @@ test('each read reflects fresh committed state', async () => {
     .prepare("UPDATE neo_todos SET state='done', blocked_reason=NULL WHERE id='item-01'")
     .run();
   expect(await read('todos', { id: 'item-01' })).toMatchObject({ state: 'done', blocker: null });
-  expect(await read('todos')).toHaveProperty('total', 22);
+  expect(await collect('todos')).toHaveLength(22);
 });
 
 test('rejects unknown conversations, cross-tool cursors and mixed selectors', async () => {
@@ -128,13 +133,13 @@ test('search paging retains its filter and matches the full text before limiting
     const first = await read(kind, { text: 'match Shared' });
     if (!first || !('items' in first) || !first.nextCursor) throw new Error('Expected search page');
     const second = await read(kind, { cursor: first.nextCursor });
-    expect(second).toHaveProperty('total', 23);
+    expect(second).toMatchObject({ total: 20, totalExact: false });
     if (!second || !('items' in second)) throw new Error('Expected search page');
     expect(second.items).toHaveLength(10);
     expect(
       second.items.some((item) => first.items.some((previous) => previous.id === item.id))
     ).toBe(false);
-    expect(await read(kind, { text: '中' }), kind).toMatchObject({ id: 'item-00' });
+    expect(await collect(kind, { text: '中' })).toMatchObject([{ id: 'item-00' }]);
   }
 });
 
@@ -144,13 +149,9 @@ test('merged projects are absent from lists, details and searches', async () => 
       "INSERT INTO neo_project_merges (source_id,target_id,merged_at) VALUES ('item-00','item-01',20)"
     )
     .run();
-  expect(await read('projects')).toHaveProperty('total', 23);
+  expect(await collect('projects')).toHaveLength(23);
   expect(await read('projects', { id: 'item-00' })).toBeNull();
-  expect(await read('projects', { text: '中文记录' })).toMatchObject({
-    total: 0,
-    items: [],
-    nextCursor: null,
-  });
+  expect(await collect('projects', { text: '中文记录' })).toEqual([]);
 });
 
 test('editing unseen and already seen records between pages never skips or repeats them', async () => {
@@ -181,7 +182,7 @@ test('editing unseen and already seen records between pages never skips or repea
   }
 });
 
-test('large project searches use indexes and tokenless pages seek by key before limiting', async () => {
+test('large-table windows and FTS probes are bounded without counts or sorting scans', async () => {
   const sql = db.getDatabase();
   sql.transaction(() => {
     const insert = sql.prepare(`INSERT INTO neo_concerns
@@ -189,57 +190,55 @@ test('large project searches use indexes and tokenless pages seek by key before 
     for (let n = 0; n < 5000; n++) insert.run(`large-${n}`, `Large searchable project ${n}`);
   })();
   const prepare = sql.prepare.bind(sql);
-  const observed: { query: string; plan: string }[] = [];
+  const observed: { query: string; plan: string; rows: number }[] = [];
   sql.prepare = ((query: string) =>
     new Proxy(prepare(query), {
       get(target, property) {
         if (property === 'get' || property === 'all')
           return (...bindings: never[]) => {
-            if (query.includes('WITH records AS')) {
-              const plan = prepare(`EXPLAIN QUERY PLAN ${query}`).all(...bindings) as {
-                detail: string;
-              }[];
-              observed.push({ query, plan: plan.map((row) => row.detail).join('\n') });
-            }
-            return Reflect.apply(target[property], target, bindings);
+            if (/count\s*\(/i.test(query)) throw new Error('Unbounded count');
+            const plan = prepare(`EXPLAIN QUERY PLAN ${query}`).all(...bindings) as {
+              detail: string;
+            }[];
+            const result = Reflect.apply(target[property], target, bindings);
+            observed.push({
+              query,
+              plan: plan.map((row) => row.detail).join('\n'),
+              rows: Array.isArray(result) ? result.length : Number(!!result),
+            });
+            return result;
           };
         const value = Reflect.get(target, property, target);
         return typeof value === 'function' ? value.bind(target) : value;
       },
     })) as typeof sql.prepare;
   try {
-    for (const text of ['searchable', 'L', '!!!']) {
-      observed.length = 0;
-      const page = await read('projects', { text });
-      expect(page).toHaveProperty('items');
-      expect(observed.length).toBeGreaterThan(0);
-      for (const { plan } of observed)
-        expect(plan).not.toMatch(/SCAN neo_concerns(?! USING (?:COVERING )?INDEX)/);
-      console.log(JSON.stringify({ query: text, plans: observed }));
-      if (text !== '!!!')
-        expect(observed.some(({ plan }) => /VIRTUAL TABLE INDEX.*M/.test(plan))).toBe(true);
-      else {
-        if (!page || !('items' in page) || !page.nextCursor) throw new Error('Expected page');
-        expect(page.total).toBe(5024);
+    for (const kind of kinds)
+      for (const text of ['searchable', '文', '!!!', '']) {
         observed.length = 0;
-        await read('projects', { cursor: page.nextCursor });
-        const candidate = observed.find(({ query }) => /LIMIT 10/.test(query));
-        expect(candidate?.plan).toMatch(/SEARCH neo_concerns USING INDEX.*id</);
-        expect(candidate?.plan).not.toContain('USE TEMP B-TREE');
+        const page = await read(kind, { text });
+        expect(observed.every((row) => row.rows <= 11)).toBe(true);
+        expect(observed.some((row) => row.plan.includes('USE TEMP B-TREE'))).toBe(false);
+        if (text === '!!!' || text === '')
+          expect(page).toMatchObject({ items: [], total: 0, totalExact: true, nextCursor: null });
+        else {
+          expect(page).toHaveProperty('totalExact', false);
+          const candidate = observed.find((row) => row.query.includes('LIMIT 11'));
+          expect(candidate?.plan).toContain('USING INDEX idx_front_');
+          if (text === 'searchable')
+            expect(observed.some((row) => /VIRTUAL TABLE INDEX.*M/.test(row.plan))).toBe(true);
+        }
+        console.log(JSON.stringify({ kind, text, observed }));
       }
-    }
-    expect(await read('projects', { text: '' })).toHaveProperty('total', 5024);
-    for (const kind of ['asks', 'cards', 'todos'] as const) {
-      const table = { asks: 'neo_asks', cards: 'neo_questions', todos: 'neo_todos' }[kind];
-      for (const text of ['S', '!!!', '']) {
-        observed.length = 0;
-        expect(await read(kind, { text })).toHaveProperty('total', 23);
-        expect(observed.length).toBeGreaterThan(0);
-        for (const { plan } of observed)
-          expect(plan).not.toMatch(new RegExp(`SCAN ${table}(?! USING (?:COVERING )?INDEX)`));
-        console.log(JSON.stringify({ kind, text, plans: observed }));
-      }
-    }
+    const first = await read('projects');
+    if (!first || !('items' in first) || !first.nextCursor) throw new Error('Expected page');
+    expect(first).toMatchObject({ total: 10, totalExact: false });
+    observed.length = 0;
+    await read('projects', { cursor: first.nextCursor });
+    const candidate = observed.find((row) => row.query.includes('LIMIT 11'));
+    expect(candidate?.plan).toMatch(/SEARCH neo_concerns USING INDEX.*created_at.*</);
+    expect(candidate?.rows).toBe(11);
+    console.log(JSON.stringify({ continuation: observed }));
   } finally {
     sql.prepare = prepare;
   }
@@ -247,21 +246,96 @@ test('large project searches use indexes and tokenless pages seek by key before 
 
 test('front FTS backfills existing records and follows title edits and deletes', async () => {
   const sql = db.getDatabase();
-  for (const fts of ['neo_front_project_fts', 'neo_front_card_fts']) {
+  for (const fts of ['neo_front_project_fts']) {
     for (const suffix of ['ai', 'ad', 'au']) sql.exec(`DROP TRIGGER ${fts}_${suffix}`);
     sql.exec(`DROP TABLE ${fts}`);
   }
   runMigration497(sql);
   runMigration497(sql);
   for (const kind of kinds)
-    expect(await read(kind, { text: '中' })).toMatchObject({ id: 'item-00' });
+    expect(await collect(kind, { text: '中' })).toMatchObject([{ id: 'item-00' }]);
   sql.prepare("UPDATE neo_concerns SET title='Renamed project' WHERE id='item-00'").run();
   expect(await read('projects', { text: 'Unique archived' })).toHaveProperty('total', 0);
-  expect(await read('projects', { text: 'Renamed' })).toHaveProperty('id', 'item-00');
+  expect(await collect('projects', { text: 'Renamed' })).toMatchObject([{ id: 'item-00' }]);
   sql.prepare("UPDATE neo_asks SET title='Renamed ask' WHERE id='item-00'").run();
-  expect(await read('asks', { text: 'Renamed' })).toHaveProperty('id', 'item-00');
+  expect(await collect('asks', { text: 'Renamed' })).toMatchObject([{ id: 'item-00' }]);
   sql.prepare("DELETE FROM neo_concerns WHERE id='item-00'").run();
   expect(await read('projects', { text: 'Renamed' })).toHaveProperty('total', 0);
   sql.prepare("DELETE FROM neo_asks WHERE id='item-00'").run();
   expect(await read('asks', { text: 'Renamed' })).toHaveProperty('total', 0);
+});
+
+test('pages newest creation time first across a boundary regardless of UUID order', async () => {
+  for (const kind of kinds) {
+    const table = {
+      projects: 'neo_concerns',
+      asks: 'neo_asks',
+      cards: 'neo_questions',
+      todos: 'neo_todos',
+    }[kind];
+    for (let n = 0; n < 24; n++)
+      db.getDatabase()
+        .prepare(`UPDATE ${table} SET created_at=? WHERE id=?`)
+        .run(24 - n, `item-${String(n).padStart(2, '0')}`);
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await read(kind, cursor ? { cursor } : {});
+      if (!page || !('items' in page)) throw new Error('Expected page');
+      ids.push(...page.items.map((item) => item.id));
+      cursor = page.nextCursor;
+    } while (cursor && ids.length < 50);
+    const expected = Array.from(
+      { length: kind === 'projects' ? 24 : 23 },
+      (_, n) => `item-${String(n + (kind === 'projects' ? 0 : 1)).padStart(2, '0')}`
+    );
+    expect(ids).toEqual(expected);
+  }
+});
+
+test('reports approximate totals without issuing an aggregate count', async () => {
+  const sql = db.getDatabase();
+  const prepare = sql.prepare.bind(sql);
+  sql.prepare = ((query: string) => {
+    if (/count\s*\(/i.test(query)) throw new Error('Unbounded count');
+    return prepare(query);
+  }) as typeof sql.prepare;
+  try {
+    for (const kind of kinds) {
+      const page = await read(kind);
+      expect(page).toHaveProperty('totalExact', false);
+      expect(page).toHaveProperty('total', 10);
+    }
+  } finally {
+    sql.prepare = prepare;
+  }
+});
+
+test('short terms retain middle-of-word substrings and tokenless queries are empty', async () => {
+  for (const kind of kinds) {
+    const first = await read(kind, { text: '文' });
+    const ids: string[] = [];
+    let next = first;
+    let pages = 0;
+    while (next && pages++ < 10) {
+      if ('items' in next) {
+        ids.push(...next.items.map((item) => item.id));
+        if (!next.nextCursor) break;
+        next = await read(kind, { cursor: next.nextCursor });
+      } else {
+        ids.push(next.id);
+        break;
+      }
+    }
+    expect(ids).toEqual(['item-00']);
+    expect(await collect(kind, { text: 'ha' })).toHaveLength(23);
+    expect(await collect(kind, { text: 'ared' })).toHaveLength(23);
+    for (const text of ['!!!', '  '])
+      expect(await read(kind, { text })).toMatchObject({
+        items: [],
+        total: 0,
+        totalExact: true,
+        nextCursor: null,
+      });
+  }
 });
