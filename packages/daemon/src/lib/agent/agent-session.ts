@@ -2025,6 +2025,10 @@ export class AgentSession
     return await this.lifecycleManager.restart(options);
   }
 
+  async validateSdkTranscript(): Promise<boolean> {
+    return await this.lifecycleManager.validateSdkTranscript();
+  }
+
   getRewindPoints(): RewindPoint[] {
     return this.rewindHandler.getRewindPoints();
   }

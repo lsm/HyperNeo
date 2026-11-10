@@ -1790,14 +1790,41 @@ describe('QueryLifecycleManager', () => {
         expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
       });
 
-      test('restarts a non-resumable workflow sub-session instead of emitting an unresolvable prompt', async () => {
+      test('restarts a non-resumable workflow sub-session fresh instead of resuming the stale id', async () => {
         mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
         mockContext.session.sdkSessionId = 'missing-sdk-session';
+        mockContext.session.sdkOriginPath = '/old/workspace';
+        let sdkSessionIdAtStart: string | undefined = 'unset';
+        mockContext.startStreamingQuery = async () => {
+          sdkSessionIdAtStart = mockContext.session.sdkSessionId;
+          startStreamingCalled = true;
+        };
         manager = new QueryLifecycleManager(mockContext);
 
         const result = await manager.restart();
 
         expect(result.blocked).toBe(false);
+        expect(startStreamingCalled).toBe(true);
+        expect(sdkSessionIdAtStart).toBeUndefined();
+        expect(mockContext.session.sdkSessionId).toBeUndefined();
+        expect(mockContext.session.sdkOriginPath).toBeUndefined();
+        expect(updateSessionSpy).toHaveBeenCalledWith('space:space-1:task:task-1:exec:exec-1', {
+          sdkSessionId: undefined,
+          sdkOriginPath: undefined,
+        });
+        expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
+      });
+
+      test('keeps the resume for a non-resumable workflow sub-session when the transcript exists', async () => {
+        const sdkSessionId = 'sdk-sub-session-found';
+        createSdkFile('/test/workspace', sdkSessionId);
+        mockContext.session.id = 'space:space-1:task:task-1:exec:exec-1';
+        mockContext.session.sdkSessionId = sdkSessionId;
+        manager = new QueryLifecycleManager(mockContext);
+
+        await manager.restart();
+
+        expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
         expect(startStreamingCalled).toBe(true);
         expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
       });

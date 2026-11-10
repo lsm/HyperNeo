@@ -381,15 +381,32 @@ export class QueryLifecycleManager {
   }
 
   private async gateOnMissingTranscript(caller: string): Promise<boolean> {
-    const { session } = this.ctx;
-    if (
-      !session.sdkSessionId ||
-      session.config.harness === 'codex' ||
-      (isWorkflowSubSessionIdentity(session.id) && !hasRuntimeWorkerOperations(session.config))
-    ) {
+    const { session, db } = this.ctx;
+    if (!session.sdkSessionId || session.config.harness === 'codex') {
       return true;
     }
     if (await this.validateAndRepairWithMigration()) {
+      return true;
+    }
+    const resumeRefused =
+      isWorkflowSubSessionIdentity(session.id) && !hasRuntimeWorkerOperations(session.config);
+    if (resumeRefused) {
+      this.logger.warn(
+        `SDK session file missing/invalid for non-resumable sub-session ${session.id} ` +
+          `(sdkSessionId=${session.sdkSessionId}, ${caller}). ` +
+          'Dropping the stale sdk identity so the restart starts fresh.'
+      );
+      const staleSessionId = session.sdkSessionId;
+      const staleOriginPath = session.sdkOriginPath;
+      session.sdkSessionId = undefined;
+      session.sdkOriginPath = undefined;
+      await db.updateSession(session.id, {
+        sdkSessionId: undefined,
+        sdkOriginPath: undefined,
+      });
+      this.logger.info(
+        `Cleared sdkSessionId=${staleSessionId} sdkOriginPath=${staleOriginPath} on ${session.id}`
+      );
       return true;
     }
     this.logger.warn(
@@ -404,6 +421,14 @@ export class QueryLifecycleManager {
       );
     }
     return false;
+  }
+
+  async validateSdkTranscript(): Promise<boolean> {
+    const { session } = this.ctx;
+    if (!session.sdkSessionId || session.config.harness === 'codex') {
+      return true;
+    }
+    return this.validateAndRepairWithMigration();
   }
 
   private async emitSdkResumeChoiceMessage(): Promise<boolean> {
