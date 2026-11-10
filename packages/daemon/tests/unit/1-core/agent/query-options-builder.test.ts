@@ -1565,6 +1565,7 @@ describe('QueryOptionsBuilder', () => {
         capabilities: {
           streaming: true,
           extendedThinking: true,
+          thinkingModes: 'on',
           maxContextWindow: 1_000_000,
           functionCalling: true,
           vision: false,
@@ -1572,11 +1573,12 @@ describe('QueryOptionsBuilder', () => {
         isAvailable: () => true,
         getModels: async () => [model],
         ownsModel: (id: string) => id === model.id,
+        getModelForTier: () => model.id,
         buildSdkConfig: () => ({
           envVars: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000' },
           isAnthropicCompatible: true,
         }),
-      } as Provider);
+      });
       setModelsCache(new Map([['global', [model]]]));
       mockSession.config.provider = 'kimi';
       mockSession.config.model = model.id;
@@ -1590,13 +1592,15 @@ describe('QueryOptionsBuilder', () => {
     it('a session explicit auto-compact window wins over the provider window and omits the provider env var', async () => {
       Object.assign(mockSession.config, { autoCompactWindow: 450_000 });
       const options = await builder.build();
-      expect(options.settings?.autoCompactWindow).toBe(450_000);
+      const settings = typeof options.settings === 'object' ? options.settings : undefined;
+      expect(settings?.autoCompactWindow).toBe(450_000);
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     });
 
     it('the same session without an explicit value still gets the provider window', async () => {
       const options = await builder.build();
-      expect(options.settings?.autoCompactWindow).toBe(1_000_000);
+      const settings = typeof options.settings === 'object' ? options.settings : undefined;
+      expect(settings?.autoCompactWindow).toBe(1_000_000);
     });
   });
 

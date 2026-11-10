@@ -11,6 +11,7 @@ import { KimiProvider } from '../../../packages/daemon/src/lib/providers/kimi-pr
 import { getProviderRegistry } from '../../../packages/daemon/src/lib/providers/registry.ts';
 import { setModelsCache } from '../../../packages/daemon/src/lib/model-service.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { releaseSessionKeyBridges } from '../../../packages/daemon/src/lib/providers/provider-key-bridge.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -71,6 +72,7 @@ QueryOptionsBuilder.prototype.build = async function (...args) {
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 const evidence: Record<string, unknown> = {};
+const sessionIds: string[] = [];
 try {
   app = await createDaemonApp({
     config: {
@@ -122,6 +124,7 @@ try {
       },
     });
     const live = await app.sessionManager.getSessionForControl(created.sessionId);
+    sessionIds.push(created.sessionId);
     assert(live);
     await live.ensureQueryStarted();
     const deadline = Date.now() + 60_000;
@@ -148,10 +151,14 @@ try {
     assert(context);
     assert.equal(context.autocompactSource === 'env', window === undefined);
   }
+  const explicit = evidence.explicit as { context: { autoCompactThreshold: number } };
+  const inherited = evidence.inherited as { context: { autoCompactThreshold: number } };
+  assert(explicit.context.autoCompactThreshold < inherited.context.autoCompactThreshold);
   evidence.passed = true;
 } finally {
   transport?.close();
   await app?.cleanup();
+  for (const sessionId of sessionIds) releaseSessionKeyBridges(sessionId);
   QueryOptionsBuilder.prototype.build = originalBuild;
   fixture.closeAllConnections();
   await new Promise<void>((done) => fixture.close(() => done()));

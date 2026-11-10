@@ -66,7 +66,10 @@ import {
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
 import { KimiProvider } from '../providers/kimi-provider.js';
-import { stripRejectedSessionConfig } from '../session/create-session-config.ts';
+import {
+  hasExplicitAutoCompactWindow,
+  stripRejectedSessionConfig,
+} from '../session/create-session-config.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
 import {
@@ -524,6 +527,7 @@ export class QueryOptionsBuilder {
       ...this.buildPluginsFromSkills(toolInputs),
       ...this.buildPluginsFromBuiltinSkills(toolInputs),
     ];
+    const sessionHasAutoCompactWindow = hasExplicitAutoCompactWindow(config);
     const providerSettings = buildProviderSettings(
       providerId,
       modelInfo?.contextWindow,
@@ -538,7 +542,9 @@ export class QueryOptionsBuilder {
         ? undefined
         : modelInfo?.autoCompactPercent);
     const compactEnv = {
-      ...(modelInfo?.autoCompactPercentOverride !== undefined && providerSettings?.autoCompactWindow
+      ...(!sessionHasAutoCompactWindow &&
+      modelInfo?.autoCompactPercentOverride !== undefined &&
+      providerSettings?.autoCompactWindow
         ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(providerSettings.autoCompactWindow) }
         : {}),
       ...(compactPercent !== undefined
@@ -603,6 +609,7 @@ export class QueryOptionsBuilder {
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
       settings: withSdkTranscriptRetention({
         ...providerSettings,
+        ...(sessionHasAutoCompactWindow ? { autoCompactWindow: config.autoCompactWindow } : {}),
         precomputeCompactionEnabled: true,
       }),
 
