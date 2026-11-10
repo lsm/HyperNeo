@@ -12,8 +12,7 @@ import time
 import unittest
 
 RUNNER = Path(sys.argv.pop(1)).resolve()
-FAKE = '''#!/usr/bin/python3
-import json, os, socket, sys, threading, time
+FAKE = f'#!{sys.executable}\n' + '''import json, os, socket, sys, threading, time
 if sys.argv[1:] == ['--version']:
     print('cua-driver 0.44.0')
     sys.exit(0)
@@ -24,7 +23,8 @@ path = sys.argv[sys.argv.index('--socket') + 1]
 assert not any('API_KEY' in key for key in os.environ)
 if '/slow/' in path:
     open(path + '.starting', 'w').close()
-    time.sleep(3)
+    while not os.path.exists(path + '.release'):
+        time.sleep(0.01)
 server = socket.socket(socket.AF_UNIX)
 server.bind(path)
 os.chmod(path, 0o600)
@@ -206,8 +206,11 @@ class WorkerDrivers(unittest.TestCase):
             before = time.monotonic()
             self.assertTrue(self.call('status')['ok'])
             self.assertTrue(self.call('stop')['ok'])
-            self.assertLess(time.monotonic() - before, 2)
+            self.assertFalse(pending.done())
+            print(f'other_worker_stop_seconds={time.monotonic() - before:.3f}')
             wait_until(lambda: not alive(driver['pid']))
+            marker = next(slow.glob('d-*/d.sock.starting'))
+            marker.with_suffix('.release').touch()
             result = pending.result(timeout=15)
             self.assertTrue(result['ok'], result)
             self.pids.append(result['result']['pid'])

@@ -206,7 +206,8 @@ impl Drivers {
                     .env("PATH", &self.verification_path)
                     .kill_on_drop(true);
                 if !timeout(Duration::from_secs(5), signature.output())
-                    .await??
+                    .await
+                    .map_err(|_| "Driver signature validation timed out")??
                     .status
                     .success()
                 {
@@ -220,7 +221,8 @@ impl Drivers {
                         .kill_on_drop(true)
                         .output(),
                 )
-                .await??;
+                .await
+                .map_err(|_| "Driver version validation timed out")??;
                 if !version.status.success() || version.stdout != b"cua-driver 0.44.0\n" {
                     return Err("Driver version validation failed".into());
                 }
