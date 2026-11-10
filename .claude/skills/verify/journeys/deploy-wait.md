@@ -9,9 +9,10 @@ The authenticated CLI must refuse a reservation during an open microphone stream
 listener between captures, queued or playing speech, and a busy Neo turn. A terminal speech ack
 and a text-only listener permit one fake restart. When reservation wins the race, voice starts
 and listens return updating and a real queued input stays durably enqueued until expiration.
-An expired stream cannot revive through chunk or begin final transcription through stop during the lease.
+A settings probe refuses during the lease, and an expired stream cannot revive through chunk
+or begin final transcription through stop.
 The unit regressions also cover unavailable state, expiration and session-socket authorization.
 
-Require `passed: true`, eight cases, one fake restart and a zero wrapper exit. The journey closes
+Require `passed: true`, nine cases, one fake restart and a zero wrapper exit. The journey closes
 its socket and daemon in finally. The coordinator's bounded wait and real deployment are the
 subsequent rollout step after this command is live.

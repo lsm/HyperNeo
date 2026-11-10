@@ -104,58 +104,64 @@ describe('voice RPC handlers', () => {
     mock.restore();
   });
 
-  it('keeps one-shot dictation busy until its upload finishes', async () => {
-    let started!: () => void;
-    let complete!: (response: Response) => void;
-    const uploading = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    vi.spyOn(globalThis, 'fetch').mockImplementation(
-      () =>
-        new Promise<Response>((resolve) => {
-          complete = resolve;
-          started();
-        })
-    );
-    expect(voiceStreamsBusy()).toBe(false);
-    const pending = handlers.get('voice.transcribe')!({
-      audioBase64: wavBase64(),
-      mimeType: 'audio/wav',
-    });
-    await uploading;
-    try {
-      const reservation = new RestartReservation();
-      expect(
-        reservation.reserve(() => ({ neo: 'idle', streams: voiceStreamsBusy(), speech: false }))
-      ).toEqual({
-        ok: false,
-        reason: 'voice_busy',
+  it.each(['voice.transcribe', 'voice.testConnection'])(
+    'keeps %s busy until its upload finishes',
+    async (method) => {
+      let started!: () => void;
+      let complete!: (response: Response) => void;
+      const uploading = new Promise<void>((resolve) => {
+        started = resolve;
       });
-      expect(reservation.remaining()).toBe(0);
-      expect(voiceStreamsBusy()).toBe(true);
-    } finally {
-      complete(Response.json({ text: 'dictation' }));
-      await pending;
-    }
-    expect(voiceStreamsBusy()).toBe(false);
-  });
-
-  it('a reserved restart refuses one-shot dictation before upload', async () => {
-    const held = spyOn(restartReservation, 'remaining').mockReturnValue(100);
-    const upload = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ text: '' }));
-    try {
-      await expect(
-        handlers.get('voice.transcribe')!({
-          audioBase64: wavBase64(),
-          mimeType: 'audio/wav',
-        })
-      ).rejects.toMatchObject({ code: 'DAEMON_UPDATING' });
-      expect(upload).not.toHaveBeenCalled();
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            complete = resolve;
+            started();
+          })
+      );
       expect(voiceStreamsBusy()).toBe(false);
-    } finally {
-      held.mockRestore();
+      const pending = handlers.get(method)!({
+        audioBase64: wavBase64(),
+        mimeType: 'audio/wav',
+      });
+      await uploading;
+      try {
+        const reservation = new RestartReservation();
+        expect(
+          reservation.reserve(() => ({ neo: 'idle', streams: voiceStreamsBusy(), speech: false }))
+        ).toEqual({
+          ok: false,
+          reason: 'voice_busy',
+        });
+        expect(reservation.remaining()).toBe(0);
+        expect(voiceStreamsBusy()).toBe(true);
+      } finally {
+        complete(Response.json({ text: 'dictation' }));
+        await pending;
+      }
+      expect(voiceStreamsBusy()).toBe(false);
     }
-  });
+  );
+
+  it.each(['voice.transcribe', 'voice.testConnection'])(
+    'a reserved restart refuses %s before upload',
+    async (method) => {
+      const held = spyOn(restartReservation, 'remaining').mockReturnValue(100);
+      const upload = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ text: '' }));
+      try {
+        await expect(
+          handlers.get(method)!({
+            audioBase64: wavBase64(),
+            mimeType: 'audio/wav',
+          })
+        ).rejects.toMatchObject({ code: 'DAEMON_UPDATING' });
+        expect(upload).not.toHaveBeenCalled();
+        expect(voiceStreamsBusy()).toBe(false);
+      } finally {
+        held.mockRestore();
+      }
+    }
+  );
 
   it('cancels a batch upload and admits the next recording before the old provider responds', async () => {
     let started: () => void = () => {};

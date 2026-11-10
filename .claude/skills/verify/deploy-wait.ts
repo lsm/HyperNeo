@@ -107,6 +107,8 @@ try {
   const clear = await reserve();
   assert.equal(clear.code, 0); assert(clear.value.ok);
   assert.equal(clear.value.pid, process.pid); assert(clear.value.expiresAt! > Date.now());
+  await assert.rejects(rpc('voice.testConnection', {}), /updating/i);
+  cases.push({ name: 'settings probe refuses during the lease', restarts });
   await assert.rejects(rpc('voice.stream.chunk', { ...expired, audioBase64: 'AAA=' }), /Unknown voice stream/);
   await assert.rejects(rpc('voice.stream.stop', expired), /Unknown voice stream/);
   cases.push({ name: 'expired chunk and stop refuse during the lease', restarts });

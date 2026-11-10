@@ -405,14 +405,17 @@ export function registerVoiceHandlers(
       }
   });
 
-  messageHub.onRequest('voice.testConnection', async (_data, context) =>
-    transcribeViaPipeline(
-      settingsManager,
-      credentialManager,
-      createTestConnectionRequest(),
-      context
-    )
-  );
+  messageHub.onRequest('voice.testConnection', async (_data, context) => {
+    if (restartReservation.remaining())
+      throw new MessageHubHandlerError('Daemon updating; retry shortly', 'DAEMON_UPDATING');
+    const request = createTestConnectionRequest();
+    activeTranscriptions.count++;
+    try {
+      return await transcribeViaPipeline(settingsManager, credentialManager, request, context);
+    } finally {
+      activeTranscriptions.count--;
+    }
+  });
 }
 
 function ownedStream(streamId: string | undefined, context: CallContext | undefined): VoiceStream {
