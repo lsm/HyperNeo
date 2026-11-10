@@ -106,7 +106,7 @@ describe('Model Service', () => {
       async () =>
         new Response(
           JSON.stringify({
-            data: [{ id: 'deepseek-v4-pro' }],
+            data: [{ id: 'deepseek-v4-pro', context_window: 262144 }],
           })
         )
     ) as unknown as typeof fetch;
@@ -122,6 +122,16 @@ describe('Model Service', () => {
     expect(getAvailableModels('global').filter((model) => model.provider === provider.id)).toEqual(
       []
     );
+    const { refreshModels } = await import('../../../../src/lib/model-service');
+    await refreshModels(undefined, { forceRemote: true });
+    expect(getAvailableModels('global').filter((model) => model.provider === provider.id)).toEqual(
+      []
+    );
+    registry.setCuratedModels(provider.id, [{ id: 'deepseek-pro' }]);
+    await refreshModels(undefined, { forceRemote: true });
+    expect(
+      getAvailableModels('global').find((model) => model.id === 'deepseek-v4-pro')?.contextWindow
+    ).toBe(262144);
   });
 
   describe('stranded-provider retry tracking', () => {

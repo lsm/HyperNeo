@@ -165,6 +165,11 @@ export class DeepSeekProvider implements Provider {
     this.curatedModels = models;
   }
 
+  isCuratedModelVisible(modelId: string): boolean {
+    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
+    return !discovered?.length || discovered.some((model) => model.id === modelId);
+  }
+
   getCachedModels(): ModelInfo[] | null {
     const discovered = this.discoveryCache.get(this.discoveryFingerprint());
     if (discovered?.length) return discovered;
@@ -212,10 +217,15 @@ export class DeepSeekProvider implements Provider {
       this.clearModelCache();
       throw new Error('DeepSeek credentials changed during model discovery');
     }
+    const remoteIds = new Set(models.map((model) => model.id.toLowerCase()));
     const discovered = mergeDiscoveredModels(
       [],
       models
         .filter((model) => this.ownsModel(model.id))
+        .filter((model) => {
+          const resolved = DeepSeekProvider.resolveModelId(model.id)!.toLowerCase();
+          return model.id.toLowerCase() === resolved || !remoteIds.has(resolved);
+        })
         .map((model) => this.toRemoteModelInfo(model))
     );
     this.discoveryCache.set(fingerprint, discovered);

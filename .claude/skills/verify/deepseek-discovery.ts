@@ -26,8 +26,8 @@ const fetchImpl: typeof fetch = async (url) => {
       String(url).endsWith('/models')
         ? {
             data: [
-              { id: 'deepseek-pro', name: 'Synthetic Pro Alias' },
               { id: 'deepseek-v4-pro', name: 'Synthetic Updated Pro', context_window: 262144 },
+              { id: 'deepseek-pro', name: 'Synthetic Pro Alias' },
               { id: 'deepseek-future', name: 'Synthetic Flash', context_length: 524288 },
             ],
           }
@@ -66,30 +66,33 @@ try {
     socket!.once('open', done);
     socket!.once('error', fail);
   });
-  const id = crypto.randomUUID();
-  const reply = await new Promise<{
-    models: { id: string; display_name: string; contextWindow: number }[];
-  }>((done, fail) => {
-    const timer = setTimeout(() => fail(new Error('models.list timeout')), 15000);
-    socket!.on('message', (raw) => {
-      const frame = JSON.parse(String(raw));
-      if ((frame.requestId ?? frame.id) !== id) return;
-      clearTimeout(timer);
-      if (frame.error) fail(new Error(JSON.stringify(frame.error)));
-      else done(frame.data);
+  const listModels = (forceRefresh = false) => {
+    const id = crypto.randomUUID();
+    return new Promise<{
+      models: { id: string; display_name: string; contextWindow: number }[];
+    }>((done, fail) => {
+      const timer = setTimeout(() => fail(new Error('models.list timeout')), 15000);
+      socket!.on('message', (raw) => {
+        const frame = JSON.parse(String(raw));
+        if ((frame.requestId ?? frame.id) !== id) return;
+        clearTimeout(timer);
+        if (frame.error) fail(new Error(JSON.stringify(frame.error)));
+        else done(frame.data);
+      });
+      socket!.send(
+        JSON.stringify({
+          id,
+          type: 'REQ',
+          sessionId: 'global',
+          method: 'models.list',
+          data: { forceRefresh },
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        })
+      );
     });
-    socket!.send(
-      JSON.stringify({
-        id,
-        type: 'REQ',
-        sessionId: 'global',
-        method: 'models.list',
-        data: {},
-        timestamp: new Date().toISOString(),
-        version: '1.0.0',
-      })
-    );
-  });
+  };
+  const reply = await listModels();
   const pro = reply.models.find((model) => model.id === 'deepseek-v4-pro');
   assert.equal(pro?.display_name, 'Synthetic Updated Pro');
   assert.equal(pro.contextWindow, 262144);
@@ -105,6 +108,17 @@ try {
   );
   assert.equal(provider.capabilities.vision, false);
   assert(requests > 0);
+  const curated = [{ id: 'deepseek-flash' }];
+  registry.setCuratedModels(provider.id, curated);
+  provider.setCuratedModels(curated);
+  const forced = await listModels(true);
+  assert.equal(forced.models.length, 0);
+  evidence.forcedModelCount = forced.models.length;
+  registry.setCuratedModels(provider.id, [{ id: 'deepseek-pro' }]);
+  const canonical = await listModels(true);
+  assert.equal(canonical.models.length, 1);
+  assert.equal(canonical.models[0].contextWindow, 262144);
+  evidence.curatedAliasContext = canonical.models[0].contextWindow;
   evidence.passed = true;
   evidence.modelCount = reply.models.length;
   evidence.syntheticRequests = requests;

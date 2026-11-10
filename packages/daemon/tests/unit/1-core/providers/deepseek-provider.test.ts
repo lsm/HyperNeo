@@ -92,26 +92,29 @@ describe('DeepSeekProvider', () => {
     expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['deepseek-v4-pro']);
   });
 
-  it('deduplicates canonical IDs after mapping remote aliases', async () => {
-    const fetchImpl = mock(
-      async () =>
-        new Response(
-          JSON.stringify({
-            data: [
-              { id: 'deepseek-pro', name: 'Alias Pro' },
-              { id: 'deepseek-v4-pro', name: 'Canonical Pro' },
-            ],
-          })
-        )
-    ) as unknown as typeof fetch;
-    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
-    expect((await provider.listRemoteModels()).map((model) => model.id)).toEqual([
-      'deepseek-v4-pro',
-    ]);
-    expect((await provider.getModels()).map((model) => model.id)).toEqual(['deepseek-v4-pro']);
-    expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['deepseek-v4-pro']);
-    expect(provider.getCachedModels()?.[0].name).toBe('Canonical Pro');
-  });
+  it.each([false, true])(
+    'preserves canonical metadata when alias ordering is reversed=%s',
+    async (reverse) => {
+      const models = [
+        { id: 'deepseek-pro', name: 'Alias Pro' },
+        { id: 'deepseek-v4-pro', name: 'Canonical Pro', context_window: 262144 },
+      ];
+      if (reverse) models.reverse();
+      const fetchImpl = mock(
+        async () => new Response(JSON.stringify({ data: models }))
+      ) as unknown as typeof fetch;
+      const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'synthetic' }, fetchImpl);
+      expect((await provider.listRemoteModels()).map((model) => model.id)).toEqual([
+        'deepseek-v4-pro',
+      ]);
+      expect((await provider.getModels()).map((model) => model.id)).toEqual(['deepseek-v4-pro']);
+      expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['deepseek-v4-pro']);
+      expect(provider.getCachedModels()?.[0].name).toBe('Canonical Pro');
+      expect(
+        provider.buildSdkConfig('deepseek-v4-pro').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      ).toBe('262144');
+    }
+  );
 
   it('probes a discovered model instead of requiring a retired fallback', async () => {
     const probes: string[] = [];
