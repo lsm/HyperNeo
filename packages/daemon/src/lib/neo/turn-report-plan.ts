@@ -7,7 +7,6 @@ export type NeoTurnReportFacts = {
   blockedBy: NeoTodo['blockedBy'];
   questionOpen: boolean;
   openCardIds?: string[];
-  blockerState?: string;
 };
 
 export function skipEmptyNeoTurnReport(

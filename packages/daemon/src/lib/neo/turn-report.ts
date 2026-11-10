@@ -91,8 +91,7 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
           ref,
           turn,
           live?.status,
-          facts?.openCardIds,
-          facts?.blockerState
+          facts?.openCardIds
         );
         const deliver = () => tell(ask, todo, text, observation.messageId, 'event');
         if (blocker) await receipts.deliverCoveredNotice(blocker.key, blocker.covered, deliver);

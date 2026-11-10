@@ -1503,6 +1503,8 @@ describe('neo todo runner', () => {
     'restart',
     'new-owner',
     'todo-match-only',
+    'different-source',
+    'missing-source',
   ] as const)(
     'structured blocker repeats require a successful same-state receipt and live card: %s',
     async (scenario) => {
@@ -1524,7 +1526,12 @@ describe('neo todo runner', () => {
           : askForWorker(
               h,
               todo.id,
-              scenario === 'todo-match-only' ? 'Another action' : 'Approval required'
+              scenario === 'todo-match-only' ? 'Another action' : 'Approval required',
+              scenario === 'missing-source'
+                ? null
+                : scenario === 'different-source'
+                  ? { ...ref, id: 'other-worker' }
+                  : ref
             );
         const ask = h.store.getAsk('ask')!;
         let attempts = 0;
@@ -1536,7 +1543,7 @@ describe('neo todo runner', () => {
         };
         const send = (id: string, message: string) => {
           const current = h.store.getTodo(todo.id)!;
-          const openCardIds = neoNoticeCardIds(current, h.store.listQuestions('ask'));
+          const openCardIds = neoNoticeCardIds(current, h.store.listQuestions('ask'), ref);
           const facts = {
             priorStatus: 'done' as const,
             state: current.state,
@@ -3299,12 +3306,20 @@ describe('worker final-line blockers', () => {
   });
 });
 
-function askForWorker(h: ReturnType<typeof setup>, todoId: string, text = 'Approve it?') {
+function askForWorker(
+  h: ReturnType<typeof setup>,
+  todoId: string,
+  text = 'Approve it?',
+  source: typeof ref | null = ref
+) {
   const question = h.store.askQuestion(
     crypto.randomUUID(),
     'ask',
     {
       text,
+      sourceSession: source
+        ? { ...workerIdentity(source, null), provider: source.adapter, link: null }
+        : undefined,
       kind: 'yesno',
       options: null,
       multiple: false,

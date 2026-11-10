@@ -20,7 +20,6 @@ export type FollowThroughIncident = {
   workerQuestion?: StagedWorkerQuestion;
   blockerReport?: {
     id: string;
-    stateId?: string;
     dispatchId: string;
     at: number;
     triagedAt?: number;

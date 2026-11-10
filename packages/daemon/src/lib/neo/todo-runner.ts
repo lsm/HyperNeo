@@ -987,8 +987,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             state: reportTodo.state,
             blockedBy: reportTodo.blockedBy,
             questionOpen: questions.some((question) => neoQuestionCoversTodo(question, reportTodo)),
-            openCardIds: neoNoticeCardIds(reportTodo, questions),
-            blockerState: sessions.readNudge(id)?.blockerReport?.stateId,
+            openCardIds: neoNoticeCardIds(reportTodo, questions, ref),
           }
         );
       }

@@ -288,7 +288,7 @@ test('holding a todo also cancels deferred input after mailbox history is purged
 });
 
 test.each(['covered', 'unrelated'] as const)(
-  'a delivered daily reminder stops repeating only for its matching card: %s',
+  'a todo-linked card preserves actionable daily reminders: %s',
   async (scenario) => {
     add('queued');
     service.todos.askQuestion(
