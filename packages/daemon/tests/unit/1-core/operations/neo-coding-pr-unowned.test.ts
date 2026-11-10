@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { wakeCodingUnownedPrs } from '../../../../src/lib/neo/packs/coding/pr-unowned.ts';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingPrEventRepository } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
@@ -338,7 +338,7 @@ describe('coding pack newly unowned PR notifications', () => {
       f.accept(false);
       await f.cycle([pr(1)]);
       expect(f.wakes).toHaveLength(1);
-      const original = f.wakes[0];
+      const original = new CodingPrEventRepository(f.db).pendingUnowned(ship + 120_000)!;
       if (claim === 'owner') {
         f.db
           .prepare("UPDATE pack_coding_pr_ledger SET owner=? WHERE repo='synthetic/a'")
@@ -432,6 +432,74 @@ describe('coding pack newly unowned PR notifications', () => {
     }
   });
 
+  test('an explicit unassigned todo claim is checked before the first notice', async () => {
+    const f = setup();
+    try {
+      const store = new NeoAskTodoRepository(f.db);
+      store.openAsk({
+        id: 'fresh-ask',
+        sessionId: 'neo',
+        projectId: null,
+        originMessageId: null,
+        title: 'Linked work',
+        request: 'Build',
+        createdAt: 1,
+      });
+      store.addTodo(
+        'fresh-todo',
+        'fresh-ask',
+        {
+          title: 'Linked work',
+          instruction: 'Build',
+          named: null,
+          doneWhen: 'Merged',
+          check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+        },
+        1
+      );
+      await f.cycle([pr(1)]);
+      expect(f.wakes).toHaveLength(1);
+      expect(f.wakes[0].text).not.toContain('synthetic/a#1');
+      expect(f.wakes[0].text).toContain('synthetic/b#1');
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test('an unreadable optional claim recheck preserves the pending notification', async () => {
+    const f = setup();
+    try {
+      f.accept(false);
+      await f.cycle([pr(1)]);
+      const events = new CodingPrEventRepository(f.db);
+      const original = events.pendingUnowned(ship + 120_000)!;
+      const prepare = f.db.prepare.bind(f.db);
+      const fault = spyOn(f.db, 'prepare').mockImplementation(((sql: string) => {
+        if (sql.includes('WITH active AS')) throw new Error('Synthetic claim read unavailable');
+        return prepare(sql);
+      }) as typeof f.db.prepare);
+      try {
+        const sent: unknown[] = [];
+        await wakeCodingUnownedPrs(
+          events,
+          async (key, text) => {
+            sent.push({ key, text });
+            return true;
+          },
+          ship + 180_000
+        );
+        expect(sent).toEqual([original]);
+        expect(
+          f.db.prepare('SELECT pending_key AS key FROM pack_coding_pr_unowned_state').get()
+        ).toEqual({ key: null });
+      } finally {
+        fault.mockRestore();
+      }
+    } finally {
+      f.db.close();
+    }
+  });
+
   test('failed handoff survives restart with the same batch identity; new arrivals wait for the next wake', async () => {
     const { db, wakes, cycle, accept, restart } = setup();
     try {
@@ -467,10 +535,8 @@ describe('coding pack unowned PR persistence', () => {
       createCodingPackTables(db, cutoff + 600_000);
       runMigration477(db);
       runMigration480(db);
-      db.exec(
-        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
-           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
-      );
+      runMigrations(db, () => {});
+      createTables(db);
       expect(db.prepare('SELECT activated_at FROM pack_coding_pr_unowned_state').get()).toEqual({
         activated_at: cutoff,
       });
@@ -495,10 +561,8 @@ describe('coding pack unowned PR persistence', () => {
       createCodingPackTables(db, 10);
       runMigration477(db);
       runMigration480(db);
-      db.exec(
-        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
-           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
-      );
+      runMigrations(db, () => {});
+      createTables(db);
       db.prepare(`INSERT INTO pack_coding_pr_ledger (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
         VALUES ('synthetic/a',1,'Synthetic','b','h','unreviewed',20,20,11,0)`).run();
       const pending = new CodingPrEventRepository(db).pendingUnowned(20);
@@ -509,10 +573,8 @@ describe('coding pack unowned PR persistence', () => {
       createCodingPackTables(db, 30);
       runMigration477(db);
       runMigration480(db);
-      db.exec(
-        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
-           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
-      );
+      runMigrations(db, () => {});
+      createTables(db);
       const repo = new CodingPrEventRepository(db);
       const sent: unknown[] = [];
       await wakeCodingUnownedPrs(
@@ -552,10 +614,8 @@ describe('coding pack unowned PR persistence', () => {
       createCodingPackTables(db, 2);
       runMigration477(db);
       runMigration480(db);
-      db.exec(
-        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
-           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
-      );
+      runMigrations(db, () => {});
+      createTables(db);
       expect(
         db.prepare('SELECT title,created_at,author_is_bot FROM pack_coding_pr_ledger').get()
       ).toEqual({

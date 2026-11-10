@@ -1,3 +1,4 @@
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { expect, spyOn, test } from 'bun:test';
 import { CodingPrEventRepository } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
 import { wakeCodingUnownedPrs } from '../../../../src/lib/neo/packs/coding/pr-unowned.ts';
@@ -17,10 +18,8 @@ for (const readOnly of [false, true]) {
       createCodingPackTables(db, 0);
       runMigration477(db);
       runMigration480(db);
-      db.exec(
-        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
-           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
-      );
+      runMigrations(db, () => {});
+      createTables(db);
     }
     writer
       .prepare(`INSERT INTO pack_coding_pr_ledger

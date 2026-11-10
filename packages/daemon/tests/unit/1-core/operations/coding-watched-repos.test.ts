@@ -171,7 +171,36 @@ describe('Coding watched repositories', () => {
       { repo: row.repo },
     ]);
     expect(f.db.prepare('SELECT pending_text FROM pack_coding_pr_unowned_state').get()).toEqual({
-      pending_text: pending!.text,
+      pending_text: null,
+    });
+  });
+  test('unwatching keeps an unclaimed pending batch for its saved history', async () => {
+    const f = setup();
+    await f.save(['chosen/repo']);
+    const now = Date.now() + 10;
+    f.ledger.replace(
+      'chosen/repo',
+      [
+        {
+          repo: 'chosen/repo',
+          number: 1,
+          title: 'Unclaimed',
+          branch: 'work',
+          head: 'head',
+          state: 'unreviewed',
+          closedAt: null,
+          createdAt: now - 1,
+          authorIsBot: false,
+        },
+      ],
+      now
+    );
+    const pending = new CodingPrEventRepository(f.db).pendingUnowned(now)!;
+    await f.save([]);
+    await f.pack.sweep!(now + 1);
+    expect(f.notices).toEqual([]);
+    expect(f.db.prepare('SELECT pending_text FROM pack_coding_pr_unowned_state').get()).toEqual({
+      pending_text: pending.text,
     });
   });
   test('a watched alias follows its canonical repo without admitting unrelated repos', async () => {
