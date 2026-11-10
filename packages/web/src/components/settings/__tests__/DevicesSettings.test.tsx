@@ -250,6 +250,10 @@ describe('DevicesSettings', () => {
     const input = await screen.findByRole('textbox', { name: 'Code shown on Phone' });
     const allow = screen.getByRole('button', { name: 'Allow Phone' });
     expect((allow as HTMLButtonElement).disabled).toBe(true);
+    for (const invalid of ['12345678', 'ABCDEFGH']) {
+      fireEvent.input(input, { target: { value: invalid } });
+      expect((allow as HTMLButtonElement).disabled).toBe(true);
+    }
     fireEvent.input(input, { target: { value: 'mrnv-jhmh' } });
     fireEvent.click(allow);
     await waitFor(() =>
