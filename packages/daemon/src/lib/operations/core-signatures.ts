@@ -1,5 +1,6 @@
 import { operationSignature } from './discovery.ts';
-import type { OperationRegistry } from './registry.ts';
+import { isOperationAdmitted } from './invoke.ts';
+import { enabledOperationPacks, type OperationRegistry } from './registry.ts';
 
 const rules = {
   'neo.speech.say':
@@ -20,10 +21,13 @@ const rules = {
 } as const;
 
 export function coreOperationSignatures(registry: OperationRegistry): string {
+  const enabled = enabledOperationPacks(registry);
   let block = Object.entries(rules)
     .flatMap(([name, rule]) => {
       const operation = registry.get(name);
-      return operation ? [`${operationSignature(operation, true)}; ${rule}`] : [];
+      return operation && isOperationAdmitted(operation, { source: 'mcp', role: 'neo' }, enabled)
+        ? [`${operationSignature(operation, true)}; ${rule}`]
+        : [];
     })
     .join('\n');
   if (!block) return '';

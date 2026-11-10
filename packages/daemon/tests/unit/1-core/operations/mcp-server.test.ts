@@ -107,6 +107,38 @@ describe('operation MCP server', () => {
     }
   });
 
+  test('omits disabled pack operations from the Neo door briefing', () => {
+    let enabled: string[] = [];
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'neo.github.read',
+        description: 'Read a GitHub reference',
+        inputSchema: z.object({ url: z.string() }),
+        resultSchema: z.unknown(),
+        pack: { id: 'coding', enabledIds: () => enabled },
+        execute: async () => null,
+      }),
+      defineOperation({
+        name: 'neo.todo.add',
+        description: 'Add a todo',
+        inputSchema: z.object({ instruction: z.string() }),
+        resultSchema: z.unknown(),
+        execute: async () => null,
+      }),
+    ]);
+    const briefing = () =>
+      operationInvokeTool(
+        createOperationMcpServer(registry, () => ({ role: 'neo' }), undefined, 'neo')
+      ).description;
+    expect(briefing()).not.toContain('neo.github.read');
+    expect(briefing()).toContain('neo.todo.add');
+    enabled = ['coding'];
+    expect(briefing()).toContain('neo.github.read');
+    expect(briefing()).toContain('neo.todo.add');
+    enabled = [];
+    expect(briefing()).not.toContain('neo.github.read');
+  });
+
   test('invokes the canonical implementation with a server-bound caller', async () => {
     const result = await call({
       name: 'example.echo',

@@ -280,7 +280,7 @@ describe('pack-owned Neo operation registration', () => {
     }
   });
 
-  test('disabling coding work guidance keeps the existing GitHub read operation available', async () => {
+  test('disabling coding keeps the GitHub read operation registered', async () => {
     const db = await createTestDb();
     const service = createNeoService(
       db,
