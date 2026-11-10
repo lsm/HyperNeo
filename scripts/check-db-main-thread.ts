@@ -9,6 +9,7 @@ const workers = new Set([
   'lib/event-loop-watchdog-worker.ts',
   'lib/neo/project-mirror-worker.ts',
   'lib/neo/packs/coding/review-merge-hold-worker.ts',
+  'lib/neo/packs/coding/unowned-claims-worker.ts',
   'storage/db-gateway/db-gateway-worker.ts',
   'storage/repositories/google-connections-worker.ts',
   'storage/repositories/neo-ask-input-worker.ts',

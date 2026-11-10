@@ -1,3 +1,4 @@
+import { codingPrKey } from './pr-key.ts';
 import { createHash } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { CodingPrEventRepository } from './pr-events.ts';
@@ -13,6 +14,15 @@ export const codingPrMayBeInRunningTurn = (
 
 export const codingUnownedPrKey = (row: CodingUnownedPr) =>
   `neo-pr-unowned:${row.repo}#${row.number}`;
+
+export function planCodingUnclaimedPrs<Row extends CodingUnownedPr>(
+  rows: readonly Row[],
+  claims: ReadonlySet<string>
+) {
+  return rows.filter(
+    (row) => !claims.has(codingPrKey(`https://github.com/${row.repo}/pull/${row.number}`)!)
+  );
+}
 
 export function planCodingUnownedNotice(
   rows: readonly CodingUnownedPr[]
