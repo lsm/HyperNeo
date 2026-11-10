@@ -1,3 +1,4 @@
+import { neoNoticeCardIds } from './covered-notice.ts';
 import type { NeoWorkerNameSource } from './worker-name.ts';
 import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
@@ -914,7 +915,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return;
     const inputs = sessions.inputs.list(ref);
     const priorStatus = sessions.readLiveStatus(id);
-    const questions = store.listQuestions(ask.id);
     for (const turn of turns) {
       const temporalDispatch = inputs.findLast((input) => {
         const result = input.outcome;
@@ -972,6 +972,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const notice = dispatch && 'todoId' in dispatch && dispatch.todoId === null;
       if (dispatch && (notice || !('todoId' in dispatch) || dispatch.todoId === id)) {
         const reportTodo = store.getTodo(todo.id) ?? todo;
+        const questions = store.listQuestions(ask.id);
         await deliverNeoTurnReport(
           ask,
           reportTodo,
@@ -986,6 +987,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             state: reportTodo.state,
             blockedBy: reportTodo.blockedBy,
             questionOpen: questions.some((question) => neoQuestionCoversTodo(question, reportTodo)),
+            openCardIds: neoNoticeCardIds(reportTodo, questions),
+            blockerState: sessions.readNudge(id)?.blockerReport?.stateId,
           }
         );
       }

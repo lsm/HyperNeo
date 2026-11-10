@@ -109,10 +109,19 @@ export const recordWorkerBlocker = (superpipe({})('neo.worker-final-blocker') as
         },
         now
       );
+      const incident = sessions.readNudge(todo.id) ?? { since: now, nudges: 0 };
+      const prior = incident.blockerReport;
       sessions.recordNudge(todo.id, {
-        ...(sessions.readNudge(todo.id) ?? { since: now, nudges: 0 }),
+        ...incident,
         blockerReport: {
           id: scope.key,
+          stateId:
+            todo.state === 'blocked' &&
+            todo.blockedBy === blocker.kind &&
+            todo.blockedReason === blocker.reason &&
+            prior?.dispatchId === dispatchId
+              ? (prior.stateId ?? prior.id)
+              : scope.key,
           dispatchId,
           at: turn.at,
           ...(blocker.kind === 'needs-human' ? { triagedAt: result.updatedAt } : {}),

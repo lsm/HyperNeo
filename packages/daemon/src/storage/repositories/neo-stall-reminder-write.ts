@@ -1,3 +1,4 @@
+import { neoNoticeCardIds, skipCoveredNeoNotice } from '../../lib/neo/covered-notice.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
@@ -76,7 +77,13 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
           ...context.incident,
           [context.field]: reminder,
         });
-      return !reminder.pending &&
+      const covered =
+        neoNoticeCardIds(todo, new NeoAskTodoRepository(db).listQuestions(todo.askId)).length > 0;
+      const deliveredToOwner = reminder.delivered.some(
+        ({ id }) => sdk.getUserSendStatus(todo.sessionId, id) === 'consumed'
+      );
+      return !skipCoveredNeoNotice(deliveredToOwner, covered) &&
+        !reminder.pending &&
         (context.field === 'checkOnlyReminder' || reminder.delivered.length < 3) &&
         now - (reminder.delivered.at(-1)?.at ?? todo.since) >=
           (context.field === 'checkOnlyReminder' ? DAY : INTERVAL)

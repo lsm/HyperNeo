@@ -1500,6 +1500,7 @@ describe('neo todo runner', () => {
     'environment-covered',
     'environment-uncovered',
     'restart',
+    'new-owner',
   ] as const)(
     'structured blocker repeats require a successful same-state receipt and live card: %s',
     async (scenario) => {
@@ -1557,6 +1558,7 @@ describe('neo todo runner', () => {
           await expect(first).rejects.toThrow('Synthetic delivery failure');
         else await first;
         expect(delivered).toHaveLength(scenario === 'failed' ? 0 : 1);
+        if (scenario === 'new-owner') ask.sessionId = 'another-owner';
         if (scenario === 'closed') h.store.retireQuestion(question!, 'Resolved', null, 3);
         if (scenario === 'new-card') {
           h.store.retireQuestion(question!, 'Replaced', null, 3);

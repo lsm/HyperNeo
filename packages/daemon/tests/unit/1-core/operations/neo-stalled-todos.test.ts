@@ -356,6 +356,7 @@ test.each([
   'closed',
   'changed',
   'failed',
+  'new-owner',
 ] as const)(
   'only a delivered same-state reminder with its open card is quiet: %s',
   async (scenario) => {
@@ -386,6 +387,11 @@ test.each([
     await service.refreshDriverWork();
     expect(notes()).toHaveLength(1);
     await consume(0, scenario === 'failed' ? 'failed' : 'consumed');
+    if (scenario === 'new-owner') {
+      db.getDatabase().exec(`INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata)
+        SELECT 'other-neo',title,type,workspace_path,created_at,last_active_at,status,config,metadata FROM sessions WHERE id='neo';
+        UPDATE neo_asks SET session_id='other-neo' WHERE id='ask'`);
+    }
     if (scenario === 'closed') service.todos.retireQuestion(question, 'Resolved', null, clock);
     if (scenario === 'changed') {
       clock++;
@@ -396,6 +402,7 @@ test.each([
     clock += 2 * hour;
     await service.refreshDriverWork();
     expect(notes()).toHaveLength(['covered', 'start-covered'].includes(scenario) ? 1 : 2);
+    if (scenario === 'new-owner') expect(notes().at(-1).to.sessionId).toBe('other-neo');
     expect(service.todos.getTodo('covered')?.state).toBe('blocked');
   }
 );
