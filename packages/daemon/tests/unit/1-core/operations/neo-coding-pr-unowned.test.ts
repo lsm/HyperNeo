@@ -783,6 +783,26 @@ describe('coding pack unowned PR persistence', () => {
     }
   );
 
+  test('an unrelated fresh batch uses the current recipient after the original is fully claimed', async () => {
+    const f = setup({ recipient: () => 'original', status: async () => 'absent', send: async () => false });
+    try {
+      await f.cycle([pr(1)]);
+      const events = new CodingPrEventRepository(f.db);
+      f.db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(JSON.stringify({ adapter: 'hyperneo', id: 'owner' }));
+      f.db.prepare(`INSERT INTO pack_coding_pr_ledger
+        (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
+        VALUES ('synthetic/a',99,'Unrelated','work','new-head','unreviewed',20,30,?,0)`).run(ship + 60_000);
+      const sent: string[] = [];
+      const delivery = {
+        recipient: () => 'current', status: async () => 'absent' as const,
+        send: async (recipient: string) => { sent.push(recipient); return true; },
+      };
+      await wakeCodingUnownedPrs(events, async () => false, 30, delivery);
+      await wakeCodingUnownedPrs(events, async () => false, 30, delivery);
+      expect(sent).toEqual(['current']);
+    } finally { f.db.close(); }
+  });
+
   test('new reservations require a concrete recipient', () => {
     const f = setup();
     try {
