@@ -4,7 +4,10 @@ import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { requireLocalUser } from '../operations/caller.ts';
 import { SESSION_DOOR_PRINCIPAL } from '../pairing/pairing-operations.ts';
-import { neoAskInputWrites } from '../../storage/repositories/neo-ask-input-worker.ts';
+import {
+  neoAskInputReads,
+  neoAskInputWrites,
+} from '../../storage/repositories/neo-ask-input-worker.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import type { NeoService } from './service.ts';
@@ -65,7 +68,38 @@ export function createNeoRelayOperations(service: NeoService) {
       'outcome'
     )
     .endAsync('outcome');
+  const recent = (superpipe({})('neo.relaySenders.recent') as PipelineAPI)
+    .input(['caller'])
+    .pipe(requireLocalUser, 'caller', 'result:outcome')
+    .pipe(
+      async () => ({
+        senders: await gatewayFor(service.db.getDatabase()).call(
+          neoAskInputReads,
+          'recentRelaySenders',
+          service.repo.readConversationId(),
+          service.repo.defaultBinding()?.sessionId ?? null
+        ),
+      }),
+      'outcome',
+      'outcome'
+    )
+    .endAsync('outcome');
   return [
+    defineOperation({
+      name: 'neo.relaySenders.recent',
+      description: neoToolDescription('neo.relaySenders.recent'),
+      inputSchema: z.object({}).strict(),
+      resultSchema: z.union([
+        z.object({ ok: z.literal(false), reason: z.string() }),
+        z.object({
+          senders: z
+            .array(z.object({ sender: z.string(), name: z.string(), lastMessageAt: z.string() }))
+            .max(10),
+        }),
+      ]),
+      policy: { safetyClass: 'read', caller: 'local_user' },
+      execute: (_input, caller) => recent(caller),
+    }),
     defineOperation({
       name: 'neo.question.relayAnswer',
       description: neoToolDescription('neo.question.relayAnswer'),

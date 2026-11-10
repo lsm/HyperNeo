@@ -81,6 +81,24 @@ class NeoAskInputs {
     })();
   }
 
+  recentRelaySenders(conversation: string | null, recipient: string | null) {
+    if (!conversation || !recipient) return [];
+    return this.db
+      .prepare(`SELECT sender, COALESCE(NULLIF(name, ''), sender) AS name, lastMessageAt
+      FROM (
+        SELECT from_session AS sender, from_name AS name, created_at AS lastMessageAt, sequence,
+          ROW_NUMBER() OVER (PARTITION BY from_session ORDER BY created_at DESC, sequence DESC) AS rank
+        FROM neo_session_messages
+        WHERE conversation_id = ? AND to_session = ? AND from_session <> ?
+          AND kind = 'session' AND from_session NOT GLOB 'daemon:*'
+      ) WHERE rank = 1 ORDER BY lastMessageAt DESC, sequence DESC LIMIT 10`)
+      .all(conversation, recipient, recipient) as {
+      sender: string;
+      name: string;
+      lastMessageAt: string;
+    }[];
+  }
+
   owner(sessionId: string, messageId: string): string | null {
     const row = this.db
       .prepare(`SELECT ask_id AS askId FROM neo_ask_inputs
@@ -124,6 +142,7 @@ class NeoAskInputs {
 
 export const neoAskInputReads = defineRepositoryOp('neo.askInputs.read', 'read', NeoAskInputs, [
   'owner',
+  'recentRelaySenders',
 ]);
 export const neoAskInputWrites = defineRepositoryOp('neo.askInputs.write', 'write', NeoAskInputs, [
   'claimNeoInputAsk',
