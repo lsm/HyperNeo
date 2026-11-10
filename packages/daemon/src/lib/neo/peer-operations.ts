@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { randomBytes, randomUUID } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -136,8 +137,7 @@ export function createPeerOperations(service: NeoService) {
   return [
     defineOperation({
       name: 'neo.peer.accept',
-      description:
-        'On the current human request, accept a contact invitation at its HTTPS origin. Store the message credential privately.',
+      description: neoToolDescription('neo.peer.accept'),
       policy,
       inputSchema: Accept,
       resultSchema: z.union([Accepted.extend({ id: z.string() }), Refused]),
@@ -159,7 +159,7 @@ export function createPeerOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.peer.invite',
-      description: 'Invite a contact on the current human request; grants text delivery only.',
+      description: neoToolDescription('neo.peer.invite'),
       policy,
       inputSchema: z.object({ name: z.string().trim().min(1).max(80) }).strict(),
       resultSchema: z.union([
@@ -175,7 +175,7 @@ export function createPeerOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.peer.list',
-      description: 'List this instance’s contacts without invitations or credentials.',
+      description: neoToolDescription('neo.peer.list'),
       policy: { ...policy, safetyClass: 'read' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([
@@ -194,7 +194,7 @@ export function createPeerOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.peer.remove',
-      description: 'On the current human request, remove a contact and its message credentials.',
+      description: neoToolDescription('neo.peer.remove'),
       policy,
       inputSchema: z.object({ id: z.string().min(1) }).strict(),
       resultSchema: z.union([Accepted, Refused]),
@@ -206,8 +206,7 @@ export function createPeerOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.peer.send',
-      description:
-        'Send text to one configured contact on a recorded current human request. Receipt means the other Neo accepted it, not that the human read it. Retries keep requestId and content.',
+      description: neoToolDescription('neo.peer.send'),
       policy,
       inputSchema: Send,
       resultSchema: z.union([Accepted, Refused]),

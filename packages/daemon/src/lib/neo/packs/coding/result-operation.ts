@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { isDeepStrictEqual } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -50,8 +51,7 @@ export function createCodingResultOperation(
     .endAsync('fact') as (input: Input) => Promise<Result>;
   return defineOperation({
     name: 'neo.coding.result',
-    description:
-      'Record Review or Verify evidence for the exact persisted coding assignment (legacy qa remains accepted). Requires its todo, worker ref, actor identity, PR head and acceptance-contract reference; rejects stale heads, mismatches and attempts to erase a failure. Bot approval is read from GitHub, never submitted through this operation.',
+    description: neoToolDescription('neo.coding.result'),
     inputSchema: Input,
     resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
     policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { requireCodingLinkedIssue } from './linked-issue.ts';
 import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
 import { homedir } from 'node:os';
@@ -249,8 +250,7 @@ export function createCodingMergeOperation(deps: Deps) {
     .endAsync('result') as (input: Input) => Promise<Result>;
   return defineOperation({
     name: 'neo.coding.merge.prepare',
-    description:
-      'Admit a linked coding PR for manual merge using persisted Review/Verify assignments, actual exact-head review, required CI, resolved findings and repository human sign-off. Mirrored plans require a closing reference to the todo issue or its parent. Owner-merged repositories receive a reminder. Re-reads the head, records gates and returns a SHA-pinned command for the caller to execute.',
+    description: neoToolDescription('neo.coding.merge.prepare'),
     inputSchema: Input,
     resultSchema: z.union([
       z.object({

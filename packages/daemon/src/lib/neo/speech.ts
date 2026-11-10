@@ -1,5 +1,5 @@
 import { createEventMessage, type MessageHub } from '@hyperneo/shared';
-import { NEO_QUICK_ACK, NEO_QUICK_ACK_LISTENING } from '@hyperneo/prompts';
+import { NEO_QUICK_ACK, NEO_QUICK_ACK_LISTENING, neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
@@ -186,8 +186,7 @@ export class NeoSpeech {
     this.operations = [
       defineOperation({
         name: 'neo.speech.listen',
-        description:
-          'Enable live spoken replies on this connected human client. No history replay.',
+        description: neoToolDescription('neo.speech.listen'),
         inputSchema: Listen,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
@@ -195,8 +194,7 @@ export class NeoSpeech {
       }),
       defineOperation({
         name: 'neo.speech.say',
-        description:
-          'Speak a short natural utterance independently of chat publications when the human enabled voice replies. Reuse requestId on retries. Acceptance is delivery, not proof of playback. No listener means no speech.',
+        description: neoToolDescription('neo.speech.say'),
         inputSchema: Say,
         resultSchema: Result,
         policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -204,7 +202,7 @@ export class NeoSpeech {
       }),
       defineOperation({
         name: 'neo.speech.preview',
-        description: 'Preview the selected voice through this server.',
+        description: neoToolDescription('neo.speech.preview'),
         inputSchema: Preview,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
@@ -212,7 +210,7 @@ export class NeoSpeech {
       }),
       defineOperation({
         name: 'neo.speech.catalog',
-        description: 'List the voices available through this server.',
+        description: neoToolDescription('neo.speech.catalog'),
         inputSchema: z.object({}),
         resultSchema: z.object({
           ok: z.boolean(),
@@ -226,7 +224,7 @@ export class NeoSpeech {
       }),
       defineOperation({
         name: 'neo.speech.ack',
-        description: 'Record playback state for speech delivered to this exact client.',
+        description: neoToolDescription('neo.speech.ack'),
         inputSchema: Ack,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },

@@ -226,6 +226,44 @@ import mdToolPackPreferencesAsk from './neo/tools/pack.preferences.ask.md' with 
 import mdToolPackPreferencesGet from './neo/tools/pack.preferences.get.md' with { type: 'text' };
 import mdToolPackPreferencesList from './neo/tools/pack.preferences.list.md' with { type: 'text' };
 import mdToolPackPreferencesSet from './neo/tools/pack.preferences.set.md' with { type: 'text' };
+import mdToolAskSearch from './neo/tools/neo.ask.search.md' with { type: 'text' };
+import mdToolCodingAssign from './neo/tools/neo.coding.assign.md' with { type: 'text' };
+import mdToolCodingMergeHuman from './neo/tools/neo.coding.merge.human.md' with { type: 'text' };
+import mdToolCodingMergePrepare from './neo/tools/neo.coding.merge.prepare.md' with {
+  type: 'text',
+};
+import mdToolCodingMergeRetry from './neo/tools/neo.coding.merge.retry.md' with { type: 'text' };
+import mdToolCodingPrFile from './neo/tools/neo.coding.pr.file.md' with { type: 'text' };
+import mdToolCodingResult from './neo/tools/neo.coding.result.md' with { type: 'text' };
+import mdToolCodingSmoke from './neo/tools/neo.coding.smoke.md' with { type: 'text' };
+import mdToolCodingWritePlan from './neo/tools/neo.coding.write.plan.md' with { type: 'text' };
+import mdToolConversationRead from './neo/tools/neo.conversation.read.md' with { type: 'text' };
+import mdToolDraftRecover from './neo/tools/neo.draft.recover.md' with { type: 'text' };
+import mdToolGithubRead from './neo/tools/neo.github.read.md' with { type: 'text' };
+import mdToolHomeGithub from './neo/tools/neo.home.github.md' with { type: 'text' };
+import mdToolHomeInit from './neo/tools/neo.home.init.md' with { type: 'text' };
+import mdToolHomeRead from './neo/tools/neo.home.read.md' with { type: 'text' };
+import mdToolHomeSave from './neo/tools/neo.home.save.md' with { type: 'text' };
+import mdToolMessageSend from './neo/tools/neo.message.send.md' with { type: 'text' };
+import mdToolPeerAccept from './neo/tools/neo.peer.accept.md' with { type: 'text' };
+import mdToolPeerInvite from './neo/tools/neo.peer.invite.md' with { type: 'text' };
+import mdToolPeerList from './neo/tools/neo.peer.list.md' with { type: 'text' };
+import mdToolPeerRemove from './neo/tools/neo.peer.remove.md' with { type: 'text' };
+import mdToolPeerSend from './neo/tools/neo.peer.send.md' with { type: 'text' };
+import mdToolPreferencesSet from './neo/tools/neo.preferences.set.md' with { type: 'text' };
+import mdToolProjectForget from './neo/tools/neo.project.forget.md' with { type: 'text' };
+import mdToolProjectMove from './neo/tools/neo.project.move.md' with { type: 'text' };
+import mdToolProjectSection from './neo/tools/neo.project.section.md' with { type: 'text' };
+import mdToolProjectsReorganize from './neo/tools/neo.projects.reorganize.md' with { type: 'text' };
+import mdToolPublicationEdit from './neo/tools/neo.publication.edit.md' with { type: 'text' };
+import mdToolPublicationPublish from './neo/tools/neo.publication.publish.md' with { type: 'text' };
+import mdToolPublicationRead from './neo/tools/neo.publication.read.md' with { type: 'text' };
+import mdToolSessionArchive from './neo/tools/neo.session.archive.md' with { type: 'text' };
+import mdToolSpeechAck from './neo/tools/neo.speech.ack.md' with { type: 'text' };
+import mdToolSpeechCatalog from './neo/tools/neo.speech.catalog.md' with { type: 'text' };
+import mdToolSpeechListen from './neo/tools/neo.speech.listen.md' with { type: 'text' };
+import mdToolSpeechPreview from './neo/tools/neo.speech.preview.md' with { type: 'text' };
+import mdToolSpeechSay from './neo/tools/neo.speech.say.md' with { type: 'text' };
 import { buildPromptRegistry } from './loader.ts';
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
@@ -658,6 +696,42 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/pack.preferences.get.md': mdToolPackPreferencesGet,
     'neo/tools/pack.preferences.list.md': mdToolPackPreferencesList,
     'neo/tools/pack.preferences.set.md': mdToolPackPreferencesSet,
+    'neo/tools/neo.ask.search.md': mdToolAskSearch,
+    'neo/tools/neo.coding.assign.md': mdToolCodingAssign,
+    'neo/tools/neo.coding.merge.human.md': mdToolCodingMergeHuman,
+    'neo/tools/neo.coding.merge.prepare.md': mdToolCodingMergePrepare,
+    'neo/tools/neo.coding.merge.retry.md': mdToolCodingMergeRetry,
+    'neo/tools/neo.coding.pr.file.md': mdToolCodingPrFile,
+    'neo/tools/neo.coding.result.md': mdToolCodingResult,
+    'neo/tools/neo.coding.smoke.md': mdToolCodingSmoke,
+    'neo/tools/neo.coding.write.plan.md': mdToolCodingWritePlan,
+    'neo/tools/neo.conversation.read.md': mdToolConversationRead,
+    'neo/tools/neo.draft.recover.md': mdToolDraftRecover,
+    'neo/tools/neo.github.read.md': mdToolGithubRead,
+    'neo/tools/neo.home.github.md': mdToolHomeGithub,
+    'neo/tools/neo.home.init.md': mdToolHomeInit,
+    'neo/tools/neo.home.read.md': mdToolHomeRead,
+    'neo/tools/neo.home.save.md': mdToolHomeSave,
+    'neo/tools/neo.message.send.md': mdToolMessageSend,
+    'neo/tools/neo.peer.accept.md': mdToolPeerAccept,
+    'neo/tools/neo.peer.invite.md': mdToolPeerInvite,
+    'neo/tools/neo.peer.list.md': mdToolPeerList,
+    'neo/tools/neo.peer.remove.md': mdToolPeerRemove,
+    'neo/tools/neo.peer.send.md': mdToolPeerSend,
+    'neo/tools/neo.preferences.set.md': mdToolPreferencesSet,
+    'neo/tools/neo.project.forget.md': mdToolProjectForget,
+    'neo/tools/neo.project.move.md': mdToolProjectMove,
+    'neo/tools/neo.project.section.md': mdToolProjectSection,
+    'neo/tools/neo.projects.reorganize.md': mdToolProjectsReorganize,
+    'neo/tools/neo.publication.edit.md': mdToolPublicationEdit,
+    'neo/tools/neo.publication.publish.md': mdToolPublicationPublish,
+    'neo/tools/neo.publication.read.md': mdToolPublicationRead,
+    'neo/tools/neo.session.archive.md': mdToolSessionArchive,
+    'neo/tools/neo.speech.ack.md': mdToolSpeechAck,
+    'neo/tools/neo.speech.catalog.md': mdToolSpeechCatalog,
+    'neo/tools/neo.speech.listen.md': mdToolSpeechListen,
+    'neo/tools/neo.speech.preview.md': mdToolSpeechPreview,
+    'neo/tools/neo.speech.say.md': mdToolSpeechSay,
   })
 );
 

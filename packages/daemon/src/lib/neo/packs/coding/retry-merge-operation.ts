@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -73,8 +74,7 @@ export function createCodingRetryMergeOperation(
     .endAsync('result') as (input: Input) => Promise<{ accepted: boolean; reason?: string }>;
   return defineOperation({
     name: 'neo.coding.merge.retry',
-    description:
-      'Neo accepts a stopped daemon merge report for an exact PR head after every fresh merge gate passes. Reopens its three-attempt budget without deleting historical failures or changing preferences. Does not merge; the daemon checks all gates again on its next sweep.',
+    description: neoToolDescription('neo.coding.merge.retry'),
     inputSchema: Input,
     resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
     policy: { safetyClass: 'mutate', roles: ['neo'] },
