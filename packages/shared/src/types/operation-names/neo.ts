@@ -57,6 +57,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.session.archive',
   'neo.session.link',
   'neo.session.mute',
+  'neo.front.set',
   'neo.session.track',
   'neo.snapshot',
   'neo.speech.ack',

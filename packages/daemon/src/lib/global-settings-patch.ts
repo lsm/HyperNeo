@@ -8,6 +8,7 @@ export function keepNeoOwnedSettings(
   delete updates.driverHealth;
   if (!updates.neo) return updates;
   const {
+    front: _front,
     relaySenders: _relaySenders,
     standingRules: _rules,
     standingRuleSources: _sources,
@@ -15,12 +16,13 @@ export function keepNeoOwnedSettings(
     mutedSessions: _muted,
     ...neo
   } = updates.neo;
-  const { relaySenders, standingRules, standingRuleSources, preferences, mutedSessions } =
+  const { front, relaySenders, standingRules, standingRuleSources, preferences, mutedSessions } =
     current.neo ?? {};
   return {
     ...updates,
     neo: {
       ...neo,
+      ...(front ? { front } : {}),
       ...(relaySenders ? { relaySenders } : {}),
       ...(standingRules ? { standingRules } : {}),
       ...(standingRuleSources ? { standingRuleSources } : {}),

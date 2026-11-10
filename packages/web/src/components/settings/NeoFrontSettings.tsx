@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import { globalSettings } from '../../lib/state.ts';
-import { updateGlobalSettings } from '../../lib/api-helpers.ts';
+import { connectionManager } from '../../lib/connection-manager';
+import { invokeOperation } from '../../lib/operations.ts';
 
 export function NeoFrontSettings() {
   const [saving, setSaving] = useState(false);
@@ -10,7 +11,10 @@ export function NeoFrontSettings() {
     setSaving(true);
     setError('');
     try {
-      await updateGlobalSettings({ neo: { ...neo, front: { ...neo?.front, enabled } } });
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) throw new Error('Reconnect before changing fast replies.');
+      const result = await invokeOperation<{ ok: boolean }>(hub, 'neo.front.set', { enabled });
+      if (!result.ok) throw new Error('Could not save fast replies.');
     } catch {
       setError('Could not save fast reply settings.');
     } finally {
