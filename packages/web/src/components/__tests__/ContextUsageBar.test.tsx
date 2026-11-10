@@ -783,3 +783,49 @@ describe('ContextUsageBar', () => {
     });
   });
 });
+
+describe('compaction budget presentation', () => {
+  afterEach(cleanup);
+
+  it('shows fractional usage from the token counts and names remaining budget', () => {
+    const { container } = render(
+      <ContextUsageBar
+        contextUsage={{
+          totalUsed: 54505,
+          totalCapacity: 1000000,
+          percentUsed: 5,
+          autoCompactThreshold: 450000,
+          isAutoCompactEnabled: true,
+          breakdown: {
+            Messages: { tokens: 54505, percent: 5.5 },
+            'Free space': { tokens: 395495, percent: 39.5 },
+          },
+        }}
+      />
+    );
+    fireEvent.click(container.querySelector('[title="Click for context details"]')!);
+    expect(
+      Array.from(container.querySelectorAll('span')).find(
+        (node) => node.textContent === 'Context Window'
+      )?.nextElementSibling?.textContent
+    ).toBe('5.5%');
+    expect(container.textContent).toContain('Until auto-compact');
+    expect(container.textContent).not.toContain('Free space');
+  });
+
+  it('keeps the free-space label when there is no active compaction threshold', () => {
+    const { container } = render(
+      <ContextUsageBar
+        contextUsage={{
+          totalUsed: 54505,
+          totalCapacity: 1000000,
+          percentUsed: 5,
+          breakdown: { 'Free space': { tokens: 945495, percent: 94.5 } },
+        }}
+      />
+    );
+    fireEvent.click(container.querySelector('[title="Click for context details"]')!);
+    expect(container.textContent).toContain('Free space');
+    expect(container.textContent).not.toContain('Until auto-compact');
+  });
+});
