@@ -16,6 +16,7 @@ vi.mock('../DriverHealthSettings.tsx', () => ({
 }));
 
 import { globalSettings } from '../../../lib/state.ts';
+vi.mock('../NeoRelaySendersSettings.tsx', () => ({ NeoRelaySendersSettings: () => null }));
 import { NeoModelSettings } from '../NeoModelSettings.tsx';
 import { SessionsHarnessSettings } from '../SessionsHarnessSettings.tsx';
 

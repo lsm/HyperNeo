@@ -1063,6 +1063,22 @@ export function NeoAskTodos({
                     </div>
                     <SettledQuestionBody question={question} />
                     <p>— {neoQuestionAnswerLabel(question, todos)}</p>
+                    {question.answerProvenance && (
+                      <div class="mt-2 space-y-1 border-l-2 border-line pl-3">
+                        <p class="text-xs font-medium text-fg-soft">
+                          {t('question.relayedBy', { name: question.answerProvenance.viaName })}
+                        </p>
+                        <p class="whitespace-pre-wrap break-words text-sm text-fg-soft">
+                          {question.answerProvenance.words}
+                        </p>
+                        <p class="whitespace-pre-wrap break-words text-xs text-fg-faint">
+                          {question.answerProvenance.where}
+                        </p>
+                        <p class="whitespace-pre-wrap break-words text-xs text-fg-faint">
+                          {question.answerProvenance.when}
+                        </p>
+                      </div>
+                    )}
                     {!!neoRelativeTime(question.answeredAt, neoNow.peek(), locale.value) && (
                       <div class="neo-time-line">
                         {t('time.answered')} ·{' '}

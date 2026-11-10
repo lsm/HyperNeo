@@ -1822,3 +1822,37 @@ it('shows adapter-based worker identity and the next record name after rename', 
   expect(app.getByText('Codex · renamed')).toBeTruthy();
   expect(app.queryByText('Codex · Claude something')).toBeNull();
 });
+
+it.each([
+  { language: 'en' as const, label: 'Relayed by Synthetic relay' },
+  { language: 'zh-Hans' as const, label: '经 Synthetic relay 转达' },
+])('shows relay words and provenance under the answer in $language', ({ language, label }) => {
+  locale.value = language;
+  const words = '  pick B  ';
+  const value = entry({
+    questions: [
+      question('relayed', {
+        kind: 'choice',
+        options: ['Alpha', 'Beta'],
+        state: 'answered',
+        answer: ['Beta'],
+        answeredBy: 'chat',
+        answerProvenance: {
+          words,
+          via: 'synthetic-sender',
+          viaName: 'Synthetic relay',
+          where: 'A local discussion',
+          when: 'Monday evening ET',
+          at: 1,
+        },
+      }),
+    ],
+  });
+  const app = render(<NeoAskTodos entry={value} onAnswer={vi.fn()} />);
+  toggleAll(app);
+  expect(app.getByText(label)).toBeTruthy();
+  expect(app.getByText('A local discussion')).toBeTruthy();
+  expect(app.getByText('Monday evening ET')).toBeTruthy();
+  expect(app.getByText('pick B').textContent).toBe(words);
+  expect(app.getByText(/Beta/)).toBeTruthy();
+});

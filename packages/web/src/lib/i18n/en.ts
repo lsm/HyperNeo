@@ -130,6 +130,7 @@ export const en = {
   'question.openSessionTitle': 'Open session: {name}',
   'question.document': 'View full versions',
   'question.report': 'View full report',
+  'question.relayedBy': 'Relayed by {name}',
   'question.readAll': 'Read all',
   'question.reply': 'Reply in chat',
   'question.confirm': 'Confirm',
