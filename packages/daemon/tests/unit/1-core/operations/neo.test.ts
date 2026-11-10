@@ -388,6 +388,7 @@ describe('Neo MVP', () => {
     ).toEqual([
       'neo.project.move',
       'neo.project.section',
+      'system.restart.reserve',
       'neo.question.relayAnswer',
       'neo.peer.accept',
       'neo.peer.invite',
