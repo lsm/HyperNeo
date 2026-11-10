@@ -241,3 +241,7 @@ Recording the review result restores the wake; a pending human question also
 restores it. Each held case executes zero merges and preserves preferences and
 the todo/question records. Unit counterparts cover missing/stale/bot assignments,
 closed todos, file sign-off and an explicit human merge policy.
+
+The assigned-review proof rejects this query if the daemon's main connection
+attempts it. Its registered worker-only repository owns the SQL, and the main
+thread parses returned records before applying the pure suppression predicate.

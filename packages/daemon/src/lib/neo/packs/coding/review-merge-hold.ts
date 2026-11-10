@@ -6,7 +6,7 @@ export function codingReviewCoversMergeHold(
   facts: CodingDaemonMergeFacts,
   policy: CodingMergePolicy,
   head: string,
-  handoffs: ReturnType<CodingAssignmentsRepository['reviewHolds']>
+  handoffs: Awaited<ReturnType<CodingAssignmentsRepository['reviewHoldsCurrent']>>
 ): boolean {
   return (
     facts.ok &&

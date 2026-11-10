@@ -68,10 +68,8 @@ import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
 import { workSessionWrites } from '../repositories/work-session-repository.ts';
 import { claudeDesktopOutboxWrites } from '../repositories/claude-desktop-outbox-repository.ts';
 import { codingLedgerReads, codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
-import {
-  codingAssignmentReads,
-  codingAssignmentWrites,
-} from '../../lib/neo/packs/coding/assignments.ts';
+import { codingAssignmentWrites } from '../../lib/neo/packs/coding/assignments.ts';
+import { codingAssignmentReads } from '../../lib/neo/packs/coding/review-merge-hold-worker.ts';
 import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
 import { codingTurnPrReads } from '../../lib/neo/packs/coding/turn-prs.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';

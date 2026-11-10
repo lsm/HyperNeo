@@ -1,3 +1,4 @@
+import { codingAssignmentReads } from './review-merge-hold-worker.ts';
 import { codingStageTargetReads } from './stage-target-db.ts';
 import { planCodingStageTarget } from './stage-preferences.ts';
 import { CodingPrLedgerRepository } from './pr-ledger.ts';
@@ -78,34 +79,20 @@ export class CodingAssignmentsRepository {
     );
   }
 
-  reviewHolds(url: string, head: string) {
-    const rows = this.db
-      .prepare(`SELECT f.value_json AS assignment, t.state,
-      t.blocked_by AS blockedBy,
-      EXISTS(SELECT 1 FROM neo_questions q WHERE q.ask_id=t.ask_id AND q.state='open') AS questionOpen,
-      EXISTS(SELECT 1 FROM pack_coding_stage_facts s
-        WHERE s.url=?1 AND s.head=?2 AND s.stage='review') AS finished
-      FROM pack_facts f JOIN neo_todos t ON t.id=f.todo_id
-      JOIN neo_asks a ON a.id=t.ask_id
-      JOIN pack_coding_stage_heads h ON h.url=?1 AND h.head=?2
-      WHERE f.pack='coding' AND f.key=?3 AND a.status='open'`)
-      .all(githubUrlKey(url), head, key(url, head, 'review')) as {
-      assignment: string;
-      state: string;
-      blockedBy: string | null;
-      questionOpen: number;
-      finished: number;
-    }[];
+  async reviewHoldsCurrent(url: string, head: string) {
+    const rows = await gatewayFor(this.db).call(
+      codingAssignmentReads,
+      'reviewHolds',
+      githubUrlKey(url),
+      head,
+      key(url, head, 'review')
+    );
     return rows.map((row) => ({
       ...row,
       assignment: CodingAssignment.safeParse(JSON.parse(row.assignment)).data ?? null,
       questionOpen: Boolean(row.questionOpen),
       finished: Boolean(row.finished),
     }));
-  }
-
-  reviewHoldsCurrent(url: string, head: string) {
-    return gatewayFor(this.db).call(codingAssignmentReads, 'reviewHolds', url, head);
   }
 
   record(todoId: string, stage: Stage, input: CodingAssignment): boolean {
@@ -168,11 +155,4 @@ export const codingAssignmentWrites = defineRepositoryOp(
   'write',
   CodingAssignmentsRepository,
   ['record']
-);
-
-export const codingAssignmentReads = defineRepositoryOp(
-  'coding.assignmentReads',
-  'read',
-  CodingAssignmentsRepository,
-  ['reviewHolds']
 );

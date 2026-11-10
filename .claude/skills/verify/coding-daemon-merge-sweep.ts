@@ -100,6 +100,11 @@ try{
  const seedStoppedBudget=async()=>{for(let i=0;i<3;i++){const[receipt]=await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:coding-sweep',at:tick+i});assert(receipt);await ledger.write('daemonMerge',{...receipt,kind:'failed',error:'The base branch policy prohibits the merge.',at:receipt.startedAt});await ledger.write('daemonMerge',{...receipt,kind:'void',at:receipt.startedAt});}};
  if (assignedReview) {
    assert(![8399, 8499].includes(app.server.port));
+   const prepare = db.prepare.bind(db);
+   db.prepare = ((sql: string) => {
+     assert(!sql.includes('SELECT f.value_json AS assignment'), 'Review holds must be read off the daemon main thread');
+     return prepare(sql);
+   }) as typeof db.prepare;
    rejectSignoff = false;
    const store = new NeoAskTodoRepository(db);
    store.openAsk({ id: 'review-ask', sessionId: 'synthetic', projectId: null,
@@ -122,6 +127,7 @@ try{
    assert.equal(held().length, 0);
    assert.equal(mergeCalls().length, 0);
    evidence.coveredHoldWakes = held().length;
+   evidence.reviewReadOffMainThread = true;
    assert(stages.record({ url, head, stage: 'review', actor, ref, verdict: 'pass',
      acceptanceContract: 'contract', evidence: ['Synthetic review completed'] }));
    await runSweep();
