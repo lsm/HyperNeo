@@ -79,6 +79,8 @@ try {
     const ids: string[] = [];
     let input: Parameters<typeof read>[1] = {};
     let windows = 0;
+    let observedEdit = false;
+    const label = { projects: 'name', asks: 'title', cards: 'label', todos: 'title' } as const;
     do {
       const page = await read(kind, input);
       assert(page && 'items' in page);
@@ -87,6 +89,11 @@ try {
       assert.equal(page.total, ids.length);
       assert.equal(page.totalExact, false);
       windows++;
+      const edited = page.items.find((item) => item.id === expectedIds[10]);
+      if (edited) {
+        assert.equal(edited[label[kind]], 'Shared record edited');
+        observedEdit = true;
+      }
       if (windows === 1) {
         const table = {
           projects: 'neo_concerns',
@@ -97,11 +104,19 @@ try {
         const timestamp = kind === 'cards' ? 'answered_at' : 'updated_at';
         sql.prepare(`UPDATE ${table} SET ${timestamp}=100 WHERE id=?`).run(expectedIds[10]);
         sql.prepare(`UPDATE ${table} SET ${timestamp}=-1 WHERE id=?`).run(page.items[0].id);
+        const column = kind === 'cards' ? 'text' : 'title';
+        sql
+          .prepare(`UPDATE ${table} SET ${column}=? WHERE id IN (?,?)`)
+          .run('Shared record edited', expectedIds[10], page.items[0].id);
       }
       input = page.nextCursor ? { cursor: page.nextCursor } : {};
       if (!page.nextCursor) break;
     } while (windows < 10);
     assert.deepEqual(ids, expectedIds);
+    assert(observedEdit);
+    const editedDetail = await read(kind, { id: expectedIds[0] });
+    assert(editedDetail && 'id' in editedDetail);
+    assert.equal(editedDetail[kind === 'cards' ? 'text' : label[kind]], 'Shared record edited');
     const closed = await collect(kind, { text: '文' });
     assert.equal(closed.length, 1);
     assert.equal(closed[0].id, 'record-00');
@@ -133,6 +148,7 @@ try {
       records: ids.length,
       newestFirst: true,
       midPageEdit: true,
+      observedEdit,
       shortSubstring: true,
       firstEstimatedTotal: ambiguous.total,
       searchMatches: allMatches.length,

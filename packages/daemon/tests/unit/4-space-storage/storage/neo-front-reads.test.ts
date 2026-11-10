@@ -155,9 +155,9 @@ test('merged projects are absent from lists, details and searches', async () => 
   expect(await collect('projects', { text: '中文记录' })).toEqual([]);
 });
 
-test('editing unseen and already seen records between pages never skips or repeats them', async () => {
+test('reader-visible edits between search pages stay fresh without skips or repeats', async () => {
   for (const kind of kinds) {
-    const first = await read(kind);
+    const first = await read(kind, { text: 'Shared match' });
     if (!first || !('items' in first) || !first.nextCursor) throw new Error('Expected page');
     const table = {
       projects: 'neo_concerns',
@@ -168,18 +168,36 @@ test('editing unseen and already seen records between pages never skips or repea
     const timestamp = kind === 'cards' ? 'answered_at' : 'updated_at';
     db.getDatabase().prepare(`UPDATE ${table} SET ${timestamp}=100 WHERE id='item-13'`).run();
     db.getDatabase().prepare(`UPDATE ${table} SET ${timestamp}=-1 WHERE id='item-22'`).run();
+    const edit = {
+      projects: "title='Shared match edited'",
+      asks: "status='done'",
+      cards: "state='answered'",
+      todos: "state='doing'",
+    }[kind];
+    db.getDatabase().prepare(`UPDATE ${table} SET ${edit} WHERE id IN ('item-13','item-22')`).run();
+    const items = [...first.items];
     const ids = first.items.map((item) => item.id);
     let cursor: string | null = first.nextCursor;
     while (cursor && ids.length < 50) {
       const page = await read(kind, { cursor });
       if (!page || !('items' in page)) throw new Error('Expected page');
+      items.push(...page.items);
       ids.push(...page.items.map((item) => item.id));
       cursor = page.nextCursor;
     }
     expect(ids.filter((id) => id === 'item-13')).toHaveLength(1);
     expect(ids.filter((id) => id === 'item-22')).toHaveLength(1);
-    expect(ids.length).toBe(kind === 'projects' ? 24 : 23);
+    expect(ids.length).toBe(23);
     expect(new Set(ids).size).toBe(ids.length);
+    const field = kind === 'projects' ? 'name' : 'state';
+    const value = {
+      projects: 'Shared match edited',
+      asks: 'done',
+      cards: 'answered',
+      todos: 'doing',
+    }[kind];
+    expect(items.find((item) => item.id === 'item-13')?.[field]).toBe(value);
+    expect(await read(kind, { id: 'item-22' })).toHaveProperty(field, value);
   }
 });
 

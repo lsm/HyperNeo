@@ -7,7 +7,8 @@ and exercises the registered read gateway.
 
 Pages visit at most ten candidates plus one lookahead. Creation time orders records
 newest first, with immutable ID as the tiebreaker. Updates between pages must retain
-every original record exactly once. Totals are explicitly approximate whenever
+every original record exactly once. Edit reader-visible names/text and assert the
+new unseen projection, plus fresh details for the already-seen edited record. Totals are explicitly approximate whenever
 `totalExact` is false. They report matches observed in this traversal. Callers must
 follow `nextCursor` even when a search window contains no matches. Candidate IDs
 support a fresh detail lookup. List and search always return paged summaries, even
