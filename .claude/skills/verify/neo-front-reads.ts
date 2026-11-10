@@ -69,6 +69,17 @@ try {
       assert(page.items.length <= 10);
       ids.push(...page.items.map((item) => item.id));
       pages++;
+      if (pages === 1) {
+        const table = {
+          projects: 'neo_concerns',
+          asks: 'neo_asks',
+          cards: 'neo_questions',
+          todos: 'neo_todos',
+        }[kind];
+        const timestamp = kind === 'cards' ? 'answered_at' : 'updated_at';
+        sql.prepare(`UPDATE ${table} SET ${timestamp}=100 WHERE id='record-20'`).run();
+        sql.prepare(`UPDATE ${table} SET ${timestamp}=-1 WHERE id='record-29'`).run();
+      }
       input = page.nextCursor ? { cursor: page.nextCursor } : {};
       if (!page.nextCursor) break;
     } while (pages < 10);
@@ -93,6 +104,7 @@ try {
       pages,
       total: expected,
       searchedClosed: true,
+      midPageEdit: true,
       searchTotal: ambiguous.total,
     });
   }

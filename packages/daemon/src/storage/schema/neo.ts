@@ -1,3 +1,4 @@
+import { runMigration497 } from './m497-neo-front-search.ts';
 import { runMigration496 } from './m496-neo-front-inputs.ts';
 import { runMigration494 } from './m494-tracker-mirrors.ts';
 import { runMigration415 } from './m415-neo-home-path.ts';
@@ -37,4 +38,5 @@ export function createNeoTables(db: Database): void {
   runMigration415(db);
   runMigration370(db);
   createNeoPublicationTable(db);
+  runMigration497(db);
 }
