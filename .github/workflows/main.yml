@@ -66,11 +66,37 @@ jobs:
     runs-on: macos-latest
     needs: [changes]
     if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.desktop == 'true')
-    timeout-minutes: 3
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Desktop Cargo dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/desktop/tests/driver-host/target
+          key: desktop-driver-${{ runner.os }}-${{ hashFiles('packages/desktop/tests/driver-host/Cargo.lock', 'packages/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: desktop-driver-${{ runner.os }}-
       - name: Test synthetic Mach-O bundles
         run: python3 packages/desktop/tests/macos-rpaths.py
+      - name: Build production-admission host fixture
+        run: cargo build --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml
+      - name: Reject unapproved workers and tolerate endpoint failures
+        run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture WorkerDrivers.test_unapproved_same_user_cannot_start_or_get_driver_socket WorkerDrivers.test_bind_failure_allows_desktop_setup_to_continue WorkerDrivers.test_missing_startup_paths_allow_desktop_setup_to_continue
+      - name: Build isolated embedded-host fixture
+        run: cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml --bin desktop-driver-fixture -- --cfg test
+      - name: Check macOS Tauri wiring with an inert sidecar
+        run: |
+          sidecar_target="$(rustc -vV | sed -n 's/^host: //p')"
+          mkdir -p packages/desktop/src-tauri/binaries
+          printf '#!/bin/sh\nexit 0\n' > "packages/desktop/src-tauri/binaries/hyperneo-$sidecar_target"
+          chmod +x "packages/desktop/src-tauri/binaries/hyperneo-$sidecar_target"
+          CARGO_TARGET_DIR="$PWD/packages/desktop/tests/driver-host/target" \
+            cargo check --locked --manifest-path packages/desktop/src-tauri/Cargo.toml
+      - name: Exercise worker drivers with a fake binary
+        run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture
 
   # ============================================
   # CODE QUALITY CHECKS
