@@ -88,8 +88,7 @@ import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
 import { neoFolder } from '../../neo/folder.ts';
 import { neoStartPlace } from '../../neo/start-place.ts';
-import { neoTodoRepository } from '../../neo/pack-contract.ts';
-import { neoTodoPolicies } from '../../neo/packs/todo-policies.ts';
+import { createCodingStartPlacePolicy } from '../../neo/packs/coding/start-place.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { WorktreeManager } from '../../worktree-manager.ts';
@@ -630,12 +629,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       db: db(),
       machine,
       workspaceRoot: context.deps.config.workspaceRoot,
-      repository: (todo, ask) =>
-        neoTodoRepository(todo ?? { check: null, named: null }, neoTodoPolicies(db()), {
-          ask,
-          todo,
-          start: true,
-        }),
+      policy: createCodingStartPlacePolicy(db()),
     }),
     isOpenTodo: (todoId: string, sessionId: string) => {
       const store = new NeoAskTodoRepository(db());

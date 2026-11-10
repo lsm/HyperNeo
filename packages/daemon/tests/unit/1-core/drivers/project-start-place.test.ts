@@ -5,8 +5,7 @@ import { dirname, join } from 'node:path';
 import { vi } from 'vitest';
 import { selectLocalStartFolder } from '../../../../src/lib/drivers/start-folder.ts';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
-import { neoTodoRepository } from '../../../../src/lib/neo/pack-contract.ts';
-import { neoTodoPolicies } from '../../../../src/lib/neo/packs/todo-policies.ts';
+import { createCodingStartPlacePolicy } from '../../../../src/lib/neo/packs/coding/start-place.ts';
 import { neoStartPlace } from '../../../../src/lib/neo/start-place.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -131,12 +130,7 @@ async function start(
         db,
         machine: 'local',
         workspaceRoot: workspaceRoot ?? undefined,
-        repository: (todo, ask) =>
-          neoTodoRepository(todo ?? { check: null, named: null }, neoTodoPolicies(db), {
-            ask,
-            todo,
-            start: true,
-          }),
+        policy: createCodingStartPlacePolicy(db),
       }),
     })
   );
@@ -296,5 +290,37 @@ describe('shared non-coding work.start home', () => {
       ok: true,
       value: { place: { folder: join(root, 'workspace') } },
     });
+  });
+});
+
+describe('pack-selected start placement', () => {
+  const input = { todoId: 'todo', adapter: 'synthetic', title: 'Task', message: 'Synthetic work' };
+
+  test('an explicit-place policy accepts a supplied place without human path intake', async () => {
+    const place = { machine: 'local', folder: join(root, 'repository'), name: 'Repository' };
+    const decide = vi.fn(() => 'explicit' as const);
+    const resolve = neoStartPlace({ db, machine: 'local', policy: decide });
+    expect(await resolve({ ...input, place }, caller)).toEqual({ value: { ...input, place } });
+    expect(decide).toHaveBeenCalledWith(store.getTodo('todo'), store.getAsk('ask'));
+  });
+
+  test('an explicit-place policy refuses an omitted place', async () => {
+    const resolve = neoStartPlace({ db, machine: 'local', policy: () => 'explicit' });
+    expect(await resolve(input, caller)).toMatchObject({ reason: { reason: 'invalid_place' } });
+    expect(existsSync(join(root, 'home/HyperNeo'))).toBe(false);
+  });
+
+  test('a shared-home policy still refuses an invented override', async () => {
+    const resolve = neoStartPlace({ db, machine: 'local', policy: () => 'shared-home' });
+    expect(await resolve(input, caller)).toMatchObject({
+      value: { place: { folder: join(root, 'home/HyperNeo') } },
+    });
+    expect(
+      await resolve(
+        { ...input, place: { machine: 'local', folder: join(root, 'invented'), name: 'Invented' } },
+        caller
+      )
+    ).toMatchObject({ reason: { reason: 'invalid_place' } });
+    expect(existsSync(join(root, 'invented'))).toBe(false);
   });
 });

@@ -91,12 +91,12 @@ test('placement dispatch leaves completion-only pack validation to its owner', (
   ).toBeNull();
 });
 
-test('start-place uses its supplied repository policy instead of inferring from the check', () => {
+test('start-place uses its supplied placement policy instead of inferring from the check', () => {
   const start = neoStartPlace({
     db,
     machine: 'local',
     workspaceRoot: '/synthetic/home',
-    repository: () => null,
+    policy: () => 'shared-home',
   });
   expect(
     Reflect.apply(start, undefined, [

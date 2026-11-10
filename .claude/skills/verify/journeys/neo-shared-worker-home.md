@@ -52,3 +52,10 @@ Neo's own cwd and home-save/export root are unchanged. Worker relative saves
 use their chosen cwd; routing neo.home.save itself is outside this change.
 Focused tests also cover refusing the home root, existing-folder overrides,
 foreign/similar paths, paginated intake, config precedence and rejected adapters.
+
+Start-policy extraction uses this same journey before and after the change.
+Compare the eleven placement checks for configured and default home paths.
+Coding decides whether an explicit place is required; core still validates
+human-named paths and prepares folders after adapter admission. Worker creation
+is matched by the returned worker ID, and coding fixtures use pack check facts.
+The companion worker-repository journey covers remote facts and mismatched sends.
