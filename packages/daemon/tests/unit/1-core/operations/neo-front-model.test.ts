@@ -124,3 +124,12 @@ test('a note has the daemon-fixed input identity and root recipient', async () =
   await runNeoFrontModel(service, ask, preference);
   expect(note).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(ask.requestId));
 });
+
+test('parallel lookup attempts cannot restore grounding after a rejected extra read', async () => {
+  vi.mocked(query).mockImplementation(async function* () {
+    await Promise.all([tools[0].handler({ id: 'one' }), tools[1].handler({ id: 'two' })]);
+    yield response('status', 'Both are done.');
+  } as unknown as typeof query);
+  expect(await runNeoFrontModel(service, ask, preference)).toBeNull();
+  expect(read).toHaveBeenCalledTimes(1);
+});

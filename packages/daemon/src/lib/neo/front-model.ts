@@ -47,6 +47,7 @@ export async function runNeoFrontModel(
           input: input.id ? { id: input.id } : input.text ? { text: input.text } : {},
         });
         grounded =
+          reads === 1 &&
           value !== null &&
           (!('items' in value) || value.items.length > 0 || (value.totalExact && !input.text));
         return result(
