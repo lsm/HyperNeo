@@ -101,26 +101,31 @@ export class SessionExternalEventStore {
   }
 
   latestPrState(subject: string): ExternalEventRecord | null {
-    const prefix = `${subject.toLowerCase()}.`;
+    const canonicalSubject = subject.toLowerCase();
+    const prefix = `${canonicalSubject}.`;
     const closed = `${prefix}closed`,
       opened = `${prefix}opened`,
       reopened = `${prefix}reopened`;
     const row = this.db
-      .prepare(`SELECT * FROM session_external_events
-      WHERE source = 'github' AND lower(substr(topic, 1, ?)) = ?
-      AND (json_extract(payload_json, '$.eventType') = 'pull_request' OR lower(topic) IN (?, ?, ?, ?))
-      AND (json_extract(payload_json, '$.state') IN ('open', 'closed') OR lower(topic) IN (?, ?, ?))
+      .prepare(`SELECT *, rowid FROM session_external_events
+      WHERE source = 'github' AND lower(topic) IN (?, ?, ?)
+      UNION ALL
+      SELECT *, rowid FROM session_external_events
+      WHERE source = 'github' AND lower(topic) >= ? AND lower(topic) < ?
+      AND lower(topic) NOT IN (?, ?, ?)
+      AND json_extract(payload_json, '$.state') IN ('open', 'closed')
+      AND (lower(topic) = ? OR json_extract(payload_json, '$.eventType') = 'pull_request')
       ORDER BY occurred_at DESC, ingested_at DESC, rowid DESC LIMIT 1`)
       .get(
-        prefix.length,
-        prefix,
         closed,
         opened,
         reopened,
-        `${prefix}polled`,
+        prefix,
+        `${canonicalSubject}/`,
         closed,
         opened,
-        reopened
+        reopened,
+        `${prefix}polled`
       ) as SessionEventRow | undefined;
     return row ? toRecord(row) : null;
   }
