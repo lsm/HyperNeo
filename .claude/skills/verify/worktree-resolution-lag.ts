@@ -6,7 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createFindWorkOperation } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
-import { mirrorNeoWorkspaceProjectsAsync } from '../../../packages/daemon/src/lib/neo/project-mirror-async.ts';
+import { mirrorNeoWorkspaceProjectsAsync } from '../../../packages/daemon/src/lib/neo/packs/coding/project-mirror-async.ts';
 import { delayedWorktree, syntheticCodex } from '../../../packages/daemon/tests/helpers/worktree-delay.ts';
 
 const [mode, portText, runText] = process.argv.slice(2);

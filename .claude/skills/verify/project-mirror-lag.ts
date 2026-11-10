@@ -11,8 +11,8 @@ import { createFindWorkOperation } from '../../../packages/daemon/src/lib/driver
 import { placeKey } from '../../../packages/daemon/src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
-import { mirrorNeoWorkspaceProjectsAsync } from '../../../packages/daemon/src/lib/neo/project-mirror-async.ts';
-import { mirrorNeoWorkspaceProjects } from '../../../packages/daemon/src/lib/neo/project-mirror.ts';
+import { mirrorNeoWorkspaceProjectsAsync } from '../../../packages/daemon/src/lib/neo/packs/coding/project-mirror-async.ts';
+import { mirrorNeoWorkspaceProjects } from '../../../packages/daemon/src/lib/neo/packs/coding/project-mirror.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 
 const [mode, portText, runText] = process.argv.slice(2);
@@ -81,7 +81,7 @@ const workerEntry = join(run, 'mirror-worker.ts');
 const workerDelay = join(run, 'worker-delay.json');
 fs.writeFileSync(
   workerEntry,
-  `import { mock } from 'bun:test'; import * as fs from 'node:fs'; const native={...fs}; let calls=0; mock.module('node:fs',()=>({...native,existsSync:(path)=>{if(path===${JSON.stringify(slowPath)}&&!calls){calls++;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1400);native.writeFileSync(${JSON.stringify(workerDelay)},JSON.stringify({calls}));}return native.existsSync(path);}})); import ${JSON.stringify(new URL('../../../packages/daemon/src/lib/neo/project-mirror-worker.ts', import.meta.url).href)};`
+  `import { mock } from 'bun:test'; import * as fs from 'node:fs'; const native={...fs}; let calls=0; mock.module('node:fs',()=>({...native,existsSync:(path)=>{if(path===${JSON.stringify(slowPath)}&&!calls){calls++;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1400);native.writeFileSync(${JSON.stringify(workerDelay)},JSON.stringify({calls}));}return native.existsSync(path);}})); import ${JSON.stringify(new URL('../../../packages/daemon/src/lib/neo/packs/coding/project-mirror-worker.ts', import.meta.url).href)};`
 );
 const probe = spawn(process.execPath, ['-e', probeCode], {
   stdio: ['pipe', 'pipe', 'pipe'],

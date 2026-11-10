@@ -23,7 +23,7 @@
         "src/lib/event-loop-watchdog-worker.ts",
         "src/lib/message-search-merge-worker.ts",
         "src/lib/message-search-worker.ts",
-        "src/lib/neo/project-mirror-worker.ts",
+        "src/lib/neo/packs/coding/project-mirror-worker.ts",
         "src/lib/voice/stream-relay-worker.ts",
         "src/lib/voice/opus-input-worker.ts",
         "src/storage/db-gateway/db-gateway-worker.ts",

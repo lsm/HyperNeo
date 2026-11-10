@@ -18,15 +18,11 @@ import {
 } from '../../storage/repositories/neo-conversation-wake-repository.ts';
 import { readNeoWorking } from './working.ts';
 import { hostname } from 'node:os';
-import {
-  backfillNeoRepositoryIdentities,
-  isNeoPlumbingFolder,
-  neoProjectFolders,
-} from './project-mirror.ts';
+import { isNeoPlumbingFolder, neoProjectFolders } from './project-mirror.ts';
 import { neoFolderPath } from './folder.ts';
 import { isTempCwd } from '../drivers/claude-feed.ts';
 import { createNeoProjectForgetOperation } from './project-forget-operation.ts';
-import { neoMirroredAliases } from './project-cleanup.ts';
+import type { NeoProjectIdentityPolicy } from './project-mirror.ts';
 import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
 import { existsSync } from 'node:fs';
@@ -295,18 +291,21 @@ function admitNeoCaller(
   return { value: caller };
 }
 
-export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime {
+export function neoReorganizeRuntime(
+  service: NeoService,
+  identity: NeoProjectIdentityPolicy
+): NeoReorganizeRuntime {
   return {
     getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
     rootSessionId: () => service.repo.defaultBinding()?.sessionId ?? null,
     recordIdentities: async () => {
-      if (backfillNeoRepositoryIdentities(service.db.getDatabase())) service.notifyChanged();
+      if (identity.backfill(service.db.getDatabase())) service.notifyChanged();
       const merges = service.repo.projectMerges;
       merges.recordIdentities(
         await readNeoProjectIdentities(merges.localFolders(hostname()), readWorkspaceIdentity)
       );
     },
-    projectFacts: () => service.repo.projectCleanupFacts(),
+    projectFacts: () => identity.facts(service.repo.projectCleanupFacts()),
     machine: () => hostname(),
     cleanup: createNeoProjectCleanupApply(service),
     mirroredAliases: async (folders) => {
@@ -340,13 +339,13 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
         isTemp: isTempCwd,
         exists: existsSync,
       };
-      return neoMirroredAliases(places, (place) => isNeoPlumbingFolder(place, local));
+      return identity.mirroredAliases(places, (place) => isNeoPlumbingFolder(place, local));
     },
     log: (line) => service.logReorganize(line),
   };
 }
 
-export function createNeoOperations(service: NeoService) {
+export function createNeoOperations(service: NeoService, identity: NeoProjectIdentityPolicy) {
   const mutationGateway = gatewayFor(service.db.getDatabase());
   const messageStatuses: NeoMessageStatusPresenter = (items) =>
     readNeoMessageStatuses((refs) => service.db.getNeoMessageStatusFactsAsync(refs), items);
@@ -734,7 +733,7 @@ export function createNeoOperations(service: NeoService) {
       },
       service.todos
     ),
-    createNeoReorganizeOperation(neoReorganizeRuntime(service)),
+    createNeoReorganizeOperation(neoReorganizeRuntime(service, identity)),
     createNeoPublicationOperation(service.publish, (items) => service.presentPublications(items)),
     ...createNeoPublicationChangeOperations({
       getBinding: (id) => service.repo.getBindingBySession(id),

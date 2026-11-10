@@ -10,14 +10,16 @@ import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts
 import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import {
-  backfillNeoRepositoryIdentities,
-  canNeoMirrorCreateProject,
   isNeoPlumbingFolder,
   neoIdentityOwner,
   neoRepositoryIdentity,
+} from '../../../../src/lib/neo/project-mirror.ts';
+import {
+  backfillNeoRepositoryIdentities,
+  canNeoMirrorCreateProject,
   mirrorNeoWorkspaceProjects,
   planNeoWorkspaceProjects,
-} from '../../../../src/lib/neo/project-mirror.ts';
+} from '../../../../src/lib/neo/packs/coding/project-mirror.ts';
 import { mergePlaceGroups } from '../../../../src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
 import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';

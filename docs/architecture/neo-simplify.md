@@ -92,7 +92,7 @@ Native tools are Read, Bash, WebSearch and WebFetch. Projects and domains such a
 
 | What | Files | Tables, operations, prompts |
 |---|---|---|
-| Router | `router.ts`, `route-classifier.ts`, `project-route-facts.ts`, `section-route-facts.ts`, `named-route-facts.ts`, `route-correct-operation.ts`, `route-failure-operation.ts`, `work-reroute.ts` | `neo_routing_log`, `neo_route_pr_refs`; `neo.route.correct`, `neo.route.failure`; `neo/route-*.md`; route settings in `shared/src/types/settings.ts` |
+| Router | `router.ts`, `route-classifier.ts`, `section-route-facts.ts`, `named-route-facts.ts`, `route-correct-operation.ts`, `route-failure-operation.ts`, `work-reroute.ts` | `neo_routing_log`, `neo_route_pr_refs`; `neo.route.correct`, `neo.route.failure`; `neo/route-*.md`; route settings in `shared/src/types/settings.ts` |
 | Holder sessions | the holder, forward and consult parts of `holder-turn.ts` (after T1), `holder-title.ts`, `binding-roles.ts`; holder and root branches of `session-policy.ts` | the `'project'` binding kind; `neo/system/holder-*.md`, `neo/system/root-*.md`. Old holder sessions are archived outright |
 | Ask ownership by session | owner resolution in `ask-origin.ts`, `outcome-binding-policy.ts`, and `intake.ts` routing | `neo/work/done-check-ask-foreign.md` and `-owned.md`, merged into one |
 | Forwarding | `ask-forward-operation.ts`, `inbox-promote-operation.ts` | `neo_ask_forwards`; `neo.ask.forward`, `neo.inbox.promote`; `neo/ask-forwarded.md`, `neo/ask-moved.md` |

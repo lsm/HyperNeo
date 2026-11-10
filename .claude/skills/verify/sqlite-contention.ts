@@ -8,10 +8,10 @@ import { DbGateway } from '../../../packages/daemon/src/storage/db-gateway/db-ga
 import { defineDbOp } from '../../../packages/daemon/src/storage/db-gateway/db-op.ts';
 import { withBusyRetry } from '../../../packages/daemon/src/storage/busy-retry.ts';
 import { runMessageSearchMerge } from '../../../packages/daemon/src/lib/message-search-merge.ts';
-import { mirrorNeoWorkspaceProjectsAsync } from '../../../packages/daemon/src/lib/neo/project-mirror-async.ts';
+import { mirrorNeoWorkspaceProjectsAsync } from '../../../packages/daemon/src/lib/neo/packs/coding/project-mirror-async.ts';
 
 if (process.env.NODE_ENV !== 'test') throw new Error('Synthetic proof requires NODE_ENV=test');
-for (const entry of ['lib/message-search-merge-worker.ts', 'lib/neo/project-mirror-worker.ts']) {
+for (const entry of ['lib/message-search-merge-worker.ts', 'lib/neo/packs/coding/project-mirror-worker.ts']) {
   const result = await Bun.build({
     entrypoints: [resolve(import.meta.dir, '../../../packages/daemon/src', entry)],
     target: 'bun',

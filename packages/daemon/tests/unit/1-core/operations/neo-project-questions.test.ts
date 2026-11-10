@@ -1,3 +1,4 @@
+import { codingProjectIdentity } from '../../../../src/lib/neo/packs/coding/project-cleanup.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
@@ -58,13 +59,16 @@ describe('reorganize identities on a real store', () => {
   });
 
   const runtime = () =>
-    neoReorganizeRuntime({
-      repo,
-      db: { getDatabase: () => db },
-      notifyChanged: () => notified.push(1),
-      defaultSessionId: () => inbox,
-      logReorganize: (line: string) => logged.push(line),
-    } as unknown as NeoService);
+    neoReorganizeRuntime(
+      {
+        repo,
+        db: { getDatabase: () => db },
+        notifyChanged: () => notified.push(1),
+        defaultSessionId: () => inbox,
+        logReorganize: (line: string) => logged.push(line),
+      } as unknown as NeoService,
+      codingProjectIdentity
+    );
   test('keeps every title, even a generated one, and records local identity', async () => {
     const uuid = '50028a5f-f9ce-4692-a1ab-63f786f65b1f';
     const save = (id: string, title: string, summary = `Project: ${title}`) =>

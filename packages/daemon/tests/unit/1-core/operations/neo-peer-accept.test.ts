@@ -1,3 +1,4 @@
+import { codingProjectIdentity } from '../../../../src/lib/neo/packs/coding/project-cleanup.ts';
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,7 +37,7 @@ type PairResult = {
 };
 const call = async (name: string, input: unknown, as = caller) => {
   const result = await invokeOperation(
-    createOperationRegistry(createNeoOperations(service)),
+    createOperationRegistry(createNeoOperations(service, codingProjectIdentity)),
     name,
     input,
     as

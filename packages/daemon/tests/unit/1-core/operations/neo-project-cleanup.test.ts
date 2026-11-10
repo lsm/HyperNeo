@@ -1,8 +1,11 @@
+import {
+  codingProjectFacts,
+  neoMirroredAliases,
+} from '../../../../src/lib/neo/packs/coding/project-cleanup.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   type NeoProjectFacts,
   neoCleanupFolders,
-  neoMirroredAliases,
   planNeoProjectCleanup,
 } from '../../../../src/lib/neo/project-cleanup.ts';
 import { createNeoProjectCleanupApply } from '../../../../src/lib/neo/project-cleanup-apply.ts';
@@ -10,17 +13,20 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import { createTestDb } from '../../../helpers/database.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
-const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProjectFacts => ({
-  id,
-  title: id,
-  createdAt: 1,
-  section: false,
-  context: 0,
-  asks: 0,
-  liveAsks: 0,
-  aliases: [],
-  ...overrides,
-});
+const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProjectFacts =>
+  codingProjectFacts([
+    {
+      id,
+      title: id,
+      createdAt: 1,
+      section: false,
+      context: 0,
+      asks: 0,
+      liveAsks: 0,
+      aliases: [],
+      ...overrides,
+    },
+  ])[0];
 const plan = (projects: NeoProjectFacts[], pinned: string[] = [], mirrored: string[] = []) =>
   planNeoProjectCleanup(projects, {
     pinned: new Set(pinned),
