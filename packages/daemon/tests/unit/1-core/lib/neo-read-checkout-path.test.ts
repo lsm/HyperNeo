@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { getNeoReadCheckoutPath } from '../../../../src/lib/neo/read-checkout-path.ts';
+import { getNeoReadCheckoutPath } from '../../../../src/lib/neo/packs/coding/read-checkout-path.ts';
 
 const priorDataDir = process.env.HYPERNEO_DATA_DIR;
 
@@ -13,7 +13,7 @@ afterEach(() => {
 describe('Neo read checkout paths', () => {
   test('the daemon composes the coding-owned read checkout through the poller callback', () => {
     const app = readFileSync(new URL('../../../../src/app.ts', import.meta.url), 'utf8');
-    expect(app).toContain("from './lib/neo/packs/coding/read-checkout-sync.ts'");
+    expect(app.includes("from './lib/neo/packs/coding/read-checkout-sync.ts'")).toBe(true);
     expect(app).toContain('syncReadCheckout: createNeoReadCheckoutSync()');
     for (const name of ['read-checkout-sync.ts', 'read-checkout-path.ts'])
       expect(existsSync(new URL(`../../../../src/lib/neo/${name}`, import.meta.url))).toBe(false);

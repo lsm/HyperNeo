@@ -5,8 +5,8 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { getDataDir } from '../data-dir.ts';
-import { buildGitHubLookupEnv } from '../github/gh-lookup-helpers.ts';
+import { getDataDir } from '../../../data-dir.ts';
+import { buildGitHubLookupEnv } from '../../../github/gh-lookup-helpers.ts';
 import { getNeoReadCheckoutPath } from './read-checkout-path.ts';
 
 type Repository = { owner: string; repo: string };
