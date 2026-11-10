@@ -30,10 +30,11 @@ describe('pairing v2 one-time request repository', () => {
   let devices: DevicePairingRepository;
   let now = 1_000_000;
 
-  const call = <K extends Parameters<typeof gateway.call>[1]>(
-    method: K,
-    ...args: unknown[]
-  ): Promise<unknown> => gateway.call(pairingRequestWrites, method, ...args);
+  const denyRequest = (requestId: string) =>
+    gateway.call(pairingRequestWrites, 'denyRequest', requestId, now) as Promise<boolean>;
+
+  const cancelRequest = (requestId: string) =>
+    gateway.call(pairingRequestWrites, 'cancelRequest', requestId, now) as Promise<boolean>;
 
   const createRequest = () =>
     gateway.call(pairingRequestWrites, 'createRequest', now) as Promise<{
@@ -214,7 +215,7 @@ describe('pairing v2 one-time request repository', () => {
     const phone = phoneKeypair();
     const bound = await bindTicket(made.ticket, phone.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    expect(await call('cancelRequest', made.requestId, now)).toBe(true);
+    expect(await cancelRequest(made.requestId)).toBe(true);
     expect(await requestStatus(made.requestId)).toMatchObject({ state: 'cancelled' });
     expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('not_pending');
     const done = await completeRequest(
@@ -232,7 +233,7 @@ describe('pairing v2 one-time request repository', () => {
     const bound = await bindTicket(made.ticket, phone.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
     await approveRequest(made.requestId, 'local-rpc:web');
-    expect(await call('denyRequest', made.requestId, now)).toBe(true);
+    expect(await denyRequest(made.requestId)).toBe(true);
     const done = await completeRequest(
       made.requestId,
       phone.publicKeyB64,
