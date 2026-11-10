@@ -1,3 +1,9 @@
+export interface RemoteModel {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+}
+
 export function extractAzureDeploymentModel(baseUrl: string): { id: string } | null {
   const parsed = new URL(baseUrl.trim());
   const match = parsed.pathname.match(/\/openai\/deployments\/([^/]+)/i);
@@ -25,10 +31,7 @@ export function buildModelListUrl(baseUrl: string, type: string): string {
   return parsed.toString();
 }
 
-export function normalizeModelList(
-  type: string,
-  data: unknown
-): Array<{ id: string; name?: string }> {
+export function normalizeModelList(type: string, data: unknown): RemoteModel[] {
   if (type === 'ollama-native') {
     const body = data as { models?: Array<{ name?: string; model?: string }> } | undefined;
     const list = body?.models ?? [];
@@ -38,7 +41,7 @@ export function normalizeModelList(
         if (!id) return null;
         return { id };
       })
-      .filter((m): m is { id: string; name?: string } => m !== null);
+      .filter((m): m is RemoteModel => m !== null);
   }
 
   if (type === 'anthropic-messages') {
@@ -64,26 +67,47 @@ export function normalizeModelList(
         if (!isModel) return null;
         return m.display_name ? { id, name: m.display_name } : { id };
       })
-      .filter((m): m is { id: string; name?: string } => m !== null);
+      .filter((m): m is RemoteModel => m !== null);
   }
 
-  const body = data as { data?: Array<{ id?: string; object?: string }> } | undefined;
+  const body = data as
+    | {
+        data?: Array<{
+          id?: string;
+          object?: string;
+          name?: unknown;
+          display_name?: unknown;
+          context_window?: unknown;
+          context_length?: unknown;
+        }>;
+      }
+    | undefined;
   const list = body?.data ?? [];
   return list
     .map((m) => {
       const id = m.id;
       if (!id) return null;
       if (m.object !== undefined && m.object !== 'model') return null;
-      return { id };
+      const name = typeof m.name === 'string' ? m.name : m.display_name;
+      const contextWindow = m.context_window ?? m.context_length;
+      return {
+        id,
+        ...(typeof name === 'string' && name ? { name } : {}),
+        ...(typeof contextWindow === 'number' &&
+        Number.isSafeInteger(contextWindow) &&
+        contextWindow > 0
+          ? { contextWindow }
+          : {}),
+      };
     })
-    .filter((m): m is { id: string; name?: string } => m !== null);
+    .filter((m): m is RemoteModel => m !== null);
 }
 
 const DEFAULT_REMOTE_LIST_TIMEOUT_MS = 10_000;
 const DEFAULT_REMOTE_LIST_CACHE_TTL_MS = 30_000;
 
 export interface RemoteModelListEntry {
-  models: Array<{ id: string; name?: string }>;
+  models: RemoteModel[];
   fetchedAt: number;
 }
 
@@ -110,9 +134,7 @@ function remoteModelListCacheKey(params: {
   ]);
 }
 
-export async function fetchRemoteModelList(
-  params: RemoteModelListParams
-): Promise<Array<{ id: string; name?: string }>> {
+export async function fetchRemoteModelList(params: RemoteModelListParams): Promise<RemoteModel[]> {
   const type = params.type ?? 'openai-chat';
   const cacheTtlMs = params.cacheTtlMs ?? DEFAULT_REMOTE_LIST_CACHE_TTL_MS;
 
