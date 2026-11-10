@@ -1,7 +1,7 @@
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { packWorkerStartFixture } from '../../helpers/pack-worker-start.ts';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { planNeoWorkerName } from '../../../../src/lib/neo/worker-name.ts';
 import { createWorkerNameSource } from '../../../../src/lib/drivers/worker-names.ts';
 import type { WorkAdapter, WorkSummary } from '../../../../src/lib/drivers/types.ts';
@@ -200,3 +200,66 @@ test('a rejected start releases its lane and other places can start independentl
   expect(await failure).toBe('Synthetic start failure');
   expect(await next).toBe('next');
 });
+
+test.each([undefined, 'Codex remote 7'])(
+  'forwarded starts preserve their title without local naming: %s',
+  async (name) => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    let reads = 0;
+    const naming = createWorkerNameSource(
+      () => [
+        {
+          id: 'fixture',
+          capabilities: ['find'],
+          find: () => {
+            reads++;
+            return [];
+          },
+        },
+      ],
+      place
+    );
+    const lane = spyOn(naming, 'withStart');
+    const remote = { ...place, daemon: 'remote', machine: 'remote' };
+    const world = packWorkerStartFixture(db, {
+      workerNames: naming,
+      invoke: async () => ({
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            ref: { adapter: 'fixture', id: 'remote-worker', daemon: 'remote' },
+            place: remote,
+            title: name ?? 'Forwarded task',
+            status: 'running',
+            lastActivityAt: 1,
+          },
+        },
+      }),
+    });
+    try {
+      await world.open();
+      const askId = world.store.listOpenAsks()[0]!.id;
+      const result = await world.invoke('neo.todo.add', {
+        askId,
+        ...world.draft('Forwarded task'),
+        target: { verb: 'start', adapter: 'fixture', place: remote, ...(name ? { name } : {}) },
+      });
+      expect(result.todo.state).toBe('doing');
+      expect(world.calls[0]!.input).toMatchObject({
+        place: remote,
+        title: name ?? 'Forwarded task',
+      });
+      expect(reads).toBe(0);
+      expect(lane).not.toHaveBeenCalled();
+      expect(world.operations.find((op) => op.name === 'neo.todo.add')!.description).toContain(
+        'local starts'
+      );
+    } finally {
+      lane.mockRestore();
+      db.close();
+    }
+  }
+);
