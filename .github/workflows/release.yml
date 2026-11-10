@@ -418,6 +418,12 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
 
+      - name: Check macOS bundle runtime paths
+        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && !inputs.publish
+        run: |
+          python3 packages/desktop/check-macos-rpaths.py \
+            "packages/desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/macos/HyperNeo.app"
+
       - name: Collect desktop artifacts
         run: |
           VERSION="${{ needs.wait-for-ci.outputs.version }}"

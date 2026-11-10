@@ -59,6 +59,14 @@ permissions:
   contents: read
 
 jobs:
+  desktop-runtime-paths:
+    name: Desktop runtime paths
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test synthetic Mach-O bundles
+        run: python3 packages/desktop/tests/macos-rpaths.py
+
   # ============================================
   # CODE QUALITY CHECKS
   # Run on: PR to dev, push to dev
