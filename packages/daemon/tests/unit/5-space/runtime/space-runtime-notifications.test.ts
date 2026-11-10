@@ -254,23 +254,6 @@ function withSyntheticEnd(endAgentId: string): {
   };
 }
 
-describe('mapNotificationEventToInternalEvent', () => {
-  test('forwards the episode field on needs-attention payloads', () => {
-    const mapped = mapNotificationEventToInternalEvent({
-      kind: 'workflow_run_needs_attention',
-      spaceId: 'space-1',
-      runId: 'run-1',
-      taskId: 'task-1',
-      reason: 'budget exhausted',
-      retriesExhausted: 5,
-      episode: 2,
-      timestamp: new Date().toISOString(),
-    });
-    expect(mapped?.event).toBe('space.workflowRun.needsAttention');
-    expect(mapped?.payload).toMatchObject({ episode: 2, taskId: 'task-1', runId: 'run-1' });
-  });
-});
-
 describe('SpaceRuntime — notification events', () => {
   let db: BunDatabase;
 

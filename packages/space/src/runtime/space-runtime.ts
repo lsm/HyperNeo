@@ -575,7 +575,6 @@ type SpaceNotificationEvent =
       taskId: string;
       reason: string;
       retriesExhausted: number;
-      episode?: number;
       timestamp: string;
     }
   | {
@@ -713,7 +712,6 @@ export function mapNotificationEventToInternalEvent(event: SpaceNotificationEven
           taskId: event.taskId,
           reason: event.reason,
           retriesExhausted: event.retriesExhausted,
-          ...(event.episode !== undefined ? { episode: event.episode } : {}),
           timestamp: event.timestamp,
         },
       };
