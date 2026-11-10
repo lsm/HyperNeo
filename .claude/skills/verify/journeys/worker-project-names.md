@@ -26,3 +26,12 @@ its lane, while other places and engines remain independent.
 Numbered names and lanes cover local starts only. The forwarding regression
 preserves an explicit target.name, or the pre-existing title when absent, and
 asserts that neither the local inventory nor its lane is consulted.
+
+The Space adapter regression reads the real task inventory and checks that its
+`#<task number>` display prefix is excluded from occupied-name comparisons.
+The displayed task title remains decorated.
+
+The same isolated daemon then routes two todo starts through the real Space
+adapter with synthetic task creation. Its stored names must be HyperNeo space 1
+and HyperNeo space 2 despite the decorated inventory titles. worker-names.json
+records all four started todos and both name lists.

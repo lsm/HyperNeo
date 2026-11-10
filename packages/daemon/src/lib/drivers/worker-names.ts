@@ -28,7 +28,7 @@ export function createWorkerNameSource(
             work.status !== 'stopped' &&
             placeKey(work.place) === placeKey(place)
         )
-        .map((work) => work.title),
+        .map((work) => (id === 'space' ? work.title.replace(/^#\d+ /, '') : work.title)),
     };
   };
   return Object.assign(read, {

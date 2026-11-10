@@ -1,3 +1,4 @@
+import { createSpaceAdapter } from '../../../packages/space/src/drivers/space-adapter.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -66,24 +67,25 @@ try {
       value: workers.find((worker) => worker.ref.id === ref.id)!,
     }),
   };
+  const adapters: WorkAdapter[] = [adapter];
   const caller = { source: 'internal' as const, role: 'neo' as const, sessionId: 'fixture-neo' };
   const verbs = createOperationRegistry(
     createWorkVerbOperations({
-      adapters: () => [adapter],
+      adapters: () => adapters,
       remote: {
         list: () => [],
         invoke: async () => {
           throw new Error('No remote');
         },
       },
-      startPlace: (input) => ({ value: { ...input, place } }),
+      startPlace: (input) => ({ value: { ...input, place: input.place ?? place } }),
     })
   );
   const world = packWorkerStartFixture(app.db.getDatabase(), {
     beforeStart: (todo) => {
       if (todo.title === 'Implement synthetic task') overlap.resolve();
     },
-    workerNames: createWorkerNameSource(() => [adapter], place),
+    workerNames: createWorkerNameSource(() => adapters, place),
     invoke: (name, input) => invokeOperation(verbs, name, input, caller),
   });
   const mcp = createOperationMcpHandler(createOperationRegistry(world.operations), () => ({
@@ -127,15 +129,56 @@ try {
   assert(description.includes('target.name'));
   assert(description.includes('local starts'));
   assert(!description.includes('use work.rename after starting'));
+  const db = app.db.getDatabase();
+  const spacePlace = { machine: 'synthetic', spaceId: 'naming-space', name: 'Space' };
+  db.prepare(
+    'INSERT INTO spaces(id,slug,workspace_path,name,created_at,updated_at) VALUES(?,?,?,?,1,1)'
+  ).run(spacePlace.spaceId, spacePlace.spaceId, place.folder, spacePlace.name);
+  const spaceNames: string[] = [];
+  adapters.push(
+    createSpaceAdapter({
+      db: () => db,
+      machine: 'synthetic',
+      searchChats: async () => [],
+      readTurnEnds: async () => [],
+      tasks: {
+        create: async (spaceId, title) => {
+          spaceNames.push(title);
+          const taskId = `space-worker-${spaceNames.length}`;
+          db.prepare(
+            'INSERT INTO space_tasks(id,space_id,task_number,title,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)'
+          ).run(taskId, spaceId, spaceNames.length, title, 'draft', 1, 1);
+          return { taskId };
+        },
+        cancel: async () => ({ reason: 'unused' }),
+        message: async () => ({ reason: 'unused' }),
+        messageAgent: async () => ({ reason: 'unused' }),
+      },
+    })
+  );
+  for (const title of ['First Space task', 'Second Space task'])
+    await call('neo.todo.add', {
+      askId,
+      ...world.draft(title),
+      target: { verb: 'start', adapter: 'space', place: spacePlace },
+    });
+  assert.deepEqual(spaceNames, ['HyperNeo space 1', 'HyperNeo space 2']);
   writeFileSync(
     join(run, 'evidence/worker-names.json'),
     JSON.stringify(
-      { names, startedTodos: 2, concurrent: true, guidance: true, ports: [app.server.port] },
+      {
+        names,
+        spaceNames,
+        startedTodos: 4,
+        concurrent: true,
+        guidance: true,
+        ports: [app.server.port],
+      },
       null,
       2
     )
   );
-  console.log(`PASS: ${names.join(', ')}`);
+  console.log(`PASS: ${[...names, ...spaceNames].join(', ')}`);
 } finally {
   release.resolve();
   await app.cleanup();
