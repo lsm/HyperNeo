@@ -112,3 +112,28 @@ test('a Neo turn waits for expiration and retains its pending input', async () =
     db.close();
   }
 });
+
+test('interrupting a deferred Neo turn preserves the interrupted state', async () => {
+  const db = await createTestDb();
+  const events = await createTestInternalEventBus();
+  const id = 'neo:10000000-0000-4000-8000-000000000001';
+  await db.createSession(createTestSession(id));
+  db.getDatabase()
+    .prepare(
+      "INSERT INTO neo_session_bindings(session_id, concern_id, kind) VALUES (?, NULL, 'neo')"
+    )
+    .run(id);
+  const manager = new ProcessingStateManager(id, events, db);
+  const held = spyOn(restartReservation, 'remaining').mockReturnValue(10);
+  try {
+    await manager.setQueued('pending-input');
+    const pending = manager.setProcessing('pending-input');
+    await manager.setInterrupted();
+    held.mockReturnValue(0);
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(manager.getState().status).toBe('interrupted');
+  } finally {
+    held.mockRestore();
+    db.close();
+  }
+});

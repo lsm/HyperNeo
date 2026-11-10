@@ -170,6 +170,7 @@ describe('the session door', () => {
       'neo.question.get',
       'neo.question.relayAnswer',
       'system.build',
+      'system.restart.reserve',
       'device.pair.create',
       'device.pair.pending',
       'device.pair.approve',

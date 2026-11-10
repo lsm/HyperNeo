@@ -302,8 +302,12 @@ export class ProcessingStateManager {
     phase: StreamingPhase = 'initializing',
     turnMessageIds?: string[]
   ): Promise<void> {
-    while (restartReservation.remaining() && neoCoordinatorBinding(this.db, this.sessionId))
+    const admittedState = this.processingState;
+    while (restartReservation.remaining() && neoCoordinatorBinding(this.db, this.sessionId)) {
       await sleep(restartReservation.remaining());
+      if (this.processingState !== admittedState)
+        throw Object.assign(new Error('Restart admission superseded'), { name: 'AbortError' });
+    }
     if (this.processingState.status === 'processing') {
       this.noteInitializationProgress(phase);
     }
