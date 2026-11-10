@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { DRAFT_CHAR_LIMIT } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -105,8 +106,7 @@ const recover = (superpipe({})('neo-draft-recover') as PipelineAPI)
 export function createNeoDraftRecoveryOperation(service: Recovers) {
   return defineOperation({
     name: 'neo.draft.recover',
-    description:
-      'Re-save a Neo composer edit captured in this tab before reload. Commits when the saved draft equals its captured base or already equals the edit text. The newest ask from that session counts as submitted only when its text matches and either Preview context was omitted (legacy) or its explicit artifactId/snapshot association matches; null means explicitly unbound. Uses a conditional write and never consumes staged voice.',
+    description: neoToolDescription('neo.draft.recover'),
     policy: { safetyClass: 'human_only' },
     inputSchema: Input,
     resultSchema: z.union([

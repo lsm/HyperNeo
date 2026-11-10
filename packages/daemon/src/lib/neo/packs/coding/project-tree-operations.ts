@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import { requireLocalTreeAuthor } from '../../project-author.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -90,8 +91,7 @@ export function createNeoProjectTreeOperations(repo: NeoRepository, read: NeoRef
   return [
     defineOperation({
       name: 'neo.project.move',
-      description:
-        'Move an avatar under another parent or root, preserving its asks and context. Any local session; refuses cycles and stale revisions.',
+      description: neoToolDescription('neo.project.move'),
       inputSchema: Move,
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true) })]),
       policy: {
@@ -105,8 +105,7 @@ export function createNeoProjectTreeOperations(repo: NeoRepository, read: NeoRef
     }),
     defineOperation({
       name: 'neo.project.section',
-      description:
-        'Create a section only when needed, from a GitHub epic issue under its code project. It inherits the parent’s workspaces; repeated calls reuse the same section. Any local session.',
+      description: neoToolDescription('neo.project.section'),
       inputSchema: Section,
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true), projectId: z.string() })]),
       policy: {

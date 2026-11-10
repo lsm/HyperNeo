@@ -1,0 +1,4 @@
+---
+id: neo.home.read
+---
+Read a complete curated home document and its SHA-256. With origin/upstream, synchronizes using bounded noninteractive fetch and isolated rebase for each read through the same path as a human RPC read. Publishes only a fast-forward that preserves ignored and untracked files. Local-only reads include human edits; synchronization relies on Git merge errors rather than a blanket dirty-state refusal. A sync conflict returns questionId for one human choice with a full-version document; answering alone does not apply it; neo.home.save can apply the exact recorded version choice. includeRemote optionally adds the browser origin URL without fetching. Never initializes or authors a commit. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.

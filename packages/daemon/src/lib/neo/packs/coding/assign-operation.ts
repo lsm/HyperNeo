@@ -1,5 +1,9 @@
 import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
-import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
+import {
+  QA_SYSTEM_CONTRACT,
+  REVIEWER_SYSTEM_CONTRACT,
+  neoToolDescription,
+} from '@hyperneo/prompts';
 import { workerSandboxOn } from '../../../drivers/worker-sandbox.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { homedir } from 'node:os';
@@ -278,8 +282,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
   ) => Promise<{ ok: true; assignment: Assignment } | Failure>;
   return defineOperation({
     name: 'neo.coding.assign',
-    description:
-      'Assign Review or Verify on one existing coding todo/PR/head/acceptance contract. Configured bot means no reviewer session; otherwise select a provenance-qualified fresh reviewer or explicit human. Verify starts independently. Candidates are available configurations (default first); shared prefer settings return fallback explanations. Existing exact-head assignments are reused; no merge/completion decisions.',
+    description: neoToolDescription('neo.coding.assign'),
     inputSchema: Input,
     resultSchema: z.union([
       z.object({ ok: z.literal(true), assignment: Assignment }),
