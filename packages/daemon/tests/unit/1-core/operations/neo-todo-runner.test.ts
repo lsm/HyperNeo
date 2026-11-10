@@ -1489,6 +1489,85 @@ describe('neo todo runner', () => {
     }
   });
 
+  test.each([
+    'covered',
+    'uncovered',
+    'closed',
+    'changed',
+    'new-card',
+    'meaningful',
+    'failed',
+  ] as const)(
+    'structured blocker repeats require a successful same-state receipt and live card: %s',
+    async (scenario) => {
+      const h = setup(false);
+      try {
+        const todo = h.add();
+        h.store.updateTodo(
+          todo,
+          { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Approval required' },
+          2
+        );
+        const question = scenario === 'uncovered' ? null : askForWorker(h, todo.id);
+        const ask = h.store.getAsk('ask')!;
+        let attempts = 0;
+        const delivered: string[] = [];
+        const tell = async (_ask: unknown, _todo: unknown, text: string) => {
+          if (++attempts === 1 && scenario === 'failed')
+            throw new Error('Synthetic delivery failure');
+          delivered.push(text);
+        };
+        const send = (id: string, message: string) => {
+          const current = h.store.getTodo(todo.id)!;
+          const openCardIds = h.store
+            .listQuestions('ask')
+            .filter((card) => card.state === 'open' && card.todoId === todo.id)
+            .map((card) => card.id);
+          const facts = {
+            priorStatus: 'done' as const,
+            state: current.state,
+            blockedBy: current.blockedBy,
+            questionOpen: openCardIds.length > 0,
+            openCardIds,
+          };
+          return deliverNeoTurnReport(
+            ask,
+            current,
+            'dispatch',
+            ref,
+            { status: 'done' },
+            { id, at: Date.now() + attempts + 10, message },
+            tell,
+            h.sessions.turnReports,
+            facts
+          );
+        };
+        const first = send('first-block', 'Blocked (needs_human): Approval required');
+        if (scenario === 'failed')
+          await expect(first).rejects.toThrow('Synthetic delivery failure');
+        else await first;
+        expect(delivered).toHaveLength(scenario === 'failed' ? 0 : 1);
+        if (scenario === 'closed') h.store.retireQuestion(question!, 'Resolved', null, 3);
+        if (scenario === 'new-card') {
+          h.store.retireQuestion(question!, 'Replaced', null, 3);
+          askForWorker(h, todo.id);
+        }
+        if (scenario === 'changed')
+          h.store.updateTodo(h.store.getTodo(todo.id)!, { blockedReason: 'Another decision' }, 3);
+        const message =
+          scenario === 'changed'
+            ? 'Blocked (needs_human): Another decision\r\n'
+            : scenario === 'meaningful'
+              ? 'New evidence.\nBlocked (needs_human): Approval required\r\n'
+              : 'Blocked (needs_human): Approval required\r\n';
+        await send('second-block', message);
+        expect(delivered).toHaveLength(['covered', 'failed'].includes(scenario) ? 1 : 2);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test.each(['', '  Final worker message 🔬\n'.repeat(400)])(
     'relays a terminal message verbatim as a report without changing the todo result: %s',
     async (message) => {

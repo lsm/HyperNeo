@@ -346,3 +346,40 @@ test('environment blockers remind Neo with the reason while needs-human cards st
   expect(JSON.stringify(notes()[0])).toContain('Synthetic DNS failure');
   expect(JSON.stringify(notes()[0])).toContain('retry or escalate');
 });
+
+test.each(['covered', 'unrelated', 'closed', 'changed', 'failed'] as const)(
+  'only a delivered same-state reminder with its open card is quiet: %s',
+  async (scenario) => {
+    add('covered');
+    const question = service.todos.askQuestion(
+      'coverage-card',
+      'ask',
+      {
+        text: 'Choose the next action',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todoId: scenario === 'unrelated' ? 'busy' : 'covered',
+      },
+      clock
+    );
+    clock += 2 * hour;
+    await service.refreshDriverWork();
+    expect(notes()).toHaveLength(1);
+    await consume(0, scenario === 'failed' ? 'failed' : 'consumed');
+    if (scenario === 'closed') service.todos.retireQuestion(question, 'Resolved', null, clock);
+    if (scenario === 'changed') {
+      clock++;
+      service.todos.commitState('covered', { blockedReason: 'A different blocker' }, clock, {
+        state: 'no_opinion',
+      });
+    }
+    clock += 2 * hour;
+    await service.refreshDriverWork();
+    expect(notes()).toHaveLength(scenario === 'covered' ? 1 : 2);
+    expect(service.todos.getTodo('covered')?.state).toBe('blocked');
+  }
+);
