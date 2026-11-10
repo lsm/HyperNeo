@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { globalSettingsWrites } from '../../../../src/storage/repositories/global-settings-writes.ts';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
@@ -166,6 +168,9 @@ test.each(['rule', 'home', 'start', 'preference'])(
     );
     const beforeTodo = service.todos.getTodo('held');
     const beforeSettings = db.getGlobalSettings();
+    const beforePreferences = sql
+      .prepare('SELECT * FROM neo_pack_preferences ORDER BY pack, scope_kind, scope_key, key')
+      .all();
     await configure();
     expect(
       await invoke('neo.question.relayAnswer', {
@@ -178,7 +183,11 @@ test.each(['rule', 'home', 'start', 'preference'])(
     expect(service.todos.getQuestion('card')).toMatchObject({ state: 'open', answer: null });
     expect(service.todos.getTodo('held')).toEqual(beforeTodo);
     expect(db.getGlobalSettings().neo?.standingRules).toEqual(beforeSettings.neo?.standingRules);
-    expect(sql.prepare('SELECT count(*) AS n FROM neo_pack_preferences').get()).toEqual({ n: 0 });
+    expect(
+      sql
+        .prepare('SELECT * FROM neo_pack_preferences ORDER BY pack, scope_kind, scope_key, key')
+        .all()
+    ).toEqual(beforePreferences);
     expect(notes).toEqual([]);
     expect(
       db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo:relay-test' })
@@ -212,7 +221,9 @@ test('only a local RPC user can set relay senders', async () => {
   }
   expect(db.getGlobalSettings().neo?.relaySenders ?? []).toEqual([]);
   expect(await configure()).toMatchObject({ value: { ok: true } });
-  db.updateGlobalSettings({ neo: { relaySenders: [] } });
+  await gatewayFor(db.getDatabase()).call(globalSettingsWrites, 'apply', {
+    neo: { relaySenders: [] },
+  });
   expect(db.getGlobalSettings().neo?.relaySenders).toEqual(configured);
 });
 test('MCP and RPC cannot relay, and ordinary session messages remain task input', async () => {
