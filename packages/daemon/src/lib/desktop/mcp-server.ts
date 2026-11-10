@@ -16,6 +16,7 @@ export async function serveDesktopMcp(
   process.stdin.once('end', driver.close);
   process.stdin.once('error', driver.close);
   await server.connect(new StdioServerTransport());
+  await driver.closed;
 }
 
 export function createDesktopMcpServer(proxy: ReturnType<typeof createDesktopProxy>) {

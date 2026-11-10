@@ -1,3 +1,4 @@
+import { isSessionCommand } from '../../../../../cli/src/session-cli-commands.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm, chmod, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -164,4 +165,8 @@ test('malformed tool-call arguments still produce one sanitized audit line', asy
     await client.close();
     await server.close();
   }
+});
+
+test('source and packaged entry points recognize the desktop MCP command', () => {
+  expect(isSessionCommand('desktop-mcp')).toBe(true);
 });
