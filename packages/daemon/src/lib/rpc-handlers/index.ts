@@ -1,3 +1,4 @@
+import { createNeoFrontHandler } from '../neo/front-job.ts';
 import { codingProjectIdentity } from '../neo/packs/coding/project-cleanup.ts';
 import { createPeerMessageRoute } from '../../routes/neo-peer-message.ts';
 import { createSessionToolActivationOperation } from '../tools/session-tool-activation.ts';
@@ -215,6 +216,7 @@ export interface RPCHandlerSetupResult<SpaceServices> {
   space?: SpaceServices;
   sessionScheduler: SessionScheduler;
   handlePeerMessage: (req: Request) => Promise<Response>;
+  frontInference: ReturnType<typeof createNeoFrontHandler>;
   prepareNeoInput: ReturnType<typeof createNeoService>['speech']['prepareInput'];
   notifyScheduleIdle: ReturnType<typeof createNeoService>['notifyScheduleIdle'];
   wakePollingConcern: (key: string, text: string) => Promise<boolean>;
@@ -627,6 +629,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     wakePollingConcern: (key: string, text: string) => neoService.wakeNeo(key, text),
     notifyScheduleIdle: neoService.notifyScheduleIdle,
     handlePeerMessage: createPeerMessageRoute(neoService),
+    frontInference: createNeoFrontHandler(neoService),
     prepareNeoInput: neoService.speech.prepareInput.bind(neoService.speech),
   };
 }
