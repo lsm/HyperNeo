@@ -427,3 +427,32 @@ test.each([false, true])(
     expect((await f.prepare()).accepted).toBe(true);
   }
 );
+
+test('a bound mirror home enables the gate for a PR in a repository with mirroring off', async () => {
+  const f = fixture();
+  const mirrors = mirrorForMerge(f);
+  f.setting('mergeBy', 'daemon');
+  f.setting('mirror_issues', false);
+  const child = mirrors.facts().mirrors.find((row) => row.ownerKind === 'todo')!;
+  mirrors.put({ ...child, home: 'synthetic/mirror-a', ref: 'synthetic/mirror-a#21' });
+  f.db
+    .prepare(
+      "INSERT INTO neo_pack_preferences VALUES ('coding','repo','synthetic/mirror-a','mirror_issues','true','human',1)"
+    )
+    .run();
+  expect(await f.prepare()).toMatchObject({
+    accepted: false,
+    reason: expect.stringContaining('linked_issue_required:'),
+  });
+  f.data.pr.closingIssuesReferences = [{ url: 'https://github.com/synthetic/mirror-a/issues/21' }];
+  expect((await f.prepare()).accepted).toBe(true);
+});
+
+test('a disabled mirror home keeps admission open when the PR repository enables mirroring', async () => {
+  const f = fixture();
+  const mirrors = mirrorForMerge(f);
+  f.setting('mergeBy', 'daemon');
+  const child = mirrors.facts().mirrors.find((row) => row.ownerKind === 'todo')!;
+  mirrors.put({ ...child, home: 'synthetic/mirror-off', ref: 'synthetic/mirror-off#21' });
+  expect((await f.prepare()).accepted).toBe(true);
+});

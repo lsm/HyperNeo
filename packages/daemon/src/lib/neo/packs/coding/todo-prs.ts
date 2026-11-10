@@ -47,17 +47,17 @@ export class CodingTodoPrRepository {
 
   linkedIssues(url: string, todoId?: string): string[][] {
     const pr = parsePrUrl(url)!;
-    const enabled =
-      pr.host === 'github.com' &&
-      listPackPreferences(this.db, 'coding').find(
+    if (pr.host !== 'github.com') return [];
+    const preferences = listPackPreferences(this.db, 'coding');
+    if (
+      !preferences.some(
         (preference) =>
           preference.key === 'mirror_issues' &&
           preference.scope.kind === 'repo' &&
-          neoRepositoryIdentity(preference.scope.key)
-            ?.slice('repository:'.length)
-            .replace(/^github\.com\//, '') === `${pr.owner}/${pr.repo}`.toLowerCase()
-      )?.value === true;
-    if (!enabled) return [];
+          preference.value === true
+      )
+    )
+      return [];
     const facts = new NeoTrackerMirrorRepository(this.db).facts();
     return facts.todos
       .filter(
@@ -76,6 +76,16 @@ export class CodingTodoPrRepository {
         );
         const own = rows.find((row) => row.ownerKind === 'todo');
         if (!own) return [];
+        const enabled =
+          preferences.find(
+            (preference) =>
+              preference.key === 'mirror_issues' &&
+              preference.scope.kind === 'repo' &&
+              neoRepositoryIdentity(preference.scope.key)
+                ?.slice('repository:'.length)
+                .replace(/^github\.com\//, '') === own.home.toLowerCase()
+          )?.value === true;
+        if (!enabled) return [];
         const refs = rows.flatMap((row) => row.ref ?? []);
         if (refs.length) return [refs];
         if (own.failures >= NEO_TRACKER_FAILURE_LIMIT || own.state === 'closed') return [];

@@ -229,3 +229,7 @@ doing. A closing reference to the parent permits one SHA-pinned merge.
 
 The `linked-issue-no-row` case pins fail-open admission for an opted-in PR
 whose todo has no stored repository and cannot acquire a mirror row.
+
+The `linked-issue-cross-repo` case keeps the bound mirror in an opted-in
+repository while its PR is in a repository with mirroring disabled. The stored
+mirror home still controls the closing-reference gate.

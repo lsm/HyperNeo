@@ -20,8 +20,9 @@ import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
+const linkedCrossRepo = process.argv.includes('linked-issue-cross-repo');
 const linkedNoRow = process.argv.includes('linked-issue-no-row');
-const linkedIssue = process.argv.includes('linked-issue') || linkedNoRow;
+const linkedIssue = process.argv.includes('linked-issue') || linkedNoRow || linkedCrossRepo;
 const humanWaiting=process.argv.includes('human-waiting-ci'),humanSibling=process.argv.includes('human-sibling-ci');
 const humanOwner=process.argv.includes('human-owner');
 const humanNewHead=process.argv.includes('human-new-head');
@@ -95,17 +96,19 @@ try{
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
  const seedStoppedBudget=async()=>{for(let i=0;i<3;i++){const[receipt]=await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:coding-sweep',at:tick+i});assert(receipt);await ledger.write('daemonMerge',{...receipt,kind:'failed',error:'The base branch policy prohibits the merge.',at:receipt.startedAt});await ledger.write('daemonMerge',{...receipt,kind:'void',at:receipt.startedAt});}};
  if (linkedIssue) {
+   const mirrorHome = linkedCrossRepo ? 'synthetic/mirror-a' : 'synthetic/merge';
    const store = new NeoAskTodoRepository(db);
    store.openAsk({ id: 'mirror-ask', projectId: null, sessionId: 'synthetic', originMessageId: null,
      title: 'Mirrored plan', request: 'Work', createdAt: 1 });
    store.addTodo('mirror-todo', 'mirror-ask', { title: 'Step', instruction: 'Work', named: null,
-     doneWhen: 'Merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } } }, 2, 'synthetic/merge');
+     doneWhen: 'Merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } } }, 2, mirrorHome);
    db.prepare("UPDATE neo_todos SET state='doing' WHERE id='mirror-todo'").run();
    assert((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/merge' },
-     key: 'mirror_issues', value: true })).ok);
+     key: 'mirror_issues', value: !linkedCrossRepo })).ok);
+   if (linkedCrossRepo) assert((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: mirrorHome }, key: 'mirror_issues', value: true })).ok);
    const mirrors = new NeoTrackerMirrorRepository(db);
    const child = { ownerKind: 'todo' as const, ownerId: 'mirror-todo', tracker: 'github-issues',
-     home: 'synthetic/merge', ref: 'synthetic/merge#21', parentRef: null, state: 'bound' as const, failures: 0, updatedAt: 3 };
+     home: mirrorHome, ref: `${mirrorHome}#21`, parentRef: null, state: 'bound' as const, failures: 0, updatedAt: 3 };
    if (linkedNoRow) {
      db.prepare("UPDATE pack_coding_todos SET repo=NULL WHERE todo_id='mirror-todo'").run();
      assert.equal(pack.tracker!.enabled({ kind: 'todo', ask: store.getAsk('mirror-ask')!, todo: store.getTodo('mirror-todo')! }), false);
@@ -118,7 +121,7 @@ try{
      evidence.verified = true;
    } else {
      mirrors.put(child);
-     mirrors.put({ ...child, ownerKind: 'ask', ownerId: 'mirror-ask', ref: 'synthetic/merge#20' });
+     mirrors.put({ ...child, ownerKind: 'ask', ownerId: 'mirror-ask', ref: `${mirrorHome}#20` });
      publish({ labels: [[{ name: 'human-merge' }]] });
      await runSweep();
      await runSweep();
@@ -137,7 +140,7 @@ try{
      const check = await pack.todos!.check(store.getTodo('mirror-todo')!);
      assert.equal(check?.done, false);
      assert.equal(store.getTodo('mirror-todo')?.state, 'doing');
-     pr.closingIssuesReferences = [{ url: 'https://github.com/synthetic/merge/issues/20' }];
+     pr.closingIssuesReferences = [{ url: `https://github.com/${mirrorHome}/issues/20` }];
      publish({ labels: [[]] });
      await runSweep();
      assert.equal(mergeCalls().length, 1);
@@ -148,6 +151,7 @@ try{
      evidence.foreignIssueMergeCount = 0;
      evidence.earlyClosedIssueTodoState = 'doing';
      evidence.parentClosingReferenceMergeCount = 1;
+     evidence.crossRepositoryMirrorHome = linkedCrossRepo;
      evidence.executorActivated = true;
      evidence.mergeCommands = mergeCalls();
      evidence.verified = true;
