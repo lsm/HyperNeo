@@ -43,6 +43,9 @@ describe('Neo reads a current default-branch checkout', () => {
     expect(result.readHead).not.toBe(result.initial);
     expect(result.humanAfter).toEqual(result.humanBefore);
     expect(result.content).toBe('version two\n');
+    expect(result.repeatedHeadGitCalls).toBe(0);
+    expect(result.unsafeCheckoutRefused).toBe(true);
+    expect(result.unsafeGitCalls).toBe(0);
     expect(result.verified).toBe(true);
   }, 30_000);
 });

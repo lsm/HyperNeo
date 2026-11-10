@@ -104,7 +104,7 @@ import {
   GITHUB_CREDENTIAL_SERVICE,
   GITHUB_CREDENTIAL_ACCOUNT,
 } from './lib/external-events/github/index.ts';
-import { createNeoReadCheckoutSync } from './lib/neo/read-checkout-sync.ts';
+import { createNeoReadCheckoutSync } from './lib/neo/packs/coding/read-checkout-sync.ts';
 import { CodingPollFactsRepository } from './lib/neo/packs/coding/poll-facts.ts';
 import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
 import { readDaemonGithubToken } from './lib/github/runtime-token.ts';

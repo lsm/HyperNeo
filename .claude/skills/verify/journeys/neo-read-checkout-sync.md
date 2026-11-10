@@ -1,54 +1,40 @@
-# Neo reads current code without updating the human's checkout
+# Coding-owned read checkout through the GitHub poller
 
-Read `../SKILL.md`. This journey uses the existing GitHub poll RPC on an isolated
-daemon, an executable GitHub API fixture, and a real synthetic bare Git origin.
-No model, provider key, real GitHub request, live database or GUI is needed.
+Use the shared metadata-only setup and resource guard in `../SKILL.md`.
 
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-neo-read-sync-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
-  HYPERNEO_USE_DEV_PROXY=1 HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
-  bun .claude/skills/verify/neo-read-checkout-sync.ts verify "$RUN"
+bash .claude/skills/verify/proof-run.sh "$EVIDENCE" \
+  .claude/skills/verify/neo-read-checkout-sync.ts verify
 ```
 
-The helper refuses a reused daemon data directory. It owns an ephemeral daemon
-port (never 8399), stops its job processor before seeding the watched repository,
-and invokes public `space.github.pollOnce` through `/ws`. Its GitHub CLI fixture
-reads the default ref SHA from the real bare origin. An isolated HOME Git URL
-rewrite directs only `synthetic/neo-read-proof` to that local origin; all actual
-HTTP requests are refused. No credentials or human repository is used.
+The helper starts an isolated daemon on an ephemeral port, stops its job
+processor, seeds a synthetic watched repository and invokes the existing
+`space.github.pollOnce` RPC over its authenticated local socket. A GitHub CLI
+fixture reads a local bare origin. An isolated HOME Git rewrite redirects only
+that synthetic repository to the local origin. All external HTTP is refused.
+No model, provider keys, real GitHub repository or human checkout is used.
 
-Require `evidence/read-checkout.json` to show:
+Require `read-checkout.json` and the wrapper exit status to show all of these.
 
-- The first poll creates a standalone clone at
-  `<data dir>/worktrees/synthetic/neo-read-proof/neo-read`, detached at the real
-  origin's initial `main` SHA.
-- A real commit and push advance the origin's default branch. The second poll
-  advances the same clone to that SHA and its `origin/main`; reading `answer.txt`
-  there returns `version two`. Git status is clean.
-- The synthetic human checkout retains identical HEAD, `origin/main`, uncommitted
-  file bytes and dirty status across both polls. No fetch or checkout runs there.
-- Both polls complete without an accessibility error. Inspect the API request log
-  in `evidence/requests.jsonl` and the cursor's partial-error field too.
+- The first poll creates a standalone detached clone at the unchanged
+  `<data>/worktrees/<owner>/<repo>/neo-read` path and matches the origin SHA.
+- A real commit and push advance the origin. The next poll updates the same
+  clone and its file bytes. Its Git status stays clean.
+- The synthetic human checkout retains its HEAD, remote ref, dirty status and
+  uncommitted bytes throughout.
+- Repeating the unchanged head adds zero checkout Git commands.
+- Replacing the read path with a symlink to the synthetic human checkout and
+  advancing the origin again is refused before checkout Git runs. The existing
+  `lastPartialPollError` records the standalone-directory refusal.
 
-At reproduction commit before the production fix, `verify` fails with
-`poll did not create Neo read checkout`; `before` records both completed polls,
-the real origin movement and the absent read checkout. Commit the failing probe
-before the fix. The daemon and WebSocket close in `finally`; keep all synthetic
-repositories and evidence.
+Inspect `git.jsonl` and `requests.jsonl` for the fixed-argv checkout operations
+and GitHub API calls. The resource marker must report `resourcesClosed=true`.
+The wrapper saves evidence and removes disposable repositories and daemon data.
 
-The production poller calls this sync in its existing cycle, after event polling,
-using the same GitHub fetch adapter and quota reserve. It reads default-branch
-metadata and its ref; unchanged heads skip Git. First setup clones independently
-of human Git metadata. Changed heads run fixed-argv `git fetch origin` and
-`git checkout --detach origin/<default>` only: no pull, force, reset or clean.
-Refresh failures appear in the existing partial-poll error. No timer was added.
-Neo's coding instructions name the same shared path helper's layout.
+The composition regression in `neo-read-checkout-path.test.ts` fails before
+extraction because the daemon still imports the core implementation. After the
+move, the daemon imports the coding implementation and supplies it through the
+same poller callback. Request budget, head cache and checkout path stay intact.
 
-This proof covers a real local Git default-branch move and production RPC wiring;
-it does not run a model turn or claim a real GitHub branch moved. After merge,
-read `hyperneo build` over the owner socket to confirm automatic deployment, then
-record one naturally occurring real GitHub default-branch advance: compare the
-owned read clone's HEAD and file bytes before/after the normal poll with GitHub's
-default ref. Do not manufacture a live poll or mutate/fetch the human checkout.
+This proves local Git movement and production RPC composition. It uses synthetic
+GitHub responses and makes no deployment or live-poll claim.
