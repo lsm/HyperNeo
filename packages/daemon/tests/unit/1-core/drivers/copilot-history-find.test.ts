@@ -1,3 +1,5 @@
+import { planNeoWorkerName } from '../../../../src/lib/neo/worker-name.ts';
+import { createWorkerNameSource } from '../../../../src/lib/drivers/worker-names.ts';
 import { testDirectories } from '../../../helpers/temporary-directory';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import fs from 'node:fs';
@@ -110,6 +112,25 @@ function setup(projectFolder?: string) {
 }
 afterEach(async () => {
   for (const f of fixtures.splice(0)) await f.adapter.close();
+});
+
+test('the full Copilot naming inventory survives the owned/external merge', async () => {
+  const place = { machine: 'test', folder: '/synthetic/copilot-project', name: 'Project' };
+  const fixture = setup(place.folder);
+  for (let i = 1; i <= 25; i++)
+    fixture.external.push({
+      sessionId: `named-${i}`,
+      cwd: place.folder,
+      title: `Copilot copilot-project ${i}`,
+      updatedAt: i + 1,
+    });
+  const normal = await fixture.adapter.find({ ...query, folder: place.folder });
+  expect(normal.flatMap((group) => group.work)).toHaveLength(20);
+  const naming = await createWorkerNameSource(() => [fixture.adapter], place)('copilot-cli');
+  expect(naming.taken).toHaveLength(26);
+  expect(planNeoWorkerName('copilot-cli', naming.place, naming.taken)).toBe(
+    'Copilot copilot-project 26'
+  );
 });
 
 describe('Copilot owned history and discovery', () => {
