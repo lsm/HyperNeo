@@ -61,6 +61,10 @@ const sendTarget: NeoDriverTarget = {
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
 
 describe('NeoDriverTargetSchema', () => {
+  test.each(['', '   ', 'x'.repeat(81), 1, null])('rejects invalid worker name %j', (name) => {
+    expect(NeoDriverTargetSchema.safeParse({ ...startTarget, name }).success).toBe(false);
+  });
+
   test('normalizes requested configuration and preserves omitted settings', () => {
     expect(
       NeoDriverTargetSchema.parse({ ...startTarget, model: ' sol 6.1 ', effort: ' medium ' })
@@ -84,6 +88,16 @@ const driverWorkCall = (
 ) => buildDriverWorkCall(target, work, goal, withWorkGoal);
 
 describe('driverWorkCall', () => {
+  test('a todo title never becomes a worker title', () => {
+    const result = driverWorkCall(startTarget, work);
+    expect(result.input.title).toBe('Codex dolmen 1');
+    expect(result.input.title).not.toBe(work.title);
+  });
+  test('target.name is used as given after trimming', () => {
+    const target = NeoDriverTargetSchema.parse({ ...startTarget, name: '  Codex dolmen 7  ' });
+    expect(driverWorkCall(target, work).input.title).toBe('Codex dolmen 7');
+  });
+
   test('sends the goal with a started or continued driver session', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: null };
     for (const target of [startTarget, sendTarget])
