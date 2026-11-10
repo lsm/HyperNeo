@@ -63,6 +63,9 @@ export function advanceTaskNotificationRequeryEpisode(
       decision: { action: 'reset' },
     };
   }
+  if (prior?.closed && (signal.kind === 'attempt-issued' || signal.kind === 'attempt-failed')) {
+    return { episode: prior, decision: { action: 'hold' } };
+  }
   if (signal.kind === 'attempt-failed') {
     const attempts = episode.attempts + 1;
     const next = { ...episode, attempts };

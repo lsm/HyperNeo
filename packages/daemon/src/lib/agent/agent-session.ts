@@ -2449,6 +2449,7 @@ export class AgentSession
   private closeTaskNotificationRequeryEpisode(): void {
     const prior = this.taskNotificationRequeryEpisode;
     if (!prior || prior.closed) return;
+    this.resetTaskNotificationRequery();
     void this.persistTaskNotificationRequeryEpisode({ ...prior, closed: true });
   }
 

@@ -263,6 +263,16 @@ describe('task-notification requery policy', () => {
       expect(advanced.episode).toMatchObject({ episode: 2, attempts: 0, closed: false });
       expect(advanced.decision.action).toBe('requery');
     });
+
+    it.each(['attempt-issued', 'attempt-failed'] as const)(
+      'holds a stale %s signal on a closed episode instead of reopening it',
+      (kind) => {
+        const closed = { ...openRequeryEpisode(1), closed: true };
+        const advanced = advanceTaskNotificationRequeryEpisode(closed, { kind });
+        expect(advanced.episode).toBe(closed);
+        expect(advanced.decision).toEqual({ action: 'hold' });
+      }
+    );
   });
 
   describe('taskNotificationRequeryDelayMs', () => {
@@ -621,6 +631,25 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       timestamp: new Date().toISOString(),
     });
     expect(episodeOf()?.closed).toBe(true);
+  });
+
+  it('disarms the armed requery when the episode closes mid-backoff', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '200';
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    fireInternalEvent('space.task.updated', {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      task: { id: 'task-1', status: 'done' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+    expect(agentSession.getSessionData().metadata.taskNotificationRequeryEpisode).toMatchObject({
+      closed: true,
+    });
   });
 
   it('keeps the episode when an unbound session sees an unrelated run complete', async () => {
