@@ -287,6 +287,30 @@ describe('daemon merge sweep behavior', () => {
     expect(notices).toHaveLength(scenario === 'covered' ? 0 : 1);
   });
 
+  test('an unavailable review lookup preserves this hold notice and the next candidate', async () => {
+    labels = ['human-merge'];
+    const second = 'https://github.com/synthetic/merge/pull/2';
+    await ledger.write(
+      'replace',
+      'synthetic/merge',
+      [...ledger.list(), { ...ledger.list()[0], number: 2 }],
+      2
+    );
+    const lookup = spyOn(CodingAssignmentsRepository.prototype, 'reviewHoldsCurrent')
+      .mockResolvedValue([])
+      .mockRejectedValueOnce(new Error('Read queue full'));
+    try {
+      await expect(sweep()(10)).resolves.toBeUndefined();
+      expect(notices).toEqual([
+        expect.stringContaining(url + ' requires human sign-off'),
+        expect.stringContaining(second + ' requires human sign-off'),
+      ]);
+      expect(merges()).toEqual([]);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   test('accepting a stopped budget preserves failures and still caps the next budget', async () => {
     for (let episode = 0; episode < 2; episode++) {
       for (let i = 0; i < 3; i++) {
