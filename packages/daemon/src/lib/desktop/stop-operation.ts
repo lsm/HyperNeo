@@ -115,7 +115,7 @@ function recorded(directory: string): Driver {
 async function askApp(dataDir: string, worker: string) {
   await new Promise<void>((resolve) => {
     const client = createConnection(join(dataDir, 'desktop/control.sock'));
-    const timer = setTimeout(finish, 200);
+    const timer = setTimeout(finish, 2500);
     function finish() {
       clearTimeout(timer);
       client.destroy();

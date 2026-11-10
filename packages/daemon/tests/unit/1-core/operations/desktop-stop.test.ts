@@ -37,6 +37,7 @@ let driver: ChildProcess;
 let exited: Promise<unknown[]>;
 let stopRequests: number;
 let appAnswers: boolean;
+let beforeAppReply: (() => Promise<void>) | undefined;
 let currentIdentity: typeof identity;
 let identityReads: number;
 let changeBeforeKill: boolean;
@@ -49,6 +50,7 @@ beforeEach(async () => {
   events = join(root, 'driver-events');
   stopRequests = 0;
   appAnswers = true;
+  beforeAppReply = undefined;
   currentIdentity = identity;
   identityReads = 0;
   changeBeforeKill = false;
@@ -56,10 +58,11 @@ beforeEach(async () => {
   app = createServer((connection) => {
     connections.add(connection);
     connection.on('close', () => connections.delete(connection));
-    connection.on('data', (data) => {
+    connection.on('data', async (data) => {
       expect(JSON.parse(String(data))).toEqual({ action: 'stop', worker: 'worker-a' });
       expect(existsSync(join(directory, 'stopped'))).toBe(true);
       stopRequests++;
+      await beforeAppReply?.();
       if (appAnswers)
         connection.end(JSON.stringify({ ok: true, result: { state: 'stopped' } }) + '\n');
     });
@@ -189,4 +192,20 @@ test('an incomplete start without a reliable record remains unconfirmed', async 
   expect(identityReads).toBe(0);
   expect(driver.exitCode).toBeNull();
   expect(existsSync(events)).toBe(false);
+});
+
+test('the app can complete graceful shutdown before daemon escalation', async () => {
+  await start();
+  let signalledBeforeAppReply = false;
+  beforeAppReply = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    signalledBeforeAppReply = existsSync(events);
+    driver.kill('SIGTERM');
+    await exited;
+  };
+  expect(await stop()).toMatchObject({ kind: 'completed', value: { state: 'stopped' } });
+  expect(signalledBeforeAppReply).toBe(false);
+  expect(identityReads).toBe(0);
+  expect(driver.exitCode).toBe(0);
+  expect(existsSync(socketPath)).toBe(false);
 });
