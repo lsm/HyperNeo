@@ -2,13 +2,15 @@ import { basename } from 'node:path';
 import { repoNameFromRemote } from '../drivers/code-identity.ts';
 import type { Place } from '../drivers/types.ts';
 
-export type NeoWorkerNameSource = (
+export type NeoWorkerNameSource = ((
   adapter: string,
   place?: Place
 ) => Promise<{
   place: Place;
   taken: readonly string[];
-}>;
+}>) & {
+  withStart<T>(adapter: string, place: Place | undefined, start: () => Promise<T>): Promise<T>;
+};
 
 export function planNeoWorkerName(
   adapter: string,

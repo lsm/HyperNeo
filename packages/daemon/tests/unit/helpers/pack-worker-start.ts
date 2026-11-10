@@ -56,7 +56,7 @@ export function packWorkerStartFixture(
     store,
     sessions,
     packs,
-    workerNames: options.workerNames,
+    workerNames: () => options.workerNames,
     write: gateway.run.bind(gateway),
     limits: () => ({ running: 99, perGroup: 99 }),
     tell: async () => {},

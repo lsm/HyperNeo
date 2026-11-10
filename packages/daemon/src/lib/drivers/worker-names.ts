@@ -6,7 +6,8 @@ export function createWorkerNameSource(
   adapters: () => readonly WorkAdapter[],
   fallback: Place
 ): NeoWorkerNameSource {
-  return async (id, requested) => {
+  const lanes = new Map<string, Promise<void>>();
+  const read = async (id: string, requested?: Place) => {
     const place = requested ?? fallback;
     const adapter = adapters().find((adapter) => adapter.id === id);
     const groups =
@@ -30,4 +31,20 @@ export function createWorkerNameSource(
         .map((work) => work.title),
     };
   };
+  return Object.assign(read, {
+    withStart<T>(id: string, requested: Place | undefined, start: () => Promise<T>) {
+      const key = `${id}\u0000${placeKey(requested ?? fallback)}`;
+      const previous = lanes.get(key) ?? Promise.resolve();
+      const result = previous.then(start);
+      const settled = result.then(
+        () => {},
+        () => {}
+      );
+      lanes.set(key, settled);
+      void settled.then(() => {
+        if (lanes.get(key) === settled) lanes.delete(key);
+      });
+      return result;
+    },
+  });
 }

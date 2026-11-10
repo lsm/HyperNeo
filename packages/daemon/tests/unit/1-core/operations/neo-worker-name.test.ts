@@ -174,3 +174,29 @@ test('direct and queue-driven starts share one naming lane for a default place',
     db.close();
   }
 });
+
+test('a rejected start releases its lane and other places can start independently', async () => {
+  const source = createWorkerNameSource(() => [], place);
+  const release = Promise.withResolvers<void>();
+  const entered = Promise.withResolvers<void>();
+  const failed = source.withStart('fixture', undefined, async () => {
+    entered.resolve();
+    await release.promise;
+    throw new Error('Synthetic start failure');
+  });
+  const failure = failed.catch((error: Error) => error.message);
+  await entered.promise;
+  const next = source.withStart('fixture', place, async () => 'next');
+  try {
+    expect(
+      await source.withStart('fixture', { ...place, folder: '/other' }, async () => 'other place')
+    ).toBe('other place');
+    expect(await source.withStart('hyperneo', place, async () => 'other engine')).toBe(
+      'other engine'
+    );
+  } finally {
+    release.resolve();
+  }
+  expect(await failure).toBe('Synthetic start failure');
+  expect(await next).toBe('next');
+});

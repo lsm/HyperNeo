@@ -78,7 +78,7 @@ const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, 
 
 export interface NeoTodoRunnerDeps {
   write: RunDbOp;
-  workerNames?: NeoWorkerNameSource;
+  workerNames?: () => NeoWorkerNameSource | undefined;
   store: NeoAskTodoRepository;
   sessions: NeoTodoSessionRepository;
   invoke(
@@ -446,46 +446,58 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       target.verb === 'start' ? target.adapter : target.ref.adapter,
       target.verb === 'send'
     );
-    const call = driverWorkCall(
-      target,
-      card,
-      {
-        workId: todo.id,
-        goal: null,
-        doneWhen: todo.doneWhen,
-        checkKind: todo.check?.kind ?? null,
-      },
-      formatGoal,
-      target.verb === 'start' && !target.name
-        ? await deps.workerNames?.(target.adapter, target.place)
-        : undefined
-    );
-    if (target.verb === 'start' && prepare?.workerStartBrief)
-      call.input.message = prepare.workerStartBrief(
-        String(call.input.message),
-        target.preparationParameters
+    const names = deps.workerNames?.();
+    const deliver = async () => {
+      const call = driverWorkCall(
+        target,
+        card,
+        {
+          workId: todo.id,
+          goal: null,
+          doneWhen: todo.doneWhen,
+          checkKind: todo.check?.kind ?? null,
+        },
+        formatGoal,
+        target.verb === 'start' && !target.name
+          ? await names?.(target.adapter, target.place)
+          : undefined
       );
-    if (target.verb === 'start' && prepare?.prepareExecution && workerSandboxOn(target.sandbox))
-      call.input.preparation = {
-        pack: prepare.id,
-        parameters: target.preparationParameters ?? {},
-        sandbox: true,
+      if (target.verb === 'start' && prepare?.workerStartBrief)
+        call.input.message = prepare.workerStartBrief(
+          String(call.input.message),
+          target.preparationParameters
+        );
+      if (target.verb === 'start' && prepare?.prepareExecution && workerSandboxOn(target.sandbox))
+        call.input.preparation = {
+          pack: prepare.id,
+          parameters: target.preparationParameters ?? {},
+          sandbox: true,
+        };
+      call.input.todoId = todo.id;
+      if (target.verb === 'start') {
+        call.input.provenance = true;
+        if (exclusions) call.input.excludeRefs = exclusions.value;
+      }
+      const message = String(call.input.message);
+      const probe =
+        target.verb === 'send'
+          ? {
+              baseline: readDriverSendBaseline(status!, Date.now(), !!target.ref.daemon),
+              sent: readDriverSent(status!, message, todo.createdAt),
+            }
+          : null;
+      const baseline = probe ? probe.baseline : Date.now();
+      return {
+        message,
+        probe,
+        baseline,
+        outcome: await deps.invoke(caller(ask), call.name, call.input),
       };
-    call.input.todoId = todo.id;
-    if (target.verb === 'start') {
-      call.input.provenance = true;
-      if (exclusions) call.input.excludeRefs = exclusions.value;
-    }
-    const message = String(call.input.message);
-    const probe =
-      target.verb === 'send'
-        ? {
-            baseline: readDriverSendBaseline(status!, Date.now(), !!target.ref.daemon),
-            sent: readDriverSent(status!, message, todo.createdAt),
-          }
-        : null;
-    const baseline = probe ? probe.baseline : Date.now();
-    const result = readDriverOutcome(target, await deps.invoke(caller(ask), call.name, call.input));
+    };
+    const { message, probe, baseline, outcome } = await (target.verb === 'start' && names
+      ? names.withStart(target.adapter, target.place, deliver)
+      : deliver());
+    const result = readDriverOutcome(target, outcome);
     if (!('ref' in result) && !result.reason) sessions.recordStartInterrupted(todo.id);
     if (!('ref' in result))
       return {

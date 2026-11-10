@@ -1,3 +1,4 @@
+import { createWorkerNameSource } from '../drivers/worker-names.ts';
 import type { NeoWorkerNameSource } from './worker-name.ts';
 import { sweepNeoTrackerMirrors } from './tracker-mirror.ts';
 import { createQuestionRetirement } from './question-retirement.ts';
@@ -256,16 +257,16 @@ export class NeoService {
       void this.rulesChanged();
     });
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
+    const fallbackWorkerNames = createWorkerNameSource(() => [], {
+      machine: '',
+      folder: this.userFolder,
+      name: this.userFolder,
+    });
     this.todoRunner = createNeoTodoRunner({
       write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
       store: this.todos,
       sessions: this.todoSessions,
-      workerNames: (adapter, place) =>
-        this.workerNames?.(adapter, place) ??
-        Promise.resolve({
-          place: place ?? { machine: '', folder: this.userFolder, name: this.userFolder },
-          taken: [],
-        }),
+      workerNames: () => this.workerNames ?? fallbackWorkerNames,
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
