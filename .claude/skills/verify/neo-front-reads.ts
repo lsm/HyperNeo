@@ -88,6 +88,7 @@ try {
       ids.push(...page.items.map((item) => item.id));
       assert.equal(page.total, ids.length);
       assert.equal(page.totalExact, false);
+      assert.equal(page.forwardOnly, true);
       windows++;
       const edited = page.items.find((item) => item.id === expectedIds[10]);
       if (edited) {
@@ -138,6 +139,7 @@ try {
         total: 0,
         totalExact: true,
         nextCursor: null,
+        forwardOnly: true,
       });
     }
     assert.equal(await read(kind, { id: 'missing' }), null);
@@ -160,6 +162,39 @@ try {
   assert.equal(fresh.state, 'done');
   assert.equal(fresh.blocker, null);
   assert.equal((await collect('todos')).length, 29);
+  const leadingProjects = await read('projects');
+  assert(leadingProjects && 'items' in leadingProjects);
+  const projectId = leadingProjects.items[0].id;
+  sql.prepare('UPDATE neo_concerns SET title=? WHERE id=?').run('Pending project', projectId);
+  const beforeRename = await read('projects', { text: 'Membership needle' });
+  assert(beforeRename && 'items' in beforeRename && beforeRename.nextCursor);
+  assert.equal(beforeRename.forwardOnly, true);
+  assert.equal(beforeRename.items.length, 0);
+  sql.prepare('UPDATE neo_concerns SET title=? WHERE id=?').run('Membership needle', projectId);
+  assert.deepEqual(await collect('projects', { cursor: beforeRename.nextCursor }), []);
+  assert.deepEqual(
+    (await collect('projects', { text: 'Membership needle' })).map((item) => item.id),
+    [projectId]
+  );
+  const renamed = await read('projects', { id: projectId });
+  assert(renamed && 'name' in renamed);
+  assert.equal(renamed.name, 'Membership needle');
+  const leadingAsks = await read('asks');
+  assert(leadingAsks && 'items' in leadingAsks);
+  const askId = leadingAsks.items[0].id;
+  sql.prepare("UPDATE neo_asks SET status='done' WHERE id=?").run(askId);
+  const beforeReopen = await read('asks');
+  assert(beforeReopen && 'items' in beforeReopen && beforeReopen.nextCursor);
+  assert.equal(beforeReopen.forwardOnly, true);
+  assert(!beforeReopen.items.some((item) => item.id === askId));
+  sql.prepare("UPDATE neo_asks SET status='open' WHERE id=?").run(askId);
+  assert(
+    !(await collect('asks', { cursor: beforeReopen.nextCursor })).some((item) => item.id === askId)
+  );
+  assert((await collect('asks')).some((item) => item.id === askId));
+  const reopened = await read('asks', { id: askId });
+  assert(reopened && 'state' in reopened);
+  assert.equal(reopened.state, 'open');
   sql.prepare("DELETE FROM neo_session_bindings WHERE kind='neo'").run();
   const unbound = await read('projects');
   assert(unbound && 'items' in unbound);
@@ -176,6 +211,8 @@ try {
     port: app.server.port,
     observations,
     estimatesExplicit: true,
+    forwardOnly: true,
+    membershipRestart: true,
     uniformSearchPages: true,
     canonicalConversationOnly: true,
     tokenlessEmpty: true,

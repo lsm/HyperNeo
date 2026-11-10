@@ -389,3 +389,35 @@ test('unique searches keep the page shape in early, middle and final windows', a
     expect(await read('projects', { id })).toMatchObject({ id, status: 'Visible status' });
   }
 });
+
+test('forward-only discovery restarts to include a project renamed behind the cursor', async () => {
+  const sql = db.getDatabase();
+  sql.prepare("UPDATE neo_concerns SET title='Needle older' WHERE id='item-01'").run();
+  const first = await read('projects', { text: 'Needle' });
+  if (!first || !('items' in first) || !first.nextCursor) throw new Error('Expected window');
+  expect(first.items).toEqual([]);
+  sql.prepare("UPDATE neo_concerns SET title='Needle newcomer' WHERE id='item-23'").run();
+  const continued = await collect('projects', { cursor: first.nextCursor });
+  expect(continued.map((item) => item.id)).toEqual(['item-01']);
+  expect((await collect('projects', { text: 'Needle' })).map((item) => item.id)).toEqual([
+    'item-23',
+    'item-01',
+  ]);
+  expect(await read('projects', { id: 'item-23' })).toHaveProperty('name', 'Needle newcomer');
+  expect(first).toHaveProperty('forwardOnly', true);
+});
+
+test('forward-only open lists restart to include an ask reopened behind the cursor', async () => {
+  const sql = db.getDatabase();
+  sql.prepare("UPDATE neo_asks SET status='done' WHERE id='item-23'").run();
+  const first = await read('asks');
+  if (!first || !('items' in first) || !first.nextCursor) throw new Error('Expected window');
+  expect(first.items.some((item) => item.id === 'item-23')).toBe(false);
+  sql.prepare("UPDATE neo_asks SET status='open' WHERE id='item-23'").run();
+  expect(
+    (await collect('asks', { cursor: first.nextCursor })).some((item) => item.id === 'item-23')
+  ).toBe(false);
+  expect((await collect('asks')).some((item) => item.id === 'item-23')).toBe(true);
+  expect(await read('asks', { id: 'item-23' })).toHaveProperty('state', 'open');
+  expect(first).toMatchObject({ forwardOnly: true, totalExact: false });
+});

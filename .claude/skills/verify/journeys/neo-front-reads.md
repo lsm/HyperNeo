@@ -6,15 +6,24 @@ starts an isolated daemon with a synthetic HOME and database, stops job processi
 and exercises the registered read gateway.
 
 Pages visit at most ten candidates plus one lookahead. Creation time orders records
-newest first, with immutable ID as the tiebreaker. Updates between pages must retain
-every original record exactly once. Edit reader-visible names/text and assert the
-new unseen projection, plus fresh details for the already-seen edited record. Totals are explicitly approximate whenever
-`totalExact` is false. They report matches observed in this traversal. Callers must
-follow `nextCursor` even when a search window contains no matches. Candidate IDs
-support a fresh detail lookup. List and search always return paged summaries, even
-for a unique match. Only `{id}` returns a detailed record. The durable conversation
-record defines scope independently of the current coordinator binding. One- and two-character terms retain substring matches.
-Empty or tokenless searches return no results.
+newest first, with immutable ID as the tiebreaker. Each response declares
+`forwardOnly: true`. These are live discovery windows. A rename into a search or a
+reopened ask behind the cursor appears on a fresh read, rather than in continuation.
+Restart list/search reads to discover membership changes behind an existing cursor.
+
+This is appropriate for the front's advisory discovery surface. Use `{id}` for
+current status. Defer absence and exhaustive-current-set claims from continued
+windows to Neo. Following a cursor to its end establishes traversal completion,
+not a snapshot of membership at the end. `totalExact: false` reports matches observed
+in this traversal. Follow `nextCursor` even when a window contains no matches.
+List/search always return summaries, including unique matches. Only `{id}` returns
+details. The durable conversation defines scope independently of coordinator bindings.
+One- and two-character terms retain substring matches. Tokenless searches are empty.
+
+Membership-preserving edits must retain each discovered ID exactly once. Edit visible
+names/text and assert the unseen projection plus fresh details for the already-seen
+record. Membership-changing regressions must show a renamed project and a reopened
+ask absent from continuation, present after restart, and current by ID.
 
 The unit regression retains query plans and row counts over 5,024 projects. Require
 an indexed `(created_at,id)` seek, no sorting scan, no aggregate count, and at most

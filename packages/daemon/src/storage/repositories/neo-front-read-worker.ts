@@ -32,7 +32,13 @@ type RecordView = {
   text?: string;
   options?: string[] | null;
 };
-type Page = { items: RecordView[]; total: number; totalExact: boolean; nextCursor: string | null };
+type Page = {
+  items: RecordView[];
+  total: number;
+  totalExact: boolean;
+  nextCursor: string | null;
+  forwardOnly: true;
+};
 type Result = RecordView | Page | null;
 type Row = {
   id: string;
@@ -84,7 +90,7 @@ export const neoFrontReads = defineDbOp<z.input<typeof Request>, Result>({
     const text = 'text' in input ? input.text : (cursor?.text ?? null);
     const terms = text?.match(/[\p{L}\p{N}]+/gu) ?? [];
     if (text !== null && !terms.length)
-      return { items: [], total: 0, totalExact: true, nextCursor: null };
+      return { items: [], total: 0, totalExact: true, nextCursor: null, forwardOnly: true };
     const records = `WITH records AS (${sources[kind]}) SELECT * FROM records`;
     if ('id' in input) {
       const row = db.prepare(`${records} WHERE id=?`).get(input.id) as Row | null;
@@ -124,13 +130,13 @@ export const neoFrontReads = defineDbOp<z.input<typeof Request>, Result>({
         )
       );
     });
-    const seen = cursor?.seen ?? 0;
-    const total = seen + matched.length;
+    const total = (cursor?.seen ?? 0) + matched.length;
     const last = rows.at(-1);
     return {
       items: matched.map((row) => JSON.parse(row.summary) as RecordView),
       total,
       totalExact: !cursor && !more,
+      forwardOnly: true,
       nextCursor:
         more && last
           ? Buffer.from(
