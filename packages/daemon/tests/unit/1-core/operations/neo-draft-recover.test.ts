@@ -286,10 +286,13 @@ describe('neo.draft.recover', () => {
   ] as OperationCaller[])(
     'refuses non-human caller %o without touching the draft',
     async (caller) => {
-      expect(await recover({ sessionId: ROOT, text: 'x', base: 'saved root' }, caller)).toEqual({
-        kind: 'completed',
-        value: { ok: false, reason: 'human_only' },
-      });
+      expect(
+        await recover({ sessionId: ROOT, text: 'x', base: 'saved root' }, caller)
+      ).toMatchObject(
+        caller.role === 'neo'
+          ? { kind: 'failed', code: 'forbidden' }
+          : { kind: 'completed', value: { ok: false, reason: 'human_only' } }
+      );
       expect(draft().inputDraft).toBe('saved root');
     }
   );

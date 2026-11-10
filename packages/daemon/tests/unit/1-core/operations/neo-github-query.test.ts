@@ -246,6 +246,7 @@ describe('pack-owned Neo operation registration', () => {
           ],
         },
       ];
+      db.updateGlobalSettings({ neo: { packs: ['synthetic-pack'] } });
       const registry = createOperationRegistry(createNeoOperations(service));
       expect(registry.get('verify.pack.echo')).toBeDefined();
       expect(

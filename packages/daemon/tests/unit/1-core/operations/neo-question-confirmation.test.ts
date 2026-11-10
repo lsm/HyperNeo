@@ -84,8 +84,8 @@ describe('Neo question confirmation binding', () => {
       answeredByHuman: false,
     });
     expect(
-      await call('neo.question.answer', { questionId: created.question.id, answer: 'yes' })
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('user') });
+      call('neo.question.answer', { questionId: created.question.id, answer: 'yes' })
+    ).rejects.toThrow('Operation neo.question.answer is not available to this caller');
     expect(await call('neo.question.get', { questionId: created.question.id })).toMatchObject({
       answeredByHuman: false,
     });

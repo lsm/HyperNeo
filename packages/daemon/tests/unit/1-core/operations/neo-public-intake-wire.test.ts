@@ -117,9 +117,11 @@ describe('real human intake joint persistence', () => {
       const targets = vi.spyOn(db, 'getSession');
       const roots = vi.spyOn(repo, 'defaultBinding');
       const storage = vi.spyOn(db, 'getSDKMessageRepo');
-      expect(await invoke({ ...input, human: true, inputKind: 'human' }, caller)).toMatchObject({
-        value: { ok: false, reason: 'Only the human can submit a Neo ask.' },
-      });
+      expect(await invoke({ ...input, human: true, inputKind: 'human' }, caller)).toMatchObject(
+        caller.role === 'neo'
+          ? { kind: 'failed', code: 'forbidden' }
+          : { value: { ok: false, reason: 'Only the human can submit a Neo ask.' } }
+      );
       expect(targets).not.toHaveBeenCalled();
       expect(roots).not.toHaveBeenCalled();
       expect(storage).not.toHaveBeenCalled();

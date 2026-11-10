@@ -249,7 +249,9 @@ describe('Neo private GitHub home proposal', () => {
     expect(await call({ askId: 'ask' })).toEqual(proposed);
     expect(todos.listQuestions('ask')).toHaveLength(1);
     expect((await call({ questionId: proposed.questionId })).ok).toBe(false);
-    expect((await answer(proposed.questionId, 'yes', owner)).ok).toBe(false);
+    await expect(answer(proposed.questionId, 'yes', owner)).rejects.toThrow(
+      'Operation neo.question.answer is not available to this caller'
+    );
     expect(await log()).not.toContain('repo create');
     await answer(proposed.questionId);
     const created = await call({ questionId: proposed.questionId });

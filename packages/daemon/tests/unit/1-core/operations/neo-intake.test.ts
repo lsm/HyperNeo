@@ -304,7 +304,7 @@ describe('durable Neo intake operation', () => {
     mailbox.db.exec('DROP TABLE neo_session_bindings');
     expect(
       await invoke(input, { source: 'mcp', role: 'neo', sessionId: input.sessionId })
-    ).toMatchObject({ value: { ok: false, reason: 'Only the human can submit a Neo ask.' } });
+    ).toMatchObject({ kind: 'failed', code: 'forbidden' });
     expect(mailbox.sdkRows()).toEqual([]);
     expect(mailbox.rows()).toEqual([]);
   });
