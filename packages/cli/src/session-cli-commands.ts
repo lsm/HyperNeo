@@ -16,7 +16,10 @@ const commands = {
   hyperneo devices reset-human        Lost-phone recovery: clear human devices, reopen one human pairing, and notify Neo`,
 };
 
-export const SESSION_CLI_HELP = Object.values(commands).join('\n');
+export const SESSION_CLI_HELP = [
+  Object.values(commands).join('\n'),
+  '  hyperneo desktop-mcp --worker <id>   Serve bounded desktop tools over stdio MCP',
+].join('\n');
 export const SESSION_CLI_USAGE = `Usage:\n${SESSION_CLI_HELP}`;
 
 export function isSessionCommand(command: string | undefined): boolean {
