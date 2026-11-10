@@ -297,7 +297,7 @@ describe('task-notification requery policy', () => {
       const advanced = advanceTaskNotificationRequeryEpisode(openRequeryEpisode(1), {
         kind: 'delivery-failed',
       });
-      expect(advanced.episode.attempts).toBe(1);
+      expect(advanced.episode?.attempts).toBe(1);
       expect(advanced.decision.action).toBe('requery');
     });
 
