@@ -21,10 +21,14 @@ export function createOperationMcpServer(
 ) {
   const signatures =
     descriptionRole === 'neo' ? coreOperationSignatures(resolveOperationRegistry(registry)) : '';
+  const discovery =
+    descriptionRole === 'neo'
+      ? 'operations.list {} returns rare-operation namespace counts; {prefix,cursor?} pages at most 20 names. all:true stays compact. operations.describe {name} returns one full schema.'
+      : 'operations.list discovers others; operations.describe {name} returns full schemas.';
   const tools = [
     tool(
       'invoke',
-      `Invoke {name,input}. operations.list discovers others; operations.describe {name} returns full schemas. message.send acceptance means durable mailbox persistence, not an agent reply.${signatures ? `\n\nCore input shapes:\n${signatures}` : ''}`,
+      `Invoke {name,input}. ${discovery} message.send acceptance means durable mailbox persistence, not an agent reply.${signatures ? `\n\nCore input shapes:\n${signatures}` : ''}`,
       OperationMcpInvocationSchema.shape,
       createOperationMcpHandler(registry, resolveCaller, recordRefusal)
     ),

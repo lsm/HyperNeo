@@ -1,3 +1,4 @@
+import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import { operationSignature } from './discovery.ts';
 import { isOperationAdmitted } from './invoke.ts';
 import { enabledOperationPacks, type OperationRegistry } from './registry.ts';
@@ -18,7 +19,25 @@ const rules = {
   'neo.ask.open': 'request required, not just title',
   'neo.todo.close': 'reason required; closure is unverified',
   'neo.question.get': 'questionId, not askId',
-} as const;
+  'work.status': 'read current work status',
+  'work.read': 'read current work content',
+  'work.rename': 'rename work',
+  'work.adapters': 'discover available work adapters',
+  'neo.todo.remove': 'remove a todo',
+  'neo.todo.hold': 'hold a todo',
+  'neo.todo.bind': 'bind existing work to a todo',
+  'neo.todo.retry': 'retry a todo',
+  'neo.todo.proceed': 'proceed with a todo',
+  'neo.ask.read': 'read an ask',
+  'neo.ask.topic': 'set the ask topic',
+  'neo.ask.search': 'search asks',
+  'neo.ask.outcome': 'record the ask outcome',
+  'neo.question.retire': 'retire a question',
+  'neo.question.relay': 'preserve the human answer and its source',
+  'neo.session.archive': 'archive a session',
+} as const satisfies Partial<Record<OperationName, string>>;
+
+export const NEO_CORE_OPERATION_NAMES = Object.keys(rules);
 
 export function coreOperationSignatures(registry: OperationRegistry): string {
   const enabled = enabledOperationPacks(registry);

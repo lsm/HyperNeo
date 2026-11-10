@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAdvertisedToProfile } from '../tools/session-tool-profiles.ts';
 import { z } from 'zod';
+import { compactNeoDiscovery, CompactDiscoverySchema } from './neo-discovery.ts';
 import { isOperationAdmitted } from './invoke.ts';
 import {
   enabledOperationPacks,
@@ -12,7 +13,22 @@ import {
 
 const SummarySchema = z.object({ name: z.string(), description: z.string() });
 const ListInputSchema = z
-  .object({ all: z.boolean().optional(), query: z.string().optional() })
+  .object({
+    all: z.boolean().optional(),
+    query: z.string().optional(),
+    prefix: z
+      .string()
+      .regex(/^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)*\.?$/)
+      .describe('Neo MCP only. Other callers ignore paging and keep the legacy array response.')
+      .optional(),
+    cursor: z
+      .string()
+      .min(1)
+      .describe(
+        'Neo MCP only. Without prefix, Neo returns namespace counts and ignores cursor. Other callers ignore paging and keep the legacy array response.'
+      )
+      .optional(),
+  })
   .default({});
 const DescriptionSchema = z.discriminatedUnion('found', [
   z.object({
@@ -67,6 +83,36 @@ export function listOperationSummaries(
     )
     .map(({ name, description }) => ({ name, description }));
 }
+
+type ListInput = z.infer<typeof ListInputSchema>;
+function isNeoDiscovery(caller: OperationCaller): boolean {
+  return caller.source === 'mcp' && caller.role === 'neo';
+}
+function discoverySummaries(
+  registry: OperationRegistry,
+  caller: OperationCaller,
+  input: ListInput
+) {
+  return listOperationSummaries(registry, caller, isNeoDiscovery(caller) || input.all, input.query);
+}
+function renderDiscovery(
+  summaries: ReturnType<typeof listOperationSummaries>,
+  caller: OperationCaller,
+  input: ListInput
+) {
+  return isNeoDiscovery(caller)
+    ? compactNeoDiscovery(summaries, input.prefix, input.cursor)
+    : summaries;
+}
+const listOperations = (superpipe({})('list-operations') as PipelineAPI)
+  .input(['registry', 'caller', 'input'])
+  .pipe(discoverySummaries, ['registry', 'caller', 'input'], 'summaries')
+  .pipe(renderDiscovery, ['summaries', 'caller', 'input'], 'listing')
+  .end('listing') as (
+  registry: OperationRegistry,
+  caller: OperationCaller,
+  input: ListInput
+) => ReturnType<typeof renderDiscovery>;
 
 export function findDescribedOperation(
   registry: OperationRegistry,
@@ -163,11 +209,17 @@ export function describeOperationSignatures(
     .join('\n');
 }
 
-export function describeOperationDefinition(operation: OperationDefinition): Description {
+export function describeOperationDefinition(
+  operation: OperationDefinition,
+  caller?: OperationCaller
+): Description {
   return {
     found: true,
     name: operation.name,
-    description: operation.description,
+    description:
+      operation.name === 'operations.list' && caller && isNeoDiscovery(caller)
+        ? 'List admitted rare operations as namespace counts. Pass { prefix, cursor? } for pages of at most 20 names. all: true stays compact. Pass { query } to filter by keywords. Use operations.describe { name } for one operation schema. Caller and pack restrictions always apply.'
+        : operation.description,
     inputSchema: z.toJSONSchema(operation.inputSchema, { io: 'input' }),
     resultSchema: z.toJSONSchema(operation.resultSchema, { io: 'output' }),
   };
@@ -176,7 +228,7 @@ export function describeOperationDefinition(operation: OperationDefinition): Des
 const describeOperation = (superpipe({})('describe-operation') as PipelineAPI)
   .input(['registry', 'name', 'caller'])
   .pipe(findDescribedOperation, ['registry', 'name', 'caller'], 'result:description')
-  .pipe(describeOperationDefinition, 'description', 'description')
+  .pipe(describeOperationDefinition, ['description', 'caller'], 'description')
   .end('description') as (
   registry: OperationRegistry,
   name: string,
@@ -192,9 +244,8 @@ export function createDiscoveryOperations(
       description:
         'List operations available to this caller and advertised by the session tool profile. Pass { all: true } to include eligible operations omitted from the default list. Pass { query } with keywords to keep only operations whose name or description contains every word. Caller and pack restrictions apply even with all: true.',
       inputSchema: ListInputSchema,
-      resultSchema: z.array(SummarySchema),
-      execute: async ({ all, query }, caller) =>
-        listOperationSummaries(getRegistry(), caller, all, query),
+      resultSchema: z.union([z.array(SummarySchema), CompactDiscoverySchema]),
+      execute: async (input, caller) => listOperations(getRegistry(), caller, input),
     }),
     defineOperation({
       name: 'operations.describe',

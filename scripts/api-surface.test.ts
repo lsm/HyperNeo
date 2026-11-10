@@ -1,3 +1,4 @@
+import { unclassifiedNeoOperations } from './neo-discovery-coverage.ts';
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -97,5 +98,43 @@ describe('api:surface', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Neo discovery coverage', () => {
+  test('requires every admitted name to have a visible route or documented exclusion', () => {
+    expect(
+      unclassifiedNeoOperations([
+        operation('work.status'),
+        operation('work.read'),
+        operation('neo.session.archive'),
+        operation('goal.journal.list'),
+        operation('goal.session.list'),
+        operation('schedule.session.list'),
+        operation('goal.list'),
+        operation('schedule.list'),
+        operation('goal.reviewFuture'),
+        operation('session.get'),
+        operation('review.new'),
+      ])
+    ).toEqual(['goal.reviewFuture', 'review.new']);
+  });
+  test('checks disabled pack operations before a future enablement', () => {
+    expect(
+      unclassifiedNeoOperations([
+        { ...operation('review.pack'), pack: { id: 'example', enabledIds: () => [] } },
+      ])
+    ).toEqual(['review.pack']);
+  });
+  test('does not require a discovery entry for callers denied by admission', () => {
+    expect(
+      unclassifiedNeoOperations([
+        {
+          ...operation('review.worker'),
+          policy: { safetyClass: 'read', roles: ['workflow_worker'] },
+        },
+        { ...operation('neo.session.track'), policy: { safetyClass: 'human_only' } },
+      ])
+    ).toEqual([]);
   });
 });

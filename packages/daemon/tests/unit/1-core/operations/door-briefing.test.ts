@@ -151,6 +151,24 @@ describe('describeResolvedOperations', () => {
 });
 
 describe('operationsCapabilityContribution with a resolved registry', () => {
+  test('Neo gets compact instructions and counts only admitted rare operations', () => {
+    const registry = createOperationRegistry([
+      stubOperation('goal.journal.list'),
+      stubOperation('work.send'),
+      stubOperation('task.list'),
+    ]);
+    const { briefing } = operationsCapabilityContribution(ATTACHED, registry, {
+      source: 'mcp',
+      role: 'neo',
+    });
+    expect(briefing).toContain('namespace counts');
+    expect(briefing).toContain('{prefix,cursor?}');
+    expect(briefing).toContain('all:true stays compact');
+    expect(briefing).toContain('1 operation across 1 area: goal.');
+    expect(briefing).not.toContain('task.list');
+    expect(briefing).not.toContain('work.send');
+  });
+
   test('appends the derived listing after the authored prose', () => {
     const registry = createOperationRegistry([stubOperation('task.create')]);
 
