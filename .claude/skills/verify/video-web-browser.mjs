@@ -172,6 +172,18 @@ try {
     await live.hover();
     await shot('live-playing');
     const liveUrl = await live.getAttribute('src');
+    const beforeDownload = await live.evaluate((v) => v.currentTime);
+    const downloaded = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download complete file', exact: true }).click();
+    const download = await downloaded;
+    assert.equal(await download.failure(), null);
+    assert.equal(await live.getAttribute('src'), liveUrl);
+    assert.equal(await live.evaluate((v) => v.paused), false);
+    assert((await live.evaluate((v) => v.currentTime)) >= beforeDownload);
+    assert.equal(
+      await page.evaluate((url) => window.__videoUrls.revoked.includes(url), liveUrl),
+      false
+    );
     await close('sample.mp4');
     await page.waitForFunction((url) => window.__videoUrls?.revoked.includes(url), liveUrl);
     await tap(paths[0]);
@@ -198,6 +210,7 @@ try {
       width,
       livePlayed: true,
       liveSeeked: true,
+      downloadKeptPlaying: true,
       liveReleased: true,
       reopenedPaused: true,
       quickTime: await mov.jsonValue(),

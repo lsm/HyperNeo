@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { connectionState } from '../../../lib/state.ts';
 import {
@@ -22,6 +22,8 @@ beforeEach(() => {
 afterEach(() => {
   act(closeArtifactPreview);
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
@@ -114,4 +116,49 @@ it('clears the displayed content on disconnect and reads the current file on rec
   });
   await screen.findByRole('heading', { name: 'After reconnect' });
   expect(request).toHaveBeenCalledTimes(2);
+});
+
+it('downloads a current video without replacing the playing preview', async () => {
+  const bytes = Buffer.alloc(32);
+  bytes.writeUInt32BE(24, 0);
+  bytes.write('ftypmp42', 4);
+  bytes.write('mp42mp42', 16);
+  request.mockResolvedValue({
+    accepted: true,
+    kind: 'video',
+    data: bytes.toString('base64'),
+    version: 'a'.repeat(64),
+    byteLength: bytes.length,
+    nextOffset: bytes.length,
+    complete: true,
+  });
+  let nextUrl = 0;
+  const createUrl = vi.fn(() => `blob:video-${++nextUrl}`);
+  const revokeUrl = vi.fn();
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL = createUrl;
+      static revokeObjectURL = revokeUrl;
+    }
+  );
+  const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+  const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  render(<ArtifactPreviewPanel />);
+  act(() => openArtifactPreview({ kind: 'reference', source, reference: 'clip.mp4' }));
+  await waitFor(() =>
+    expect(document.querySelector('video')?.getAttribute('src')).toBe('blob:video-1')
+  );
+  const video = document.querySelector('video')!;
+  video.currentTime = 5;
+  fireEvent.click(screen.getByRole('button', { name: 'Download complete file' }));
+  await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(document.querySelector('video')).toBe(video);
+  expect(video.getAttribute('src')).toBe('blob:video-1');
+  expect(video.currentTime).toBe(5);
+  expect(pause).not.toHaveBeenCalled();
+  expect(revokeUrl).not.toHaveBeenCalledWith('blob:video-1');
+  expect(createUrl).toHaveBeenCalledTimes(2);
 });

@@ -62,7 +62,7 @@ export function LiveFilePreview({
       const hub = await connectionManager.getHub();
       const next = await readLiveFile(hub, target, controller.signal);
       controller.signal.throwIfAborted();
-      setResult({ target, file: next });
+      if (!download || file?.kind !== 'video') setResult({ target, file: next });
       if (download) {
         const url = URL.createObjectURL(next.blob);
         const anchor = document.createElement('a');
