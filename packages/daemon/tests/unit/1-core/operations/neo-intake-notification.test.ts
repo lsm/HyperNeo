@@ -183,9 +183,11 @@ describe('accepted public ask notification', () => {
     { source: 'mcp', role: 'neo', sessionId: root.sessionId } as OperationCaller,
     { source: 'rpc', principal: 'remote' } as OperationCaller,
   ])('does not notify a refused caller %j', async (caller) => {
-    expect(await send({ ...input, inputKind: 'human' }, caller)).toMatchObject({
-      value: { ok: false, reason: 'Only the human can submit a Neo ask.' },
-    });
+    expect(await send({ ...input, inputKind: 'human' }, caller)).toMatchObject(
+      caller.role === 'neo'
+        ? { kind: 'failed', code: 'forbidden' }
+        : { value: { ok: false, reason: 'Only the human can submit a Neo ask.' } }
+    );
     expect(notify).not.toHaveBeenCalled();
   });
 

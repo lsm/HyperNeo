@@ -293,7 +293,7 @@ function admitNeoCaller(
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
   if (caller.source !== 'mcp' || binding?.kind !== 'neo')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (['neo.restart', 'neo.session.track'].includes(name))
+  if (['neo.restart', 'neo.session.track', 'neo.front.set'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   return { value: caller };
 }
@@ -934,6 +934,23 @@ export function createNeoOperations(service: NeoService) {
       }),
     }),
     defineOperation({
+      name: 'neo.front.set',
+      description: 'Set fast replies for text and voice.',
+      inputSchema: z.object({ enabled: z.boolean() }).strict(),
+      resultSchema: z.union([Failure, z.object({ ok: z.literal(true) })]),
+      policy: { safetyClass: 'human_only' },
+      execute: path('neo.front.set', async (input: { enabled: boolean }) => {
+        const settings = await mutationGateway.call(
+          globalSettingsWrites,
+          'neoFront',
+          input.enabled
+        );
+        service.publishSettings?.(settings);
+        service.notifyChanged();
+        return { ok: true as const };
+      }),
+    }),
+    defineOperation({
       name: 'neo.session.mute',
       description: neoToolDescription('neo.session.mute'),
       inputSchema: SessionMute,
@@ -952,6 +969,7 @@ export function createNeoOperations(service: NeoService) {
     ...service.installedPacks().flatMap((pack) =>
       (pack.operations ?? []).map((operation) => ({
         ...operation,
+        pack: { id: pack.id, enabledIds: service.enabledOperationPackIds },
         execute: path(operation.name, operation.execute),
       }))
     ),

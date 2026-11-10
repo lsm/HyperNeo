@@ -1162,6 +1162,8 @@ export class NeoService {
     return this.todos.read('followedRefs');
   }
 
+  readonly enabledOperationPackIds = () => this.packs().map((pack) => pack.id);
+
   packs(): NeoPack[] {
     return neoPacks({
       builtins: this.builtinPacks,
@@ -1210,6 +1212,29 @@ export class NeoService {
     if (!root) return false;
     await this.deliver(root, key, text, root);
     return true;
+  }
+
+  deliveryStatus(sessionId: string, messageId: string) {
+    try {
+      if (
+        !this.db.getSession(sessionId) ||
+        this.repo.getBindingBySession(sessionId)?.kind !== 'neo'
+      )
+        return 'recipient_gone' as const;
+      if (
+        this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId) ||
+        this.db.getJobQueueRepo().getLatestByPayload('mailbox', {
+          'to.sessionId': sessionId,
+          messageUuid: messageId,
+        })
+      )
+        return 'admitted' as const;
+      return this.deliveries.has(`${sessionId}:${messageId}`)
+        ? ('in-flight' as const)
+        : ('absent' as const);
+    } catch {
+      return 'unknown' as const;
+    }
   }
 
   hasDelivery(sessionId: string, messageId: string): boolean {

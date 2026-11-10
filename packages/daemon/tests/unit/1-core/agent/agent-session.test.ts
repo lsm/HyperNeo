@@ -43,6 +43,7 @@ import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
+import { operationInvokeTool } from '../../../helpers/operation-mcp';
 import type { Database } from '../../../../src/storage/database';
 import {
   createTestDb,
@@ -6548,6 +6549,70 @@ describe('AgentSession', () => {
       }
     });
 
+    it('lets Codex reach harness startup while the same daemon holds SDK delivery without a provider', async () => {
+      const db = await createTestDb();
+      const registry = initializeProviders();
+      await waitForOptionalProviderRegistration(registry);
+      const availability = registry
+        .getAll()
+        .map((provider) => spyOn(provider, 'isAvailable').mockImplementation(async () => false));
+      const anthropic = registry.get('anthropic');
+      markBuiltInProviderDisabled('anthropic');
+      registry.unregister('anthropic');
+      try {
+        const bus = await createTestInternalEventBus();
+        for (const harness of ['codex', 'sdk'] as const) {
+          const session = createTestSession(`provider-gate-${harness}`);
+          session.config = {
+            ...session.config,
+            ...(harness === 'codex' ? { harness } : {}),
+            model: 'model-no-provider-owns',
+          };
+          await db.createSession(session);
+          const uuid = `provider-gate-message-${harness}`;
+          db.getSDKMessageRepo().saveUserMessage(
+            session.id,
+            { type: 'user', uuid, message: { role: 'user', content: 'hello' } } as SDKMessage,
+            'enqueued'
+          );
+          const agent = new AgentSession(
+            session,
+            db,
+            { event: mock(async () => {}) } as unknown as MessageHub,
+            bus,
+            mock(async () => null),
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            { autoReplayPendingMessages: false }
+          );
+          const startup = mock(async () => {
+            throw new Error('harness startup reached');
+          });
+          (agent as unknown as { lifecycleManager: unknown }).lifecycleManager = {
+            ensureQueryStarted: startup,
+          };
+          const drive = agent.driveDeliveryTurn(uuid, 'hello', null, false, () => true);
+          if (harness === 'codex') {
+            await expect(drive).rejects.toThrow('harness startup reached');
+            expect(startup).toHaveBeenCalledTimes(1);
+          } else {
+            expect(await drive).toMatchObject({ outcome: 'blocked', reason: 'no_provider' });
+            expect(startup).not.toHaveBeenCalled();
+          }
+          expect(db.getSDKMessageRepo().getDeliveryContent(session.id, uuid)?.sendStatus).toBe(
+            'enqueued'
+          );
+        }
+      } finally {
+        for (const spy of availability) spy.mockRestore();
+        markBuiltInProviderEnabled('anthropic');
+        if (anthropic) registry.register(anthropic);
+        db.close();
+      }
+    });
+
     it('aborts when the session is cleaning up', async () => {
       const db = await createTestDb();
       try {
@@ -7407,6 +7472,37 @@ describe('AgentSession', () => {
 
       expect(agentSession.getOperationsCapabilityContribution().briefing).toContain(
         'shows this session 1 operation across 1 area: task.'
+      );
+    });
+
+    it('refreshes the cached Neo briefing after pack toggles in the same session', () => {
+      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+      const agentSession = new AgentSession(
+        createTestSession('session-op-pack-toggle'),
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+      let enabled = ['coding'];
+      const registry = createOperationRegistry([
+        {
+          ...stubOperation('neo.github.read'),
+          pack: { id: 'coding', enabledIds: () => enabled },
+        },
+      ]);
+      agentSession.setOperationRegistryProvider(() => registry);
+      agentSession.setCallerScopeResolver(() => ({ role: 'neo' }));
+      const initial = agentSession.getOperationMcpServer();
+      expect(operationInvokeTool(initial).description).toContain('neo.github.read');
+      expect(agentSession.getOperationMcpServer()).toBe(initial);
+      enabled = [];
+      const disabled = agentSession.getOperationMcpServer();
+      expect(operationInvokeTool(disabled).description).not.toContain('neo.github.read');
+      expect(agentSession.getOperationMcpServer()).toBe(disabled);
+      enabled = ['coding'];
+      expect(operationInvokeTool(agentSession.getOperationMcpServer()).description).toContain(
+        'neo.github.read'
       );
     });
 

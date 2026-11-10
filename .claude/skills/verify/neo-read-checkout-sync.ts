@@ -1,13 +1,13 @@
 import { createLocalSocket } from "../../../packages/daemon/src/lib/pairing/local-credential.ts";
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { ExternalEventExtensionConfigStore } from '../../../packages/daemon/src/lib/external-events/extension-config-store.ts';
 import { GitHubEventExtension } from '../../../packages/daemon/src/lib/external-events/github/github-event-extension.ts';
-import { getNeoReadCheckoutPath } from '../../../packages/daemon/src/lib/neo/read-checkout-path.ts';
+import { getNeoReadCheckoutPath } from '../../../packages/daemon/src/lib/neo/packs/coding/read-checkout-path.ts';
 
 const [mode, directory] = process.argv.slice(2);
 assert(['before', 'verify'].includes(mode));
@@ -18,7 +18,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.GH_TOKEN, undefined);
 assert.equal(process.env.GITHUB_TOKEN, undefined);
 assert(!existsSync(join(run, 'data')));
-for (const name of ['bin', 'evidence']) mkdirSync(join(run, name));
+for (const name of ['bin', 'evidence']) mkdirSync(join(run, name), { recursive: true });
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const origin = join(run, 'origin.git'), publisher = join(run, 'publisher'), human = join(run, 'human');
 git(run, 'init', '--bare', '--initial-branch=main', origin);
@@ -49,6 +49,15 @@ fs.appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({path})+'\\n');
 if(args.includes('--include')) process.stdout.write('HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\nX-RateLimit-Remaining: 4900\\r\\n\\r\\n');
 process.stdout.write(JSON.stringify(body));
 `, { mode: 0o700 });
+const gitExecutable = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+writeFileSync(join(run, 'bin', 'git'), `#!${process.execPath}
+const fs = require('node:fs'), cp = require('node:child_process');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(join(run, 'evidence', 'git.jsonl'))}, JSON.stringify({cwd:process.cwd(),args})+'\\n');
+const result = cp.spawnSync(${JSON.stringify(gitExecutable)}, args, {stdio:'inherit',env:process.env});
+process.exit(result.status ?? 1);
+`, { mode: 0o700 });
+const gitCalls = () => readFileSync(join(run, 'evidence', 'git.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as {cwd:string;args:string[]}).filter(call => call.args.includes('core.hooksPath=/dev/null'));
 const fetch = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('No external HTTP in synthetic proof'); }) as typeof fetch;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
@@ -59,7 +68,7 @@ try {
  const ext = app.extensionManager.getExtension('github') as GitHubEventExtension;
  ext.repo.upsertWatchedRepo({spaceId:'proof-space',owner:'synthetic',repo:'neo-read-proof',pollingEnabled:true});
  await new ExternalEventExtensionConfigStore(app.db.getDatabase()).setGlobalConfig('github',{source:'github',globallyEnabled:true,capabilities:{polling:true,rpcConfig:true}});
- ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+ ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
  await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('RPC unavailable'));});
  const poll = () => new Promise<unknown>((done,fail)=>{
   const id=crypto.randomUUID(), timer=setTimeout(()=>fail(new Error('poll RPC deadline')),30000);
@@ -68,7 +77,7 @@ try {
  });
  evidence.firstPoll = await poll();
  const watched=ext.repo.getWatchedRepo('proof-space','synthetic','neo-read-proof');
- assert(watched?.lastPollAt && !watched.pollCursor?.lastPollError, JSON.stringify(watched));
+ assert(watched?.lastPollAt && !watched.pollCursor?.lastPollError && !watched.pollCursor?.lastPartialPollError, JSON.stringify(watched));
  evidence.pollCursor=watched.pollCursor;
  const path = getNeoReadCheckoutPath('synthetic','neo-read-proof');
  evidence.checkoutPath = path; evidence.created = existsSync(join(path,'.git'));
@@ -90,8 +99,27 @@ try {
   assert.equal(git(path,'status','--porcelain'),'');
   evidence.readHead = advanced; evidence.content = readFileSync(join(path,'answer.txt'),'utf8');
  }
+ if(mode==='verify') {
+ const beforeRepeat = gitCalls().length;
+ evidence.repeatedPoll = await poll();
+ assert.equal(gitCalls().length, beforeRepeat, 'Unchanged head must skip Git operations');
+ evidence.repeatedHeadGitCalls = gitCalls().length - beforeRepeat;
+ renameSync(path, `${path}-safe`);
+ symlinkSync(human, path, 'dir');
+ writeFileSync(join(publisher, 'answer.txt'), 'version three\n');
+ git(publisher, 'add', 'answer.txt'); git(publisher, 'commit', '-m', 'Advance before unsafe checkout'); git(publisher, 'push', 'origin', 'main');
+ const beforeUnsafe = gitCalls().length;
+ evidence.unsafePoll = await poll();
+ const unsafe = ext.repo.getWatchedRepo('proof-space', 'synthetic', 'neo-read-proof');
+ assert(unsafe?.pollCursor?.lastPartialPollError?.includes('standalone directory'), JSON.stringify(unsafe));
+ assert.equal(gitCalls().length, beforeUnsafe, 'Unsafe checkout must be refused before Git operations');
+ assert.deepEqual(snapshot(), before);
+ evidence.unsafeCheckoutRefused = true;
+ evidence.unsafeGitCalls = 0;
+ }
  evidence.verified = true; console.log(JSON.stringify(evidence,null,2));
 } finally {
  writeFileSync(join(run,'evidence','read-checkout.json'),JSON.stringify(evidence,null,2));
  ws?.close();await app?.cleanup();globalThis.fetch=fetch;
+ writeFileSync(join(run,'evidence','resources.json'),JSON.stringify({resourcesClosed:true}));
 }

@@ -53,6 +53,10 @@ export interface OperationEntry<Input, Output> {
   readonly inputSchema: z.ZodType<Input>;
   readonly resultSchema: z.ZodType<Output>;
   readonly policy?: OperationPolicy;
+  readonly pack?: {
+    readonly id: string;
+    readonly enabledIds: () => readonly string[];
+  };
   readonly execute: (input: Input, caller: OperationCaller) => Promise<Output>;
 }
 
@@ -97,4 +101,15 @@ export type OperationRegistrySource = OperationRegistry | OperationRegistryProvi
 
 export function resolveOperationRegistry(source: OperationRegistrySource): OperationRegistry {
   return typeof source === 'function' ? source() : source;
+}
+
+export function enabledOperationPacks(registry: OperationRegistry): readonly string[] {
+  const readers = new Set(
+    registry.entries.flatMap((entry) => (entry.pack ? [entry.pack.enabledIds] : []))
+  );
+  try {
+    return [...new Set([...readers].flatMap((read) => [...read()]))];
+  } catch {
+    return [];
+  }
 }

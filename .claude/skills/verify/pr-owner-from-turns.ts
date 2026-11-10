@@ -46,7 +46,7 @@ try {
   assert.equal(owner(2), null);
   assert.equal(owner(3), null);
   db.prepare('UPDATE pack_coding_pr_unowned_state SET activated_at = 0').run();
-  const notice = events.pendingUnowned(at);
+  const notice = events.pendingUnowned(at, { key: null, recipient: 'synthetic-neo', status: 'absent' });
   evidence.notice = notice;
   assert(notice?.text.includes('synthetic/proof#3'), JSON.stringify(notice));
   assert(!notice.text.includes('synthetic/proof#1'), notice.text);

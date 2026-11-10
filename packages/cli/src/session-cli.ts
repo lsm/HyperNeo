@@ -137,6 +137,11 @@ async function post(socketPath: string, body: unknown): Promise<{ status: number
 }
 
 export async function runSessionCommand(args: string[], env: Env = process.env): Promise<number> {
+  if (args[0] === 'desktop-mcp') {
+    const { runDesktopMcp } = await import('./desktop-mcp.ts');
+    await runDesktopMcp(args.slice(1));
+    return 0;
+  }
   if (args[0] === 'read') return readCard(args.slice(1), env.HYPERNEO_DATA_DIR);
   const sender =
     resolveSender(env) ?? (['pair', 'devices', 'reserve-restart'].includes(args[0]) ? 'cli' : null);

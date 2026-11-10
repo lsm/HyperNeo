@@ -18,7 +18,7 @@ const moved = [
     text: 'Re-save a Neo composer edit captured in this tab before reload. Commits when the saved draft equals its captured base or already equals the edit text. The newest ask from that session counts as submitted only when its text matches and either Preview context was omitted (legacy) or its explicit artifactId/snapshot association matches; null means explicitly unbound. Uses a conditional write and never consumes staged voice.',
   },
   {
-    file: 'home/github.ts',
+    file: 'packs/coding/home/github.ts',
     name: 'neo.home.github',
     text: 'After local setup, propose a private GitHub neo-home once on an open root-Neo ask using askId. Without GitHub it stays local; repeats reuse the stored proposal, including a no. To create and push, pass questionId only: requires the exact daemon-bound human yes. External creation is reserved once; creation_unconfirmed needs human reconciliation and never replays. Does not clone or change existing origin. Root Neo or local human only.',
   },

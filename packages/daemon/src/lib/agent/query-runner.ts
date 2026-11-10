@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
+import { hasExplicitAutoCompactWindow } from '../session/create-session-config.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -1160,6 +1161,11 @@ export class QueryRunner {
           provider = liveProvider;
           providerEnvVars = await providerService.resolveSessionProviderEnvVars(providerSession);
         }
+        const sessionHasAutoCompactWindow = hasExplicitAutoCompactWindow(providerSession.config);
+        if (sessionHasAutoCompactWindow) {
+          providerEnvVars = { ...providerEnvVars };
+          delete providerEnvVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+        }
         provider?.setSessionThinkingConfig?.(
           session.id,
           optionsBuilder.getEffectiveThinkingLevel()
@@ -1170,6 +1176,7 @@ export class QueryRunner {
         );
         applyProviderEnvToFlagSettings(queryOptions, providerEnvVars);
         const childEnv = providerService.providerProcessEnv(providerSession, providerEnvVars);
+        if (sessionHasAutoCompactWindow) delete childEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
         queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, childEnv, {
           refreshAutoCompactWindow: true,
           clearProviderManaged: true,

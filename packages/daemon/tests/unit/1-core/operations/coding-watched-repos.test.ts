@@ -15,6 +15,14 @@ const databases: Database[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
 });
+function readPending(repo: CodingPrEventRepository, now: number) {
+  return repo.pendingUnowned(now, {
+    key: repo.pendingDelivery().key,
+    recipient: 'neo',
+    status: 'absent',
+  });
+}
+
 function setup(legacy = false) {
   const db = new Database(':memory:');
   databases.push(db);
@@ -46,6 +54,14 @@ function setup(legacy = false) {
       };
     },
     prSweepDeps: {
+      delivery: {
+        recipient: () => 'neo',
+        status: async () => 'absent',
+        send: async (_recipient, _key, text) => {
+          notices.push(text);
+          return true;
+        },
+      },
       tell: async (_ref, _key, text) => {
         notices.push(text);
         return true;
@@ -150,7 +166,7 @@ describe('Coding watched repositories', () => {
     };
     const now = Date.now() + 2;
     f.ledger.replace(row.repo, [row], now);
-    const pending = events.pendingUnowned(now);
+    const pending = readPending(events, now);
     expect(pending?.text).toContain('chosen/repo#1');
     f.db
       .prepare('UPDATE pack_coding_pr_ledger SET owner = ?')
@@ -171,7 +187,36 @@ describe('Coding watched repositories', () => {
       { repo: row.repo },
     ]);
     expect(f.db.prepare('SELECT pending_text FROM pack_coding_pr_unowned_state').get()).toEqual({
-      pending_text: pending!.text,
+      pending_text: null,
+    });
+  });
+  test('unwatching keeps an unclaimed pending batch for its saved history', async () => {
+    const f = setup();
+    await f.save(['chosen/repo']);
+    const now = Date.now() + 10;
+    f.ledger.replace(
+      'chosen/repo',
+      [
+        {
+          repo: 'chosen/repo',
+          number: 1,
+          title: 'Unclaimed',
+          branch: 'work',
+          head: 'head',
+          state: 'unreviewed',
+          closedAt: null,
+          createdAt: now - 1,
+          authorIsBot: false,
+        },
+      ],
+      now
+    );
+    const pending = readPending(new CodingPrEventRepository(f.db), now)!;
+    await f.save([]);
+    await f.pack.sweep!(now + 1);
+    expect(f.notices).toEqual([]);
+    expect(f.db.prepare('SELECT pending_text FROM pack_coding_pr_unowned_state').get()).toEqual({
+      pending_text: pending.text,
     });
   });
   test('a watched alias follows its canonical repo without admitting unrelated repos', async () => {
@@ -204,16 +249,26 @@ describe('Coding watched repositories', () => {
         now
       );
     const events = new CodingPrEventRepository(f.db);
-    const pending = events.pendingUnowned(now)!;
+    const pending = readPending(events, now)!;
     expect(pending.text).toContain('other/repo#1');
-    f.db.prepare('UPDATE pack_coding_pr_unowned_state SET pending_rows = NULL').run();
     initializeCodingWatches(f.db, []);
-    expect(events.pendingUnowned(now)).toEqual(pending);
+    expect(readPending(events, now)).toEqual(pending);
     await f.save(['chosen/repo']);
-    const allowed = events.pendingUnowned(now)!;
+    const allowed = readPending(events, now)!;
     expect(allowed.text).toContain('chosen/repo#1');
     expect(allowed.text).not.toContain('other/repo');
     events.unownedDelivered(allowed.key);
-    expect(events.pendingUnowned(now)).toBeNull();
+    expect(readPending(events, now)).toBeNull();
   });
+});
+
+test('watch initialization leaves recipient-less pending rows untouched', () => {
+  const f = setup();
+  f.db
+    .prepare("UPDATE pack_coding_pr_unowned_state SET pending_key='legacy', pending_rows=NULL")
+    .run();
+  initializeCodingWatches(f.db, []);
+  expect(
+    f.db.prepare('SELECT pending_rows AS rows FROM pack_coding_pr_unowned_state').get()
+  ).toEqual({ rows: null });
 });

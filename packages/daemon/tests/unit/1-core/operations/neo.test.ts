@@ -397,7 +397,6 @@ describe('Neo MVP', () => {
       'neo.peer.send',
       'neo.speech.say',
       'neo.project.forget',
-      'neo.message.send',
       'neo.projects.reorganize',
       'neo.publication.publish',
       'neo.publication.edit',
@@ -405,12 +404,10 @@ describe('Neo MVP', () => {
       'neo.conversation.read',
       'neo.conversation.asks.read',
       'neo.conversation.image.read',
-      'neo.draft.recover',
       'neo.rule.ask',
       'neo.rule.applyAnswer',
       'pack.preferences.ask',
       'pack.preferences.applyAnswer',
-      'neo.preferences.set',
       'pack.preferences.get',
       'pack.preferences.list',
       'neo.todo.add',
@@ -434,13 +431,10 @@ describe('Neo MVP', () => {
       'neo.question.retire',
       'neo.question.relay',
       'neo.question.get',
-      'neo.question.answer',
       'neo.open',
-      'neo.restart',
       'neo.rule.save',
       'neo.session.link',
       'neo.session.mute',
-      'neo.session.track',
       'neo.coding.merge.human',
       'neo.coding.merge.retry',
       'neo.coding.write.plan',
@@ -455,7 +449,32 @@ describe('Neo MVP', () => {
       'neo.snapshot',
       'neo.project.save',
     ]);
-    expect(isOperationAdmitted({ ...definitions[0], name: 'session.create' }, caller)).toBe(true);
+    const humanOperations = [
+      'neo.front.set',
+      'neo.message.send',
+      'neo.draft.recover',
+      'neo.preferences.set',
+      'neo.question.answer',
+      'neo.restart',
+      'neo.session.track',
+    ];
+    const registry = createOperationRegistry(definitions);
+    for (const name of humanOperations) {
+      expect(await invokeOperation(registry, name, {}, caller)).toMatchObject({
+        kind: 'failed',
+        code: 'forbidden',
+      });
+    }
+    expect(
+      listOperationSummaries(registry, { source: 'rpc' }, true).map((item) => item.name)
+    ).toEqual(expect.arrayContaining(humanOperations));
+    expect(
+      isOperationAdmitted(
+        { ...definitions[0], name: 'session.create' },
+        caller,
+        service.enabledOperationPackIds()
+      )
+    ).toBe(true);
     expect(
       isOperationAdmitted(
         { ...definitions[0], name: 'session.create' },

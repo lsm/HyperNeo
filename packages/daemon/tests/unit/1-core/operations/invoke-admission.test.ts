@@ -46,7 +46,7 @@ async function invoke(policy: OperationPolicy | undefined, caller: OperationCall
 }
 
 describe('isOperationAdmitted', () => {
-  test('admits every caller regardless of policy, role, or source; capability gating is removed', () => {
+  test('preserves non-Neo access and applies Neo policy', () => {
     const policies: (OperationPolicy | undefined)[] = [
       undefined,
       { safetyClass: 'read' },
@@ -60,7 +60,11 @@ describe('isOperationAdmitted', () => {
       expect(isOperationAdmitted(operation, { source: 'rpc' })).toBe(true);
       expect(isOperationAdmitted(operation, { source: 'internal' })).toBe(true);
       for (const role of [...MCP_ROLES, undefined]) {
-        expect(isOperationAdmitted(operation, mcpCaller(role))).toBe(true);
+        expect(isOperationAdmitted(operation, mcpCaller(role))).toBe(
+          role !== 'neo' ||
+            (policy?.safetyClass !== 'human_only' &&
+              (!policy?.roles || policy.roles.includes('neo')))
+        );
       }
     }
   });
@@ -69,15 +73,20 @@ describe('isOperationAdmitted', () => {
 describe('admitOperationCaller', () => {
   test('carries the prepared operation through for every caller, including one a human_only policy used to reject', () => {
     const { operation } = fixture({ safetyClass: 'human_only' });
-    const prepared = { operation, input: { content: 'hello' } };
-    expect(admitOperationCaller(prepared, mcpCaller('long_term_agent'))).toEqual({
-      value: prepared,
+    expect(
+      admitOperationCaller(
+        operation,
+        mcpCaller('long_term_agent'),
+        createOperationRegistry([operation])
+      )
+    ).toEqual({
+      value: operation,
     });
   });
 });
 
 describe('invokeOperation caller admission', () => {
-  test('every caller and policy combination reaches execution now that the generic door is removed', async () => {
+  test('preserves legitimate callers and refuses denied Neo calls', async () => {
     const policies: (OperationPolicy | undefined)[] = [
       undefined,
       { safetyClass: 'read' },
@@ -95,8 +104,16 @@ describe('invokeOperation caller admission', () => {
     for (const policy of policies) {
       for (const caller of callers) {
         const { outcome, execute } = await invoke(policy, caller);
-        expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
-        expect(execute).toHaveBeenCalledTimes(1);
+        if (
+          caller.role === 'neo' &&
+          (policy?.safetyClass === 'human_only' || (policy?.roles && !policy.roles.includes('neo')))
+        ) {
+          expect(outcome).toMatchObject({ code: 'forbidden' });
+          expect(execute).not.toHaveBeenCalled();
+        } else {
+          expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+          expect(execute).toHaveBeenCalledTimes(1);
+        }
       }
     }
   });
@@ -105,7 +122,7 @@ describe('invokeOperation caller admission', () => {
     const { registry, execute } = fixture({ safetyClass: 'human_only' });
     expect(
       await invokeOperation(registry, 'task.act', { content: '' }, mcpCaller(role))
-    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    ).toMatchObject({ kind: 'failed', code: role === 'neo' ? 'forbidden' : 'invalid_input' });
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -120,10 +137,8 @@ describe('invokeOperation caller admission', () => {
         input: { content: 'hello' },
         caller: { source: 'rpc', principal: 'local', role: 'long_term_agent' },
       });
-      expect(result.isError).toBeUndefined();
-      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: 'hello' });
-      expect(execute).toHaveBeenCalledTimes(1);
-      expect(execute).toHaveBeenCalledWith({ content: 'hello' }, caller);
+      expect(result.isError).toBe(true);
+      expect(execute).not.toHaveBeenCalled();
     }
   );
 });
