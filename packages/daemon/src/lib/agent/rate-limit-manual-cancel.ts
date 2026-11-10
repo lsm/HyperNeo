@@ -29,8 +29,8 @@ export interface RateLimitManualCancelCtx {
 export function captureEpisodeStage(ctx: RateLimitManualCancelCtx): RateLimitManualCancelCtx {
   const liveEpisodeMessageUuid = ctx.getLiveEpisodeMessageUuid();
   const persistedArmMessageUuid = ctx.getPersistedArmMessageUuid();
-  ctx.cancelWatchdog();
   const inMemoryCooldown = ctx.isInMemoryCooldown();
+  ctx.cancelWatchdog();
   const persisted = readRateLimitPersistedCooldown(ctx.db, ctx.sessionId);
   if (persisted.state === 'unreadable') {
     ctx.onPersistedCooldownReadError();
