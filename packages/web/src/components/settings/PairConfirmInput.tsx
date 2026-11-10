@@ -3,7 +3,8 @@ import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 type Pending = { twoWay?: boolean; phoneConfirmed?: boolean };
 
 export const pairApprovalReady = (pending: Pending, code: string) =>
-  !pending.twoWay || (!!pending.phoneConfirmed && code.replace(/[\s-]/g, '').length === 8);
+  !pending.twoWay ||
+  (!!pending.phoneConfirmed && /^[BCDFGHJKLMNPQRSTVWXZ]{8}$/i.test(code.replace(/[\s-]/g, '')));
 
 export function PairConfirmInput({
   pending,

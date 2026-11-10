@@ -20,3 +20,8 @@ Retain the five light/dark, desktop/narrow browser screenshots and
 pair-confirm-code.json. Screenshots are captured before entering generated codes;
 no pairing code, cookie or credential is written into evidence. Browser console
 errors fail the proof. Native phone rendering is not tested by this journey.
+
+Both trusted approval screens keep Allow disabled for eight digits and preserve
+the pending request. Normalized alphabet letters still enable approval. A
+well-shaped submitted mismatch still permanently denies the request once.
+The readiness correction changes no markup or visual styling.

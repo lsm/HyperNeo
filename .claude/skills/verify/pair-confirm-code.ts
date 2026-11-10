@@ -104,6 +104,10 @@ try {
   );
   assert(repo.pendingCode(made.codeId, Date.now()));
   evidence.legacySchemaRefusalPreservesRequest = true;
+  await input.fill('12345678');
+  assert(await page.getByRole('button', { name: 'Allow Synthetic phone', exact: true }).isDisabled());
+  assert(repo.pendingCode(made.codeId, Date.now()));
+  evidence.settingsDigitsDisabled = true;
   await input.fill(` ${expected.toLowerCase().replace('-', ' - ')} `);
   await page.getByRole('button', { name: 'Allow Synthetic phone', exact: true }).click();
   await input.waitFor({ state: 'detached' });
@@ -122,6 +126,10 @@ try {
   await page.screenshot({ path: join(run, 'evidence', 'confirm-drawer-1280-dark.png'), fullPage: true, animations: 'disabled' });
   const deniedFact = repo.pendingCode(denied.codeId, Date.now())!;
   const correct = pairConfirmCode(deniedFact.codeHash, deniedFact.requestedBy!);
+  await drawerInput.fill('12345678');
+  assert(await page.getByRole('button', { name: 'Allow Synthetic phone', exact: true }).isDisabled());
+  assert(repo.pendingCode(denied.codeId, Date.now()));
+  evidence.drawerDigitsDisabled = true;
   await drawerInput.fill((correct[0] === 'B' ? 'C' : 'B') + correct.slice(1));
   await page.getByRole('button', { name: 'Allow Synthetic phone', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'the code is denied' }).waitFor();
