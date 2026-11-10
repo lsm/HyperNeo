@@ -108,16 +108,12 @@ describe('renderQr', () => {
 
 describe('planPairWatch', () => {
   const code = { codeId: 'c1', expiresAt: 10_000 };
-  test('waits for the phone, then asks for the last group once it confirmed', () => {
-    const entry = { id: 'c1', requestedName: 'Phone', fingerprint: null };
+  test('waits for the phone, then asks for the confirmation code once it confirmed', () => {
+    const entry = { id: 'c1', requestedName: 'Phone', phoneConfirmed: false };
     expect(planPairWatch({ ok: true, pending: [entry] }, code, 1)).toEqual({ kind: 'waiting' });
     expect(
-      planPairWatch(
-        { ok: true, pending: [{ ...entry, fingerprint: ['1', '2', '3', '4', '5', '6', '7'] }] },
-        code,
-        1
-      )
-    ).toEqual({ kind: 'confirm', name: 'Phone', groups: ['1', '2', '3', '4', '5', '6', '7'] });
+      planPairWatch({ ok: true, pending: [{ ...entry, phoneConfirmed: true }] }, code, 1)
+    ).toEqual({ kind: 'confirm', name: 'Phone' });
   });
 
   test('stops when the terminal may not approve, the code is gone, or it expired', () => {
@@ -144,17 +140,18 @@ describe('planPairWatch', () => {
 });
 
 describe('runPairQr', () => {
-  test('creates a two-way code, shows the QR, and approves with the typed last group', async () => {
+  test('creates a two-way code, shows the QR, and approves with the typed confirmation code', async () => {
     const calls: { name: string; input: unknown }[] = [];
     const replies: Record<string, unknown[]> = {
       'device.pair.create': [{ ok: true, codeId: 'c1', code: 'ABCDEFGH23', expiresAt: 600_000 }],
       'device.pair.pending': [
-        { ok: true, pending: [{ id: 'c1', requestedName: null, fingerprint: null }] },
         {
           ok: true,
-          pending: [
-            { id: 'c1', requestedName: 'Phone', fingerprint: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] },
-          ],
+          pending: [{ id: 'c1', requestedName: null, twoWay: false, phoneConfirmed: false }],
+        },
+        {
+          ok: true,
+          pending: [{ id: 'c1', requestedName: 'Phone', phoneConfirmed: true }],
         },
       ],
       'device.pair.approve': [{ ok: true }],
@@ -169,7 +166,10 @@ describe('runPairQr', () => {
         args[0] === 'status'
           ? { BackendState: 'Running', Self: { DNSName: 'mac.example.ts.net.', TailscaleIPs: [] } }
           : { TCP: { '443': {} } },
-      ask: async () => ' 7DCC ',
+      ask: async (prompt) => {
+        expect(prompt).toBe('Type the code shown on the phone: ');
+        return ' mrnv - jhmh ';
+      },
       print: (text) => out.push(text),
       now: () => 1,
       sleep: async () => {},
@@ -182,10 +182,43 @@ describe('runPairQr', () => {
       'device.pair.approve',
     ]);
     expect(calls[0].input).toEqual({ kind: 'human', confirm: 'two-way', name: 'Phone' });
-    expect(calls[3].input).toEqual({ codeId: 'c1', lastGroup: '7dcc' });
-    expect(out.join('\n')).toContain('a b c d e f g ????');
+    expect(calls[3].input).toEqual({ codeId: 'c1', confirmCode: ' mrnv - jhmh ' });
+    expect(out.join('\n')).not.toContain('????');
+    expect(out.join('\n')).not.toContain('MRNV-JHMH');
     expect(out.join('\n')).not.toContain('ABCDEFGH23');
   });
+
+  test.each(['', 'MRNV', '12345678', 'ABCDEFGH'])(
+    'malformed confirmation %j never consumes the pending request',
+    async (answer) => {
+      const calls: string[] = [];
+      const output: string[] = [];
+      const exit = await runPairQr(['--qr'], {
+        call: async (name) => {
+          calls.push(name);
+          if (name === 'device.pair.create')
+            return { ok: true, codeId: 'c1', code: 'ABCDEFGH23', expiresAt: 600_000 };
+          if (name === 'device.pair.pending')
+            return {
+              ok: true,
+              pending: [{ id: 'c1', requestedName: 'Phone', phoneConfirmed: true }],
+            };
+          return { ok: false, reason: 'wrong_fingerprint' };
+        },
+        tailscale: async (args) =>
+          args[0] === 'status'
+            ? { BackendState: 'Running', Self: { DNSName: 'mac.example.ts.net.' } }
+            : { TCP: { '443': {} } },
+        ask: async () => answer,
+        print: (text) => output.push(text),
+        now: () => 1,
+        sleep: async () => {},
+      });
+      expect(exit).toBe(1);
+      expect(calls).toEqual(['device.pair.create', 'device.pair.pending']);
+      expect(output.at(-1)).toContain('eight letters');
+    }
+  );
 
   test('refuses without a tailnet address and creates no code', async () => {
     const calls: string[] = [];

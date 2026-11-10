@@ -1,3 +1,4 @@
+import { validPairConfirmCode } from '@hyperneo/shared/pair-confirm-code';
 import qrcode from 'qrcode-generator';
 
 const QUIET = 4;
@@ -5,13 +6,13 @@ const DARK = 30;
 const LIGHT = 97;
 const POLL_MS = 1000;
 
-type Pending = { id: string; requestedName: string | null; fingerprint: string[] | null };
+type Pending = { id: string; requestedName: string | null; phoneConfirmed: boolean };
 type PendingReply = { ok: true; pending: Pending[] } | { ok: false; reason: string };
 type Created = { ok: true; codeId: string; code: string; expiresAt: number };
 
 export type PairWatch =
   | { kind: 'waiting' }
-  | { kind: 'confirm'; name: string; groups: string[] }
+  | { kind: 'confirm'; name: string }
   | { kind: 'stop'; message: string; exit: number };
 
 export interface PairQrDeps {
@@ -85,8 +86,8 @@ export function planPairWatch(
   if (now >= code.expiresAt) return stop('The code expired. Run hyperneo pair --qr again.', 1);
   const entry = reply.pending.find((item) => item.id === code.codeId);
   if (!entry) return stop('The code was used or withdrawn. Check the new device.');
-  return entry.fingerprint
-    ? { kind: 'confirm', name: entry.requestedName ?? 'New device', groups: entry.fingerprint }
+  return entry.phoneConfirmed
+    ? { kind: 'confirm', name: entry.requestedName ?? 'New device' }
     : { kind: 'waiting' };
 }
 
@@ -137,11 +138,15 @@ export async function runPairQr(args: string[], deps: PairQrDeps): Promise<numbe
       deps.print(watch.message);
       return watch.exit;
     }
-    deps.print(`${watch.name} wants to pair: ${watch.groups.join(' ')} ????`);
-    const lastGroup = (await deps.ask('Type the last group shown on the device: ')).trim();
+    deps.print(`${watch.name} wants to pair.`);
+    const confirmCode = await deps.ask('Type the code shown on the phone: ');
+    if (!validPairConfirmCode(confirmCode)) {
+      deps.print('Enter the eight letters shown on the phone. No approval was submitted.');
+      return 1;
+    }
     const approved = (await deps.call('device.pair.approve', {
       codeId: made.codeId,
-      lastGroup: lastGroup.toLowerCase(),
+      confirmCode,
     })) as { ok: boolean; reason?: string };
     deps.print(approved.ok ? 'Allowed. The device finishes pairing now.' : (approved.reason ?? ''));
     return approved.ok ? 0 : 1;

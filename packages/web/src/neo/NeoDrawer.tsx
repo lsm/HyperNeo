@@ -1,3 +1,4 @@
+import { PairConfirmInput, pairApprovalReady } from '../components/settings/PairConfirmInput.tsx';
 import type { ConnectionState } from '../lib/state.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { setupFocusTrap } from '../components/ui/Modal.tsx';
@@ -137,6 +138,8 @@ export function NeoDrawer({
 }
 
 type PendingDevice = {
+  twoWay?: boolean;
+  phoneConfirmed?: boolean;
   requestedName?: string | null;
   id: string;
   kind: string;
@@ -148,6 +151,7 @@ type PendingResult = { ok: true; pending: PendingDevice[] } | { ok: false; reaso
 function PendingDevices({ connection }: { connection: ConnectionState }) {
   const [pending, setPending] = useState<PendingDevice[]>([]);
   const [error, setError] = useState('');
+  const [confirmCodes, setConfirmCodes] = useState<Record<string, string>>({});
   const [deciding, setDeciding] = useState<string | null>(null);
   const live = useRef(true);
   const read = async () => {
@@ -175,15 +179,31 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
       live.current = false;
     };
   }, [connection]);
-  const decide = async (operation: 'device.pair.approve' | 'device.pair.deny', codeId: string) => {
+  const waitingForPhone = pending.some((item) => item.twoWay && !item.phoneConfirmed);
+  useEffect(() => {
+    if (!waitingForPhone || connection !== 'connected') return;
+    const timer = setInterval(() => void read().catch(() => {}), 1000);
+    return () => clearInterval(timer);
+  }, [waitingForPhone, connection]);
+
+  const decide = async (
+    operation: 'device.pair.approve' | 'device.pair.deny',
+    codeId: string,
+    confirmCode?: string
+  ) => {
     setDeciding(codeId);
     try {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Reconnect before deciding on a device.');
       const result = await invokeOperation<{ ok: boolean; reason?: string }>(hub, operation, {
         codeId,
+        ...(confirmCode === undefined ? {} : { confirmCode }),
       });
-      if (!result.ok) throw new Error(result.reason ?? 'Could not update the device.');
+      if (!result.ok) {
+        if (result.reason?.startsWith('wrong_fingerprint:'))
+          setPending((current) => current.filter((item) => item.id !== codeId));
+        throw new Error(result.reason ?? 'Could not update the device.');
+      }
       await read();
     } catch (cause) {
       if (live.current) setError(String(cause));
@@ -196,13 +216,19 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
     <section aria-label="Pending devices">
       <h3 class="mb-2 text-sm font-medium text-fg-muted">Pending devices</h3>
       {pending.map((device) => (
-        <div key={device.id} class="mb-3 flex items-center justify-between gap-2 text-sm">
+        <div key={device.id} class="mb-3 flex flex-wrap items-start justify-between gap-3 text-sm">
           <div>
             <p>{device.requestedName ?? device.name ?? 'Unnamed device'}</p>
             <p class="text-xs text-fg-muted">
               {device.kind} · expires {new Date(device.expiresAt).toLocaleTimeString()}
             </p>
           </div>
+          <PairConfirmInput
+            pending={device}
+            name={device.requestedName ?? device.name ?? 'Unnamed device'}
+            value={confirmCodes[device.id] ?? ''}
+            onInput={(value) => setConfirmCodes({ ...confirmCodes, [device.id]: value })}
+          />
           <div class="flex shrink-0 gap-2">
             <button
               type="button"
@@ -216,9 +242,17 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
             <button
               type="button"
               class="neo-drawer-action"
-              disabled={deciding !== null}
+              disabled={
+                deciding !== null || !pairApprovalReady(device, confirmCodes[device.id] ?? '')
+              }
               aria-label={`Allow ${device.requestedName ?? device.name ?? 'Unnamed device'}`}
-              onClick={() => void decide('device.pair.approve', device.id)}
+              onClick={() =>
+                void decide(
+                  'device.pair.approve',
+                  device.id,
+                  device.twoWay ? confirmCodes[device.id] : undefined
+                )
+              }
             >
               Allow
             </button>

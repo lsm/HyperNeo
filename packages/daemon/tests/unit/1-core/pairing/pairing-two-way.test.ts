@@ -1,7 +1,7 @@
 import { createPairWaits } from '../../../../src/lib/pairing/pair-waits.ts';
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { pairFingerprint } from '../../../../src/lib/pairing/pair-fingerprint.ts';
+import { pairConfirmCode } from '../../../../src/lib/pairing/pair-confirm-code.ts';
 import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter.ts';
 import { createPairRoute } from '../../../../src/lib/pairing/pair-route.ts';
 import { createDevicePairingOperations } from '../../../../src/lib/pairing/pairing-operations.ts';
@@ -50,9 +50,9 @@ function setup() {
     );
     return { status: response.status, body: (await response.json()) as Record<string, any> };
   };
-  const fingerprintOf = (code: string, requestId: string) =>
-    pairFingerprint(sha256(code), sha256(requestId));
-  return { db, repo, call, pair, fingerprintOf };
+  const confirmCodeOf = (code: string, requestId: string) =>
+    pairConfirmCode(sha256(code), sha256(requestId));
+  return { db, repo, call, pair, confirmCodeOf };
 }
 
 const door: OperationCaller = {
@@ -77,15 +77,16 @@ async function withFirstPhone(t: ReturnType<typeof setup>) {
   return t.repo.redeem(first.code, 'First phone', 1_000_000)!.device.id;
 }
 
-describe('pairFingerprint', () => {
+describe('pairConfirmCode', () => {
+  test('renders the eight-letter confirm-code vector', () => {
+    expect(pairConfirmCode(sha256('ABCDEFGH23'), sha256(REQUEST))).toBe('MRNV-JHMH');
+  });
   test('matches the shared test vector', () => {
     const codeHash = sha256('ABCDEFGH23');
     const requestedBy = sha256(REQUEST);
     expect(codeHash).toBe('17190666e16f8d07ca35531be8ac05a695b08ec80bc1ef7303ebf76bba91be49');
     expect(requestedBy).toBe('5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720');
-    expect(pairFingerprint(codeHash, requestedBy).join(' ')).toBe(
-      '3008 b30a 60a3 ac09 d97a 9655 80c6 7dcc'
-    );
+    expect(pairConfirmCode(codeHash, requestedBy)).toBe('MRNV-JHMH');
   });
 });
 
@@ -108,7 +109,7 @@ describe('two-way pairing codes', () => {
     ).toMatchObject({ ok: false });
   });
 
-  test('pending shows seven fingerprint groups and never the last one', async () => {
+  test('pending exposes confirmation state without the confirmation code', async () => {
     const t = setup();
     const phoneId = await withFirstPhone(t);
     const made = await t.call(
@@ -119,14 +120,25 @@ describe('two-way pairing codes', () => {
     await t.pair(made.code, REQUEST);
     const plain = await t.call('device.pair.create', { kind: 'human' }, door);
     const listed = await t.call('device.pair.pending', {}, phone(phoneId));
-    const fingerprint = t.fingerprintOf(made.code, REQUEST);
+    const confirmCode = t.confirmCodeOf(made.code, REQUEST);
+    expect(JSON.stringify(listed)).not.toContain(confirmCode);
     expect(listed.pending).toEqual([
-      expect.objectContaining({ id: made.codeId, fingerprint: fingerprint.slice(0, 7) }),
-      expect.objectContaining({ id: plain.codeId, fingerprint: null }),
+      expect.objectContaining({ id: made.codeId, twoWay: true, phoneConfirmed: true }),
+      expect.objectContaining({ id: plain.codeId, twoWay: false, phoneConfirmed: false }),
     ]);
   });
 
-  test('a paired phone approves with the right last group and only that requester redeems once', async () => {
+  test('a submitted one-way request does not report two-way phone confirmation', async () => {
+    const t = setup();
+    const phoneId = await withFirstPhone(t);
+    const made = await t.call('device.pair.create', { kind: 'human' }, door);
+    expect((await t.pair(made.code, REQUEST)).status).toBe(403);
+    expect((await t.call('device.pair.pending', {}, phone(phoneId))).pending).toEqual([
+      expect.objectContaining({ id: made.codeId, twoWay: false, phoneConfirmed: false }),
+    ]);
+  });
+
+  test('a paired phone approves with the right confirmation code and only that requester redeems once', async () => {
     const t = setup();
     const phoneId = await withFirstPhone(t);
     const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
@@ -134,16 +146,16 @@ describe('two-way pairing codes', () => {
     expect(
       await t.call(
         'device.pair.approve',
-        { codeId: made.codeId, lastGroup: 'abcd' },
+        { codeId: made.codeId, confirmCode: 'abcd' },
         phone(phoneId)
       )
     ).toMatchObject({ ok: false, reason: expect.stringContaining('not_requested') });
     await t.pair(made.code, REQUEST);
-    const lastGroup = t.fingerprintOf(made.code, REQUEST)[7];
+    const confirmCode = t.confirmCodeOf(made.code, REQUEST);
     expect(
       await t.call(
         'device.pair.approve',
-        { codeId: made.codeId, lastGroup: lastGroup.toUpperCase() },
+        { codeId: made.codeId, confirmCode: ` ${confirmCode.toLowerCase().replace('-', ' - ')} ` },
         phone(phoneId)
       )
     ).toEqual({ ok: true });
@@ -155,14 +167,35 @@ describe('two-way pairing codes', () => {
     const phoneId = await withFirstPhone(t);
     const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
     await t.pair(made.code, REQUEST);
-    const lastGroup = t.fingerprintOf(made.code, REQUEST)[7];
-    await t.call('device.pair.approve', { codeId: made.codeId, lastGroup }, phone(phoneId));
+    const confirmCode = t.confirmCodeOf(made.code, REQUEST);
+    await t.call('device.pair.approve', { codeId: made.codeId, confirmCode }, phone(phoneId));
     expect((await t.pair(made.code, REQUEST)).status).toBe(200);
     expect((await t.pair(made.code, REQUEST)).status).toBe(401);
   });
 
-  test('a wrong or missing last group denies the code', async () => {
-    for (const lastGroup of [undefined, '0000']) {
+  test('legacy group approval is schema-refused without consuming the request', async () => {
+    const t = setup();
+    const phoneId = await withFirstPhone(t);
+    const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
+    await t.pair(made.code, REQUEST);
+    expect(() =>
+      t.call('device.pair.approve', { codeId: made.codeId, lastGroup: 'abcd' }, phone(phoneId))
+    ).toThrow(/lastGroup/);
+    expect((await t.call('device.pair.pending', {}, phone(phoneId))).pending).toEqual([
+      expect.objectContaining({ id: made.codeId, phoneConfirmed: true }),
+    ]);
+    expect(
+      await t.call(
+        'device.pair.approve',
+        { codeId: made.codeId, confirmCode: t.confirmCodeOf(made.code, REQUEST) },
+        phone(phoneId)
+      )
+    ).toEqual({ ok: true });
+    expect((await t.pair(made.code, REQUEST)).status).toBe(200);
+  });
+
+  test('a wrong or missing confirmation code denies the request', async () => {
+    for (const confirmCode of [undefined, '0000']) {
       const t = setup();
       const phoneId = await withFirstPhone(t);
       const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
@@ -170,7 +203,7 @@ describe('two-way pairing codes', () => {
       expect(
         await t.call(
           'device.pair.approve',
-          { codeId: made.codeId, ...(lastGroup ? { lastGroup } : {}) },
+          { codeId: made.codeId, ...(confirmCode ? { confirmCode } : {}) },
           phone(phoneId)
         )
       ).toMatchObject({ ok: false, reason: expect.stringContaining('wrong_fingerprint') });
@@ -189,17 +222,18 @@ describe('terminal approval', () => {
     const made = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
     expect(made).toMatchObject({ ok: true, approval: 'pending' });
     expect((await t.pair(made.code, REQUEST)).status).toBe(403);
-    const fingerprint = t.fingerprintOf(made.code, REQUEST);
+    const confirmCode = t.confirmCodeOf(made.code, REQUEST);
     expect((await t.call('device.pair.pending', {}, door)).pending).toEqual([
       expect.objectContaining({
         id: made.codeId,
         requestedName: 'New phone',
-        fingerprint: fingerprint.slice(0, 7),
+        twoWay: true,
+        phoneConfirmed: true,
       }),
     ]);
-    expect(
-      await t.call('device.pair.approve', { codeId: made.codeId, lastGroup: fingerprint[7] }, door)
-    ).toEqual({ ok: true });
+    expect(await t.call('device.pair.approve', { codeId: made.codeId, confirmCode }, door)).toEqual(
+      { ok: true }
+    );
     expect((await t.pair(made.code, REQUEST)).status).toBe(200);
     expect((await t.pair(made.code, REQUEST)).status).toBe(401);
   });
@@ -218,14 +252,14 @@ describe('terminal approval', () => {
       ok: true,
     });
     expect(
-      await t.call('device.pair.approve', { codeId: twoWay.codeId, lastGroup: '0000' }, door)
+      await t.call('device.pair.approve', { codeId: twoWay.codeId, confirmCode: '0000' }, door)
     ).toMatchObject({ ok: false, reason: expect.stringContaining('wrong_fingerprint') });
     const again = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
     await t.pair(again.code, OTHER);
     expect(
       await t.call(
         'device.pair.approve',
-        { codeId: again.codeId, lastGroup: t.fingerprintOf(again.code, OTHER)[7] },
+        { codeId: again.codeId, confirmCode: t.confirmCodeOf(again.code, OTHER) },
         localTools
       )
     ).toEqual({ ok: true });
@@ -241,19 +275,19 @@ describe('terminal approval', () => {
     const legacy = await t.call('device.pair.create', { kind: 'human' }, door);
     const twoWay = await t.call('device.pair.create', { kind: 'human', confirm: 'two-way' }, door);
     await t.pair(twoWay.code, REQUEST);
-    const lastGroup = t.fingerprintOf(twoWay.code, REQUEST)[7];
+    const confirmCode = t.confirmCodeOf(twoWay.code, REQUEST);
     for (const caller of [door, localTools]) {
       expect(await t.call('device.pair.approve', { codeId: legacy.codeId }, caller)).toMatchObject({
         ok: false,
         reason: expect.stringContaining('not_paired'),
       });
       expect(
-        await t.call('device.pair.approve', { codeId: twoWay.codeId, lastGroup }, caller)
+        await t.call('device.pair.approve', { codeId: twoWay.codeId, confirmCode }, caller)
       ).toMatchObject({ ok: false, reason: expect.stringContaining('not_paired') });
       expect(await t.call('device.pair.pending', {}, caller)).toMatchObject({ ok: false });
     }
     expect(
-      await t.call('device.pair.approve', { codeId: twoWay.codeId, lastGroup }, phone(phoneId))
+      await t.call('device.pair.approve', { codeId: twoWay.codeId, confirmCode }, phone(phoneId))
     ).toEqual({ ok: true });
     expect(await t.call('device.pair.approve', { codeId: legacy.codeId }, phone(phoneId))).toEqual({
       ok: true,
