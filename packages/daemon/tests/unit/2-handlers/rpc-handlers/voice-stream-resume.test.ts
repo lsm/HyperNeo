@@ -173,13 +173,13 @@ describe('resumable voice stream RPC', () => {
     const uploading = new Promise<void>((resolve) => {
       started = resolve;
     });
-    globalThis.fetch = vi.fn(
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
       () =>
         new Promise<Response>((resolve) => {
           complete = resolve;
           started();
         })
-    ) as typeof fetch;
+    );
     const { streamId } = await start();
     await call('voice.stream.chunk', { streamId, audioBase64: pcm([1, 2]) });
     const pending = call('voice.stream.stop', { streamId });
