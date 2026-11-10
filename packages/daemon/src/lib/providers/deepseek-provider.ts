@@ -13,7 +13,7 @@ import type {
 } from '@hyperneo/shared/provider';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
-import { fetchRemoteModelList } from './shared/model-list.js';
+import { fetchRemoteModelList, type RemoteModel } from './shared/model-list.js';
 import {
   mergeDiscoveredModels,
   ProviderDiscoveryCache,
@@ -120,8 +120,8 @@ export class DeepSeekProvider implements Provider {
     });
   }
 
-  private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {
-    const cacheKey = `${baseUrl}::${apiKey}`;
+  private async verifyCredentials(baseUrl: string, apiKey: string, model: string): Promise<void> {
+    const cacheKey = `${baseUrl}::${apiKey}::${model}`;
     const cached = this.probeCache.get(cacheKey);
     if (cached && Date.now() - cached.at < DeepSeekProvider.PROBE_TTL_MS) {
       await cached.result;
@@ -130,7 +130,7 @@ export class DeepSeekProvider implements Provider {
     const result = probeAnthropicCompatCredentials({
       baseUrl,
       apiKey,
-      model: DeepSeekProvider.DEFAULT_MODEL,
+      model,
       providerName: 'DeepSeek',
       fetchImpl: this.fetchImpl,
     })
@@ -145,8 +145,7 @@ export class DeepSeekProvider implements Provider {
 
   async getModels(): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
-    if (!apiKey) return [];
-    await this.verifyCredentials(DeepSeekProvider.BASE_URL, apiKey);
+    if (!apiKey) return this.mergeCuratedModels(DeepSeekProvider.MODELS);
     let models: ModelInfo[];
     try {
       const discovered = await this.listRemoteModels();
@@ -154,6 +153,11 @@ export class DeepSeekProvider implements Provider {
     } catch {
       models = DeepSeekProvider.MODELS;
     }
+    await this.verifyCredentials(
+      DeepSeekProvider.BASE_URL,
+      apiKey,
+      this.getModelForTier('opus') ?? DeepSeekProvider.DEFAULT_MODEL
+    );
     return this.mergeCuratedModels(models);
   }
 
@@ -162,8 +166,11 @@ export class DeepSeekProvider implements Provider {
   }
 
   getCachedModels(): ModelInfo[] | null {
-    if (!this.curatedModels?.length) return null;
-    return this.mergeCuratedModels(DeepSeekProvider.MODELS);
+    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
+    if (!discovered?.length && !this.curatedModels?.length) return null;
+    return this.mergeCuratedModels(
+      mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered ?? [])
+    );
   }
 
   private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
@@ -214,22 +221,25 @@ export class DeepSeekProvider implements Provider {
     return this.mergeCuratedModels(discovered);
   }
 
-  private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
+  private toRemoteModelInfo(model: RemoteModel): ModelInfo {
     const staticModel = DeepSeekProvider.MODELS.find(
       (candidate) => candidate.id === DeepSeekProvider.resolveModelId(model.id)
     );
-    if (staticModel) return staticModel;
     return {
-      id: model.id,
-      name: model.name ?? model.id,
-      alias: model.id,
+      ...staticModel,
+      id: staticModel?.id ?? model.id,
+      name: model.name ?? staticModel?.name ?? model.id,
+      alias: staticModel?.alias ?? model.id,
       family: 'deepseek',
       provider: this.id,
-      contextWindow: DeepSeekProvider.DISCOVERED_MODEL_CONTEXT_WINDOW,
+      contextWindow:
+        model.contextWindow ??
+        staticModel?.contextWindow ??
+        DeepSeekProvider.DISCOVERED_MODEL_CONTEXT_WINDOW,
       preferContextWindowMetadata: true,
       thinkingModes: this.capabilities.thinkingModes,
-      description: `${model.name ?? model.id} via DeepSeek`,
-      releaseDate: '',
+      description: staticModel?.description ?? `${model.name ?? model.id} via DeepSeek`,
+      releaseDate: staticModel?.releaseDate ?? '',
       available: true,
     };
   }
@@ -248,7 +258,12 @@ export class DeepSeekProvider implements Provider {
   }
 
   getModelForTier(tier: ModelTier): string | undefined {
-    return tier === 'opus' ? 'deepseek-v4-pro' : 'deepseek-v4-flash';
+    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
+    if (!discovered?.length)
+      return tier === 'opus' ? DeepSeekProvider.DEFAULT_MODEL : DeepSeekProvider.MODELS[1].id;
+    const preferred = (keyword: string) =>
+      discovered.find((model) => `${model.id} ${model.name}`.toLowerCase().includes(keyword));
+    return (preferred(tier === 'opus' ? 'pro' : 'flash') ?? preferred('flash') ?? discovered[0]).id;
   }
 
   getModelEffortLevels(): ThinkingEffort[] {
@@ -262,8 +277,13 @@ export class DeepSeekProvider implements Provider {
     const routingModelId =
       DeepSeekProvider.resolveModelId(modelId) ?? DeepSeekProvider.DEFAULT_MODEL;
     const staticModel = DeepSeekProvider.MODELS.find((model) => model.id === routingModelId);
+    const discoveredModel = this.discoveryCache
+      .get(this.discoveryFingerprint())
+      ?.find((model) => model.id === routingModelId);
     const contextWindow =
-      staticModel?.contextWindow ?? DeepSeekProvider.DISCOVERED_MODEL_CONTEXT_WINDOW;
+      discoveredModel?.contextWindow ??
+      staticModel?.contextWindow ??
+      DeepSeekProvider.DISCOVERED_MODEL_CONTEXT_WINDOW;
     return {
       envVars: {
         ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || DeepSeekProvider.BASE_URL,
