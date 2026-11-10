@@ -1,3 +1,4 @@
+import { validPairConfirmCode } from '@hyperneo/shared/pair-confirm-code';
 import qrcode from 'qrcode-generator';
 
 const QUIET = 4;
@@ -139,6 +140,10 @@ export async function runPairQr(args: string[], deps: PairQrDeps): Promise<numbe
     }
     deps.print(`${watch.name} wants to pair.`);
     const confirmCode = await deps.ask('Type the code shown on the phone: ');
+    if (!validPairConfirmCode(confirmCode)) {
+      deps.print('Enter the eight letters shown on the phone. No approval was submitted.');
+      return 1;
+    }
     const approved = (await deps.call('device.pair.approve', {
       codeId: made.codeId,
       confirmCode,

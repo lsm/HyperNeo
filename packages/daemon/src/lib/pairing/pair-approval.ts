@@ -1,4 +1,5 @@
-import { normalizeConfirmCode, pairConfirmCode } from './pair-confirm-code.ts';
+import { normalizeConfirmCode } from '@hyperneo/shared/pair-confirm-code';
+import { pairConfirmCode } from './pair-confirm-code.ts';
 
 export interface PairApprovalFacts {
   active: boolean;

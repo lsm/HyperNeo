@@ -14,6 +14,7 @@
     "./provider": "./src/provider/index.ts",
     "./provider/*": "./src/provider/*.ts",
     "./logger": "./src/logger.ts",
+    "./pair-confirm-code": "./src/pair-confirm-code.ts",
     "./command": "./src/command.ts",
     "./message-hub/unix-socket-transport": "./src/message-hub/unix-socket-transport.ts",
     "./message-hub/stdio-transport": "./src/message-hub/stdio-transport.ts",

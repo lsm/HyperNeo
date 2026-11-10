@@ -1,10 +1,10 @@
+import { validPairConfirmCode } from '@hyperneo/shared/pair-confirm-code';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 
 type Pending = { twoWay?: boolean; phoneConfirmed?: boolean };
 
 export const pairApprovalReady = (pending: Pending, code: string) =>
-  !pending.twoWay ||
-  (!!pending.phoneConfirmed && /^[BCDFGHJKLMNPQRSTVWXZ]{8}$/i.test(code.replace(/[\s-]/g, '')));
+  !pending.twoWay || (!!pending.phoneConfirmed && validPairConfirmCode(code));
 
 export function PairConfirmInput({
   pending,

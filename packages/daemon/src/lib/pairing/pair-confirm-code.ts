@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto';
 
-const ALPHA = 'BCDFGHJKLMNPQRSTVWXZ';
-
-export const normalizeConfirmCode = (value: string) => value.replace(/[\s-]/g, '').toUpperCase();
+import { PAIR_CONFIRM_ALPHABET } from '@hyperneo/shared/pair-confirm-code';
 
 export function pairConfirmCode(codeHash: string, requestedBy: string): string {
   const digest = createHash('sha256')
@@ -11,7 +9,7 @@ export function pairConfirmCode(codeHash: string, requestedBy: string): string {
   let number = BigInt(`0x${digest.slice(0, 16)}`);
   let letters = '';
   for (let index = 0; index < 8; index++) {
-    letters = ALPHA[Number(number % 20n)] + letters;
+    letters = PAIR_CONFIRM_ALPHABET[Number(number % 20n)] + letters;
     number /= 20n;
   }
   return `${letters.slice(0, 4)}-${letters.slice(4)}`;

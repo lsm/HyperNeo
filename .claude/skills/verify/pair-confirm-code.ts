@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runPairQr } from '../../../packages/cli/src/pair-qr.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
@@ -137,6 +138,33 @@ try {
   const again = await invoke<{ ok: boolean; reason?: string }>('device.pair.approve', { codeId: denied.codeId, confirmCode: correct });
   assert(!again.ok && again.reason?.startsWith('not_pending'));
   await page.screenshot({ path: join(run, 'evidence', 'confirm-denied-1280-dark.png'), fullPage: true, animations: 'disabled' });
+  const cliCodes: string[] = [];
+  let cliApprovals = 0;
+  for (const answer of ['', 'MRNV', '12345678', 'ABCDEFGH']) {
+    const cliExit = await runPairQr(['--qr'], {
+      call: async (name, input) => {
+        if (name === 'device.pair.approve') cliApprovals++;
+        const result = await invoke(name, input);
+        if (name === 'device.pair.create') {
+          const created = result as { codeId: string; code: string };
+          cliCodes.push(created.codeId);
+          assert.equal((await phone(created.code)).status, 403);
+        }
+        return result;
+      },
+      tailscale: async (args) => args[0] === 'status'
+        ? { BackendState: 'Running', Self: { DNSName: 'synthetic.example.ts.net.' } }
+        : { TCP: { '443': {} } },
+      ask: async () => answer,
+      print: () => {},
+      now: Date.now,
+      sleep: async () => {},
+    });
+    assert.equal(cliExit, 1);
+    assert(repo.pendingCode(cliCodes.at(-1)!, Date.now()));
+  }
+  assert.equal(cliApprovals, 0);
+  evidence.cliMalformedPreservesRequests = cliCodes.length;
   evidence.drawerWrongCodeDeniedOnce = true;
   evidence.pendingLeaks = 0;
   evidence.screenshots = 5;

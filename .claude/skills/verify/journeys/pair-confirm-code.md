@@ -25,3 +25,7 @@ Both trusted approval screens keep Allow disabled for eight digits and preserve
 the pending request. Normalized alphabet letters still enable approval. A
 well-shaped submitted mismatch still permanently denies the request once.
 The readiness correction changes no markup or visual styling.
+
+The QR CLI runs against the same isolated RPC door. Empty, short, numeric and
+non-alphabet answers abort locally and retain all four pending requests without
+an approval call. Daemon mismatch denial remains unchanged.
