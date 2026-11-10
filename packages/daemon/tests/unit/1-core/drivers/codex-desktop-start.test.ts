@@ -59,6 +59,7 @@ function adapter(
     threads?: CodexSnapshot['threads'];
     readState?: boolean;
     root?: string;
+    roots?: Record<string, string>;
     exit?: number;
     linked?: boolean;
     prepareExecution?: WorkExecutionPreparer;
@@ -120,7 +121,8 @@ function adapter(
     homeDir: '/Users/test',
     gitCheckout: async (folder) => {
       checkoutFolders.push(folder);
-      return git.root ? { repo: git.root, linked: git.linked ?? false } : null;
+      const repo = git.roots?.[folder] ?? git.root;
+      return repo ? { repo, linked: git.linked ?? false } : null;
     },
     newId: () => 'abcd1234-0000',
   });
@@ -852,6 +854,41 @@ describe('codex-desktop start', () => {
     });
   });
 
+  test.each([false, true])(
+    'keeps names occupied after a worktree is deleted, explicit: %s',
+    async (explicit) => {
+      const { instance, calls } = adapter(
+        { call: async (method) => (method === 'thread/start' ? { thread: { id: 'fresh' } } : {}) },
+        undefined,
+        {
+          threads: [
+            {
+              id: 'missing',
+              title: 'Codex dolmen 1',
+              folder: '/synthetic/deleted-worktree',
+              archived: 0,
+              updatedAt: NOW,
+            },
+          ],
+        }
+      );
+      const result = await instance.start!(
+        { ...request, inPlace: true, ...(explicit ? { sessionTitle: 'Codex dolmen 1' } : {}) },
+        user
+      );
+      if (explicit) {
+        expect(result).toMatchObject({
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('already in use'),
+        });
+        expect(calls.some(([method]) => method === 'thread/start')).toBe(false);
+      } else {
+        expect(result).toMatchObject({ ok: true, value: { title: 'Codex dolmen 2' } });
+      }
+    }
+  );
+
   test('an omitted session title uses the next free generic project name, never the task title', async () => {
     const { instance, calls } = adapter(
       {
@@ -859,6 +896,7 @@ describe('codex-desktop start', () => {
       },
       undefined,
       {
+        roots: { '/other': '/other' },
         threads: [
           { id: 'one', title: 'Codex dolmen 1', folder: place.folder, archived: 0, updatedAt: NOW },
           {
