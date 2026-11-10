@@ -1058,6 +1058,7 @@ export function NeoAskTodos({
                 {answered.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
                     <div class="neo-time-line neo-question-time">
+                      <span>{t('ask.answered')}</span>
                       <NeoTime at={question.createdAt} />
                     </div>
                     <SettledQuestionBody question={question} />
