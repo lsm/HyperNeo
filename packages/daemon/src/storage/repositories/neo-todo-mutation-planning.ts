@@ -8,7 +8,6 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
-import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
   neoTodoPlaceRefusal,

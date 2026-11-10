@@ -1,3 +1,4 @@
+import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { afterEach, beforeEach, expect, jest, mock, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -51,6 +52,7 @@ const tracker = (
   }
 ) =>
   createCodingIssueTracker({
+    place: (scope) => new CodingTodoPrRepository(db).place(scope),
     todos: readTodos,
     createdAt: (marker) => {
       const [, kind, id] = marker.split(':');

@@ -2,7 +2,11 @@ import type { ReactiveDatabase } from '../../../../storage/reactive-database.ts'
 import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoRepositoryIdentity } from '../../project-mirror.ts';
 import { codingPrKey } from './pr-key.ts';
-import { codingTodoRepository, createCodingTodoPolicy } from './todo-prs.ts';
+import {
+  CodingTodoPrRepository,
+  codingTodoRepository,
+  createCodingTodoPolicy,
+} from './todo-prs.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../../../drivers/types.ts';
@@ -187,13 +191,14 @@ export class CodingTurnPrRepository {
       WHERE a.status = 'open' AND t.state = 'doing'
         AND json_extract(t.check_json, '$.pack') = 'coding' AND s.ref IS NOT NULL`)
       .all() as { id: string; ref: string }[];
+    const policy = createCodingTodoPolicy(new CodingTodoPrRepository(this.db));
     const candidates = active.map((row) => {
       const todo = store.getTodo(row.id)!;
       return {
         id: row.id,
         ref: JSON.parse(row.ref) as WorkRef,
         startedAt: todo.startedAt,
-        repo: todo.repo ?? codingTodoRepository(todo),
+        repo: policy.repository(todo, { ask: null, todo }) ?? codingTodoRepository(todo),
       };
     });
     const claims = this.db
@@ -209,7 +214,6 @@ export class CodingTurnPrRepository {
       url: `https://github.com/${row.repo.toLowerCase()}/pull/${row.number}`,
       createdAt: row.createdAt ?? undefined,
     }));
-    const policy = createCodingTodoPolicy({ urls: () => [] });
     const attach = (superpipe({})('coding.attach-unclaimed-pr') as PipelineAPI)
       .input(['pr'])
       .pipe(
