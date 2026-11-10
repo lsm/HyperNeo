@@ -1,5 +1,4 @@
 import { NEO_FRONT_INFERENCE } from '../../../../src/lib/job-queue-constants.ts';
-import { createFakeNeoFrontHandler } from '../../../../src/lib/neo/front-job.ts';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
 import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
@@ -89,7 +88,7 @@ test('default-off intake stamps ineligible and schedules no front job', async ()
 });
 
 test.each(['text', 'dictation', 'live_voice'] as const)(
-  'eligible %s intake enqueues once and the fake front hands off through the gateway',
+  'eligible %s intake enqueues once without claiming ownership',
   async (inputMode) => {
     await db.createSession(createTestSession(sessionId));
     await db.updateGlobalSettings({ neo: { front: { enabled: true } } });
@@ -97,12 +96,9 @@ test.each(['text', 'dictation', 'live_voice'] as const)(
     const jobs = db.getJobQueueRepo().listJobs({ queue: NEO_FRONT_INFERENCE });
     expect(jobs).toHaveLength(1);
     expect(jobs[0].payload).toEqual({ conversationId, messageId: requestId });
-    expect(await createFakeNeoFrontHandler(db.gateway)(jobs[0])).toEqual({ handedOff: true });
-    expect(inputs.get(conversationId, requestId)).toEqual({ eligible: true, owner: 'neo' });
-    expect(await createFakeNeoFrontHandler(db.gateway)(jobs[0])).toEqual({ handedOff: false });
     await db.updateGlobalSettings({ neo: { front: { enabled: false } } });
     expect(await intake(inputMode)).toMatchObject({ accepted: true, created: false });
     expect(db.getJobQueueRepo().listJobs({ queue: NEO_FRONT_INFERENCE })).toHaveLength(1);
-    expect(inputs.get(conversationId, requestId)).toEqual({ eligible: true, owner: 'neo' });
+    expect(inputs.get(conversationId, requestId)).toEqual({ eligible: true, owner: null });
   }
 );

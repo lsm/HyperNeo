@@ -56,6 +56,8 @@ import mdneoSystemQuickAckListening from './neo/system/quick-ack-listening.md' w
   type: 'text',
 };
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
+import mdNeoFront from './neo/front.md' with { type: 'text' };
+export const NEO_FRONT = mdNeoFront;
 import mdneoSystemPackPreferences from './neo/system/pack-preferences.md' with { type: 'text' };
 import mdneoSystemStandingRules from './neo/system/standing-rules.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };

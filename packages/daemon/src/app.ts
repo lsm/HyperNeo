@@ -1,5 +1,4 @@
 import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
-import { createFakeNeoFrontHandler } from './lib/neo/front-job.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
 import {
@@ -547,7 +546,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       staleThresholdMs: 5 * 60 * 1000,
     });
     const frontProcessor = new JobQueueProcessor(jobQueue, { db: db.gateway, maxConcurrent: 2 });
-    frontProcessor.register(NEO_FRONT_INFERENCE, createFakeNeoFrontHandler(db.gateway));
     const mailboxExpireProcessor = new JobQueueProcessor(jobQueue, {
       db: db.gateway,
       pollIntervalMs: 1000,
@@ -1149,6 +1147,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             )
         : undefined
     );
+    frontProcessor.register(NEO_FRONT_INFERENCE, rpcHandlers.frontInference);
     void recoverRestartCutTurns(cutOffSessionIds, restartRecoveryDeps)
       .then((results) => {
         const acted = results.filter((result) => result.resumed).length;
