@@ -14,6 +14,10 @@ Check `bun --version` before proof jobs. Select the pinned Bun 1.4.2 binary's
 directory on PATH when the host default differs. The wrapper carries that PATH
 into its isolated child environment and CLI subprocesses.
 
+Use Node 24 for focused Vitest contracts, matching CI. Keep the pinned Bun on
+PATH for daemon proof subprocesses. Builtin-module spies and matcher semantics
+require this Vitest entry point when running the home operation contracts.
+
 ## Rules
 
 - Owned HTTP preview servers must await `app.guardRequest(request)` before

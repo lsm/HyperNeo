@@ -5,8 +5,8 @@ import {
   type SessionToolPreferenceWriter,
 } from '../tools/write-session-tool-preferences.ts';
 import { createNeoHomeOperations } from '../neo/home/operations.ts';
-import { createNeoHomeGithubOperation } from '../neo/home/github.ts';
-import { NeoHomeRepository } from '../neo/home/repository.ts';
+import { createNeoHomeGithubOperation } from '../neo/packs/coding/home/github.ts';
+import { NeoHomeRepository } from '../neo/packs/coding/home/repository.ts';
 import { neoFolderPath } from '../neo/folder.ts';
 import { homedir } from 'node:os';
 import { SessionScheduler } from '../scheduler/session-schedules.ts';

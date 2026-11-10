@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { spawnProcess } from '../../runtime-spawn/index.ts';
-import type { SpawnOptions } from '../../runtime-spawn/types.ts';
+import { spawnProcess } from '../../../../runtime-spawn/index.ts';
+import type { SpawnOptions } from '../../../../runtime-spawn/types.ts';
 
 function quoted(value: string) {
   return value

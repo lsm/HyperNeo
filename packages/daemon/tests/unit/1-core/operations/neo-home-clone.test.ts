@@ -14,7 +14,7 @@ import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
+import { NeoHomeRepository } from '../../../../src/lib/neo/packs/coding/home/repository.ts';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
