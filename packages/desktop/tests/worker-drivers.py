@@ -288,6 +288,8 @@ class WorkerDrivers(unittest.TestCase):
         self.assertFalse(alive(record['pid']))
         self.assertFalse(Path(record['socket']).exists())
         self.assertTrue((self.lifecycle() / 'stopped').exists())
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+        self.assertFalse(list(self.work.glob('d-*')))
 
     def test_status_and_unknown_actions_do_not_create_records(self):
         for worker in ('unknown-a', 'unknown-b'):

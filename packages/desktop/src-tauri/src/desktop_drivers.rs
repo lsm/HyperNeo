@@ -421,25 +421,7 @@ impl Drivers {
                 "status" => {}
                 _ => return Err("Unknown Desktop control action".into()),
             }
-            Ok(())
-        }
-        .await;
-        if worker
-            .as_ref()
-            .is_some_and(|worker| worker.host.state() == EmbeddedDriverHostState::Stopped)
-        {
-            *worker = None;
-        }
-        if worker.is_none() {
-            let mut slots = self.workers.lock().await;
-            // The map and this request must be the only owners before removal.
-            if Arc::strong_count(&slot) == 2 {
-                slots.remove(&worker_id);
-            }
-        }
-        result?;
-        Ok(match worker.as_ref() {
-            Some(worker) => {
+            if let Some(worker) = worker.as_ref() {
                 let connection = worker.host.connection();
                 if let Some(connection) = &connection {
                     #[cfg(test)]
@@ -472,6 +454,27 @@ impl Drivers {
                         return Err(error);
                     }
                 }
+            }
+            Ok(())
+        }
+        .await;
+        if worker
+            .as_ref()
+            .is_some_and(|worker| worker.host.state() == EmbeddedDriverHostState::Stopped)
+        {
+            *worker = None;
+        }
+        if worker.is_none() {
+            let mut slots = self.workers.lock().await;
+            // The map and this request must be the only owners before removal.
+            if Arc::strong_count(&slot) == 2 {
+                slots.remove(&worker_id);
+            }
+        }
+        result?;
+        Ok(match worker.as_ref() {
+            Some(worker) => {
+                let connection = worker.host.connection();
                 json!({"state": format!("{:?}", worker.host.state()).to_lowercase(), "pid": connection.as_ref().map(|c| c.pid), "socket": connection.map(|c| c.socket_path)})
             }
             None => json!({"state": "stopped", "pid": null, "socket": null}),
