@@ -66,6 +66,7 @@ function adapter(
 ) {
   const calls: Array<[string, Record<string, unknown>]> = [];
   const projectFolders: string[] = [];
+  const checkoutFolders: string[] = [];
   const spawned: Array<{ args: string[]; cwd?: string }> = [];
   let closed = false;
   const instance = createCodexDesktopAdapter({
@@ -117,10 +118,13 @@ function adapter(
     folderExists: (folder) => folders.includes(folder),
     makeFolder: () => {},
     homeDir: '/Users/test',
-    gitCheckout: async () => (git.root ? { repo: git.root, linked: git.linked ?? false } : null),
+    gitCheckout: async (folder) => {
+      checkoutFolders.push(folder);
+      return git.root ? { repo: git.root, linked: git.linked ?? false } : null;
+    },
     newId: () => 'abcd1234-0000',
   });
-  return { instance, calls, projectFolders, spawned, closed: () => closed };
+  return { instance, calls, projectFolders, checkoutFolders, spawned, closed: () => closed };
 }
 
 describe('startedThreadId', () => {
@@ -790,6 +794,38 @@ describe('codex-desktop start', () => {
       } else {
         expect(result).toMatchObject({ ok: true, value: { title: `Codex ${'x'.repeat(73)} 2` } });
       }
+    }
+  );
+
+  test.each([false, true])(
+    'only resolves folders whose names can collide, explicit: %s',
+    async (explicit) => {
+      const relevant = '/synthetic/linked-project';
+      const { instance, checkoutFolders } = adapter(
+        { call: async (method) => (method === 'thread/start' ? { thread: { id: 'fresh' } } : {}) },
+        undefined,
+        {
+          root: place.folder,
+          threads: [
+            { id: 'one', title: 'Codex dolmen 1', folder: relevant, archived: 0, updatedAt: NOW },
+            { id: 'two', title: 'Codex dolmen 2', folder: relevant, archived: 0, updatedAt: NOW },
+            {
+              id: 'other',
+              title: 'Codex other 1',
+              folder: '/synthetic/other',
+              archived: 0,
+              updatedAt: NOW,
+            },
+          ],
+        }
+      );
+      expect(
+        await instance.start!(
+          { ...request, inPlace: true, ...(explicit ? { sessionTitle: 'Codex dolmen 3' } : {}) },
+          user
+        )
+      ).toMatchObject({ ok: true, value: { title: 'Codex dolmen 3' } });
+      expect(checkoutFolders).toEqual(explicit ? [] : [relevant]);
     }
   );
 
