@@ -17,11 +17,13 @@ class CodingReviewHoldQueries {
   record(todoId: string, url: string, head: string, handoff: z.infer<typeof CodingReviewHandoff>) {
     const key = `review-handoff:${url}:${head}`;
     return this.db.transaction(() => {
-      const row = this.db
+      const rows = this.db
         .prepare(
-          "SELECT value_json AS value FROM pack_facts WHERE todo_id=? AND pack='coding' AND key=?"
+          "SELECT key, value_json AS value FROM pack_facts WHERE todo_id=? AND pack='coding' AND key LIKE 'review-handoff:%'"
         )
-        .get(todoId, key) as { value: string } | null;
+        .all(todoId) as { key: string; value: string }[];
+      const row = rows.find((fact) => fact.key === key);
+      let recorded = handoff;
       if (row) {
         const previous = CodingReviewHandoff.parse(JSON.parse(row.value));
         if (!isDeepStrictEqual(previous.ref, handoff.ref)) return false;
@@ -30,8 +32,19 @@ class CodingReviewHoldQueries {
             previous.state === handoff.state &&
             (handoff.state !== 'pending' || isDeepStrictEqual(previous.receipt, handoff.receipt))
           );
+        recorded = { ...handoff, receipt: previous.receipt };
       } else {
         if (handoff.state !== 'pending' || !handoff.receipt) return false;
+        if (
+          rows.some((fact) => {
+            const previous = CodingReviewHandoff.parse(JSON.parse(fact.value));
+            return (
+              isDeepStrictEqual(previous.ref, handoff.ref) &&
+              isDeepStrictEqual(previous.receipt, handoff.receipt)
+            );
+          })
+        )
+          return false;
         const accepted = new WorkDeliveryInputRepository(this.db)
           .list(handoff.ref)
           .some(
@@ -54,7 +67,7 @@ class CodingReviewHoldQueries {
              JOIN pack_coding_stage_heads h ON h.url=?5 AND h.head=?6
              WHERE t.id=?1 AND t.state IN ('doing','blocked') AND a.status='open')
           ON CONFLICT(todo_id,pack,key) DO UPDATE SET value_json=excluded.value_json`)
-          .run(todoId, key, JSON.stringify(handoff), handoff.state, url, head).changes === 1
+          .run(todoId, key, JSON.stringify(recorded), handoff.state, url, head).changes === 1
       );
     }, 'immediate')();
   }

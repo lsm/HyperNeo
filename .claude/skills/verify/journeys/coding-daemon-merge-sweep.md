@@ -247,3 +247,7 @@ The proof rejects the coverage query on the main connection. The registered
 SQLite worker owns its SQL. Focused tests preserve missing/stale/unreadable
 coverage, unaccepted or uncertain receipts, completed reviews, file sign-off and
 explicit human merge policy. Retired handoffs cannot be revived by stale retries.
+
+The independent-review modes then advance the PR head after retirement. Reusing
+the earlier receipt must be refused and the next sweep must wake Neo. A fresh
+accepted work.send receipt for the new head restores coverage without a merge.
