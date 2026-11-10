@@ -894,6 +894,14 @@ describe('NeoAskTodos', () => {
     expect(line('old')).toMatch(/1月|Jan/);
     expect(line('new')).toContain(neoRelativeTime(today, Date.now(), 'zh-Hans')!.label);
     expect(line('new')).toContain('已回答');
+    const header = app.baseElement.querySelector('#neo-ref-question-new > .neo-question-time')!;
+    expect(header.textContent).toContain('已回答');
+    expect(header.querySelector('time')?.getAttribute('datetime')).toBe(new Date(1).toISOString());
+    expect(
+      app.baseElement
+        .querySelector('#neo-ref-question-new > .neo-time-line:last-child time')
+        ?.getAttribute('datetime')
+    ).toBe(new Date(today).toISOString());
     expect(
       app.baseElement.querySelector('#neo-ref-question-new time')?.getAttribute('datetime')
     ).toBe(new Date(1).toISOString());
