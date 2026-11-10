@@ -275,6 +275,7 @@ import {
   advanceTaskNotificationRequeryEpisode,
   buildTaskNotificationRequeryEscalationEvent,
   TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
+  TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
   type TaskNotificationRequeryDecision,
   type TaskNotificationRequeryEpisode,
   type TaskNotificationRequerySignal,
@@ -2434,14 +2435,14 @@ export class AgentSession
   }
 
   private advanceTaskNotificationRequery(signal: TaskNotificationRequerySignal): {
-    episode: TaskNotificationRequeryEpisode;
+    episode: TaskNotificationRequeryEpisode | null;
     decision: TaskNotificationRequeryDecision;
   } {
     const prior = this.taskNotificationRequeryEpisode;
     const advanced = advanceTaskNotificationRequeryEpisode(prior, signal, {
       followUpQueued: signal.kind === 'result' ? this.hasQueuedFollowUpDelivery() : false,
     });
-    if (advanced.episode !== prior) {
+    if (advanced.episode !== null && advanced.episode !== prior) {
       void this.persistTaskNotificationRequeryEpisode(advanced.episode);
     }
     return advanced;
@@ -2613,7 +2614,7 @@ export class AgentSession
       void this.escalateTaskNotificationRequeryExhaustion();
       return;
     }
-    if (issueGate.decision.action !== 'issue') {
+    if (issueGate.decision.action !== 'issue' || !issueGate.episode) {
       return;
     }
     this.taskNotificationRequeryPending = false;
@@ -2621,7 +2622,8 @@ export class AgentSession
     const attempt = issueGate.episode.attempts;
     this.logger.warn(
       `task-notification requery: turn ended on a hollow task-notification result; ` +
-        `issuing bare-continue follow-up turn ${attempt}/5 ` +
+        `issuing bare-continue follow-up turn ` +
+        `${attempt}/${TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS} ` +
         `for session ${this.session.id}`
     );
     const continueMessageId = generateUUID();

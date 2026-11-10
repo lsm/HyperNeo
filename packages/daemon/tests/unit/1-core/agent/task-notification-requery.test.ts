@@ -240,7 +240,26 @@ describe('task-notification requery policy', () => {
         { kind: 'result', message: buildRealSuccessResult() }
       );
       expect(advanced.decision).toEqual({ action: 'reset' });
-      expect(advanced.episode.closed).toBe(true);
+      expect(advanced.episode?.closed).toBe(true);
+    });
+
+    it('does not mint an episode for an ordinary result without a prior', () => {
+      const advanced = advanceTaskNotificationRequeryEpisode(null, {
+        kind: 'result',
+        message: buildRealSuccessResult(),
+      });
+      expect(advanced.decision).toEqual({ action: 'reset' });
+      expect(advanced.episode).toBeNull();
+    });
+
+    it('does not mint a fresh episode for an ordinary result on a closed prior', () => {
+      const closed = { ...openRequeryEpisode(5), closed: true };
+      const advanced = advanceTaskNotificationRequeryEpisode(closed, {
+        kind: 'result',
+        message: buildRealSuccessResult(),
+      });
+      expect(advanced.decision).toEqual({ action: 'reset' });
+      expect(advanced.episode).toBe(closed);
     });
 
     it('closes the episode on the close signal without bumping a closed prior', () => {
@@ -1856,6 +1875,32 @@ describe('AgentSession task-notification requery (incident replay)', () => {
 
     expect(episodeWrites()).toBe(writesBefore);
     expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('writes no episode metadata for an ordinary result without an open episode', async () => {
+    const updateSessionSpy = (
+      agentSession as unknown as { db: { updateSession: ReturnType<typeof mock> } }
+    ).db.updateSession;
+    const episodeWrites = () =>
+      updateSessionSpy.mock.calls.filter(
+        (call: unknown[]) =>
+          (call[1] as { metadata?: Record<string, unknown> } | undefined)?.metadata?.[
+            'taskNotificationRequeryEpisode'
+          ] !== undefined
+      ).length;
+    const writesBefore = episodeWrites();
+
+    await agentSession.onSDKMessage(buildRealSuccessResult());
+    await settleRequery();
+
+    expect(episodeWrites()).toBe(writesBefore);
+    expect(
+      (
+        agentSession as unknown as {
+          taskNotificationRequeryEpisode: TaskNotificationRequeryEpisode | null;
+        }
+      ).taskNotificationRequeryEpisode
+    ).toBeNull();
   });
 
   it('invalidates the episode during cleanup instead of escalating from teardown', async () => {

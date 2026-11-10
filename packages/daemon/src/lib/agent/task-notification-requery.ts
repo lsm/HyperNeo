@@ -56,7 +56,10 @@ export function advanceTaskNotificationRequeryEpisode(
   prior: TaskNotificationRequeryEpisode | null | undefined,
   signal: TaskNotificationRequerySignal,
   opts: { followUpQueued?: boolean } = {}
-): { episode: TaskNotificationRequeryEpisode; decision: TaskNotificationRequeryDecision } {
+): {
+  episode: TaskNotificationRequeryEpisode | null;
+  decision: TaskNotificationRequeryDecision;
+} {
   const episode = openTaskNotificationRequeryEpisode(prior);
   if (signal.kind === 'close') {
     return {
@@ -121,9 +124,13 @@ export function advanceTaskNotificationRequeryEpisode(
   if (!isTopLevelHollowTaskNotificationResult(message)) {
     const isError = (message as SDKMessage & { is_error?: unknown }).is_error === true;
     if (!isError || prior == null || prior.closed || prior.attempts <= 0) {
+      if (prior == null || prior.closed) {
+        return { episode: prior ?? null, decision: { action: 'reset' } };
+      }
       return { episode: { ...episode, closed: true }, decision: { action: 'reset' } };
     }
   }
+
   if (opts.followUpQueued || episode.escalation !== 'none') {
     return { episode, decision: { action: 'hold' } };
   }
