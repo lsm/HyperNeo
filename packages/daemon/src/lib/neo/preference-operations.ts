@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoPackSetting } from '@hyperneo/shared/types/neo-snapshot';
@@ -157,8 +158,7 @@ export function createPackPreferenceOperations(
   return [
     defineOperation({
       name: 'pack.preferences.set',
-      description:
-        'Set a declared pack setting. Only the local human may write; agents cannot change settings.',
+      description: neoToolDescription('pack.preferences.set'),
       inputSchema: PackPreferenceInput,
       resultSchema: Result,
       policy: { safetyClass: 'human_only', caller: 'local_user' },
@@ -166,7 +166,7 @@ export function createPackPreferenceOperations(
     }),
     defineOperation({
       name: 'pack.preferences.get',
-      description: 'Read a setting at exact scope, then pack global. Missing is unanswered.',
+      description: neoToolDescription('pack.preferences.get'),
       inputSchema: Address,
       resultSchema: z.object({ preference: PackSettingSchema.nullable() }),
       policy: { safetyClass: 'read' },
@@ -174,8 +174,7 @@ export function createPackPreferenceOperations(
     }),
     defineOperation({
       name: 'pack.preferences.list',
-      description:
-        'List saved pack settings with scope and human provenance. Missing defaults are never applied.',
+      description: neoToolDescription('pack.preferences.list'),
       inputSchema: z.object({ pack: z.string().optional() }),
       resultSchema: z.object({
         preferences: z.array(PackSettingSchema),

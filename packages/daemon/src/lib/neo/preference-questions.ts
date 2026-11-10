@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -108,8 +109,7 @@ export function createPackPreferenceQuestions(
   return [
     defineOperation({
       name: 'pack.preferences.ask',
-      description:
-        'Ask the human to apply typed pack settings. The daemon displays and binds this exact immutable proposal; no settings change until human yes. Reuse requestId for pending retries; question_closed means use a new requestId to ask again.',
+      description: neoToolDescription('pack.preferences.ask'),
       inputSchema: Ask,
       resultSchema: Result,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -117,8 +117,7 @@ export function createPackPreferenceQuestions(
     }),
     defineOperation({
       name: 'pack.preferences.applyAnswer',
-      description:
-        'Retry applying a bound settings question by questionId only. Requires the recorded human yes; accepts no replacement values. Already-applied answers never overwrite later human changes.',
+      description: neoToolDescription('pack.preferences.applyAnswer'),
       inputSchema: Apply,
       resultSchema: Result,
       policy: { safetyClass: 'mutate' },
