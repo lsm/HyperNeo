@@ -64,7 +64,7 @@ beforeEach(async () => {
   });
   vi.mocked(query)
     .mockClear()
-    .mockImplementation(async function* (options) {
+    .mockImplementation(async function* (options: Parameters<typeof query>[0]) {
       if (typeof options.prompt !== 'string')
         for await (const _input of options.prompt) {
         }
@@ -176,7 +176,7 @@ test('an SDK startup failure records a failed terminal turn instead of a Stopped
     askOrigin: { sessionId: root },
     content: 'Hello',
   };
-  vi.mocked(query).mockImplementation(async function* (options) {
+  vi.mocked(query).mockImplementation(async function* (options: Parameters<typeof query>[0]) {
     if (typeof options.prompt !== 'string')
       for await (const _input of options.prompt) {
       }

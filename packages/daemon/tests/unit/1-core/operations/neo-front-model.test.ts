@@ -28,7 +28,10 @@ vi.mock('../../../../src/lib/neo/front-session.ts', () => ({
   }),
 }));
 const service = {
-  db: { gateway: { run: read }, getSDKMessageRepo: () => ({ saveSDKMessage: () => true }) },
+  db: {
+    gateway: { run: read, call: vi.fn(async () => true) },
+    getSDKMessageRepo: () => ({ saveSDKMessage: () => true }),
+  },
   wakeNeo: note,
 } as unknown as NeoService;
 type Tool = { name: string; handler: (input: object) => Promise<unknown> };

@@ -14,6 +14,7 @@ import {
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { NEO_FRONT } from '@hyperneo/prompts';
 import { z } from 'zod';
+import { sdkMessageWrites } from '../../storage/repositories/sdk-message-writes.ts';
 import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.ts';
 import { oneShotModelIds, readAssistantReply } from '../agent/one-shot-model.ts';
 import { awaitSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
@@ -112,7 +113,13 @@ export async function runNeoFrontModel(
         };
         if (
           !history.getMessageByUuid(session.id, input.uuid!) &&
-          !history.saveSDKMessage(session.id, input, 'human')
+          !(await service.db.gateway.call(
+            sdkMessageWrites,
+            'saveSDKMessage',
+            session.id,
+            input,
+            'human'
+          ))
         )
           throw new Error('front_history_write_failed');
         yield input;
@@ -163,17 +170,20 @@ export async function runNeoFrontModel(
     if (reply.kind === 'status' && !grounded) throw new Error('front_status_not_grounded');
     if (
       assistant &&
-      !history.saveSDKMessage(session.id, {
+      !(await service.db.gateway.call(sdkMessageWrites, 'saveSDKMessage', session.id, {
         ...assistant,
         message: { ...assistant.message, content: [{ type: 'text', text: reply.text }] },
-      })
+      }))
     )
       throw new Error('front_history_write_failed');
-    if (terminal && !history.saveSDKMessage(session.id, terminal))
+    if (
+      terminal &&
+      !(await service.db.gateway.call(sdkMessageWrites, 'saveSDKMessage', session.id, terminal))
+    )
       throw new Error('front_history_write_failed');
     return reply.text;
   } catch (error) {
-    history.saveSDKMessage(session.id, {
+    await service.db.gateway.call(sdkMessageWrites, 'saveSDKMessage', session.id, {
       type: 'result',
       subtype: 'error_during_execution',
       is_error: true,
