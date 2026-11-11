@@ -7494,16 +7494,19 @@ describe('AgentSession', () => {
       agentSession.setOperationRegistryProvider(() => registry);
       agentSession.setCallerScopeResolver(() => ({ role: 'neo' }));
       const initial = agentSession.getOperationMcpServer();
-      expect(operationInvokeTool(initial).description).toContain('neo.github.read');
+      expect(operationInvokeTool(initial).description).toContain('operations.describe');
       expect(agentSession.getOperationMcpServer()).toBe(initial);
       enabled = [];
       const disabled = agentSession.getOperationMcpServer();
-      expect(operationInvokeTool(disabled).description).not.toContain('neo.github.read');
+      expect(disabled).not.toBe(initial);
+      expect(operationInvokeTool(disabled).description).toBe(
+        operationInvokeTool(initial).description
+      );
       expect(agentSession.getOperationMcpServer()).toBe(disabled);
       enabled = ['coding'];
-      expect(operationInvokeTool(agentSession.getOperationMcpServer()).description).toContain(
-        'neo.github.read'
-      );
+      const restored = agentSession.getOperationMcpServer();
+      expect(restored).not.toBe(disabled);
+      expect(agentSession.getOperationMcpServer()).toBe(restored);
     });
 
     it('shares the exact registry resolution used to serve the invoke tool', () => {
