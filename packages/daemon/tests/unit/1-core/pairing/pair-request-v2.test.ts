@@ -121,7 +121,7 @@ describe('pairing v2 one-time request repository', () => {
     const made = await createRequest();
     const bound = await bindTicket(made.ticket, phoneKeypair().publicKeyB64);
     expect(bound.ok).toBe(true);
-    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('approved');
+    expect(await approveRequest(made.requestId, 'signer:fixture')).toBe('approved');
 
     const thief = phoneKeypair();
     const stolen = await completeRequest(
@@ -148,7 +148,7 @@ describe('pairing v2 one-time request repository', () => {
     expect(early.ok).toBe(false);
     if (!early.ok) expect(early.reason).toBe('not_approved');
 
-    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('approved');
+    expect(await approveRequest(made.requestId, 'signer:fixture')).toBe('approved');
 
     const badSignature = await completeRequest(
       made.requestId,
@@ -165,7 +165,7 @@ describe('pairing v2 one-time request repository', () => {
     const phone = phoneKeypair();
     const bound = await bindTicket(made.ticket, phone.publicKeyB64, 'My Phone');
     if (!bound.ok) throw new Error('bind failed');
-    await approveRequest(made.requestId, 'local-rpc:web');
+    await approveRequest(made.requestId, 'signer:fixture');
 
     const done = await completeRequest(
       made.requestId,
@@ -198,7 +198,7 @@ describe('pairing v2 one-time request repository', () => {
     const phone = phoneKeypair();
     const bound = await bindTicket(made.ticket, phone.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    await approveRequest(made.requestId, 'local-rpc:web');
+    await approveRequest(made.requestId, 'signer:fixture');
     expect(devices.humanRecoveryOpen()).toBe(true);
     const done = await completeRequest(
       made.requestId,
@@ -220,7 +220,7 @@ describe('pairing v2 one-time request repository', () => {
     const phone = phoneKeypair();
     const bound = await bindTicket(made.ticket, phone.publicKeyB64, 'Rejected phone');
     if (!bound.ok) throw new Error('bind failed');
-    await approveRequest(made.requestId, 'local-rpc:web');
+    await approveRequest(made.requestId, 'signer:fixture');
     writer.exec(
       "CREATE TRIGGER reject_device BEFORE INSERT ON paired_devices WHEN NEW.name = 'Rejected phone' BEGIN SELECT RAISE(ABORT, 'synthetic insertion failure'); END"
     );
@@ -241,7 +241,7 @@ describe('pairing v2 one-time request repository', () => {
     const made = await createRequest();
     now += 91_000;
     expect((await bindTicket(made.ticket, phoneKeypair().publicKeyB64)).ok).toBe(false);
-    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('not_pending');
+    expect(await approveRequest(made.requestId, 'signer:fixture')).toBe('not_pending');
     expect(await requestStatus(made.requestId)).toMatchObject({ state: 'expired' });
   });
 
@@ -250,7 +250,7 @@ describe('pairing v2 one-time request repository', () => {
     const phone = phoneKeypair();
     const bound = await bindTicket(made.ticket, phone.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    await approveRequest(made.requestId, 'local-rpc:web');
+    await approveRequest(made.requestId, 'signer:fixture');
     now += 91_000;
     const done = await completeRequest(
       made.requestId,
@@ -268,7 +268,7 @@ describe('pairing v2 one-time request repository', () => {
     if (!bound.ok) throw new Error('bind failed');
     expect(await cancelRequest(made.requestId)).toBe(true);
     expect(await requestStatus(made.requestId)).toMatchObject({ state: 'cancelled' });
-    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('not_pending');
+    expect(await approveRequest(made.requestId, 'signer:fixture')).toBe('not_pending');
     const done = await completeRequest(
       made.requestId,
       phone.publicKeyB64,
@@ -283,7 +283,7 @@ describe('pairing v2 one-time request repository', () => {
     const phone = phoneKeypair();
     const bound = await bindTicket(made.ticket, phone.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    await approveRequest(made.requestId, 'local-rpc:web');
+    await approveRequest(made.requestId, 'signer:fixture');
     expect(await denyRequest(made.requestId)).toBe(true);
     const done = await completeRequest(
       made.requestId,
@@ -296,7 +296,7 @@ describe('pairing v2 one-time request repository', () => {
 
   test('approval requires a bound ticket', async () => {
     const made = await createRequest();
-    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('not_pending');
+    expect(await approveRequest(made.requestId, 'signer:fixture')).toBe('not_pending');
   });
 
   test('two simultaneous first-owner approvals grant exactly one owner', async () => {
@@ -308,8 +308,8 @@ describe('pairing v2 one-time request repository', () => {
     const boundB = await bindTicket(madeB.ticket, phoneB.publicKeyB64);
     if (!boundA.ok || !boundB.ok) throw new Error('bind failed');
 
-    expect(await approveRequest(madeA.requestId, 'local-rpc:web')).toBe('approved');
-    expect(await approveRequest(madeB.requestId, 'local-rpc:web')).toBe('approved');
+    expect(await approveRequest(madeA.requestId, 'signer:fixture')).toBe('approved');
+    expect(await approveRequest(madeB.requestId, 'signer:fixture')).toBe('approved');
 
     const first = await completeRequest(
       madeA.requestId,
@@ -328,6 +328,18 @@ describe('pairing v2 one-time request repository', () => {
     expect(await requestStatus(madeB.requestId)).toMatchObject({ state: 'cancelled' });
   });
 
+  test('a local-rpc approver cannot approve even with no owners', async () => {
+    const made = await createRequest();
+    const bound = await bindTicket(made.ticket, phoneKeypair().publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+
+    expect(await ownerCount()).toBe(0);
+    expect(await approveRequest(made.requestId, 'local-rpc:web')).toBe('not_allowed');
+    expect(await approveRequest(made.requestId, 'agent-read:cli')).toBe('not_allowed');
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'bound' });
+    expect(await approveRequest(made.requestId, 'signer:fixture')).toBe('approved');
+  });
+
   test('a local-rpc approval that raced a first-owner grant cannot approve a second device', async () => {
     const madeA = await createRequest();
     const madeB = await createRequest();
@@ -338,7 +350,7 @@ describe('pairing v2 one-time request repository', () => {
     if (!boundA.ok || !boundB.ok) throw new Error('bind failed');
 
     expect(await ownerCount()).toBe(0);
-    expect(await approveRequest(madeA.requestId, 'local-rpc:web')).toBe('approved');
+    expect(await approveRequest(madeA.requestId, 'signer:fixture')).toBe('approved');
     const granted = await completeRequest(
       madeA.requestId,
       phoneA.publicKeyB64,
@@ -361,7 +373,7 @@ describe('pairing v2 one-time request repository', () => {
     const owner = phoneKeypair();
     const bound = await bindTicket(bootstrap.ticket, owner.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    await approveRequest(bootstrap.requestId, 'local-rpc:web');
+    await approveRequest(bootstrap.requestId, 'signer:fixture');
     const first = await completeRequest(
       bootstrap.requestId,
       owner.publicKeyB64,

@@ -5,6 +5,7 @@ import {
   pairingRequestReads,
   pairingRequestWrites,
 } from '../../storage/repositories/pairing-request-repository.ts';
+import { pairingStateReads } from '../../storage/repositories/pairing-state-read.ts';
 import type { PairingLimiter } from './pairing-limiter.ts';
 
 export interface Pair2Identity {
@@ -52,13 +53,19 @@ async function readJson(req: Request): Promise<unknown | null> {
 }
 
 export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteDeps) {
-  const mayDecide = async (req: Request, remoteAddress: string | null) => {
+  const admitHuman = async (req: Request, remoteAddress: string | null) => {
     const identity = await authenticate(req, remoteAddress);
-    if (!identity || identity.kind !== 'human') return null;
+    return identity?.kind === 'human' ? identity : null;
+  };
+
+  const mayApprove = async (req: Request, remoteAddress: string | null) => {
+    const identity = await admitHuman(req, remoteAddress);
+    if (!identity) return null;
     const synthetic =
       identity.deviceId.startsWith('local-rpc:') || identity.deviceId.startsWith('agent-read:');
     if (synthetic) return null;
-    return identity;
+    const owner = await db.call(pairingStateReads, 'isOwnerDevice', identity.deviceId);
+    return owner ? identity : null;
   };
 
   return async (req: Request, remoteAddress: string | null = null): Promise<Response> => {
@@ -110,8 +117,8 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
     }
 
     if (url.pathname === '/pair2/request') {
-      const identity = await authenticate(req, remoteAddress);
-      if (!identity || identity.kind !== 'human') return answer(403, { error: 'not_allowed' });
+      const identity = await admitHuman(req, remoteAddress);
+      if (!identity) return answer(403, { error: 'not_allowed' });
       return answer(200, await db.call(pairingRequestWrites, 'createRequest', now()));
     }
 
@@ -124,7 +131,7 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
     }
 
     if (url.pathname === '/pair2/approve') {
-      const identity = await mayDecide(req, remoteAddress);
+      const identity = await mayApprove(req, remoteAddress);
       if (!identity) return answer(403, { error: 'not_allowed' });
       const outcome = await db.call(
         pairingRequestWrites,
@@ -137,7 +144,7 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
     }
 
     if (url.pathname === '/pair2/deny') {
-      const identity = await mayDecide(req, remoteAddress);
+      const identity = await admitHuman(req, remoteAddress);
       if (!identity) return answer(403, { error: 'not_allowed' });
       return (await db.call(pairingRequestWrites, 'denyRequest', parsed.data.requestId, now()))
         ? answer(200, { ok: true })
@@ -145,8 +152,8 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
     }
 
     if (url.pathname === '/pair2/cancel') {
-      const identity = await authenticate(req, remoteAddress);
-      if (!identity || identity.kind !== 'human') return answer(403, { error: 'not_allowed' });
+      const identity = await admitHuman(req, remoteAddress);
+      if (!identity) return answer(403, { error: 'not_allowed' });
       return (await db.call(pairingRequestWrites, 'cancelRequest', parsed.data.requestId, now()))
         ? answer(200, { ok: true })
         : answer(403, { error: 'not_pending' });

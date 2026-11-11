@@ -31,7 +31,12 @@ describe('pairing v2 one-time request route', () => {
     remoteAddress === '10.0.0.9'
       ? null
       : req.headers.get('x-test-device')
-        ? { deviceId: req.headers.get('x-test-device') as string, kind: 'human' as const }
+        ? {
+            deviceId: req.headers.get('x-test-device') as string,
+            kind: (req.headers.get('x-test-device') as string).startsWith('agent-read:')
+              ? ('agent' as const)
+              : ('human' as const),
+          }
         : localIdentity;
 
   beforeEach(() => {
@@ -77,17 +82,17 @@ describe('pairing v2 one-time request route', () => {
     return { res, body: (await res.json()) as { requestId?: string; bindNonce?: string } };
   };
 
-  const seedDevice = (name = 'Seeded phone') => {
+  const seedDevice = (name = 'Seeded phone', owner = 1) => {
     const id = crypto.randomUUID();
     writer
       .prepare(
-        "INSERT INTO paired_devices (id, name, kind, secret_hash, created_at) VALUES (?, ?, 'human', '', ?)"
+        "INSERT INTO paired_devices (id, name, kind, secret_hash, created_at, owner) VALUES (?, ?, 'human', ?, ?, ?)"
       )
-      .run(id, name, now);
+      .run(id, name, `hash-${id}`, now, owner);
     return id;
   };
 
-  const repoApprove = (requestId: string, approver = 'local-rpc:fixture') =>
+  const repoApprove = (requestId: string, approver = 'signer:fixture') =>
     gateway.call(pairingRequestWrites, 'approveRequest', requestId, approver, now) as Promise<
       'approved' | 'not_pending' | 'not_allowed'
     >;
@@ -261,10 +266,7 @@ describe('pairing v2 one-time request route', () => {
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
     await repoApprove(made.requestId);
-    const denier = seedDevice();
-    expect(
-      (await post('/pair2/deny', { requestId: made.requestId }, { 'x-test-device': denier })).status
-    ).toBe(200);
+    expect((await post('/pair2/deny', { requestId: made.requestId })).status).toBe(200);
     const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
     expect(done.res.status).toBe(403);
     expect(done.body.error).toBe('denied');
@@ -320,19 +322,38 @@ describe('pairing v2 one-time request route', () => {
     expect(devices.countDevices().humans).toBe(2);
   });
 
-  test('approve and deny refuse the local synthetic credential', async () => {
+  test('the web session can deny and cancel but not approve', async () => {
     const made = await createRequest();
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
     expect(bound.res.status).toBe(200);
 
     expect((await approveRequest(made.requestId)).status).toBe(403);
-    expect((await post('/pair2/deny', { requestId: made.requestId })).status).toBe(403);
+    expect((await post('/pair2/deny', { requestId: made.requestId })).status).toBe(200);
+    expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'denied' });
+
+    const second = await createRequest();
+    await bindRequest(second.ticket, phone);
+    expect((await post('/pair2/cancel', { requestId: second.requestId })).status).toBe(200);
+    expect(await (await status(second.requestId)).json()).toMatchObject({ state: 'cancelled' });
+  });
+
+  test('only a paired owner device can approve a bound request', async () => {
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    expect(bound.res.status).toBe(200);
+
     expect(
       (await approveRequest(made.requestId, { 'x-test-device': 'agent-read:cli' })).status
     ).toBe(403);
+    const nonOwner = seedDevice('Paired non-owner', 0);
+    expect((await approveRequest(made.requestId, { 'x-test-device': nonOwner })).status).toBe(403);
+    expect(
+      (await approveRequest(made.requestId, { 'x-test-device': crypto.randomUUID() })).status
+    ).toBe(403);
 
-    const owner = seedDevice();
+    const owner = seedDevice('Owner phone');
     expect((await approveRequest(made.requestId, { 'x-test-device': owner })).status).toBe(200);
   });
 

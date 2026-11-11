@@ -79,7 +79,8 @@ export class PairingRequestRepository {
       this.db
         .prepare(
           "SELECT COUNT(*) AS humans FROM paired_devices WHERE kind = 'human' " +
-            "AND revoked_at IS NULL AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
+            'AND owner = 1 AND revoked_at IS NULL ' +
+            "AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
         )
         .get() as { humans: number }
     ).humans;
@@ -127,9 +128,9 @@ export class PairingRequestRepository {
     now: number
   ): 'approved' | 'not_pending' | 'not_allowed' {
     return this.db.transaction(() => {
-      const owners = this.ownerCount();
-      if (approver.startsWith('local-rpc:') && owners > 0) return 'not_allowed';
-      const ownerGrant = owners === 0;
+      if (approver.startsWith('local-rpc:') || approver.startsWith('agent-read:'))
+        return 'not_allowed';
+      const ownerGrant = this.ownerCount() === 0;
       const approved = this.db
         .prepare(
           `UPDATE pairing_requests SET approved_at = ?, approved_by = ?, grants_owner = ?
@@ -220,10 +221,10 @@ export class PairingRequestRepository {
       new DevicePairingRepository(this.db).closeHumanRecovery(now);
       this.db
         .prepare(
-          `INSERT INTO paired_devices (id, name, kind, secret_hash, created_at)
-           VALUES (?, ?, 'human', ?, ?)`
+          `INSERT INTO paired_devices (id, name, kind, secret_hash, created_at, owner)
+           VALUES (?, ?, 'human', ?, ?, ?)`
         )
-        .run(deviceId, row.name ?? 'Paired phone', hash(credential), now);
+        .run(deviceId, row.name ?? 'Paired phone', hash(credential), now, row.grantsOwner ? 1 : 0);
       return { ok: true as const, deviceId, credential, owner: row.grantsOwner };
     })();
   }

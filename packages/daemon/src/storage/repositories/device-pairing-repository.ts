@@ -22,6 +22,7 @@ export interface PairedDevice {
   name: string;
   kind: DeviceKind;
   createdAt: number;
+  owner?: boolean;
 }
 
 const CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -36,8 +37,15 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 function insertDevice(db: Database, device: PairedDevice, credential: string, reuse = false): void {
   db.prepare(
-    `INSERT ${reuse ? 'OR IGNORE ' : ''}INTO paired_devices (id, name, kind, secret_hash, created_at) VALUES (?, ?, ?, ?, ?)`
-  ).run(device.id, device.name, device.kind, hash(credential), device.createdAt);
+    `INSERT ${reuse ? 'OR IGNORE ' : ''}INTO paired_devices (id, name, kind, secret_hash, created_at, owner) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    device.id,
+    device.name,
+    device.kind,
+    hash(credential),
+    device.createdAt,
+    device.owner ? 1 : 0
+  );
 }
 
 export const enrollLocalDevice = defineDbOp({
@@ -216,6 +224,14 @@ export class DevicePairingRepository {
   isActiveDevice(id: string): boolean {
     return !!this.db
       .prepare('SELECT 1 FROM paired_devices WHERE id = ? AND revoked_at IS NULL')
+      .get(id);
+  }
+
+  isOwnerDevice(id: string): boolean {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM paired_devices WHERE id = ? AND kind = 'human' AND owner = 1 AND revoked_at IS NULL"
+      )
       .get(id);
   }
 
@@ -490,7 +506,11 @@ export class DevicePairingRepository {
         .get(now, hash(normalizePairingCode(code)), now) as { kind: DeviceKind } | null;
       if (!claimed) return null;
       if (claimed.kind === 'human') this.closeHumanRecovery(now);
-      insertDevice(this.db, { ...device, kind: claimed.kind }, credential);
+      insertDevice(
+        this.db,
+        { ...device, kind: claimed.kind, owner: claimed.kind === 'human' },
+        credential
+      );
       return { device: { ...device, kind: claimed.kind }, credential };
     })();
   }
