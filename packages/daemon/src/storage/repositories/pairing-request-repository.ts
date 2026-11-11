@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { DevicePairingRepository } from './device-pairing-repository.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import {
@@ -198,6 +199,7 @@ export class PairingRequestRepository {
         )
         .run(now, requestId, now);
       if (claimed.changes === 0) return { ok: false as const, reason: 'used' as const };
+      new DevicePairingRepository(this.db).closeHumanRecovery(now);
       this.db
         .prepare(
           `INSERT INTO paired_devices (id, name, kind, secret_hash, created_at)

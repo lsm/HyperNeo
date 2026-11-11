@@ -187,6 +187,7 @@ describe('pairing v2 one-time request repository', () => {
   });
 
   test('a completed human request closes recovery and invalidates peer human approvals', async () => {
+    devices.setTerminalApproval(false, 'fixture', now);
     writer
       .prepare('INSERT INTO human_device_resets (id, reset_at, devices_json) VALUES (?, ?, ?)')
       .run('recovery', now, '[]');
