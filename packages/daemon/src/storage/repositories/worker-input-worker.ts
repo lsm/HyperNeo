@@ -119,7 +119,7 @@ export class WorkerInputJobs {
   wait(job: Job, detail: string, reported = false): void {
     const waiting = new JobQueueRepository(this.db).requeueWaiting(
       job.id,
-      Date.now() + 1000,
+      Date.now() + 60_000,
       job.claimToken!
     );
     if (waiting)

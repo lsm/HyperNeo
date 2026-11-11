@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { neoDerivedId } from '../neo/derived-id.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { type Job } from '../../storage/repositories/job-queue-repository.ts';
@@ -47,6 +48,12 @@ export function createWorkerInputDelivery(
     return { ...stored, status };
   };
   type Facts = Awaited<ReturnType<typeof read>>;
+  const reportId = (facts: Facts) =>
+    facts.payload.idempotencyKey
+      ? neoDerivedId(
+          JSON.stringify(['worker-input-report', facts.payload.from, facts.payload.idempotencyKey])
+        )
+      : facts.payload.inputId;
   const decide = (
     facts: Facts
   ): { action: 'wait' | 'fail' | 'send' | 'uncertain'; detail: string; report?: true } => {
@@ -95,7 +102,7 @@ export function createWorkerInputDelivery(
     if (!(await gateway.call(workerInputWrites, 'recordFailure', job, outcome)))
       return { fenced: true };
     try {
-      await report(facts.payload.inputId, outcome.failure, facts.payload.from);
+      await report(reportId(facts), outcome.failure, facts.payload.from);
     } catch (error) {
       const detail = `Worker failure notification is pending: ${String(error)}`;
       await gateway.call(workerInputWrites, 'wait', job, detail);
@@ -109,7 +116,7 @@ export function createWorkerInputDelivery(
       let reported = false;
       if (plan.report && !facts.payload.waitReported) {
         try {
-          await report(`${facts.payload.inputId}:waiting`, plan.detail, facts.payload.from);
+          await report(`${reportId(facts)}:waiting`, plan.detail, facts.payload.from);
           reported = true;
         } catch {
           reported = false;

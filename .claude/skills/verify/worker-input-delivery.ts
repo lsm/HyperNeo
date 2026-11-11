@@ -28,7 +28,11 @@ const ref = { adapter: 'hyperneo', id: worker };
 const caller = { source: 'internal', role: 'neo', sessionId: root } as const;
 const evidence: Record<string, unknown> = {};
 const db = () => app.db.getDatabase();
-const state = (status: string) => db().prepare('UPDATE sessions SET processing_state = ? WHERE id = ?').run(JSON.stringify({ status }), worker);
+const wakeInputs = () => db().prepare("UPDATE job_queue SET run_at = 0 WHERE queue = 'worker_input' AND status = 'pending'").run();
+const state = (status: string) => {
+  db().prepare('UPDATE sessions SET processing_state = ? WHERE id = ?').run(JSON.stringify({ status }), worker);
+  if (status === 'idle') wakeInputs();
+};
 const inputs = () => db().prepare('SELECT id, message, outcome, deadline_at AS deadline FROM work_delivery_inputs ORDER BY accepted_at, rowid').all() as { id: string; message: string; outcome: string | null; deadline: number }[];
 const messages = (sessionId = worker) => (db().prepare(`SELECT ${sdkMessageBodyAt('m.rowid')} AS body FROM sdk_messages m WHERE session_id=? AND message_type='user' ORDER BY seq`).all(sessionId) as { body: string }[]).map((row) => hyperneoInputText(row.body));
 const until = async (condition: () => boolean, label: string) => {
@@ -89,6 +93,7 @@ try {
   assert.equal(app.jobQueue.getJob(claimed.id)?.retryCount, 0);
   evidence.notificationPending = { input: inputs()[2], job: app.jobQueue.getJob(claimed.id) };
   await app.db.createSession({ id: recoveringNeo, title: 'Recovered synthetic Neo', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  wakeInputs();
   await until(() => app.jobQueue.getJob(claimed.id)?.status === 'completed', 'the notification completes after its recipient recovers');
   await until(() => messages(recoveringNeo).some((text) => text.includes('dispatch was interrupted')), 'Neo receives the uncertainty report');
   assert.equal(messages().filter((text) => text.includes('Retain the interrupted dispatch')).length, 0);
@@ -134,6 +139,7 @@ try {
   assert.equal(inputs().find((input) => input.id === waitingId)?.outcome, null);
   await app.cleanup();
   app = await start();
+  wakeInputs();
   const previousRun = waitingJob().runAt;
   await until(() => waitingJob().runAt > previousRun, 'the retained unknown input retries after restart');
   const waitingReports = messages(root).filter((text) => text.includes(waitingReason));
@@ -142,9 +148,20 @@ try {
   assert.equal(waitingJob().status, 'pending');
   assert.equal(inputs().find((input) => input.id === waitingId)?.outcome, null);
   evidence.waiting = { input: inputs().find((input) => input.id === waitingId), job: waitingJob(), reports: waitingReports };
+  const refusedIds: string[] = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const id = await app.db.gateway.call(workerInputWrites, 'accept', { ref: { adapter: 'hyperneo', id: 'synthetic-retired-worker' }, message: 'The same synthetic answer', idempotencyKey: 'synthetic-answer' }, `session:${root}`, caller);
+    refusedIds.push(id);
+    await until(() => app.jobQueue.listJobs({ queue: 'worker_input' }).some((job) => job.payload.inputId === id && job.status === 'completed'), 'the answer refusal is reported and settled');
+  }
+  const refusal = JSON.parse(inputs().find((input) => input.id === refusedIds[0])!.outcome!).failure;
+  await until(() => messages(root).some((text) => text.includes(refusal)), 'Neo receives the answer refusal');
+  const refusalReports = messages(root).filter((text) => text.includes(refusal));
+  assert.equal(refusalReports.length, 1);
+  evidence.refusedAnswers = { inputs: inputs().filter((input) => refusedIds.includes(input.id)), reports: refusalReports };
   evidence.port = app.server.port;
   evidence.passed = true;
-  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length }));
+  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length, refusalReports: refusalReports.length }));
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
