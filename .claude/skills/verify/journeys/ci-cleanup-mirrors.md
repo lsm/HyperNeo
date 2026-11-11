@@ -6,10 +6,12 @@ Ubuntu mirror cannot resolve. Both apt-get commands explicitly select the
 fallback source list, which references mirror+file and the Ubuntu signing keyring.
 
 Run `python3 scripts/test-cleanup-sandbox.py` on an authorized test host or CI.
-The fixture executes both workflow steps with isolated commands and mirror files.
+The fixture executes both workflow steps with stubbed package commands and
+isolated mirror files. It proves source selection and command order. Package
+availability is proved by the signed APT rehearsal below.
 A simulated DNS outage starts with a direct Ubuntu source URL. The script must
-select its mirror+file source explicitly, log package policy before installing
-bubblewrap and run its smoke command. The CI logs retain the selected candidate
+select its mirror+file source explicitly, request package policy before the
+install command and preserve the namespace smoke command. The CI logs retain the selected candidate
 and archive component on the runner itself.
 Healthy DNS must retain the runner mirror configuration. The reproduction on the
 old workflow fails both outage subcases. All fixture data is temporary.

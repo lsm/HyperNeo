@@ -81,7 +81,7 @@ printf 'apt-get %s\\n' "$*" >> "$CI_TEST_LOG"''',
             self.assertIn('bwrap --die-with-parent --ro-bind / / -- /bin/true\n', commands)
             return mirrors.read_text(), sources.read_text(), commands
 
-    def test_dns_outage_still_installs_and_checks_cleanup_sandbox(self):
+    def test_dns_outage_selects_signed_fallback_and_preserves_smoke_command(self):
         steps = sandbox_steps()
         self.assertEqual(len(steps), 2)
         for step in steps:
