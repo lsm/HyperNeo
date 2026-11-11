@@ -77,11 +77,5 @@ export async function settleConvoInput(
     throw new Error(receipt.reason);
   }
   service.notifyPublicationsChanged(conversationId);
-  if (receipt.created)
-    await service.speech.publish(
-      ask.askOrigin.sessionId,
-      receipt.publication.publicationId,
-      receipt.publication.fullText
-    );
   return { delivered: true, outcome: 'answered' };
 }

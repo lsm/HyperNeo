@@ -1,6 +1,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.ts';
+import { NeoSpeechSay } from './speech.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { NeoPublicationDraft } from './publication-operation.ts';
 import { frontProgressId, frontSessionId } from './front-mode.ts';
@@ -86,6 +87,17 @@ export function createFrontTools(service: NeoService, conversationId: string) {
     name: 'front',
     tools: [
       ...lookups,
+      tool(
+        'speech_say',
+        'Speak a brief natural line to the current listener. Use for spoken acknowledgments and a missing spoken reply after switching to voice. Reuse publication:<version> from the publication receipt when completing its speech.',
+        NeoSpeechSay.shape,
+        async (input) => {
+          const say = service.speech.operations.find(
+            (operation) => operation.name === 'neo.speech.say'
+          )!;
+          return result(await say.execute(input, { source: 'mcp', role: 'neo', sessionId }));
+        }
+      ),
       tool(
         'reply_short',
         'Send one plain message with no Details. Use for at most five short sentences in one brief paragraph. Use for acknowledgments, brief answers and progress updates. First call this with progress:true and the human replyTo ID for a one-sentence acknowledgment before doing work. For a final short answer omit progress. To update your existing message, pass publicationId.',

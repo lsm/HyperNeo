@@ -34,7 +34,7 @@ const Listen = z.object({
     .optional(),
 });
 const Preview = z.object({ sessionId: z.string().min(1).max(160), requestId: z.uuid() });
-const Say = z.object({
+export const NeoSpeechSay = z.object({
   requestId: z.string().min(1).max(160),
   text: z.string().trim().min(1).max(500),
 });
@@ -45,7 +45,7 @@ const Ack = z.object({
 });
 type Input =
   | z.infer<typeof Listen>
-  | z.infer<typeof Say>
+  | z.infer<typeof NeoSpeechSay>
   | z.infer<typeof Ack>
   | z.infer<typeof Preview>;
 type SpeechState = 'queued' | 'playing' | 'played' | 'cancelled' | 'failed';
@@ -135,7 +135,8 @@ export class NeoSpeech {
     private readonly onListeningChanged?: (sessionId: string, listening: boolean) => Promise<void>,
     private readonly canReadSession: (sessionId: string) => boolean = isNeo,
     private readonly modeNote?: (sessionId: string) => string | undefined,
-    private readonly canSay: (sessionId: string) => boolean = isNeo
+    private readonly canSay: (sessionId: string) => boolean = isNeo,
+    private readonly speechSession: (sessionId: string) => string = (id) => id
   ) {
     this.audio = new NeoSpeechAudio(
       (client, data) => this.send(client, data),
@@ -182,7 +183,12 @@ export class NeoSpeech {
         )
         .pipe(
           (sessionId: string, input: Input, caller: OperationCaller) =>
-            this.enqueue(action, sessionId, input, caller),
+            this.enqueue(
+              action,
+              action === 'say' ? this.speechSession(sessionId) : sessionId,
+              input,
+              caller
+            ),
           ['receipt', 'input', 'caller'],
           'receipt'
         )
@@ -213,7 +219,7 @@ export class NeoSpeech {
       defineOperation({
         name: 'neo.speech.say',
         description: neoToolDescription('neo.speech.say'),
-        inputSchema: Say,
+        inputSchema: NeoSpeechSay,
         resultSchema: Result,
         policy: { safetyClass: 'mutate', roles: ['neo'] },
         execute: route('say'),
@@ -432,7 +438,7 @@ export class NeoSpeech {
     input: Input,
     caller: OperationCaller
   ): Promise<SpeechReceipt> {
-    if (action === 'say' && caller.source === 'mcp' && !this.canSay(sessionId))
+    if (action === 'say' && caller.source === 'mcp' && !this.canSay(caller.sessionId ?? sessionId))
       return { ok: false, reason: 'neo_speech_not_available' };
     const clientId = caller.clientId ?? '';
     if (action === 'listen' && 'enabled' in input) {

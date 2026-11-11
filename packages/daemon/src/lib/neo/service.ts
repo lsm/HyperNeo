@@ -216,6 +216,15 @@ export class NeoService {
       undefined,
       undefined,
       async (id, listening) => {
+        const conversation = this.repo.readConversationId();
+        const speaker =
+          conversation && id === this.defaultSessionId()
+            ? publicationSpeaker(
+                conversation,
+                this.db.getGlobalSettings().neo?.front?.enabled === true
+              )
+            : id;
+        id = speaker;
         if (this.sessions.getCachedSession(id)?.getProcessingState().status === 'processing')
           await ensurePrompt({
             db: this.db.getDatabase(),
@@ -235,8 +244,8 @@ export class NeoService {
                   {
                     type: 'text',
                     text: listening
-                      ? 'The human is now listening.'
-                      : 'The human stopped listening.',
+                      ? '[listening: yes] The human is now listening. If your current reply has not been spoken, give its short spoken version once using the speech tool.'
+                      : '[listening: no] The human stopped listening.',
                   },
                 ],
               },
@@ -258,9 +267,21 @@ export class NeoService {
               `\n[listening: ${this.speech.isListening(this.defaultSessionId() ?? id) ? 'yes' : 'no'}]`
           : undefined;
       },
-      (id) =>
-        this.repo.getBindingBySession(id)?.kind === 'neo' &&
-        this.db.getGlobalSettings().neo?.front?.enabled !== true
+      (id) => {
+        const conversation = this.repo.readConversationId();
+        return (
+          !!conversation &&
+          id ===
+            publicationSpeaker(
+              conversation,
+              this.db.getGlobalSettings().neo?.front?.enabled === true
+            )
+        );
+      },
+      (id) => {
+        const conversation = this.repo.readConversationId();
+        return conversation && id === frontSessionId(conversation) ? `neo:${conversation}` : id;
+      }
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());

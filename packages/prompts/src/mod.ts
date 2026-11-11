@@ -57,7 +57,8 @@ import mdneoSystemQuickAckListening from './neo/system/quick-ack-listening.md' w
 };
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdNeoFront from './neo/front.md' with { type: 'text' };
-export const NEO_FRONT = mdNeoFront;
+import mdNeoSpeech from './neo/system/speech.md' with { type: 'text' };
+
 import mdneoSystemPackPreferences from './neo/system/pack-preferences.md' with { type: 'text' };
 import mdneoSystemStandingRules from './neo/system/standing-rules.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
@@ -398,6 +399,8 @@ const registry: Record<string, string> = {
   'neo/system/quick-ack-listening.md': mdneoSystemQuickAckListening,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
+  'neo/system/speech.md': mdNeoSpeech,
+  'neo/front.md': mdNeoFront,
   'neo/system/pack-preferences.md': mdneoSystemPackPreferences,
   'neo/system/standing-rules.md': mdneoSystemStandingRules,
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
@@ -549,6 +552,7 @@ export const {
   WORKER_PROVENANCE_OPEN_PRS,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
+  NEO_FRONT,
   NEO_STANDING_RULES,
   NEO_PACK_PREFERENCES,
   NEO_WORK_GOAL_ASKED,

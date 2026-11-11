@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishTextHandoff } from '../../../../src/lib/handoffs/publish-text.ts';
+import { NEO_FRONT, NEO_ROOT_TURN_END } from '@hyperneo/prompts';
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'node:crypto';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -61,6 +62,15 @@ beforeEach(async () => {
 afterEach(async () => {
   await service.dispose();
   db.close();
+});
+
+test('Front and Neo share the same expanded speech rules', () => {
+  const start = 'Input-source markers';
+  const end = 'Never derive speech by reading or truncating publication Markdown.';
+  const rules = NEO_FRONT.slice(NEO_FRONT.indexOf(start));
+  expect(rules).toContain(end);
+  expect(NEO_ROOT_TURN_END).toContain(rules.trim());
+  expect(NEO_FRONT).not.toContain('<!-- include:');
 });
 
 test('Front uses the ordinary immediate session with its role and tools', async () => {
@@ -368,6 +378,29 @@ test('canonical Neo speech retains its normal listener admission', async () => {
       { source: 'mcp', role: 'neo', sessionId: root }
     )
   ).toMatchObject({ ok: false, reason: 'neo_speech_not_available' });
+});
+
+test('Front speech uses the canonical listener while Back speech stays disabled', async () => {
+  const say = service.speech.operations.find((op) => op.name === 'neo.speech.say')!;
+  expect(
+    await say.execute(
+      { requestId: 'front-speech', text: 'Hello' },
+      { source: 'mcp', role: 'neo', sessionId: front }
+    )
+  ).toMatchObject({ ok: false, reason: 'voice_replies_off' });
+  await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
+  expect(
+    await say.execute(
+      { requestId: 'stale-front-speech', text: 'Hello' },
+      { source: 'mcp', role: 'neo', sessionId: front }
+    )
+  ).toMatchObject({ ok: false, reason: 'neo_speech_not_available' });
+  expect(
+    await say.execute(
+      { requestId: 'neo-speech', text: 'Hello' },
+      { source: 'mcp', role: 'neo', sessionId: root }
+    )
+  ).toMatchObject({ ok: false, reason: 'voice_replies_off' });
 });
 
 test('Front keeps ordinary model settings and preserves a usable conversation', async () => {
@@ -1074,6 +1107,25 @@ async function deliveredConvoInput() {
   );
   return accepted;
 }
+
+test('Front leaves Markdown silent and requests a spoken line from the model', async () => {
+  const { id } = await deliveredConvoInput();
+  const speech = vi.spyOn(service.speech, 'publish').mockResolvedValue({
+    listening: 'yes',
+    spokenDelivered: false,
+  });
+  const receipt = await convoPublish({
+    requestId: 'markdown-progress',
+    replyTo: [id],
+    fullText: '**Report** with 12345 and /example/report.md',
+    verbatim: true,
+    progress: true,
+  });
+  expect(receipt.accepted).toBe(true);
+  expect(speech).toHaveBeenCalledWith(root, expect.any(String), undefined);
+  expect(receipt.guidance).toContain('speech_say');
+  speech.mockRestore();
+});
 
 test('only Convo can publish in dual mode and Neo can publish again in single mode', async () => {
   const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
