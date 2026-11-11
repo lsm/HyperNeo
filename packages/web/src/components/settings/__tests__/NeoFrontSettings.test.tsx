@@ -79,3 +79,16 @@ test('dual-model switch is a plain on/off control', () => {
   expect(screen.getByRole('checkbox', { name: 'Dual-model mode' })).toBeTruthy();
   expect(container.querySelector('p')).toBeNull();
 });
+
+test('a missing Front model refusal explains how to enable dual mode', async () => {
+  save.mockResolvedValueOnce({ ok: false, reason: 'front_model_required' });
+  render(<NeoFrontSettings />);
+  const toggle = screen.getByRole('checkbox') as HTMLInputElement;
+  toggle.checked = true;
+  fireEvent.change(toggle);
+  expect((await screen.findByRole('alert')).textContent).toBe(
+    'Choose a Front model before enabling dual-model mode.'
+  );
+  expect(toggle.checked).toBe(false);
+  expect(toggle.disabled).toBe(false);
+});

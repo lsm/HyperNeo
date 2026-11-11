@@ -1,4 +1,5 @@
 import { t } from '../../lib/i18n/index.ts';
+import { NEO_REFUSALS } from '@hyperneo/shared/types/neo-refusals';
 import { useState } from 'preact/hooks';
 import { globalSettings } from '../../lib/state.ts';
 import { connectionManager } from '../../lib/connection-manager';
@@ -14,10 +15,13 @@ export function NeoFrontSettings() {
     try {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error(t('dual.reconnect'));
-      const result = await invokeOperation<{ ok: boolean }>(hub, 'neo.front.set', { enabled });
-      if (!result.ok) throw new Error(t('dual.saveError'));
-    } catch {
-      setError(t('dual.saveError'));
+      const result = await invokeOperation<{ ok: boolean; reason?: string }>(hub, 'neo.front.set', {
+        enabled,
+      });
+      if (!result.ok)
+        throw new Error(NEO_REFUSALS[result.reason ?? ''] ?? result.reason ?? t('dual.saveError'));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('dual.saveError'));
     } finally {
       setSaving(false);
     }

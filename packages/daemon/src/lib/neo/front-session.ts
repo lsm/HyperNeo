@@ -30,7 +30,6 @@ export async function frontSession(
     autoCompactPercent: model.autoCompactPercent,
     tools: { useClaudeCodePreset: false },
     operationTools: false,
-    toolSelection: { version: 1, choices: {} },
     disallowedTools: ['mcp__exa'],
     sdkToolsPreset: [],
     allowedTools: [
@@ -64,7 +63,7 @@ export async function frontSession(
     new Logger('NeoFront').warn('Convo session was unusable; restoring it', {
       status: existing.status,
     });
-    const restore: SessionUpdate = { status: 'active', archivedAt: null, sdkSessionId: undefined };
+    const restore: SessionUpdate = { status: 'active', archivedAt: null };
     const outcome = await service.db.updateSession(id, restore);
     if (outcome !== 'written') throw new Error('front_session_restore_refused');
   }
@@ -103,6 +102,12 @@ async function createConvo(
       worktreeMode: 'direct',
     });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      /UNIQUE constraint failed: sessions\.id/.test(error.message) &&
+      service.db.getSession(id)
+    )
+      return;
     new Logger('NeoFront').warn('Convo session creation failed', {
       errorType: error instanceof Error ? error.name : 'unknown',
     });
@@ -120,14 +125,13 @@ async function attachFrontTools(
   let config = requireSession(service, id).config;
   if (Object.keys(config.toolSelection?.choices ?? {}).length) {
     const snapshot = service.db.captureSessionRuntimeSettings(id);
-    if (
-      !snapshot ||
-      (await service.db.casSessionRuntimeSettings(snapshot, {
-        toolSelection: { version: 1, choices: {} },
-      })) !== 'won'
-    )
-      throw new Error('front_session_tools_superseded');
+    if (!snapshot) throw new Error('front_session_tools_superseded');
+    const outcome = await service.db.casSessionRuntimeSettings(snapshot, {
+      toolSelection: { version: 1, choices: {} },
+    });
     config = requireSession(service, id).config;
+    if (outcome !== 'won' && Object.keys(config.toolSelection?.choices ?? {}).length)
+      throw new Error('front_session_tools_superseded');
   }
   const previous = live.getSessionData().config;
   if (

@@ -20,6 +20,7 @@ import { createNeoFrontHandler } from '../../../../src/lib/neo/front-job.ts';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { frontSession } from '../../../../src/lib/neo/front-session.ts';
+import { admitCreateSessionConfig } from '../../../../src/lib/session/create-session-config.ts';
 import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 import {
   createTestDb,
@@ -39,6 +40,7 @@ beforeEach(async () => {
   await db.createSession(createTestSession(root));
   const sessions = {
     createSession: async (input: { sessionId: string; config: Partial<Session['config']> }) => {
+      admitCreateSessionConfig(input.config);
       await db.createSession({
         ...createTestSession(input.sessionId),
         config: { ...createTestSession(input.sessionId).config, ...input.config },
@@ -105,6 +107,98 @@ test('Front removes inherited catalog tools from an existing session without rep
   expect(session.config.toolSelection).toEqual({ version: 1, choices: {} });
   expect(session.config.disallowedTools).toContain('mcp__exa');
   expect(session.sdkSessionId).toBe('retained-front-history');
+});
+
+test.each(['archived', 'ended'] as const)(
+  'reactivating an %s Front session retains its SDK history',
+  async (status) => {
+    await db.createSession({
+      ...createTestSession(front),
+      status,
+      archivedAt: new Date().toISOString(),
+      sdkSessionId: 'retained-front-history',
+    });
+    const session = await frontSession(
+      service,
+      { conversationId, askOrigin: { sessionId: root, messageId: crypto.randomUUID() } },
+      model
+    );
+    expect(session.status).toBe('active');
+    expect(session.archivedAt).toBeUndefined();
+    expect(db.captureSessionRuntimeSettings(front)?.archivedAt).toBeNull();
+    expect(session.sdkSessionId).toBe('retained-front-history');
+  }
+);
+
+test('concurrent first Front deliveries converge on one session', async () => {
+  const create = service.sessions.createSession.bind(service.sessions);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let arrivals = 0;
+  vi.spyOn(service.sessions, 'createSession').mockImplementation(async (input) => {
+    arrivals++;
+    if (arrivals === 2) release();
+    await gate;
+    return create(input);
+  });
+  const ask = { conversationId, askOrigin: { sessionId: root, messageId: crypto.randomUUID() } };
+  const sessions = await Promise.all([
+    frontSession(service, ask, model),
+    frontSession(service, ask, model),
+  ]);
+  expect(sessions.map((session) => session.id)).toEqual([front, front]);
+  expect(arrivals).toBe(2);
+  expect(attach).toHaveBeenCalledTimes(2);
+});
+
+test('concurrent Front tool alignment accepts an already-converged selection', async () => {
+  const existing = createTestSession(front);
+  await db.createSession({
+    ...existing,
+    config: {
+      ...existing.config,
+      toolSelection: {
+        version: 1,
+        choices: { 'mcp:legacy': { selected: true, aliases: ['legacy'] } },
+      },
+    },
+  });
+  const commit = db.casSessionRuntimeSettings.bind(db);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let arrivals = 0;
+  vi.spyOn(db, 'casSessionRuntimeSettings').mockImplementation(async (snapshot, patch) => {
+    arrivals++;
+    if (arrivals === 2) release();
+    await gate;
+    return commit(snapshot, patch);
+  });
+  const ask = { conversationId, askOrigin: { sessionId: root, messageId: crypto.randomUUID() } };
+  const sessions = await Promise.all([
+    frontSession(service, ask, model),
+    frontSession(service, ask, model),
+  ]);
+  expect(sessions.map((session) => session.config.toolSelection)).toEqual([
+    { version: 1, choices: {} },
+    { version: 1, choices: {} },
+  ]);
+  expect(arrivals).toBe(2);
+});
+
+test('Front creation still propagates a failure when no session was created', async () => {
+  vi.spyOn(service.sessions, 'createSession').mockRejectedValueOnce(new Error('create_refused'));
+  await expect(
+    frontSession(
+      service,
+      { conversationId, askOrigin: { sessionId: root, messageId: crypto.randomUUID() } },
+      model
+    )
+  ).rejects.toThrow('create_refused');
+  expect(db.getSession(front)).toBeNull();
 });
 
 test('dual mode refuses Back publication and single mode restores it', async () => {
