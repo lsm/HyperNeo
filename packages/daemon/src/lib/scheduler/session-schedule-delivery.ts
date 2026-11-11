@@ -21,7 +21,12 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
     const value = outcome.value as
       | {
           ok: true;
-          value: { status?: WorkStatus; unconfirmed?: boolean; turnQuestion?: WorkTurnQuestion };
+          value: {
+            status?: WorkStatus;
+            inputId?: string;
+            unconfirmed?: boolean;
+            turnQuestion?: WorkTurnQuestion;
+          };
         }
       | { ok: false; reason: string; detail: string };
     if (!value.ok && value.reason !== 'not_found' && value.reason !== 'not_open')
@@ -73,7 +78,7 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
           return 'unconfirmed';
         const sent = await invoke('work.send', { ref, message, from: origin, notice: true });
         if (!sent.ok) return 'target_gone';
-        return sent.value.unconfirmed ? 'unconfirmed' : undefined;
+        return sent.value.unconfirmed || sent.value.inputId ? 'unconfirmed' : undefined;
       }
       const sent = await gatewayFor(db.getDatabase()).call(
         enqueueMailboxAdmission,

@@ -89,7 +89,7 @@ export function createWorkerInputDelivery(
   const reportFailure = async (
     job: Job,
     facts: Facts,
-    outcome: Extract<ReturnType<typeof readDriverOutcome>, { failure: string }>
+    outcome: Extract<ReturnType<typeof readDriverOutcome>, { failure: string }> & { notSent?: true }
   ) => {
     if (!(await gateway.call(workerInputWrites, 'recordFailure', job, outcome)))
       return { fenced: true };
@@ -109,7 +109,10 @@ export function createWorkerInputDelivery(
       return { waiting: plan.detail };
     }
     if (plan.action === 'fail' || plan.action === 'uncertain')
-      return reportFailure(job, facts, { failure: plan.detail });
+      return reportFailure(job, facts, {
+        failure: plan.detail,
+        ...(plan.action === 'fail' && !facts.payload.dispatched ? { notSent: true as const } : {}),
+      });
     const ref = facts.ref!;
     const route = pickRoute('send', ref, deps.adapters());
     if ('reason' in route) {
@@ -143,7 +146,11 @@ export function createWorkerInputDelivery(
         { verb: 'send', ref },
         { kind: 'completed', value: result }
       );
-      if ('failure' in outcome) return reportFailure(job, facts, outcome);
+      if ('failure' in outcome)
+        return reportFailure(job, facts, {
+          ...outcome,
+          ...(!result.ok && result.notSent ? { notSent: true as const } : {}),
+        });
       const sent = facts.status
         ? readDriverSent(
             { kind: 'completed', value: facts.status },

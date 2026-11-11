@@ -88,9 +88,23 @@ export function createNeoQuestionAnswerDelivery(
             ask.sessionId,
             'event'
           );
+        const queued = route.receipt
+          ? await sessions.inputs.queuedFor(route.todoId, text, ref)
+          : null;
+        if (queued) {
+          if (!queued.outcome) return false;
+          if ('failure' in queued.outcome) {
+            if (NotSent.safeParse({ ok: false, ...queued.outcome }).success) {
+              store.questionAnswers.retry(route.id, key);
+              return false;
+            }
+          } else if (!queued.outcome.delivery?.unconfirmed) {
+            return store.questionAnswers.accept(route.id, key, Date.now(), key);
+          }
+        }
         const claimed = store.questionAnswers.claim(route.id, key);
         let receipt: string | null = null;
-        if (claimed || ref.adapter === 'hyperneo') {
+        if (claimed || (ref.adapter === 'hyperneo' && !queued)) {
           const result = await invoke(caller, 'work.send', {
             ref,
             message: text,
@@ -99,7 +113,8 @@ export function createNeoQuestionAnswerDelivery(
           });
           const value = result.kind === 'completed' ? result.value : null;
           const sent = Sent.safeParse(value);
-          if (sent.success && !sent.data.value.unconfirmed) receipt = key;
+          if (sent.success && !sent.data.value.unconfirmed && !sent.data.value.inputId)
+            receipt = key;
           else if (NotSent.safeParse(value).success) store.questionAnswers.retry(route.id, key);
         } else if (
           !ReadWorkInputSchema.safeParse({
@@ -120,7 +135,11 @@ export function createNeoQuestionAnswerDelivery(
             status.data.ok &&
             status.data.value.ref.adapter === ref.adapter &&
             status.data.value.ref.id === ref.id &&
-            status.data.value.recentInputs?.some((input) => input.text.split(/\s/, 1)[0] === marker)
+            status.data.value.recentInputs?.some(
+              (input) =>
+                input.text.split(/\s/, 1)[0] === marker ||
+                (ref.adapter === 'hyperneo' && input.text.endsWith(`\n${marker}`))
+            )
           )
             receipt = key;
         } else {

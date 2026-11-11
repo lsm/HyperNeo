@@ -141,7 +141,7 @@ export class WorkerInputJobs {
 
   recordFailure(
     job: Job,
-    outcome: Extract<ReturnType<typeof readDriverOutcome>, { failure: string }>
+    outcome: Extract<ReturnType<typeof readDriverOutcome>, { failure: string }> & { notSent?: true }
   ): boolean {
     const current = new JobQueueRepository(this.db).getJob(job.id);
     if (current?.status !== 'processing' || current.claimToken !== job.claimToken) return false;

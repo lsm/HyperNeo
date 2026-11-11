@@ -8,7 +8,6 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoQuestionAnswerDelivery } from '../../../packages/daemon/src/lib/neo/question-answer-delivery.ts';
-import { createSendMessageOperation } from '../../../packages/daemon/src/lib/messaging/message-send.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { createNeoWorkerQuestionWriter } from '../../../packages/daemon/src/lib/neo/question-operations.ts';
 
@@ -35,7 +34,6 @@ async function rpc(name: string, input: unknown) {
   receipts.push({ name, result });
   return result.reply.value ?? result.reply;
 }
-let release = () => {};
 let answer: Promise<unknown> | undefined;
 try {
   await app.spaceRuntimeService.ready();
@@ -58,38 +56,30 @@ try {
     return report.question;
   };
   const target = await seed('target', 'hyperneo', 'synthetic-worker');
-  let entered = () => {};
-  const admitted = new Promise<void>((resolve) => { entered = resolve; });
-  const barrier = new Promise<void>((resolve) => { release = resolve; });
-  const outcomes: unknown[] = [];
-  const send = createSendMessageOperation(app.db.getJobQueueRepo(), (id) => app.db.getSession(id)?.status ?? null, undefined, undefined, async () => {
-    entered(); await barrier; return 'Synthetic Neo';
-  });
   const registry = app.sessionManager.getOperationRegistry();
-  const get = registry.get.bind(registry);
-  registry.get = (name) => name !== 'message.send' ? get(name) : { ...send, execute: async (input, caller) => {
-    const outcome = await send.execute(input, caller);
-    outcomes.push(outcome);
-    return outcome;
-  } };
   const sweep = createNeoQuestionAnswerDelivery(store, sessions,
     (caller, name, input) => invokeOperation(registry, name, input, caller),
     async () => {},
     async (todo) => store.recompute(todo, {}, Date.now(), { state: 'no_opinion' }, async () => {}),
     (error) => { throw error; });
   answer = rpc('neo.question.answer', { questionId: target.id, answer: ['Staging'] });
-  await admitted;
-  await sweep();
-  assert.match(JSON.stringify(outcomes[0]), /duplicate/);
-  release();
   assert.equal((await answer as { ok: boolean }).ok, true);
-  const observed = { target: await rpc('neo.question.get', { questionId: target.id }), todo: store.getTodo('target'), outcomes };
+  assert.equal(store.questionAnswers.list(target.id)[0].state, 'pending');
+  await sweep();
+  assert.equal(sessions.inputs.list('target').length, 1, 'the competing sweep must retain one queued input');
+  app.jobProcessor.start();
+  const deadline = Date.now() + 15000;
+  while (!sessions.inputs.list('target').some((input) => input.outcome && 'ref' in input.outcome) && Date.now() < deadline)
+    await new Promise((done) => setTimeout(done, 25));
+  assert(sessions.inputs.list('target').some((input) => input.outcome && 'ref' in input.outcome));
+  await sweep();
+  const observed = { target: await rpc('neo.question.get', { questionId: target.id }), todo: store.getTodo('target'), inputs: sessions.inputs.list('target') };
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
-  assert.equal(observed.target.answerDelivery[0].state, 'accepted', 'a competing duplicate rejection must not strand the accepted answer');
+  assert.equal(observed.target.answerDelivery[0].state, 'accepted');
   assert.equal(observed.todo?.state, 'doing');
-  console.log('PASS: overlapping answer RPC and sweep retain accepted delivery and release the hold');
+  assert.equal(observed.inputs.length, 1);
+  console.log('PASS: overlapping answer delivery and sweep retain one native submission and release the hold after admission');
 } finally {
-  release();
   await answer;
   await app.cleanup();
   for (const name of ['data', 'home', 'tmp', 'bin', 'workspace']) rmSync(join(run, name), { recursive: true, force: true });

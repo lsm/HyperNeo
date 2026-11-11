@@ -7,7 +7,7 @@ import type { Database } from '../sqlite-compat.ts';
 type Target =
   | Extract<NeoDriverTarget, { verb: 'start' | 'send' }>
   | { verb: 'todo'; todoId: string };
-type Outcome = ReturnType<typeof readDriverOutcome>;
+type Outcome = ReturnType<typeof readDriverOutcome> & { notSent?: true };
 type InputRow = {
   id: string;
   todoId: string | null;
@@ -114,6 +114,10 @@ export class WorkDeliveryInputRepository {
     ).map(readInput);
   }
 
+  queuedFor(todoId: string, message: string, ref: WorkRef) {
+    return gatewayFor(this.db).run(findWorkDeliveryInput, { todoId, message, ref });
+  }
+
   openWorkerRefs(): { ref: WorkRef; lastActivityAt: number | null }[] {
     const rows = this.db
       .prepare(`WITH workers(ref) AS (
@@ -146,3 +150,19 @@ export class WorkDeliveryInputRepository {
     ).map(readInput);
   }
 }
+
+export const findWorkDeliveryInput = defineDbOp({
+  name: 'work.deliveryInput.find',
+  mode: 'read',
+  run: (db: Database, input: { todoId: string; message: string; ref: WorkRef }) =>
+    new WorkDeliveryInputRepository(db)
+      .list(input.todoId)
+      .findLast(
+        (row) =>
+          row.message === input.message.trim() &&
+          row.target.verb === 'send' &&
+          row.target.ref.adapter === input.ref.adapter &&
+          row.target.ref.id === input.ref.id &&
+          row.target.ref.daemon === input.ref.daemon
+      ) ?? null,
+});

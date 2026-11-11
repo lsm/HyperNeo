@@ -29,3 +29,10 @@ Deferred adapter refusals, thrown transport errors and live-prompt refusals must
 retain their failure outcome when notification fails. Their jobs wait for the
 report receiver without consuming failure retries, and recovery sends one report
 with no additional native submission. The fixture covers these failure paths.
+
+The helper also answers a real worker card through neo.question.answer while
+that worker is busy. The route and todo stay held after daemon acceptance.
+After native admission, the real driver refresh accepts the stored answer and
+the SDK inbox contains it. Consumer regressions additionally cover definite
+failure retries, uncertain-outcome reconciliation and scheduled wakes keeping
+their source baseline intact while their worker input is unconfirmed.
