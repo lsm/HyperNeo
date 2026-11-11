@@ -27,6 +27,7 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
   let question = false;
   const sent: string[] = [];
   const reports: string[] = [];
+  const reportIds = new Set<string>();
   let reportUnavailable = false;
   const adapter = {
     id: ref.adapter,
@@ -65,9 +66,10 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
     daemonName: 'synthetic',
     isOpenTodo: () => true,
   };
-  const delivery = createWorkerInputDelivery(db, deps, async (_id, detail) => {
+  const delivery = createWorkerInputDelivery(db, deps, async (id, detail) => {
     if (reportUnavailable) throw new Error('Synthetic report receiver is unavailable');
-    reports.push(detail);
+    if (!reportIds.has(id)) reports.push(detail);
+    reportIds.add(id);
   });
   const registry = createOperationRegistry(
     createWorkVerbOperations({ ...deps, queueInput: delivery.accept })
@@ -164,6 +166,46 @@ describe('durable worker follow-ups', () => {
     await h.tick();
     expect(h.sent.join('\n')).toContain('Keep this exact follow-up');
     expect(h.jobs.listJobs({ queue: 'worker_input' })[0].status).toBe('completed');
+  });
+
+  test('a busy input waits for the driver refresh cadence before another status read', async () => {
+    let reads = 0;
+    const h = fixture('codex-desktop', {
+      status: async () => {
+        reads++;
+        return { ok: false, reason: 'unreachable', detail: 'Synthetic receiver is offline' };
+      },
+    });
+    await h.send('Retained follow-up');
+    const before = Date.now();
+    await h.tick();
+    const readsAfterWait = reads;
+    expect(h.jobs.listJobs({ queue: 'worker_input' })[0].runAt).toBeGreaterThanOrEqual(
+      before + 60_000
+    );
+    expect(h.jobs.dequeue('worker_input', 1)).toEqual([]);
+    expect(reads).toBe(readsAfterWait);
+  });
+
+  test('retrying the same answer reports a persistent refusal once', async () => {
+    const h = fixture();
+    h.setStatus('needs_you');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await h.delivery.accept(
+        { ref: h.ref, message: 'The same human answer', idempotencyKey: 'synthetic-answer' },
+        'session:synthetic-neo',
+        caller
+      );
+      await h.tick();
+    }
+    expect(h.db.prepare('SELECT COUNT(*) AS count FROM work_delivery_inputs').get()).toEqual({
+      count: 2,
+    });
+    expect(h.reports).toEqual(['needs_you: its session is waiting on the human.']);
+    expect(
+      h.jobs.listJobs({ queue: 'worker_input' }).every((job) => job.status === 'completed')
+    ).toBe(true);
+    expect(h.sent).toEqual([]);
   });
 
   test('question-stop answer is delivered immediately', async () => {
