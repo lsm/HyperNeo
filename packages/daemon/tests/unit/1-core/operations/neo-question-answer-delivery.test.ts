@@ -1,3 +1,4 @@
+import { WorkDeliveryInputRepository } from '../../../../src/storage/repositories/work-delivery-input-repository.ts';
 import { vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -774,3 +775,92 @@ test('a lost Space answer reconciles after fifty older and 160 later landed inpu
     f.db.close();
   }
 });
+
+test.each(['hyperneo', 'codex-desktop'])(
+  'a queued %s answer stays pending until native admission',
+  async (adapter) => {
+    const f = adapter === 'hyperneo' ? await fixture() : await externalFixture();
+    if (adapter === 'hyperneo') f.store.answerQuestion(f.question, ['Staging'], 'chat', 4);
+    const ref = { adapter, id: 'worker' };
+    const inputs = new WorkDeliveryInputRepository(f.db);
+    let inputId = '';
+    let sends = 0;
+    const flush = externalDelivery(f, async (_caller, name, input) => {
+      expect(name).toBe('work.send');
+      sends++;
+      inputId = await inputs.accept(
+        'todo',
+        'session:neo',
+        { verb: 'send', ref },
+        String(input.message),
+        Date.now()
+      );
+      return { kind: 'completed', value: { ok: true, value: { delivered: false, inputId } } };
+    });
+    try {
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+      await flush();
+      expect(sends).toBe(1);
+      expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+      await inputs.recordOutcome(inputId, { ref, delivery: { delivered: true } }, Date.now());
+      await flush();
+      expect(sends).toBe(1);
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+      expect(f.store.getTodo('todo')?.state).toBe('doing');
+    } finally {
+      f.db.close();
+    }
+  }
+);
+
+test.each([true, false])(
+  'a failed queued answer retries only with proof it was unsent, notSent=%s',
+  async (notSent) => {
+    const f = await externalFixture();
+    const ref = { adapter: 'codex-desktop', id: 'worker' };
+    const inputs = new WorkDeliveryInputRepository(f.db);
+    let inputId = '';
+    let sends = 0;
+    const flush = externalDelivery(f, async (_caller, name, input) => {
+      if (name === 'work.send') {
+        sends++;
+        inputId = await inputs.accept(
+          'todo',
+          'session:neo',
+          { verb: 'send', ref },
+          String(input.message),
+          Date.now()
+        );
+        return { kind: 'completed', value: { ok: true, value: { delivered: false, inputId } } };
+      }
+      expect(name).toBe('work.read');
+      return {
+        kind: 'completed',
+        value: { ok: false, reason: 'not_found', detail: 'No native answer yet' },
+      };
+    });
+    try {
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+      const failure = {
+        failure: 'Synthetic refusal or lost acknowledgement',
+        reason: 'not_delivered',
+        ...(notSent ? { notSent: true as const } : {}),
+      };
+      await inputs.recordOutcome(inputId, failure, Date.now());
+      await flush();
+      await flush();
+      expect(sends).toBe(notSent ? 2 : 1);
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+      expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+      if (notSent) {
+        await inputs.recordOutcome(inputId, { ref, delivery: { delivered: true } }, Date.now());
+        await flush();
+        expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+      }
+    } finally {
+      f.db.close();
+    }
+  }
+);

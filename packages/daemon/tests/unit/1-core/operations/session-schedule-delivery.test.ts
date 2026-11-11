@@ -420,4 +420,44 @@ describe('schedule target lifecycle and external delivery', () => {
       factsDigest: null,
     });
   });
+  test('a queued worker input keeps its schedule unconfirmed and its source baseline intact', async () => {
+    const { scheduler, row, job } = create('codex-desktop');
+    let commits = 0;
+    scheduler.registerSource({
+      kind: 'reminder',
+      facts: async () => ({
+        digest: 'reminder',
+        summary: 'Check release',
+        commit: () => {
+          commits++;
+        },
+      }),
+      message: (_id, change) => change.summary,
+    });
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'work.send',
+        description: 'Synthetic queued input',
+        inputSchema: z.unknown(),
+        resultSchema: z.unknown(),
+        execute: async () => ({
+          ok: true,
+          value: { delivered: false, inputId: 'synthetic-pending-input' },
+        }),
+      }),
+    ]);
+    const result = await createSessionScheduleFire({
+      scheduler,
+      status: async () => 'done',
+      deliver: createScheduleDelivery(db, () => registry).deliver,
+    })(job);
+    expect(result).toEqual({ outcome: 'skipped_delivery_unconfirmed' });
+    expect(scheduler.repo.get(row.id)).toMatchObject({
+      status: 'active',
+      factsDigest: null,
+      lastOutcome: 'skipped_delivery_unconfirmed',
+      pendingJobId: expect.any(String),
+    });
+    expect(commits).toBe(0);
+  });
 });
