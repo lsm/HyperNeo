@@ -14,6 +14,7 @@ export function neoReadTools() {
       `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`,
       ...NEO_RESIDENT_FAMILIES.map(({ name }) => `mcp__${OPERATIONS_MCP_SERVER_NAME}__${name}`),
       'mcp__fetch-mcp',
+      'mcp__exa',
     ],
     permissionMode: 'dontAsk' as const,
     coordinatorMode: false,
