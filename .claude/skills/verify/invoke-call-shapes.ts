@@ -91,7 +91,7 @@ try {
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['invoke', 'neo_work', 'neo_todo', 'neo_publish', 'neo_ask', 'neo_question', 'neo_session', 'neo_speech'].sort());
   const description = listed.tools[0].description!;
   const schemas: unknown[] = [];
-  for (const name of ['work.send', 'neo.publication.publish', 'neo.todo.add', 'neo.todo.continue', 'neo.todo.edit', 'neo.github.read', 'neo.question.ask', 'neo.ask.settle', 'neo.snapshot', 'work.find', 'neo.ask.open', 'neo.todo.close', 'neo.question.get']) {
+  for (const name of ['work.send', 'neo.publication.publish', 'neo.todo.add', 'neo.todo.continue', 'neo.todo.edit', 'neo.question.ask', 'neo.ask.settle', 'neo.snapshot', 'work.find', 'neo.ask.open', 'neo.todo.close', 'neo.question.get']) {
     const reply = await client.callTool({ name: 'invoke', arguments: { name: 'operations.describe', input: { name } } });
     assert(Array.isArray(reply.content));
     const described = JSON.parse((reply.content[0] as { text: string }).text);
@@ -108,7 +108,7 @@ try {
   assert.deepEqual(plainListed.tools.map(tool => tool.name), ['invoke']);
   assert.equal(plainListed.tools[0].description, base);
   console.log('PASS: plain session MCP tools/list retains the unaugmented description.');
-  console.log(`PASS: eight Neo tools expose compact routes and thirteen full schemas through operations.describe.`);
+  console.log(`PASS: eight Neo tools expose compact routes and twelve full schemas through operations.describe.`);
 } finally {
   for (const [attached, reader] of roleClients) {
     await reader.close();

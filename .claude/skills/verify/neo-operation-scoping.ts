@@ -38,9 +38,9 @@ try {
   const settings = new SettingsRepository(app.db.getDatabase());
   const initial = settings.getGlobalSettings();
   settings.updateGlobalSettings({ neo: { ...initial.neo, packs: [] } });
-  assert.equal((await call('neo.github.read', {})).code, 'forbidden');
-  assert.equal((await call('operations.describe', { name: 'neo.github.read' })).found, false);
-  const disabled = await call('operations.list', { prefix: 'neo.github', all: true });
+  assert.equal((await call('neo.coding.pr.file', {})).code, 'forbidden');
+  assert.equal((await call('operations.describe', { name: 'neo.coding.pr.file' })).found, false);
+  const disabled = await call('operations.list', { prefix: 'neo.coding.pr', all: true });
   assert.deepEqual(disabled, { total: 0, names: [], next: null });
   const index = await call('operations.list', {});
   assert(Array.isArray(index.prefixes));
@@ -57,15 +57,15 @@ try {
   const human = await rpc({ name: 'operations.list', input: { all: true } }, { messageId: 'proof', sessionId: 'global', method: 'operation.invoke', timestamp: 'proof' });
   assert.equal(JSON.stringify(human), JSON.stringify(listOperationSummaries(registry, { source: 'rpc', principal: 'local' }, true)));
   assert(Array.isArray(human));
-  assert(human.some((entry: { name: string }) => entry.name === 'neo.github.read'));
+  assert(human.some((entry: { name: string }) => entry.name === 'neo.coding.pr.file'));
   evidence.push({ humanRpcCount: human.length, byteParity: true, indexBytes: Buffer.byteLength(JSON.stringify(index)) });
-  const typo = await call('neo.github.readd', {});
-  assert(!typo.message.includes('neo.github.read,'));
-  assert(!typo.message.includes('neo.github.read?'));
+  const typo = await call('neo.coding.pr.filee', {});
+  assert(!typo.message.includes('neo.coding.pr.file,'));
+  assert(!typo.message.includes('neo.coding.pr.file?'));
   settings.updateGlobalSettings({ neo: { ...initial.neo, packs: ['coding'] } });
-  assert.equal((await call('operations.describe', { name: 'neo.github.read' })).found, true);
-  const enabled = await call('operations.list', { prefix: 'neo.github' });
-  assert.deepEqual(enabled, { total: 1, names: ['neo.github.read'], next: null });
+  assert.equal((await call('operations.describe', { name: 'neo.coding.pr.file' })).found, true);
+  const enabled = await call('operations.list', { prefix: 'neo.coding.pr' });
+  assert.deepEqual(enabled, { total: 1, names: ['neo.coding.pr.file'], next: null });
   const first = await call('operations.list', { prefix: 'neo' });
   assert(first.names.length <= 20);
   if (first.next) {
@@ -74,9 +74,9 @@ try {
     assert.equal(next.total, first.total);
   }
   evidence.push({ firstPageBytes: Buffer.byteLength(JSON.stringify(first)) });
-  const read = await call('neo.github.read', { url: 'https://github.com/example/project/pull/1' });
+  const read = await call('neo.coding.pr.file', { url: 'https://github.com/example/project/pull/1' });
   assert.notEqual(read.code, 'forbidden');
-  assert.notEqual(read.code, 'invalid_input');
+  assert.equal(read.code, 'invalid_input');
   assert.notEqual(read.code, 'execution_failed');
   console.log(`PASS registry=${registry.entries.length} disabled=${disabled.total} enabled=${enabled.total} humanRpc=${human.length}`);
 } finally {

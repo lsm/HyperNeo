@@ -21,7 +21,6 @@ export const NEO_OPERATION_NAMES = [
   'neo.draft.recover',
   'neo.front.model.set',
   'neo.front.set',
-  'neo.github.read',
   'neo.home.github',
   'neo.home.init',
   'neo.home.read',

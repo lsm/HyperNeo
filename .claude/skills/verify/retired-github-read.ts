@@ -5,7 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
+import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
+import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
 import { SettingsRepository } from '../../../packages/daemon/src/storage/repositories/settings-repository.ts';
 
 const run = resolve(process.argv.at(-1)!);
@@ -23,15 +25,22 @@ console.log(JSON.stringify(args[1]==='list'?[item]:item));
 `, { mode: 0o700 });
 const app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
 const evidence: unknown[] = [];
+let client: Client | undefined;
+let server: ReturnType<typeof createOperationMcpServer> | undefined;
 try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
   assert(![8399, 8499].includes(app.server.port));
   const registry = app.sessionManager.getOperationRegistry();
-  const handler = createOperationMcpHandler(registry, () => ({ role: 'neo', sessionId: 'synthetic' }));
+  server = createOperationMcpServer(registry, () => ({ role: 'neo', sessionId: 'synthetic' }), undefined, 'neo');
+  client = new Client({ name: 'retirement-proof', version: '1' });
+  const [left, right] = InMemoryTransport.createLinkedPair();
+  await server.instance.connect(right);
+  await client.connect(left);
   const call = async (name: string, input: unknown) => {
-    const reply = await handler({ name, input });
-    return JSON.parse(reply.content[0].text);
+    const reply = await client!.callTool({ name: 'invoke', arguments: { name, input } });
+    assert(Array.isArray(reply.content));
+    return JSON.parse((reply.content[0] as { text: string }).text);
   };
   const settings = new SettingsRepository(app.db.getDatabase());
   for (const packs of [[], ['coding']]) {
@@ -57,5 +66,7 @@ try {
   console.log(`PASS registry=${registry.entries.length} retiredOperations=1 ghReads=${requests.length} packStates=2`);
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
+  await client?.close();
+  await server?.instance.close();
   await app.cleanup();
 }
