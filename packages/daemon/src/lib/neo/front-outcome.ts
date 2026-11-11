@@ -5,6 +5,8 @@ import { neoPublicationWrites } from '../../storage/repositories/neo-publication
 import { neoDerivedId } from './derived-id.ts';
 import type { NeoService } from './service.ts';
 
+const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
+
 export async function settleConvoInput(
   service: NeoService,
   job: Job,
@@ -16,35 +18,32 @@ export async function settleConvoInput(
   if (owner?.owner) return { delivered: true, outcome: 'answered' };
   const ask = service.asks.find(conversationId, messageId);
   if (!ask) return { delivered: false };
-  if (
-    service.db
-      .getSDKMessageRepo()
-      .getDeliveryMessageIdsByUuids(ask.askOrigin.sessionId, [messageId]).length
-  )
-    return { delivered: true, outcome: 'handed_off' };
-  const terminal = await service.db.gateway.call(
-    neoFrontInputReads,
-    'terminal',
-    conversationId,
-    sessionId,
-    messageId
-  );
+  const sdk = service.db.getSDKMessageRepo();
+  const hasNeoDelivery = (id: string) =>
+    sdk.getDeliveryMessageIdsByUuids(ask.askOrigin.sessionId, [id]).length > 0 &&
+    !sdk.getMessageByStatusAndUuid(ask.askOrigin.sessionId, 'failed', id);
+  if (hasNeoDelivery(messageId)) return { delivered: true, outcome: 'handed_off' };
+  const deadline = Date.parse(ask.createdAt) + SETTLEMENT_TIMEOUT_MS;
+  const terminal =
+    (await service.db.gateway.call(
+      neoFrontInputReads,
+      'terminal',
+      conversationId,
+      sessionId,
+      messageId
+    )) ?? (Date.now() >= deadline ? { messageIds: [messageId], text: '' } : null);
   const pending = async () => {
     await service.db.gateway.call(
       jobQueueWrites,
       'requeue',
       job.id,
-      Date.now() + 1000,
+      Math.min(Date.now() + 1000, deadline),
       job.claimToken
     );
     return { delivered: false, pending: true };
   };
   if (!terminal) return pending();
-  const ids = terminal.messageIds.filter(
-    (id) =>
-      !service.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(ask.askOrigin.sessionId, [id])
-        .length
-  );
+  const ids = terminal.messageIds.filter((id) => !hasNeoDelivery(id));
   if (!ids.length) return { delivered: true, outcome: 'handed_off' };
   const receipt = await service.db.gateway.call(
     neoPublicationWrites,

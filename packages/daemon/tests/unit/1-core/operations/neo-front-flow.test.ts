@@ -620,22 +620,63 @@ test('the canonical Neo publication path remains available in dual mode', async 
   ).toMatchObject({ accepted: true });
 });
 
-test('Convo delivery remains pending until a terminal reply or handoff commits', async () => {
-  await accept();
+test('Convo delivery remains pending only until the accepted input deadline', async () => {
+  const { id } = await accept();
   const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
-  expect(await createNeoFrontHandler(service)(job)).toMatchObject({
-    delivered: false,
-    pending: true,
-  });
+  const handler = createNeoFrontHandler(service);
+  expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
   expect(db.getJobQueueRepo().getJob(job.id)?.status).toBe('pending');
+  await db.saveUserMessage(
+    front,
+    {
+      type: 'user',
+      uuid: id as UUID,
+      session_id: front,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Hello' },
+    },
+    'enqueued'
+  );
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  const deadline = Date.parse(service.asks.find(conversationId, id)!.createdAt) + 30 * 60_000;
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(deadline - 1);
+  try {
+    const pending = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+    expect(await handler(pending)).toMatchObject({ delivered: false, pending: true });
+    expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline);
+    clock.mockReturnValue(deadline);
+    const expired = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+    expect(await handler(expired)).toMatchObject({ delivered: true, outcome: 'answered' });
+    const replies = service.publications.list(conversationId)!;
+    expect(replies).toHaveLength(1);
+    expect(replies[0].replyTo).toEqual([id]);
+    expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+    await handler(expired);
+    expect(service.publications.list(conversationId)).toHaveLength(1);
+  } finally {
+    clock.mockRestore();
+  }
 });
 
-test.each(['A plain terminal answer', ''])(
-  'the daemon resolves a tool-free Convo terminal visibly (%s)',
-  async (text) => {
+test.each([
+  { text: 'A plain terminal answer', failedNeo: false },
+  { text: '', failedNeo: false },
+  { text: 'A plain terminal answer', failedNeo: true },
+  { text: '', failedNeo: true },
+])(
+  'the daemon resolves a tool-free Convo terminal visibly ($text, failed Neo delivery $failedNeo)',
+  async ({ text, failedNeo }) => {
     const { id, job } = await accept();
     const handler = createNeoFrontHandler(service);
     await handler(job);
+    if (failedNeo) {
+      await db.saveUserMessage(
+        root,
+        neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+        'failed'
+      );
+      expect(db.getSDKMessageRepo().getMessageByStatusAndUuid(root, 'failed', id)).not.toBeNull();
+    }
     await db.saveUserMessage(
       front,
       {
@@ -798,3 +839,26 @@ test.each(['creation', 'delivery'])(
     });
   }
 );
+
+test('a failed Neo delivery cannot complete the Convo error fallback', async () => {
+  const { id, job } = await accept();
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+    'failed'
+  );
+  vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
+  const handler = createNeoFrontHandler(service);
+  expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
+  const deadline = Date.parse(service.asks.find(conversationId, id)!.createdAt) + 30 * 60_000;
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(deadline);
+  try {
+    expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
+    const replies = service.publications.list(conversationId)!;
+    expect(replies).toHaveLength(1);
+    expect(replies[0].replyTo).toEqual([id]);
+    expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+  } finally {
+    clock.mockRestore();
+  }
+});

@@ -27,8 +27,14 @@ process.env.TEST_SDK_SESSION_DIR = join(run, 'sdk');
 const humanId = crypto.randomUUID();
 const handoffId = crypto.randomUUID();
 const requests: string[] = [];
+let exaRequests = 0;
 const model = KimiProvider.MODELS.find((entry) => entry.contextWindow >= 1_000_000)!;
 const fixture = createServer(async (request, response) => {
+  if (request.url === '/exa-probe') {
+    exaRequests++;
+    response.writeHead(404).end();
+    return;
+  }
   let raw = '';
   for await (const chunk of request) raw += chunk;
   if (request.url?.includes('count_tokens')) {
@@ -112,6 +118,7 @@ const childSessions = new Set<string>();
 QueryOptionsBuilder.prototype.build = async function (...args) {
   const options = await originalBuild.apply(this, args);
   childSessions.add(options.env?.HYPERNEO_SESSION_ID!);
+  assert.equal(options.mcpServers?.exa, undefined);
   return {
     ...options,
     ...(process.env.VERIFY_CLAUDE
@@ -208,6 +215,12 @@ try {
   );
   assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: true })).ok, true);
   assert.equal(app.db.getSession(front)?.config.queryMode, 'immediate');
+  const convo = await app.sessionManager.getSessionForControl(front);
+  assert(convo);
+  convo.mergeRuntimeMcpServers({
+    exa: { type: 'http', url: `http://127.0.0.1:${port}/exa-probe` },
+  });
+  assert(convo.getSessionData().config.mcpServers?.exa);
   assert.equal(
     (
       await invoke<{ ok: boolean }>('neo.message.send', {
@@ -268,6 +281,9 @@ try {
   assert.equal(app.db.getSession(front)?.sdkSessionId, nativeId);
   assert(childSessions.has(front));
   assert(app.db.getSDKMessageRepo().getSDKMessages(front).messages.length > 0);
+  assert.equal(exaRequests, 0);
+  evidence.configuredExaExcluded = true;
+  evidence.exaRequests = exaRequests;
   evidence.passed = true;
   evidence.nativeFrontSession = nativeId;
   evidence.replies = rows.map((row) => ({ text: row.fullText, replyTo: row.replyTo }));

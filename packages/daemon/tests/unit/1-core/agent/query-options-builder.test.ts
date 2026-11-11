@@ -2680,6 +2680,34 @@ describe('QueryOptionsBuilder', () => {
       expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
     });
 
+    it('excludes a configured Exa server from Convo attachment', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+      mockSession.config.operationTools = false;
+      mockSession.config.allowedTools = ['mcp__front__neo_send'];
+      mockSession.config.disallowedTools = ['mcp__exa'];
+      const kept = { type: 'http' as const, url: 'https://example.com/retained' };
+      mockSession.config.mcpServers = {
+        exa: { type: 'http', url: 'https://example.com/configured-exa' },
+        kept,
+      };
+      const options = await builder.build();
+      expect(options.mcpServers?.exa).toBeUndefined();
+      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+      expect(options.mcpServers?.kept).toEqual(kept);
+    });
+
+    it('excludes live Exa attachment when a veto replaces cached activation', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+      await builder.build();
+      expect(builder.getEffectiveMcpServers()?.exa).toBeDefined();
+      mockSession.config.disallowedTools = ['mcp__exa'];
+      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+    });
+
     it('keeps automatic Exa when neo_send is listed without an Exa veto', async () => {
       process.env.EXA_API_KEY = EXA_TEST_KEY;
       enableExaSettings();

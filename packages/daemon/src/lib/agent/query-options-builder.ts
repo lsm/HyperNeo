@@ -396,7 +396,8 @@ export class QueryOptionsBuilder {
   }
 
   private computeEffectiveMcpServers(
-    inputs = this.canonicalToolInputs()
+    inputs = this.canonicalToolInputs(),
+    config = this.admittedConfig()
   ): Record<string, SdkMcpServerConfig> | undefined {
     const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
       registryServers: inputs ? this.canonicalMcpServers(inputs) : this.getMcpServersFromRegistry(),
@@ -412,6 +413,7 @@ export class QueryOptionsBuilder {
     if (exa && !(exa.serverName in servers)) {
       servers[exa.serverName] = exa.serverConfig;
     }
+    if (config.disallowedTools?.includes('mcp__exa')) delete servers.exa;
     return Object.keys(servers).length > 0 ? servers : undefined;
   }
 
@@ -568,7 +570,7 @@ export class QueryOptionsBuilder {
       config.operationTools === false
         ? undefined
         : this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin);
-    const mergedMcpServers = this.computeEffectiveMcpServers(toolInputs);
+    const mergedMcpServers = this.computeEffectiveMcpServers(toolInputs, config);
 
     const queryOptions: Options = {
       model: sdkModelId,

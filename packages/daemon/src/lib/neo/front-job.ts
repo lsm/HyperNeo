@@ -48,6 +48,18 @@ export function createNeoFrontHandler(service: NeoService) {
                 : 'immediate',
             delivery: { origin: 'chat' },
           });
+          if (
+            service.db
+              .getSDKMessageRepo()
+              .getMessageByStatusAndUuid(ask.askOrigin.sessionId, 'failed', messageId)
+          )
+            return settleConvoInput(
+              service,
+              job,
+              conversationId,
+              frontSessionId(conversationId),
+              messageId
+            );
           return { delivered: true, outcome: 'handed_off' };
         };
         if (!front?.enabled || !front.model) return handoff();
