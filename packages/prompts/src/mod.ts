@@ -238,7 +238,6 @@ import mdToolCodingMergeRetry from './neo/tools/neo.coding.merge.retry.md' with 
 import mdToolCodingPrFile from './neo/tools/neo.coding.pr.file.md' with { type: 'text' };
 import mdToolCodingResult from './neo/tools/neo.coding.result.md' with { type: 'text' };
 import mdToolCodingSmoke from './neo/tools/neo.coding.smoke.md' with { type: 'text' };
-import mdToolCodingWritePlan from './neo/tools/neo.coding.write.plan.md' with { type: 'text' };
 import mdToolConversationRead from './neo/tools/neo.conversation.read.md' with { type: 'text' };
 import mdToolDraftRecover from './neo/tools/neo.draft.recover.md' with { type: 'text' };
 import mdToolHomeGithub from './neo/tools/neo.home.github.md' with { type: 'text' };
@@ -710,7 +709,6 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.coding.pr.file.md': mdToolCodingPrFile,
     'neo/tools/neo.coding.result.md': mdToolCodingResult,
     'neo/tools/neo.coding.smoke.md': mdToolCodingSmoke,
-    'neo/tools/neo.coding.write.plan.md': mdToolCodingWritePlan,
     'neo/tools/neo.conversation.read.md': mdToolConversationRead,
     'neo/tools/neo.draft.recover.md': mdToolDraftRecover,
     'neo/tools/neo.home.github.md': mdToolHomeGithub,

@@ -7,19 +7,6 @@
     "source": "sanitized historical input shape"
   },
   {
-    "operation": "neo.coding.write.plan",
-    "input": {
-      "repo": "synthetic/repo",
-      "targets": [{ "adapter": "codex-desktop", "model": "synthetic-model" }]
-    },
-    "canonical": {
-      "repo": "synthetic/repo",
-      "candidates": [{ "adapter": "codex-desktop", "model": "synthetic-model" }]
-    },
-    "error": "Invalid input: expected array, received undefined at candidates",
-    "source": "observed input shape supplied by Neo"
-  },
-  {
     "operation": "work.send",
     "input": {
       "ref": { "adapter": "hyperneo", "id": "synthetic-worker" },

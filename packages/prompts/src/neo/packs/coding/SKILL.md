@@ -88,9 +88,17 @@ Include coding.provenance in the existing first-use pack preference question.
 Use one preference shape for Write, Review and Verify: `write.harness/model/effort`,
 `review.harness/model/effort` and `verify.harness/model/effort` in the coding pack.
 All prefer a configuration; empty means default. Before starting a coding Write
-todo, call `neo.coding.write.plan` with the repo and available target configurations
-(default first), use its target in the existing todo start, and report its fallback
-explanations. Use the existing pack preference question to propose changes; never
+todo, read `write.harness`, `write.model` and `write.effort` with
+`pack.preferences.get` for the coding pack and repository scope. Repository keys
+match case-insensitively; use the saved scope spelling from `pack.preferences.list`.
+Trim saved preference text. A missing repository value inherits the global
+value; an explicit empty value uses the default for that field. Keep available target configurations in default-first order.
+Choose the candidate matching the most nonempty preferences, comparing harness
+to its adapter and model/effort to their corresponding fields. Break ties by the
+original default-first order. For each preference the selected target cannot
+match, report the preferred value and the fallback value being used. Pass the
+selected configuration as a `target` with `verb: "start"` to `neo.todo.add` with
+`start: true` through the existing coding todo path. Use the existing pack preference question to propose changes; never
 save unanswered defaults. Review preferences do not apply to configured bots.
 Read the saved repository preference with pack.preferences.get; an unanswered
 provenance preference falls back to on without saving a value or marking it answered.

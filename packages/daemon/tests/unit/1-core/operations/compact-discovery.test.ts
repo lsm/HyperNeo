@@ -169,7 +169,6 @@ describe('Neo compact prefix discovery', () => {
       'neo.coding.pr.file',
       'neo.coding.result',
       'neo.coding.smoke',
-      'neo.coding.write.plan',
       'neo.conversation.asks.read',
       'neo.conversation.image.read',
       'neo.conversation.read',
@@ -189,14 +188,14 @@ describe('Neo compact prefix discovery', () => {
       next: string;
       total: number;
     };
-    expect(first).toEqual({ total: 22, names: names.slice(0, 20), next: 'neo.peer.invite' });
+    expect(first).toEqual({ total: 21, names: names.slice(0, 20), next: 'neo.peer.list' });
     expect(await list(registry, { prefix: 'neo', cursor: first.next })).toEqual({
-      total: 22,
+      total: 21,
       names: names.slice(20),
       next: null,
     });
     expect(await list(registry, { prefix: 'neo', cursor: names.at(-1) })).toEqual({
-      total: 22,
+      total: 21,
       names: [],
       next: null,
     });

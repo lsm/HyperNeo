@@ -34,7 +34,7 @@ import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
 import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
-import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stage-preferences.ts';
+import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -105,7 +105,6 @@ export function createCodingPack(deps: {
     operations: [
       createCodingHumanMergeOperation(),
       createCodingRetryMergeOperation(deps.database, deps.prLedger),
-      createCodingWritePlanOperation(deps.database),
       createCodingPrFileOperation(deps.database),
     ],
     tracker: createCodingIssueTracker({

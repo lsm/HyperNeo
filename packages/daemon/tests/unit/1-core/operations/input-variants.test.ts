@@ -5,7 +5,6 @@ import {
   createOperationRegistry,
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
-import { createCodingWritePlanOperation } from '../../../../src/lib/neo/packs/coding/stage-preferences.ts';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -128,7 +127,6 @@ describe('operation input variants through the MCP door', () => {
     const db = new Database(':memory:');
     try {
       const operations = [
-        createCodingWritePlanOperation(() => db),
         ...createNeoQuestionOperations(
           new NeoAskTodoRepository(db),
           async () => {},

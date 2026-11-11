@@ -1,51 +1,22 @@
 # Coding target selection through the DB gateway
 
-Use shared isolation and the resource guard in SKILL.md; run heavy jobs serially.
+Use the shared isolated setup and resource guard in `../SKILL.md`.
 
 ```sh
-python3 .claude/skills/verify/lane-a-stage-target-db-run.py bun before
-python3 .claude/skills/verify/lane-a-stage-target-db-run.py bun verify
+bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/lane-a-stage-target-db.ts verify
 ```
 
-Every run owns fresh synthetic HOME/data/TMPDIR and an ephemeral non-8399 daemon. HTTP is
-refused and gh is a refusing stub. The runner retains evidence and deletes temporary
-daemon data after shutdown. Before mode restores the old selector/assignment files from
-origin/dev and restores the draft in finally; do not edit concurrently. Commit the guarded
-main regression before production changes.
+The helper saves Write/Review/Verify settings through authenticated WebSocket RPC.
+It calls the retained Verify selector through `CodingAssignmentsRepository` and
+the daemon gateway, checking default-first ordering, preferred targets, fallback
+explanations and persistence after restart. An unanswered repository saves nothing.
 
-Real neo.coding.write.plan WebSocket RPCs select default and preferred targets,
-explain unavailable preferences and retain the same selection after restart.
-Human preference RPCs save all nine Write/Review/Verify settings with their
-provenance. Invalid setting values are refused; unanswered repositories retain
-their first candidate without saving defaults. Filter assertions to target-stage
-settings because unrelated bookkeeping preferences may exist at startup.
+During selector calls, preference and alias SQL must stay off the main connection.
+Each decision runs through the read-only gateway. A held synthetic writer lock
+must allow the reader to return before release. Evidence records gateway commands,
+argument and reply sizes, durations and observed selections. The helper cleans up
+both isolated daemon instances. Actor dispatch remains covered by assignment
+contracts in CI. This journey does not claim native session startup.
 
-During plan RPCs, instrument preference/alias SQL on the main connection,
-excluding setting RPCs, fixtures and assertions. Baseline requires target SQL;
-fixed runs require zero. The complete preference lookup and selection decision
-runs in one dedicated read-only gateway command. Review/Verify assignment also
-awaits that shared command before external actor creation; existing actor tests
-retain fallback, provenance and target-selection contracts. This journey does
-not claim real actor dispatch or absence of other assignment admission SQL.
-
-The initial harness attempt failed because it expected every preference to be
-absent at startup; that failure is retained, not counted as a SQL regression.
-The corrected regression reaches the main-SQL assertion after all behaviour
-checks. No provider, credentials, model, GUI, actual GitHub, complete-daemon SQL
-absence or latency target is verified. Command duration and argument/reply sizes
-are recorded without separate queue, SQL or cloning attribution.
-
-Bind both successful runtime proofs to the committed application/helper tree:
-
-Only this journey and its evidence directory may change after the bound proof
-commit. Other source, test or helper changes require fresh committed proofs.
-
-The reader proof also holds a synthetic writer lock during a real Write-plan
-RPC. The reader must return the preferred configuration before lock release.
-The CI actor tests structured-clone gateway replies and make the selector
-connection query-only for its snapshot. An unsupported default configuration
-must be attempted once without persisting an assignment. Temporarily restoring
-reference comparison or write mode makes all four new default cases fail.
-The initial broad read-only fixture also blocked unrelated legacy bookkeeping;
-that attempt is retained, not counted as a selector regression. Query-only is
-now scoped to the selector command.
+Historical before-mode evidence concerns the original DB gateway migration.
+Current retirement verification uses verify mode against the checked-out tree.

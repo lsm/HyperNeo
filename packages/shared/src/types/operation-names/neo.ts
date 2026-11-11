@@ -14,7 +14,6 @@ export const NEO_OPERATION_NAMES = [
   'neo.coding.pr.file',
   'neo.coding.result',
   'neo.coding.smoke',
-  'neo.coding.write.plan',
   'neo.conversation.asks.read',
   'neo.conversation.image.read',
   'neo.conversation.read',
