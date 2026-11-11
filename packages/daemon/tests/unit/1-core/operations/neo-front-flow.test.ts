@@ -885,29 +885,6 @@ test('a pending Convo outcome does not reattach or redeliver the active session'
   expect(deliver).toHaveBeenCalledTimes(1);
 });
 
-test.each(['creation', 'delivery'])(
-  'a persistent Convo %s failure hands the original input to Neo once',
-  async (phase) => {
-    const { id, job } = await accept();
-    if (phase === 'creation')
-      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
-    else vi.spyOn(service, 'deliverForward').mockRejectedValue(new Error('Convo unavailable'));
-    const handler = createNeoFrontHandler(service);
-    for (let attempt = 0; attempt < 2; attempt++) {
-      expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
-    }
-    const sdk = db.getSDKMessageRepo();
-    expect(sdk.getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
-    expect(sdk.getMessageByStatusAndUuid(root, 'enqueued', id)).toMatchObject({
-      type: 'user',
-      inputKind: 'human',
-      uuid: id,
-    });
-    expect(sdk.markDeliveryConsumedByUuid(root, id)).not.toBeNull();
-    expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
-  }
-);
-
 test('a failed Neo delivery cannot complete the Convo error fallback', async () => {
   const { id, job } = await accept();
   await db.saveUserMessage(
@@ -986,8 +963,8 @@ test.each(['terminal', 'creation failure'])(
   }
 );
 
-test.each(['disabled', 'creation failure'])(
-  'a manual Neo hold survives the Convo deadline after %s',
+test.each(['disabled', 'dual'])(
+  'a manual Neo hold survives the Convo deadline in %s mode',
   async (path) => {
     const { id } = await accept();
     const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
@@ -996,8 +973,25 @@ test.each(['disabled', 'creation failure'])(
     });
     if (path === 'disabled')
       await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
-    else
-      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
+    else {
+      await frontSession(service, service.asks.find(conversationId, id)!, model);
+      await db.saveUserMessage(
+        front,
+        {
+          type: 'user',
+          uuid: id as UUID,
+          session_id: front,
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'Hello' },
+        },
+        'submitted'
+      );
+      await db.saveUserMessage(
+        root,
+        neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+        'deferred'
+      );
+    }
     const handler = createNeoFrontHandler(service);
     expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
     const sdk = db.getSDKMessageRepo();
@@ -1157,3 +1151,22 @@ test('Convo publication refuses an input it was never given and a stale dual-mod
   ).toMatchObject({ accepted: false });
   expect(service.publications.list(conversationId)).toHaveLength(0);
 });
+
+test.each(['creation', 'delivery'])(
+  'a Convo %s failure gives the human one visible failure without delegating to a silent Back',
+  async (phase) => {
+    const { id, job } = await accept();
+    if (phase === 'creation')
+      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
+    else vi.spyOn(service, 'deliverForward').mockRejectedValue(new Error('Convo unavailable'));
+    const handler = createNeoFrontHandler(service);
+    expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
+    expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBeNull();
+    const replies = service.publications.list(conversationId)!;
+    expect(replies).toHaveLength(1);
+    expect(replies[0].replyTo).toEqual([id]);
+    expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+    await handler(job);
+    expect(service.publications.list(conversationId)).toHaveLength(1);
+  }
+);

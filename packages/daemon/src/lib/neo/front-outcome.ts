@@ -1,3 +1,4 @@
+import { publicationSpeaker } from './front-mode.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { jobQueueWrites } from '../../storage/repositories/job-queue-repository.ts';
 import { neoFrontInputReads } from '../../storage/repositories/neo-front-input-worker.ts';
@@ -12,7 +13,8 @@ export async function settleConvoInput(
   job: Job,
   conversationId: string,
   sessionId: string,
-  messageId: string
+  messageId: string,
+  failed = false
 ) {
   const owner = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, messageId);
   if (owner?.owner) return { delivered: true, outcome: 'answered' };
@@ -42,7 +44,9 @@ export async function settleConvoInput(
       sessionId,
       messageId
     )) ??
-    (status === 'failed' || Date.now() >= deadline ? { messageIds: [messageId], text: '' } : null);
+    (failed || status === 'failed' || Date.now() >= deadline
+      ? { messageIds: [messageId], text: '' }
+      : null);
   if (!terminal) return pending();
   const deliveries = terminal.messageIds.map((id) => ({
     id,
@@ -66,7 +70,7 @@ export async function settleConvoInput(
       replyTo: ids,
       links: [],
     },
-    sessionId
+    publicationSpeaker(conversationId, service.db.getGlobalSettings().neo?.front?.enabled === true)
   );
   if (!receipt.accepted) {
     if (receipt.reason === 'publication_superseded') return pending();
