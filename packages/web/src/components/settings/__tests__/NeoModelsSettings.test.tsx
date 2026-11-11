@@ -759,8 +759,8 @@ async function frontEditor() {
 
 test('chooses a separate provider/model through the targeted front operation', async () => {
   await frontEditor();
-  const convo = within(screen.getByRole('region', { name: 'Convo' }));
-  fireEvent.click(convo.getByRole('button', { name: 'Choose Convo model' }));
+  const convo = within(screen.getByRole('region', { name: 'Front' }));
+  fireEvent.click(convo.getByRole('button', { name: 'Choose Front model' }));
   fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -781,8 +781,8 @@ test.each(['refused', 'failed'])(
       return { ok: false, reason: 'Unavailable model' };
     });
     await frontEditor();
-    const convo = within(screen.getByRole('region', { name: 'Convo' }));
-    fireEvent.click(convo.getByRole('button', { name: 'Choose Convo model' }));
+    const convo = within(screen.getByRole('region', { name: 'Front' }));
+    fireEvent.click(convo.getByRole('button', { name: 'Choose Front model' }));
     fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
     expect((await convo.findByRole('alert')).textContent).toBeTruthy();
     expect(convo.getByText('opus')).toBeTruthy();
@@ -790,10 +790,10 @@ test.each(['refused', 'failed'])(
   }
 );
 
-test('the Convo compact percentage saves through the targeted front operation', async () => {
+test('the Front compact percentage saves through the targeted front operation', async () => {
   await frontEditor();
-  const convo = within(screen.getByRole('region', { name: 'Convo' }));
-  const input = convo.getByLabelText('Convo model auto-compact percentage') as HTMLInputElement;
+  const convo = within(screen.getByRole('region', { name: 'Front' }));
+  const input = convo.getByLabelText('Front model auto-compact percentage') as HTMLInputElement;
   expect(input.value).toBe('90');
   fireEvent.input(input, { target: { value: '65' } });
   fireEvent.focusOut(input);
@@ -805,7 +805,7 @@ test('the Convo compact percentage saves through the targeted front operation', 
   );
 });
 
-test('primary model, thinking and compaction share one visible flat row', async () => {
+test('primary model groups visibly labeled thinking and compaction controls', async () => {
   const ui = await editor();
   const button = ui.getByRole('button', { name: 'Change Neo primary' });
   const row = button.closest('[data-model-row]');
@@ -813,32 +813,34 @@ test('primary model, thinking and compaction share one visible flat row', async 
   expect(row?.contains(ui.getByLabelText('Neo model 1 thinking'))).toBe(true);
   expect(row?.contains(ui.getByLabelText('Neo model 1 auto-compact percentage'))).toBe(true);
   expect(ui.queryByText('Advanced')).toBeNull();
-  expect(ui.queryByText('Thinking')).toBeNull();
+  expect(ui.getAllByText('Thinking').length).toBeGreaterThan(0);
+  expect(ui.getAllByText('Auto-compact').length).toBeGreaterThan(0);
 });
 
-test('Convo owns a separate section that holds the dual-model switch', async () => {
+test('the mode switch sits above the separate Front and Neo sections', async () => {
   await frontEditor();
-  const convo = screen.getByRole('region', { name: 'Convo' });
+  const convo = screen.getByRole('region', { name: 'Front' });
   const neo = screen.getByRole('region', { name: 'Neo models' });
   expect(neo.contains(convo)).toBe(false);
   expect(convo.contains(neo)).toBe(false);
-  expect(within(convo).getByRole('checkbox', { name: 'Dual-model mode' })).toBeTruthy();
-  expect(within(convo).getByRole('button', { name: 'Choose Convo model' })).toBeTruthy();
-  expect(within(neo).queryByRole('button', { name: 'Choose Convo model' })).toBeNull();
+  expect(screen.getByRole('checkbox', { name: 'Dual-model mode' })).toBeTruthy();
+  expect(within(convo).queryByRole('checkbox')).toBeNull();
+  expect(within(convo).getByRole('button', { name: 'Choose Front model' })).toBeTruthy();
+  expect(within(neo).queryByRole('button', { name: 'Choose Front model' })).toBeNull();
 });
 
-test('Neo and Convo render the same model row component', async () => {
+test('Neo and Front render the same model row component', async () => {
   await frontEditor();
   const neoRow = screen
     .getByRole('button', { name: 'Change Neo primary' })
     .closest('[data-model-row]')!;
   const convoRow = screen
-    .getByRole('button', { name: 'Choose Convo model' })
+    .getByRole('button', { name: 'Choose Front model' })
     .closest('[data-model-row]')!;
   expect(neoRow).toBeTruthy();
   expect(convoRow).toBeTruthy();
-  expect(convoRow.contains(screen.getByLabelText('Convo model thinking'))).toBe(true);
-  expect(convoRow.contains(screen.getByLabelText('Convo model auto-compact percentage'))).toBe(
+  expect(convoRow.contains(screen.getByLabelText('Front model thinking'))).toBe(true);
+  expect(convoRow.contains(screen.getByLabelText('Front model auto-compact percentage'))).toBe(
     true
   );
   expect(neoRow.contains(screen.getByLabelText('Neo model 1 thinking'))).toBe(true);

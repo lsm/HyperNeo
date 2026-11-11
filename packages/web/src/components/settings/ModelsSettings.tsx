@@ -196,7 +196,7 @@ function FallbackChainEditor({
         return (
           <div
             key={`${entry.provider}:${entry.model}`}
-            class="flex items-center gap-2 bg-surface-raised border border-line rounded-lg px-2 py-2"
+            class="flex flex-wrap items-center gap-2 bg-surface-raised border border-line rounded-lg px-3 py-3"
           >
             <span class="text-xs text-fg-faint font-medium w-4">{index + indexOffset + 1}.</span>
             <ProviderLogo provider={entry.provider} class="h-4 w-4" />
@@ -206,7 +206,9 @@ function FallbackChainEditor({
                 {PROVIDER_LABELS[entry.provider] || getProviderLabel(entry.provider)}
               </div>
             </div>
-            <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <div
+              class={`ml-auto flex max-w-full flex-wrap items-center justify-end gap-2 ${controls ? 'w-full border-t border-line pt-3' : ''}`}
+            >
               {controls?.(entry, index + indexOffset)}
               <div class="flex items-center gap-1">
                 <button
@@ -474,43 +476,59 @@ function ModelRow({
   percent,
 }: ModelRowProps) {
   return (
-    <div data-model-row class="flex items-center gap-2">
-      <span class="min-w-0 flex-1 truncate text-sm text-fg" title={`${name} · ${provider}`}>
-        <span class="block text-xs text-fg-faint">{heading}</span>
-        {name}
-      </span>
-      <Button
-        aria-label={pickLabel}
-        variant="secondary"
-        size="xs"
-        disabled={disabled}
-        onClick={onPick}
-      >
-        <PencilIcon />
-      </Button>
-      {thinking && (
-        <FallbackThinkingSelect
-          saved={thinking.saved}
-          label={thinking.label}
-          capability={thinking.capability}
+    <div data-model-row class="space-y-4">
+      <div class="flex min-w-0 items-center justify-between gap-3">
+        <div class="min-w-0">
+          <div class="text-xs text-fg-muted">{heading}</div>
+          <div class="mt-1 truncate text-sm font-medium text-fg" title={name}>
+            {name}
+          </div>
+          <div class="mt-0.5 text-xs text-fg-faint">{provider}</div>
+        </div>
+        <Button
+          aria-label={pickLabel}
+          variant="secondary"
+          size="sm"
           disabled={disabled}
-          inherits={false}
-          onChange={thinking.onChange}
-        />
-      )}
-      <input
-        type="number"
-        aria-label={percent.label}
-        title={percent.title}
-        min={AUTO_COMPACT_PERCENT_MIN}
-        max={AUTO_COMPACT_PERCENT_MAX}
-        step={1}
-        value={percent.value}
-        disabled={disabled}
-        onInput={(event) => percent.onInput(event.currentTarget.value)}
-        onBlur={(event) => percent.onBlur(event.currentTarget.value)}
-        class="w-12 rounded border border-line bg-surface px-1 py-1 text-xs text-fg"
-      />
+          onClick={onPick}
+        >
+          Change model
+        </Button>
+      </div>
+      <div class="grid grid-cols-2 gap-4 border-t border-line pt-4">
+        {thinking && (
+          <label class="flex min-w-0 flex-col items-start gap-2 text-xs text-fg-muted">
+            <span>Thinking</span>
+            <FallbackThinkingSelect
+              saved={thinking.saved}
+              label={thinking.label}
+              capability={thinking.capability}
+              disabled={disabled}
+              inherits={false}
+              onChange={thinking.onChange}
+            />
+          </label>
+        )}
+        <label class="flex min-w-0 flex-col items-start gap-2 text-xs text-fg-muted">
+          <span>Auto-compact</span>
+          <span class="flex items-center gap-2">
+            <input
+              type="number"
+              aria-label={percent.label}
+              title={percent.title}
+              min={AUTO_COMPACT_PERCENT_MIN}
+              max={AUTO_COMPACT_PERCENT_MAX}
+              step={1}
+              value={percent.value}
+              disabled={disabled}
+              onInput={(event) => percent.onInput(event.currentTarget.value)}
+              onBlur={(event) => percent.onBlur(event.currentTarget.value)}
+              class="w-20 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg"
+            />
+            <span>%</span>
+          </span>
+        </label>
+      </div>
     </div>
   );
 }
@@ -542,7 +560,7 @@ function FrontModelSettings({
     setError('');
     try {
       const hub = connectionManager.getHubIfConnected();
-      if (!hub) throw new Error('Reconnect before changing the Convo model.');
+      if (!hub) throw new Error('Reconnect before changing the Front model.');
       const result = await invokeOperation<{ ok: boolean; reason?: string }>(
         hub,
         'neo.front.model.set',
@@ -553,10 +571,10 @@ function FrontModelSettings({
           ...(autoCompactPercent === undefined ? {} : { autoCompactPercent }),
         }
       );
-      if (!result.ok) throw new Error(result.reason ?? 'Could not save the Convo model.');
+      if (!result.ok) throw new Error(result.reason ?? 'Could not save the Front model.');
     } catch (cause) {
       setPercent(savedPercent);
-      setError(cause instanceof Error ? cause.message : 'Could not save the Convo model.');
+      setError(cause instanceof Error ? cause.message : 'Could not save the Front model.');
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -581,22 +599,24 @@ function FrontModelSettings({
     if (model) void save(model, preference.thinkingLevel, value);
   }
   return (
-    <div class="space-y-2">
-      <div class="flex items-center justify-between gap-2">
-        <h4 class="text-[13px] font-semibold text-fg">Convo</h4>
-        <NeoFrontSettings />
+    <div class="space-y-4 rounded-xl border border-line bg-surface p-4 sm:p-5">
+      <div class="border-b border-line pb-4">
+        <h4 class="text-sm font-semibold text-fg">Front Neo</h4>
+        <p class="mt-1 text-xs leading-relaxed text-fg-muted">
+          Receives your messages and replies. Hands work to Neo when needed.
+        </p>
       </div>
       {preference ? (
         <ModelRow
-          heading="Convo"
+          heading="Model"
           name={findSameModel(allModels, preference)?.name ?? preference.model}
           provider={getProviderLabel(preference.provider)}
-          pickLabel="Choose Convo model"
+          pickLabel="Choose Front model"
           disabled={busy}
           onPick={() => setPicker(true)}
           thinking={{
             saved: preference.thinkingLevel,
-            label: 'Convo model thinking',
+            label: 'Front model thinking',
             capability: loading ? null : (findSameModel(allModels, preference) ?? null),
             onChange: (level) => {
               const model = findSameModel(allModels, preference);
@@ -604,8 +624,8 @@ function FrontModelSettings({
             },
           }}
           percent={{
-            label: 'Convo model auto-compact percentage',
-            title: 'Applies to Convo replies as they run',
+            label: 'Front model auto-compact percentage',
+            title: 'Applies to Front replies as they run',
             value: percent,
             onInput: setPercent,
             onBlur: savePercent,
@@ -613,7 +633,7 @@ function FrontModelSettings({
         />
       ) : (
         <Button variant="secondary" size="sm" disabled={busy} onClick={() => setPicker(true)}>
-          Choose Convo model
+          Choose Front model
         </Button>
       )}
       {error && (
@@ -623,7 +643,7 @@ function FrontModelSettings({
       )}
       {picker && (
         <ModelPickerModal
-          title="Choose Convo model"
+          title="Choose Front model"
           groupedModels={groupedModels}
           providerAuthStatuses={providerAuthStatuses}
           excludeModels={[]}
@@ -765,7 +785,10 @@ function NeoModelSettings({
     setList(list.map((item, i) => (i === index ? updated : item)));
   }
   return (
-    <section aria-label="Neo models" class="space-y-3 rounded-xl border border-line bg-surface p-4">
+    <section
+      aria-label="Neo models"
+      class="space-y-4 rounded-xl border border-line bg-surface p-4 sm:p-5"
+    >
       {pendingPrimary && (
         <ConfirmModal
           isOpen
@@ -785,10 +808,15 @@ function NeoModelSettings({
           }}
         />
       )}
-      <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
+      <div class="border-b border-line pb-4">
+        <h4 class="text-sm font-semibold text-fg">Neo</h4>
+        <p class="mt-1 text-xs leading-relaxed text-fg-muted">
+          Handles work and investigations. Replies directly in single-model mode.
+        </p>
+      </div>
       {draft ? (
         <ModelRow
-          heading="Neo"
+          heading="Primary model"
           name={findSameModel(availableModels, draft)?.name ?? draft.model}
           provider={getProviderLabel(draft.provider)}
           pickLabel="Change Neo primary"
@@ -821,8 +849,11 @@ function NeoModelSettings({
           </Button>
         </div>
       )}
-      <div>
+      <div class="border-t border-line pt-4">
         <div class="space-y-3">
+          {list.length > 1 && (
+            <div class="text-xs font-medium text-fg-muted">Fallback models · tried in order</div>
+          )}
           <FallbackChainEditor
             models={list.slice(1)}
             indexOffset={1}
@@ -848,40 +879,47 @@ function NeoModelSettings({
                     aria-label={`Make Neo model ${index + 1} primary`}
                     onClick={() => setList([list[index], ...list.filter((_, i) => i !== index)])}
                   >
-                    <span aria-hidden="true">↑</span>
+                    Use as primary
                   </Button>
                 )}
                 {index > 0 && (
-                  <FallbackThinkingSelect
-                    saved={entry.thinkingLevel ?? 'off'}
-                    label={`Neo model ${index + 1} thinking`}
-                    capability={loading ? null : (findSameModel(availableModels, entry) ?? entry)}
-                    disabled={busy}
-                    inherits={false}
-                    onChange={(level = 'off') =>
-                      setList(
-                        list.map((item, i) =>
-                          i === index ? { ...item, thinkingLevel: level } : item
+                  <label class="flex items-center gap-2 text-xs text-fg-muted">
+                    <span>Thinking</span>
+                    <FallbackThinkingSelect
+                      saved={entry.thinkingLevel ?? 'off'}
+                      label={`Neo model ${index + 1} thinking`}
+                      capability={loading ? null : (findSameModel(availableModels, entry) ?? entry)}
+                      disabled={busy}
+                      inherits={false}
+                      onChange={(level = 'off') =>
+                        setList(
+                          list.map((item, i) =>
+                            i === index ? { ...item, thinkingLevel: level } : item
+                          )
                         )
-                      )
-                    }
-                  />
+                      }
+                    />
+                  </label>
                 )}
-                <input
-                  type="number"
-                  aria-label={`Neo model ${index + 1} auto-compact percentage`}
-                  title={compactSize(entry)}
-                  min={AUTO_COMPACT_PERCENT_MIN}
-                  max={AUTO_COMPACT_PERCENT_MAX}
-                  step={1}
-                  value={percentText(entry)}
-                  disabled={busy}
-                  onInput={(event) =>
-                    setPercents({ ...percents, [entryKey(entry)]: event.currentTarget.value })
-                  }
-                  onBlur={(event) => savePercent(index, event.currentTarget.value)}
-                  class="w-14 rounded border border-line bg-surface px-1.5 py-1 text-xs text-fg"
-                />
+                <label class="flex items-center gap-2 text-xs text-fg-muted">
+                  <span>Auto-compact</span>
+                  <input
+                    type="number"
+                    aria-label={`Neo model ${index + 1} auto-compact percentage`}
+                    title={compactSize(entry)}
+                    min={AUTO_COMPACT_PERCENT_MIN}
+                    max={AUTO_COMPACT_PERCENT_MAX}
+                    step={1}
+                    value={percentText(entry)}
+                    disabled={busy}
+                    onInput={(event) =>
+                      setPercents({ ...percents, [entryKey(entry)]: event.currentTarget.value })
+                    }
+                    onBlur={(event) => savePercent(index, event.currentTarget.value)}
+                    class="w-14 rounded border border-line bg-surface px-1.5 py-1 text-xs text-fg"
+                  />
+                  <span>%</span>
+                </label>
               </div>
             )}
           />
@@ -1286,33 +1324,41 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
 
   if (neoOnly)
     return (
-      <SettingsSection title="Coordinator">
+      <SettingsSection
+        title="Conversation models"
+        actions={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={loading || refreshing}
+            loading={refreshing}
+          >
+            Refresh models
+          </Button>
+        }
+      >
         {loadError && (
           <p role="alert" class="text-sm text-danger">
             {loadError.message}
           </p>
         )}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleRefresh}
-          disabled={loading || refreshing}
-        >
-          Refresh models
-        </Button>
-        <NeoModelSettings
-          availableModels={availableModels}
-          groupedModels={groupedModels}
-          providerAuthStatuses={providerAuthStatuses}
-          loading={loading}
-        />
-        <section aria-label="Convo">
-          <FrontModelSettings
+        <NeoFrontSettings />
+        <div class="grid items-start gap-4 xl:grid-cols-2">
+          <section aria-label="Front">
+            <FrontModelSettings
+              groupedModels={groupedModels}
+              providerAuthStatuses={providerAuthStatuses}
+              loading={loading}
+            />
+          </section>
+          <NeoModelSettings
+            availableModels={availableModels}
             groupedModels={groupedModels}
             providerAuthStatuses={providerAuthStatuses}
             loading={loading}
           />
-        </section>
+        </div>
       </SettingsSection>
     );
 
