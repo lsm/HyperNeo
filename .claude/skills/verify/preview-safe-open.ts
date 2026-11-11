@@ -106,7 +106,6 @@ assert(successes > 0 && refusals > 0);
 const afterRace = readdirSync(descriptorDirectory).length;
 for (let count = 0; count < 50; count++) await denied(workspace, ['final-link']);
 const afterRefusals = readdirSync(descriptorDirectory).length;
-// Bun may finish closing the race subprocess pipe after its exit promise resolves.
 assert(afterRefusals <= afterRace, 'Repeated refusals must not increase open descriptors');
 const evidence = { exactBytes: true, symlinksDenied: true, hardlinksDenied: true,
   descriptorStable: true, parentRaceContained: true, descriptorsClosed: true,
