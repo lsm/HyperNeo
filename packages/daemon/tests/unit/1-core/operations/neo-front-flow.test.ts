@@ -317,3 +317,19 @@ test('Back can use message.send to reach its ordinary Front session', async () =
     )
   ).toMatchObject({ kind: 'completed', value: { kind: 'rejected' } });
 });
+
+test('Front publication supplies a spoken fallback on the human listening session', async () => {
+  await frontSession(
+    service,
+    { conversationId, askOrigin: { sessionId: root, messageId: root } },
+    model
+  );
+  const speech = vi
+    .spyOn(service.speech, 'publish')
+    .mockResolvedValue({ listening: 'yes', spokenDelivered: true });
+  await service.publish(
+    { requestId: 'voice-reply', verbatim: true, fullText: 'Hello from Neo.' },
+    { source: 'mcp', sessionId: front }
+  );
+  expect(speech).toHaveBeenCalledWith(root, expect.any(String), undefined, 'Hello from Neo.');
+});

@@ -45,6 +45,27 @@ export function createFrontTools(service: NeoService, conversationId: string) {
         }
       ),
       tool(
+        'speech_say',
+        'Speak a brief acknowledgment to the current human listener. Publish substantive replies with spoken instead.',
+        { requestId: z.string().min(1).max(160), text: z.string().trim().min(1).max(500) },
+        async ({ requestId, text }) => {
+          const root = service.defaultSessionId();
+          if (
+            !root ||
+            service.repo.readConversationId() !== conversationId ||
+            service.db.getGlobalSettings().neo?.front?.enabled !== true
+          )
+            return result({ ok: false, reason: 'front_not_speaking' });
+          return result(
+            await service.speech.publish(
+              root,
+              neoDerivedId(`front-speech:${conversationId}:${requestId}`),
+              text
+            )
+          );
+        }
+      ),
+      tool(
         'neo_send',
         'Send an internal note to Back Neo. Include the original human message IDs. The human message already reaches Back Neo.',
         { requestId: z.string().min(1).max(160), text: z.string().trim().min(1).max(16000) },

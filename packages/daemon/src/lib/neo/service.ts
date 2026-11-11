@@ -257,7 +257,8 @@ export class NeoService {
               conversation,
               this.db.getGlobalSettings().neo?.front?.enabled === true,
               id === frontSessionId(conversation)
-            )
+            ) +
+              `\n[listening: ${this.speech.isListening(this.defaultSessionId() ?? id) ? 'yes' : 'no'}]`
           : undefined;
       }
     );
@@ -363,7 +364,8 @@ export class NeoService {
       lookupSession: async (id) => (await this.resolveSessionSource(id)).status,
       append: (input, speaker) =>
         this.db.gateway.call(neoPublicationWrites, 'append', input, speaker),
-      speech: (sessionId, version, text) => this.speech.publish(sessionId, version, text),
+      speech: (sessionId, version, text, fallback) =>
+        this.speech.publish(sessionId, version, text, fallback),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
     });

@@ -78,7 +78,8 @@ interface NeoPublicationRuntime {
   speech(
     sessionId: string,
     version: string,
-    text?: string
+    text?: string,
+    fallback?: string
   ): Promise<{
     listening: 'yes' | 'no';
     spokenDelivered: boolean;
@@ -319,15 +320,18 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         const speech = await runtime.speech(
           runtime.getRootBinding()?.sessionId ?? caller.sessionId!,
           version,
-          fresh ? draft.spoken : undefined
+          fresh ? draft.spoken : undefined,
+          fresh && caller.sessionId !== runtime.getRootBinding()?.sessionId
+            ? draft.fullText
+            : undefined
         );
         runtime.notify();
         return {
           ...saved,
           ...speech,
           guidance:
-            fresh && !draft.spoken && speech.listening === 'yes'
-              ? `Already shown to the user. The human is now listening: call neo.speech.say once with a short spoken version and requestId "publication:${version}"; never re-publish the text.`
+            fresh && !draft.spoken && !speech.spokenDelivered && speech.listening === 'yes'
+              ? `Already shown to the user. The human is now listening: call ${caller.sessionId === runtime.getRootBinding()?.sessionId ? 'neo.speech.say' : 'front.speech_say'} once with a short spoken version and requestId "publication:${version}"; never re-publish the text.`
               : 'Already shown to the user; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.',
         };
       },
