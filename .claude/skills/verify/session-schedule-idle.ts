@@ -80,7 +80,7 @@ try {
     assert.equal(row.lastOutcome, 'skipped_unchanged', `Quiet wake ${count} started a model delivery`);
     assert.equal(row.dueCount, count);
     assert.equal(row.nextRunAt! - now, Math.min(1_200_000 * 2 ** Math.max(0, count - 2), 28_800_000));
-    assert.equal(publications().length - before, count < 3 ? 0 : 1);
+    assert.equal(publications().length - before, 0);
     assert.deepEqual(inputRows(), initialInputs);
     assert.equal(pendingInputs().length, 0);
     assert.equal(live.queryPromise, null);
@@ -115,8 +115,7 @@ try {
   assert((await call('goal.session.update', { ownerSessionId: target, goalId: result.goal.id, progress: 0 })).accepted);
   for (let count = 1; count <= 4; count++) assert.equal((await wake()).lastOutcome, 'skipped_unchanged');
   evidence.revertedProgressCards = publications().slice(before);
-  assert.equal(publications().length - before, 2, 'Reverted facts must still notify once in the new idle stretch');
-  assert(publications().slice(before)[1].shortText.includes('Review lead renamed'));
+  assert.equal(publications().length - before, 0, 'Unchanged schedules must never publish idle bubbles');
   assert.deepEqual(inputRows(), initialInputs);
   assert.equal(pendingInputs().length, 0);
   assert((await call('goal.session.update', { ownerSessionId: target, goalId: result.goal.id, progress: 1 })).accepted);
@@ -129,16 +128,12 @@ try {
   await hub.request('session.update', { sessionId: target, title: longTitle });
   for (let count = 1; count <= 4; count++) await wake();
   assert.equal(pendingInputs().length, pendingAfterProgress);
-  assert.equal(publications().length - before, 3, 'A new idle stretch must notify once again');
-  const longTitleCard = publications().slice(before)[2];
-  assert(longTitleCard.shortText.length <= 2000);
-  assert(longTitleCard.fullText.length <= 16000);
-  assert(longTitleCard.shortText.endsWith('waiting for work.'));
+  assert.equal(publications().length - before, 0, 'Idle checks must stay out of the conversation');
   assert.equal(app.db.getSession(target)!.title, longTitle, 'Stored title must remain intact');
   evidence.cards = publications().slice(before);
   evidence.conversation = await call('neo.conversation.read', { conversationId });
-  assert((evidence.cards as { shortText: string }[]).every(card => card.shortText.includes('Review lead')));
-  console.log(`PASS quiet wakes back off to 8h, progress resets immediately, one human card per stretch, no unchanged-wake input. ${run}/evidence/schedule-idle.json`);
+  assert.deepEqual(evidence.cards, []);
+  console.log(`PASS quiet wakes back off to 8h, progress resets immediately, zero idle publications across repeated stretches, no unchanged-wake input. ${run}/evidence/schedule-idle.json`);
 } finally {
   Date.now = clock;
   writeFileSync(join(run, 'evidence/schedule-idle.json'), JSON.stringify(evidence, null, 2));

@@ -130,7 +130,7 @@ describe('session schedule firing', () => {
       expect((await fire(row.id)).dueCount).toBe(2);
       expect(notices).toEqual([]);
       expect((await fire(row.id)).dueCount).toBe(3);
-      expect(notices).toEqual([row.id]);
+      expect(notices).toEqual([]);
       expect(deliveries).toHaveLength(1);
     }
   );
@@ -174,7 +174,7 @@ describe('session schedule firing', () => {
       expect(quiet.nextRunAt).toBe(now + Math.min(60000 * 2 ** Math.max(0, count - 2), 28_800_000));
     }
     expect(deliveries).toHaveLength(1);
-    expect(notices).toEqual([initial.id]);
+    expect(notices).toEqual([]);
     digest = 'b';
     now += 1;
     await scheduler.refreshProgress();
@@ -185,7 +185,7 @@ describe('session schedule firing', () => {
     });
     expect(await fire(initial.id)).toMatchObject({ lastOutcome: 'fired', factsDigest: 'b' });
     for (let count = 1; count <= 4; count++) await fire(initial.id);
-    expect(notices).toEqual([initial.id, initial.id]);
+    expect(notices).toEqual([]);
   });
   test.each(['running', 'queued', 'stopped', 'needs_you'] as const)(
     '%s skips without counting quiet wakes or forcing a turn when idle',
