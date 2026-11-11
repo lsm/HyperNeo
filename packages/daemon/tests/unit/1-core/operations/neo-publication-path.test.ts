@@ -28,7 +28,7 @@ describe('Neo publication persistence paths', () => {
     const service = readFileSync(join(SRC, 'lib/neo/service.ts'), 'utf8');
     expect(
       service.match(
-        /append: \(input\) => this\.db\.gateway\.call\(neoPublicationWrites, 'append', input\)/g
+        /append: \(input, speaker\) =>\s*this\.db\.gateway\.call\(neoPublicationWrites, 'append', input, speaker\)/g
       )
     ).toHaveLength(1);
   });

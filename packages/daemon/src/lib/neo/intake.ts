@@ -121,10 +121,7 @@ export function neoIntakeMessage(
       : input.content;
   const fact =
     (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply, neoAskText(input.content)) : null) ??
-    neoQuoteFact(input.replyTo) ??
-    (input.replyTo
-      ? `The human replied to ${input.replyTo.kind} ${input.replyTo.id}: ${input.replyTo.excerpt ?? ''}`
-      : null);
+    neoQuoteFact(input.replyTo);
   const messageId = `[message id: ${input.requestId}]`;
   const first =
     stored?.type === 'user' && Array.isArray(stored.message.content)

@@ -1,4 +1,15 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
+  unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
+  front_not_speaking:
+    'Front may publish only while dual-model mode is enabled for its current conversation.',
+  front_model_required: 'Choose a Front model before enabling dual-model mode.',
+  dual_model_front_required:
+    'Front owns human-facing replies in dual-model mode. Send your result to Front with the original human message IDs.',
+  unknown_back_reply:
+    'Choose a stored message sent by the current Back Neo to this Front conversation.',
+  not_a_ready_reply:
+    'Ask Back Neo for a ready reply wrapped in a publication object, or compose a reply yourself.',
+
   updating:
     'A daemon restart is reserved. Retry speech after the brief update finishes; keep the reply on screen meanwhile.',
   speech_backend_not_configured:

@@ -284,7 +284,8 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       (draft: Draft, proof: Proof) => {
         if (
           runtime.publicationSessionId &&
-          runtime.publicationSessionId() !== proof.binding.sessionId
+          (runtime.publicationSessionId() ?? runtime.getRootBinding()?.sessionId) !==
+            proof.binding.sessionId
         )
           return { accepted: false as const, reason: 'publication_superseded' };
         const { requestId, spoken: _spoken, ...message } = draft;
