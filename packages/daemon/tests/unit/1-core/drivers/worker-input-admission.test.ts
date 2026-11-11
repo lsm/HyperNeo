@@ -42,3 +42,54 @@ test('busy worker follow-up is kept for delivery after the turn', async () => {
     value: { ok: true, value: { delivered: false, inputId: 'synthetic-input' } },
   });
 });
+
+test('a remote busy-worker send keeps its existing admission behavior', async () => {
+  const calls: string[] = [];
+  const waiting: string[] = [];
+  const ref = { adapter: 'codex-desktop', id: 'synthetic-worker', daemon: 'synthetic-remote' };
+  const deps = {
+    adapters: () => [],
+    daemonName: 'synthetic',
+    remote: {
+      list: () => [],
+      invoke: async (_daemon: string, name: string) => {
+        calls.push(name);
+        return name === 'work.status'
+          ? {
+              ok: true,
+              value: {
+                ref,
+                title: 'Synthetic remote worker',
+                place: { machine: 'synthetic', name: 'Synthetic workspace' },
+                status: 'running',
+                lastActivityAt: 1,
+              },
+            }
+          : { ok: true, value: { delivered: true } };
+      },
+    },
+    queueInput: async () => {
+      throw new Error('Unexpected local admission');
+    },
+    todoWorker: {
+      on: () => false,
+      wait: async (_todo: string, _ref: unknown, message: string) => {
+        waiting.push(message);
+        return 'instruction' as const;
+      },
+    },
+  };
+  const registry = createOperationRegistry(createWorkVerbOperations(deps));
+  const reply = await invokeOperation(
+    registry,
+    'work.send',
+    { ref, todoId: 'synthetic-todo', message: 'Remote follow-up' },
+    { source: 'internal', role: 'neo', sessionId: 'synthetic-neo' }
+  );
+  expect(reply).toMatchObject({
+    kind: 'completed',
+    value: { ok: false, reason: 'worker_busy', notSent: true },
+  });
+  expect(waiting).toEqual(['Remote follow-up']);
+  expect(calls).toEqual(['work.status']);
+});
