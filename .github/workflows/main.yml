@@ -195,6 +195,9 @@ jobs:
       - name: Test API compatibility tooling
         run: bun run test:api-diff
 
+      - name: Test cleanup sandbox bootstrap
+        run: python3 scripts/test-cleanup-sandbox.py
+
       - name: Test CI gate script
         run: bun run test:ci-gate
 
@@ -389,6 +392,9 @@ jobs:
 
       - name: Install cleanup sandbox
         run: |
+          if ! getent hosts azure.archive.ubuntu.com >/dev/null; then
+            printf '%s\n' https://mirrors.mit.edu/ubuntu/ https://mirrors.edge.kernel.org/ubuntu/ | sudo tee /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update && sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           /usr/bin/bwrap --die-with-parent --ro-bind / / -- /bin/true
@@ -475,6 +481,9 @@ jobs:
 
       - name: Install cleanup sandbox
         run: |
+          if ! getent hosts azure.archive.ubuntu.com >/dev/null; then
+            printf '%s\n' https://mirrors.mit.edu/ubuntu/ https://mirrors.edge.kernel.org/ubuntu/ | sudo tee /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update && sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           /usr/bin/bwrap --die-with-parent --ro-bind / / -- /bin/true
