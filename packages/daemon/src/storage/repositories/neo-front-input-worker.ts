@@ -66,14 +66,14 @@ export class NeoFrontInputRepository {
     } | null;
     if (!row || (!row.body && row.sendStatus !== 'failed')) return null;
     const result = row.body
-      ? (JSON.parse(row.body) as { subtype?: string; result?: string; is_error?: boolean })
+      ? (JSON.parse(row.body) as { subtype?: string; num_turns?: number; is_error?: boolean })
       : null;
     const ids = JSON.parse(row.messageIds ?? '[]') as string[];
     return {
       messageIds: (ids.length ? ids : [messageId]).filter(
         (id) => !this.get(conversationId, id)?.owner
       ),
-      text: result?.subtype === 'success' && !result.is_error ? (result.result ?? '') : '',
+      toolUsed: result?.subtype === 'success' && !result.is_error && (result.num_turns ?? 0) > 1,
     };
   }
 

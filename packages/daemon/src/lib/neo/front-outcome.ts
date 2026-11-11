@@ -46,7 +46,7 @@ export async function settleConvoInput(
       messageId
     )) ??
     (failure === 'delivery' || status === 'failed' || Date.now() >= deadline
-      ? { messageIds: [messageId], text: '' }
+      ? { messageIds: [messageId], toolUsed: false }
       : null);
   if (!terminal) return pending();
   const deliveries = terminal.messageIds.map((id) => ({
@@ -57,6 +57,7 @@ export async function settleConvoInput(
     return pending();
   const ids = deliveries.filter(({ status }) => status !== 'consumed').map(({ id }) => id);
   if (!ids.length) return { delivered: true, outcome: 'handed_off' };
+  if (terminal.toolUsed) return { delivered: true, outcome: 'answered' };
   const receipt = await service.db.gateway.call(
     neoPublicationWrites,
     'append',
@@ -64,10 +65,7 @@ export async function settleConvoInput(
       conversationId,
       publicationId: neoDerivedId(`convo-reply:${conversationId}:${[...ids].sort().join(',')}`),
       verbatim: true,
-      fullText:
-        terminal.text.trim() && terminal.text.length <= 16000
-          ? terminal.text
-          : 'Convo could not complete this reply. Please try again.',
+      fullText: 'Convo could not complete this reply. Please try again.',
       replyTo: ids,
       links: [],
     },
