@@ -57,6 +57,11 @@ const fixture = createServer(async (request, response) => {
   const front = body.tools?.some(
     (tool: { name: string }) => tool.name === 'mcp__front__neo_send'
   );
+  if (!front && app?.db.getGlobalSettings().neo?.front?.enabled === true) {
+    const names = body.tools?.map((tool: { name: string }) => tool.name) ?? [];
+    assert(!names.some((name: string) => name.endsWith('__neo_publish') || name.endsWith('__neo_speech')));
+    evidence.backToolsHidden = true;
+  }
   const history = JSON.stringify(body.messages);
   const active = [failedDeliveryId, handoffId, humanId].find(id => history.includes(id)) ?? humanId;
   let stage = stages.get(active) ?? 0;
@@ -325,6 +330,7 @@ try {
   assert.equal(exaRequests, 0);
   evidence.configuredExaExcluded = true;
   evidence.exaRequests = exaRequests;
+  assert.equal(evidence.backToolsHidden, true);
   evidence.passed = true;
   evidence.nativeFrontSession = nativeId;
   evidence.replies = rows.map((row) => ({ text: row.fullText, replyTo: row.replyTo }));
