@@ -112,15 +112,15 @@ try {
       .run(JSON.stringify({ status }), worker);
   const registry = app.sessionManager.getOperationRegistry();
   const neo = { source: 'internal', role: 'neo', sessionId: root } as const;
-  const send = (todoId: string) =>
-    invokeOperation(registry, 'work.send', { ref, message: `Do ${todoId}`, todoId }, neo);
+  const assign = (todoId: string) => sessions.write('queueOn', todoId, ref, `Do ${todoId}`);
   const sent = (id: string) => sessions.inputs.list(id).map((row) => row.message);
   const todo = (id: string) => store.getTodo(id)!;
   const finish = (id: string) => store.updateTodo(todo(id), { state: 'done', finishedAt: Date.now() }, Date.now());
 
+  await invokeOperation(registry, 'work.status', { ref }, neo);
   worksOn('processing');
-  const replies = [await send('low'), await send('high')];
-  for (const reply of replies) assert.match(JSON.stringify(reply), /"reason":"worker_busy"/);
+  await assign('low');
+  await assign('high');
   await refresh();
   for (const id of ['low', 'high']) {
     assert.deepEqual(sent(id), [], 'a busy worker gets no todo send');
@@ -128,10 +128,9 @@ try {
     assert.equal(todo(id).startedAt, null);
     assert.match(todo(id).reason ?? '', /^Waiting for worker hyperneo:.*outside a todo\.$/);
   }
-  evidence.whileBusy = { replies, reason: todo('low').reason };
+  evidence.whileBusy = { assigned: ['low', 'high'], reason: todo('low').reason };
 
-  const stuck = await send('stuck');
-  assert.match(JSON.stringify(stuck), /"reason":"worker_busy"/);
+  assert.equal(await assign('stuck'), 'instruction');
   await refresh();
   sessions.recordNudge('stuck', { since: Date.now() - 61 * 60_000, nudges: 2 });
   await refresh();

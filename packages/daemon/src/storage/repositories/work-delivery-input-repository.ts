@@ -4,7 +4,9 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 
-type Target = Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
+type Target =
+  | Extract<NeoDriverTarget, { verb: 'start' | 'send' }>
+  | { verb: 'todo'; todoId: string };
 type Outcome = ReturnType<typeof readDriverOutcome>;
 type InputRow = {
   id: string;

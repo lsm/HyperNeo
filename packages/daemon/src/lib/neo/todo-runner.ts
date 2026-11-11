@@ -78,6 +78,12 @@ const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, 
 
 export interface NeoTodoRunnerDeps {
   write: RunDbOp;
+  queueFollowUp?: (
+    todoId: string,
+    message: string,
+    origin: string,
+    ref?: WorkRef
+  ) => Promise<string>;
   workerNames?: () => NeoWorkerNameSource | undefined;
   store: NeoAskTodoRepository;
   sessions: NeoTodoSessionRepository;
@@ -1553,7 +1559,23 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const proceed = async (todoId: string, message: string) => {
-    const gate = requireNeoTodoContinuable(read(todoId));
+    const pending = read(todoId);
+    if (
+      deps.queueFollowUp &&
+      pending.todo?.state === 'todo' &&
+      pending.ask?.status === 'open' &&
+      !pending.ref &&
+      !(pending.target?.verb === 'start' && pending.target.place?.daemon) &&
+      !(pending.target?.verb === 'send' && pending.target.ref.daemon)
+    ) {
+      const inputId = await deps.queueFollowUp(todoId, message, pending.ask.sessionId);
+      return {
+        ok: true as const,
+        todo: pending.todo,
+        records: [`queued: follow-up ${inputId} waits for the worker to start.`],
+      };
+    }
+    const gate = requireNeoTodoContinuable(pending);
     if ('reason' in gate) return gate.reason;
     const { todo, ask, ref } = gate.value;
     const status = await refreshIdentity(todo.id, ref, ask);
@@ -1568,6 +1590,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return fail(
         'needs_you: its session is waiting on the human; ask them to answer it there, then continue.'
       ).reason;
+    if (deps.queueFollowUp && !ref.daemon) {
+      const inputId = await deps.queueFollowUp(todoId, text, ask.sessionId, ref);
+      return { ok: true as const, todo, records: [`queued: follow-up ${inputId} is saved.`] };
+    }
     const baseline = readDriverSendBaseline(status, Date.now(), !!ref.daemon);
     const sent = readDriverSent(status, text, todo.createdAt);
     const delivered = readDriverOutcome(
@@ -1575,25 +1601,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       await deps.invoke(caller(ask), 'work.send', { ref, message: text, todoId: todo.id })
     );
     if (!('ref' in delivered)) return { ok: false as const, reason: delivered.failure };
-    sessions.recordStartedAt(
+    sessions.completeFollowUp(
       todo.id,
-      'queued' in delivered ? null : (delivered.startedAt ?? baseline)
-    );
-    sessions.recordSent(
-      todo.id,
-      sent && { ...sent, receipt: delivered.receipt, delivery: delivered.delivery }
-    );
-    restartLadder(todo.id, Date.now());
-    if (todo.blockedBy === 'needs-human')
-      for (const card of store.listQuestions(ask.id))
-        if (card.state === 'open' && card.todoId === todo.id)
-          store.retireQuestion(card, 'Neo sent the worker on.', null, Date.now());
-    const next = store.updateTodo(
-      todo,
-      { state: 'doing', report: null, evidence: null, finishedAt: null },
+      { ...delivered, startedAt: delivered.startedAt ?? baseline ?? undefined },
+      sent && { ...sent, receipt: delivered.receipt, delivery: delivered.delivery },
       Date.now()
     );
-    return { ok: true as const, todo: next };
+    return { ok: true as const, todo: store.getTodo(todo.id)! };
   };
 
   type StopContext = NonNullable<ReturnType<NeoTodoSessionRepository['stopContext']>>;

@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { SendWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { sdkMessageBodyAt } from '../../../packages/daemon/src/storage/repositories/sdk-message-body-read.ts';
+import { hyperneoInputText } from '../../../packages/daemon/src/lib/drivers/hyperneo-adapter.ts';
+
+const run = resolve(process.argv.at(-1)!);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+mkdirSync(join(run, 'evidence'), { recursive: true });
+writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
+const start = () => createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
+let app = await start();
+const worker = '10000000-0000-4000-8000-000000008836';
+const root = 'neo:10000000-0000-4000-8000-000000008837';
+const ref = { adapter: 'hyperneo', id: worker };
+const caller = { source: 'internal', role: 'neo', sessionId: root } as const;
+const evidence: Record<string, unknown> = {};
+const db = () => app.db.getDatabase();
+const state = (status: string) => db().prepare('UPDATE sessions SET processing_state = ? WHERE id = ?').run(JSON.stringify({ status }), worker);
+const inputs = () => db().prepare('SELECT id, message, outcome, deadline_at AS deadline FROM work_delivery_inputs ORDER BY accepted_at, rowid').all() as { id: string; message: string; outcome: string | null; deadline: number }[];
+const messages = () => (db().prepare(`SELECT ${sdkMessageBodyAt('m.rowid')} AS body FROM sdk_messages m WHERE session_id=? AND message_type='user' ORDER BY seq`).all(worker) as { body: string }[]).map((row) => hyperneoInputText(row.body));
+const until = async (condition: () => boolean, label: string) => {
+  const deadline = Date.now() + 15000;
+  while (!condition() && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+  assert(condition(), `${label}: ${JSON.stringify(db().prepare("SELECT queue,status,error,result,payload FROM job_queue WHERE queue = 'worker_input'").all())}`);
+};
+try {
+  assert(![8399, 8499].includes(app.server.port));
+  for (const id of [root, worker]) await app.db.createSession({ id, title: 'Synthetic delivery proof', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  new NeoRepository(db()).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  const registry = app.sessionManager.getOperationRegistry();
+  await invokeOperation(registry, 'work.status', { ref }, caller);
+  state('processing');
+  evidence.busyStatus = await invokeOperation(registry, 'work.status', { ref }, caller);
+  assert.match(JSON.stringify(evidence.busyStatus), /\"status\":\"running\"/);
+  const first = await invokeOperation(registry, 'work.send', { ref, notice: true, message: 'First retained follow-up' }, caller);
+  const second = await invokeOperation(registry, 'work.send', { ref, notice: true, message: 'Second retained follow-up' }, caller);
+  for (const accepted of [first, second]) {
+    assert.equal(accepted.kind, 'completed');
+    assert(accepted.kind === 'completed');
+    const result = SendWorkResultSchema.parse(accepted.value);
+    assert(result.ok && !result.value.delivered && result.value.inputId);
+  }
+  await until(() => !!db().prepare("SELECT 1 FROM job_queue WHERE queue='worker_input' AND error LIKE 'Waiting for the current%'").get(), 'busy input is parked');
+  assert.equal(inputs().length, 2);
+  assert(inputs().every((input) => input.outcome === null && input.deadline > Date.now() + 60000));
+  assert.equal(messages().length, 0);
+  evidence.beforeRestart = inputs();
+  await app.cleanup();
+  app = await start();
+  assert(![8399, 8499].includes(app.server.port));
+  assert.equal(inputs().length, 2);
+  assert(inputs().every((input) => input.outcome === null));
+  state('idle');
+  await until(() => inputs()[0].outcome !== null, 'first input dispatches after restart and turn completion');
+  await until(() => messages().some((text) => text.includes('First retained follow-up')), 'first input reaches the SDK receiver');
+  state('idle');
+  await until(() => inputs()[1].outcome !== null, 'second input dispatches');
+  await until(() => messages().some((text) => text.includes('Second retained follow-up')), 'second input reaches the SDK receiver');
+  const received = messages().filter((text) => text.includes('retained follow-up'));
+  assert.equal(received.length, 2);
+  assert(received[0].includes('First retained follow-up'));
+  assert(received[1].includes('Second retained follow-up'));
+  assert(inputs().every((input) => input.deadline < Date.now() + 31000));
+  evidence.afterRestart = inputs();
+  evidence.received = received;
+  evidence.port = app.server.port;
+  evidence.passed = true;
+  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, restartRecovered: true }));
+} finally {
+  await app.cleanup();
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
+}

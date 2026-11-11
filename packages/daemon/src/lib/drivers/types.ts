@@ -173,6 +173,7 @@ export const WorkInputReceiptSchema = z.object({
 });
 
 export const WorkDeliverySchema = z.object({
+  inputId: z.string().min(1).optional(),
   desktopUI: DesktopUIEvidenceSchema.optional(),
   delivered: z.boolean(),
   unconfirmed: z.literal(true).optional(),

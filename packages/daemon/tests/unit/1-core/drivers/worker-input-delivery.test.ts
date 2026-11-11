@@ -1,3 +1,7 @@
+import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { WorkAdapter, WorkStatus } from '../../../../src/lib/drivers/types.ts';
 import { createWorkerInputDelivery } from '../../../../src/lib/drivers/worker-input-delivery.ts';
@@ -11,14 +15,14 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const databases: Database[] = [];
 afterEach(() => databases.splice(0).forEach((db) => db.close()));
-const ref = { adapter: 'codex-desktop', id: 'synthetic-worker' };
 const caller = { source: 'internal' as const, role: 'neo' as const, sessionId: 'synthetic-neo' };
 
-function fixture() {
+function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = {}) {
+  const ref = { adapter: adapterId, id: 'synthetic-worker' };
   const db = new Database(':memory:');
   databases.push(db);
+  runMigrations(db, () => {});
   createTables(db);
-  runMigrations(db);
   let status: WorkStatus = 'running';
   let question = false;
   const sent: string[] = [];
@@ -31,9 +35,17 @@ function fixture() {
       ok: true,
       value: {
         ref,
+        title: 'Synthetic worker',
+        place: {
+          machine: 'synthetic',
+          name: 'Synthetic workspace',
+          folder: '/tmp/synthetic-worker',
+        },
         status,
         lastActivityAt: 1,
-        ...(question ? { turnQuestion: { id: 'synthetic-question', text: 'Proceed?' } } : {}),
+        ...(question
+          ? { turnQuestion: { id: 'synthetic-question', at: 1, text: 'Proceed?', actions: [] } }
+          : {}),
       },
     }),
     send: async (_ref: unknown, text: string) => {
@@ -44,6 +56,7 @@ function fixture() {
       sent.push(text);
       return { ok: true, value: { delivered: true } };
     },
+    ...overrides,
   } as unknown as WorkAdapter;
   const deps = {
     adapters: () => [adapter],
@@ -60,8 +73,7 @@ function fixture() {
   const jobs = new JobQueueRepository(db);
   const tick = async () => {
     db.prepare("UPDATE job_queue SET run_at = 0 WHERE queue = 'worker_input'").run();
-    const job = jobs.dequeue('worker_input', 1)[0];
-    if (job) await delivery.run(job);
+    for (const job of jobs.dequeue('worker_input', 10)) await delivery.run(job);
   };
   const send = (message: string, mode?: 'steer') =>
     invokeOperation(
@@ -78,6 +90,50 @@ function fixture() {
     send,
     tick,
     delivery,
+    adapter,
+    registry,
+    ref,
+    seedTodo: () => {
+      const store = new NeoAskTodoRepository(db);
+      store.openAsk({
+        id: 'synthetic-ask',
+        title: 'Queue follow-ups',
+        request: 'Synthetic queue proof',
+        sessionId: caller.sessionId,
+        projectId: null,
+        originMessageId: null,
+        createdAt: 1,
+      });
+      const todo = store.addTodo(
+        'synthetic-todo',
+        'synthetic-ask',
+        {
+          title: 'Synthetic todo',
+          instruction: 'Original instruction',
+          approvedAt: 1,
+          dependsOn: [],
+          named: null,
+          check: null,
+          doneWhen: 'Synthetic result observed',
+        },
+        1
+      );
+      const sessions = new NeoTodoSessionRepository(db);
+      sessions.create(todo.id, { verb: 'start', adapter: adapterId });
+      const runner = createNeoTodoRunner({
+        store,
+        sessions,
+        write: gatewayFor(db).run.bind(gatewayFor(db)),
+        invoke: (caller, name, input) => invokeOperation(registry, name, input, caller),
+        packs: () => [],
+        tell: async () => {},
+        changed: () => {},
+        limits: () => ({ running: 1, perGroup: 1 }),
+        queueFollowUp: (todoId, message, origin, ref) =>
+          delivery.accept({ todoId, message, ref, continuation: true }, origin, caller),
+      });
+      return { store, sessions, todo, runner };
+    },
     setStatus: (next: WorkStatus, asks = false) => {
       status = next;
       question = asks;
@@ -132,5 +188,167 @@ describe('durable worker follow-ups', () => {
     expect(h.sent).toHaveLength(2);
     expect(h.sent[0]).toContain('First follow-up');
     expect(h.sent[1]).toContain('Second follow-up');
+  });
+  test('a live human prompt is refused and the input is retained', async () => {
+    const h = fixture();
+    h.setStatus('needs_you');
+    await h.send('This cannot answer a permission prompt');
+    await h.tick();
+    expect(h.sent).toEqual([]);
+    expect(h.reports).toHaveLength(1);
+    expect(h.db.prepare('SELECT message, outcome FROM work_delivery_inputs').get()).toMatchObject({
+      message: 'This cannot answer a permission prompt',
+      outcome: expect.stringContaining('needs_you'),
+    });
+  });
+
+  test('a dispatched input recovered without confirmation is reported once and never replayed', async () => {
+    const h = fixture();
+    h.setStatus('done');
+    await h.send('Keep the uncertain original');
+    const job = h.jobs.dequeue('worker_input', 1)[0];
+    h.db
+      .prepare(
+        "UPDATE job_queue SET payload = json_set(payload, '$.dispatched', json('true')) WHERE id = ?"
+      )
+      .run(job.id);
+    h.jobs.requeueWaiting(job.id, 0, job.claimToken!);
+    await h.tick();
+    await h.tick();
+    expect(h.sent).toEqual([]);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]).toContain('may not have reached');
+    expect(h.db.prepare('SELECT message FROM work_delivery_inputs').get()).toEqual({
+      message: 'Keep the uncertain original',
+    });
+  });
+
+  test('input acceptance rolls back when inserting its job fails', async () => {
+    const h = fixture();
+    h.db.exec(
+      "CREATE TRIGGER reject_worker_input BEFORE INSERT ON job_queue WHEN NEW.queue = 'worker_input' BEGIN SELECT RAISE(ABORT, 'synthetic acceptance failure'); END"
+    );
+    const result = await h.send('Must not be partially accepted');
+    expect(result).toMatchObject({ kind: 'failed' });
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get()).toEqual({ n: 0 });
+    expect(h.sent).toEqual([]);
+  });
+
+  test.each(['codex-desktop', 'claude-desktop', 'claude-code', 'hyperneo'])(
+    '%s waits only while running or queued',
+    async (adapter) => {
+      const h = fixture(adapter);
+      h.setStatus('queued');
+      await h.send('Retain this follow-up');
+      await h.tick();
+      expect(h.sent).toEqual([]);
+      h.setStatus('done');
+      await h.tick();
+      expect(h.sent).toHaveLength(1);
+    }
+  );
+
+  test('a follow-up saved before startup follows the original instruction after binding', async () => {
+    const h = fixture();
+    const { todo, sessions, runner } = h.seedTodo();
+    h.setStatus('done');
+    const accepted = await runner.proceed(todo.id, 'Follow-up before startup');
+    expect(accepted).toMatchObject({ ok: true, records: [expect.stringContaining('queued:')] });
+    await h.tick();
+    expect(h.sent).toEqual([]);
+    sessions.recordRef(todo.id, h.ref);
+    await h.delivery.accept(
+      { todoId: todo.id, ref: h.ref, message: 'Original instruction' },
+      'neo:synthetic-neo',
+      caller
+    );
+    await h.tick();
+    await h.tick();
+    await h.tick();
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[0]).toContain('Original instruction');
+    expect(h.sent[1]).toContain('Follow-up before startup');
+  });
+  test('continue keeps the current report until its saved follow-up is dispatched', async () => {
+    const h = fixture();
+    const { todo, sessions, store, runner } = h.seedTodo();
+    sessions.recordRef(todo.id, h.ref, 1);
+    store.updateTodo(
+      todo,
+      { state: 'doing', report: 'Retained earlier report', evidence: 'Earlier evidence' },
+      Date.now()
+    );
+    const accepted = await runner.proceed(todo.id, 'Continue the same todo');
+    expect(accepted).toMatchObject({ ok: true, records: [expect.stringContaining('queued:')] });
+    await h.tick();
+    expect(store.getTodo(todo.id)?.report).toBe('Retained earlier report');
+    expect(h.sent).toEqual([]);
+    h.setStatus('done');
+    await h.tick();
+    expect(h.sent).toHaveLength(1);
+    expect(store.getTodo(todo.id)?.report).toBeNull();
+  });
+
+  test('continue refuses a live human prompt before accepting an input', async () => {
+    const h = fixture();
+    const { todo, sessions, store, runner } = h.seedTodo();
+    sessions.recordRef(todo.id, h.ref, 1);
+    store.updateTodo(todo, { state: 'doing' }, Date.now());
+    h.setStatus('needs_you');
+    const result = await runner.proceed(todo.id, 'Cannot answer this live prompt');
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('needs_you') });
+    expect(h.jobs.listJobs({ queue: 'worker_input' })).toEqual([]);
+  });
+  test('unreachable status retains the input and reason without spending retries', async () => {
+    const h = fixture('codex-desktop', {
+      status: async () => ({
+        ok: false,
+        reason: 'unreachable',
+        detail: 'Synthetic receiver is offline',
+      }),
+    });
+    await h.send('Wait for this receiver');
+    await h.tick();
+    await h.tick();
+    expect(h.sent).toEqual([]);
+    expect(h.jobs.listJobs({ queue: 'worker_input' })[0]).toMatchObject({
+      status: 'pending',
+      retryCount: 0,
+      error: 'Synthetic receiver is offline',
+    });
+  });
+
+  test('work.queue retains an input and releases it through ordinary send after the turn', async () => {
+    const h = fixture('codex-desktop', {
+      queue: async () => {
+        throw new Error('Unexpected native queue submission');
+      },
+    });
+    const result = await invokeOperation(
+      h.registry,
+      'work.queue',
+      { ref: h.ref, notice: true, message: 'Queued through the daemon' },
+      caller
+    );
+    expect(result).toMatchObject({
+      value: { ok: true, value: { delivered: false, inputId: expect.any(String) } },
+    });
+    await h.tick();
+    expect(h.sent).toEqual([]);
+    h.setStatus('done');
+    await h.tick();
+    expect(h.sent).toHaveLength(1);
+  });
+  test('continue can reopen a completed todo after its accepted follow-up is dispatched', async () => {
+    const h = fixture();
+    const { todo, sessions, store, runner } = h.seedTodo();
+    sessions.recordRef(todo.id, h.ref, 1);
+    store.updateTodo(todo, { state: 'done', report: 'Previous result' }, Date.now());
+    h.setStatus('done');
+    expect(await runner.proceed(todo.id, 'One more change')).toMatchObject({ ok: true });
+    expect(store.getTodo(todo.id)?.state).toBe('done');
+    await h.tick();
+    expect(h.sent).toHaveLength(1);
+    expect(store.getTodo(todo.id)?.state).toBe('doing');
   });
 });

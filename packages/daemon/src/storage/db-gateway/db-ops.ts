@@ -1,3 +1,4 @@
+import { workerInputReads, workerInputWrites } from '../repositories/worker-input-worker.ts';
 import { neoFrontReads } from '../repositories/neo-front-read-worker.ts';
 import { neoFrontInputWrites } from '../repositories/neo-front-input-worker.ts';
 import { neoAskInputReads, neoAskInputWrites } from '../repositories/neo-ask-input-worker.ts';
@@ -303,6 +304,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     forgetAgentChildren,
     recordNeoSessionMessage,
     sentDuringTurn,
+    workerInputReads,
+    workerInputWrites,
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
     recordWorkTurns,
