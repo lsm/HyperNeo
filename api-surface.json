@@ -32875,6 +32875,10 @@
             "maxItems": 16,
             "type": "array"
           },
+          "progress": {
+            "const": true,
+            "type": "boolean"
+          },
           "replyTo": {
             "items": {
               "format": "uuid",
