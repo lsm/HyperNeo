@@ -34,6 +34,7 @@ class CleanupSandboxTests(unittest.TestCase):
             sources.write_text('deb http://azure.archive.ubuntu.com/ubuntu noble main\n')
             log = root / 'commands.log'
             programs = {
+                'apt-cache': '''printf 'apt-cache %s\\n' "$*" >> "$CI_TEST_LOG"''',
                 'getent': 'exit "$CI_TEST_DNS_STATUS"',
                 'sudo': '''if [ "$1" = tee ]; then
   if [ "$2" = /etc/apt/apt-mirrors.txt ]; then
@@ -74,6 +75,8 @@ printf 'apt-get %s\\n' "$*" >> "$CI_TEST_LOG"''',
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             commands = log.read_text()
+            self.assertIn('policy bubblewrap\n', commands)
+            self.assertLess(commands.index('policy bubblewrap\n'), commands.index('install -y bubblewrap\n'))
             self.assertIn('install -y bubblewrap\n', commands)
             self.assertIn('bwrap --die-with-parent --ro-bind / / -- /bin/true\n', commands)
             return mirrors.read_text(), sources.read_text(), commands
