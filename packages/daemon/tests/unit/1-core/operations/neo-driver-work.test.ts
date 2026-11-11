@@ -54,6 +54,16 @@ test('worker delivery guidance uses a live owning-daemon path instead of requiri
   expect(message).not.toContain('artifact.file.register');
   expect(message).toContain('owner_unavailable');
 });
+
+test('work guidance tells Neo-assigned workers not to poll for external progress', () => {
+  const message = withWorkGoal('Ship the fix.', {
+    goal: 'Fix the bug',
+    doneWhen: 'The fix is released',
+  });
+  expect(message).toContain('do not poll');
+  expect(message).toContain('end the turn');
+  expect(message).toContain('arrive on their own as new input');
+});
 const sendTarget: NeoDriverTarget = {
   verb: 'send',
   ref: { adapter: 'hyperneo', id: 's1' },
