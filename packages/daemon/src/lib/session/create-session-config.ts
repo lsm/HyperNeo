@@ -73,6 +73,14 @@ export function hasExplicitAutoCompactWindow(
   return typeof window === 'number' && Number.isSafeInteger(window) && window > 0;
 }
 
+export function hasExplicitAutoCompactChoice(
+  config: Pick<SessionConfig, 'autoCompactWindow' | 'autoCompactPercent'>
+): boolean {
+  if (hasExplicitAutoCompactWindow(config)) return true;
+  const percent = config.autoCompactPercent;
+  return typeof percent === 'number' && Number.isFinite(percent) && percent > 0;
+}
+
 function fieldsWithPolicy(policy: CreateSessionConfigFieldPolicy): (keyof SessionConfig)[] {
   return (Object.keys(CREATE_SESSION_CONFIG_FIELD_POLICY) as (keyof SessionConfig)[]).filter(
     (field) => CREATE_SESSION_CONFIG_FIELD_POLICY[field] === policy

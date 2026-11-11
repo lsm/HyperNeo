@@ -4,7 +4,7 @@ import type { ReactiveDatabase } from '../reactive-database.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
 import { sdkMailboxFailure } from './sdk-message-transactions.ts';
-import { neoTodoStartRefusal, neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
+import { neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
 import { neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
@@ -276,17 +276,17 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       const asked = store.gateQuestions(ask);
       const family = store.listFamilyTodos(ask.id);
       return plan.flatMap((next) =>
-        next.state === 'todo' &&
+        (next.state === 'todo' || (next.state === 'blocked' && next.blockedBy === 'question')) &&
         next.startedAt === null &&
-        !(next.instruction
-          ? neoTodoStartRefusal(next, family, asked, trackerHolds[next.id])
-          : neoTodoWaitReason(next, family, asked))
+        !neoTodoWaitReason(next, family, asked, next.instruction ? trackerHolds[next.id] : null)
           ? [{ ask, next, target: this.get(next.id) }]
           : []
       );
     });
     const candidates = waiting.flatMap(({ ask, next, target }) =>
-      next.instruction && (target?.verb === 'start' || target?.verb === 'send')
+      next.approvedAt !== null &&
+      next.instruction &&
+      (target?.verb === 'start' || target?.verb === 'send')
         ? [
             {
               id: next.id,
@@ -300,7 +300,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         : []
     );
     const unworked = waiting.flatMap(({ next, target }) =>
-      !next.instruction && !target ? [next.id] : []
+      next.approvedAt === null ||
+      !next.instruction ||
+      !target ||
+      !['start', 'send'].includes(target.verb)
+        ? [next.id]
+        : []
     );
     return { candidates, running, unworked };
   }

@@ -121,7 +121,7 @@ describe('todos given work later', () => {
       expect(sessions.queueFacts().unworked).toEqual([second.id]);
       await runner.refresh(() => {});
       await runner.refresh(() => {});
-      expect(told.filter((note) => note.includes('nothing runs it'))).toEqual([
+      expect(told.filter((note) => note.includes('cannot start'))).toEqual([
         expect.stringContaining(second.id),
       ]);
     } finally {

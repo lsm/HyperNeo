@@ -1435,6 +1435,17 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
+    it('scales the Kimi K3 window by an explicit session percentage', () => {
+      expect(buildProviderSettings('kimi', 1_048_576, 'kimi-k3', undefined, 70)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 734_003,
+      });
+      expect(buildProviderSettings('kimi', 262_144, 'k3-256k', undefined, 50)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 131_072,
+      });
+    });
+
     it('should pass the 256K window for the k3-256k K3 variant', () => {
       expect(buildProviderSettings('kimi', 262_144, 'k3-256k')).toEqual({
         autoCompactEnabled: true,
