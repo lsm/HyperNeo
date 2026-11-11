@@ -7,6 +7,13 @@ import { frontSessionId } from './front-mode.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
+import {
+  createHandoffOperations,
+  HandoffReadInput,
+  HandoffReadResult,
+} from '../handoffs/operations.ts';
+import { createOperationRegistry } from '../operations/registry.ts';
+import { invokeOperation } from '../operations/invoke.ts';
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -18,6 +25,9 @@ const result = (value: unknown) => ({
 
 export function createFrontTools(service: NeoService, conversationId: string) {
   const sessionId = frontSessionId(conversationId);
+  const handoffs = createOperationRegistry(
+    createHandoffOperations((id) => service.db.getSession(id)?.status ?? null)
+  );
   const lookups = (['projects', 'asks', 'cards', 'todos'] as const).map((kind) =>
     tool(`${kind}_read`, `Read current ${kind} for this conversation.`, Read, async (input) =>
       result(
@@ -44,6 +54,28 @@ export function createFrontTools(service: NeoService, conversationId: string) {
               ? await service.publish(input, { source: 'mcp', sessionId })
               : { accepted: false, reason: 'unknown_reply_target' }
           );
+        }
+      ),
+      tool(
+        'handoff_read',
+        'Read a complete published report reference from Back Neo. The daemon verifies its SHA-256 and returns text. Continue at nextOffset until complete before summarizing.',
+        HandoffReadInput.shape,
+        async (input) => {
+          if (
+            service.repo.readConversationId() !== conversationId ||
+            service.db.getGlobalSettings().neo?.front?.enabled !== true
+          )
+            return result({ kind: 'rejected', reason: 'front_not_speaking' });
+          const outcome = await invokeOperation(handoffs, 'handoff.read', input, {
+            source: 'mcp',
+            role: 'neo',
+            sessionId,
+          });
+          if (outcome.kind !== 'completed') return result(outcome);
+          const read = HandoffReadResult.parse(outcome.value);
+          if (read.kind !== 'read') return result(read);
+          const { data, ...metadata } = read;
+          return result({ ...metadata, text: Buffer.from(data, 'base64').toString('utf8') });
         }
       ),
       tool(

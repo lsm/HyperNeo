@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { publishTextHandoff } from '../../../../src/lib/handoffs/publish-text.ts';
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'node:crypto';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -398,4 +402,54 @@ test('an unknown Front handoff creates no Back delivery', async () => {
   expect(JSON.stringify(response)).toContain('unknown_reply_target');
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
   expect(db.getJobQueueRepo().listJobs({ queue: 'mailbox' })).toHaveLength(0);
+});
+
+test('Front has a dedicated reader for the existing handoff operation', async () => {
+  createFrontTools(service, conversationId);
+  const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
+  expect(definitions.find((tool) => tool.name === 'handoff_read')).toBeTruthy();
+  const session = await frontSession(
+    service,
+    { conversationId, askOrigin: { sessionId: root, messageId: root } },
+    model
+  );
+  expect(session.config.allowedTools).toContain('mcp__front__handoff_read');
+  expect(session.config.operationTools).toBe(false);
+});
+
+test('Front reads Back report text through the verified handoff reader', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'front-handoff-'));
+  const previous = process.env.HYPERNEO_DATA_DIR;
+  process.env.HYPERNEO_DATA_DIR = folder;
+  try {
+    const text = 'Verified report. 完整结果。'.repeat(200);
+    const reference = await publishTextHandoff(folder, root, text);
+    createFrontTools(service, conversationId);
+    const reader = vi
+      .mocked(createSdkMcpServer)
+      .mock.calls.at(-1)![0]
+      .tools!.find((tool) => tool.name === 'handoff_read')!;
+    const response = await reader.handler(
+      { reference, offset: 0, length: 256 * 1024 },
+      {} as never
+    );
+    expect(JSON.parse((response.content[0] as { text: string }).text)).toMatchObject({
+      kind: 'read',
+      text,
+      complete: true,
+    });
+    const invalid = await reader.handler(
+      {
+        reference: { ...reference, path: reference.path + '.other' },
+        offset: 0,
+        length: 256 * 1024,
+      },
+      {} as never
+    );
+    expect(JSON.stringify(invalid)).toContain('invalid_reference');
+  } finally {
+    if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;
+    else process.env.HYPERNEO_DATA_DIR = previous;
+    await rm(folder, { recursive: true, force: true });
+  }
 });
