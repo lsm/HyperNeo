@@ -821,7 +821,7 @@ test.each([
   { text: 'A plain terminal answer', failedNeo: true },
   { text: '', failedNeo: true },
 ])(
-  'the daemon resolves a tool-free Convo terminal visibly ($text, failed Neo delivery $failedNeo)',
+  'a tool-free Convo turn gets the fixed notice, never its closing text ($text, failed Neo delivery $failedNeo)',
   async ({ text, failedNeo }) => {
     const { id, job } = await accept();
     const handler = createNeoFrontHandler(service);
@@ -858,15 +858,14 @@ test.each([
     const replies = service.publications.list(conversationId)!;
     expect(replies).toHaveLength(1);
     expect(replies[0].replyTo).toEqual([id]);
-    expect(replies[0].fullText.trim().length).toBeGreaterThan(0);
-    if (text) expect(replies[0].fullText).toBe(text);
+    expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
     await handler(job);
     expect(service.publications.list(conversationId)).toHaveLength(1);
   }
 );
 
 test.each(['user_message_uuid', 'user_message_uuids'] as const)(
-  'an overlapping terminal settles only the inputs named by %s',
+  'an overlapping terminal settles only the inputs named by %s without republishing closing text',
   async (attribution) => {
     const previous = await accept();
     const current = await accept();
@@ -912,23 +911,21 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
         progress: true,
       })
     ).toMatchObject({ accepted: true });
+    const published = service.publications.list(conversationId)!.length;
     await db.saveSDKMessage(front, {
       type: 'result',
       subtype: 'success',
       uuid: crypto.randomUUID(),
       session_id: front,
-      result: 'The answer to the current input.',
+      result: 'I will check that.',
+      num_turns: 2,
       is_error: false,
       ...(attribution === 'user_message_uuid'
         ? { user_message_uuid: current.id }
         : { user_message_uuids: [current.id] }),
     } as import('@hyperneo/shared/sdk').SDKMessage);
-    expect(await handler(current.job)).toMatchObject({ delivered: true });
-    const replies = service.publications
-      .list(conversationId)!
-      .filter((row) => row.replyTo?.includes(current.id));
-    expect(replies).toHaveLength(1);
-    expect(replies[0].fullText).toBe('The answer to the current input.');
+    expect(await handler(current.job)).toMatchObject({ delivered: true, outcome: 'answered' });
+    expect(service.publications.list(conversationId)).toHaveLength(published);
   }
 );
 
