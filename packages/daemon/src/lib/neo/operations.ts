@@ -761,7 +761,7 @@ export function createNeoOperations(
     createNeoReorganizeOperation(neoReorganizeRuntime(service, identity)),
     createNeoPublicationOperation(service.publish, (items) => service.presentPublications(items)),
     ...createNeoPublicationChangeOperations({
-      getBinding: (id) => service.repo.getBindingBySession(id),
+      getBinding: (id) => service.repo.getPublicationBinding(id),
       getRootBinding: () => service.repo.defaultBinding(),
       publicationSessionId: () => {
         const conversation = service.repo.readConversationId();

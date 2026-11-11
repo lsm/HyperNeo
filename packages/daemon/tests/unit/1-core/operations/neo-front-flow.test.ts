@@ -1,4 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  handoffDraftDirectory,
+  publishHandoff,
+  publicHandoffReference,
+} from '../../../../src/lib/handoffs/outbox.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishTextHandoff } from '../../../../src/lib/handoffs/publish-text.ts';
@@ -453,3 +458,248 @@ test('Front reads Back report text through the verified handoff reader', async (
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+test('Front forwards a ready Back reply by message ID without rewriting or duplicate publication', async () => {
+  const { id, job } = await accept();
+  await createNeoFrontHandler(service)(job);
+  const { NeoSessionMessageRepository } = await import(
+    '../../../../src/storage/repositories/neo-session-message-repository.ts'
+  );
+  const publication = {
+    fullText: '  Exact reply.\n\nKeep this spacing.  ',
+    verbatim: true as const,
+    replyTo: [id],
+  };
+  const sent = await invokeOperation(
+    createDatabaseOperationCatalog(db),
+    'message.send',
+    {
+      to: front,
+      text: JSON.stringify({ publication }),
+      idempotencyKey: 'ready-reply',
+    },
+    { source: 'mcp', role: 'neo', sessionId: root }
+  );
+  expect(sent.kind).toBe('completed');
+  if (sent.kind !== 'completed') throw new Error('Back send failed');
+  const receipt = sent.value as { messageId: string };
+  const stored = new NeoSessionMessageRepository(db.getDatabase()).get(
+    conversationId,
+    receipt.messageId
+  );
+  expect(stored?.text).toBe(JSON.stringify({ publication }));
+  createFrontTools(service, conversationId);
+  const forward = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'publication_forward');
+  expect(forward).toBeTruthy();
+  for (let i = 0; i < 2; i++) {
+    const response = await forward!.handler({ messageId: receipt.messageId }, {} as never);
+    expect(JSON.parse((response.content[0] as { text: string }).text)).toMatchObject({
+      accepted: true,
+      created: i === 0,
+    });
+  }
+  expect(service.publications.list(conversationId)).toHaveLength(1);
+  expect(service.publications.list(conversationId)?.[0]).toMatchObject(publication);
+});
+
+test('forwarding preserves a preview and its work session through ordinary publication checks', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'front-ready-reply-'));
+  const previous = process.env.HYPERNEO_DATA_DIR;
+  process.env.HYPERNEO_DATA_DIR = folder;
+  try {
+    const { id, job } = await accept();
+    await createNeoFrontHandler(service)(job);
+    const worker = crypto.randomUUID();
+    await db.createSession(createTestSession(worker));
+    const name = 'result.md';
+    await writeFile(join(handoffDraftDirectory(folder, root), name), '# Complete result');
+    const published = await publishHandoff(folder, root, name);
+    if (published.kind !== 'published') throw new Error('Fixture publication failed');
+    const publication = {
+      fullText: 'Exact result. '.repeat(400),
+      verbatim: true,
+      replyTo: [id],
+      session: worker,
+      artifacts: [publicHandoffReference(published.reference)],
+    };
+    const sent = await invokeOperation(
+      createDatabaseOperationCatalog(db),
+      'message.send',
+      { to: front, text: JSON.stringify({ publication }), idempotencyKey: 'ready-with-preview' },
+      { source: 'mcp', role: 'neo', sessionId: root }
+    );
+    if (sent.kind !== 'completed') throw new Error('Back send failed');
+    const { messageId } = sent.value as { messageId: string };
+    createFrontTools(service, conversationId);
+    const forward = vi
+      .mocked(createSdkMcpServer)
+      .mock.calls.at(-1)![0]
+      .tools!.find((tool) => tool.name === 'publication_forward')!;
+    const response = await forward.handler({ messageId }, {} as never);
+    expect(JSON.parse((response.content[0] as { text: string }).text)).toMatchObject({
+      accepted: true,
+    });
+    expect(service.publications.list(conversationId)?.[0]).toMatchObject(publication);
+  } finally {
+    if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;
+    else process.env.HYPERNEO_DATA_DIR = previous;
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test.each(['note', 'wrong-sender', 'wrong-recipient', 'unknown-input'])(
+  'forwarding refuses %s without publishing',
+  async (kind) => {
+    const { id, job } = await accept();
+    await createNeoFrontHandler(service)(job);
+    const { NeoSessionMessageRepository } = await import(
+      '../../../../src/storage/repositories/neo-session-message-repository.ts'
+    );
+    const messageId = crypto.randomUUID();
+    await new NeoSessionMessageRepository(db.getDatabase()).record({
+      conversationId,
+      messageId,
+      fromSession: kind === 'wrong-sender' ? front : root,
+      fromName: null,
+      toSession: kind === 'wrong-recipient' ? root : front,
+      toName: null,
+      text:
+        kind === 'note'
+          ? 'Internal note only.'
+          : JSON.stringify({
+              publication: {
+                fullText: 'Answer',
+                verbatim: true,
+                replyTo: [kind === 'unknown-input' ? crypto.randomUUID() : id],
+              },
+            }),
+      createdAt: new Date().toISOString(),
+      kind: 'session',
+    });
+    createFrontTools(service, conversationId);
+    const forward = vi
+      .mocked(createSdkMcpServer)
+      .mock.calls.at(-1)![0]
+      .tools!.find((tool) => tool.name === 'publication_forward')!;
+    const response = await forward.handler({ messageId }, {} as never);
+    expect(JSON.parse((response.content[0] as { text: string }).text)).toMatchObject({
+      accepted: false,
+    });
+    expect(service.publications.list(conversationId)).toHaveLength(0);
+  }
+);
+
+test('Front gets the complete quoted question with its options and references', async () => {
+  const id = crypto.randomUUID();
+  const askId = crypto.randomUUID();
+  const questionId = crypto.randomUUID();
+  service.todos.openAsk({
+    id: askId,
+    projectId: null,
+    sessionId: root,
+    originMessageId: id,
+    title: 'Native settings',
+    request: 'Review the native window.',
+    createdAt: Date.now(),
+  });
+  const text = 'Review the native settings window. '.repeat(20) + 'The quoted tail is required.';
+  service.todos.askQuestion(
+    questionId,
+    askId,
+    {
+      kind: 'choice',
+      text,
+      options: ['Open the native window', 'Show screenshots'],
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      startTodos: null,
+      document: '/fixture/native-review.md',
+    },
+    Date.now()
+  );
+  await service.asks.acceptPrompt(
+    conversationId,
+    neoIntakeMessage({
+      sessionId: root,
+      requestId: id,
+      content: 'Show me a screenshot',
+      replyTo: { kind: 'question', id: questionId, author: 'neo', excerpt: text.slice(0, 300) },
+    }),
+    'immediate',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  await createNeoFrontHandler(service)(
+    db.getJobQueueRepo().listJobs({ queue: 'neo.front' }).at(-1)!
+  );
+  const content = JSON.stringify(db.getJobQueueRepo().listJobs({ queue: 'mailbox' }));
+  for (const expected of [
+    questionId,
+    askId,
+    'Show screenshots',
+    '/fixture/native-review.md',
+    'The quoted tail is required.',
+  ])
+    expect(content).toContain(expected);
+});
+
+test.each([
+  {
+    topic: 'the C explanation',
+    original: 'C removes the write-plan preview.',
+    updates: [
+      'The preview returns adapter, place, model and effort.',
+      'The preview returns adapter, place, model and effort. Neo uses it through prompt guidance.',
+    ],
+  },
+  {
+    topic: 'the native screenshot request',
+    original: 'The screenshot is pending because the Mac is locked.',
+    updates: [
+      'The Mac is still locked; the screenshot remains pending.',
+      'The Mac is still locked; three native screenshots will follow after unlock.',
+    ],
+  },
+])(
+  'Front updates the existing answer for $topic instead of publishing duplicates',
+  async ({ original, updates }) => {
+    const { id, job } = await accept();
+    await createNeoFrontHandler(service)(job);
+    const saved = await service.publish(
+      { requestId: 'original', verbatim: true, fullText: original, replyTo: [id] },
+      { source: 'mcp', sessionId: front }
+    );
+    if (!saved.accepted) throw new Error('Original publication failed');
+    createFrontTools(service, conversationId);
+    const edit = vi
+      .mocked(createSdkMcpServer)
+      .mock.calls.at(-1)![0]
+      .tools!.find((tool) => tool.name === 'publication_edit');
+    expect(edit).toBeTruthy();
+    for (const [index, fullText] of updates.entries()) {
+      const input = {
+        publicationId: saved.publication.publicationId,
+        requestId: `correction-${index}`,
+        fullText,
+      };
+      for (let retry = 0; retry < 2; retry++) {
+        const response = await edit!.handler(input, {} as never);
+        expect(JSON.parse((response.content[0] as { text: string }).text)).toMatchObject({
+          accepted: true,
+        });
+      }
+    }
+    const publications = service.publications.list(conversationId) ?? [];
+    expect(publications).toHaveLength(1);
+    expect(publications[0]).toMatchObject({
+      publicationId: saved.publication.publicationId,
+      fullText: updates.at(-1),
+      replyTo: [id],
+    });
+    expect(publications[0].revisions).toHaveLength(updates.length);
+  }
+);

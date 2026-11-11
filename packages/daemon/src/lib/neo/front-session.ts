@@ -37,6 +37,8 @@ export async function frontSession(
       'cards_read',
       'todos_read',
       'publication_publish',
+      'publication_forward',
+      'publication_edit',
       'speech_say',
       'handoff_read',
       'neo_send',

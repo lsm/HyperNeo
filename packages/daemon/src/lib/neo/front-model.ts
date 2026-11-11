@@ -4,6 +4,8 @@ import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.
 import { NeoPublicationDraft } from './publication-operation.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { frontSessionId } from './front-mode.ts';
+import { forwardFrontPublication } from './front-publication.ts';
+import { NeoPublicationEditInput } from './publication-change-operation.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
@@ -55,6 +57,29 @@ export function createFrontTools(service: NeoService, conversationId: string) {
               : { accepted: false, reason: 'unknown_reply_target' }
           );
         }
+      ),
+      tool(
+        'publication_edit',
+        'Update an existing answer for corrections, added detail or ongoing progress. Preserves its attachments, session and reply target. Reuse requestId on retries. A new blocker, completion or necessary human decision may warrant a new publication.',
+        NeoPublicationEditInput.shape,
+        async (input) => {
+          const edited = await service.publications.reviseCurrent(input, {
+            source: 'mcp',
+            sessionId,
+          });
+          if (edited.accepted) {
+            service.notifyChanged();
+            service.notifyPublicationsChanged(edited.publication.conversationId);
+          }
+          return result(edited);
+        }
+      ),
+      tool(
+        'publication_forward',
+        'Publish a ready Back reply unchanged using its daemon message-id. Preserves text, artifacts, session and replyTo. Inspect the reply first; retries of the same message never publish it twice.',
+        { messageId: z.uuid() },
+        async ({ messageId }) =>
+          result(await forwardFrontPublication(service, conversationId, messageId))
       ),
       tool(
         'handoff_read',

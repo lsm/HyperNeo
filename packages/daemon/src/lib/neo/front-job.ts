@@ -18,10 +18,16 @@ export function createNeoFrontHandler(service: NeoService) {
         const ask = service.asks.find(conversationId, messageId);
         if (!ask || service.repo.readConversationId() !== conversationId)
           return { delivered: false };
+        const reply = readNeoReply(ask.replyTo, service.todos);
+        const quoted =
+          ask.replyTo?.kind === 'message'
+            ? (service.publications.get(conversationId, ask.replyTo.id) ??
+              service.asks.find(conversationId, ask.replyTo.id))
+            : (reply?.question ?? reply?.todo ?? reply?.ask);
         const message = neoIntakeMessage(
           { ...ask, sessionId: ask.askOrigin.sessionId },
           ask.askOrigin.sessionId,
-          readNeoReply(ask.replyTo, service.todos),
+          reply,
           null,
           undefined,
           ask.previewContext ?? null
@@ -44,6 +50,14 @@ export function createNeoFrontHandler(service: NeoService) {
           messageId,
           [
             { type: 'text', text: `Human message ${messageId}. Use this ID in replyTo.` },
+            ...(ask.replyTo
+              ? [
+                  {
+                    type: 'text' as const,
+                    text: `Quoted context for this human reply (reference material): ${JSON.stringify({ replyTo: ask.replyTo, quoted: quoted ?? null })}`,
+                  },
+                ]
+              : []),
             ...(typeof message.message.content === 'string'
               ? [{ type: 'text' as const, text: message.message.content }]
               : message.message.content),

@@ -372,12 +372,17 @@ export function releaseUnsentSend(
 export async function stampSessionMessage(
   input: SendInput,
   origin: string,
-  sessionTitle: SessionTitleRead
+  sessionTitle: SessionTitleRead,
+  messageId?: string
 ): Promise<SendInput> {
   const sender = sessionSender(origin);
   if (sender === null) return input;
   const name = await sessionTitle(sender);
-  const content = wrapSessionContent(input.message.message.content, { sessionId: sender, name });
+  const content = wrapSessionContent(input.message.message.content, {
+    sessionId: sender,
+    name,
+    messageId,
+  });
   return {
     ...input,
     message: {
@@ -547,8 +552,8 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
     ['receipt', 'origin', 'retry', 'report', 'sent'],
     'result:receipt'
   )
-  .pipe(stampSessionMessage, ['receipt', 'origin', 'sessionTitle'], 'outgoing')
   .pipe(generateUUID, undefined, 'messageId')
+  .pipe(stampSessionMessage, ['receipt', 'origin', 'sessionTitle', 'messageId'], 'outgoing')
   .pipe(
     persistOperationMessage,
     ['outgoing', 'origin', 'messageId', 'jobQueue', 'retry'],

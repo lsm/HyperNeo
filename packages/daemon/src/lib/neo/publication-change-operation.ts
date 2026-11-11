@@ -17,7 +17,7 @@ type Producer = Extract<ReturnType<typeof requirePublicationProducer>, { value: 
 type Rejection = { accepted: false; reason: string; detail?: string };
 type Owned = { producer: Producer; publication: NeoPublication };
 
-const EditInput = z
+export const NeoPublicationEditInput = z
   .object({
     requestId: z.string().min(1).max(160),
     publicationId: z.string().uuid(),
@@ -149,7 +149,7 @@ export function createNeoPublicationChangeAdmission(
           undefined
         )
     );
-  return revise('neo.publication.edit', EditInput);
+  return revise('neo.publication.edit', NeoPublicationEditInput);
 }
 
 export function createNeoPublicationChangeOperations(runtime: NeoPublicationChangeRuntime) {
@@ -158,7 +158,7 @@ export function createNeoPublicationChangeOperations(runtime: NeoPublicationChan
       name: 'neo.publication.edit',
       description: neoToolDescription('neo.publication.edit'),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      inputSchema: EditInput,
+      inputSchema: NeoPublicationEditInput,
       resultSchema: NeoPublicationResultSchema,
       execute: async (input, caller) => {
         const result = await runtime.publications.reviseCurrent(input, caller);

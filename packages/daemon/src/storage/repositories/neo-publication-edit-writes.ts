@@ -13,7 +13,7 @@ class NeoPublicationEditCommands {
   revise(input: unknown, caller: OperationCaller) {
     const repo = new NeoRepository(this.db);
     const admit = publicationChange.createNeoPublicationChangeAdmission({
-      getBinding: (id) => repo.getBindingBySession(id),
+      getBinding: (id) => repo.getPublicationBinding(id),
       getRootBinding: () => repo.defaultBinding(),
       publicationSessionId: () => {
         const conversation = repo.readConversationId();

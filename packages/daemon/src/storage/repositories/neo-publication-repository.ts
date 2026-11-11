@@ -68,9 +68,15 @@ function hasTrigger(
 function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
-  payload: string
+  payload: string,
+  speaker?: string
 ): NeoPublicationWriteResult {
   return db.transaction((): NeoPublicationWriteResult => {
+    if (speaker) {
+      const dual = new SettingsRepository(db).getGlobalSettings().neo?.front?.enabled === true;
+      if (speaker !== publicationSpeaker(input.conversationId, dual))
+        return { accepted: false, reason: 'publication_superseded' };
+    }
     if (input.cardReply) {
       const target = db
         .prepare('SELECT ask_id FROM neo_questions WHERE id = ?')
@@ -203,7 +209,7 @@ function appendImmutable(
 }
 
 const append = (superpipe({})('neo-publication-append') as PipelineAPI)
-  .input(['input', 'db'])
+  .input(['input', 'db', 'speaker'])
   .pipe(admitNeoPublication, 'input', 'result:append')
   .pipe(
     (input: NeoPublicationInput) =>
@@ -221,10 +227,11 @@ const append = (superpipe({})('neo-publication-append') as PipelineAPI)
     'append'
   )
   .pipe(JSON.stringify, 'append', 'payload')
-  .pipe(appendImmutable, ['db', 'append', 'payload'], 'append')
+  .pipe(appendImmutable, ['db', 'append', 'payload', 'speaker'], 'append')
   .end('append') as (
   input: unknown,
-  db: Database
+  db: Database,
+  speaker?: string
 ) => NeoPublicationWriteResult | 'invalid_publication';
 
 const readPage = (superpipe({})('neo-publication-page') as PipelineAPI)
@@ -275,20 +282,9 @@ export class NeoPublicationRepository {
   }
 
   append(input: unknown, speaker?: string): NeoPublicationWriteResult {
-    return this.db.transaction(() => {
-      if (speaker) {
-        const parsed = admitNeoPublication(input);
-        if ('reason' in parsed)
-          return { accepted: false as const, reason: 'invalid_publication' as const };
-        const dual =
-          new SettingsRepository(this.db).getGlobalSettings().neo?.front?.enabled === true;
-        if (speaker !== publicationSpeaker(parsed.value.conversationId, dual))
-          return { accepted: false as const, reason: 'publication_superseded' as const };
-      }
-      const result = append(input, this.db);
-      if (result === 'invalid_publication') return { accepted: false as const, reason: result };
-      return result;
-    })();
+    const result = append(input, this.db, speaker);
+    if (result === 'invalid_publication') return { accepted: false, reason: result };
+    return result;
   }
 
   get(conversationId: string, publicationId: string): NeoPublication | null {

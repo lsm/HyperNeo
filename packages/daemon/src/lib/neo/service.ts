@@ -343,12 +343,7 @@ export class NeoService {
           ? sources[0]
           : undefined;
       },
-      getBinding: (id) => {
-        const conversation = this.repo.readConversationId();
-        return conversation && id === frontSessionId(conversation) && this.db.getSession(id)
-          ? { sessionId: id, kind: 'neo', projectId: null }
-          : this.repo.getBindingBySession(id);
-      },
+      getBinding: (id) => this.repo.getPublicationBinding(id),
       getRootBinding: () => this.repo.defaultBinding(),
       publicationSessionId: () => {
         const conversation = this.repo.readConversationId();
