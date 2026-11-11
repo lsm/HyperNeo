@@ -4,6 +4,7 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   front_ack_required:
     'First use reply_short with progress:true to publish a brief acknowledgment for each original human replyTo ID, then call neo_send.',
 
+  spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
   front_not_speaking:
     'Convo may hand off requests only while dual-model mode is enabled for its current conversation.',
