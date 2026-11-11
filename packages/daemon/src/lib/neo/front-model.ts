@@ -84,7 +84,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       : current?.producerInput
         ? [current.producerInput.messageId]
         : [];
-    if (!ids.length || !ids.every((id) => replyTo.includes(id)))
+    if (!current || (ids.length ? !ids.every((id) => replyTo.includes(id)) : replyTo.length))
       return result({ accepted: false, reason: 'unknown_reply_target' });
     const edited = await service.publications.reviseCurrent(
       {

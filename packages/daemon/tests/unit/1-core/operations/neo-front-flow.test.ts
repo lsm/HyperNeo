@@ -726,6 +726,17 @@ test('Convo publishes an unrequested background result without borrowing a human
   ).toEqual([]);
   expect(
     await convoPublish({
+      requestId: 'status-correction',
+      publicationId: standalone.publication.publicationId,
+      fullText: 'The pull request merged at the reviewed head.',
+      verbatim: true,
+    })
+  ).toMatchObject({ accepted: true });
+  expect(
+    service.publications.get(conversationId, standalone.publication.publicationId)
+  ).toMatchObject({ fullText: 'The pull request merged at the reviewed head.' });
+  expect(
+    await convoPublish({
       requestId: 'unknown-target',
       replyTo: [crypto.randomUUID()],
       fullText: 'Not a reply.',
