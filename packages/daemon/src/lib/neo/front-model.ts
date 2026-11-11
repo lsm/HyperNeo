@@ -5,6 +5,8 @@ import { NeoPublicationDraft } from './publication-operation.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { frontSessionId } from './front-mode.ts';
 import type { NeoService } from './service.ts';
+import { neoIntakeMessage, readNeoReply } from './intake.ts';
+import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -67,15 +69,53 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'neo_send',
-        'Send an internal note to Back Neo. Include the original human message IDs. The human message already reaches Back Neo.',
-        { requestId: z.string().min(1).max(160), text: z.string().trim().min(1).max(16000) },
-        async ({ requestId, text }) =>
-          result({
+        'Ask Back Neo to handle a human request. Pass messageIds to deliver the complete recorded human inputs, including references and attachments. Back receives human requests only through this handoff.',
+        {
+          requestId: z.string().min(1).max(160),
+          messageIds: z.array(z.uuid()).min(1).max(100),
+          text: z.string().trim().min(1).max(16000),
+        },
+        async ({ requestId, messageIds, text }) => {
+          const asks = messageIds.map((id) => service.asks.find(conversationId, id));
+          if (asks.some((ask) => !ask))
+            return result({ delivered: false, reason: 'unknown_reply_target' });
+          if (
+            service.repo.readConversationId() !== conversationId ||
+            service.db.getGlobalSettings().neo?.front?.enabled !== true
+          )
+            return result({ delivered: false, reason: 'front_not_speaking' });
+          for (const ask of asks) {
+            if (!ask) continue;
+            const message = neoIntakeMessage(
+              { ...ask, sessionId: ask.askOrigin.sessionId },
+              ask.askOrigin.sessionId,
+              readNeoReply(ask.replyTo, service.todos),
+              null,
+              undefined,
+              ask.previewContext ?? null
+            );
+            if (
+              !service.db
+                .getSDKMessageRepo()
+                .getDeliveryMessageIdsByUuids(ask.askOrigin.sessionId, [ask.requestId]).length
+            )
+              await ensurePrompt({
+                db: service.db.getDatabase(),
+                sdkMessageRepo: service.db.getSDKMessageRepo(),
+                jobQueue: service.db.getJobQueueRepo(),
+                sessionId: ask.askOrigin.sessionId,
+                message,
+                hold: 'immediate',
+                delivery: { origin: 'chat' },
+              });
+          }
+          return result({
             delivered: await service.wakeNeo(
               neoDerivedId(`front-note:${conversationId}:${requestId}`),
-              text
+              `Front is waiting for your result for human messages ${messageIds.join(', ')}. It has already acknowledged the request. Send the result to Front with these IDs.\n${text}`
             ),
-          })
+          });
+        }
       ),
     ],
   });

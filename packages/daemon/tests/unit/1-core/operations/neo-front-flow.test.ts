@@ -94,7 +94,7 @@ async function accept() {
   return { id, job: db.getJobQueueRepo().listJobs({ queue: 'neo.front' }).at(-1)! };
 }
 
-test('human input reaches both ordinary sessions once and assistant text is not auto-published', async () => {
+test('human input reaches Front once without waking Back or auto-publishing', async () => {
   const { id, job } = await accept();
   const handler = createNeoFrontHandler(service);
   expect(await handler(job)).toEqual({ delivered: true });
@@ -106,7 +106,7 @@ test('human input reaches both ordinary sessions once and assistant text is not 
   expect(jobs).toHaveLength(1);
   expect(JSON.stringify(jobs[0].payload)).toContain(id);
   expect(service.publications.list(conversationId)).toHaveLength(0);
-  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
 });
 
 test('a Front publication succeeds only while dual mode is enabled', async () => {
@@ -196,10 +196,11 @@ test('Back results use the ordinary Front mailbox with a separate delivery ident
   expect(JSON.stringify(jobs)).toContain(id);
 });
 
-test('a queued Front delivery stops when dual mode is disabled', async () => {
-  const { job } = await accept();
+test('a queued Front delivery falls back to Back when dual mode is disabled', async () => {
+  const { id, job } = await accept();
   await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
-  expect(await createNeoFrontHandler(service)(job)).toEqual({ delivered: false });
+  expect(await createNeoFrontHandler(service)(job)).toEqual({ delivered: true });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(db.getSession(front)).toBeNull();
 });
 
@@ -240,15 +241,24 @@ test('Front publication tools refuse unknown inputs and preserve the actual repl
 });
 
 test('Front notes go to the existing Back session and carry their original input reference', async () => {
+  const { id } = await accept();
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   const send = definitions.find((tool) => tool.name === 'neo_send')!;
   await send.handler(
-    { requestId: 'clarification', text: 'Human message original-id needs clarification.' },
+    {
+      requestId: 'clarification',
+      messageIds: [id],
+      text: 'Human message original-id needs clarification.',
+    },
     {} as never
   );
   await send.handler(
-    { requestId: 'clarification', text: 'Human message original-id needs clarification.' },
+    {
+      requestId: 'clarification',
+      messageIds: [id],
+      text: 'Human message original-id needs clarification.',
+    },
     {} as never
   );
   const jobs = db
@@ -257,6 +267,7 @@ test('Front notes go to the existing Back session and carry their original input
     .filter((j) => JSON.stringify(j.payload).includes('original-id'));
   expect(jobs).toHaveLength(1);
   expect(JSON.stringify(jobs[0].payload)).toContain(root);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
 });
 
 test('dual mode also refuses Back speech', async () => {
@@ -332,4 +343,59 @@ test('Front chooses the spoken text on the human listening session', async () =>
     { source: 'mcp', sessionId: front }
   );
   expect(speech).toHaveBeenCalledWith(root, expect.any(String), 'Hello.');
+});
+
+test('Front receives the quoted card and forwards the original human input only on handoff', async () => {
+  const id = crypto.randomUUID();
+  const replyTo = {
+    kind: 'question' as const,
+    id: crypto.randomUUID(),
+    author: 'neo' as const,
+    excerpt: 'Review the native settings window.',
+  };
+  await service.asks.acceptPrompt(
+    conversationId,
+    neoIntakeMessage({ sessionId: root, requestId: id, content: 'Show me a screenshot', replyTo }),
+    'immediate',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+  const job = db.getJobQueueRepo().listJobs({ queue: 'neo.front' }).at(-1)!;
+  await createNeoFrontHandler(service)(job);
+  const jobs = db.getJobQueueRepo().listJobs({ queue: 'mailbox' });
+  expect(JSON.stringify(jobs)).toContain(replyTo.excerpt);
+  createFrontTools(service, conversationId);
+  const send = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'neo_send')!;
+  await send.handler(
+    { requestId: 'screenshot', messageIds: [id], text: 'Capture the quoted settings window.' },
+    {} as never
+  );
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
+
+test('single mode still delivers the human message directly to Back', async () => {
+  await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
+  const { id } = await accept();
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  expect(db.getJobQueueRepo().listJobs({ queue: 'neo.front' })).toHaveLength(0);
+});
+
+test('an unknown Front handoff creates no Back delivery', async () => {
+  createFrontTools(service, conversationId);
+  const send = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'neo_send')!;
+  const id = crypto.randomUUID();
+  const response = await send.handler(
+    { requestId: 'unknown', messageIds: [id], text: 'Do this.' },
+    {} as never
+  );
+  expect(JSON.stringify(response)).toContain('unknown_reply_target');
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+  expect(db.getJobQueueRepo().listJobs({ queue: 'mailbox' })).toHaveLength(0);
 });
