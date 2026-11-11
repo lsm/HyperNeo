@@ -12,6 +12,8 @@ export class NeoFrontInputRepository {
         SELECT 1 FROM neo_publications p WHERE p.conversation_id = f.conversation_id AND (
           f.message_id IN (SELECT value FROM json_each(p.payload_json, '$.replyTo'))
           OR f.message_id IN (SELECT value FROM json_each(p.payload_json, '$.cardReply.sourceMessageIds'))
+          OR (json_extract(p.payload_json, '$.producerInput.messageId') = f.message_id
+            AND json_type(p.payload_json, '$.revisionId') = 'text')
         )
       ) THEN 'neo' END) AS owner FROM neo_front_inputs f
       WHERE conversation_id = ? AND message_id = ?`)

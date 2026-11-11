@@ -713,6 +713,45 @@ test.each([
   }
 );
 
+test('editing a progress acknowledgment into an answer prevents a later fallback', async () => {
+  const { id, job } = await deliveredConvoInput();
+  const handler = createNeoFrontHandler(service);
+  const acknowledgment = await convoPublish({
+    requestId: 'progress-before-edit',
+    replyTo: [id],
+    fullText: 'I will check.',
+    verbatim: true,
+    progress: true,
+  });
+  expect(acknowledgment).toMatchObject({ accepted: true });
+  expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
+  const publicationId = acknowledgment.publication.publicationId;
+  expect(
+    await convoPublish({
+      requestId: 'answer-from-progress',
+      publicationId,
+      replyTo: [id],
+      fullText: 'The requested result is ready.',
+      verbatim: true,
+    })
+  ).toMatchObject({ accepted: true });
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: '',
+    is_error: false,
+    user_message_uuids: [id],
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
+  expect(service.publications.list(conversationId)).toHaveLength(1);
+  expect(service.publications.get(conversationId, publicationId)).toMatchObject({
+    fullText: 'The requested result is ready.',
+  });
+});
+
 test('Convo exposes reads, handoff and one publication path', () => {
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;

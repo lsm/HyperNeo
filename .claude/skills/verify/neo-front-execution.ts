@@ -16,7 +16,7 @@ import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/r
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { neoIntakeMessage } from '../../../packages/daemon/src/lib/neo/intake.ts';
 import { NeoFrontInputRepository } from '../../../packages/daemon/src/storage/repositories/neo-front-input-worker.ts';
-import { frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
+import { frontProgressId, frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -79,7 +79,14 @@ const fixture = createServer(async (request, response) => {
   } else if (front && ((active === humanId && stage === 1) || (active === handoffId && stage === 3))) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: active === humanId ? 'mcp__front__reply_short' : 'mcp__front__reply_detailed',
       input: active === humanId
-        ? { requestId: `final-${active}`, replyTo: [active], text: 'Hello from Neo.' }
+        ? {
+            requestId: `final-${active}`,
+            publicationId: frontProgressId(
+              new NeoRepository(app!.db.getDatabase()).readConversationId()!, [active]
+            ),
+            replyTo: [active],
+            text: 'Hello from Neo.',
+          }
         : { requestId: `final-${active}`, replyTo: [active], summary: 'The requested work is complete.', details: 'The job is complete. All files were copied and their checksums match.' } };
     stages.set(active, 4);
   } else if (front && stage === 5) {
@@ -221,7 +228,12 @@ try {
   const replies = () =>
     publications
       .list(conversationId)
-      ?.filter((row) => row.replyTo?.includes(humanId) || row.replyTo?.includes(handoffId) || row.fullText === 'Single-mode reply.') ??
+      ?.filter((row) =>
+        row.replyTo?.includes(humanId) ||
+        (row.producerInput?.messageId === humanId && !!row.revisionId) ||
+        row.replyTo?.includes(handoffId) ||
+        row.fullText === 'Single-mode reply.'
+      ) ??
     [];
   const invoke = <T>(name: string, input: unknown) =>
     hub!.request<T>('operation.invoke', { name, input });
@@ -328,9 +340,13 @@ try {
     'Hello from Neo.', 'The job is complete. All files were copied and their checksums match.',
     'The review is complete. Here is the later result.', 'Single-mode reply.',
   ]);
-  assert.equal(rows.filter((row) => row.replyTo?.includes(humanId)).length, 1);
+  assert.equal(rows.filter((row) =>
+    row.replyTo?.includes(humanId) || row.producerInput?.messageId === humanId
+  ).length, 1);
   assert.equal(rows.filter((row) => row.replyTo?.includes(handoffId)).length, 2);
-  assert.deepEqual(rows[0].replyTo, [humanId]);
+  assert.equal(rows[0].producerInput?.messageId, humanId);
+  assert(new NeoFrontInputRepository(app.db.getDatabase()).get(conversationId, humanId)?.owner);
+  evidence.editedAcknowledgmentAnswered = true;
   assert.deepEqual(rows[1].replyTo, [handoffId]);
   assert.equal(rows[1].shortText, 'The requested work is complete.');
   const acknowledgment = publications.list(conversationId)!.find(row => row.producerInput?.messageId === humanId)!;
@@ -345,7 +361,7 @@ try {
   assert.equal(evidence.backToolsHidden, true);
   evidence.passed = true;
   evidence.nativeFrontSession = nativeId;
-  evidence.replies = rows.map((row) => ({ text: row.fullText, replyTo: row.replyTo }));
+  evidence.replies = rows.map((row) => ({ text: row.fullText, replyTo: row.replyTo, producerInput: row.producerInput }));
   evidence.requests = requests;
   evidence.normalSession = true;
   evidence.modeSwitchPreservedSession = true;
