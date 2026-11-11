@@ -836,7 +836,9 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
       session_id: front,
       result: '',
       is_error: false,
-      [attribution]: attribution === 'user_message_uuid' ? previous.id : [previous.id],
+      ...(attribution === 'user_message_uuid'
+        ? { user_message_uuid: previous.id }
+        : { user_message_uuids: [previous.id] }),
     } as import('@hyperneo/shared/sdk').SDKMessage);
     expect(await handler(current.job)).toMatchObject({ delivered: false, pending: true });
     expect(service.publications.list(conversationId)).toHaveLength(0);
@@ -859,7 +861,9 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
       session_id: front,
       result: 'The answer to the current input.',
       is_error: false,
-      [attribution]: attribution === 'user_message_uuid' ? current.id : [current.id],
+      ...(attribution === 'user_message_uuid'
+        ? { user_message_uuid: current.id }
+        : { user_message_uuids: [current.id] }),
     } as import('@hyperneo/shared/sdk').SDKMessage);
     expect(await handler(current.job)).toMatchObject({ delivered: true });
     const replies = service.publications
