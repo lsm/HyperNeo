@@ -24,7 +24,6 @@ import { invokeOperation } from '../../operations/invoke.ts';
 import { CodingPrEventRepository } from './coding/pr-events.ts';
 import { CodingPrLedgerRepository } from './coding/pr-ledger.ts';
 import { CodingPrSweepRepository } from './coding/pr-sweep.ts';
-import { createCodingQueryReader } from './coding/query-reader.ts';
 import { createCodingRefReader } from './coding/ref-reader.ts';
 import { createCodingWorkPrReader } from './coding/work-reader.ts';
 import { createCodingReviewThreadReader } from './coding/connector-review-thread-reader.ts';
@@ -56,7 +55,6 @@ export function createNeoCodingReaders(db: () => Database) {
     readPrs,
     readBranchPrs: createCodingBranchPrReader(db),
     readRefStates: createCodingRefReader(() => new CodingPrLedgerRepository(db()).refFacts),
-    listGithub: createCodingQueryReader(db),
     readDeploys,
     readDeliveryDeploys: ((urls) => readDeploys(urls, readPrs)) as NeoDeployReader,
   };
@@ -95,7 +93,6 @@ export function createNeoService(...args: NeoServiceArgs) {
       const { coding, lifeAdmin, delegation } = createNeoBuiltinPacks(db.getDatabase(), {
         readPrs: (urls) => configured.readPrs(urls),
         readRefStates: (refs) => configured.readRefStates(refs),
-        listGithub: (args, coverage) => configured.listGithub(args, coverage),
         todoPrs,
         prSweepDeps: {
           human: (key, text) =>

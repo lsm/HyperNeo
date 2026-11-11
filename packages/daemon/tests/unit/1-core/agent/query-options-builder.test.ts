@@ -2518,6 +2518,13 @@ describe('QueryOptionsBuilder', () => {
               'Bash',
               'Skill',
               'mcp__hyperneo-operations__invoke',
+              'mcp__hyperneo-operations__neo_work',
+              'mcp__hyperneo-operations__neo_todo',
+              'mcp__hyperneo-operations__neo_publish',
+              'mcp__hyperneo-operations__neo_ask',
+              'mcp__hyperneo-operations__neo_question',
+              'mcp__hyperneo-operations__neo_session',
+              'mcp__hyperneo-operations__neo_speech',
               'mcp__fetch-mcp',
             ]);
             expect(options.permissionMode).toBe('dontAsk');

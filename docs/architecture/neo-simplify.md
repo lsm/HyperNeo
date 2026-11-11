@@ -32,7 +32,7 @@ The core knows nothing about any one kind of work. A pack supplies the four thin
 
 | Group | Neo's operations |
 |---|---|
-| Reading | `neo.snapshot`, `neo.conversation.read`, `neo.pack.read`, `neo.github.read`, `work.find`, `work.read` |
+| Reading | `neo.snapshot`, `neo.conversation.read`, `neo.pack.read`, Bash with `gh`, `work.find`, `work.read` |
 | Asks | `neo.ask.open`, `neo.ask.settle` |
 | Todos | `neo.todo.add`, `neo.todo.edit`, `neo.todo.remove`, `neo.todo.continue`, `neo.todo.proceed`, `neo.todo.retry`, `neo.todo.close` |
 | Questions | `neo.question.ask`, `neo.question.answer`, `neo.question.retire` |

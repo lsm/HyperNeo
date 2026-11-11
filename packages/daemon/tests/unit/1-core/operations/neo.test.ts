@@ -438,7 +438,6 @@ describe('Neo MVP', () => {
       'neo.coding.merge.retry',
       'neo.coding.write.plan',
       'neo.coding.pr.file',
-      'neo.github.read',
       'neo.coding.merge.prepare',
       'neo.coding.assign',
       'neo.coding.smoke',

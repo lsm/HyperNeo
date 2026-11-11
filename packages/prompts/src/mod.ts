@@ -241,7 +241,6 @@ import mdToolCodingSmoke from './neo/tools/neo.coding.smoke.md' with { type: 'te
 import mdToolCodingWritePlan from './neo/tools/neo.coding.write.plan.md' with { type: 'text' };
 import mdToolConversationRead from './neo/tools/neo.conversation.read.md' with { type: 'text' };
 import mdToolDraftRecover from './neo/tools/neo.draft.recover.md' with { type: 'text' };
-import mdToolGithubRead from './neo/tools/neo.github.read.md' with { type: 'text' };
 import mdToolHomeGithub from './neo/tools/neo.home.github.md' with { type: 'text' };
 import mdToolHomeInit from './neo/tools/neo.home.init.md' with { type: 'text' };
 import mdToolHomeRead from './neo/tools/neo.home.read.md' with { type: 'text' };
@@ -714,7 +713,6 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.coding.write.plan.md': mdToolCodingWritePlan,
     'neo/tools/neo.conversation.read.md': mdToolConversationRead,
     'neo/tools/neo.draft.recover.md': mdToolDraftRecover,
-    'neo/tools/neo.github.read.md': mdToolGithubRead,
     'neo/tools/neo.home.github.md': mdToolHomeGithub,
     'neo/tools/neo.home.init.md': mdToolHomeInit,
     'neo/tools/neo.home.read.md': mdToolHomeRead,
