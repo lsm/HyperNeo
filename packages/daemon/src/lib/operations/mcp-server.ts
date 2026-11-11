@@ -19,7 +19,7 @@ export function createOperationMcpServer(
   const invoke = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
   const discovery =
     descriptionRole === 'neo'
-      ? 'Rare calls: operations.list {prefix,cursor?} pages names; operations.describe {name} gives one schema. message.send acceptance means durable mailbox persistence, not an agent reply.'
+      ? 'operations.list {prefix,cursor?}; operations.describe {name}. message.send acceptance means durable mailbox persistence, not an agent reply.'
       : 'operations.list discovers others; operations.describe {name} returns full schemas.';
   const tools: NonNullable<Parameters<typeof createSdkMcpServer>[0]['tools']> = [
     tool(
@@ -35,7 +35,7 @@ export function createOperationMcpServer(
     for (const family of NEO_RESIDENT_FAMILIES) {
       const schema =
         family.actions.length === 1
-          ? z.object({ input: z.looseObject({}) })
+          ? z.object({ input: z.looseObject({}), action: z.never().optional() })
           : z.object({ action: z.enum(family.actions), input: z.looseObject({}) });
       tools.push(
         tool(family.name, family.description, schema.shape, async (args) => {

@@ -174,7 +174,7 @@ describe('operationsCapabilityContribution with a resolved registry', () => {
       role: 'neo',
     });
     expect(briefing).toContain('counts namespaces');
-    expect(briefing).toContain('{prefix,cursor?}');
+    expect(briefing).toContain('invoke for rare calls');
     expect(briefing).toContain('neo_*');
     expect(briefing).toContain('neo.snapshot');
     expect(briefing).not.toContain('task.list');

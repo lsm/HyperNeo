@@ -50,19 +50,14 @@ export function operationsCapabilityContribution(
   registry?: OperationRegistry,
   caller?: OperationCaller
 ): AuthoredCapabilityContribution {
-  const listing = registry ? describeResolvedOperations(registry, caller) : '';
-  const door =
-    caller?.source === 'mcp' && caller.role === 'neo'
-      ? 'Use neo_* for resident actions and invoke for rare calls. operations.list {} counts namespaces; {prefix,cursor?} pages names. neo.snapshot is the current state index.'
-      : SPACE_OPERATIONS_DOOR;
+  const neo = caller?.source === 'mcp' && caller.role === 'neo';
+  const listing = !neo && registry ? describeResolvedOperations(registry, caller) : '';
+  const door = neo
+    ? 'Use neo_* for resident actions and invoke for rare calls. operations.list {} counts namespaces. neo.snapshot is the current state index.'
+    : SPACE_OPERATIONS_DOOR;
   return {
     kind: 'authored',
     server: { name: OPERATIONS_MCP_SERVER_NAME, config },
-    briefing:
-      caller?.source === 'mcp' && caller.role === 'neo'
-        ? door
-        : listing
-          ? `${door}\n\n${listing}`
-          : door,
+    briefing: listing ? `${door}\n\n${listing}` : door,
   };
 }
