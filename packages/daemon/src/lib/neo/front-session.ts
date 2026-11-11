@@ -39,6 +39,7 @@ export async function frontSession(
       'todos_read',
       'handoff_read',
       'neo_send',
+      'publication_publish',
     ].map((name) => `mcp__front__${name}`),
     permissionMode: 'dontAsk',
     settingSources: [],

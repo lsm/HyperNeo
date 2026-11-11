@@ -68,7 +68,7 @@ describe('explainNeoRefusal', () => {
 });
 
 describe('NEO_REFUSALS', () => {
-  test.each(['dual_model_front_required', 'unknown_back_reply', 'not_a_ready_reply'])(
+  test.each(['unknown_back_reply', 'not_a_ready_reply'])(
     'does not advertise the retired Convo refusal %s',
     (reason) => {
       expect(NEO_REFUSALS).not.toHaveProperty(reason);

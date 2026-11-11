@@ -74,7 +74,7 @@ test('Front uses the ordinary immediate session with its role and tools', async 
   expect(session.config.toolSelection).toEqual({ version: 1, choices: {} });
   expect(session.config.disallowedTools).toContain('mcp__exa');
   expect(session.config.systemPrompt).toContain('You are Convo');
-  expect(session.config.systemPrompt).toContain('The daemon records the terminal outcome');
+  expect(session.config.systemPrompt).toContain('Your first tool call');
   expect(attach).toHaveBeenCalled();
 });
 
@@ -289,6 +289,29 @@ test('Front notes go to the existing Back session and carry their original input
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   const send = definitions.find((tool) => tool.name === 'neo_send')!;
+  await frontSession(
+    service,
+    { conversationId, askOrigin: { sessionId: root, messageId: id } },
+    model
+  );
+  await db.saveUserMessage(
+    front,
+    {
+      type: 'user',
+      uuid: id as UUID,
+      session_id: front,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Hello' },
+    },
+    'submitted'
+  );
+  await convoPublish({
+    requestId: 'ack',
+    replyTo: [id],
+    fullText: 'I will check.',
+    verbatim: true,
+    progress: true,
+  });
   await send.handler(
     {
       requestId: 'clarification',
@@ -297,6 +320,29 @@ test('Front notes go to the existing Back session and carry their original input
     },
     {} as never
   );
+  await frontSession(
+    service,
+    { conversationId, askOrigin: { sessionId: root, messageId: id } },
+    model
+  );
+  await db.saveUserMessage(
+    front,
+    {
+      type: 'user',
+      uuid: id as UUID,
+      session_id: front,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Hello' },
+    },
+    'submitted'
+  );
+  await convoPublish({
+    requestId: 'ack',
+    replyTo: [id],
+    fullText: 'I will check.',
+    verbatim: true,
+    progress: true,
+  });
   await send.handler(
     {
       requestId: 'clarification',
@@ -321,7 +367,7 @@ test('canonical Neo speech retains its normal listener admission', async () => {
       { requestId: 'speech', text: 'Hello' },
       { source: 'mcp', role: 'neo', sessionId: root }
     )
-  ).toMatchObject({ ok: false, reason: 'voice_replies_off' });
+  ).toMatchObject({ ok: false, reason: 'neo_speech_not_available' });
 });
 
 test('Front keeps ordinary model settings and preserves a usable conversation', async () => {
@@ -347,7 +393,7 @@ test('Front keeps ordinary model settings and preserves a usable conversation', 
     queryMode: 'immediate',
   });
   expect(next.config.allowedTools).toContain('mcp__front__neo_send');
-  expect(next.config.allowedTools).not.toContain('mcp__front__publication_publish');
+  expect(next.config.allowedTools).toContain('mcp__front__publication_publish');
 });
 
 test('Back can use message.send to reach its ordinary Front session', async () => {
@@ -399,6 +445,24 @@ test('Front receives the quoted card and forwards the original human input only 
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
     .tools!.find((tool) => tool.name === 'neo_send')!;
+  await db.saveUserMessage(
+    front,
+    {
+      type: 'user',
+      uuid: id as UUID,
+      session_id: front,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Show me a screenshot' },
+    },
+    'submitted'
+  );
+  await convoPublish({
+    requestId: 'ack',
+    replyTo: [id],
+    fullText: 'I will get that screenshot.',
+    verbatim: true,
+    progress: true,
+  });
   await send.handler(
     { requestId: 'screenshot', messageIds: [id], text: 'Capture the quoted settings window.' },
     {} as never
@@ -552,23 +616,19 @@ test.each([
     ],
   },
 ])(
-  'canonical Neo edits the existing answer for $topic instead of publishing duplicates',
+  'Convo edits the existing answer for $topic instead of publishing duplicates',
   async ({ original, updates }) => {
-    const { id, job } = await accept();
-    await createNeoFrontHandler(service)(job);
-    createFrontTools(service, conversationId);
-    const send = vi
-      .mocked(createSdkMcpServer)
-      .mock.calls.at(-1)![0]
-      .tools!.find((tool) => tool.name === 'neo_send');
-    await send!.handler(
-      { requestId: 'route-original', messageIds: [id], text: 'Handle the original request.' },
-      {} as never
-    );
-    expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id)).not.toBeNull();
+    const { id } = await deliveredConvoInput();
+    await convoPublish({
+      requestId: 'ack',
+      replyTo: [id],
+      fullText: 'I will check.',
+      verbatim: true,
+      progress: true,
+    });
     const saved = await service.publish(
       { requestId: 'original', verbatim: true, fullText: original, replyTo: [id] },
-      { source: 'mcp', sessionId: root }
+      { source: 'mcp', sessionId: front }
     );
     if (!saved.accepted) throw new Error('Original publication failed');
     for (const [index, fullText] of updates.entries()) {
@@ -580,15 +640,17 @@ test.each([
       for (let retry = 0; retry < 2; retry++) {
         const response = await service.publications.reviseCurrent(input, {
           source: 'mcp',
-          sessionId: root,
+          sessionId: front,
         });
         expect(response).toMatchObject({
           accepted: true,
         });
       }
     }
-    const publications = service.publications.list(conversationId) ?? [];
-    expect(publications).toHaveLength(1);
+    const publications = (service.publications.list(conversationId) ?? []).filter((row) =>
+      row.replyTo?.includes(id)
+    );
+    expect(publications.filter((row) => row.replyTo?.includes(id))).toHaveLength(1);
     expect(publications[0]).toMatchObject({
       publicationId: saved.publication.publicationId,
       fullText: updates.at(-1),
@@ -598,7 +660,7 @@ test.each([
   }
 );
 
-test('Convo exposes only reads and neo_send', () => {
+test('Convo exposes reads, handoff and one publication path', () => {
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   expect(definitions.map((entry) => entry.name).sort()).toEqual([
@@ -607,17 +669,18 @@ test('Convo exposes only reads and neo_send', () => {
     'handoff_read',
     'neo_send',
     'projects_read',
+    'publication_publish',
     'todos_read',
   ]);
 });
 
-test('the canonical Neo publication path remains available in dual mode', async () => {
+test('the canonical Neo publication path refuses Back in dual mode', async () => {
   expect(
     await service.publish(
       { requestId: 'canonical', fullText: 'Canonical answer', verbatim: true },
       { source: 'mcp', role: 'neo', sessionId: root }
     )
-  ).toMatchObject({ accepted: true });
+  ).toMatchObject({ accepted: false, reason: 'dual_model_front_required' });
 });
 
 test('Convo delivery remains pending only until the accepted input deadline', async () => {
@@ -966,6 +1029,7 @@ test.each(['disabled', 'creation failure'])(
       clock.mockReturnValue(deadline + 3000);
       const consumed = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
       expect(await handler(consumed)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+      await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
       expect(
         await service.publish(
           {
@@ -983,3 +1047,113 @@ test.each(['disabled', 'creation failure'])(
     }
   }
 );
+
+async function convoPublish(input: Record<string, unknown>) {
+  createFrontTools(service, conversationId);
+  const definition = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'publication_publish');
+  expect(definition).toBeDefined();
+  const receipt = await definition!.handler(input, {} as never);
+  return JSON.parse((receipt.content[0] as { text: string }).text);
+}
+
+async function deliveredConvoInput() {
+  const accepted = await accept();
+  await createNeoFrontHandler(service)(accepted.job);
+  await db.saveUserMessage(
+    front,
+    {
+      type: 'user',
+      uuid: accepted.id as UUID,
+      session_id: front,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Hello' },
+    },
+    'submitted'
+  );
+  return accepted;
+}
+
+test('only Convo can publish in dual mode and Neo can publish again in single mode', async () => {
+  const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
+  const input = { requestId: 'back-answer', fullText: 'Back answer', verbatim: true };
+  expect(await service.publish(input, caller)).toMatchObject({ accepted: false });
+  expect(service.publications.list(conversationId)).toHaveLength(0);
+  await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
+  expect(await service.publish(input, caller)).toMatchObject({ accepted: true });
+});
+
+test('Convo must publish a visible progress reply before sending work to Neo', async () => {
+  const { id } = await deliveredConvoInput();
+  createFrontTools(service, conversationId);
+  const send = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'neo_send')!;
+  const input = { requestId: 'work', messageIds: [id], text: 'Handle this request.' };
+  const early = await send.handler(input, {} as never);
+  expect(JSON.parse((early.content[0] as { text: string }).text)).toMatchObject({
+    delivered: false,
+  });
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBeNull();
+  const progress = {
+    requestId: 'ack',
+    replyTo: [id],
+    fullText: 'I will handle that.',
+    verbatim: true,
+    progress: true,
+  };
+  expect(await convoPublish(progress)).toMatchObject({ accepted: true, created: true });
+  expect(await convoPublish({ ...progress, requestId: 'ack-retry' })).toMatchObject({
+    accepted: true,
+    created: false,
+  });
+  expect(service.publications.list(conversationId)).toHaveLength(1);
+  expect(service.publications.list(conversationId)![0].replyTo ?? []).toEqual([]);
+  expect(await send.handler(input, {} as never)).toBeTruthy();
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  expect(
+    await convoPublish({ requestId: 'final', replyTo: [id], fullText: 'Done.', verbatim: true })
+  ).toMatchObject({ accepted: true });
+  expect(
+    await convoPublish({
+      requestId: 'duplicate',
+      replyTo: [id],
+      fullText: 'Done again.',
+      verbatim: true,
+    })
+  ).toMatchObject({ accepted: false });
+  expect(
+    service.publications.list(conversationId)!.filter((row) => row.replyTo?.includes(id))
+  ).toHaveLength(1);
+});
+
+test('Convo publication refuses an input it was never given and a stale dual-mode tool', async () => {
+  await frontSession(
+    service,
+    { conversationId, askOrigin: { sessionId: root, messageId: crypto.randomUUID() } },
+    model
+  );
+  expect(
+    await convoPublish({
+      progress: true,
+      requestId: 'unknown',
+      replyTo: [crypto.randomUUID()],
+      fullText: 'Wrong input',
+      verbatim: true,
+    })
+  ).toMatchObject({ accepted: false });
+  const { id } = await deliveredConvoInput();
+  await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
+  expect(
+    await convoPublish({
+      requestId: 'stale',
+      replyTo: [id],
+      fullText: 'Stale reply',
+      verbatim: true,
+    })
+  ).toMatchObject({ accepted: false });
+  expect(service.publications.list(conversationId)).toHaveLength(0);
+});

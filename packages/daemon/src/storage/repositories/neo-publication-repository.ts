@@ -1,5 +1,6 @@
 import { NeoFrontInputRepository } from './neo-front-input-worker.ts';
-import { frontSessionId } from '../../lib/neo/front-mode.ts';
+import { SettingsRepository } from './settings-repository.ts';
+import { publicationSpeaker, frontSessionId } from '../../lib/neo/front-mode.ts';
 import { neoPublicationPageWrites } from './neo-publication-page-db.ts';
 import type { readNeoPublicationPage } from '../../lib/neo/publication-read-operation.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -72,6 +73,15 @@ function appendImmutable(
   speaker?: string
 ): NeoPublicationWriteResult {
   return db.transaction((): NeoPublicationWriteResult => {
+    if (
+      speaker &&
+      speaker !==
+        publicationSpeaker(
+          input.conversationId,
+          new SettingsRepository(db).getGlobalSettings().neo?.front?.enabled === true
+        )
+    )
+      return { accepted: false, reason: 'publication_superseded' };
     if (input.cardReply) {
       const target = db
         .prepare('SELECT ask_id FROM neo_questions WHERE id = ?')

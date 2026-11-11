@@ -32,6 +32,7 @@ const EditInput = z
 export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
+  publicationSessionId?(): string | undefined;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent' | 'reviseCurrent'>;
   notify(conversationId: string): void;
   present?(items: NeoPublication[]): Promise<NeoPublication[]>;
@@ -83,7 +84,8 @@ function changePipeline(
         requirePublicationProducer(
           caller,
           runtime.getBinding(caller.sessionId ?? ''),
-          runtime.getRootBinding()
+          runtime.getRootBinding(),
+          runtime.publicationSessionId?.() ?? runtime.getRootBinding()?.sessionId
         ),
       'caller',
       'result:change'

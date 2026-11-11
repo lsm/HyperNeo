@@ -1,3 +1,4 @@
+import { frontSessionId, frontProgressRequest } from './front-mode.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublicationInput, NeoPublication } from '@hyperneo/shared/types/neo-publication';
@@ -17,7 +18,7 @@ import {
   workerSession,
 } from './publication.ts';
 
-const Draft = NeoPublicationObject.omit({
+export const NeoPublicationDraft = NeoPublicationObject.omit({
   conversationId: true,
   publicationId: true,
   askOrigin: true,
@@ -33,6 +34,7 @@ const Draft = NeoPublicationObject.omit({
 })
   .extend({
     requestId: z.string().min(1).max(160),
+    progress: z.literal(true).optional(),
     spoken: z.string().trim().min(1).max(500).optional(),
     session: NeoPublicationObject.shape.session.nullable(),
     links: z
@@ -42,7 +44,16 @@ const Draft = NeoPublicationObject.omit({
       .max(16)
       .default([]),
   })
-  .superRefine(publicationTextRule);
+  .superRefine((value, ctx) => {
+    publicationTextRule(value, ctx);
+    if (value.progress && (value.replyTo?.length !== 1 || value.fullText.length > 300))
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Progress requires one replyTo ID and a brief acknowledgment of at most 300 characters.',
+      });
+  });
+const Draft = NeoPublicationDraft;
 type Draft = z.infer<typeof Draft>;
 const Result = NeoPublicationResultSchema.and(
   z.object({
@@ -63,6 +74,7 @@ interface NeoPublicationRuntime {
   currentHumanInputs(sessionId: string): string[];
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
+  publicationSessionId?(): string | undefined;
   hasProject(id: string): boolean;
   lookupSession(
     id: string
@@ -72,7 +84,7 @@ interface NeoPublicationRuntime {
     publicationId: string
   ): Pick<NeoPublicationInput, 'session'> | null;
   sourceSession(sessionId: string): string | undefined;
-  append(input: NeoPublicationInput): Receipt | Promise<Receipt>;
+  append(input: NeoPublicationInput, speaker?: string): Receipt | Promise<Receipt>;
   speech(
     sessionId: string,
     version: string,
@@ -95,21 +107,34 @@ export function admitPublicationDraft(input: unknown): { value: Draft } | { reas
 export function requirePublicationProducer(
   caller: OperationCaller,
   binding: NeoBinding | null,
-  root: NeoBinding | null
+  root: NeoBinding | null,
+  speaker = root?.sessionId
 ): { value: Producer } | { reason: Rejection } {
   return caller.source === 'mcp' &&
     binding &&
     binding.sessionId === caller.sessionId &&
     isMainNeoBinding(root) &&
     isMainNeoBinding(binding) &&
-    binding.sessionId === root.sessionId
+    binding.sessionId === speaker
     ? {
         value: {
           binding,
           root,
         },
       }
-    : { reason: { accepted: false, reason: 'avatar_required' } };
+    : {
+        reason: {
+          accepted: false,
+          reason:
+            speaker && speaker !== root?.sessionId
+              ? 'dual_model_front_required'
+              : 'avatar_required',
+          detail:
+            speaker && speaker !== root?.sessionId
+              ? `Dual-model mode: send your result and the original human message IDs to Convo using message.send {to: "${speaker}", text: "...", idempotencyKey: "..."}. Convo publishes to the human.`
+              : undefined,
+        },
+      };
 }
 
 export function requirePublicationLifetime(
@@ -139,11 +164,37 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'binding'
     )
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
-    .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
     .pipe(
-      (draft: Draft, caller: OperationCaller) =>
-        readCardArtifactFacts(draft.artifacts ?? [], caller, runtime.artifact),
-      ['submitted', 'caller'],
+      (caller: OperationCaller, binding: NeoBinding | null, root: NeoBinding | null) =>
+        requirePublicationProducer(
+          caller,
+          binding,
+          root,
+          runtime.publicationSessionId?.() ?? root?.sessionId
+        ),
+      ['caller', 'binding', 'root'],
+      'result:publication'
+    )
+    .pipe(
+      (draft: Draft, caller: OperationCaller, proof: Proof) =>
+        caller.sessionId === frontSessionId(proof.root.sessionId.slice(4)) &&
+        (!draft.replyTo?.length ||
+          !draft.replyTo.every((id) => runtime.receivedHumanInput(caller.sessionId!, id)))
+          ? { reason: { accepted: false as const, reason: 'unknown_reply_target' } }
+          : { value: proof },
+      ['submitted', 'caller', 'publication'],
+      'result:publication'
+    )
+    .pipe(
+      (draft: Draft, caller: OperationCaller, proof: Proof) =>
+        readCardArtifactFacts(
+          draft.artifacts ?? [],
+          caller.sessionId === frontSessionId(proof.root.sessionId.slice(4))
+            ? { ...caller, sessionId: proof.root.sessionId, role: 'neo' }
+            : caller,
+          runtime.artifact
+        ),
+      ['submitted', 'caller', 'publication'],
       'registeredArtifacts'
     )
     .pipe(
@@ -253,15 +304,31 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(
       (draft: Draft, proof: Proof) => {
-        const { requestId, spoken: _spoken, ...message } = draft;
-        return runtime.append({
-          ...message,
-          session: message.session ?? undefined,
-          publicationId: neoDerivedId(
-            JSON.stringify(['neo.publication.publish', proof.binding.sessionId, requestId])
-          ),
-          conversationId: proof.root.sessionId.slice(4),
-        });
+        const { requestId, spoken: _spoken, progress, ...message } = draft;
+        return runtime.append(
+          {
+            ...(progress
+              ? {
+                  producerInput: {
+                    sessionId: proof.root.sessionId,
+                    messageId: message.replyTo![0],
+                  },
+                }
+              : {}),
+            ...message,
+            session: message.session ?? undefined,
+            replyTo: progress ? undefined : message.replyTo,
+            publicationId: neoDerivedId(
+              JSON.stringify([
+                'neo.publication.publish',
+                proof.binding.sessionId,
+                progress ? frontProgressRequest(message.replyTo!) : requestId,
+              ])
+            ),
+            conversationId: proof.root.sessionId.slice(4),
+          },
+          proof.binding.sessionId
+        );
       },
       ['draft', 'publication'],
       'publication'
@@ -280,9 +347,14 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         const fresh = receipt.created || versionCreated === true;
         const version = receipt.publication.revisionId ?? receipt.publication.publicationId;
         const speech = await runtime.speech(
-          caller.sessionId!,
+          runtime.getRootBinding()?.sessionId ?? caller.sessionId!,
           version,
-          fresh ? draft.spoken : undefined
+          fresh
+            ? (draft.spoken ??
+                (caller.sessionId === frontSessionId(receipt.publication.conversationId)
+                  ? draft.fullText.slice(0, 500)
+                  : undefined))
+            : undefined
         );
         runtime.notify();
         return {

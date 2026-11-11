@@ -30,6 +30,7 @@ const humanId = crypto.randomUUID();
 const handoffId = crypto.randomUUID();
 const failedDeliveryId = crypto.randomUUID();
 const requests: string[] = [];
+const stages = new Map<string, number>();
 let exaRequests = 0;
 const model = KimiProvider.MODELS.find((entry) => entry.contextWindow >= 1_000_000)!;
 const fixture = createServer(async (request, response) => {
@@ -56,20 +57,26 @@ const fixture = createServer(async (request, response) => {
   const front = body.tools?.some(
     (tool: { name: string }) => tool.name === 'mcp__front__neo_send'
   );
-  const publish = front && !content.includes('tool_result') && content.includes('Delegate this');
-  requests.push(publish ? 'convo-handoff-tool' : front ? 'convo-terminal' : 'neo-turn');
-  const block = publish
-    ? {
-        type: 'tool_use',
-        id: `toolu_${crypto.randomUUID()}`,
-        name: 'mcp__front__neo_send',
-        input: {
-          requestId: 'handoff-proof',
-          messageIds: [handoffId],
-          text: 'Complete the requested action and publish its answer.',
-        },
-      }
-    : { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
+  const history = JSON.stringify(body.messages);
+  const active = [failedDeliveryId, handoffId, humanId].find(id => history.includes(id)) ?? humanId;
+  let stage = stages.get(active) ?? 0;
+  if (front && content.includes('RESULT_FOR_HANDOFF')) stage = 3;
+  let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
+  if (front && stage === 0) {
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__publication_publish',
+      input: { requestId: `ack-${active}`, replyTo: [active], progress: true, verbatim: true, fullText: 'I will handle that.' } };
+    stages.set(active, 1);
+  } else if (front && active === handoffId && stage === 1) {
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__neo_send',
+      input: { requestId: 'handoff-proof', messageIds: [handoffId], text: 'Complete the requested action and send the result back to Convo.' } };
+    stages.set(active, 2);
+  } else if (front && ((active === humanId && stage === 1) || (active === handoffId && stage === 3))) {
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__publication_publish',
+      input: { requestId: `final-${active}`, replyTo: [active], verbatim: true, fullText: active === humanId ? 'Hello from Neo.' : 'The job is complete.' } };
+    stages.set(active, 4);
+  }
+  const publish = block.type === 'tool_use';
+  requests.push(front ? String(block.name ?? 'convo-terminal') : 'neo-turn');
   const message = {
     id: `msg_${crypto.randomUUID()}`,
     type: 'message',
@@ -262,14 +269,16 @@ try {
     });
     return JSON.parse((result.content[0] as { text: string }).text);
   };
-  assert.equal((await publish('ack', [], 'Working on it.')).accepted, true);
-  assert.equal((await publish('back-direct', [handoffId], 'The job is complete.')).accepted, true);
+  assert.equal((await publish('back-direct', [handoffId], 'Back must not publish.')).accepted, false);
+  const relayed = await back({ name: 'message.send', input: { to: front, text: `RESULT_FOR_HANDOFF ${handoffId}: The job is complete.`, idempotencyKey: 'native-back-result' } });
+  assert(!relayed.isError, JSON.stringify(relayed));
+  await waitFor(() => replies().length === 2);
   const duplicate = await publish('fresh-request', [handoffId], 'Duplicate answer');
   assert.equal(duplicate.accepted, false);
-  assert.match(duplicate.reason, /^publication_superseded(?::|$)/);
+  assert.match(duplicate.reason, /^dual_model_front_required(?::|$)/);
   const batch = await publish('duplicate-batch', [humanId, handoffId], 'Duplicate batch');
   assert.equal(batch.accepted, false);
-  assert.match(batch.reason, /^publication_superseded(?::|$)/);
+  assert.match(batch.reason, /^dual_model_front_required(?::|$)/);
   await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
   await app.db.saveUserMessage(
     root,

@@ -2,7 +2,8 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { frontSessionId } from './front-mode.ts';
+import { NeoPublicationDraft } from './publication-operation.ts';
+import { frontProgressId, frontSessionId } from './front-mode.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
@@ -43,6 +44,47 @@ export function createFrontTools(service: NeoService, conversationId: string) {
     tools: [
       ...lookups,
       tool(
+        'publication_publish',
+        'Publish to the human. First send a brief progress:true acknowledgment before any other tool. Pass original replyTo IDs. Use publicationId to edit that input’s existing answer. Plain assistant text stays internal.',
+        {
+          ...NeoPublicationDraft.shape,
+          replyTo: z.array(z.uuid()).min(1).max(100),
+          publicationId: z.uuid().optional(),
+        },
+        async ({ publicationId, ...input }) => {
+          if (
+            !publicationId &&
+            !input.progress &&
+            input.replyTo.some(
+              (id) =>
+                !service.publications.get(conversationId, frontProgressId(conversationId, [id]))
+            )
+          )
+            return result({ accepted: false, reason: 'front_ack_required' });
+          if (!publicationId)
+            return result(await service.publish(input, { source: 'mcp', sessionId }));
+          const current = service.publications.get(conversationId, publicationId);
+          const ids = current?.replyTo?.length
+            ? current.replyTo
+            : current?.producerInput
+              ? [current.producerInput.messageId]
+              : [];
+          if (!ids.length || !ids.every((id) => input.replyTo.includes(id)))
+            return result({ accepted: false, reason: 'unknown_reply_target' });
+          const edited = await service.publications.reviseCurrent(
+            {
+              requestId: input.requestId,
+              publicationId,
+              fullText: input.fullText,
+              shortText: input.shortText,
+            },
+            { source: 'mcp', sessionId }
+          );
+          if (edited.accepted) service.notifyPublicationsChanged(conversationId);
+          return result(edited);
+        }
+      ),
+      tool(
         'handoff_read',
         'Read a complete published report reference from Back Neo. The daemon verifies its SHA-256 and returns text. Continue at nextOffset until complete before summarizing.',
         HandoffReadInput.shape,
@@ -81,6 +123,13 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
             return result({ delivered: false, reason: 'front_not_speaking' });
+          if (
+            messageIds.some(
+              (id) =>
+                !service.publications.get(conversationId, frontProgressId(conversationId, [id]))
+            )
+          )
+            return result({ delivered: false, reason: 'front_ack_required' });
           for (const ask of asks) {
             if (!ask) continue;
             const message = neoIntakeMessage(
@@ -109,7 +158,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           return result({
             delivered: await service.wakeNeo(
               neoDerivedId(`front-note:${conversationId}:${requestId}`),
-              `Convo is waiting for your result for human messages ${messageIds.join(', ')}. Publish the answer through the canonical Neo publication path with these replyTo IDs. Edit an existing answer for corrections.\n${text}`
+              `Convo is waiting for your result for human messages ${messageIds.join(', ')}. Send the result, original human IDs and references to Convo using message.send {to: "${sessionId}", text: "...", idempotencyKey: "..."}. Only Convo publishes or speaks to the human in dual-model mode.\n${text}`
             ),
           });
         }

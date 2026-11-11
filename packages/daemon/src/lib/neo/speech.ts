@@ -134,7 +134,8 @@ export class NeoSpeech {
     audioRequest?: typeof fetch,
     private readonly onListeningChanged?: (sessionId: string, listening: boolean) => Promise<void>,
     private readonly canReadSession: (sessionId: string) => boolean = isNeo,
-    private readonly modeNote?: (sessionId: string) => string | undefined
+    private readonly modeNote?: (sessionId: string) => string | undefined,
+    private readonly canSay: (sessionId: string) => boolean = isNeo
   ) {
     this.audio = new NeoSpeechAudio(
       (client, data) => this.send(client, data),
@@ -171,7 +172,7 @@ export class NeoSpeech {
                 : caller.source === 'rpc' && caller.principal === 'local' && !!caller.clientId;
             const available =
               sessionId &&
-              (action === 'say' ? this.isNeo(sessionId) : this.canReadSession(sessionId));
+              (action === 'say' ? this.canSay(sessionId) : this.canReadSession(sessionId));
             return admitted && available
               ? { value: sessionId }
               : { reason: { ok: false, reason: 'neo_speech_not_available' } };
@@ -296,7 +297,7 @@ export class NeoSpeech {
           'say',
           sessionId,
           { requestId: `publication:${version}`, text },
-          { source: 'mcp', role: 'neo', sessionId }
+          { source: 'internal', role: 'neo', sessionId }
         ).catch(() => {
           new Logger('NeoSpeech').warn('Publication speech delivery failed');
           return { ok: false, created: false };
@@ -431,6 +432,8 @@ export class NeoSpeech {
     input: Input,
     caller: OperationCaller
   ): Promise<SpeechReceipt> {
+    if (action === 'say' && caller.source === 'mcp' && !this.canSay(sessionId))
+      return { ok: false, reason: 'neo_speech_not_available' };
     const clientId = caller.clientId ?? '';
     if (action === 'listen' && 'enabled' in input) {
       for (const [previousSession, prior] of this.listeners) {
