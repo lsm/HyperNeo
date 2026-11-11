@@ -2526,6 +2526,7 @@ describe('QueryOptionsBuilder', () => {
               'mcp__hyperneo-operations__neo_session',
               'mcp__hyperneo-operations__neo_speech',
               'mcp__fetch-mcp',
+              'mcp__exa',
             ]);
             expect(options.permissionMode).toBe('dontAsk');
             expect(options.agent).toBeUndefined();
