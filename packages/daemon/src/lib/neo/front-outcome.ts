@@ -23,16 +23,18 @@ export async function settleConvoInput(
   if (status === 'consumed') return { delivered: true, outcome: 'handed_off' };
   const deadline = Date.parse(ask.createdAt) + SETTLEMENT_TIMEOUT_MS;
   const pending = async () => {
+    const now = Date.now();
     await service.db.gateway.call(
       jobQueueWrites,
       'requeue',
       job.id,
-      Math.min(Date.now() + 1000, deadline),
+      now < deadline ? Math.min(now + 1000, deadline) : now + 1000,
       job.claimToken
     );
     return { delivered: false, pending: true };
   };
-  if (status && status !== 'failed' && Date.now() < deadline) return pending();
+  if (status === 'deferred' || (status && status !== 'failed' && Date.now() < deadline))
+    return pending();
   const terminal =
     (await service.db.gateway.call(
       neoFrontInputReads,
@@ -48,8 +50,11 @@ export async function settleConvoInput(
     status: id === messageId ? status : sdk.getUserSendStatus(ask.askOrigin.sessionId, id),
   }));
   if (
-    Date.now() < deadline &&
-    deliveries.some(({ status }) => status && status !== 'consumed' && status !== 'failed')
+    deliveries.some(
+      ({ status }) =>
+        status === 'deferred' ||
+        (Date.now() < deadline && status && status !== 'consumed' && status !== 'failed')
+    )
   )
     return pending();
   const ids = deliveries.filter(({ status }) => status !== 'consumed').map(({ id }) => id);

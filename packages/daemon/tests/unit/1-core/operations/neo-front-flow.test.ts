@@ -922,3 +922,49 @@ test.each(['terminal', 'creation failure'])(
     }
   }
 );
+
+test.each(['disabled', 'creation failure'])(
+  'a manual Neo hold survives the Convo deadline after %s',
+  async (path) => {
+    const { id } = await accept();
+    const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+    await db.updateSession(root, {
+      config: { ...db.getSession(root)!.config, queryMode: 'manual' },
+    });
+    if (path === 'disabled')
+      await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
+    else
+      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
+    const handler = createNeoFrontHandler(service);
+    expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
+    const sdk = db.getSDKMessageRepo();
+    expect(sdk.getUserSendStatus(root, id)).toBe('deferred');
+    const deadline = Date.parse(service.asks.find(conversationId, id)!.createdAt) + 30 * 60_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(deadline);
+    try {
+      const held = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+      expect(await handler(held)).toMatchObject({ delivered: false, pending: true });
+      expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline + 1000);
+      expect(service.publications.list(conversationId)).toHaveLength(0);
+      sdk.updateMessageStatus([sdk.findMessageIdByUuid(root, id)!], 'enqueued');
+      expect(sdk.markDeliveryConsumedByUuid(root, id)).not.toBeNull();
+      clock.mockReturnValue(deadline + 1000);
+      const released = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+      expect(await handler(released)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+      expect(
+        await service.publish(
+          {
+            requestId: 'held-answer',
+            fullText: 'The requested answer',
+            verbatim: true,
+            replyTo: [id],
+          },
+          { source: 'mcp', role: 'neo', sessionId: root }
+        )
+      ).toMatchObject({ accepted: true });
+      expect(service.publications.list(conversationId)).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+    }
+  }
+);
