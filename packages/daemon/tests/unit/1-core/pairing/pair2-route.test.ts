@@ -328,6 +328,9 @@ describe('pairing v2 one-time request route', () => {
 
     expect((await approveRequest(made.requestId)).status).toBe(403);
     expect((await post('/pair2/deny', { requestId: made.requestId })).status).toBe(403);
+    expect(
+      (await approveRequest(made.requestId, { 'x-test-device': 'agent-read:cli' })).status
+    ).toBe(403);
 
     const owner = seedDevice();
     expect((await approveRequest(made.requestId, { 'x-test-device': owner })).status).toBe(200);

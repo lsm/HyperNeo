@@ -55,7 +55,9 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
   const mayDecide = async (req: Request, remoteAddress: string | null) => {
     const identity = await authenticate(req, remoteAddress);
     if (!identity || identity.kind !== 'human') return null;
-    if (identity.deviceId.startsWith('local-rpc:')) return null;
+    const synthetic =
+      identity.deviceId.startsWith('local-rpc:') || identity.deviceId.startsWith('agent-read:');
+    if (synthetic) return null;
     return identity;
   };
 
