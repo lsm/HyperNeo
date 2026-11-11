@@ -246,9 +246,14 @@ export function buildProviderSettings(
   }
 
   if (providerId === 'kimi' && modelId && KimiProvider.isKimiK3Model(modelId)) {
+    const kimiWindow = KimiProvider.resolveContextWindow(modelId);
+    if (autoCompactPercentOverride === undefined)
+      return { autoCompactEnabled: true, autoCompactWindow: kimiWindow };
     return {
       autoCompactEnabled: true,
-      autoCompactWindow: KimiProvider.resolveContextWindow(modelId),
+      autoCompactWindow: Math.floor(
+        (kimiWindow * resolveAutoCompactPercent(autoCompactPercentOverride)) / 100
+      ),
     };
   }
 
@@ -609,7 +614,9 @@ export class QueryOptionsBuilder {
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
       settings: withSdkTranscriptRetention({
         ...providerSettings,
-        ...(sessionHasAutoCompactWindow ? { autoCompactWindow: config.autoCompactWindow } : {}),
+        ...(sessionHasAutoCompactWindow && config.autoCompactWindow !== undefined
+          ? { autoCompactWindow: config.autoCompactWindow }
+          : {}),
         precomputeCompactionEnabled: true,
       }),
 
