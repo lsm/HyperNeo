@@ -444,7 +444,7 @@ export class QueryOptionsBuilder {
     await contextManager.ensureContextReady(session);
     const providerContext = contextManager.createContext(session);
     const providerId = providerContext.provider.id;
-    this.exaWebToolsActivation = config.allowedTools?.includes('mcp__front__neo_send')
+    this.exaWebToolsActivation = config.disallowedTools?.includes('mcp__exa')
       ? undefined
       : await resolveExaWebToolsActivation({
           settings: this.ctx.settingsManager.getGlobalSettings(),
