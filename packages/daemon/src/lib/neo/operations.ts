@@ -1,4 +1,3 @@
-import { publicationSpeaker } from './front-mode.ts';
 import { createNeoRelayOperations } from './relay-answer.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
@@ -761,17 +760,8 @@ export function createNeoOperations(
     createNeoReorganizeOperation(neoReorganizeRuntime(service, identity)),
     createNeoPublicationOperation(service.publish, (items) => service.presentPublications(items)),
     ...createNeoPublicationChangeOperations({
-      getBinding: (id) => service.repo.getPublicationBinding(id),
+      getBinding: (id) => service.repo.getBindingBySession(id),
       getRootBinding: () => service.repo.defaultBinding(),
-      publicationSessionId: () => {
-        const conversation = service.repo.readConversationId();
-        return conversation
-          ? publicationSpeaker(
-              conversation,
-              service.db.getGlobalSettings().neo?.front?.enabled === true
-            )
-          : undefined;
-      },
       publications: service.publications,
       present: (items) => service.presentPublications(items),
       notify: (conversationId) => {

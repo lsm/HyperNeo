@@ -87,7 +87,7 @@ test('a missing Front model refusal explains how to enable dual mode', async () 
   toggle.checked = true;
   fireEvent.change(toggle);
   expect((await screen.findByRole('alert')).textContent).toBe(
-    'Choose a Front model before enabling dual-model mode.'
+    'Choose a Convo model before enabling dual-model mode.'
   );
   expect(toggle.checked).toBe(false);
   expect(toggle.disabled).toBe(false);

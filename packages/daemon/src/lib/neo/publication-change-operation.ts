@@ -17,7 +17,7 @@ type Producer = Extract<ReturnType<typeof requirePublicationProducer>, { value: 
 type Rejection = { accepted: false; reason: string; detail?: string };
 type Owned = { producer: Producer; publication: NeoPublication };
 
-export const NeoPublicationEditInput = z
+const EditInput = z
   .object({
     requestId: z.string().min(1).max(160),
     publicationId: z.string().uuid(),
@@ -32,7 +32,6 @@ export const NeoPublicationEditInput = z
 export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
-  publicationSessionId?(): string | undefined;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent' | 'reviseCurrent'>;
   notify(conversationId: string): void;
   present?(items: NeoPublication[]): Promise<NeoPublication[]>;
@@ -84,8 +83,7 @@ function changePipeline(
         requirePublicationProducer(
           caller,
           runtime.getBinding(caller.sessionId ?? ''),
-          runtime.getRootBinding(),
-          runtime.publicationSessionId?.() ?? runtime.getRootBinding()?.sessionId
+          runtime.getRootBinding()
         ),
       'caller',
       'result:change'
@@ -149,7 +147,7 @@ export function createNeoPublicationChangeAdmission(
           undefined
         )
     );
-  return revise('neo.publication.edit', NeoPublicationEditInput);
+  return revise('neo.publication.edit', EditInput);
 }
 
 export function createNeoPublicationChangeOperations(runtime: NeoPublicationChangeRuntime) {
@@ -158,7 +156,7 @@ export function createNeoPublicationChangeOperations(runtime: NeoPublicationChan
       name: 'neo.publication.edit',
       description: neoToolDescription('neo.publication.edit'),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      inputSchema: NeoPublicationEditInput,
+      inputSchema: EditInput,
       resultSchema: NeoPublicationResultSchema,
       execute: async (input, caller) => {
         const result = await runtime.publications.reviseCurrent(input, caller);

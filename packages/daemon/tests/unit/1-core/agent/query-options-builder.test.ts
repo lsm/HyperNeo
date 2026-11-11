@@ -2668,6 +2668,17 @@ describe('QueryOptionsBuilder', () => {
       expect(options.disallowedTools).toContain('WebFetch');
     });
 
+    it('excludes automatic Exa attachment for the Convo lane', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+      mockSession.config.operationTools = false;
+      mockSession.config.allowedTools = ['mcp__front__neo_send'];
+      const options = await builder.build();
+      expect(options.mcpServers?.exa).toBeUndefined();
+      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+    });
+
     it('does not attach exa for providers with native web tools', async () => {
       process.env.EXA_API_KEY = EXA_TEST_KEY;
       enableExaSettings();

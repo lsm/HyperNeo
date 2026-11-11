@@ -2,6 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { frontSession } from './front-session.ts';
+import { settleConvoInput } from './front-outcome.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
@@ -32,24 +33,32 @@ export function createNeoFrontHandler(service: NeoService) {
           undefined,
           ask.previewContext ?? null
         );
-        if (!front?.enabled || !front.model) {
+        const handoff = async () => {
           await ensurePrompt({
             db: service.db.getDatabase(),
             sdkMessageRepo: service.db.getSDKMessageRepo(),
             jobQueue: service.db.getJobQueueRepo(),
             sessionId: ask.askOrigin.sessionId,
             message,
-            hold: 'immediate',
+            hold:
+              service.db.getSession(ask.askOrigin.sessionId)?.config.queryMode === 'manual'
+                ? 'manual'
+                : 'immediate',
             delivery: { origin: 'chat' },
           });
-          return { delivered: true };
-        }
+          return { delivered: true, outcome: 'handed_off' };
+        };
+        if (!front?.enabled || !front.model) return handoff();
         const session = await frontSession(service, ask, front.model);
+        if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
         await service.deliverForward(
           session.id,
           messageId,
           [
-            { type: 'text', text: `Human message ${messageId}. Use this ID in replyTo.` },
+            {
+              type: 'text',
+              text: `Human message ${messageId}. Preserve this ID when handing the request to Neo.`,
+            },
             ...(ask.replyTo
               ? [
                   {
@@ -65,10 +74,13 @@ export function createNeoFrontHandler(service: NeoService) {
           ask.askOrigin.sessionId,
           'event'
         );
-        return { delivered: true };
+        if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
+        return settleConvoInput(service, job, conversationId, session.id, messageId);
       },
       'job',
       'result'
     )
-    .endAsync('result') as (job: Job) => Promise<{ delivered: boolean }>;
+    .endAsync('result') as (
+    job: Job
+  ) => Promise<{ delivered: boolean; pending?: boolean; outcome?: string }>;
 }

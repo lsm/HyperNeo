@@ -1,5 +1,3 @@
-import { SettingsRepository } from './settings-repository.ts';
-import { publicationSpeaker } from '../../lib/neo/front-mode.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
@@ -13,17 +11,8 @@ class NeoPublicationEditCommands {
   revise(input: unknown, caller: OperationCaller) {
     const repo = new NeoRepository(this.db);
     const admit = publicationChange.createNeoPublicationChangeAdmission({
-      getBinding: (id) => repo.getPublicationBinding(id),
+      getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
-      publicationSessionId: () => {
-        const conversation = repo.readConversationId();
-        return conversation
-          ? publicationSpeaker(
-              conversation,
-              new SettingsRepository(this.db).getGlobalSettings().neo?.front?.enabled === true
-            )
-          : undefined;
-      },
       publications: new NeoPublicationRepository(this.db),
       notify: () => {},
     });

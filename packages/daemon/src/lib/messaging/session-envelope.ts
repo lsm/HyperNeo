@@ -6,7 +6,7 @@ const RESERVED_TAGS =
 const IMPERSONATION =
   /^\s*(?:from another session\b|(?:the )?human\s+(?:says|said|wrote|approved)\b)/i;
 
-type SessionSender = { sessionId: string; name: string | null; messageId?: string };
+type SessionSender = { sessionId: string; name: string | null };
 
 function escapeSessionText(text: string): string {
   return text
@@ -22,8 +22,7 @@ function attribute(value: string): string {
 
 function sessionEnvelopeOpen(sender: SessionSender): string {
   const name = sender.name ? ` from-name="${attribute(sender.name)}"` : '';
-  const id = sender.messageId ? ` message-id="${attribute(sender.messageId)}"` : '';
-  return `<session-message from-session="${attribute(sender.sessionId)}"${name} origin="session"${id}>\n${SESSION_MESSAGE_NOTE}\n`;
+  return `<session-message from-session="${attribute(sender.sessionId)}"${name} origin="session">\n${SESSION_MESSAGE_NOTE}\n`;
 }
 
 const SESSION_ENVELOPE_CLOSE = '\n</session-message>';

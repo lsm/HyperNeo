@@ -17,7 +17,7 @@ import {
   workerSession,
 } from './publication.ts';
 
-export const NeoPublicationDraft = NeoPublicationObject.omit({
+const Draft = NeoPublicationObject.omit({
   conversationId: true,
   publicationId: true,
   askOrigin: true,
@@ -43,7 +43,6 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
       .default([]),
   })
   .superRefine(publicationTextRule);
-const Draft = NeoPublicationDraft;
 type Draft = z.infer<typeof Draft>;
 const Result = NeoPublicationResultSchema.and(
   z.object({
@@ -64,7 +63,6 @@ interface NeoPublicationRuntime {
   currentHumanInputs(sessionId: string): string[];
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
-  publicationSessionId?(): string | undefined;
   hasProject(id: string): boolean;
   lookupSession(
     id: string
@@ -74,7 +72,7 @@ interface NeoPublicationRuntime {
     publicationId: string
   ): Pick<NeoPublicationInput, 'session'> | null;
   sourceSession(sessionId: string): string | undefined;
-  append(input: NeoPublicationInput, sessionId?: string): Receipt | Promise<Receipt>;
+  append(input: NeoPublicationInput): Receipt | Promise<Receipt>;
   speech(
     sessionId: string,
     version: string,
@@ -97,34 +95,21 @@ export function admitPublicationDraft(input: unknown): { value: Draft } | { reas
 export function requirePublicationProducer(
   caller: OperationCaller,
   binding: NeoBinding | null,
-  root: NeoBinding | null,
-  speaker = root?.sessionId
+  root: NeoBinding | null
 ): { value: Producer } | { reason: Rejection } {
   return caller.source === 'mcp' &&
     binding &&
     binding.sessionId === caller.sessionId &&
     isMainNeoBinding(root) &&
     isMainNeoBinding(binding) &&
-    binding.sessionId === speaker
+    binding.sessionId === root.sessionId
     ? {
         value: {
           binding,
           root,
         },
       }
-    : {
-        reason: {
-          accepted: false,
-          reason:
-            speaker && speaker !== root?.sessionId
-              ? 'dual_model_front_required'
-              : 'avatar_required',
-          detail:
-            speaker && speaker !== root?.sessionId
-              ? `Dual-model mode: send the result and original human message IDs to Front Neo using message.send {to: "${speaker}", text: "...", idempotencyKey: "..."}.`
-              : undefined,
-        },
-      };
+    : { reason: { accepted: false, reason: 'avatar_required' } };
 }
 
 export function requirePublicationLifetime(
@@ -154,25 +139,11 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'binding'
     )
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
+    .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
     .pipe(
-      (caller: OperationCaller, binding: NeoBinding | null, root: NeoBinding | null) =>
-        requirePublicationProducer(
-          caller,
-          binding,
-          root,
-          runtime.publicationSessionId?.() ?? root?.sessionId
-        ),
-      ['caller', 'binding', 'root'],
-      'result:publication'
-    )
-    .pipe(
-      (draft: Draft, caller: OperationCaller, proof: Proof) =>
-        readCardArtifactFacts(
-          draft.artifacts ?? [],
-          { ...caller, sessionId: proof.root.sessionId, role: 'neo' },
-          runtime.artifact
-        ),
-      ['submitted', 'caller', 'publication'],
+      (draft: Draft, caller: OperationCaller) =>
+        readCardArtifactFacts(draft.artifacts ?? [], caller, runtime.artifact),
+      ['submitted', 'caller'],
       'registeredArtifacts'
     )
     .pipe(
@@ -282,24 +253,15 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(
       (draft: Draft, proof: Proof) => {
-        if (
-          runtime.publicationSessionId &&
-          (runtime.publicationSessionId() ?? runtime.getRootBinding()?.sessionId) !==
-            proof.binding.sessionId
-        )
-          return { accepted: false as const, reason: 'publication_superseded' };
         const { requestId, spoken: _spoken, ...message } = draft;
-        return runtime.append(
-          {
-            ...message,
-            session: message.session ?? undefined,
-            publicationId: neoDerivedId(
-              JSON.stringify(['neo.publication.publish', proof.binding.sessionId, requestId])
-            ),
-            conversationId: proof.root.sessionId.slice(4),
-          },
-          proof.binding.sessionId
-        );
+        return runtime.append({
+          ...message,
+          session: message.session ?? undefined,
+          publicationId: neoDerivedId(
+            JSON.stringify(['neo.publication.publish', proof.binding.sessionId, requestId])
+          ),
+          conversationId: proof.root.sessionId.slice(4),
+        });
       },
       ['draft', 'publication'],
       'publication'
@@ -318,7 +280,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         const fresh = receipt.created || versionCreated === true;
         const version = receipt.publication.revisionId ?? receipt.publication.publicationId;
         const speech = await runtime.speech(
-          runtime.getRootBinding()?.sessionId ?? caller.sessionId!,
+          caller.sessionId!,
           version,
           fresh ? draft.spoken : undefined
         );
@@ -327,8 +289,8 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           ...saved,
           ...speech,
           guidance:
-            fresh && !draft.spoken && !speech.spokenDelivered && speech.listening === 'yes'
-              ? `Already shown to the user. The human is now listening: call ${caller.sessionId === runtime.getRootBinding()?.sessionId ? 'neo.speech.say' : 'front.speech_say'} once with a short spoken version and requestId "publication:${version}"; never re-publish the text.`
+            fresh && !draft.spoken && speech.listening === 'yes'
+              ? `Already shown to the user. The human is now listening: call neo.speech.say once with a short spoken version and requestId "publication:${version}"; never re-publish the text.`
               : 'Already shown to the user; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.',
         };
       },

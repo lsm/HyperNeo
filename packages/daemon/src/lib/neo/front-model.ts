@@ -1,11 +1,8 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.ts';
-import { NeoPublicationDraft } from './publication-operation.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { frontSessionId } from './front-mode.ts';
-import { forwardFrontPublication } from './front-publication.ts';
-import { NeoPublicationEditInput } from './publication-change-operation.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
@@ -46,42 +43,6 @@ export function createFrontTools(service: NeoService, conversationId: string) {
     tools: [
       ...lookups,
       tool(
-        'publication_publish',
-        'Publish a reply to the human. Use replyTo for the original human message IDs. Plain assistant text stays internal.',
-        { ...NeoPublicationDraft.shape, replyTo: z.array(z.uuid()).min(1).max(100) },
-        async (input) => {
-          const known = input.replyTo.every((id) => service.asks.find(conversationId, id));
-          return result(
-            known
-              ? await service.publish(input, { source: 'mcp', sessionId })
-              : { accepted: false, reason: 'unknown_reply_target' }
-          );
-        }
-      ),
-      tool(
-        'publication_edit',
-        'Update an existing answer for corrections, added detail or ongoing progress. Preserves its attachments, session and reply target. Reuse requestId on retries. A new blocker, completion or necessary human decision may warrant a new publication.',
-        NeoPublicationEditInput.shape,
-        async (input) => {
-          const edited = await service.publications.reviseCurrent(input, {
-            source: 'mcp',
-            sessionId,
-          });
-          if (edited.accepted) {
-            service.notifyChanged();
-            service.notifyPublicationsChanged(edited.publication.conversationId);
-          }
-          return result(edited);
-        }
-      ),
-      tool(
-        'publication_forward',
-        'Publish a ready Back reply unchanged using its daemon message-id. Preserves text, artifacts, session and replyTo. Inspect the reply first; retries of the same message never publish it twice.',
-        { messageId: z.uuid() },
-        async ({ messageId }) =>
-          result(await forwardFrontPublication(service, conversationId, messageId))
-      ),
-      tool(
         'handoff_read',
         'Read a complete published report reference from Back Neo. The daemon verifies its SHA-256 and returns text. Continue at nextOffset until complete before summarizing.',
         HandoffReadInput.shape,
@@ -101,27 +62,6 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           if (read.kind !== 'read') return result(read);
           const { data, ...metadata } = read;
           return result({ ...metadata, text: Buffer.from(data, 'base64').toString('utf8') });
-        }
-      ),
-      tool(
-        'speech_say',
-        'Speak a brief acknowledgment to the current human listener. Publish substantive replies with spoken instead.',
-        { requestId: z.string().min(1).max(160), text: z.string().trim().min(1).max(500) },
-        async ({ requestId, text }) => {
-          const root = service.defaultSessionId();
-          if (
-            !root ||
-            service.repo.readConversationId() !== conversationId ||
-            service.db.getGlobalSettings().neo?.front?.enabled !== true
-          )
-            return result({ ok: false, reason: 'front_not_speaking' });
-          return result(
-            await service.speech.publish(
-              root,
-              neoDerivedId(`front-speech:${conversationId}:${requestId}`),
-              text
-            )
-          );
         }
       ),
       tool(
@@ -169,7 +109,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           return result({
             delivered: await service.wakeNeo(
               neoDerivedId(`front-note:${conversationId}:${requestId}`),
-              `Front is waiting for your result for human messages ${messageIds.join(', ')}. It has already acknowledged the request. Send the result to Front with these IDs.\n${text}`
+              `Convo is waiting for your result for human messages ${messageIds.join(', ')}. Publish the answer through the canonical Neo publication path with these replyTo IDs. Edit an existing answer for corrections.\n${text}`
             ),
           });
         }

@@ -25,6 +25,7 @@ writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 process.env.CLAUDE_CONFIG_DIR = join(run, 'sdk');
 process.env.TEST_SDK_SESSION_DIR = join(run, 'sdk');
 const humanId = crypto.randomUUID();
+const handoffId = crypto.randomUUID();
 const requests: string[] = [];
 const model = KimiProvider.MODELS.find((entry) => entry.contextWindow >= 1_000_000)!;
 const fixture = createServer(async (request, response) => {
@@ -44,25 +45,22 @@ const fixture = createServer(async (request, response) => {
   const last = body.messages?.at(-1);
   const content = JSON.stringify(last?.content ?? '');
   const front = body.tools?.some(
-    (tool: { name: string }) => tool.name === 'mcp__front__publication_publish'
+    (tool: { name: string }) => tool.name === 'mcp__front__neo_send'
   );
-  const backResult = content.includes('BACK_RESULT_PROOF');
-  const publish =
-    front && !content.includes('tool_result') && (content.includes('Human message') || backResult);
-  requests.push(publish ? (backResult ? 'front-result-tool' : 'front-chat-tool') : 'internal-text');
+  const publish = front && !content.includes('tool_result') && content.includes('Delegate this');
+  requests.push(publish ? 'convo-handoff-tool' : front ? 'convo-terminal' : 'neo-turn');
   const block = publish
     ? {
         type: 'tool_use',
         id: `toolu_${crypto.randomUUID()}`,
-        name: 'mcp__front__publication_publish',
+        name: 'mcp__front__neo_send',
         input: {
-          requestId: backResult ? 'result-proof' : 'chat-proof',
-          verbatim: true,
-          fullText: backResult ? 'The job is complete.' : 'Hello from Neo.',
-          replyTo: [humanId],
+          requestId: 'handoff-proof',
+          messageIds: [handoffId],
+          text: 'Complete the requested action and publish its answer.',
         },
       }
-    : { type: 'text', text: 'Internal assistant text.' };
+    : { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
   const message = {
     id: `msg_${crypto.randomUUID()}`,
     type: 'message',
@@ -123,6 +121,7 @@ QueryOptionsBuilder.prototype.build = async function (...args) {
 };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
+let hub: MessageHub | undefined;
 const evidence: Record<string, unknown> = {};
 async function waitFor(check: () => boolean) {
   const deadline = Date.now() + 90_000;
@@ -142,7 +141,7 @@ try {
     },
     verbose: false,
   });
-  const hub = new MessageHub({ defaultSessionId: 'global', timeout: 30_000 });
+  hub = new MessageHub({ defaultSessionId: 'global', timeout: 30_000 });
   transport = new WebSocketClientTransport({
     createSocket: createLocalSocket,
     url: `ws://127.0.0.1:${app.server.port}/ws`,
@@ -193,10 +192,10 @@ try {
   const replies = () =>
     publications
       .list(conversationId)
-      ?.filter((row) => row.replyTo?.includes(humanId) || row.fullText === 'Single-mode reply.') ??
+      ?.filter((row) => row.replyTo?.includes(humanId) || row.replyTo?.includes(handoffId) || row.fullText === 'Single-mode reply.') ??
     [];
   const invoke = <T>(name: string, input: unknown) =>
-    hub.request<T>('operation.invoke', { name, input });
+    hub!.request<T>('operation.invoke', { name, input });
   assert.equal(
     (
       await invoke<{ ok: boolean }>('neo.front.model.set', {
@@ -230,46 +229,42 @@ try {
     role: 'neo',
     sessionId: root,
   }));
-  const rejected = await back({
-    name: 'neo.publication.publish',
-    input: { requestId: 'back-direct', verbatim: true, fullText: 'Back must be refused.' },
-  });
-  assert(JSON.stringify(rejected).includes('dual_model_front_required'));
-  const forwarded = await back({
-    name: 'message.send',
-    input: {
-      to: front,
-      text: `BACK_RESULT_PROOF for human message ${humanId}: the job is complete.`,
-      idempotencyKey: 'back-result-proof',
-    },
-  });
-  assert(JSON.stringify(forwarded).includes('accepted'));
-  await waitFor(() => replies().length === 2);
-  await back({
-    name: 'message.send',
-    input: {
-      to: front,
-      text: `BACK_RESULT_PROOF for human message ${humanId}: the job is complete.`,
-      idempotencyKey: 'back-result-proof',
-    },
-  });
-  await waitFor(
-    () => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle'
+  assert.equal(
+    (await invoke<{ ok: boolean }>('neo.message.send', {
+      sessionId: root,
+      requestId: handoffId,
+      content: 'Delegate this action to Neo.',
+    })).ok,
+    true
   );
+  await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(root, 'consumed', handoffId));
+  await waitFor(() => app!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle');
+  const publish = async (requestId: string, replyTo: string[], fullText: string) => {
+    const result = await back({
+      name: 'neo.publication.publish',
+      input: { requestId, verbatim: true, fullText, replyTo },
+    });
+    return JSON.parse((result.content[0] as { text: string }).text);
+  };
+  assert.equal((await publish('ack', [], 'Working on it.')).accepted, true);
+  assert.equal((await publish('back-direct', [handoffId], 'The job is complete.')).accepted, true);
+  const duplicate = await publish('fresh-request', [handoffId], 'Duplicate answer');
+  assert.equal(duplicate.accepted, false);
+  assert.match(duplicate.reason, /^publication_superseded(?::|$)/);
+  const batch = await publish('duplicate-batch', [humanId, handoffId], 'Duplicate batch');
+  assert.equal(batch.accepted, false);
+  assert.match(batch.reason, /^publication_superseded(?::|$)/);
+  await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
   assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
-  const restored = await back({
-    name: 'neo.publication.publish',
-    input: { requestId: 'single-mode', verbatim: true, fullText: 'Single-mode reply.' },
-  });
-  const restoredValue = JSON.parse((restored.content[0] as { text: string }).text);
-  assert.equal(restoredValue.accepted, true, JSON.stringify(restoredValue));
+  assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
   const rows = replies();
-  assert.deepEqual(
-    rows.map((row) => row.fullText),
-    ['Hello from Neo.', 'The job is complete.', 'Single-mode reply.']
-  );
+  assert.deepEqual(rows.map((row) => row.fullText), [
+    'Hello from Neo.', 'The job is complete.', 'Single-mode reply.',
+  ]);
+  assert.equal(rows.filter((row) => row.replyTo?.includes(humanId)).length, 1);
+  assert.equal(rows.filter((row) => row.replyTo?.includes(handoffId)).length, 1);
   assert.deepEqual(rows[0].replyTo, [humanId]);
-  assert.deepEqual(rows[1].replyTo, [humanId]);
+  assert.deepEqual(rows[1].replyTo, [handoffId]);
   assert.equal(app.db.getSession(front)?.sdkSessionId, nativeId);
   assert(childSessions.has(front));
   assert(app.db.getSDKMessageRepo().getSDKMessages(front).messages.length > 0);
@@ -280,7 +275,8 @@ try {
   evidence.normalSession = true;
   evidence.modeSwitchPreservedSession = true;
 } finally {
-  transport?.close();
+  await transport?.close();
+  hub?.cleanup();
   await app?.cleanup();
   for (const id of childSessions) releaseSessionKeyBridges(id);
   QueryOptionsBuilder.prototype.build = originalBuild;
@@ -290,5 +286,5 @@ try {
   writeFileSync(join(run, 'evidence/neo-front-execution.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(
-  'PASS ordinary Front session, tool-only publication, Back handoff, mode gate and session continuity'
+  'PASS ordinary Convo session, terminal reply, canonical handoff and atomic per-input ownership'
 );

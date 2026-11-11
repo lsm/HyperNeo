@@ -161,7 +161,7 @@ describe('forwarding message.send to an attached daemon', () => {
       ...message,
       inputKind: 'task',
       message: {
-        content: `<session-message from-session="daemon:a::session:agent-on-a" origin="session" message-id="${entry?.messageUuid}">\n${SESSION_MESSAGE_NOTE}\nping from daemon A\n</session-message>`,
+        content: `<session-message from-session="daemon:a::session:agent-on-a" origin="session">\n${SESSION_MESSAGE_NOTE}\nping from daemon A\n</session-message>`,
       },
     });
     expect(entry?.origin).toBe('daemon:a::session:agent-on-a');

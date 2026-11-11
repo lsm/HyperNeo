@@ -140,7 +140,7 @@ describe('shared operation delivery parity', () => {
       expect(JSON.parse(row.sdk_message).message.content).toEqual(
         source === 'rpc'
           ? message.message.content
-          : `<session-message from-session="sender" origin="session" message-id="${receipt.messageId}">\n${SESSION_MESSAGE_NOTE}\n${message.message.content}\n</session-message>`
+          : `<session-message from-session="sender" origin="session">\n${SESSION_MESSAGE_NOTE}\n${message.message.content}\n</session-message>`
       );
       expect(Boolean(JSON.parse(row.sdk_message).isSynthetic)).toBe(source === 'mcp');
       expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);

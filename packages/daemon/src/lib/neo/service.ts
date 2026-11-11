@@ -1,4 +1,4 @@
-import { frontSessionId, publicationSpeaker, frontModeNote } from './front-mode.ts';
+import { frontSessionId, frontModeNote } from './front-mode.ts';
 import { frontSession } from './front-session.ts';
 import { createWorkerNameSource } from '../drivers/worker-names.ts';
 import type { NeoWorkerNameSource } from './worker-name.ts';
@@ -246,9 +246,7 @@ export class NeoService {
           });
       },
       (id) => !!this.db.getSession(id),
-      (id) =>
-        this.repo.getBindingBySession(id)?.kind === 'neo' &&
-        !this.db.getGlobalSettings().neo?.front?.enabled,
+      (id) => this.repo.getBindingBySession(id)?.kind === 'neo',
       (id) => {
         const conversation = this.repo.readConversationId();
         return conversation &&
@@ -320,12 +318,7 @@ export class NeoService {
       }
     };
     this.publish = createNeoPublisher({
-      receivedHumanInput: (sessionId, id) => {
-        const conversation = this.repo.readConversationId();
-        return conversation && sessionId === frontSessionId(conversation)
-          ? !!this.asks.find(conversation, id)
-          : !!receivedNeoHumanInput(this, sessionId, id);
-      },
+      receivedHumanInput: (sessionId, id) => !!receivedNeoHumanInput(this, sessionId, id),
       currentHumanInputs: (sessionId) => this.currentInputIds(sessionId),
       sourceSession: (sessionId) => {
         const conversation = this.repo.conversationId();
@@ -343,22 +336,12 @@ export class NeoService {
           ? sources[0]
           : undefined;
       },
-      getBinding: (id) => this.repo.getPublicationBinding(id),
+      getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
-      publicationSessionId: () => {
-        const conversation = this.repo.readConversationId();
-        return conversation
-          ? publicationSpeaker(
-              conversation,
-              this.db.getGlobalSettings().neo?.front?.enabled === true
-            )
-          : undefined;
-      },
       hasProject: (id) => !!this.repo.getProject(id),
       publication: (conversation, id) => this.publications.get(conversation, id),
       lookupSession: async (id) => (await this.resolveSessionSource(id)).status,
-      append: (input, speaker) =>
-        this.db.gateway.call(neoPublicationWrites, 'append', input, speaker),
+      append: (input) => this.db.gateway.call(neoPublicationWrites, 'append', input),
       speech: (sessionId, version, text) => this.speech.publish(sessionId, version, text),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),

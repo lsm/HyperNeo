@@ -231,7 +231,7 @@ describe('the session door', () => {
     expect(entry?.origin).toBe('session:codex-desktop%3Athread-9');
     expect(entry?.message.inputKind).toBe('task');
     expect(entry?.message.message.content).toContain(
-      `<session-message from-session="codex-desktop:thread-9" origin="session" message-id="${entry?.messageUuid}">`
+      '<session-message from-session="codex-desktop:thread-9" origin="session">'
     );
   });
 

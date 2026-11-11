@@ -444,11 +444,13 @@ export class QueryOptionsBuilder {
     await contextManager.ensureContextReady(session);
     const providerContext = contextManager.createContext(session);
     const providerId = providerContext.provider.id;
-    this.exaWebToolsActivation = await resolveExaWebToolsActivation({
-      settings: this.ctx.settingsManager.getGlobalSettings(),
-      db: this.ctx.db,
-      nativeWebTools: providerContext.provider.capabilities.nativeWebTools === true,
-    });
+    this.exaWebToolsActivation = config.allowedTools?.includes('mcp__front__neo_send')
+      ? undefined
+      : await resolveExaWebToolsActivation({
+          settings: this.ctx.settingsManager.getGlobalSettings(),
+          db: this.ctx.db,
+          nativeWebTools: providerContext.provider.capabilities.nativeWebTools === true,
+        });
     const { modelInfo } = await resolveSessionContextModelInfo(session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
