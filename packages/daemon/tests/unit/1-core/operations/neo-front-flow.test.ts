@@ -393,7 +393,7 @@ test('Front keeps ordinary model settings and preserves a usable conversation', 
     queryMode: 'immediate',
   });
   expect(next.config.allowedTools).toContain('mcp__front__neo_send');
-  expect(next.config.allowedTools).toContain('mcp__front__publication_publish');
+  expect(next.config.allowedTools).toContain('mcp__front__reply_short');
 });
 
 test('Back can use message.send to reach its ordinary Front session', async () => {
@@ -669,7 +669,8 @@ test('Convo exposes reads, handoff and one publication path', () => {
     'handoff_read',
     'neo_send',
     'projects_read',
-    'publication_publish',
+    'reply_detailed',
+    'reply_short',
     'todos_read',
   ]);
 });
@@ -1044,12 +1045,16 @@ test.each(['disabled', 'dual'])(
 
 async function convoPublish(input: Record<string, unknown>) {
   createFrontTools(service, conversationId);
+  const { fullText, shortText, verbatim, ...fields } = input;
   const definition = vi
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'publication_publish');
+    .tools!.find((tool) => tool.name === (verbatim ? 'reply_short' : 'reply_detailed'));
   expect(definition).toBeDefined();
-  const receipt = await definition!.handler(input, {} as never);
+  const receipt = await definition!.handler(
+    verbatim ? { ...fields, text: fullText } : { ...fields, summary: shortText, details: fullText },
+    {} as never
+  );
   return JSON.parse((receipt.content[0] as { text: string }).text);
 }
 
@@ -1170,3 +1175,76 @@ test.each(['creation', 'delivery'])(
     expect(service.publications.list(conversationId)).toHaveLength(1);
   }
 );
+
+test('Convo uses distinct short and detailed reply tools with no format switch', async () => {
+  const { id } = await deliveredConvoInput();
+  createFrontTools(service, conversationId);
+  const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
+  const short = definitions.find((tool) => tool.name === 'reply_short');
+  const detailed = definitions.find((tool) => tool.name === 'reply_detailed');
+  expect(short).toBeDefined();
+  expect(detailed).toBeDefined();
+  expect(definitions.some((tool) => tool.name === 'publication_publish')).toBe(false);
+  const acknowledgment = await short!.handler(
+    { requestId: 'short-ack', replyTo: [id], text: 'I will check.', progress: true },
+    {} as never
+  );
+  expect(JSON.parse((acknowledgment.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+  });
+  const first = service.publications.list(conversationId)![0];
+  expect(first).toMatchObject({ verbatim: true, fullText: 'I will check.' });
+  expect(first.shortText).toBeUndefined();
+  const answer = await detailed!.handler(
+    {
+      requestId: 'long-result',
+      replyTo: [id],
+      summary: 'The result',
+      details: 'Additional evidence and explanation.',
+    },
+    {} as never
+  );
+  expect(JSON.parse((answer.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+  });
+  const final = service.publications.list(conversationId)![1];
+  expect(final).toMatchObject({
+    shortText: 'The result',
+    fullText: 'Additional evidence and explanation.',
+    replyTo: [id],
+  });
+  expect(final.verbatim).toBeUndefined();
+  const shortened = await short!.handler(
+    {
+      requestId: 'short-update',
+      replyTo: [id],
+      publicationId: final.publicationId,
+      text: 'A brief correction.',
+    },
+    {} as never
+  );
+  expect(JSON.parse((shortened.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+  });
+  const edited = service.publications.get(conversationId, final.publicationId)!;
+  expect(edited).toMatchObject({ verbatim: true, fullText: 'A brief correction.' });
+  expect(edited.shortText).toBeUndefined();
+  const expanded = await detailed!.handler(
+    {
+      requestId: 'expanded-update',
+      replyTo: [id],
+      publicationId: final.publicationId,
+      summary: 'The updated result',
+      details: 'New supporting details.',
+    },
+    {} as never
+  );
+  expect(JSON.parse((expanded.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+  });
+  expect(service.publications.get(conversationId, final.publicationId)).toMatchObject({
+    shortText: 'The updated result',
+    fullText: 'New supporting details.',
+  });
+  expect(service.publications.list(conversationId)).toHaveLength(2);
+});

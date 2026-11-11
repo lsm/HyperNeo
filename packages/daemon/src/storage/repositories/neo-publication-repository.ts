@@ -321,7 +321,7 @@ export class NeoPublicationRepository {
   edit(
     conversationId: string,
     publicationId: string,
-    text: { shortText?: string; fullText?: string },
+    text: { shortText?: string; fullText?: string; verbatim?: true },
     at: string,
     by: string,
     input: NeoInputOrigin | undefined,
@@ -355,6 +355,7 @@ export class NeoPublicationRepository {
       if (prior) {
         const same =
           (text.shortText === undefined || text.shortText === prior.shortText) &&
+          (!text.verbatim || prior.shortText === undefined) &&
           (text.fullText === undefined || text.fullText === prior.fullText) &&
           (!input ||
             (input.sessionId === prior.producerInput?.sessionId &&
@@ -371,6 +372,11 @@ export class NeoPublicationRepository {
       } = current;
       const next = admitNeoPublication({
         ...stored,
+        ...(text.verbatim
+          ? { verbatim: true as const, shortText: undefined }
+          : text.shortText !== undefined
+            ? { verbatim: undefined }
+            : {}),
         ...(text.shortText !== undefined ? { shortText: text.shortText } : {}),
         ...(text.fullText !== undefined ? { fullText: text.fullText } : {}),
         revisionId,

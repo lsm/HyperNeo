@@ -63,16 +63,18 @@ const fixture = createServer(async (request, response) => {
   if (front && content.includes('RESULT_FOR_HANDOFF')) stage = 3;
   let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
   if (front && stage === 0) {
-    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__publication_publish',
-      input: { requestId: `ack-${active}`, replyTo: [active], progress: true, verbatim: true, fullText: 'I will handle that.' } };
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply_short',
+      input: { requestId: `ack-${active}`, replyTo: [active], progress: true, text: 'I will handle that.' } };
     stages.set(active, 1);
   } else if (front && active === handoffId && stage === 1) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__neo_send',
       input: { requestId: 'handoff-proof', messageIds: [handoffId], text: 'Complete the requested action and send the result back to Convo.' } };
     stages.set(active, 2);
   } else if (front && ((active === humanId && stage === 1) || (active === handoffId && stage === 3))) {
-    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__publication_publish',
-      input: { requestId: `final-${active}`, replyTo: [active], verbatim: true, fullText: active === humanId ? 'Hello from Neo.' : 'The job is complete.' } };
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: active === humanId ? 'mcp__front__reply_short' : 'mcp__front__reply_detailed',
+      input: active === humanId
+        ? { requestId: `final-${active}`, replyTo: [active], text: 'Hello from Neo.' }
+        : { requestId: `final-${active}`, replyTo: [active], summary: 'The requested work is complete.', details: 'The job is complete. All files were copied and their checksums match.' } };
     stages.set(active, 4);
   }
   const publish = block.type === 'tool_use';
@@ -307,12 +309,16 @@ try {
   assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
   const rows = replies();
   assert.deepEqual(rows.map((row) => row.fullText), [
-    'Hello from Neo.', 'The job is complete.', 'Single-mode reply.',
+    'Hello from Neo.', 'The job is complete. All files were copied and their checksums match.', 'Single-mode reply.',
   ]);
   assert.equal(rows.filter((row) => row.replyTo?.includes(humanId)).length, 1);
   assert.equal(rows.filter((row) => row.replyTo?.includes(handoffId)).length, 1);
   assert.deepEqual(rows[0].replyTo, [humanId]);
   assert.deepEqual(rows[1].replyTo, [handoffId]);
+  assert.equal(rows[1].shortText, 'The requested work is complete.');
+  const acknowledgment = publications.list(conversationId)!.find(row => row.producerInput?.messageId === humanId)!;
+  assert.equal(acknowledgment.verbatim, true);
+  assert.equal(acknowledgment.shortText, undefined);
   assert.equal(app.db.getSession(front)?.sdkSessionId, nativeId);
   assert(childSessions.has(front));
   assert(app.db.getSDKMessageRepo().getSDKMessages(front).messages.length > 0);

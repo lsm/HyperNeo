@@ -32136,6 +32136,10 @@
             "description": "What the human reads first; it must stand alone and summarize the message.",
             "maxLength": 2000,
             "type": "string"
+          },
+          "verbatim": {
+            "const": true,
+            "type": "boolean"
           }
         },
         "required": [

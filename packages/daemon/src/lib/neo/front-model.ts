@@ -39,50 +39,73 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       )
     )
   );
+  const replyFields = {
+    requestId: NeoPublicationDraft.shape.requestId,
+    replyTo: z.array(z.uuid()).min(1).max(100),
+    publicationId: z.uuid().optional(),
+    artifacts: NeoPublicationDraft.shape.artifacts,
+    session: NeoPublicationDraft.shape.session,
+    links: NeoPublicationDraft.shape.links,
+    spoken: NeoPublicationDraft.shape.spoken,
+  };
+  const publish = async ({
+    publicationId,
+    ...input
+  }: z.infer<typeof NeoPublicationDraft> & { publicationId?: string; replyTo: string[] }) => {
+    if (
+      !publicationId &&
+      !input.progress &&
+      input.replyTo.some(
+        (id) => !service.publications.get(conversationId, frontProgressId(conversationId, [id]))
+      )
+    )
+      return result({ accepted: false, reason: 'front_ack_required' });
+    if (!publicationId) return result(await service.publish(input, { source: 'mcp', sessionId }));
+    const current = service.publications.get(conversationId, publicationId);
+    const ids = current?.replyTo?.length
+      ? current.replyTo
+      : current?.producerInput
+        ? [current.producerInput.messageId]
+        : [];
+    if (!ids.length || !ids.every((id) => input.replyTo.includes(id)))
+      return result({ accepted: false, reason: 'unknown_reply_target' });
+    const edited = await service.publications.reviseCurrent(
+      {
+        requestId: input.requestId,
+        publicationId,
+        fullText: input.fullText,
+        shortText: input.shortText,
+        verbatim: input.verbatim,
+      },
+      { source: 'mcp', sessionId }
+    );
+    if (edited.accepted) service.notifyPublicationsChanged(conversationId);
+    return result(edited);
+  };
   return createSdkMcpServer({
     name: 'front',
     tools: [
       ...lookups,
       tool(
-        'publication_publish',
-        'Publish to the human. First send a brief progress:true acknowledgment before any other tool. Pass original replyTo IDs. Use publicationId to edit that input’s existing answer. Plain assistant text stays internal.',
+        'reply_short',
+        'Send one plain message with no Details. Use for acknowledgments, brief answers and progress updates. First call this with progress:true and the human replyTo ID before doing work. For a final short answer omit progress. To update your existing message, pass publicationId.',
         {
-          ...NeoPublicationDraft.shape,
-          replyTo: z.array(z.uuid()).min(1).max(100),
-          publicationId: z.uuid().optional(),
+          ...replyFields,
+          text: z.string().trim().min(1).max(16000),
+          progress: z.literal(true).optional(),
         },
-        async ({ publicationId, ...input }) => {
-          if (
-            !publicationId &&
-            !input.progress &&
-            input.replyTo.some(
-              (id) =>
-                !service.publications.get(conversationId, frontProgressId(conversationId, [id]))
-            )
-          )
-            return result({ accepted: false, reason: 'front_ack_required' });
-          if (!publicationId)
-            return result(await service.publish(input, { source: 'mcp', sessionId }));
-          const current = service.publications.get(conversationId, publicationId);
-          const ids = current?.replyTo?.length
-            ? current.replyTo
-            : current?.producerInput
-              ? [current.producerInput.messageId]
-              : [];
-          if (!ids.length || !ids.every((id) => input.replyTo.includes(id)))
-            return result({ accepted: false, reason: 'unknown_reply_target' });
-          const edited = await service.publications.reviseCurrent(
-            {
-              requestId: input.requestId,
-              publicationId,
-              fullText: input.fullText,
-              shortText: input.shortText,
-            },
-            { source: 'mcp', sessionId }
-          );
-          if (edited.accepted) service.notifyPublicationsChanged(conversationId);
-          return result(edited);
-        }
+        async ({ text, ...input }) => publish({ ...input, fullText: text, verbatim: true })
+      ),
+      tool(
+        'reply_detailed',
+        'Send a substantial reply or a long Back report with a standalone summary and additional details. Details must add information beyond the summary. Give the original human replyTo IDs. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result.',
+        {
+          ...replyFields,
+          summary: z.string().trim().min(1).max(2000),
+          details: z.string().trim().min(1).max(16000),
+        },
+        async ({ summary, details, ...input }) =>
+          publish({ ...input, shortText: summary, fullText: details })
       ),
       tool(
         'handoff_read',

@@ -69,7 +69,7 @@ export function createNeoFrontHandler(service: NeoService) {
             [
               {
                 type: 'text',
-                text: `Human message ${messageId}. First call publication_publish with progress:true and replyTo:["${messageId}"] to give the human a brief acknowledgment. Then handle the request or call neo_send. Preserve this ID throughout.`,
+                text: `Human message ${messageId}. First call reply_short with progress:true and replyTo:["${messageId}"] to give the human a brief acknowledgment. Then handle the request or call neo_send. Preserve this ID throughout.`,
               },
               ...(ask.replyTo
                 ? [
