@@ -117,7 +117,18 @@ async function attachFrontTools(
 ): Promise<void> {
   const live = await service.sessions.getSessionForControl(id);
   if (!live) throw new Error('front_session_unavailable');
-  const config = requireSession(service, id).config;
+  let config = requireSession(service, id).config;
+  if (Object.keys(config.toolSelection?.choices ?? {}).length) {
+    const snapshot = service.db.captureSessionRuntimeSettings(id);
+    if (
+      !snapshot ||
+      (await service.db.casSessionRuntimeSettings(snapshot, {
+        toolSelection: { version: 1, choices: {} },
+      })) !== 'won'
+    )
+      throw new Error('front_session_tools_superseded');
+    config = requireSession(service, id).config;
+  }
   const previous = live.getSessionData().config;
   if (
     live.queryObject &&

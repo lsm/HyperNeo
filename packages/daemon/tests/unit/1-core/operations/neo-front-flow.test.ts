@@ -81,6 +81,29 @@ test('Front uses the ordinary immediate session with its role and tools', async 
   expect(attach).toHaveBeenCalled();
 });
 
+test('Front removes inherited catalog tools from an existing session without replacing its history', async () => {
+  const existing = createTestSession(front);
+  await db.createSession({
+    ...existing,
+    sdkSessionId: 'retained-front-history',
+    config: {
+      ...existing.config,
+      toolSelection: {
+        version: 1,
+        choices: { 'mcp:legacy': { selected: true, aliases: ['legacy'] } },
+      },
+    },
+  });
+  const session = await frontSession(
+    service,
+    { conversationId, askOrigin: { sessionId: root, messageId: crypto.randomUUID() } },
+    model
+  );
+  expect(session.config.toolSelection).toEqual({ version: 1, choices: {} });
+  expect(session.config.disallowedTools).toContain('mcp__exa');
+  expect(session.sdkSessionId).toBe('retained-front-history');
+});
+
 test('dual mode refuses Back publication and single mode restores it', async () => {
   const draft = { requestId: 'result', verbatim: true, fullText: 'The work is ready.' };
   const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
