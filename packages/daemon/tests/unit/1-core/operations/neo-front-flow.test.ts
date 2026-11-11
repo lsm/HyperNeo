@@ -75,6 +75,8 @@ test('Front uses the ordinary immediate session with its role and tools', async 
   );
   expect(session.id).toBe(front);
   expect(session.config.queryMode).toBe('immediate');
+  expect(session.config.toolSelection).toEqual({ version: 1, choices: {} });
+  expect(session.config.disallowedTools).toContain('mcp__exa');
   expect(session.config.systemPrompt).toContain('Front Neo');
   expect(attach).toHaveBeenCalled();
 });

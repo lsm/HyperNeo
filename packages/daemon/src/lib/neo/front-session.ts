@@ -30,6 +30,8 @@ export async function frontSession(
     autoCompactPercent: model.autoCompactPercent,
     tools: { useClaudeCodePreset: false },
     operationTools: false,
+    toolSelection: { version: 1, choices: {} },
+    disallowedTools: ['mcp__exa'],
     sdkToolsPreset: [],
     allowedTools: [
       'projects_read',
