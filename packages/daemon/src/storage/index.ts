@@ -33,7 +33,7 @@ import type {
   ToolPreferenceSnapshot,
 } from './repositories/tool-preference-commit.ts';
 import type { SessionInputDraftSnapshot } from './repositories/session-input-draft-write.ts';
-import type { SessionWriteOutcome } from './repositories/session-status-write.ts';
+import type { SessionUpdate, SessionWriteOutcome } from './repositories/session-status-write.ts';
 import type {
   RuntimeSettingsPatch,
   SessionRuntimeSettingsSnapshot,
@@ -272,7 +272,7 @@ export class Database {
     return this.sessionRepo.listAcpSessionIds();
   }
 
-  async updateSession(id: string, updates: Partial<Session>): Promise<SessionWriteOutcome> {
+  async updateSession(id: string, updates: SessionUpdate): Promise<SessionWriteOutcome> {
     const readStatus = updates.status ? (this.sessionRepo.getSession(id)?.status ?? null) : null;
     const outcome = await this.gateway.call(
       sessionWrites,
@@ -762,7 +762,7 @@ export class Database {
   }
 }
 
-function postable<T extends Partial<Session>>(session: T): T {
+function postable<T extends SessionUpdate>(session: T): T {
   if (!session.config) return session;
   const config = Object.fromEntries(
     Object.entries(session.config).filter(

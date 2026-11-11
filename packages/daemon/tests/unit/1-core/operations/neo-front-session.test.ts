@@ -169,6 +169,91 @@ test('repairs the existing front title and Neo project grouping without losing i
   });
 });
 
+test('a deleted Convo is recreated under the Neo project and still publishes its reply', async () => {
+  const handler = createNeoFrontHandler(service);
+  const requestId = '20000000-0000-4000-8000-000000000010';
+  await service.asks.acceptPrompt(
+    conversation,
+    neoIntakeMessage({ sessionId: root, requestId, content: 'Hello again' }),
+    'manual',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  const job = () =>
+    db
+      .getJobQueueRepo()
+      .listJobs({ queue: 'neo.front' })
+      .find((job) => job.payload.messageId === requestId)!;
+  expect(await handler(job())).toMatchObject({ delivered: true });
+  const frontId = neoDerivedId(`front-session:${conversation}`);
+  await db.deleteSession(frontId);
+  expect(db.getSession(frontId)).toBeNull();
+  const second = '20000000-0000-4000-8000-000000000011';
+  await service.asks.acceptPrompt(
+    conversation,
+    neoIntakeMessage({ sessionId: root, requestId: second, content: 'Hello after deletion' }),
+    'manual',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  const next = db
+    .getJobQueueRepo()
+    .listJobs({ queue: 'neo.front' })
+    .find((job) => job.payload.messageId === second)!;
+  expect(await handler(next)).toMatchObject({ delivered: true });
+  expect(db.getSession(frontId)).toMatchObject({
+    title: 'Convo',
+    metadata: { executionProjectPath: '/synthetic/Neo' },
+  });
+  expect(db.getSession(frontId)?.sdkSessionId).toBe(sdkId);
+  expect(vi.mocked(query).mock.calls.at(-1)?.[0].options?.resume).toBeUndefined();
+  expect(service.publications.list(conversation)?.map((item) => item.replyTo?.[0])).toEqual([
+    requestId,
+    second,
+  ]);
+});
+
+test('an archived Convo is recreated instead of reused', async () => {
+  const id = neoDerivedId(`front-session:${conversation}`);
+  await db.createSession({
+    ...createTestSession(id),
+    title: 'Convo',
+    workspacePath: service.userFolder,
+    status: 'archived',
+    archivedAt: new Date().toISOString(),
+  });
+  const session = await frontSession(
+    service,
+    { conversationId: conversation } as Parameters<typeof frontSession>[1],
+    { model: 'fixture', provider: 'glm', thinkingLevel: 'think24k' }
+  );
+  expect(session).toMatchObject({ id, title: 'Convo', status: 'active' });
+  expect(session.archivedAt).toBeUndefined();
+});
+
+test('a failed Convo creation errors the job instead of completing silently', async () => {
+  const handler = createNeoFrontHandler(service);
+  const requestId = '20000000-0000-4000-8000-000000000012';
+  await service.asks.acceptPrompt(
+    conversation,
+    neoIntakeMessage({ sessionId: root, requestId, content: 'Hello again' }),
+    'manual',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  vi.spyOn(service.sessions, 'createSession').mockRejectedValueOnce(
+    new Error('Synthetic Convo creation failure')
+  );
+  const job = db
+    .getJobQueueRepo()
+    .listJobs({ queue: 'neo.front' })
+    .find((job) => job.payload.messageId === requestId)!;
+  await expect(handler(job)).rejects.toThrow('Synthetic Convo creation failure');
+  expect(
+    db.getSDKMessageRepo().getUserMessages(neoDerivedId(`front-session:${conversation}`))
+  ).toHaveLength(0);
+});
+
 test('an SDK startup failure records a failed terminal turn instead of a Stopped gap', async () => {
   const ask = {
     conversationId: conversation,

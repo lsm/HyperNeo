@@ -20,7 +20,7 @@ vi.mock('../NeoRelaySendersSettings.tsx', () => ({ NeoRelaySendersSettings: () =
 import { NeoModelSettings } from '../NeoModelSettings.tsx';
 import { connectionState, globalSettings } from '../../../lib/state.ts';
 
-const primary = { model: 'opus', provider: 'anthropic', thinkingLevel: 'think24k' };
+const primary = { model: 'opus', provider: 'anthropic', thinkingLevel: 'think24k' as const };
 const glm = { model: 'glm-5', provider: 'glm', thinkingLevel: 'think8k' };
 const copilot = { model: 'gpt-5', provider: 'anthropic-copilot', thinkingLevel: 'off' };
 const models = [primary, glm, copilot, { model: 'router/test', provider: 'openrouter' }].map(
@@ -740,11 +740,17 @@ test('a failed save retains a newer pushed preference instead of restoring stale
 });
 
 async function frontEditor() {
+  const settings = globalSettings.value as GlobalSettings;
+  if (!settings.neo?.front?.model)
+    (globalSettings as { value: GlobalSettings }).value = {
+      ...settings,
+      neo: { ...settings.neo, front: { enabled: false, model: primary } },
+    };
   render(<NeoModelSettings />);
   const section = await screen.findByRole('region', { name: 'Neo models' });
   const ui = within(section);
   await waitFor(() =>
-    expect(ui.getByRole('button', { name: 'Choose Convo model' }).hasAttribute('disabled')).toBe(
+    expect(ui.getByRole('button', { name: 'Change Neo primary' }).hasAttribute('disabled')).toBe(
       false
     )
   );
@@ -752,38 +758,52 @@ async function frontEditor() {
 }
 
 test('chooses a separate provider/model through the targeted front operation', async () => {
-  const ui = await frontEditor();
-  fireEvent.click(ui.getByRole('button', { name: 'Choose Convo model' }));
+  await frontEditor();
+  const convo = within(screen.getByRole('region', { name: 'Convo' }));
+  fireEvent.click(convo.getByRole('button', { name: 'Choose Convo model' }));
   fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.front.model.set',
-      input: { ...glm, thinkingLevel: 'off' },
+      input: { ...glm, thinkingLevel: 'think24k' },
     })
   );
   expect(globalSettings.value?.neo?.preferences?.model).toBe('opus');
-  expect(globalSettings.value?.neo?.front?.enabled).not.toBe(true);
+  expect(globalSettings.value?.neo?.front?.enabled).toBe(false);
 });
 
 test.each(['refused', 'failed'])(
   'a %s front model save retains the saved selection',
   async (mode) => {
-    (globalSettings as { value: GlobalSettings | null }).value = {
-      neo: { preferences: primary, front: { enabled: false, model: primary } },
-    } as GlobalSettings;
     request.mockImplementation(async (method) => {
       if (method === 'models.list') return { models };
       if (mode === 'failed') throw new Error('Disconnected');
       return { ok: false, reason: 'Unavailable model' };
     });
-    const ui = await frontEditor();
-    fireEvent.click(ui.getByRole('button', { name: 'Choose Convo model' }));
+    await frontEditor();
+    const convo = within(screen.getByRole('region', { name: 'Convo' }));
+    fireEvent.click(convo.getByRole('button', { name: 'Choose Convo model' }));
     fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
-    await within(await screen.findByRole('region', { name: 'Neo models' })).findByRole('alert');
-    expect(ui.getByText(/^opus ·/)).toBeTruthy();
+    expect((await convo.findByRole('alert')).textContent).toBeTruthy();
+    expect(convo.getByText('opus')).toBeTruthy();
     expect(globalSettings.value?.neo?.front?.enabled).toBe(false);
   }
 );
+
+test('the Convo compact percentage saves through the targeted front operation', async () => {
+  await frontEditor();
+  const convo = within(screen.getByRole('region', { name: 'Convo' }));
+  const input = convo.getByLabelText('Convo model auto-compact percentage') as HTMLInputElement;
+  expect(input.value).toBe('90');
+  fireEvent.input(input, { target: { value: '65' } });
+  fireEvent.focusOut(input);
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.front.model.set',
+      input: { ...primary, thinkingLevel: 'think24k', autoCompactPercent: 65 },
+    })
+  );
+});
 
 test('primary model, thinking and compaction share one visible flat row', async () => {
   const ui = await editor();
@@ -796,13 +816,33 @@ test('primary model, thinking and compaction share one visible flat row', async 
   expect(ui.queryByText('Thinking')).toBeNull();
 });
 
-test('front model is an inline row inside the same Neo models card', async () => {
-  const ui = await editor();
-  expect(
-    ui.getByRole('checkbox', { name: 'Dual-model mode' }).closest('[data-model-row]')
-  ).toBeTruthy();
-  expect(ui.getByRole('button', { name: 'Choose Convo model' })).toBeTruthy();
-  expect(screen.queryByRole('region', { name: 'Front model' })).toBeNull();
+test('Convo owns a separate section that holds the dual-model switch', async () => {
+  await frontEditor();
+  const convo = screen.getByRole('region', { name: 'Convo' });
+  const neo = screen.getByRole('region', { name: 'Neo models' });
+  expect(neo.contains(convo)).toBe(false);
+  expect(convo.contains(neo)).toBe(false);
+  expect(within(convo).getByRole('checkbox', { name: 'Dual-model mode' })).toBeTruthy();
+  expect(within(convo).getByRole('button', { name: 'Choose Convo model' })).toBeTruthy();
+  expect(within(neo).queryByRole('button', { name: 'Choose Convo model' })).toBeNull();
+});
+
+test('Neo and Convo render the same model row component', async () => {
+  await frontEditor();
+  const neoRow = screen
+    .getByRole('button', { name: 'Change Neo primary' })
+    .closest('[data-model-row]')!;
+  const convoRow = screen
+    .getByRole('button', { name: 'Choose Convo model' })
+    .closest('[data-model-row]')!;
+  expect(neoRow).toBeTruthy();
+  expect(convoRow).toBeTruthy();
+  expect(convoRow.contains(screen.getByLabelText('Convo model thinking'))).toBe(true);
+  expect(convoRow.contains(screen.getByLabelText('Convo model auto-compact percentage'))).toBe(
+    true
+  );
+  expect(neoRow.contains(screen.getByLabelText('Neo model 1 thinking'))).toBe(true);
+  expect(neoRow.contains(screen.getByLabelText('Neo model 1 auto-compact percentage'))).toBe(true);
 });
 
 test('all Neo model controls are visible without an Advanced disclosure', async () => {

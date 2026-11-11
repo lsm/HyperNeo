@@ -6,7 +6,7 @@ import type {
   SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import {
-  AUTO_COMPACT_PERCENT_DEFAULT,
+  resolveAutoCompactPercent,
   THINKING_LEVEL_TOKENS,
   THINKING_LEVEL_EFFORT,
   type NeoModelPreference,
@@ -16,6 +16,7 @@ import { NEO_FRONT } from '@hyperneo/prompts';
 import { z } from 'zod';
 import { sdkMessageWrites } from '../../storage/repositories/sdk-message-writes.ts';
 import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.ts';
+import { getModelInfo } from '../model-service.ts';
 import { oneShotModelIds, readAssistantReply } from '../agent/one-shot-model.ts';
 import { awaitSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
 import { getProviderService } from '../provider-service.ts';
@@ -89,9 +90,18 @@ export async function runNeoFrontModel(
   const tools = [...lookups, send];
   const env: NodeJS.ProcessEnv = {
     ...(await getProviderService().getIsolatedEnvForModel(model.provider, model.model)),
-    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(AUTO_COMPACT_PERCENT_DEFAULT),
   };
   delete env.CLAUDE_CODE_DISABLE_THINKING;
+  delete env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  const compactPercent = resolveAutoCompactPercent(model.autoCompactPercent);
+  env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(compactPercent);
+  const contextWindow = (
+    await getModelInfo(model.model, 'global', model.provider).catch(() => null)
+  )?.contextWindow;
+  const autoCompactWindow =
+    contextWindow === undefined || contextWindow <= 0
+      ? undefined
+      : Math.floor((contextWindow * compactPercent) / 100);
   const budget = THINKING_LEVEL_TOKENS[model.thinkingLevel];
   let phase = 'sdk_path';
   const abortController = new AbortController();
@@ -135,6 +145,10 @@ export async function runNeoFrontModel(
         allowedTools: tools.map((entry) => `mcp__front__${entry.name}`),
         mcpServers: { front: createSdkMcpServer({ name: 'front', tools }) },
         permissionMode: 'dontAsk',
+        settings:
+          autoCompactWindow === undefined
+            ? undefined
+            : { autoCompactEnabled: true, autoCompactWindow },
         maxTurns: 4,
         persistSession: true,
         ...(session.sdkSessionId ? { resume: session.sdkSessionId } : { sessionId: session.id }),

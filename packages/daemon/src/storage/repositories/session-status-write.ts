@@ -2,6 +2,8 @@ import type { Session } from '@hyperneo/shared';
 
 export type SessionStatus = Session['status'];
 
+export type SessionUpdate = Omit<Partial<Session>, 'archivedAt'> & { archivedAt?: string | null };
+
 export type SessionStatusRefusal = 'stale-status' | 'terminal-task';
 
 export type SessionWriteOutcome = 'written' | SessionStatusRefusal;

@@ -441,6 +441,80 @@ function OverrideEditorModal({
   );
 }
 
+interface ModelRowProps {
+  heading: string;
+  name: string;
+  provider: string;
+  pickLabel: string;
+  disabled: boolean;
+  onPick: () => void;
+  thinking?: {
+    saved: ThinkingLevel | undefined;
+    label: string;
+    capability: ThinkingCapability | null;
+    onChange: (level: ThinkingLevel | undefined) => void;
+  };
+  percent: {
+    label: string;
+    title: string;
+    value: string;
+    onInput: (value: string) => void;
+    onBlur: (value: string) => void;
+  };
+}
+
+function ModelRow({
+  heading,
+  name,
+  provider,
+  pickLabel,
+  disabled,
+  onPick,
+  thinking,
+  percent,
+}: ModelRowProps) {
+  return (
+    <div data-model-row class="flex items-center gap-2">
+      <span class="min-w-0 flex-1 truncate text-sm text-fg" title={`${name} · ${provider}`}>
+        <span class="block text-xs text-fg-faint">{heading}</span>
+        {name}
+      </span>
+      <Button
+        aria-label={pickLabel}
+        variant="secondary"
+        size="xs"
+        disabled={disabled}
+        onClick={onPick}
+      >
+        <PencilIcon />
+      </Button>
+      {thinking && (
+        <FallbackThinkingSelect
+          saved={thinking.saved}
+          label={thinking.label}
+          capability={thinking.capability}
+          disabled={disabled}
+          inherits={false}
+          onChange={thinking.onChange}
+        />
+      )}
+      <input
+        type="number"
+        aria-label={percent.label}
+        title={percent.title}
+        min={AUTO_COMPACT_PERCENT_MIN}
+        max={AUTO_COMPACT_PERCENT_MAX}
+        step={1}
+        value={percent.value}
+        disabled={disabled}
+        onInput={(event) => percent.onInput(event.currentTarget.value)}
+        onBlur={(event) => percent.onBlur(event.currentTarget.value)}
+        class="w-12 rounded border border-line bg-surface px-1 py-1 text-xs text-fg"
+      />
+    </div>
+  );
+}
+
 function FrontModelSettings({
   groupedModels,
   providerAuthStatuses,
@@ -451,8 +525,16 @@ function FrontModelSettings({
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [error, setError] = useState('');
+  const [percent, setPercent] = useState('');
+  const allModels = [...groupedModels.values()].flat();
   const busy = loading || saving || connectionState.value !== 'connected';
-  async function save(model: ModelInfo, thinkingLevel = preference?.thinkingLevel ?? 'off') {
+  const savedPercent = String(preference?.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT);
+  useEffect(() => setPercent(savedPercent), [savedPercent]);
+  async function save(
+    model: ModelInfo,
+    thinkingLevel = preference?.thinkingLevel ?? 'off',
+    autoCompactPercent = preference?.autoCompactPercent
+  ) {
     if (busy || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
@@ -468,63 +550,72 @@ function FrontModelSettings({
           model: model.id,
           provider: model.provider,
           thinkingLevel,
+          ...(autoCompactPercent === undefined ? {} : { autoCompactPercent }),
         }
       );
       if (!result.ok) throw new Error(result.reason ?? 'Could not save the Convo model.');
     } catch (cause) {
+      setPercent(savedPercent);
       setError(cause instanceof Error ? cause.message : 'Could not save the Convo model.');
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
   }
+  function savePercent(text: string) {
+    if (!preference) return;
+    const value = Number(text);
+    if (
+      !text.trim() ||
+      !Number.isInteger(value) ||
+      value < AUTO_COMPACT_PERCENT_MIN ||
+      value > AUTO_COMPACT_PERCENT_MAX
+    ) {
+      setPercent(savedPercent);
+      setError('Enter a whole number from 10 to 100.');
+      return;
+    }
+    setError('');
+    if (String(value) === savedPercent) return;
+    const model = findSameModel(allModels, preference);
+    if (model) void save(model, preference.thinkingLevel, value);
+  }
   return (
     <div class="space-y-2">
-      <div data-model-row class="flex items-center gap-2">
-        <div class="min-w-0 flex-1">
-          <NeoFrontSettings />
-          <p
-            class="truncate text-sm text-fg"
-            title={
-              preference
-                ? `${preference.model} · ${getProviderLabel(preference.provider)}`
-                : undefined
-            }
-          >
-            {preference
-              ? `${preference.model} · ${getProviderLabel(preference.provider)}`
-              : 'No Convo model selected'}
-          </p>
-        </div>
-        <Button
-          aria-label="Choose Convo model"
-          variant="secondary"
-          size="xs"
-          disabled={busy}
-          onClick={() => setPicker(true)}
-        >
-          <PencilIcon />
-        </Button>
-        {preference && (
-          <FallbackThinkingSelect
-            saved={preference.thinkingLevel}
-            label="Convo model thinking"
-            capability={findSameModel([...groupedModels.values()].flat(), preference) ?? null}
-            disabled={busy}
-            inherits={false}
-            onChange={(level) => {
-              const model = findSameModel([...groupedModels.values()].flat(), preference);
-              if (model) void save(model, level);
-            }}
-          />
-        )}
-        <output
-          title="Default auto-compact percentage"
-          class="rounded border border-line px-1 py-1 text-xs"
-        >
-          {AUTO_COMPACT_PERCENT_DEFAULT}%
-        </output>
+      <div class="flex items-center justify-between gap-2">
+        <h4 class="text-[13px] font-semibold text-fg">Convo</h4>
+        <NeoFrontSettings />
       </div>
+      {preference ? (
+        <ModelRow
+          heading="Convo"
+          name={findSameModel(allModels, preference)?.name ?? preference.model}
+          provider={getProviderLabel(preference.provider)}
+          pickLabel="Choose Convo model"
+          disabled={busy}
+          onPick={() => setPicker(true)}
+          thinking={{
+            saved: preference.thinkingLevel,
+            label: 'Convo model thinking',
+            capability: loading ? null : (findSameModel(allModels, preference) ?? null),
+            onChange: (level) => {
+              const model = findSameModel(allModels, preference);
+              if (model) void save(model, level);
+            },
+          }}
+          percent={{
+            label: 'Convo model auto-compact percentage',
+            title: 'Applies to Convo replies as they run',
+            value: percent,
+            onInput: setPercent,
+            onBlur: savePercent,
+          }}
+        />
+      ) : (
+        <Button variant="secondary" size="sm" disabled={busy} onClick={() => setPicker(true)}>
+          Choose Convo model
+        </Button>
+      )}
       {error && (
         <p role="alert" class="text-xs text-danger">
           {error}
@@ -696,46 +787,27 @@ function NeoModelSettings({
       )}
       <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
       {draft ? (
-        <div data-model-row class="flex items-center gap-2">
-          <span
-            class="min-w-0 flex-1 truncate text-sm text-fg"
-            title={`${draft.model} · ${draft.provider}`}
-          >
-            <span class="block text-xs text-fg-faint">Neo</span>
-            {findSameModel(availableModels, draft)?.name ?? draft.model}
-          </span>
-          <Button
-            aria-label="Change Neo primary"
-            variant="secondary"
-            size="xs"
-            disabled={busy}
-            onClick={() => setPicker('primary')}
-          >
-            <PencilIcon />
-          </Button>
-          <FallbackThinkingSelect
-            saved={draft.thinkingLevel ?? 'off'}
-            label="Neo model 1 thinking"
-            capability={loading ? null : (findSameModel(availableModels, draft) ?? draft)}
-            disabled={busy}
-            inherits={false}
-            onChange={(level = 'off') => void save({ ...draft, thinkingLevel: level })}
-          />
-          <input
-            type="number"
-            aria-label="Neo model 1 auto-compact percentage"
-            title={compactSize(draft)}
-            min={AUTO_COMPACT_PERCENT_MIN}
-            max={AUTO_COMPACT_PERCENT_MAX}
-            value={percentText(draft)}
-            disabled={busy}
-            onInput={(event) =>
-              setPercents({ ...percents, [entryKey(draft)]: event.currentTarget.value })
-            }
-            onBlur={(event) => savePercent(0, event.currentTarget.value)}
-            class="w-12 rounded border border-line bg-surface px-1 py-1 text-xs text-fg"
-          />
-        </div>
+        <ModelRow
+          heading="Neo"
+          name={findSameModel(availableModels, draft)?.name ?? draft.model}
+          provider={getProviderLabel(draft.provider)}
+          pickLabel="Change Neo primary"
+          disabled={busy}
+          onPick={() => setPicker('primary')}
+          thinking={{
+            saved: draft.thinkingLevel ?? 'off',
+            label: 'Neo model 1 thinking',
+            capability: loading ? null : (findSameModel(availableModels, draft) ?? draft),
+            onChange: (level) => void save({ ...draft, thinkingLevel: level ?? 'off' }),
+          }}
+          percent={{
+            label: 'Neo model 1 auto-compact percentage',
+            title: compactSize(draft),
+            value: percentText(draft),
+            onInput: (value) => setPercents({ ...percents, [entryKey(draft)]: value }),
+            onBlur: (value) => savePercent(0, value),
+          }}
+        />
       ) : (
         <div class="space-y-2">
           <p class="text-xs text-fg-faint">
@@ -749,11 +821,6 @@ function NeoModelSettings({
           </Button>
         </div>
       )}
-      <FrontModelSettings
-        groupedModels={groupedModels}
-        providerAuthStatuses={providerAuthStatuses}
-        loading={loading}
-      />
       <div>
         <div class="space-y-3">
           <FallbackChainEditor
@@ -1239,6 +1306,13 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
           providerAuthStatuses={providerAuthStatuses}
           loading={loading}
         />
+        <section aria-label="Convo">
+          <FrontModelSettings
+            groupedModels={groupedModels}
+            providerAuthStatuses={providerAuthStatuses}
+            loading={loading}
+          />
+        </section>
       </SettingsSection>
     );
 
