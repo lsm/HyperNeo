@@ -39,6 +39,13 @@ const Reply = z
   .strict();
 const FRONT_DEADLINE_BASE_MS = 15_000;
 const FRONT_DEADLINE_PER_THINKING_TOKEN_MS = 1;
+
+export function frontDeadlineMs(thinkingLevel: NeoModelPreference['thinkingLevel']): number {
+  return (
+    FRONT_DEADLINE_BASE_MS +
+    (THINKING_LEVEL_TOKENS[thinkingLevel] ?? 0) * FRONT_DEADLINE_PER_THINKING_TOKEN_MS
+  );
+}
 const STALE_RESUME_PATTERN = /No conversation found|no conversation found/;
 const result = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -109,7 +116,7 @@ export async function runNeoFrontModel(
       ? undefined
       : Math.floor((contextWindow * compactPercent) / 100);
   const budget = THINKING_LEVEL_TOKENS[model.thinkingLevel];
-  const deadlineMs = FRONT_DEADLINE_BASE_MS + (budget ?? 0) * FRONT_DEADLINE_PER_THINKING_TOKEN_MS;
+  const deadlineMs = frontDeadlineMs(model.thinkingLevel);
   const cwd = existsSync(session.workspacePath ?? '')
     ? (session.workspacePath ?? undefined)
     : undefined;

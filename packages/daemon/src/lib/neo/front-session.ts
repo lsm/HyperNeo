@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import type { NeoModelPreference, Session } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { SessionUpdate } from '../../storage/repositories/session-status-write.ts';
@@ -29,6 +30,7 @@ export async function frontSession(
   );
   const executionProjectPath =
     neo?.metadata.executionProjectPath ?? neo?.workspacePath ?? neoFolderPath();
+  mkdirSync(service.userFolder, { recursive: true });
   const existing = service.db.getSession(id);
   if (!existing) {
     await createConvo(service, id, config, executionProjectPath);

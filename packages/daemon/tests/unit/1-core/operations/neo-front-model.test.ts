@@ -192,3 +192,11 @@ test('uses the JSON Schema draft accepted by the SDK CLI', async () => {
     schema: { $schema: 'http://json-schema.org/draft-07/schema#' },
   });
 });
+
+test('the deadline grows with the selected thinking budget', async () => {
+  const { frontDeadlineMs } = await import('../../../../src/lib/neo/front-model.ts');
+  expect(frontDeadlineMs('off')).toBe(15_000);
+  expect(frontDeadlineMs('think8k')).toBe(23_000);
+  expect(frontDeadlineMs('think64k')).toBe(78_999);
+  expect(frontDeadlineMs('think64k')).toBeGreaterThan(frontDeadlineMs('think8k'));
+});
