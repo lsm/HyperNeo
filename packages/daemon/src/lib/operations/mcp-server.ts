@@ -19,7 +19,7 @@ export function createOperationMcpServer(
   const invoke = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
   const discovery =
     descriptionRole === 'neo'
-      ? 'Find rare operations with operations.list by prefix, describe one schema by exact name, or invoke a rare operation.'
+      ? 'Find rare operations with operations.list by prefix, operations.describe one schema by exact name, or invoke a rare operation.'
       : 'operations.list discovers others; operations.describe {name} returns full schemas.';
   const tools: NonNullable<Parameters<typeof createSdkMcpServer>[0]['tools']> = [
     tool(
