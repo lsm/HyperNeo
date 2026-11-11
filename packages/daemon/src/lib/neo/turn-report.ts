@@ -1,3 +1,4 @@
+import { neoSafeSessionLink } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { neoBlockerNotice } from './covered-notice.ts';
 import { skipEmptyNeoTurnReport, type NeoTurnReportFacts } from './turn-report-plan.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -6,7 +7,14 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoRunnerDeps } from './todo-runner.ts';
 import type { NeoTurnReportReceipts } from './turn-report-receipts.ts';
 
-type Live = { status: string; waitingFor?: string; turnQuestion?: unknown } | null;
+type Live = {
+  status: string;
+  title?: string;
+  link?: string;
+  remoteLink?: string;
+  waitingFor?: string;
+  turnQuestion?: unknown;
+} | null;
 type Turn = {
   id: string;
   at: number;
@@ -42,19 +50,41 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
     'quiet'
   )
   .pipe(
-    (ask: NeoAsk, todo: NeoTodo, dispatchId: string, ref: WorkRef, live: Live, turn: Turn) => {
+    (
+      ask: NeoAsk,
+      todo: NeoTodo,
+      dispatchId: string,
+      ref: WorkRef,
+      live: Live,
+      turn: Turn,
+      currentLive: Live
+    ) => {
+      const fullRef = `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}`;
+      const name = (currentLive?.title ?? live?.title ?? '')
+        .replace(/[\s\p{Cc}\p{Cf}]+/gu, ' ')
+        .trim()
+        .slice(0, 200);
+      const link =
+        neoSafeSessionLink(currentLive?.remoteLink, true) ??
+        neoSafeSessionLink(currentLive?.link, !!ref.daemon) ??
+        neoSafeSessionLink(live?.remoteLink, true) ??
+        neoSafeSessionLink(live?.link, !!ref.daemon);
+      const worker = [`Worker: ${name ? `${name} (${fullRef})` : fullRef}`, link]
+        .filter(Boolean)
+        .join('\n');
       const focused = ask.focusedSession;
       const statusOnly =
         focused?.adapter === ref.adapter && focused.id === ref.id && focused.daemon === ref.daemon;
       const owner = turn.notice ? 'a notice, no todo' : `todo ${todo.id}`;
       const context = `${owner}, dispatch ${dispatchId}, status ${live?.status ?? 'unknown'}`;
       if (turn.humanInput !== undefined)
-        return `The human worked directly in ${ref.adapter}:${ref.id} (ask ${ask.title}, todo ${todo.id}).\n\nThe human said: ${turn.humanInput}\n\nThe worker replied: ${turn.message || 'worker ended its turn with no reply'}\n\nWorker status: ${live?.status ?? 'unknown'}${live?.waitingFor ? `; waiting for: ${live.waitingFor}` : ''}`;
+        return `The human worked directly in ${ref.adapter}:${ref.id} (ask ${ask.title}, todo ${todo.id}).\n\n${worker}\n\nThe human said: ${turn.humanInput}\n\nThe worker replied: ${turn.message || 'worker ended its turn with no reply'}\n\nWorker status: ${live?.status ?? 'unknown'}${live?.waitingFor ? `; waiting for: ${live.waitingFor}` : ''}`;
       const prefix = statusOnly
         ? `Focused discussion status only (ask ${ask.id}, ${context}). Do not act, reply, forward or treat this as approval.`
         : `Worker turn report (${context}):`;
       return [
         prefix,
+        worker,
         live?.waitingFor ? `Waiting for: ${live.waitingFor}` : '',
         turn.message || 'worker ended its turn with no reply',
         !statusOnly && !turn.notice && todo.blockedBy === 'needs-human'
@@ -64,7 +94,7 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
         .filter(Boolean)
         .join('\n\n');
     },
-    ['ask', 'todo', 'dispatchId', 'ref', 'live', 'turn'],
+    ['ask', 'todo', 'dispatchId', 'ref', 'live', 'turn', 'currentLive'],
     'text'
   )
   .pipe(
