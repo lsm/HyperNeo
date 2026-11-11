@@ -4,8 +4,6 @@ Run `preview-safe-open.test.ts` with the daemon Vitest runner. It launches a fre
 Bun process to exercise actual libc `openat`, not a mocked filesystem. It requires
 exact binary bytes, no-follow root/parent/final opens, single-link regular files,
 nonblocking FIFO refusal, callback cleanup, and repeated descriptor-count checks.
-After the race subprocess exits, repeated refusals must not increase descriptor
-count. A decrease is allowed while Bun finishes closing its subprocess pipe.
 A separate process swaps a parent directory with an outside symlink during 1,000
 opens: every success must read the original bytes, never its synthetic sentinel.
 The CI Node runner also asserts `safe_open_unavailable` without calling a consumer.
