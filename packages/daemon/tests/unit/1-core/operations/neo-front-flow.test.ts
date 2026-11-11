@@ -66,7 +66,8 @@ afterEach(async () => {
 
 test('Front and Neo share the same expanded speech rules', () => {
   const start = 'Input-source markers';
-  const end = 'Never derive speech by reading or truncating publication Markdown.';
+  const end =
+    'If speech is unavailable, continue with the normal screen reply; do not retry in a loop.';
   const rules = NEO_FRONT.slice(NEO_FRONT.indexOf(start));
   expect(rules).toContain(end);
   expect(NEO_ROOT_TURN_END).toContain(rules.trim());
