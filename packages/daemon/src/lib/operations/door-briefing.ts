@@ -53,7 +53,7 @@ export function operationsCapabilityContribution(
   const listing = registry ? describeResolvedOperations(registry, caller) : '';
   const door =
     caller?.source === 'mcp' && caller.role === 'neo'
-      ? 'Use neo_* for resident actions; invoke for rare calls. operations.list {} counts namespaces; {prefix,cursor?} pages names. operations.describe {name} gives full inputs. neo.snapshot is the current state index.'
+      ? 'Use neo_* for resident actions and invoke for rare calls. operations.list {} counts namespaces; {prefix,cursor?} pages names. neo.snapshot is the current state index.'
       : SPACE_OPERATIONS_DOOR;
   return {
     kind: 'authored',
