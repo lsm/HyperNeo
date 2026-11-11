@@ -130,7 +130,14 @@ export class PairingRequestRepository {
     return this.db.transaction(() => {
       if (approver.startsWith('local-rpc:') || approver.startsWith('agent-read:'))
         return 'not_allowed';
-      const ownerGrant = this.ownerCount() === 0;
+      const devices = new DevicePairingRepository(this.db);
+      const owners = this.ownerCount();
+      if (owners > 0) {
+        if (!devices.isOwnerDevice(approver)) return 'not_allowed';
+      } else if (this.db.prepare('SELECT 1 FROM paired_devices WHERE id = ?').get(approver)) {
+        return 'not_allowed';
+      }
+      const ownerGrant = owners === 0;
       const approved = this.db
         .prepare(
           `UPDATE pairing_requests SET approved_at = ?, approved_by = ?, grants_owner = ?

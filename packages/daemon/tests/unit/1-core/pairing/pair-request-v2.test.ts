@@ -368,6 +368,66 @@ describe('pairing v2 one-time request repository', () => {
     expect(await ownerCount()).toBe(1);
   });
 
+  test('a revoked owner cannot approve a successor in the empty-owner window', async () => {
+    const bootstrap = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(bootstrap.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+    await approveRequest(bootstrap.requestId, 'signer:fixture');
+    const granted = await completeRequest(
+      bootstrap.requestId,
+      phone.publicKeyB64,
+      proof(phone, bootstrap.requestId, bound.bindNonce)
+    );
+    expect(granted.ok).toBe(true);
+    if (!granted.ok) return;
+    expect(devices.revokeDevice(granted.deviceId, now)).toBe(true);
+    expect(await ownerCount()).toBe(0);
+
+    const second = await createRequest();
+    const boundSecond = await bindTicket(second.ticket, phoneKeypair().publicKeyB64);
+    if (!boundSecond.ok) throw new Error('bind failed');
+    expect(await approveRequest(second.requestId, granted.deviceId)).toBe('not_allowed');
+    expect(await requestStatus(second.requestId)).toMatchObject({ state: 'bound' });
+  });
+
+  test('a paired non-owner phone cannot promote itself after the owner is revoked', async () => {
+    const bootstrap = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(bootstrap.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+    await approveRequest(bootstrap.requestId, 'signer:fixture');
+    const first = await completeRequest(
+      bootstrap.requestId,
+      phone.publicKeyB64,
+      proof(phone, bootstrap.requestId, bound.bindNonce)
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const second = await createRequest();
+    const phoneB = phoneKeypair();
+    const boundB = await bindTicket(second.ticket, phoneB.publicKeyB64);
+    if (!boundB.ok) throw new Error('bind failed');
+    await approveRequest(second.requestId, first.deviceId);
+    const secondDone = await completeRequest(
+      second.requestId,
+      phoneB.publicKeyB64,
+      proof(phoneB, second.requestId, boundB.bindNonce)
+    );
+    expect(secondDone.ok).toBe(true);
+    if (!secondDone.ok) return;
+    expect(secondDone.owner).toBe(false);
+
+    expect(devices.revokeDevice(first.deviceId, now)).toBe(true);
+    expect(await ownerCount()).toBe(0);
+
+    const third = await createRequest();
+    const boundThird = await bindTicket(third.ticket, phoneKeypair().publicKeyB64);
+    if (!boundThird.ok) throw new Error('bind failed');
+    expect(await approveRequest(third.requestId, secondDone.deviceId)).toBe('not_allowed');
+  });
+
   test('owner approvals after the first device do not grant owner', async () => {
     const bootstrap = await createRequest();
     const owner = phoneKeypair();
