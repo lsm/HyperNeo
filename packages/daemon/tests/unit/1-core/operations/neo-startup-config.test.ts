@@ -27,6 +27,7 @@ const allowed = [
   'mcp__hyperneo-operations__neo_session',
   'mcp__hyperneo-operations__neo_speech',
   'mcp__fetch-mcp',
+  'mcp__exa',
 ];
 
 describe('Neo startup configuration', () => {
