@@ -219,7 +219,6 @@ export interface RPCHandlerSetupResult<SpaceServices> {
   handlePeerMessage: (req: Request) => Promise<Response>;
   frontInference: ReturnType<typeof createNeoFrontHandler>;
   prepareNeoInput: ReturnType<typeof createNeoService>['speech']['prepareInput'];
-  notifyScheduleIdle: ReturnType<typeof createNeoService>['notifyScheduleIdle'];
   wakePollingConcern: (key: string, text: string) => Promise<boolean>;
 }
 
@@ -628,7 +627,6 @@ export async function setupRPCHandlers<SpaceServices = never>(
     space: space?.services,
     sessionScheduler,
     wakePollingConcern: (key: string, text: string) => neoService.wakeNeo(key, text),
-    notifyScheduleIdle: neoService.notifyScheduleIdle,
     handlePeerMessage: createPeerMessageRoute(neoService),
     frontInference: createNeoFrontHandler(neoService),
     prepareNeoInput: neoService.speech.prepareInput.bind(neoService.speech),

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { SessionScheduler } from '../../../packages/daemon/src/lib/scheduler/session-schedules.ts';
@@ -41,7 +42,7 @@ try {
   assert.notEqual(app.server.port, 8399);
   await app.jobProcessor.stop();
   assert(scheduler && fire, 'The real daemon did not register its schedule handler');
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: url => createLocalSocket(url, join(run, 'data/local-rpc.credential')) });
   hub.registerTransport(transport); await transport.initialize();
   const call = (name: string, input: unknown = {}) => hub.request<any>('operation.invoke', { name, input });
   await call('neo.open');

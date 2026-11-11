@@ -6,7 +6,6 @@ import type { SessionScheduler } from './session-schedules.ts';
 
 export interface ScheduleFireDeps {
   scheduler: SessionScheduler;
-  notifyIdle?(schedule: SessionSchedule): void;
   status(target: WorkRef): Promise<WorkStatus | 'not_found' | 'not_open'>;
   deliver(
     schedule: SessionSchedule,
@@ -72,11 +71,7 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
         const nudge = facts.digest === schedule.factsDigest;
         if (nudge) {
           const quiet = { ...schedule, dueCount: schedule.dueCount + 1 };
-          return finish(
-            quiet,
-            'skipped_unchanged',
-            quiet.dueCount === 3 ? () => deps.notifyIdle?.(quiet) : undefined
-          );
+          return finish(quiet, 'skipped_unchanged');
         }
         const text = source.message(schedule.sourceId, { summary: facts.summary, nudge });
         if (text === null) return finish(schedule, 'source_gone');

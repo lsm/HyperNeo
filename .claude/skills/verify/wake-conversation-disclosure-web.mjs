@@ -8,7 +8,8 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   await mkdir(dir, { recursive: true });
   await page.setViewportSize({ width, height: 1000 });
   await page.goto(`http://127.0.0.1:${port}/neo`);
-  const wake = page.locator(`[data-wake="${seed.wake}"]`);
+  if (width < 1120) await page.getByRole('button', { name: /^Your work(?:,.*)?$/ }).click();
+  const wake = page.locator(`#neo-preview-work-panel [data-wake="${seed.wake}"]`);
   await wake.waitFor();
   const message = page.locator('details[aria-label="Message from Neo to Synthetic worker"]');
   await message.waitFor();
@@ -26,7 +27,7 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   if (after) { result.focusAfterOpen = await page.evaluate(() => document.activeElement?.getAttribute('aria-label')); assert.match(result.focusAfterOpen, /^less/); }
   const linkedPublication = seed.additions.find(a => a.kind === 'publication');
   const link = wake.getByRole('link', { name: linkedPublication.label, exact: true });
-  assert.equal(await link.getAttribute('href'), `#${await wake.locator(`[data-message-ref="${linkedPublication.id}"]`).getAttribute('id')}`);
+  assert.equal(await link.getAttribute('href'), `#${await page.locator(`[data-message-ref="${linkedPublication.id}"]`).getAttribute('id')}`);
   if (after) {
     await wake.getByText('Synthetic wake finished.', { exact: true }).click();
     assert.equal(await toggle(wake).getAttribute('aria-expanded'), 'true');
@@ -40,6 +41,7 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
     assert.match(result.focusAfterClose, /^more/);
   } else await wake.locator('summary').click();
   assert.equal(await wake.getAttribute('open'), null);
+  if (width < 1120) await page.getByRole('button', { name: 'Close work list', exact: true }).click();
   await message.getByText('Synthetic session preview', { exact: true }).click();
   result.sessionBodyOpens = await message.getAttribute('open') !== null;
   if (after) { assert.equal(result.sessionBodyOpens, false); await toggle(message).click(); }

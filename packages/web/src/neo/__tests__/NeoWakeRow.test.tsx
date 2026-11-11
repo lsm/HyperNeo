@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 describe('scheduled work stays outside the public conversation', () => {
-  it('keeps scheduled rows and internal settlement text out of chat while retaining Neo replies', () => {
+  it('keeps scheduled rows and internal settlement text out of chat while retaining Neo replies', async () => {
     const internal = 'That ask was already settled as done after its todo completed.';
     const { container } = render(
       <NeoPublicConversation conversation={conversation([{ ...wake, summary: internal }])} />
@@ -75,7 +75,7 @@ describe('scheduled work stays outside the public conversation', () => {
     expect(container.textContent).not.toContain(wake.title);
     expect(container.textContent).not.toContain(internal);
     expect(container.querySelectorAll('[data-message-ref="publication-one"]')).toHaveLength(1);
-    expect(screen.getByText('Guide ready.')).toBeTruthy();
+    expect(await screen.findByText('Guide ready.')).toBeTruthy();
   });
   it('keeps an active scheduled task out of chat, including repeated refreshes', () => {
     const view = conversation([{ ...wake, settledAt: null }], []);
@@ -92,7 +92,7 @@ describe('scheduled work stays outside the public conversation', () => {
     const row = container.querySelector('details')!;
     expect(row.open).toBe(false);
     expect(row.querySelector('summary')?.textContent).toContain(wake.title);
-    expect(row.querySelector('summary')?.textContent).toContain('Check-in finished');
+    expect(row.querySelector('summary')?.textContent).toContain('Completed');
     expect(row.querySelector('summary')?.textContent).not.toContain(internal);
     fireEvent.click(within(row).getByRole('button', { name: /more/i }));
     expect(row.open).toBe(true);
@@ -100,6 +100,13 @@ describe('scheduled work stays outside the public conversation', () => {
     rerender(
       <NeoWakeRow entryKey="wake" wake={{ ...wake, settledAt: null }} conversationId={id} />
     );
-    expect(row.querySelector('summary')?.textContent).toContain('Working…');
+    expect(row.querySelector('summary')?.textContent).toContain('Running');
+    locale.value = 'zh-Hans';
+    rerender(
+      <NeoWakeRow entryKey="wake" wake={{ ...wake, settledAt: null }} conversationId={id} />
+    );
+    expect(row.querySelector('summary')?.textContent).toContain('运行中');
+    rerender(<NeoWakeRow entryKey="wake" wake={wake} conversationId={id} />);
+    expect(row.querySelector('summary')?.textContent).toContain('已完成');
   });
 });
