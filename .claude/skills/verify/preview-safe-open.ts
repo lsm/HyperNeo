@@ -105,10 +105,13 @@ assert(Number(readFileSync(join(workspace, 'swaps'), 'utf8')) > 0);
 assert(successes > 0 && refusals > 0);
 const afterRace = readdirSync(descriptorDirectory).length;
 for (let count = 0; count < 50; count++) await denied(workspace, ['final-link']);
-assert.equal(readdirSync(descriptorDirectory).length, afterRace);
+const afterRefusals = readdirSync(descriptorDirectory).length;
+// Bun may finish closing the race subprocess pipe after its exit promise resolves.
+assert(afterRefusals <= afterRace, 'Repeated refusals must not increase open descriptors');
 const evidence = { exactBytes: true, symlinksDenied: true, hardlinksDenied: true,
   descriptorStable: true, parentRaceContained: true, descriptorsClosed: true,
   platform: process.platform, runtime: process.versions.bun, successes, refusals,
+  descriptorsBeforeRefusals: afterRace, descriptorsAfterRefusals: afterRefusals,
 };
 writeFileSync(join(root, 'safe-open-evidence.json'), JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence));
