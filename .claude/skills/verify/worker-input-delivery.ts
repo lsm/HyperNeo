@@ -1,3 +1,4 @@
+import { workerInputWrites } from '../../../packages/daemon/src/storage/repositories/worker-input-worker.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -25,7 +26,7 @@ const evidence: Record<string, unknown> = {};
 const db = () => app.db.getDatabase();
 const state = (status: string) => db().prepare('UPDATE sessions SET processing_state = ? WHERE id = ?').run(JSON.stringify({ status }), worker);
 const inputs = () => db().prepare('SELECT id, message, outcome, deadline_at AS deadline FROM work_delivery_inputs ORDER BY accepted_at, rowid').all() as { id: string; message: string; outcome: string | null; deadline: number }[];
-const messages = () => (db().prepare(`SELECT ${sdkMessageBodyAt('m.rowid')} AS body FROM sdk_messages m WHERE session_id=? AND message_type='user' ORDER BY seq`).all(worker) as { body: string }[]).map((row) => hyperneoInputText(row.body));
+const messages = (sessionId = worker) => (db().prepare(`SELECT ${sdkMessageBodyAt('m.rowid')} AS body FROM sdk_messages m WHERE session_id=? AND message_type='user' ORDER BY seq`).all(sessionId) as { body: string }[]).map((row) => hyperneoInputText(row.body));
 const until = async (condition: () => boolean, label: string) => {
   const deadline = Date.now() + 15000;
   while (!condition() && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
@@ -71,9 +72,26 @@ try {
   assert(inputs().every((input) => input.deadline < Date.now() + 31000));
   evidence.afterRestart = inputs();
   evidence.received = received;
+  await app.jobProcessor.stop();
+  const uncertain = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.send', { ref, notice: true, message: 'Retain the interrupted dispatch' }, caller);
+  assert(uncertain.kind === 'completed' && SendWorkResultSchema.parse(uncertain.value).ok);
+  const claimed = app.jobQueue.dequeue('worker_input', 1)[0];
+  assert(claimed);
+  assert(await app.db.gateway.call(workerInputWrites, 'dispatch', claimed));
+  app.jobQueue.requeueWaiting(claimed.id, Date.now(), claimed.claimToken!);
+  await app.cleanup();
+  app = await start();
+  await until(() => inputs()[2].outcome !== null, 'interrupted dispatch is settled');
+  await until(() => messages(root).some((text) => text.includes('dispatch was interrupted')), 'Neo receives the uncertainty report');
+  assert.equal(messages().filter((text) => text.includes('Retain the interrupted dispatch')).length, 0);
+  const uncertaintyReports = messages(root).filter((text) => text.includes('dispatch was interrupted'));
+  assert.equal(uncertaintyReports.length, 1);
+  assert.equal(inputs()[2].message, 'Retain the interrupted dispatch');
+  assert.match(inputs()[2].outcome!, /may not have reached/);
+  evidence.uncertainty = { input: inputs()[2], reports: uncertaintyReports };
   evidence.port = app.server.port;
   evidence.passed = true;
-  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, restartRecovered: true }));
+  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, restartRecovered: true }));
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

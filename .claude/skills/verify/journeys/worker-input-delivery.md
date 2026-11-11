@@ -11,7 +11,9 @@ operation to a busy synthetic HyperNeo session. It requires durable input rows,
 parked jobs, retained message text and deferred deadlines, then restarts its own
 daemon against that synthetic database. Once the worker becomes idle it observes
 both messages, in order and once each, through the real SDK input reader and
-retains the native adapter outcomes. The session uses manual query mode.
+retains the native adapter outcomes. It also recovers a persisted dispatch marker,
+requires one uncertainty report in Neo’s SDK inbox and proves the uncertain text
+stays retained while the worker receives no replay. The session uses manual query mode.
 The wrapper removes the disposable HOME and database after saving observed.json.
 
 Run worker-input-admission.test.ts and worker-input-delivery.test.ts on the test
