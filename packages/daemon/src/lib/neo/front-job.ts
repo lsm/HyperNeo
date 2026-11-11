@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { frontSession } from './front-session.ts';
 import { settleConvoInput } from './front-outcome.ts';
+import { frontSessionId } from './front-mode.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
@@ -49,6 +50,9 @@ export function createNeoFrontHandler(service: NeoService) {
           return { delivered: true, outcome: 'handed_off' };
         };
         if (!front?.enabled || !front.model) return handoff();
+        const id = frontSessionId(conversationId);
+        if (service.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(id, [messageId]).length)
+          return settleConvoInput(service, job, conversationId, id, messageId);
         const session = await frontSession(service, ask, front.model);
         if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
         await service.deliverForward(

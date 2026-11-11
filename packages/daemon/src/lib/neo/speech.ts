@@ -134,7 +134,6 @@ export class NeoSpeech {
     audioRequest?: typeof fetch,
     private readonly onListeningChanged?: (sessionId: string, listening: boolean) => Promise<void>,
     private readonly canReadSession: (sessionId: string) => boolean = isNeo,
-    private readonly canSpeak: (sessionId: string) => boolean = isNeo,
     private readonly modeNote?: (sessionId: string) => string | undefined
   ) {
     this.audio = new NeoSpeechAudio(
@@ -170,17 +169,9 @@ export class NeoSpeech {
               action === 'say'
                 ? caller.source === 'mcp' && caller.role === 'neo'
                 : caller.source === 'rpc' && caller.principal === 'local' && !!caller.clientId;
-            if (action === 'say' && sessionId && this.isNeo(sessionId) && !this.canSpeak(sessionId))
-              return {
-                reason: {
-                  ok: false,
-                  reason: 'dual_model_front_required',
-                  guidance: this.modeNote?.(sessionId),
-                },
-              };
             const available =
               sessionId &&
-              (action === 'say' ? this.canSpeak(sessionId) : this.canReadSession(sessionId));
+              (action === 'say' ? this.isNeo(sessionId) : this.canReadSession(sessionId));
             return admitted && available
               ? { value: sessionId }
               : { reason: { ok: false, reason: 'neo_speech_not_available' } };
@@ -260,10 +251,9 @@ export class NeoSpeech {
   }
 
   prepareInput(sessionId: string, loaded: DeliveryLoadResult): DeliveryLoadResult {
-    const input =
-      this.isNeo(sessionId) && this.canSpeak(sessionId)
-        ? listeningInput(loaded, this.listeners.has(sessionId))
-        : loaded;
+    const input = this.isNeo(sessionId)
+      ? listeningInput(loaded, this.listeners.has(sessionId))
+      : loaded;
     const note = this.modeNote?.(sessionId);
     return note
       ? {

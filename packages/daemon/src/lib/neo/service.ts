@@ -246,7 +246,6 @@ export class NeoService {
           });
       },
       (id) => !!this.db.getSession(id),
-      (id) => this.repo.getBindingBySession(id)?.kind === 'neo',
       (id) => {
         const conversation = this.repo.readConversationId();
         return conversation &&

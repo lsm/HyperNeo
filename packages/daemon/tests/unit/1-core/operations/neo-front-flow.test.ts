@@ -753,3 +753,27 @@ test('a shared terminal still answers an unclaimed input after Neo answered its 
   expect(replies.filter((reply) => reply.replyTo?.includes(second.id))).toHaveLength(1);
   expect(replies.filter((reply) => reply.replyTo?.includes(first.id))).toHaveLength(1);
 });
+
+test('a pending Convo outcome does not reattach or redeliver the active session', async () => {
+  const { id, job } = await accept();
+  const deliver = vi.spyOn(service, 'deliverForward');
+  const handler = createNeoFrontHandler(service);
+  await handler(job);
+  await db.saveUserMessage(
+    front,
+    {
+      type: 'user',
+      uuid: id as UUID,
+      session_id: front,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Hello' },
+    },
+    'enqueued'
+  );
+  attach.mockClear();
+  const update = vi.spyOn(db, 'updateSession');
+  expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
+  expect(attach).not.toHaveBeenCalled();
+  expect(update).not.toHaveBeenCalled();
+  expect(deliver).toHaveBeenCalledTimes(1);
+});
