@@ -1200,15 +1200,38 @@ describe('codex-desktop adapter status and send', () => {
 
   const user = { from: 'chat', caller: { source: 'rpc' as const, principal: 'local' } };
 
+  test('renames with Desktop closed through the owned server and closes it', async () => {
+    const call = vi.fn(async () => ({}));
+    const close = vi.fn();
+    const desktop = vi.fn(async () => {
+      throw new Error('Desktop is closed');
+    });
+    const driver = adapter(0, '', desktop, undefined, '', {
+      bootstrapServer: async () => ({ call, close }),
+      desktopRunning: async () => false,
+    });
+    expect(await driver.rename!(ref('busy'), 'Codex hyperneo 2', user)).toEqual({
+      ok: true,
+      value: { renamed: true, title: 'Codex hyperneo 2' },
+    });
+    expect(call).toHaveBeenCalledWith('thread/name/set', {
+      threadId: 'busy',
+      name: 'Codex hyperneo 2',
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(desktop).not.toHaveBeenCalled();
+  });
+
   test('rename updates a busy thread through Codex without starting or interrupting a turn', async () => {
     const calls: unknown[] = [];
-    const driver = adapter(0, '', async () => ({
+    const server: () => Promise<CodexAppServer> = async () => ({
       call: async (method, params) => {
         calls.push([method, params]);
         return {};
       },
       close: () => {},
-    }));
+    });
+    const driver = adapter(0, '', undefined, undefined, '', { bootstrapServer: server });
     expect(await driver.rename!(ref('busy'), 'HyperNeo backend', user)).toEqual({
       ok: true,
       value: { renamed: true, title: 'HyperNeo backend' },
@@ -1219,13 +1242,14 @@ describe('codex-desktop adapter status and send', () => {
 
   test('rename refuses archived and missing Codex threads and reports API failure', async () => {
     const calls: string[] = [];
-    const driver = adapter(0, '', async () => ({
+    const server: () => Promise<CodexAppServer> = async () => ({
       call: async (method) => {
         calls.push(method);
         throw new Error('rename refused');
       },
       close: () => {},
-    }));
+    });
+    const driver = adapter(0, '', undefined, undefined, '', { bootstrapServer: server });
     expect(await driver.rename!(ref('missing'), 'ops', user)).toMatchObject({
       ok: false,
       reason: 'not_found',

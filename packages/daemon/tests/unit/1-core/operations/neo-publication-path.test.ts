@@ -14,7 +14,7 @@ function sources(dir: string): string[] {
 }
 
 describe('Neo publication persistence paths', () => {
-  test('publication delivery uses the writer and only idle notices retain the legacy append', () => {
+  test('publication delivery uses the writer and only dropped work retains the legacy append', () => {
     const writers = sources(SRC)
       .filter((path) => !path.includes('/storage/'))
       .flatMap((path) =>
@@ -23,11 +23,7 @@ describe('Neo publication persistence paths', () => {
         )
       );
     expect(writers.sort()).toEqual(
-      [
-        'lib/neo/service.ts:appendPublication(',
-        'lib/neo/service.ts:appendPublication(',
-        'lib/neo/service.ts:publications.append(',
-      ].sort()
+      ['lib/neo/service.ts:appendPublication(', 'lib/neo/service.ts:publications.append('].sort()
     );
     const service = readFileSync(join(SRC, 'lib/neo/service.ts'), 'utf8');
     expect(

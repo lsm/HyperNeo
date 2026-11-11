@@ -577,7 +577,7 @@ describe('NeoLive durable conversation activation', () => {
   });
 
   it.each([0, 100])(
-    'restores the visible wake after folding a publication with hidden height %s',
+    'keeps the reply and reading position when loading scheduled history with hidden row height %s',
     async (hiddenHeight) => {
       const reply = publication('wake-reply');
       asks.value = { ...asks.value, items: [], hasEarlier: true };
@@ -608,10 +608,8 @@ describe('NeoLive durable conversation activation', () => {
         .mockImplementation(function (this: HTMLElement) {
           if (this.tagName === 'MAIN') return new DOMRect(0, 100, 500, 200);
           if (this.getAttribute('data-message-ref') === reply.publicationId)
-            return this.closest('details:not([open])')
-              ? new DOMRect(0, 0, 500, hiddenHeight)
-              : new DOMRect(0, 140, 500, 100);
-          if (this.hasAttribute('data-wake')) return new DOMRect(0, 300, 500, 36);
+            return new DOMRect(0, 140, 500, 100);
+          if (this.hasAttribute('data-wake')) return new DOMRect(0, 0, 500, hiddenHeight);
           return new DOMRect();
         });
       try {
@@ -640,9 +638,11 @@ describe('NeoLive durable conversation activation', () => {
           };
         });
         const message = container.querySelector('[data-message-ref="wake-reply"]')!;
-        expect(message.closest('details:not([open])')).toBeTruthy();
-        expect(message.getBoundingClientRect().height).toBe(hiddenHeight);
-        expect(main.scrollTop).toBe(360);
+        expect(message.closest('details:not([open])')).toBeNull();
+        expect(message.getBoundingClientRect().height).toBe(100);
+        expect(container.querySelector('.neo-chat-rail [data-wake]')).toBeNull();
+        expect(container.querySelector('#neo-preview-work-panel [data-wake]')).toBeTruthy();
+        expect(main.scrollTop).toBe(200);
       } finally {
         rect.mockRestore();
       }

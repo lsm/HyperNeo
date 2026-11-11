@@ -27,7 +27,7 @@ finite animations before screenshots.
 
 | Surface / claim | User-visible check and evidence |
 | --- | --- |
-| Wake summary | Clicking title/summary stays closed; more/Enter opens additions; less/Space closes; focus follows the new button; wake-expanded and collapsed screenshots |
+| Work-panel wake title/state | Clicking title/summary stays closed; more/Enter opens additions; less/Space closes; focus follows the new button; wake-expanded and collapsed screenshots |
 | Session message | Preview stays inert; more reveals complete selectable text; body click/drag never closes it; final-line and right-edge bounds in JSON; session-expanded screenshots |
 | Edited history | Edited marker stays inert; explicit more shows ordered original/current text; less sits after the history; copy/reply remain separate; history-expanded screenshots |
 | Stored delivery failure | Alert indicator stays inert; more/less controls the reason; edit/resend remains separate; reason-expanded screenshots |
@@ -45,8 +45,8 @@ because the daemon's background writers can otherwise race the synthetic seed.
 The helpers retain their CLI usage and export `verifyNeoWake(page, {port, run})`
 and `verifyWakePagination(page, {port, run})` for persistent browser use. Pagination
 uses ordinary mouse-wheel input, never direct DOM scroll mutation. Inspect the
-Load earlier before/after pair: a newly folded closed wake keeps the prior
-publication's position. Native summary text no longer toggles; the explicit
+Load earlier before/after pair: loading earlier scheduled work keeps the existing
+publication visible at its prior position. Scheduled rows stay in the work panel. Native summary text no longer toggles; the explicit
 more/less button does.
 
 Close the browser and stop each owned run with `stop.sh "$RUN"`. Preserve evidence

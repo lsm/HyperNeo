@@ -37,6 +37,15 @@ import { NeoReadWorkTarget } from './read-work.ts';
 
 const NeoStartWorkTarget = z.object({
   verb: z.literal('start'),
+  sessionTitle: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      'For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.'
+    ),
   adapter: z.string().min(1).max(80),
   name: z.string().trim().min(1).max(80).optional(),
   place: PlaceSchema.optional(),
@@ -130,6 +139,7 @@ export function driverWorkCall(
                   target.place ?? naming?.place,
                   naming?.taken ?? []
                 )),
+          ...(target.sessionTitle ? { sessionTitle: target.sessionTitle } : {}),
           message,
           ...(target.createFolder ? { createFolder: true } : {}),
           ...(target.model ? { model: target.model } : {}),

@@ -6,9 +6,11 @@ import {
   type NeoWorkFocus,
   type NeoWorkSelector,
 } from './neo-work-reference.ts';
+import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-snapshot';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { NeoWakeRow } from './NeoWakeRow.tsx';
 import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -668,6 +670,54 @@ export function NeoLive() {
     neo.publications.refresh();
   }
 
+  const openWork = (anchor: string, cardReply?: NeoCardReply) => {
+    const element = scroll.current ?? mainScroll.current;
+    if (element && !returnToChat.current)
+      returnToChat.current = {
+        element,
+        top: element.scrollTop,
+        focus: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      };
+    nearBottom.current = false;
+    const ticket = {};
+    referenceRequest.current = ticket;
+    setWorkQuery('');
+    setCardTarget(null);
+    setCardUnavailable(false);
+    setCardOpening(true);
+    setChat(null);
+    setScenesOpen(true);
+    void resolveNeoWorkReference(
+      cardReply ? `neo-ref-question-${cardReply.questionId}` : anchor,
+      workEntries,
+      loadNeoAskDetails
+    ).then(
+      (result) => {
+        if (referenceRequest.current !== ticket) return;
+        setCardOpening(false);
+        if (result === 'unavailable') return setCardUnavailable(true);
+        if (!loadedEntries.some((entry) => entry.ask.id === result.entry.ask.id))
+          setReferenced({
+            scope: sceneScope,
+            entry: neoWorkReferenceEntry(result.entry),
+          });
+        requestAnimationFrame(() => {
+          if (referenceRequest.current === ticket) setCardTarget(result.target);
+        });
+        if (!result.target.questionId && !result.target.todoId)
+          requestAnimationFrame(() =>
+            document
+              .getElementById(`neo-ref-ask-${result.target.askId}`)
+              ?.scrollIntoView({ block: 'center' })
+          );
+      },
+      () => {
+        if (referenceRequest.current !== ticket) return;
+        setCardOpening(false);
+        setCardUnavailable(true);
+      }
+    );
+  };
   return (
     <div
       ref={shell}
@@ -757,7 +807,6 @@ export function NeoLive() {
             <h1 class="text-3xl font-medium leading-tight tracking-tight">{t('live.heading')}</h1>
             <p class="mt-3 max-w-lg text-sm leading-relaxed text-fg-muted">{t('live.intro')}</p>
           </div>
-          <SessionSchedules sessionId={neo.sessionId} />
           {firstConnect && (
             <p role="status" class="mb-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">
               {t('live.connecting')}
@@ -793,55 +842,7 @@ export function NeoLive() {
               replyLabels={replyLabels}
               onOpenSession={openSession}
               publicConversation={publicConversation}
-              onOpenWork={(anchor, cardReply) => {
-                const element = scroll.current ?? mainScroll.current;
-                if (element && !returnToChat.current)
-                  returnToChat.current = {
-                    element,
-                    top: element.scrollTop,
-                    focus:
-                      document.activeElement instanceof HTMLElement ? document.activeElement : null,
-                  };
-                nearBottom.current = false;
-                const ticket = {};
-                referenceRequest.current = ticket;
-                setWorkQuery('');
-                setCardTarget(null);
-                setCardUnavailable(false);
-                setCardOpening(true);
-                setChat(null);
-                setScenesOpen(true);
-                void resolveNeoWorkReference(
-                  cardReply ? `neo-ref-question-${cardReply.questionId}` : anchor,
-                  workEntries,
-                  loadNeoAskDetails
-                ).then(
-                  (result) => {
-                    if (referenceRequest.current !== ticket) return;
-                    setCardOpening(false);
-                    if (result === 'unavailable') return setCardUnavailable(true);
-                    if (!loadedEntries.some((entry) => entry.ask.id === result.entry.ask.id))
-                      setReferenced({
-                        scope: sceneScope,
-                        entry: neoWorkReferenceEntry(result.entry),
-                      });
-                    requestAnimationFrame(() => {
-                      if (referenceRequest.current === ticket) setCardTarget(result.target);
-                    });
-                    if (!result.target.questionId && !result.target.todoId)
-                      requestAnimationFrame(() =>
-                        document
-                          .getElementById(`neo-ref-ask-${result.target.askId}`)
-                          ?.scrollIntoView({ block: 'center' })
-                      );
-                  },
-                  () => {
-                    if (referenceRequest.current !== ticket) return;
-                    setCardOpening(false);
-                    setCardUnavailable(true);
-                  }
-                );
-              }}
+              onOpenWork={openWork}
               onRetryPublic={retryPublicConversation}
               pendingAsks={neo.pendingAsks}
               onRetryAsk={(requestId) =>
@@ -1011,6 +1012,18 @@ export function NeoLive() {
             <p class="mt-3 text-xs text-fg-muted">
               {t('live.neoUnhandled', { count: neoUnhandled })}
             </p>
+          )}
+          <SessionSchedules sessionId={neo.sessionId} />
+          {publicConversation?.entries.map((entry) =>
+            entry.kind === 'wake' ? (
+              <NeoWakeRow
+                key={entry.key}
+                entryKey={entry.key}
+                wake={entry.wake}
+                conversationId={publicConversation.conversationId!}
+                onOpenWork={openWork}
+              />
+            ) : null
           )}
           <NeoGoals sessionId={neo.sessionId} />
           {publicConversation && <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} />}

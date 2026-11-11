@@ -1,7 +1,8 @@
 import type { NeoConversationWake } from '@hyperneo/shared/types/neo-wake';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { NeoWakeRow } from '../NeoWakeRow.tsx';
 import { NeoPublicConversation } from '../NeoPublicConversation.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { locale } from '../../lib/i18n/index.ts';
@@ -64,83 +65,48 @@ afterEach(() => {
   locale.value = originalLocale;
 });
 
-describe('scheduled wake disclosures in the public conversation', () => {
-  it('folds the attributed publication under one closed row with time, title and summary', () => {
-    const { container } = render(<NeoPublicConversation conversation={conversation()} />);
-    const row = container.querySelector<HTMLDetailsElement>('[data-wake]')!;
-    expect(row).toBeTruthy();
+describe('scheduled work stays outside the public conversation', () => {
+  it('keeps scheduled rows and internal settlement text out of chat while retaining Neo replies', async () => {
+    const internal = 'That ask was already settled as done after its todo completed.';
+    const { container } = render(
+      <NeoPublicConversation conversation={conversation([{ ...wake, summary: internal }])} />
+    );
+    expect(container.querySelector('[data-wake]')).toBeNull();
+    expect(container.textContent).not.toContain(wake.title);
+    expect(container.textContent).not.toContain(internal);
+    expect(container.querySelectorAll('[data-message-ref="publication-one"]')).toHaveLength(1);
+    expect(await screen.findByText('Guide ready.')).toBeTruthy();
+  });
+  it('keeps an active scheduled task out of chat, including repeated refreshes', () => {
+    const view = conversation([{ ...wake, settledAt: null }], []);
+    const { container, rerender } = render(<NeoPublicConversation conversation={view} />);
+    rerender(<NeoPublicConversation conversation={view} />);
+    expect(container.querySelector('[data-wake]')).toBeNull();
+    expect(container.textContent).not.toContain(wake.title);
+  });
+  it('shows title and state in the work panel and keeps internal reasons behind more', () => {
+    const internal = 'That ask was already settled as done after its todo completed.';
+    const { container, rerender } = render(
+      <NeoWakeRow entryKey="wake" wake={{ ...wake, summary: internal }} conversationId={id} />
+    );
+    const row = container.querySelector('details')!;
     expect(row.open).toBe(false);
     expect(row.querySelector('summary')?.textContent).toContain(wake.title);
-    expect(row.querySelector('summary')?.textContent).toContain(wake.summary);
-    expect(row.querySelector('time')?.dateTime).toBe(new Date(firedAt).toISOString());
-    const message = container.querySelector('[data-message-ref="publication-one"]');
-    expect(message?.closest('[data-wake]')).toBe(row);
-    expect(container.querySelectorAll('[data-message-ref="publication-one"]')).toHaveLength(1);
-    expect(within(row).getByRole('link', { name: 'Which language?' }).getAttribute('href')).toBe(
-      '#neo-ref-question-question-one'
-    );
-    expect(within(row).getByText('Guide reviewed.').closest('a')).toBeNull();
-  });
-  it('links the publication addition to its actual rendered article', () => {
-    const { container } = render(<NeoPublicConversation conversation={conversation()} />);
-    const link = screen.getByRole('link', { name: 'Guide ready.' });
-    const article = container.querySelector('[data-message-ref="publication-one"]')!;
-    const anchor = link.getAttribute('href')!.slice(1);
-    expect(document.getElementById(anchor)).toBe(article);
-  });
-  it('navigates work additions without changing their labels or asking extra questions', () => {
-    const open = vi.fn();
-    const props = { conversation: conversation(), onOpenWork: open };
-    render(<NeoPublicConversation {...props} />);
-    fireEvent.click(screen.getByRole('link', { name: 'Review guide' }));
-    expect(open).toHaveBeenCalledWith('neo-ref-todo-todo-one');
-  });
-  it('keeps an active wake working until settlement and preserves its disclosure through refresh', () => {
-    const { container, rerender } = render(
-      <NeoPublicConversation conversation={conversation([{ ...wake, settledAt: null }])} />
-    );
-    const row = container.querySelector<HTMLDetailsElement>('[data-wake]')!;
-    expect(row.querySelector('summary')?.textContent).toContain('Working…');
-    expect(row.querySelector('summary')?.textContent).not.toContain(wake.summary);
-    row.open = true;
-    rerender(<NeoPublicConversation conversation={conversation()} />);
-    expect(container.querySelector('[data-wake]')).toBe(row);
+    expect(row.querySelector('summary')?.textContent).toContain('Completed');
+    expect(row.querySelector('summary')?.textContent).not.toContain(internal);
+    fireEvent.click(within(row).getByRole('button', { name: /more/i }));
     expect(row.open).toBe(true);
-    expect(row.querySelector('summary')?.textContent).toContain(wake.summary);
-  });
-  it('retains empty wakes and leaves unrelated publications outside the disclosure', () => {
-    const other = { ...publication, publicationId: 'other', sequence: 2 };
-    const { container } = render(
-      <NeoPublicConversation
-        conversation={conversation([{ ...wake, summary: null, additions: [] }], [other])}
-      />
+    expect(within(row).getByText(internal)).toBeTruthy();
+    rerender(
+      <NeoWakeRow entryKey="wake" wake={{ ...wake, settledAt: null }} conversationId={id} />
     );
-    expect(container.querySelector('[data-wake] summary')?.textContent).toContain(
-      'Check-in finished'
-    );
-    expect(
-      container.querySelector('[data-message-ref="other"]')?.closest('[data-wake]')
-    ).toBeNull();
-    expect(container.querySelector('[data-message-ref="other"]')).toBeTruthy();
-  });
-  it('orders wake rows by immutable fired time and distinguishes repeated fires of a schedule', () => {
-    const first = conversation([wake, { ...wake, firedAt: firedAt + 5000, settledAt: null }]);
-    expect(first.entries.map((entry) => entry.kind)).toEqual(['wake', 'publication', 'wake']);
-    const keys = first.entries.filter((entry) => entry.kind === 'wake').map((entry) => entry.key);
-    expect(new Set(keys).size).toBe(2);
-    const settled = conversation([
-      { ...wake, settledAt: firedAt + 10000, summary: 'Updated closing line.' },
-    ]);
-    expect(settled.entries.find((entry) => entry.kind === 'wake')?.key).toBe(keys[0]);
-  });
-
-  it('uses Chinese labels for an active wake', () => {
+    expect(row.querySelector('summary')?.textContent).toContain('Running');
     locale.value = 'zh-Hans';
-    const { container } = render(
-      <NeoPublicConversation
-        conversation={conversation([{ ...wake, settledAt: null, additions: [] }], [])}
-      />
+    rerender(
+      <NeoWakeRow entryKey="wake" wake={{ ...wake, settledAt: null }} conversationId={id} />
     );
-    expect(container.querySelector('summary')?.textContent).toContain('正在做…');
+    expect(row.querySelector('summary')?.textContent).toContain('运行中');
+    rerender(<NeoWakeRow entryKey="wake" wake={wake} conversationId={id} />);
+    expect(row.querySelector('summary')?.textContent).toContain('已完成');
   });
 });

@@ -1,3 +1,4 @@
+import { lockCodexSessionName } from './codex-session-name-lock.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { basename, join } from 'node:path';
@@ -120,7 +121,8 @@ export interface CodexDesktopAdapterDeps {
   readSnapshot?: (
     statePath: string,
     includeClosed: boolean,
-    idPrefix?: string
+    idPrefix?: string,
+    fullTitles?: boolean
   ) => Promise<CodexSnapshot>;
   desktopSocketPath?: string;
   desktopRunning?: () => Promise<boolean>;
@@ -289,12 +291,13 @@ export function buildCodexGroups(
 
 export async function loadCodexSnapshot(
   query: FindQuery,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  fullTitles = false
 ): Promise<CodexSnapshot> {
   return runLagPhase('scanner:codex_desktop', () =>
     deps.readSnapshot
-      ? deps.readSnapshot(deps.statePath, query.includeClosed, query.idPrefix)
-      : readCodexSnapshot(deps.statePath, query.includeClosed, query.idPrefix)
+      ? deps.readSnapshot(deps.statePath, query.includeClosed, query.idPrefix, fullTitles)
+      : readCodexSnapshot(deps.statePath, query.includeClosed, query.idPrefix, fullTitles)
   );
 }
 
@@ -1070,7 +1073,7 @@ const runCodexRename = (superpipe({})('codex-rename-work') as PipelineAPI)
   .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
   .pipe(
     (detail: CodexThreadDetail, title: string, deps: CodexDesktopAdapterDeps) =>
-      withCodexMessageServer(deps, async (server) => {
+      withCodexMessageServer({ ...deps, appServer: deps.bootstrapServer }, async (server) => {
         await server.call('thread/name/set', { threadId: detail.thread.id, name: title });
         return { ok: true, value: { renamed: true as const, title } };
       }),
@@ -1158,6 +1161,48 @@ export async function withCodexAppServer<Value>(
   }
 }
 
+async function genericCodexSessionTitle(
+  projectFolder: string,
+  deps: CodexDesktopAdapterDeps,
+  requested?: string
+): Promise<string> {
+  const snapshot = await loadCodexSnapshot(
+    { includeClosed: false, limit: Number.MAX_SAFE_INTEGER },
+    deps,
+    true
+  );
+  const prefix = `Codex ${basename(projectFolder)} `;
+  const candidates = snapshot.threads.filter(
+    (thread) =>
+      !thread.archived && (requested ? thread.title === requested : thread.title.startsWith(prefix))
+  );
+  const folders = new Map<string, string>();
+  for (const folder of new Set(candidates.map((thread) => thread.folder))) {
+    folders.set(
+      folder,
+      folder === projectFolder ? folder : ((await deps.gitCheckout(folder))?.repo ?? projectFolder)
+    );
+  }
+  const names = new Set(
+    candidates
+      .filter(
+        (thread) =>
+          !thread.archived && (folders.get(thread.folder) ?? thread.folder) === projectFolder
+      )
+      .map((thread) => thread.title)
+  );
+  if (requested) {
+    if (names.has(requested))
+      throw new Error(
+        `Codex session title ${requested} is already in use in this project; choose another generic title.`
+      );
+    return requested;
+  }
+  let number = 1;
+  while (names.has(`${prefix}${number}`)) number++;
+  return `${prefix}${number}`;
+}
+
 export async function startCodexThread(
   folder: string,
   request: StartRequest,
@@ -1165,6 +1210,7 @@ export async function startCodexThread(
 ): Promise<Result<WorkStarted>> {
   return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
     let threadId: string | null = null;
+    let releaseTitle: (() => void) | undefined;
     let workFolder: CodexWorkFolder | null = null;
     try {
       const configuration = await selectCodexConfiguration(
@@ -1198,6 +1244,12 @@ export async function startCodexThread(
         ? folder
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
+      releaseTitle = await lockCodexSessionName(deps.statePath, projectFolder);
+      const sessionTitle = await genericCodexSessionTitle(
+        projectFolder,
+        deps,
+        request.sessionTitle
+      );
       const config = {
         shell_environment_policy: { set: workerWorkEnvironment(workFolder.cwd) },
         ...sandbox?.config,
@@ -1237,7 +1289,12 @@ export async function startCodexThread(
           `${confirmed.detail} Thread ${threadId} was created without its first turn.`
         );
       }
-      await server.call('thread/name/set', { threadId, name: request.title });
+      await server.call('thread/name/set', {
+        threadId,
+        name: sessionTitle,
+      });
+      releaseTitle?.();
+      releaseTitle = undefined;
       await server.close();
       const brief = request.provenance
         ? withWorkerProvenance(request.message, {
@@ -1267,7 +1324,7 @@ export async function startCodexThread(
         ok: true,
         value: {
           ref: { adapter: 'codex-desktop', id: threadId },
-          title: request.title,
+          title: sessionTitle,
           place: { machine: deps.machine, folder, name: request.place.name },
           status: 'running',
           lastActivityAt: deps.now(),
@@ -1286,6 +1343,7 @@ export async function startCodexThread(
         `${error instanceof Error ? error.message : String(error)}${made}`
       );
     } finally {
+      releaseTitle?.();
       if (!threadId) {
         await workFolder?.release();
         if (request.preparation) await releaseWorkerSandbox(workFolder?.cwd);

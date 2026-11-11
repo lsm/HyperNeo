@@ -72,7 +72,8 @@ worker.onmessage = ({ data }) => {
       result = readCodexSnapshot(
         args.codexSnapshot.statePath,
         args.codexSnapshot.includeClosed,
-        args.codexSnapshot.idPrefix
+        args.codexSnapshot.idPrefix,
+        args.codexSnapshot.fullTitles
       );
     } else {
       if (!db) {

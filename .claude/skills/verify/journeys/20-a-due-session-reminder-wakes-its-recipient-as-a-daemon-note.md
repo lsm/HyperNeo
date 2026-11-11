@@ -12,6 +12,6 @@
     a screenshot. Busy/needs-you/unchanged skips, quiet-wake backoff, source removal and
     pause races are covered by the focused session-schedule-fire unit suite.
 
-    For repeated quiet wakes and the one human idle notice, run the
+    For repeated quiet wakes without human idle notices, run the
     [idle-backoff journey](session-schedule-idle-backoff.md). Reminders use this
     same policy: nudgeEvery no longer forces unchanged model turns.

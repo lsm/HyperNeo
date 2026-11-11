@@ -69,8 +69,13 @@ export function withCodexState<T>(
 export function readCodexSnapshot(
   statePath: string,
   includeClosed: boolean,
-  idPrefix = ''
+  idPrefix = '',
+  fullTitles = false
 ): CodexSnapshot {
+  const columns = fullTitles
+    ? `id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(substr(first_user_message, 1, 200), ''), 'Untitled thread') AS title,
+       cwd AS folder, COALESCE(archived, 0) AS archived, COALESCE(updated_at_ms, 0) AS updatedAt`
+    : THREAD_COLUMNS;
   return withCodexState(statePath, (db) => ({
     roots: runLagPhase(
       'scanner:codex_desktop:roots',
@@ -100,10 +105,10 @@ export function readCodexSnapshot(
         db
           .prepare(
             `SELECT * FROM (
-             SELECT ${THREAD_COLUMNS} FROM threads WHERE ${OWN_THREADS} AND COALESCE(archived, 0) = 0
+             SELECT ${columns} FROM threads WHERE ${OWN_THREADS} AND COALESCE(archived, 0) = 0
                AND substr(id, 1, length(?2)) = ?2
              UNION ALL
-             SELECT * FROM (SELECT ${THREAD_COLUMNS} FROM threads
+             SELECT * FROM (SELECT ${columns} FROM threads
                WHERE ${OWN_THREADS} AND ?1 = 1 AND COALESCE(archived, 0) != 0
                  AND substr(id, 1, length(?2)) = ?2
                ORDER BY updatedAt DESC LIMIT ${CLOSED_THREADS}))

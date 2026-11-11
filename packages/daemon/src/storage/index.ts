@@ -509,8 +509,13 @@ export class Database {
     return this.getSDKReader().readClaudeRecords(sessionsDir);
   }
 
-  readCodexSnapshotAsync(statePath: string, includeClosed: boolean, idPrefix?: string) {
-    return this.getSDKReader().readCodexSnapshot(statePath, includeClosed, idPrefix);
+  readCodexSnapshotAsync(
+    statePath: string,
+    includeClosed: boolean,
+    idPrefix?: string,
+    fullTitles?: boolean
+  ) {
+    return this.getSDKReader().readCodexSnapshot(statePath, includeClosed, idPrefix, fullTitles);
   }
 
   get gateway(): DbGateway {

@@ -1,3 +1,4 @@
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -9,10 +10,17 @@ import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-serve
 import { vi } from 'vitest';
 import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import {
+  type CodexSnapshot,
   codexStartReceipt,
   createCodexDesktopAdapter,
   startedThreadId,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
+
+let namingDir: string;
+beforeEach(() => {
+  namingDir = mkdtempSync(join(tmpdir(), 'codex-name-lock-'));
+});
+afterEach(() => rmSync(namingDir, { recursive: true, force: true }));
 
 const NOW = Date.parse('2026-10-05T12:00:00.000Z');
 const user = { from: 'user', caller: { source: 'rpc' as const } };
@@ -48,7 +56,10 @@ function adapter(
   server: Partial<CodexAppServer> | Error,
   folders = ['/focus/dolmen'],
   git: {
+    threads?: CodexSnapshot['threads'];
+    readState?: boolean;
     root?: string;
+    roots?: Record<string, string>;
     exit?: number;
     linked?: boolean;
     prepareExecution?: WorkExecutionPreparer;
@@ -56,10 +67,14 @@ function adapter(
 ) {
   const calls: Array<[string, Record<string, unknown>]> = [];
   const projectFolders: string[] = [];
+  const checkoutFolders: string[] = [];
   const spawned: Array<{ args: string[]; cwd?: string }> = [];
   let closed = false;
   const instance = createCodexDesktopAdapter({
-    statePath: '/codex/state.sqlite',
+    statePath: join(namingDir, 'state.sqlite'),
+    readSnapshot: git.readState
+      ? undefined
+      : async () => ({ roots: [], folders: [], threads: git.threads ?? [] }),
     prepareExecution: git.prepareExecution,
     worktreesDir: '/codex/worktrees',
     machine: 'laptop',
@@ -104,10 +119,14 @@ function adapter(
     folderExists: (folder) => folders.includes(folder),
     makeFolder: () => {},
     homeDir: '/Users/test',
-    gitCheckout: async () => (git.root ? { repo: git.root, linked: git.linked ?? false } : null),
+    gitCheckout: async (folder) => {
+      checkoutFolders.push(folder);
+      const repo = git.roots?.[folder] ?? git.root;
+      return repo ? { repo, linked: git.linked ?? false } : null;
+    },
     newId: () => 'abcd1234-0000',
   });
-  return { instance, calls, projectFolders, spawned, closed: () => closed };
+  return { instance, calls, projectFolders, checkoutFolders, spawned, closed: () => closed };
 }
 
 describe('startedThreadId', () => {
@@ -417,7 +436,7 @@ describe('codex-desktop start', () => {
     expect(calls).toEqual([
       ['model/list', { limit: 100, includeHidden: false }],
       ['thread/start', { ...threadAccess, cwd: '/focus/dolmen', model: 'gpt-6.1-sol' }],
-      ['thread/name/set', { threadId: 'th1', name: request.title }],
+      ['thread/name/set', { threadId: 'th1', name: 'Codex dolmen 1' }],
       [
         'desktop/start-turn',
         {
@@ -457,7 +476,7 @@ describe('codex-desktop start', () => {
           config: { ...threadAccess.config, model_reasoning_effort: 'medium' },
         },
       ],
-      ['thread/name/set', { threadId: 'th1', name: request.title }],
+      ['thread/name/set', { threadId: 'th1', name: 'Codex dolmen 1' }],
       [
         'desktop/start-turn',
         {
@@ -651,6 +670,266 @@ describe('codex-desktop start', () => {
     }
   );
 
+  test('refuses an explicit title already used by a live project thread', async () => {
+    const { instance, calls } = adapter({ call: async () => ({}) }, undefined, {
+      threads: [
+        {
+          id: 'existing',
+          title: 'Codex dolmen 1',
+          folder: place.folder,
+          archived: 0,
+          updatedAt: NOW,
+        },
+      ],
+    });
+    expect(
+      await instance.start!({ ...request, sessionTitle: 'Codex dolmen 1' }, user)
+    ).toMatchObject({ ok: false, detail: expect.stringContaining('already in use') });
+    expect(calls.some(([method]) => method === 'thread/start')).toBe(false);
+  });
+
+  test('a failed thread creation releases its generic naming lock', async () => {
+    let attempts = 0;
+    const { instance } = adapter({
+      call: async (method) => {
+        if (method === 'thread/start') {
+          if (++attempts === 1) throw new Error('Synthetic creation failure');
+          return { thread: { id: 'recovered' } };
+        }
+        return {};
+      },
+    });
+    expect(await instance.start!(request, user)).toMatchObject({ ok: false });
+    expect(await instance.start!(request, user)).toMatchObject({
+      ok: true,
+      value: { title: 'Codex dolmen 1' },
+    });
+  });
+
+  test.each([undefined, 'Codex dolmen 1'])(
+    'overlapping starts serialize naming with explicit title %s',
+    async (sessionTitle) => {
+      const threads: CodexSnapshot['threads'] = [];
+      let started = 0;
+      let entered!: () => void;
+      const firstNaming = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let release!: () => void;
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const { instance } = adapter(
+        {
+          call: async (method, params) => {
+            if (method === 'thread/start') return { thread: { id: `th${++started}` } };
+            if (method === 'thread/name/set') {
+              if (params.threadId === 'th1') {
+                entered();
+                await hold;
+              }
+              threads.push({
+                id: String(params.threadId),
+                title: String(params.name),
+                folder: place.folder,
+                archived: 0,
+                updatedAt: NOW,
+              });
+            }
+            return {};
+          },
+        },
+        undefined,
+        { threads }
+      );
+      const first = instance.start!({ ...request, sessionTitle }, user);
+      await firstNaming;
+      const second = instance.start!(request, user);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      release();
+      const results = await Promise.all([first, second]);
+      expect(results.map((result) => result.ok && result.value.title)).toEqual([
+        'Codex dolmen 1',
+        'Codex dolmen 2',
+      ]);
+      expect(threads.map((thread) => thread.title)).toEqual(['Codex dolmen 1', 'Codex dolmen 2']);
+    }
+  );
+
+  test.each([false, true])(
+    'compares full stored session names beyond the display limit, explicit: %s',
+    async (explicit) => {
+      const folder = `/synthetic/${'x'.repeat(73)}`;
+      const title = `Codex ${'x'.repeat(73)} 1`;
+      const db = new Database(join(namingDir, 'state.sqlite'));
+      db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+      CREATE TABLE projects (id TEXT, name TEXT, updated_at_ms INTEGER);
+      CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+      db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        'existing',
+        title,
+        title,
+        '',
+        folder,
+        'desktop',
+        0,
+        1,
+        ''
+      );
+      db.close();
+      const { instance, calls } = adapter(
+        { call: async (method) => (method === 'thread/start' ? { thread: { id: 'fresh' } } : {}) },
+        [folder],
+        { readState: true }
+      );
+      const result = await instance.start!(
+        { ...request, place: { ...place, folder }, ...(explicit ? { sessionTitle: title } : {}) },
+        user
+      );
+      if (explicit) {
+        expect(result).toMatchObject({
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('already in use'),
+        });
+        expect(calls.some(([method]) => method === 'thread/start')).toBe(false);
+      } else {
+        expect(result).toMatchObject({ ok: true, value: { title: `Codex ${'x'.repeat(73)} 2` } });
+      }
+    }
+  );
+
+  test.each([false, true])(
+    'only resolves folders whose names can collide, explicit: %s',
+    async (explicit) => {
+      const relevant = '/synthetic/linked-project';
+      const { instance, checkoutFolders } = adapter(
+        { call: async (method) => (method === 'thread/start' ? { thread: { id: 'fresh' } } : {}) },
+        undefined,
+        {
+          root: place.folder,
+          threads: [
+            { id: 'one', title: 'Codex dolmen 1', folder: relevant, archived: 0, updatedAt: NOW },
+            { id: 'two', title: 'Codex dolmen 2', folder: relevant, archived: 0, updatedAt: NOW },
+            {
+              id: 'other',
+              title: 'Codex other 1',
+              folder: '/synthetic/other',
+              archived: 0,
+              updatedAt: NOW,
+            },
+          ],
+        }
+      );
+      expect(
+        await instance.start!(
+          { ...request, inPlace: true, ...(explicit ? { sessionTitle: 'Codex dolmen 3' } : {}) },
+          user
+        )
+      ).toMatchObject({ ok: true, value: { title: 'Codex dolmen 3' } });
+      expect(checkoutFolders).toEqual(explicit ? [] : [relevant]);
+    }
+  );
+
+  test('counts a session in a user linked worktree as part of its main project', async () => {
+    const { instance } = adapter(
+      { call: async (method) => (method === 'thread/start' ? { thread: { id: 'fresh' } } : {}) },
+      undefined,
+      {
+        root: place.folder,
+        threads: [
+          {
+            id: 'linked',
+            title: 'Codex dolmen 1',
+            folder: '/user-owned/worktree',
+            archived: 0,
+            updatedAt: NOW,
+          },
+        ],
+      }
+    );
+    expect(await instance.start!(request, user)).toMatchObject({
+      ok: true,
+      value: { title: 'Codex dolmen 2' },
+    });
+  });
+
+  test.each([false, true])(
+    'keeps names occupied after a worktree is deleted, explicit: %s',
+    async (explicit) => {
+      const { instance, calls } = adapter(
+        { call: async (method) => (method === 'thread/start' ? { thread: { id: 'fresh' } } : {}) },
+        undefined,
+        {
+          threads: [
+            {
+              id: 'missing',
+              title: 'Codex dolmen 1',
+              folder: '/synthetic/deleted-worktree',
+              archived: 0,
+              updatedAt: NOW,
+            },
+          ],
+        }
+      );
+      const result = await instance.start!(
+        { ...request, inPlace: true, ...(explicit ? { sessionTitle: 'Codex dolmen 1' } : {}) },
+        user
+      );
+      if (explicit) {
+        expect(result).toMatchObject({
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('already in use'),
+        });
+        expect(calls.some(([method]) => method === 'thread/start')).toBe(false);
+      } else {
+        expect(result).toMatchObject({ ok: true, value: { title: 'Codex dolmen 2' } });
+      }
+    }
+  );
+
+  test('an omitted session title uses the next free generic project name, never the task title', async () => {
+    const { instance, calls } = adapter(
+      {
+        call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+      },
+      undefined,
+      {
+        roots: { '/other': '/other' },
+        threads: [
+          { id: 'one', title: 'Codex dolmen 1', folder: place.folder, archived: 0, updatedAt: NOW },
+          {
+            id: 'three',
+            title: 'Codex dolmen 3',
+            folder: place.folder,
+            archived: 0,
+            updatedAt: NOW,
+          },
+          { id: 'old', title: 'Codex dolmen 2', folder: place.folder, archived: 1, updatedAt: NOW },
+          { id: 'foreign', title: 'Codex dolmen 2', folder: '/other', archived: 0, updatedAt: NOW },
+        ],
+      }
+    );
+    expect(await instance.start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { title: 'Codex dolmen 2' },
+    });
+    expect(calls).toContainEqual(['thread/name/set', { threadId: 'th1', name: 'Codex dolmen 2' }]);
+  });
+
+  test('uses the requested session title independently of the task title', async () => {
+    const { instance, calls } = adapter({
+      call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+    });
+    const result = await instance.start?.({ ...request, sessionTitle: 'Codex hyperneo 2' }, user);
+    expect(result).toMatchObject({ ok: true, value: { title: 'Codex hyperneo 2' } });
+    expect(calls).toContainEqual([
+      'thread/name/set',
+      { threadId: 'th1', name: 'Codex hyperneo 2' },
+    ]);
+  });
+
   test('starts a named thread in the folder and sends the first turn', async () => {
     const { instance, calls, closed } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
@@ -659,7 +938,7 @@ describe('codex-desktop start', () => {
       ok: true,
       value: {
         ref: { adapter: 'codex-desktop', id: 'th1' },
-        title: 'Bigger font',
+        title: 'Codex dolmen 1',
         place,
         status: 'running',
         lastActivityAt: NOW,
@@ -668,7 +947,7 @@ describe('codex-desktop start', () => {
     });
     expect(calls).toEqual([
       ['thread/start', { ...threadAccess, cwd: '/focus/dolmen' }],
-      ['thread/name/set', { threadId: 'th1', name: 'Bigger font' }],
+      ['thread/name/set', { threadId: 'th1', name: 'Codex dolmen 1' }],
       [
         'desktop/start-turn',
         {

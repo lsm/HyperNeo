@@ -29,7 +29,7 @@ its current real RPC digest and nudgeEvery 1. Both make that one synthetic job d
 now instead of waiting an hour. The changed `wake` mailbox note must ask Neo to
 read journal pages and rewrite worksNote. The unchanged `nudge` must report
 `skipped_unchanged` with no model-facing input, even with nudgeEvery 1; use the
-[idle-backoff journey](session-schedule-idle-backoff.md) for the cap and one notice.
+[idle-backoff journey](session-schedule-idle-backoff.md) for the cap and zero idle publications.
 These fixtures do not
 replace the source, fire handler or delivery handler. A later no-provider turn
 failure is expected and is not autonomous-model proof.

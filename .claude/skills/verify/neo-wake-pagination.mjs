@@ -26,16 +26,17 @@ const observed=[];
   const scrollBefore=await scroller.evaluate(element=>element.scrollTop);
   await page.screenshot({path:`${run}/evidence/neo-wake-pagination-${name}-before.png`});
   await earlier.click();
-  await wake.waitFor();
+  await wake.waitFor({state:'attached'});
   await page.locator(`[data-message-ref="${seed.older}"]`).waitFor();
-  const after=await wake.boundingBox();
+  const after=await message.boundingBox();
   const scrollAfter=await scroller.evaluate(element=>element.scrollTop);
-  const hiddenHeight=await message.evaluate(element=>element.getBoundingClientRect().height);
-  observed.push({viewport:name,before,after,scrollBefore,scrollAfter,hiddenHeight,delta:after.y-before.y});
+  const messageHeight=await message.evaluate(element=>element.getBoundingClientRect().height);
+  observed.push({viewport:name,before,after,scrollBefore,scrollAfter,messageHeight,delta:after.y-before.y});
   writeFileSync(`${run}/evidence/neo-wake-pagination.json`,JSON.stringify(observed,null,2));
   await page.screenshot({path:`${run}/evidence/neo-wake-pagination-${name}-after.png`});
-  assert.equal(await message.isVisible(),false);
-  assert(Math.abs(after.y-before.y)<2,`Load earlier moved replacement wake by ${after.y-before.y}px`);
+  assert.equal(await message.isVisible(),true);
+  assert.equal(await page.locator('.neo-chat-rail [data-wake]').count(),0);
+  assert(Math.abs(after.y-before.y)<2,`Load earlier moved retained reply by ${after.y-before.y}px`);
  }
 return observed;
 }

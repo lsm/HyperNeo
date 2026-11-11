@@ -21850,6 +21850,12 @@
                           "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                           "type": "boolean"
                         },
+                        "sessionTitle": {
+                          "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "verb": {
                           "const": "start",
                           "type": "string"
@@ -41527,6 +41533,12 @@
                     "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                     "type": "boolean"
                   },
+                  "sessionTitle": {
+                    "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "verb": {
                     "const": "start",
                     "type": "string"
@@ -44578,6 +44590,12 @@
                   "sandbox": {
                     "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                     "type": "boolean"
+                  },
+                  "sessionTitle": {
+                    "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
                   },
                   "verb": {
                     "const": "start",
@@ -59955,6 +59973,12 @@
           },
           "provenance": {
             "type": "boolean"
+          },
+          "sessionTitle": {
+            "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
           },
           "title": {
             "maxLength": 200,

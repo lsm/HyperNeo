@@ -1,9 +1,7 @@
 import type { NeoConversationWake } from '@hyperneo/shared/types/neo-wake';
-import type { ComponentChildren } from 'preact';
 import { NativeContentDisclosure } from '../components/ui/NativeContentDisclosure.tsx';
 import { t } from '../lib/i18n/index.ts';
 import { NeoIcon } from './NeoIcon.tsx';
-import { messageTime } from './NeoMessage.tsx';
 import { neoMessageAnchor } from './reply-context.ts';
 
 export function NeoWakeRow({
@@ -11,15 +9,12 @@ export function NeoWakeRow({
   wake,
   conversationId,
   onOpenWork,
-  children,
 }: {
   entryKey: string;
   wake: NeoConversationWake;
   conversationId: string;
   onOpenWork?: (anchor: string) => void;
-  children?: ComponentChildren;
 }) {
-  const time = messageTime(wake.firedAt);
   return (
     <NativeContentDisclosure
       data-public-entry={entryKey}
@@ -31,19 +26,13 @@ export function NeoWakeRow({
           <NeoIcon name="clock" class="!h-3.5 !w-3.5" />
           <span class="max-w-40 truncate font-medium text-fg">{wake.title}</span>
           <span class="min-w-0 flex-1 truncate">
-            {wake.settledAt === null
-              ? t('session.working')
-              : (wake.summary ?? t('chat.wakeFinished'))}
+            {wake.settledAt === null ? t('chat.wakeRunning') : t('chat.wakeFinished')}
           </span>
-          {time && (
-            <time dateTime={time.iso} title={time.full} class="shrink-0 text-[11px] text-fg-faint">
-              {time.label}
-            </time>
-          )}
         </span>
       }
     >
       <div class="space-y-3 px-3 pb-2 pt-1">
+        {wake.summary && <p class="whitespace-pre-wrap break-words">{wake.summary}</p>}
         <ul class="space-y-1 break-words">
           {wake.additions.map((item) => {
             const anchor =
@@ -74,7 +63,6 @@ export function NeoWakeRow({
             );
           })}
         </ul>
-        {children}
       </div>
     </NativeContentDisclosure>
   );

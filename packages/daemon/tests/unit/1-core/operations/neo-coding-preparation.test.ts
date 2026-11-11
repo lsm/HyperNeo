@@ -77,7 +77,8 @@ describe('createCodexDesktopAdapter with coding preparation', () => {
       if (failFetch) git(f.directory, 'remote', 'set-url', 'origin', join(f.directory, 'missing'));
       const starts: string[] = [];
       const driver = createCodexDesktopAdapter({
-        statePath: '/unused',
+        statePath: join(f.directory, 'synthetic-codex-state'),
+        readSnapshot: async () => ({ roots: [], folders: [], threads: [] }),
         worktreesDir: join(f.directory, '.executions'),
         machine: 'local',
         now: Date.now,

@@ -312,6 +312,7 @@ export interface FindQuery {
 }
 
 export interface StartRequest {
+  sessionTitle?: string;
   prepareFolder?: () => { value: string } | { reason: Rejected };
   inPlace?: boolean;
   place: Place;
