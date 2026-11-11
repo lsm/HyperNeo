@@ -36,13 +36,13 @@ const measured = async <T>(work: () => Promise<T>): Promise<T> => {
   try { return await work(); } finally { measuring = false; }
 };
 const now = 1_000_000;
-const pending = async (name: string) => {
+const pending = async (name: string, approver = 'local-rpc:fixture') => {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const phoneKey = Buffer.from(publicKey.export({ type: 'spki', format: 'der' })).subarray(-32).toString('base64url');
   const made = await measured(() => app.db.gateway.call(pairingRequestWrites, 'createRequest', now));
   const bound = await measured(() => app.db.gateway.call(pairingRequestWrites, 'bindTicket', made.ticket, phoneKey, name, now));
   assert(bound.ok);
-  assert.equal(await measured(() => app.db.gateway.call(pairingRequestWrites, 'approveRequest', made.requestId, 'local-rpc:fixture', now)), 'approved');
+  assert.equal(await measured(() => app.db.gateway.call(pairingRequestWrites, 'approveRequest', made.requestId, approver, now)), 'approved');
   return { requestId: made.requestId, phoneKey, signature: sign(null, Buffer.from(`${made.requestId}:${bound.bindNonce}`), privateKey).toString('base64url') };
 };
 const complete = (request: Awaited<ReturnType<typeof pending>>) => measured(() => app.db.gateway.call(pairingRequestWrites, 'completeRequest', request.requestId, request.phoneKey, request.signature, now));
@@ -73,7 +73,7 @@ try {
   evidence.peerApprovalInvalidated = true;
   fixture.prepare('INSERT INTO human_device_resets(id, reset_at, devices_json) VALUES (?, ?, ?)').run('second', now, '[]');
   const rollbackPeer = devices.createCode('human', 'Rollback peer', true, now);
-  const rejected = await pending('Rejected phone');
+  const rejected = await pending('Rejected phone', granted.deviceId);
   fixture.exec("CREATE TRIGGER reject_device BEFORE INSERT ON paired_devices WHEN NEW.name = 'Rejected phone' BEGIN SELECT RAISE(ABORT, 'synthetic insertion failure'); END");
   await assert.rejects(() => complete(rejected), /synthetic insertion failure/);
   assert.equal(devices.humanRecoveryOpen(), true);

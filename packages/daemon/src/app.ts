@@ -362,6 +362,7 @@ export interface DaemonAppContext {
   oapEngine: OapEngine;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
+  handlePair2: ((req: Request, remoteAddress: string | null) => Promise<Response>) | null;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   handleMessageImage: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   authenticateUpgrade: (
@@ -1792,6 +1793,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       oapEngine,
       server,
       handlePair,
+      handlePair2,
       handleAskMarkdown,
       handleMessageImage,
       authenticateUpgrade,
