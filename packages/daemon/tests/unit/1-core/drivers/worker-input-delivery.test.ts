@@ -27,6 +27,7 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
   let question = false;
   const sent: string[] = [];
   const reports: string[] = [];
+  let reportUnavailable = false;
   const adapter = {
     id: ref.adapter,
     capabilities: ['send', 'steer', 'queue', 'status'],
@@ -65,6 +66,7 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
     isOpenTodo: () => true,
   };
   const delivery = createWorkerInputDelivery(db, deps, async (_id, detail) => {
+    if (reportUnavailable) throw new Error('Synthetic report receiver is unavailable');
     reports.push(detail);
   });
   const registry = createOperationRegistry(
@@ -86,6 +88,9 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
     db,
     sent,
     reports,
+    setReportUnavailable: (value: boolean) => {
+      reportUnavailable = value;
+    },
     jobs,
     send,
     tick,
@@ -351,4 +356,80 @@ describe('durable worker follow-ups', () => {
     expect(h.sent).toHaveLength(1);
     expect(store.getTodo(todo.id)?.state).toBe('doing');
   });
+  test('a deferred native refusal is retained and reported to Neo', async () => {
+    let attempts = 0;
+    const h = fixture('claude-desktop', {
+      send: async () => {
+        attempts++;
+        return { ok: false, reason: 'claude_cli_login_expired', detail: 'Synthetic login expired' };
+      },
+    });
+    h.setStatus('done');
+    await h.send('Refused native input');
+    await h.tick();
+    expect(h.reports).toEqual(['claude_cli_login_expired: Synthetic login expired']);
+    expect(h.jobs.listJobs({ queue: 'worker_input' })[0].status).toBe('completed');
+    expect(h.db.prepare('SELECT message, outcome FROM work_delivery_inputs').get()).toMatchObject({
+      message: 'Refused native input',
+      outcome: expect.stringContaining('claude_cli_login_expired'),
+    });
+    await h.tick();
+    expect(attempts).toBe(1);
+  });
+
+  test.each(['prompt', 'interrupted', 'throw'] as const)(
+    'a %s failure survives unavailable reporting and is reported after recovery',
+    async (failure) => {
+      let attempts = 0;
+      const h = fixture(
+        'codex-desktop',
+        failure === 'throw'
+          ? {
+              send: async () => {
+                attempts++;
+                throw new Error('Synthetic transport disconnected');
+              },
+            }
+          : {}
+      );
+      h.setReportUnavailable(true);
+      h.setStatus(failure === 'prompt' ? 'needs_you' : 'done');
+      await h.send('Retain failed input');
+      if (failure === 'interrupted') {
+        const job = h.jobs.dequeue('worker_input', 1)[0];
+        h.db
+          .prepare(
+            "UPDATE job_queue SET payload = json_set(payload, '$.dispatched', json('true')) WHERE id = ?"
+          )
+          .run(job.id);
+        h.jobs.requeueWaiting(job.id, 0, job.claimToken!);
+      }
+      await h.tick();
+      const retained = h.db.prepare('SELECT message, outcome FROM work_delivery_inputs').get();
+      expect(retained).toMatchObject({
+        message: 'Retain failed input',
+        outcome: expect.any(String),
+      });
+      expect(h.jobs.listJobs({ queue: 'worker_input' })[0]).toMatchObject({
+        status: 'pending',
+        retryCount: 0,
+      });
+      await h.tick();
+      expect(h.jobs.listJobs({ queue: 'worker_input' })[0]).toMatchObject({
+        status: 'pending',
+        retryCount: 0,
+      });
+      h.setReportUnavailable(false);
+      h.setStatus('done');
+      await h.tick();
+      await h.tick();
+      expect(h.reports).toHaveLength(1);
+      expect(h.sent).toEqual([]);
+      expect(attempts).toBe(failure === 'throw' ? 1 : 0);
+      expect(h.jobs.listJobs({ queue: 'worker_input' })[0].status).toBe('completed');
+      expect(h.db.prepare('SELECT message, outcome FROM work_delivery_inputs').get()).toEqual(
+        retained
+      );
+    }
+  );
 });
