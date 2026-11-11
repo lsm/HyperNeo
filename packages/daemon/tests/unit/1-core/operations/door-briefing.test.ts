@@ -151,6 +151,18 @@ describe('describeResolvedOperations', () => {
 });
 
 describe('operationsCapabilityContribution with a resolved registry', () => {
+  test('Neo briefing does not enumerate an unused operation catalog', () => {
+    const registry = {
+      get: () => undefined,
+      get entries(): never {
+        throw new Error('Neo briefing must not enumerate operations');
+      },
+    };
+    expect(
+      operationsCapabilityContribution(ATTACHED, registry, { source: 'mcp', role: 'neo' }).briefing
+    ).toContain('neo_*');
+  });
+
   test('Neo gets resident guidance and compact discovery instructions', () => {
     const registry = createOperationRegistry([
       stubOperation('goal.journal.list'),

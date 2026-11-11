@@ -77,7 +77,7 @@ try {
     evidence.push({ opened, read });
     const index = await invoke('operations.list', {});
     assert.deepEqual(await invoke('operations.list', { all: true }), index);
-    const door = operationsCapabilityContribution(server, registry, { source: 'mcp', role: 'neo' }).briefing;
+    const door = operationsCapabilityContribution(server, { get: registry.get, get entries(): never { throw new Error('Neo briefing must not enumerate operations'); } }, { source: 'mcp', role: 'neo' }).briefing;
     const definitions = tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
     const bytes = Buffer.byteLength(JSON.stringify({ tools: definitions, door }));
     const listBytes = Buffer.byteLength(JSON.stringify(index.value));
