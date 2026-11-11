@@ -1290,6 +1290,89 @@ describe('neo todo runner', () => {
     }
   );
 
+  test.each([
+    {
+      label: 'remote relative path without a bridge',
+      adapter: 'hyperneo',
+      daemon: 'synthetic-peer',
+      link: '/session/synthetic-worker',
+      remoteLink: undefined,
+      expected: null,
+    },
+    {
+      label: 'remote HyperNeo HTTPS bridge',
+      adapter: 'hyperneo',
+      daemon: 'synthetic-peer',
+      link: '/session/synthetic-worker',
+      remoteLink: 'https://example.test/remote/session',
+      expected: 'https://example.test/remote/session',
+    },
+    {
+      label: 'remote Claude HTTPS bridge before its native link',
+      adapter: 'claude-desktop',
+      daemon: 'synthetic-peer',
+      link: 'claude://synthetic-worker',
+      remoteLink: 'https://example.test/remote/claude',
+      expected: 'https://example.test/remote/claude',
+    },
+    {
+      label: 'unsafe links',
+      adapter: 'hyperneo',
+      daemon: 'synthetic-peer',
+      link: 'javascript:synthetic',
+      remoteLink: '//example.test/unsafe',
+      expected: null,
+    },
+    {
+      label: 'local HyperNeo relative path',
+      adapter: 'hyperneo',
+      daemon: undefined,
+      link: '/session/synthetic-worker',
+      remoteLink: undefined,
+      expected: '/session/synthetic-worker',
+    },
+  ])('turn reports choose safe reachable worker links for $label', async (scenario) => {
+    const h = setup(false);
+    try {
+      const todo = h.add();
+      const ask = h.store.getAsk(todo.askId)!;
+      const worker = {
+        adapter: scenario.adapter,
+        id: 'synthetic-worker',
+        ...(scenario.daemon ? { daemon: scenario.daemon } : {}),
+      };
+      await deliverNeoTurnReport(
+        ask,
+        todo,
+        'synthetic-link-dispatch',
+        worker,
+        {
+          status: 'running',
+          title: 'Synthetic worker',
+          link: scenario.link,
+          remoteLink: scenario.remoteLink,
+        },
+        {
+          id: 'synthetic-link-turn',
+          at: Date.now() + 100,
+          message: 'Synthetic link report',
+          notice: true,
+        },
+        async (_ask, _todo, text) => {
+          h.told.push(text);
+        },
+        h.sessions.turnReports
+      );
+      expect(h.told).toHaveLength(1);
+      if (scenario.expected) expect(h.told[0]).toContain(`\n${scenario.expected}\n`);
+      if (scenario.link !== scenario.expected) expect(h.told[0]).not.toContain(scenario.link);
+      if (scenario.remoteLink && scenario.remoteLink !== scenario.expected)
+        expect(h.told[0]).not.toContain(scenario.remoteLink);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a notice turn reaches Neo once with its worker name and full ref, attached to no todo', async () => {
     const h = setup(false);
     try {
