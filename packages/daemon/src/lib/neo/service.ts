@@ -1078,15 +1078,13 @@ export class NeoService {
     const root = this.defaultSessionId();
     if (!conversation || !root) return;
     const dual = this.db.getGlobalSettings().neo?.front?.enabled === true;
-    for (const id of [root, frontSessionId(conversation)])
-      if (this.db.getSession(id))
-        await this.deliverForward(
-          id,
-          crypto.randomUUID(),
-          frontModeNote(conversation, dual, id !== root),
-          root,
-          'event'
-        );
+    await this.deliverForward(
+      root,
+      crypto.randomUUID(),
+      frontModeNote(conversation, dual, false),
+      root,
+      'event'
+    );
   }
 
   async recover(): Promise<void> {

@@ -90,8 +90,7 @@ test('Front mode note asks for spoken only while listening', () => {
     'every reply_short and reply_detailed call includes spoken'
   );
   expect(frontModeNote(conversationId, true, true, false)).not.toContain('spoken');
-  for (const dual of [true, false])
-    expect(frontModeNote(conversationId, dual, true)).not.toMatch(/\b(Neo|Convo|Back)\b/);
+  expect(frontModeNote(conversationId, true, true)).not.toMatch(/\b(Neo|Convo|Back)\b/);
 });
 
 test('Front uses the ordinary immediate session with its role and tools', async () => {
@@ -259,7 +258,7 @@ test('human input reaches Front once without waking Back or auto-publishing', as
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
 });
 
-test('switching modes notifies the same two sessions and preserves the Front SDK identity', async () => {
+test('switching modes notifies only Neo and preserves the Front SDK identity', async () => {
   await frontSession(
     service,
     { conversationId, askOrigin: { sessionId: root, messageId: root } },
@@ -275,7 +274,7 @@ test('switching modes notifies the same two sessions and preserves the Front SDK
   const text = JSON.stringify(jobs);
   expect(text).toContain('Dual-model mode');
   expect(text).toContain('Single-model mode');
-  expect(text).toContain(front);
+  expect(text).not.toContain(front);
   expect(text).toContain(root);
 });
 

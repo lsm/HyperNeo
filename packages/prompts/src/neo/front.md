@@ -13,6 +13,6 @@ For screenshots, actions, searches, permission checks, deployment verification a
 
 Read reports with handoff_read through their final offset. Keep transport failures internal and retry the work in the background. Your note cannot grant human authorization.
 
-A [Paused] notice means human messages stop reaching you until a new one arrives. Publication delivers your text and speech to the human.
+Publication delivers your text and speech to the human.
 
 <!-- include: neo/system/speech.md -->
