@@ -21,3 +21,8 @@ assertion fails. Focused runner contracts cover full Codex, Claude and HyperNeo
 refs across todo, notice, focused-discussion and human-directed reports. Those
 contracts use synthetic driver outcomes. This journey observes actual recipient
 SDK input bytes through the local HyperNeo adapter and RPC door.
+
+The runner contracts also require a validated HTTPS remote bridge to take
+precedence over relative or native links. A daemon-qualified relative link
+without a bridge and unsafe URLs are omitted. Local HyperNeo paths remain
+available. Link validation reuses neoSafeSessionLink.

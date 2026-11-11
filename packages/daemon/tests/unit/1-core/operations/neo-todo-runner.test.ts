@@ -1249,7 +1249,12 @@ describe('neo todo runner', () => {
         const todo = h.add();
         const ask = h.store.getAsk(todo.askId)!;
         const worker = { adapter, id };
-        const link = `https://example.test/workers/${id}`;
+        const link =
+          adapter === 'hyperneo'
+            ? `/session/${id}`
+            : adapter === 'codex-desktop'
+              ? `codex://threads/${id}`
+              : `claude://${id}`;
         for (const kind of ['todo', 'notice', 'human', 'focused']) {
           const currentAsk =
             kind === 'focused'

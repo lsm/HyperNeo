@@ -1,3 +1,4 @@
+import { neoSafeSessionLink } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { neoBlockerNotice } from './covered-notice.ts';
 import { skipEmptyNeoTurnReport, type NeoTurnReportFacts } from './turn-report-plan.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -60,7 +61,11 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
     ) => {
       const fullRef = `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}`;
       const name = currentLive?.title ?? live?.title;
-      const link = currentLive?.link ?? currentLive?.remoteLink ?? live?.link ?? live?.remoteLink;
+      const link =
+        neoSafeSessionLink(currentLive?.remoteLink, true) ??
+        neoSafeSessionLink(currentLive?.link, !!ref.daemon) ??
+        neoSafeSessionLink(live?.remoteLink, true) ??
+        neoSafeSessionLink(live?.link, !!ref.daemon);
       const worker = [`Worker: ${name ? `${name} (${fullRef})` : fullRef}`, link]
         .filter(Boolean)
         .join('\n');
