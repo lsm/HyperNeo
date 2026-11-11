@@ -31,6 +31,8 @@ test "${#releases[@]}" -eq 3
 for release in "${releases[@]}"; do
   gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg "$release" 2>&1 | tee -a "$EVIDENCE/signatures.log"
 done
+apt-cache "${options[@]}" policy bubblewrap | tee "$EVIDENCE/policy.txt"
+grep -Eq "Candidate: [0-9]" "$EVIDENCE/policy.txt"
 cd "$task_run"
 apt-get "${options[@]}" download bubblewrap 2>&1 | tee "$EVIDENCE/download.log"
 package=$(printf '%s\n' "$task_run"/bubblewrap_*.deb)

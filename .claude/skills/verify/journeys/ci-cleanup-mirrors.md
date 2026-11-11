@@ -15,6 +15,7 @@ old workflow fails both outage subcases. All fixture data is temporary.
 On an Ubuntu test host, run the package rehearsal below with a fresh absolute
 evidence directory. It uses separate APT sources, lists, cache and status files.
 It verifies three InRelease signatures with the installed public Ubuntu keyring,
+records the bubblewrap candidate and its archive component with apt-cache policy,
 downloads bubblewrap, extracts it and executes its version command. All runtime
 files are temporary. It changes no host APT configuration or installed packages.
 
@@ -22,5 +23,5 @@ files are temporary. It changes no host APT configuration or installed packages.
 bash .claude/skills/verify/ci-cleanup-mirrors.sh "$EVIDENCE"
 ```
 
-Retain apt-update.log, signatures.log, download.log, package.txt and version.txt.
+Retain apt-update.log, signatures.log, policy.txt, download.log, package.txt and version.txt.
 The actual runner's user-namespace smoke and full daemon suites remain CI gates.
