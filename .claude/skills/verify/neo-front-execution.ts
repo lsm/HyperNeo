@@ -22,6 +22,7 @@ const makeServer = sdk.createSdkMcpServer;
 let tools: Array<{ name: string; handler: (input: object, extra: object) => Promise<unknown> }> =
   [];
 const calls: string[] = [];
+const nativeIds: string[] = [];
 mock.module(sdkPath, () => ({
   ...sdk,
   createSdkMcpServer(options: Parameters<typeof sdk.createSdkMcpServer>[0]) {
@@ -30,6 +31,12 @@ mock.module(sdkPath, () => ({
   },
   query: ({ prompt, options }: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) =>
     (async function* () {
+      assert.equal(options.persistSession, true);
+      assert.equal(options.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '90');
+      assert.deepEqual(options.thinking, { type: 'enabled', budgetTokens: 24000 });
+      const nativeId = options.resume ?? options.sessionId!;
+      nativeIds.push(nativeId);
+      yield { type: 'system', subtype: 'init', session_id: nativeId };
       assert.deepEqual(options.tools, []);
       assert.equal(options.strictMcpConfig, true);
       assert.deepEqual(
@@ -64,7 +71,8 @@ mock.module(sdkPath, () => ({
       }
       yield {
         type: 'assistant',
-        message: { content: [{ type: 'text', text: JSON.stringify({ kind, text }) }] },
+        uuid: crypto.randomUUID(), session_id: nativeId, parent_tool_use_id: null,
+        message: { id: crypto.randomUUID(), role: 'assistant', type: 'message', model: 'front-fixture', content: [{ type: 'text', text: JSON.stringify({ kind, text }) }] },
       };
       yield { type: 'result', subtype: 'success' };
     })(),
@@ -206,7 +214,7 @@ try {
       await invoke<{ ok: boolean }>('neo.front.model.set', {
         model: 'front-fixture',
         provider: 'glm',
-        thinkingLevel: 'off',
+        thinkingLevel: 'think24k',
       })
     ).ok,
     true
@@ -288,6 +296,13 @@ try {
     0
   );
   await invoke('neo.front.set', { enabled: false });
+  const frontId = nativeIds[0];
+  assert.equal(new Set(nativeIds).size, 1);
+  assert.equal(app.db.getSession(frontId)?.title, '前端');
+  assert.equal(app.db.getSession(frontId)?.sdkSessionId, frontId);
+  assert.equal(app.db.getSDKMessageRepo().getUserMessages(frontId).length, 4);
+  assert.equal((app.db.getDatabase().prepare("SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='assistant'").get(frontId) as {n:number}).n, 4);
+  observed.frontSession = { turns: 4, resumedNativeSessions: new Set(nativeIds).size, visibleReplies: 4 };
   observed.textReplies = 4;
   observed.voiceSay = events.filter((event) => event.type === 'say').length;
   observed.audioChunks = events.filter((event) => event.type === 'audio').length;

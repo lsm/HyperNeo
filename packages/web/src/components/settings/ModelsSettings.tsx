@@ -1,3 +1,4 @@
+import { NeoFrontSettings } from './NeoFrontSettings.tsx';
 import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import {
   ModelChevronUpIcon as ChevronUpIcon,
@@ -164,6 +165,7 @@ function ModelPickerModal({
 
 interface FallbackChainEditorProps {
   models: FallbackModelEntry[];
+  indexOffset?: number;
   availableModels: ModelInfo[];
   isUpdating: boolean;
   onMove: (index: number, direction: 'up' | 'down') => void;
@@ -174,6 +176,7 @@ interface FallbackChainEditorProps {
 
 function FallbackChainEditor({
   models,
+  indexOffset = 0,
   availableModels,
   isUpdating,
   onMove,
@@ -193,30 +196,30 @@ function FallbackChainEditor({
         return (
           <div
             key={`${entry.provider}:${entry.model}`}
-            class="flex flex-wrap items-center gap-2 bg-surface-raised border border-line rounded-lg px-3 py-2"
+            class="flex items-center gap-2 bg-surface-raised border border-line rounded-lg px-2 py-2"
           >
-            <span class="text-xs text-fg-faint font-medium w-4">{index + 1}.</span>
+            <span class="text-xs text-fg-faint font-medium w-4">{index + indexOffset + 1}.</span>
             <ProviderLogo provider={entry.provider} class="h-4 w-4" />
-            <div class="flex-1 min-w-[7rem]">
+            <div class="flex-1 min-w-0">
               <div class="text-sm text-fg-soft truncate">{displayInfo.name}</div>
               <div class="text-xs text-fg-faint">
                 {PROVIDER_LABELS[entry.provider] || getProviderLabel(entry.provider)}
               </div>
             </div>
             <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
-              {controls?.(entry, index)}
+              {controls?.(entry, index + indexOffset)}
               <div class="flex items-center gap-1">
                 <button
                   class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
-                  onClick={() => onMove(index, 'up')}
-                  disabled={index === 0 || isUpdating}
+                  onClick={() => onMove(index + indexOffset, 'up')}
+                  disabled={(index === 0 && indexOffset === 0) || isUpdating}
                   title="Move up"
                 >
                   <ChevronUpIcon />
                 </button>
                 <button
                   class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
-                  onClick={() => onMove(index, 'down')}
+                  onClick={() => onMove(index + indexOffset, 'down')}
                   disabled={index === models.length - 1 || isUpdating}
                   title="Move down"
                 >
@@ -225,8 +228,8 @@ function FallbackChainEditor({
               </div>
               <button
                 class="p-1 rounded hover:bg-danger/30 disabled:opacity-30 disabled:cursor-not-allowed"
-                onClick={() => onRemove(index)}
-                disabled={isUpdating || canRemove?.(index) === false}
+                onClick={() => onRemove(index + indexOffset)}
+                disabled={isUpdating || canRemove?.(index + indexOffset) === false}
                 title="Remove"
               >
                 <XIcon class="w-4 h-4 text-danger" />
@@ -449,7 +452,7 @@ function FrontModelSettings({
   const savingRef = useRef(false);
   const [error, setError] = useState('');
   const busy = loading || saving || connectionState.value !== 'connected';
-  async function save(model: ModelInfo) {
+  async function save(model: ModelInfo, thinkingLevel = preference?.thinkingLevel ?? 'off') {
     if (busy || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
@@ -464,7 +467,7 @@ function FrontModelSettings({
         {
           model: model.id,
           provider: model.provider,
-          thinkingLevel: 'off',
+          thinkingLevel,
         }
       );
       if (!result.ok) throw new Error(result.reason ?? 'Could not save the front model.');
@@ -476,23 +479,52 @@ function FrontModelSettings({
     }
   }
   return (
-    <section
-      aria-label="Front model"
-      class="space-y-3 rounded-xl border border-line bg-surface p-4"
-    >
-      <h4 class="text-[13px] font-semibold text-fg">Front model</h4>
-      <p class="text-xs text-fg-faint">
-        Separate model for fast text and voice replies. Selecting a model keeps the fast replies
-        switch as saved.
-      </p>
-      <p class="text-sm text-fg">
-        {preference
-          ? `${preference.model} · ${getProviderLabel(preference.provider)}`
-          : 'No front model selected'}
-      </p>
-      <Button variant="secondary" size="sm" disabled={busy} onClick={() => setPicker(true)}>
-        Choose front model
-      </Button>
+    <div class="space-y-2">
+      <div data-model-row class="flex items-center gap-2">
+        <div class="min-w-0 flex-1">
+          <NeoFrontSettings />
+          <p
+            class="truncate text-sm text-fg"
+            title={
+              preference
+                ? `${preference.model} · ${getProviderLabel(preference.provider)}`
+                : undefined
+            }
+          >
+            {preference
+              ? `${preference.model} · ${getProviderLabel(preference.provider)}`
+              : 'No front model selected'}
+          </p>
+        </div>
+        <Button
+          aria-label="Choose front model"
+          variant="secondary"
+          size="xs"
+          disabled={busy}
+          onClick={() => setPicker(true)}
+        >
+          <PencilIcon />
+        </Button>
+        {preference && (
+          <FallbackThinkingSelect
+            saved={preference.thinkingLevel}
+            label="Front model thinking"
+            capability={findSameModel([...groupedModels.values()].flat(), preference) ?? null}
+            disabled={busy}
+            inherits={false}
+            onChange={(level) => {
+              const model = findSameModel([...groupedModels.values()].flat(), preference);
+              if (model) void save(model, level);
+            }}
+          />
+        )}
+        <output
+          title="Default auto-compact percentage"
+          class="rounded border border-line px-1 py-1 text-xs"
+        >
+          {AUTO_COMPACT_PERCENT_DEFAULT}%
+        </output>
+      </div>
       {error && (
         <p role="alert" class="text-xs text-danger">
           {error}
@@ -509,7 +541,7 @@ function FrontModelSettings({
           onSelect={save}
         />
       )}
-    </section>
+    </div>
   );
 }
 
@@ -641,9 +673,6 @@ function NeoModelSettings({
       value === AUTO_COMPACT_PERCENT_DEFAULT ? other : { ...other, autoCompactPercent: value };
     setList(list.map((item, i) => (i === index ? updated : item)));
   }
-  const providers = [...groupedModels.entries()]
-    .filter(([, models]) => models.some((model) => model.available !== false))
-    .map(([id]) => PROVIDER_LABELS[id] || getProviderLabel(id));
   return (
     <section aria-label="Neo models" class="space-y-3 rounded-xl border border-line bg-surface p-4">
       {pendingPrimary && (
@@ -667,35 +696,45 @@ function NeoModelSettings({
       )}
       <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
       {draft ? (
-        <div class="space-y-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p class="text-xs text-fg-faint">Neo model</p>
-              <p class="text-sm text-fg-soft">
-                {findSameModel(availableModels, draft)?.name ?? draft.model} ·{' '}
-                {PROVIDER_LABELS[draft.provider] || getProviderLabel(draft.provider)}
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              size="xs"
-              disabled={busy}
-              onClick={() => setPicker('primary')}
-            >
-              Change Neo primary
-            </Button>
-          </div>
-          <div>
-            <p class="text-xs text-fg-faint mb-1">Thinking</p>
-            <FallbackThinkingSelect
-              saved={draft.thinkingLevel ?? 'off'}
-              label="Neo model 1 thinking"
-              capability={loading ? null : (findSameModel(availableModels, draft) ?? draft)}
-              disabled={busy}
-              inherits={false}
-              onChange={(level = 'off') => void save({ ...draft, thinkingLevel: level })}
-            />
-          </div>
+        <div data-model-row class="flex items-center gap-2">
+          <span
+            class="min-w-0 flex-1 truncate text-sm text-fg"
+            title={`${draft.model} · ${draft.provider}`}
+          >
+            <span class="block text-xs text-fg-faint">Neo</span>
+            {findSameModel(availableModels, draft)?.name ?? draft.model}
+          </span>
+          <Button
+            aria-label="Change Neo primary"
+            variant="secondary"
+            size="xs"
+            disabled={busy}
+            onClick={() => setPicker('primary')}
+          >
+            <PencilIcon />
+          </Button>
+          <FallbackThinkingSelect
+            saved={draft.thinkingLevel ?? 'off'}
+            label="Neo model 1 thinking"
+            capability={loading ? null : (findSameModel(availableModels, draft) ?? draft)}
+            disabled={busy}
+            inherits={false}
+            onChange={(level = 'off') => void save({ ...draft, thinkingLevel: level })}
+          />
+          <input
+            type="number"
+            aria-label="Neo model 1 auto-compact percentage"
+            title={compactSize(draft)}
+            min={AUTO_COMPACT_PERCENT_MIN}
+            max={AUTO_COMPACT_PERCENT_MAX}
+            value={percentText(draft)}
+            disabled={busy}
+            onInput={(event) =>
+              setPercents({ ...percents, [entryKey(draft)]: event.currentTarget.value })
+            }
+            onBlur={(event) => savePercent(0, event.currentTarget.value)}
+            class="w-12 rounded border border-line bg-surface px-1 py-1 text-xs text-fg"
+          />
         </div>
       ) : (
         <div class="space-y-2">
@@ -710,33 +749,16 @@ function NeoModelSettings({
           </Button>
         </div>
       )}
-      <details class="rounded-lg border border-line">
-        <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-fg">Advanced</summary>
-        <div class="space-y-3 p-3">
-          <p class="text-xs text-fg-faint">
-            Saved Neo model preference: the primary first, then the fallbacks. Recovery uses the
-            ordinary session policy and does not follow this list.
-          </p>
-          <p class="text-xs text-fg-faint">
-            Auto-compact is set per model and shown against that model’s context window. 90% keeps
-            the provider default; at 100%, compaction follows the provider’s limits. Percentage
-            changes apply when Neo is idle.
-          </p>
-          <p class="text-xs text-fg-faint">
-            Providers with usable models: {providers.join(', ') || 'None available'}
-          </p>
-          {draft?.fallbacks === undefined && draft ? (
-            <p class="text-xs text-fg-faint">
-              Uses the general session fallback chain until you save a Neo chain.
-            </p>
-          ) : draft?.fallbacks?.length === 0 ? (
-            <p class="text-xs text-fg-faint">No saved fallbacks.</p>
-          ) : null}
-          {list.length === 1 && (
-            <p class="text-xs text-fg-faint">Add another model before removing this one.</p>
-          )}
+      <FrontModelSettings
+        groupedModels={groupedModels}
+        providerAuthStatuses={providerAuthStatuses}
+        loading={loading}
+      />
+      <div>
+        <div class="space-y-3">
           <FallbackChainEditor
-            models={list}
+            models={list.slice(1)}
+            indexOffset={1}
             availableModels={availableModels}
             isUpdating={busy}
             canRemove={() => list.length > 1}
@@ -759,7 +781,7 @@ function NeoModelSettings({
                     aria-label={`Make Neo model ${index + 1} primary`}
                     onClick={() => setList([list[index], ...list.filter((_, i) => i !== index)])}
                   >
-                    <span class="whitespace-nowrap">Make primary</span>
+                    <span aria-hidden="true">↑</span>
                   </Button>
                 )}
                 {index > 0 && (
@@ -781,6 +803,7 @@ function NeoModelSettings({
                 <input
                   type="number"
                   aria-label={`Neo model ${index + 1} auto-compact percentage`}
+                  title={compactSize(entry)}
                   min={AUTO_COMPACT_PERCENT_MIN}
                   max={AUTO_COMPACT_PERCENT_MAX}
                   step={1}
@@ -792,7 +815,6 @@ function NeoModelSettings({
                   onBlur={(event) => savePercent(index, event.currentTarget.value)}
                   class="w-14 rounded border border-line bg-surface px-1.5 py-1 text-xs text-fg"
                 />
-                <span class="text-xs text-fg-faint whitespace-nowrap">{compactSize(entry)}</span>
               </div>
             )}
           />
@@ -815,7 +837,7 @@ function NeoModelSettings({
             </Button>
           </div>
         </div>
-      </details>
+      </div>
       {saving && (
         <p role="status" class="text-xs text-fg-faint">
           Saving changes. Wait until complete, then retry any other action.
@@ -1197,10 +1219,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
 
   if (neoOnly)
     return (
-      <SettingsSection
-        title="Coordinator"
-        description="Model, provider, thinking and compaction for Neo and its projects. It is not a default for workers or for your own sessions. Compaction changes apply when Neo is idle."
-      >
+      <SettingsSection title="Coordinator">
         {loadError && (
           <p role="alert" class="text-sm text-danger">
             {loadError.message}
@@ -1214,16 +1233,8 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
         >
           Refresh models
         </Button>
-        <p class="text-xs text-fg-faint">
-          Refresh reloads the model list only; it does not change saved defaults.
-        </p>
         <NeoModelSettings
           availableModels={availableModels}
-          groupedModels={groupedModels}
-          providerAuthStatuses={providerAuthStatuses}
-          loading={loading}
-        />
-        <FrontModelSettings
           groupedModels={groupedModels}
           providerAuthStatuses={providerAuthStatuses}
           loading={loading}

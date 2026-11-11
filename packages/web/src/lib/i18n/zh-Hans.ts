@@ -391,4 +391,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.htmlPreviewUnavailable': '无法预览此 HTML 文档。',
   'artifact.htmlSourceOnly': '无法预览 HTML，请查看原始源码。',
   'artifact.loadingSource': '正在加载源码…',
+  'dual.label': '双模型模式',
+  'dual.description': '开启后，每条消息同时发给前端和 Neo；关闭后由 Neo 独自处理。',
+  'dual.reconnect': '请重新连接后再更改双模型模式。',
+  'dual.saveError': '无法保存双模型设置。',
 };

@@ -1,6 +1,12 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { NeoModelPreference } from '@hyperneo/shared';
+import type { UUID } from 'node:crypto';
+import type { SDKAssistantMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import {
+  AUTO_COMPACT_PERCENT_DEFAULT,
+  THINKING_LEVEL_TOKENS,
+  THINKING_LEVEL_EFFORT,
+  type NeoModelPreference,
+} from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { NEO_FRONT } from '@hyperneo/prompts';
 import { z } from 'zod';
@@ -9,6 +15,8 @@ import { oneShotModelIds, readAssistantReply } from '../agent/one-shot-model.ts'
 import { awaitSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
 import { getProviderService } from '../provider-service.ts';
 import { neoDerivedId } from './derived-id.ts';
+import { frontSession } from './front-session.ts';
+import { Logger } from '../logger.ts';
 import type { NeoService } from './service.ts';
 
 const Read = z
@@ -29,6 +37,9 @@ export async function runNeoFrontModel(
   ask: NeoConversationAsk,
   model: NeoModelPreference
 ): Promise<string | null> {
+  const session = await frontSession(service, ask, model);
+  const history = service.db.getSDKMessageRepo();
+  let assistant: SDKAssistantMessage | undefined;
   let reads = 0;
   let grounded = false;
   const lookups = (['projects', 'asks', 'cards', 'todos'] as const).map((kind) =>
@@ -71,25 +82,41 @@ export async function runNeoFrontModel(
       })
   );
   const tools = [...lookups, send];
-  const env = await getProviderService().getIsolatedEnvForModel(model.provider, model.model);
+  const env: NodeJS.ProcessEnv = {
+    ...(await getProviderService().getIsolatedEnvForModel(model.provider, model.model)),
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(AUTO_COMPACT_PERCENT_DEFAULT),
+  };
+  delete env.CLAUDE_CODE_DISABLE_THINKING;
+  const budget = THINKING_LEVEL_TOKENS[model.thinkingLevel];
+  let phase = 'sdk_path';
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), 15000);
   let text = '';
+  let structured: unknown;
   try {
+    const pathToClaudeCodeExecutable = await awaitSDKCliPath();
+    phase = 'sdk_query';
     const messages = query({
       prompt: (async function* () {
-        yield {
+        const input: SDKUserMessage = {
           type: 'user',
-          session_id: '',
+          session_id: session.sdkSessionId ?? session.id,
           parent_tool_use_id: null,
-          uuid: ask.requestId,
+          uuid: neoDerivedId(`front-input:${ask.requestId}`) as UUID,
           message: { role: 'user', content: ask.content },
-        } as SDKUserMessage;
+        };
+        if (
+          !history.getMessageByUuid(session.id, input.uuid!) &&
+          !history.saveSDKMessage(session.id, input, 'human')
+        )
+          throw new Error('front_history_write_failed');
+        yield input;
       })(),
       options: {
         model: oneShotModelIds(model.provider, model.model, env).model,
         env,
         systemPrompt: NEO_FRONT,
+        outputFormat: { type: 'json_schema', schema: z.toJSONSchema(Reply) },
         tools: [],
         settingSources: [],
         strictMcpConfig: true,
@@ -97,23 +124,56 @@ export async function runNeoFrontModel(
         mcpServers: { front: createSdkMcpServer({ name: 'front', tools }) },
         permissionMode: 'dontAsk',
         maxTurns: 4,
-        persistSession: false,
-        thinking: { type: 'disabled' },
+        persistSession: true,
+        ...(session.sdkSessionId ? { resume: session.sdkSessionId } : { sessionId: session.id }),
+        cwd: session.workspacePath ?? undefined,
+        thinking:
+          budget === undefined ? { type: 'disabled' } : { type: 'enabled', budgetTokens: budget },
+        effort: THINKING_LEVEL_EFFORT[model.thinkingLevel],
         abortController,
-        pathToClaudeCodeExecutable: await awaitSDKCliPath(),
+        pathToClaudeCodeExecutable,
         executable: isRunningUnderBun() ? 'bun' : undefined,
       },
     });
     for await (const message of messages) {
-      if (message.type === 'result' && message.subtype !== 'success') return null;
+      if (message.type === 'system' && message.subtype === 'init')
+        await service.db.updateSession(session.id, { sdkSessionId: message.session_id });
+      if (message.type === 'result') {
+        if (message.subtype !== 'success') throw new Error(message.subtype);
+        structured = message.structured_output;
+      }
       if (message.type === 'assistant') {
+        assistant = message;
         const reply = readAssistantReply(message);
-        if ('error' in reply) return null;
+        if ('error' in reply) throw new Error(`front_sdk_${message.error}`);
         if (reply.text) text = reply.text;
       }
     }
-    const reply = Reply.safeParse(JSON.parse(text));
-    return reply.success && (reply.data.kind !== 'status' || grounded) ? reply.data.text : null;
+    phase = 'reply_validation';
+    const reply = Reply.parse(
+      structured ?? JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''))
+    );
+    if (reply.kind === 'status' && !grounded) {
+      new Logger('NeoFront').warn('Front status reply lacked a fresh grounding read');
+      return null;
+    }
+    if (
+      assistant &&
+      !history.saveSDKMessage(session.id, {
+        ...assistant,
+        message: { ...assistant.message, content: [{ type: 'text', text: reply.text }] },
+      })
+    )
+      throw new Error('front_history_write_failed');
+    return reply.text;
+  } catch (error) {
+    new Logger('NeoFront').warn('Front query failed', {
+      phase: abortController.signal.aborted ? 'deadline_exceeded' : phase,
+      provider: model.provider,
+      model: model.model,
+      errorType: error instanceof Error ? error.name : 'unknown',
+    });
+    throw error;
   } finally {
     clearTimeout(timer);
   }

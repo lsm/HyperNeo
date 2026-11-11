@@ -396,4 +396,9 @@ export const en = {
   'artifact.htmlPreviewUnavailable': 'This HTML document cannot be previewed.',
   'artifact.htmlSourceOnly': 'HTML preview unavailable. View the original source.',
   'artifact.loadingSource': 'Loading source…',
+  'dual.label': 'Dual-model mode',
+  'dual.description':
+    'On sends every message to the front model and Neo together; off uses Neo alone.',
+  'dual.reconnect': 'Reconnect before changing dual-model mode.',
+  'dual.saveError': 'Could not save dual-model settings.',
 } as const;

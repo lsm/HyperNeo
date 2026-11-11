@@ -83,10 +83,10 @@ test.each(['text', 'live_voice'] as const)(
     });
   }
 );
-test('a silent deferral leaves the action with coordinator delivery', async () => {
+test('an empty inference is a job failure while coordinator delivery remains available', async () => {
   const [job] = await accept(true, 'Book the appointment');
   infer.mockResolvedValue(null);
-  await createNeoFrontHandler(service, infer)(job);
+  await expect(createNeoFrontHandler(service, infer)(job)).rejects.toThrow('front_empty_reply');
   expect(service.publications.list(conversationId) ?? []).toEqual([]);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [requestId])).toHaveLength(
     1
@@ -112,7 +112,7 @@ test('turning the switch off prevents a queued front job from speaking', async (
 test('model failure leaves coordinator delivery available without a front publication', async () => {
   const [job] = await accept(true);
   infer.mockRejectedValueOnce(new Error('Model unavailable'));
-  expect(await createNeoFrontHandler(service, infer)(job)).toEqual({ delivered: false });
+  await expect(createNeoFrontHandler(service, infer)(job)).rejects.toThrow('Model unavailable');
   expect(service.publications.list(conversationId) ?? []).toEqual([]);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [requestId])).toHaveLength(
     1

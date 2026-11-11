@@ -21,7 +21,16 @@ const ask = {
 const preference = { model: 'glm-4.7-flashx', provider: 'glm', thinkingLevel: 'off' as const };
 const read = vi.fn();
 const note = vi.fn();
-const service = { db: { gateway: { run: read } }, wakeNeo: note } as unknown as NeoService;
+vi.mock('../../../../src/lib/neo/front-session.ts', () => ({
+  frontSession: async () => ({
+    id: '30000000-0000-4000-8000-000000000001',
+    workspacePath: '/synthetic',
+  }),
+}));
+const service = {
+  db: { gateway: { run: read }, getSDKMessageRepo: () => ({ saveSDKMessage: () => true }) },
+  wakeNeo: note,
+} as unknown as NeoService;
 type Tool = { name: string; handler: (input: object) => Promise<unknown> };
 let tools: Tool[];
 function response(kind: string, text: string) {
@@ -132,4 +141,34 @@ test('parallel lookup attempts cannot restore grounding after a rejected extra r
   } as unknown as typeof query);
   expect(await runNeoFrontModel(service, ask, preference)).toBeNull();
   expect(read).toHaveBeenCalledTimes(1);
+});
+
+test('uses the selected thinking level and the daemon default compaction percentage', async () => {
+  await runNeoFrontModel(service, ask, { ...preference, thinkingLevel: 'think24k' });
+  const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+  expect(options.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
+  expect(options.effort).toBe('high');
+  expect(options.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('90');
+  expect(options.maxTurns).toBe(4);
+});
+
+test('continues the same durable front SDK session on an extra human message', async () => {
+  await runNeoFrontModel(service, ask, preference);
+  const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+  expect(options.persistSession).toBe(true);
+  expect(options.resume ?? options.sessionId).toBeTruthy();
+});
+
+test('reads the SDK structured reply instead of silently rejecting non-JSON assistant text', async () => {
+  vi.mocked(query).mockImplementation(async function* () {
+    yield {
+      type: 'result',
+      subtype: 'success',
+      structured_output: { kind: 'chat', text: 'Hello!' },
+    };
+  } as unknown as typeof query);
+  expect(await runNeoFrontModel(service, ask, preference)).toBe('Hello!');
+  expect(vi.mocked(query).mock.calls.at(-1)![0].options?.outputFormat).toMatchObject({
+    type: 'json_schema',
+  });
 });

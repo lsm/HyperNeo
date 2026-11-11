@@ -1,3 +1,4 @@
+import { Logger } from '../logger.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -19,6 +20,7 @@ export function createNeoFrontHandler(service: NeoService, infer = runNeoFrontMo
         const { conversationId, messageId } = Receipt.parse(job.payload);
         const front = service.db.getGlobalSettings().neo?.front;
         const ask = service.asks.find(conversationId, messageId);
+        if (front?.enabled && !front.model) throw new Error('front_model_not_selected');
         if (
           !front?.enabled ||
           !front.model ||
@@ -29,8 +31,17 @@ export function createNeoFrontHandler(service: NeoService, infer = runNeoFrontMo
         const publicationId = neoDerivedId(`front-reply:${conversationId}:${messageId}`);
         const previous = service.publications.get(conversationId, publicationId);
         const text =
-          previous?.fullText ?? (await infer(service, ask, front.model).catch(() => null));
-        if (!text || service.db.getGlobalSettings().neo?.front?.enabled !== true) return null;
+          previous?.fullText ??
+          (await infer(service, ask, front.model).catch((error) => {
+            new Logger('NeoFront').warn('Front inference failed', {
+              provider: front.model!.provider,
+              model: front.model!.model,
+              errorType: error instanceof Error ? error.name : 'unknown',
+            });
+            throw error;
+          }));
+        if (!text) throw new Error('front_empty_reply');
+        if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return null;
         return { ask, publicationId, text };
       },
       'job',

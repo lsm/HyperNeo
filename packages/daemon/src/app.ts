@@ -545,7 +545,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
-    const frontProcessor = new JobQueueProcessor(jobQueue, { db: db.gateway, maxConcurrent: 2 });
+    const frontProcessor = new JobQueueProcessor(jobQueue, { db: db.gateway, maxConcurrent: 1 });
     const mailboxExpireProcessor = new JobQueueProcessor(jobQueue, {
       db: db.gateway,
       pollIntervalMs: 1000,
