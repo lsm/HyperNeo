@@ -357,7 +357,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           ...speech,
           guidance:
             fresh && !draft.spoken && speech.listening === 'yes'
-              ? `Already shown to the user. The human is now listening: call neo.speech.say (Front: speech_say) once with a short spoken version and requestId "publication:${version}"; never re-publish the text.`
+              ? `Already shown to the user. The human is now listening: call ${caller.sessionId === frontSessionId(receipt.publication.conversationId) ? 'speech_say' : 'neo.speech.say'} once with a short spoken version and requestId "publication:${version}"; never re-publish the text.`
               : 'Already shown to the user; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.',
         };
       },

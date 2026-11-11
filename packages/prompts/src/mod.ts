@@ -271,7 +271,7 @@ import mdToolQuestionRelayAnswer from './neo/tools/neo.question.relayAnswer.md' 
 };
 import mdToolRelaySendersSet from './neo/tools/neo.relaySenders.set.md' with { type: 'text' };
 import mdToolRelaySendersRecent from './neo/tools/neo.relaySenders.recent.md' with { type: 'text' };
-import { buildPromptRegistry } from './loader.ts';
+import { buildPromptRegistry, fillPrompt } from './loader.ts';
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
 };
@@ -551,8 +551,8 @@ export const {
   WORKER_PROVENANCE_TEAM_FIELD,
   WORKER_PROVENANCE_OPEN_PRS,
   NEO_ROOT_PROMPT,
-  NEO_ROOT_TURN_END,
-  NEO_FRONT,
+  NEO_ROOT_TURN_END: NEO_ROOT_TURN_END_TEMPLATE,
+  NEO_FRONT: NEO_FRONT_TEMPLATE,
   NEO_STANDING_RULES,
   NEO_PACK_PREFERENCES,
   NEO_WORK_GOAL_ASKED,
@@ -653,6 +653,20 @@ export const {
   RESEARCH_REVIEW_PROMPT,
   REVIEW_ONLY_REVIEW_PROMPT,
 } = buildPromptRegistry(registry);
+
+export const NEO_ROOT_TURN_END = fillPrompt(NEO_ROOT_TURN_END_TEMPLATE, {
+  ACK_TOOL: 'neo.speech.say',
+  ACK_NOTE: 'A spoken acknowledgment needs no publication.',
+  PUBLISH_TOOL: 'neo.publication.publish',
+  SAY_TOOL: 'neo.speech.say',
+});
+
+export const NEO_FRONT = fillPrompt(NEO_FRONT_TEMPLATE, {
+  ACK_TOOL: 'reply_short with progress:true and spoken',
+  ACK_NOTE: 'The acknowledgment is a progress reply that includes spoken.',
+  PUBLISH_TOOL: 'reply_short or reply_detailed',
+  SAY_TOOL: 'speech_say',
+});
 
 const codingSkill = parseSkillMarkdown(mdneoPacksCodingSkill, 'neo/packs/coding/SKILL.md');
 

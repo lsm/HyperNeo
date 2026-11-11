@@ -17,6 +17,7 @@ import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
 import { frontSession } from '../../../../src/lib/neo/front-session.ts';
 import { admitCreateSessionConfig } from '../../../../src/lib/session/create-session-config.ts';
 import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
+import { frontModeNote } from '../../../../src/lib/neo/front-mode.ts';
 import {
   createTestDb,
   createTestInternalEventBus,
@@ -64,14 +65,31 @@ afterEach(async () => {
   db.close();
 });
 
-test('Front and Neo share the same expanded speech rules', () => {
-  const start = 'Input-source markers';
-  const end =
-    'If speech is unavailable, continue with the normal screen reply; do not retry in a loop.';
-  const rules = NEO_FRONT.slice(NEO_FRONT.indexOf(start));
-  expect(rules).toContain(end);
-  expect(NEO_ROOT_TURN_END).toContain(rules.trim());
-  expect(NEO_FRONT).not.toContain('<!-- include:');
+test('Front and Neo share speech rules with their own tool names', () => {
+  expect(NEO_FRONT).toContain(
+    'use reply_short with progress:true and spoken to briefly acknowledge the request naturally'
+  );
+  expect(NEO_FRONT).toContain('published through reply_short or reply_detailed.');
+  expect(NEO_FRONT).toContain('follow its guidance to call speech_say once');
+  expect(NEO_FRONT).not.toContain('neo.speech.say');
+  expect(NEO_FRONT).not.toContain('{{');
+  expect(NEO_ROOT_TURN_END).toContain(
+    'use neo.speech.say to briefly acknowledge the request naturally, then do the work.'
+  );
+  expect(NEO_ROOT_TURN_END).toContain(
+    'Every substantive answer or result must still be published through neo.publication.publish.'
+  );
+  expect(NEO_ROOT_TURN_END).toContain('A spoken acknowledgment needs no publication.');
+  expect(NEO_ROOT_TURN_END).toContain('follow its guidance to call neo.speech.say once');
+  expect(NEO_ROOT_TURN_END).not.toContain('{{');
+});
+
+test('Front mode note asks for spoken only while listening', () => {
+  expect(frontModeNote(conversationId, true, true, true)).toContain('progress:true, spoken');
+  expect(frontModeNote(conversationId, true, true, true)).toContain(
+    'every reply_short and reply_detailed call includes spoken'
+  );
+  expect(frontModeNote(conversationId, true, true, false)).not.toContain('spoken');
 });
 
 test('Front uses the ordinary immediate session with its role and tools', async () => {
@@ -1194,6 +1212,27 @@ test('Front leaves Markdown silent and requests a spoken line from the model', a
   expect(receipt.accepted).toBe(true);
   expect(speech).toHaveBeenCalledWith(root, expect.any(String), undefined);
   expect(receipt.guidance).toContain('speech_say');
+  speech.mockRestore();
+});
+
+test('Front rejects a new reply without spoken while the human is listening', async () => {
+  const { id } = await deliveredConvoInput();
+  const listening = vi.spyOn(service.speech, 'isListening').mockReturnValue(true);
+  const speech = vi.spyOn(service.speech, 'publish').mockResolvedValue({
+    listening: 'yes',
+    spokenDelivered: true,
+  });
+  const draft = { replyTo: [id], fullText: 'Done.', verbatim: true, progress: true };
+  expect(await convoPublish({ ...draft, requestId: 'silent' })).toEqual({
+    accepted: false,
+    reason: 'spoken_required',
+    listening: 'yes',
+  });
+  expect(speech).not.toHaveBeenCalled();
+  const receipt = await convoPublish({ ...draft, requestId: 'spoken', spoken: '好了。' });
+  expect(receipt.accepted).toBe(true);
+  expect(speech).toHaveBeenCalledWith(root, expect.any(String), '好了。');
+  listening.mockRestore();
   speech.mockRestore();
 });
 

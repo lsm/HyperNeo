@@ -69,7 +69,7 @@ export function createNeoFrontHandler(service: NeoService) {
             [
               {
                 type: 'text',
-                text: `Human message ${messageId}. First call reply_short with progress:true and replyTo:["${messageId}"] to give the human a one-sentence acknowledgment. Use reply_short for at most five short sentences in one paragraph; use reply_detailed for more than five sentences or any structured report, list, table or multi-topic update. Then handle the request or call neo_send. Preserve this ID throughout.`,
+                text: `Human message ${messageId}. First call reply_short with progress:true${service.speech.isListening(service.defaultSessionId() ?? ask.askOrigin.sessionId) ? ', spoken' : ''} and replyTo:["${messageId}"] to give the human a one-sentence acknowledgment. Use reply_short for at most five short sentences in one paragraph; use reply_detailed for more than five sentences or any structured report, list, table or multi-topic update. Then handle the request or call neo_send. Preserve this ID throughout.`,
               },
               ...(ask.replyTo
                 ? [

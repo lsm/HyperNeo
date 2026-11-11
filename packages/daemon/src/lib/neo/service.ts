@@ -243,9 +243,14 @@ export class NeoService {
                 content: [
                   {
                     type: 'text',
-                    text: listening
-                      ? '[listening: yes] The human is now listening. If your current reply has not been spoken, give its short spoken version once using the speech tool.'
-                      : '[listening: no] The human stopped listening.',
+                    text:
+                      conversation && id === frontSessionId(conversation)
+                        ? listening
+                          ? '[listening: yes] The human is now listening. If your current reply has not been spoken, give its short spoken version once using speech_say.'
+                          : '[listening: no] The human stopped listening.'
+                        : listening
+                          ? 'The human is now listening.'
+                          : 'The human stopped listening.',
                   },
                 ],
               },
@@ -257,14 +262,15 @@ export class NeoService {
       (id) => !!this.db.getSession(id),
       (id) => {
         const conversation = this.repo.readConversationId();
+        const listening = this.speech.isListening(this.defaultSessionId() ?? id);
         return conversation &&
           (id === this.defaultSessionId() || id === frontSessionId(conversation))
           ? frontModeNote(
               conversation,
               this.db.getGlobalSettings().neo?.front?.enabled === true,
-              id === frontSessionId(conversation)
-            ) +
-              `\n[listening: ${this.speech.isListening(this.defaultSessionId() ?? id) ? 'yes' : 'no'}]`
+              id === frontSessionId(conversation),
+              listening
+            ) + `\n[listening: ${listening ? 'yes' : 'no'}]`
           : undefined;
       },
       (id) => {

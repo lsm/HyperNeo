@@ -47,7 +47,9 @@ export function createFrontTools(service: NeoService, conversationId: string) {
     artifacts: NeoPublicationDraft.shape.artifacts,
     session: NeoPublicationDraft.shape.session,
     links: NeoPublicationDraft.shape.links,
-    spoken: NeoPublicationDraft.shape.spoken,
+    spoken: NeoPublicationDraft.shape.spoken.describe(
+      "Required while the latest fact is [listening: yes]: one or two natural spoken lines in the human's language, consistent with the text, without paths, IDs, hashes, long numbers or Markdown. Omit when [listening: no]."
+    ),
   };
   const publish = async ({
     publicationId,
@@ -61,6 +63,12 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       )
     )
       return result({ accepted: false, reason: 'front_ack_required' });
+    if (
+      !publicationId &&
+      !input.spoken &&
+      service.speech.isListening(service.defaultSessionId() ?? sessionId)
+    )
+      return result({ accepted: false, reason: 'spoken_required', listening: 'yes' });
     if (!publicationId) return result(await service.publish(input, { source: 'mcp', sessionId }));
     const current = service.publications.get(conversationId, publicationId);
     const ids = current?.replyTo?.length
@@ -100,7 +108,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply_short',
-        'Send one plain message with no Details. Use for at most five short sentences in one brief paragraph. Use for acknowledgments, brief answers and progress updates. First call this with progress:true and the human replyTo ID for a one-sentence acknowledgment before doing work. For a final short answer omit progress. To update your existing message, pass publicationId.',
+        'Send one plain message with no Details. Use for at most five short sentences in one brief paragraph. Use for acknowledgments, brief answers and progress updates. First call this with progress:true and the human replyTo ID for a one-sentence acknowledgment before doing work. For a final short answer omit progress. To update your existing message, pass publicationId. While [listening: yes], include spoken.',
         {
           ...replyFields,
           text: z.string().trim().min(1).max(16000),
@@ -110,7 +118,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply_detailed',
-        'Use for more than five sentences or any structured report, multi-topic update, list, table or long Back report. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the original human replyTo IDs. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result.',
+        'Use for more than five sentences or any structured report, multi-topic update, list, table or long Back report. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the original human replyTo IDs. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result. While [listening: yes], include spoken.',
         {
           ...replyFields,
           summary: z.string().trim().min(1).max(2000),
