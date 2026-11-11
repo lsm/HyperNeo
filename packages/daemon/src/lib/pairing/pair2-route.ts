@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
+import { readBoundedText } from './pair-route.ts';
 import {
   pairingRequestReads,
   pairingRequestWrites,
@@ -17,8 +18,6 @@ export interface Pair2RouteDeps {
   readonly now: () => number;
   readonly authenticate: (req: Request) => Promise<Pair2Identity | null>;
 }
-
-const MAX_BODY_BYTES = 4 * 1024;
 
 const BindBody = z.object({
   ticket: z.string().trim().min(16).max(80),
@@ -40,9 +39,9 @@ const answer = (status: number, body: unknown) =>
   });
 
 async function readJson(req: Request): Promise<unknown | null> {
-  if (Number(req.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return null;
+  const text = await readBoundedText(req);
+  if (text === null) return null;
   try {
-    const text = await req.text();
     return text ? JSON.parse(text) : {};
   } catch {
     return null;
@@ -155,7 +154,7 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
       );
       if (outcome.ok) return answer(200, outcome);
       if (outcome.reason === 'used') return answer(409, { error: outcome.reason });
-      limiter.fail(now());
+      if (outcome.reason !== 'not_approved') limiter.fail(now());
       return answer(403, { error: outcome.reason });
     }
 

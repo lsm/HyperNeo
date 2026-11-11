@@ -124,6 +124,36 @@ describe('pairing v2 one-time request route', () => {
     expect(devices.countDevices().humans).toBe(0);
   });
 
+  test('status exposes the bound phone key and name so an approver can verify it', async () => {
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await post('/pair2/bind', {
+      ticket: made.ticket,
+      phoneKey: phone.publicKeyB64,
+      name: 'My Phone',
+    });
+    expect(bound.status).toBe(200);
+    expect(await (await status(made.requestId)).json()).toMatchObject({
+      state: 'bound',
+      phoneKey: phone.publicKeyB64,
+      name: 'My Phone',
+    });
+  });
+
+  test('a phone retrying complete while awaiting approval does not trip the limiter', async () => {
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    const nonce = bound.body.bindNonce as string;
+    for (let i = 0; i < 5; i++) {
+      expect((await completeRequest(made.requestId, phone, nonce)).res.status).toBe(403);
+    }
+    await approveRequest(made.requestId);
+    const done = await completeRequest(made.requestId, phone, nonce);
+    expect(done.res.status).toBe(200);
+    expect(done.body.credential).toBeTruthy();
+  });
+
   test('completion needs approval and proof of possession', async () => {
     const made = await createRequest();
     const phone = phoneKeypair();

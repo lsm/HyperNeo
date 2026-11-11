@@ -160,9 +160,21 @@ export class PairingRequestRepository {
   requestStatus(
     requestId: string,
     now: number
-  ): { state: PairingRequestState; expiresAt: number } | null {
+  ): {
+    state: PairingRequestState;
+    expiresAt: number;
+    phoneKey: string | null;
+    name: string | null;
+  } | null {
     const row = this.rowById(requestId);
-    return row && { state: pairingRequestState(row, now), expiresAt: row.expiresAt };
+    return (
+      row && {
+        state: pairingRequestState(row, now),
+        expiresAt: row.expiresAt,
+        phoneKey: row.phoneKey,
+        name: row.name,
+      }
+    );
   }
 
   completeRequest(
