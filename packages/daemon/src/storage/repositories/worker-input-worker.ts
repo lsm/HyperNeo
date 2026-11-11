@@ -108,7 +108,11 @@ export class WorkerInputJobs {
       return neoWorkerKey(priorRef) === neoWorkerKey(ref);
     });
     const head = first < 0 || earlier[first].id === payload.inputId;
-    return { ...row, payload, ref, closed, head, todo };
+    const outcome = row.outcome
+      ? (JSON.parse(row.outcome) as ReturnType<typeof readDriverOutcome>)
+      : null;
+    const failure = outcome && 'failure' in outcome ? outcome.failure : null;
+    return { ...row, failure, payload, ref, closed, head, todo };
   }
 
   wait(job: Job, detail: string): void {
@@ -135,14 +139,30 @@ export class WorkerInputJobs {
     return true;
   }
 
+  recordFailure(
+    job: Job,
+    outcome: Extract<ReturnType<typeof readDriverOutcome>, { failure: string }>
+  ): boolean {
+    const current = new JobQueueRepository(this.db).getJob(job.id);
+    if (current?.status !== 'processing' || current.claimToken !== job.claimToken) return false;
+    if (!this.read(job).outcome)
+      recordWorkDeliveryOutcome.run(
+        this.db,
+        { id: job.payload.inputId as string, outcome, now: Date.now() },
+        new ChangeRecorder()
+      );
+    return true;
+  }
+
   settle(job: Job, outcome: ReturnType<typeof readDriverOutcome>, sent?: DriverSent | null): void {
     const jobs = new JobQueueRepository(this.db);
     if (!jobs.complete(job.id, {}, job.claimToken!)) return;
-    recordWorkDeliveryOutcome.run(
-      this.db,
-      { id: job.payload.inputId as string, outcome, now: Date.now() },
-      new ChangeRecorder()
-    );
+    if (!this.read(job).outcome)
+      recordWorkDeliveryOutcome.run(
+        this.db,
+        { id: job.payload.inputId as string, outcome, now: Date.now() },
+        new ChangeRecorder()
+      );
     if (job.payload.continuation && 'ref' in outcome && !outcome.delivery?.unconfirmed) {
       new NeoTodoSessionRepository(this.db).completeFollowUp(
         this.read(job).todoId!,
@@ -158,7 +178,7 @@ export const workerInputWrites = defineRepositoryOp(
   'work.workerInput.write',
   'write',
   WorkerInputJobs,
-  ['accept', 'wait', 'dispatch', 'settle']
+  ['accept', 'wait', 'dispatch', 'recordFailure', 'settle']
 );
 
 export const workerInputReads = defineRepositoryOp(

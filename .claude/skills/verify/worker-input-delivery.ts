@@ -20,6 +20,7 @@ const start = () => createDaemonApp({ config: { ...getConfig({ port: 0, host: '1
 let app = await start();
 const worker = '10000000-0000-4000-8000-000000008836';
 const root = 'neo:10000000-0000-4000-8000-000000008837';
+const recoveringNeo = 'neo:10000000-0000-4000-8000-000000008838';
 const ref = { adapter: 'hyperneo', id: worker };
 const caller = { source: 'internal', role: 'neo', sessionId: root } as const;
 const evidence: Record<string, unknown> = {};
@@ -73,7 +74,7 @@ try {
   evidence.afterRestart = inputs();
   evidence.received = received;
   await app.jobProcessor.stop();
-  const uncertain = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.send', { ref, notice: true, message: 'Retain the interrupted dispatch' }, caller);
+  const uncertain = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.send', { ref, notice: true, message: 'Retain the interrupted dispatch' }, { ...caller, sessionId: recoveringNeo });
   assert(uncertain.kind === 'completed' && SendWorkResultSchema.parse(uncertain.value).ok);
   const claimed = app.jobQueue.dequeue('worker_input', 1)[0];
   assert(claimed);
@@ -81,17 +82,21 @@ try {
   app.jobQueue.requeueWaiting(claimed.id, Date.now(), claimed.claimToken!);
   await app.cleanup();
   app = await start();
-  await until(() => inputs()[2].outcome !== null, 'interrupted dispatch is settled');
-  await until(() => messages(root).some((text) => text.includes('dispatch was interrupted')), 'Neo receives the uncertainty report');
+  await until(() => inputs()[2].outcome !== null && app.jobQueue.getJob(claimed.id)?.status === 'pending', 'interrupted dispatch failure is retained while its recipient is unavailable');
+  assert.equal(app.jobQueue.getJob(claimed.id)?.retryCount, 0);
+  evidence.notificationPending = { input: inputs()[2], job: app.jobQueue.getJob(claimed.id) };
+  await app.db.createSession({ id: recoveringNeo, title: 'Recovered synthetic Neo', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  await until(() => app.jobQueue.getJob(claimed.id)?.status === 'completed', 'the notification completes after its recipient recovers');
+  await until(() => messages(recoveringNeo).some((text) => text.includes('dispatch was interrupted')), 'Neo receives the uncertainty report');
   assert.equal(messages().filter((text) => text.includes('Retain the interrupted dispatch')).length, 0);
-  const uncertaintyReports = messages(root).filter((text) => text.includes('dispatch was interrupted'));
+  const uncertaintyReports = messages(recoveringNeo).filter((text) => text.includes('dispatch was interrupted'));
   assert.equal(uncertaintyReports.length, 1);
   assert.equal(inputs()[2].message, 'Retain the interrupted dispatch');
   assert.match(inputs()[2].outcome!, /may not have reached/);
   evidence.uncertainty = { input: inputs()[2], reports: uncertaintyReports };
   evidence.port = app.server.port;
   evidence.passed = true;
-  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, restartRecovered: true }));
+  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, restartRecovered: true }));
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

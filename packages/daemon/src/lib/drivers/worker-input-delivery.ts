@@ -33,7 +33,7 @@ export function createWorkerInputDelivery(
   const gateway = gatewayFor(db);
   const read = async (job: Job) => {
     const stored = await gateway.call(workerInputReads, 'read', job);
-    if (!stored.ref || stored.closed || !stored.head || stored.payload.dispatched)
+    if (!stored.ref || stored.closed || !stored.head || stored.payload.dispatched || stored.outcome)
       return { ...stored, status: null };
     const route = routeStatus({ ref: stored.ref }, deps);
     const status =
@@ -50,6 +50,7 @@ export function createWorkerInputDelivery(
   const decide = (
     facts: Facts
   ): { action: 'wait' | 'fail' | 'send' | 'uncertain'; detail: string } => {
+    if (facts.failure !== null) return { action: 'fail', detail: facts.failure };
     if (facts.payload.dispatched)
       return {
         action: 'uncertain',
@@ -85,16 +86,30 @@ export function createWorkerInputDelivery(
       };
     return { action: 'send', detail: '' };
   };
+  const reportFailure = async (
+    job: Job,
+    facts: Facts,
+    outcome: Extract<ReturnType<typeof readDriverOutcome>, { failure: string }>
+  ) => {
+    if (!(await gateway.call(workerInputWrites, 'recordFailure', job, outcome)))
+      return { fenced: true };
+    try {
+      await report(facts.payload.inputId, outcome.failure, facts.payload.from);
+    } catch (error) {
+      const detail = `Worker failure notification is pending: ${String(error)}`;
+      await gateway.call(workerInputWrites, 'wait', job, detail);
+      return { waiting: detail };
+    }
+    await gateway.call(workerInputWrites, 'settle', job, outcome);
+    return { failure: outcome.failure };
+  };
   const apply = async (job: Job, facts: Facts, plan: ReturnType<typeof decide>) => {
     if (plan.action === 'wait') {
       await gateway.call(workerInputWrites, 'wait', job, plan.detail);
       return { waiting: plan.detail };
     }
-    if (plan.action === 'fail' || plan.action === 'uncertain') {
-      await report(facts.payload.inputId, plan.detail, facts.payload.from);
-      await gateway.call(workerInputWrites, 'settle', job, { failure: plan.detail });
-      return { failure: plan.detail };
-    }
+    if (plan.action === 'fail' || plan.action === 'uncertain')
+      return reportFailure(job, facts, { failure: plan.detail });
     const ref = facts.ref!;
     const route = pickRoute('send', ref, deps.adapters());
     if ('reason' in route) {
@@ -128,6 +143,7 @@ export function createWorkerInputDelivery(
         { verb: 'send', ref },
         { kind: 'completed', value: result }
       );
+      if ('failure' in outcome) return reportFailure(job, facts, outcome);
       const sent = facts.status
         ? readDriverSent(
             { kind: 'completed', value: facts.status },
@@ -147,9 +163,7 @@ export function createWorkerInputDelivery(
       return { inputId: facts.payload.inputId };
     } catch (error) {
       const detail = `This input may not have reached the worker: ${String(error)}`;
-      await report(facts.payload.inputId, detail, facts.payload.from);
-      await gateway.call(workerInputWrites, 'settle', job, { failure: detail });
-      return { failure: detail };
+      return reportFailure(job, facts, { failure: detail });
     }
   };
   const deliver = (superpipe({})('deliver-worker-input') as PipelineAPI)
