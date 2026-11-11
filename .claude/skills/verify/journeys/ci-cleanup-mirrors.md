@@ -8,7 +8,9 @@ fallback source list, which references mirror+file and the Ubuntu signing keyrin
 Run `python3 scripts/test-cleanup-sandbox.py` on an authorized test host or CI.
 The fixture executes both workflow steps with isolated commands and mirror files.
 A simulated DNS outage starts with a direct Ubuntu source URL. The script must
-select its mirror+file source explicitly, install bubblewrap and run its smoke command.
+select its mirror+file source explicitly, log package policy before installing
+bubblewrap and run its smoke command. The CI logs retain the selected candidate
+and archive component on the runner itself.
 Healthy DNS must retain the runner mirror configuration. The reproduction on the
 old workflow fails both outage subcases. All fixture data is temporary.
 
