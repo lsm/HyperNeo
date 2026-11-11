@@ -1,10 +1,7 @@
 import type { Database } from '../sqlite-compat.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { sdkMessageBodyAt } from './sdk-message-body-read.ts';
-import {
-  SESSION_BILLING_TERMINAL,
-  CONSUMED_INPUT,
-} from '../../lib/drivers/space-input-evidence.ts';
+import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
 
 export class NeoFrontInputRepository {
   constructor(private readonly db: Database) {}

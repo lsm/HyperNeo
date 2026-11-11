@@ -202,7 +202,13 @@ async function accept() {
     db.getSDKMessageRepo(),
     db.getJobQueueRepo()
   );
-  return { id, job: db.getJobQueueRepo().listJobs({ queue: 'neo.front' }).at(-1)! };
+  return {
+    id,
+    job: db
+      .getJobQueueRepo()
+      .listJobs({ queue: 'neo.front' })
+      .find((job) => job.payload.messageId === id)!,
+  };
 }
 
 test('human input reaches Front once without waking Back or auto-publishing', async () => {
@@ -699,7 +705,11 @@ test('the disabled-mode fallback preserves a manual Neo input hold', async () =>
 
 test('a shared terminal still answers an unclaimed input after Neo answered its batch peer', async () => {
   const first = await accept();
+  db.getDatabase()
+    .prepare('UPDATE job_queue SET created_at = created_at - 1000 WHERE id = ?')
+    .run(first.job.id);
   const second = await accept();
+  expect(second.job.payload.messageId).toBe(second.id);
   const handler = createNeoFrontHandler(service);
   await handler(first.job);
   await handler(second.job);
