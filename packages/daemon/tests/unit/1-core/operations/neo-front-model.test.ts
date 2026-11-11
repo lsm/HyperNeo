@@ -83,7 +83,9 @@ test('status requires a successful fresh read in this call', async () => {
   vi.mocked(query).mockImplementation(async function* () {
     yield response('status', 'Done.');
   } as unknown as typeof query);
-  expect(await runNeoFrontModel(service, ask, preference)).toBeNull();
+  await expect(runNeoFrontModel(service, ask, preference)).rejects.toThrow(
+    'front_status_not_grounded'
+  );
   vi.mocked(query).mockImplementation(async function* () {
     await tools[3].handler({ id: 'one' });
     yield response('status', 'Done.');
@@ -95,7 +97,9 @@ test('status requires a successful fresh read in this call', async () => {
     input: { id: 'one' },
   });
   read.mockResolvedValue(null);
-  expect(await runNeoFrontModel(service, ask, preference)).toBeNull();
+  await expect(runNeoFrontModel(service, ask, preference)).rejects.toThrow(
+    'front_status_not_grounded'
+  );
 });
 test('each invocation discards reads and refuses a second lookup', async () => {
   vi.mocked(query).mockImplementation(async function* () {
@@ -104,12 +108,16 @@ test('each invocation discards reads and refuses a second lookup', async () => {
     expect(repeated).toMatchObject({ isError: true });
     yield response('status', 'Done.');
   } as unknown as typeof query);
-  expect(await runNeoFrontModel(service, ask, preference)).toBeNull();
+  await expect(runNeoFrontModel(service, ask, preference)).rejects.toThrow(
+    'front_status_not_grounded'
+  );
   expect(read).toHaveBeenCalledTimes(1);
   vi.mocked(query).mockImplementation(async function* () {
     yield response('status', 'Done.');
   } as unknown as typeof query);
-  expect(await runNeoFrontModel(service, ask, preference)).toBeNull();
+  await expect(runNeoFrontModel(service, ask, preference)).rejects.toThrow(
+    'front_status_not_grounded'
+  );
 });
 test('action and mixed requests can only return a brief deferral', async () => {
   vi.mocked(query).mockImplementation(async function* () {
@@ -139,7 +147,9 @@ test('parallel lookup attempts cannot restore grounding after a rejected extra r
     await Promise.all([tools[0].handler({ id: 'one' }), tools[1].handler({ id: 'two' })]);
     yield response('status', 'Both are done.');
   } as unknown as typeof query);
-  expect(await runNeoFrontModel(service, ask, preference)).toBeNull();
+  await expect(runNeoFrontModel(service, ask, preference)).rejects.toThrow(
+    'front_status_not_grounded'
+  );
   expect(read).toHaveBeenCalledTimes(1);
 });
 
@@ -170,5 +180,12 @@ test('reads the SDK structured reply instead of silently rejecting non-JSON assi
   expect(await runNeoFrontModel(service, ask, preference)).toBe('Hello!');
   expect(vi.mocked(query).mock.calls.at(-1)![0].options?.outputFormat).toMatchObject({
     type: 'json_schema',
+  });
+});
+
+test('uses the JSON Schema draft accepted by the SDK CLI', async () => {
+  await runNeoFrontModel(service, ask, preference);
+  expect(vi.mocked(query).mock.calls.at(-1)![0].options?.outputFormat).toMatchObject({
+    schema: { $schema: 'http://json-schema.org/draft-07/schema#' },
   });
 });

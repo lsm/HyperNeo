@@ -25,7 +25,7 @@ export function NeoFrontSettings() {
   return (
     <>
       <label class="flex items-center gap-1 text-xs text-fg">
-        <span>Front</span>
+        <span>Convo</span>
         <input
           aria-label={t('dual.label')}
           type="checkbox"

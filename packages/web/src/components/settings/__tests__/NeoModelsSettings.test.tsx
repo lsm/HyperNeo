@@ -744,7 +744,7 @@ async function frontEditor() {
   const section = await screen.findByRole('region', { name: 'Neo models' });
   const ui = within(section);
   await waitFor(() =>
-    expect(ui.getByRole('button', { name: 'Choose front model' }).hasAttribute('disabled')).toBe(
+    expect(ui.getByRole('button', { name: 'Choose Convo model' }).hasAttribute('disabled')).toBe(
       false
     )
   );
@@ -753,7 +753,7 @@ async function frontEditor() {
 
 test('chooses a separate provider/model through the targeted front operation', async () => {
   const ui = await frontEditor();
-  fireEvent.click(ui.getByRole('button', { name: 'Choose front model' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Choose Convo model' }));
   fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -777,7 +777,7 @@ test.each(['refused', 'failed'])(
       return { ok: false, reason: 'Unavailable model' };
     });
     const ui = await frontEditor();
-    fireEvent.click(ui.getByRole('button', { name: 'Choose front model' }));
+    fireEvent.click(ui.getByRole('button', { name: 'Choose Convo model' }));
     fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
     await within(await screen.findByRole('region', { name: 'Neo models' })).findByRole('alert');
     expect(ui.getByText(/^opus ·/)).toBeTruthy();
@@ -801,7 +801,7 @@ test('front model is an inline row inside the same Neo models card', async () =>
   expect(
     ui.getByRole('checkbox', { name: 'Dual-model mode' }).closest('[data-model-row]')
   ).toBeTruthy();
-  expect(ui.getByRole('button', { name: 'Choose front model' })).toBeTruthy();
+  expect(ui.getByRole('button', { name: 'Choose Convo model' })).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Front model' })).toBeNull();
 });
 

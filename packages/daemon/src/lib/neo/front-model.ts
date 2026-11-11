@@ -1,6 +1,10 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'node:crypto';
-import type { SDKAssistantMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  SDKAssistantMessage,
+  SDKUserMessage,
+  SDKResultMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 import {
   AUTO_COMPACT_PERCENT_DEFAULT,
   THINKING_LEVEL_TOKENS,
@@ -93,6 +97,7 @@ export async function runNeoFrontModel(
   const timer = setTimeout(() => abortController.abort(), 15000);
   let text = '';
   let structured: unknown;
+  let terminal: SDKResultMessage | undefined;
   try {
     const pathToClaudeCodeExecutable = await awaitSDKCliPath();
     phase = 'sdk_query';
@@ -116,7 +121,7 @@ export async function runNeoFrontModel(
         model: oneShotModelIds(model.provider, model.model, env).model,
         env,
         systemPrompt: NEO_FRONT,
-        outputFormat: { type: 'json_schema', schema: z.toJSONSchema(Reply) },
+        outputFormat: { type: 'json_schema', schema: z.toJSONSchema(Reply, { target: 'draft-7' }) },
         tools: [],
         settingSources: [],
         strictMcpConfig: true,
@@ -139,7 +144,9 @@ export async function runNeoFrontModel(
       if (message.type === 'system' && message.subtype === 'init')
         await service.db.updateSession(session.id, { sdkSessionId: message.session_id });
       if (message.type === 'result') {
-        if (message.subtype !== 'success') throw new Error(message.subtype);
+        terminal = message;
+        if (message.subtype !== 'success' || message.is_error)
+          throw new Error(`front_sdk_${message.subtype}`);
         structured = message.structured_output;
       }
       if (message.type === 'assistant') {
@@ -153,10 +160,7 @@ export async function runNeoFrontModel(
     const reply = Reply.parse(
       structured ?? JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''))
     );
-    if (reply.kind === 'status' && !grounded) {
-      new Logger('NeoFront').warn('Front status reply lacked a fresh grounding read');
-      return null;
-    }
+    if (reply.kind === 'status' && !grounded) throw new Error('front_status_not_grounded');
     if (
       assistant &&
       !history.saveSDKMessage(session.id, {
@@ -165,8 +169,40 @@ export async function runNeoFrontModel(
       })
     )
       throw new Error('front_history_write_failed');
+    if (terminal && !history.saveSDKMessage(session.id, terminal))
+      throw new Error('front_history_write_failed');
     return reply.text;
   } catch (error) {
+    history.saveSDKMessage(session.id, {
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      uuid: crypto.randomUUID(),
+      session_id: session.sdkSessionId ?? session.id,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 1,
+      stop_reason: 'error',
+      total_cost_usd: 0,
+      modelUsage: {},
+      permission_denials: [],
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        output_tokens_details: { thinking_tokens: 0 },
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+        inference_geo: '',
+        iterations: [],
+        server_tool_use: { web_fetch_requests: 0, web_search_requests: 0 },
+        service_tier: 'standard',
+        speed: 'standard',
+      },
+      errors: [
+        `Convo could not reply (${abortController.signal.aborted ? 'deadline_exceeded' : phase}). See daemon logs.`,
+      ],
+    });
     new Logger('NeoFront').warn('Front query failed', {
       phase: abortController.signal.aborted ? 'deadline_exceeded' : phase,
       provider: model.provider,

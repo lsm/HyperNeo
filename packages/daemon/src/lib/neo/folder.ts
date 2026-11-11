@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository.ts';
+import { neoDerivedId } from './derived-id.ts';
 import { getDataDir } from '../data-dir.ts';
 
 export const neoUserFolder = (workspaceRoot?: string) =>
@@ -36,14 +37,30 @@ export function planNeoSessionFiling(
 
 export async function fileNeoSessions(
   db: {
-    getSession(id: string): Pick<Session, 'id' | 'workspacePath'> | null;
+    getSession(
+      id: string
+    ): (Pick<Session, 'id' | 'workspacePath'> & Partial<Pick<Session, 'metadata'>>) | null;
     updateSession(id: string, updates: Partial<Session>): Promise<unknown>;
   },
-  repo: Pick<NeoRepository, 'defaultBinding'>,
+  repo: Pick<NeoRepository, 'defaultBinding'> & Partial<Pick<NeoRepository, 'readConversationId'>>,
   folder: string
 ): Promise<void> {
   const root = repo.defaultBinding();
   const sessions = [root ? db.getSession(root.sessionId) : null];
   for (const id of planNeoSessionFiling(sessions))
     await db.updateSession(id, { workspacePath: folder });
+  const conversationId = repo.readConversationId?.();
+  const front = conversationId
+    ? db.getSession(neoDerivedId(`front-session:${conversationId}`))
+    : null;
+  if (front?.metadata) {
+    const neo = sessions[0];
+    await db.updateSession(front.id, {
+      title: 'Convo',
+      metadata: {
+        ...front.metadata,
+        executionProjectPath: neo?.metadata?.executionProjectPath ?? neo?.workspacePath ?? folder,
+      },
+    });
+  }
 }

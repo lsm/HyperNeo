@@ -4,6 +4,8 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import { createNeoFrontHandler } from '../../../../src/lib/neo/front-job.ts';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
+import { fileNeoSessions } from '../../../../src/lib/neo/folder.ts';
+import { frontSession } from '../../../../src/lib/neo/front-session.ts';
 import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import {
@@ -25,7 +27,7 @@ const root = `neo:${conversation}`;
 const sdkId = '30000000-0000-4000-8000-000000000001';
 beforeEach(async () => {
   db = await createTestDb();
-  await db.createSession(createTestSession(root));
+  await db.createSession({ ...createTestSession(root), workspacePath: '/synthetic/Neo' });
   service = createNeoService(
     db,
     {
@@ -33,12 +35,17 @@ beforeEach(async () => {
         sessionId: string;
         title: string;
         workspacePath: string;
+        executionProjectPath?: string;
         config: object;
       }) =>
         db.createSession({
           ...createTestSession(input.sessionId),
           title: input.title,
           workspacePath: input.workspacePath,
+          metadata: {
+            ...createTestSession(input.sessionId).metadata,
+            executionProjectPath: input.executionProjectPath,
+          },
           config: { ...createTestSession(input.sessionId).config, ...input.config },
         }),
     } as unknown as SessionManager,
@@ -78,7 +85,14 @@ beforeEach(async () => {
           usage: { input_tokens: 1, output_tokens: 1 },
         },
       };
-      yield { type: 'result', subtype: 'success' };
+      yield {
+        type: 'result',
+        subtype: 'success',
+        uuid: crypto.randomUUID(),
+        session_id: sdkId,
+        duration_ms: 1,
+        is_error: false,
+      };
     } as unknown as typeof query);
 });
 afterEach(async () => {
@@ -103,7 +117,12 @@ test('switch on runs the extra message in the same SDK conversation and records 
     expect(await handler(job)).toMatchObject({ delivered: true });
   }
   const frontId = neoDerivedId(`front-session:${conversation}`);
-  expect(db.getSession(frontId)).toMatchObject({ title: '前端', sdkSessionId: sdkId });
+  expect(db.getSession(frontId)).toMatchObject({
+    title: 'Convo',
+    sdkSessionId: sdkId,
+    workspacePath: service.userFolder,
+    metadata: { executionProjectPath: '/synthetic/Neo' },
+  });
   expect(vi.mocked(query).mock.calls[1][0].options?.resume).toBe(sdkId);
   expect(db.getSDKMessageRepo().getUserMessages(frontId)).toHaveLength(2);
   expect(
@@ -115,4 +134,87 @@ test('switch on runs the extra message in the same SDK conversation and records 
       .get(frontId)
   ).toEqual({ n: 2 });
   expect(service.publications.list(conversation)?.map((item) => item.replyTo?.[0])).toEqual(ids);
+  expect(
+    db
+      .getDatabase()
+      .prepare(
+        "SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='result' AND is_terminal=1"
+      )
+      .get(frontId)
+  ).toEqual({ n: 2 });
+});
+
+test('repairs the existing front title and Neo project grouping without losing its SDK identity', async () => {
+  await db.updateSession(root, {
+    metadata: { ...db.getSession(root)!.metadata, executionProjectPath: '/synthetic/Neo-project' },
+  });
+  const id = neoDerivedId(`front-session:${conversation}`);
+  await db.createSession({
+    ...createTestSession(id),
+    title: 'Old front',
+    sdkSessionId: sdkId,
+    metadata: { ...createTestSession(id).metadata, messageCount: 7 },
+  });
+  const session = await frontSession(
+    service,
+    { conversationId: conversation } as Parameters<typeof frontSession>[1],
+    { model: 'fixture', provider: 'glm', thinkingLevel: 'think24k' }
+  );
+  expect(session).toMatchObject({
+    id,
+    title: 'Convo',
+    workspacePath: service.userFolder,
+    sdkSessionId: sdkId,
+    metadata: { executionProjectPath: '/synthetic/Neo-project', messageCount: 7 },
+  });
+});
+
+test('an SDK startup failure records a failed terminal turn instead of a Stopped gap', async () => {
+  const ask = {
+    conversationId: conversation,
+    requestId: crypto.randomUUID(),
+    askOrigin: { sessionId: root },
+    content: 'Hello',
+  };
+  vi.mocked(query).mockImplementation(async function* (options) {
+    if (typeof options.prompt !== 'string')
+      for await (const _input of options.prompt) {
+      }
+    throw new Error('Synthetic SDK startup failure');
+  } as unknown as typeof query);
+  const { runNeoFrontModel } = await import('../../../../src/lib/neo/front-model.ts');
+  await expect(
+    runNeoFrontModel(service, ask as Parameters<typeof runNeoFrontModel>[1], {
+      model: 'fixture',
+      provider: 'glm',
+      thinkingLevel: 'off',
+    })
+  ).rejects.toThrow('Synthetic SDK startup failure');
+  const id = neoDerivedId(`front-session:${conversation}`);
+  expect(
+    db
+      .getDatabase()
+      .prepare(
+        "SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='result' AND is_terminal=1 AND is_error=1"
+      )
+      .get(id)
+  ).toEqual({ n: 1 });
+});
+
+test('startup files an already existing Convo beside Neo without a model turn', async () => {
+  const id = neoDerivedId(`front-session:${conversation}`);
+  await db.createSession({
+    ...createTestSession(id),
+    title: 'Old front',
+    workspacePath: service.userFolder,
+    sdkSessionId: sdkId,
+  });
+  await fileNeoSessions(db, service.repo, '/synthetic/Neo');
+  expect(db.getSession(id)).toMatchObject({
+    title: 'Convo',
+    workspacePath: service.userFolder,
+    sdkSessionId: sdkId,
+    metadata: { executionProjectPath: '/synthetic/Neo' },
+  });
+  expect(query).not.toHaveBeenCalled();
 });

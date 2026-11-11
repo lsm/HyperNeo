@@ -74,7 +74,7 @@ mock.module(sdkPath, () => ({
         uuid: crypto.randomUUID(), session_id: nativeId, parent_tool_use_id: null,
         message: { id: crypto.randomUUID(), role: 'assistant', type: 'message', model: 'front-fixture', content: [{ type: 'text', text: JSON.stringify({ kind, text }) }] },
       };
-      yield { type: 'result', subtype: 'success' };
+      yield { type: 'result', subtype: 'success', uuid: crypto.randomUUID(), session_id: nativeId, duration_ms: 1, is_error: false };
     })(),
 }));
 const resolver = await import('../../../packages/daemon/src/lib/agent/sdk-cli-resolver.ts');
@@ -298,10 +298,13 @@ try {
   await invoke('neo.front.set', { enabled: false });
   const frontId = nativeIds[0];
   assert.equal(new Set(nativeIds).size, 1);
-  assert.equal(app.db.getSession(frontId)?.title, '前端');
+  assert.equal(app.db.getSession(frontId)?.title, 'Convo');
   assert.equal(app.db.getSession(frontId)?.sdkSessionId, frontId);
+  assert.equal(app.db.getSession(frontId)?.metadata.executionProjectPath, app.db.getSession(sessionId)?.workspacePath);
+  assert.equal(app.db.getSession(frontId)?.workspacePath, run);
   assert.equal(app.db.getSDKMessageRepo().getUserMessages(frontId).length, 4);
   assert.equal((app.db.getDatabase().prepare("SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='assistant'").get(frontId) as {n:number}).n, 4);
+  assert.equal((app.db.getDatabase().prepare("SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='result' AND is_terminal=1").get(frontId) as {n:number}).n, 4);
   observed.frontSession = { turns: 4, resumedNativeSessions: new Set(nativeIds).size, visibleReplies: 4 };
   observed.textReplies = 4;
   observed.voiceSay = events.filter((event) => event.type === 'say').length;

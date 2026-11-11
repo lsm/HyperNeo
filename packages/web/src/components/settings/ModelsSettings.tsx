@@ -460,7 +460,7 @@ function FrontModelSettings({
     setError('');
     try {
       const hub = connectionManager.getHubIfConnected();
-      if (!hub) throw new Error('Reconnect before changing the front model.');
+      if (!hub) throw new Error('Reconnect before changing the Convo model.');
       const result = await invokeOperation<{ ok: boolean; reason?: string }>(
         hub,
         'neo.front.model.set',
@@ -470,9 +470,9 @@ function FrontModelSettings({
           thinkingLevel,
         }
       );
-      if (!result.ok) throw new Error(result.reason ?? 'Could not save the front model.');
+      if (!result.ok) throw new Error(result.reason ?? 'Could not save the Convo model.');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save the front model.');
+      setError(cause instanceof Error ? cause.message : 'Could not save the Convo model.');
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -493,11 +493,11 @@ function FrontModelSettings({
           >
             {preference
               ? `${preference.model} · ${getProviderLabel(preference.provider)}`
-              : 'No front model selected'}
+              : 'No Convo model selected'}
           </p>
         </div>
         <Button
-          aria-label="Choose front model"
+          aria-label="Choose Convo model"
           variant="secondary"
           size="xs"
           disabled={busy}
@@ -508,7 +508,7 @@ function FrontModelSettings({
         {preference && (
           <FallbackThinkingSelect
             saved={preference.thinkingLevel}
-            label="Front model thinking"
+            label="Convo model thinking"
             capability={findSameModel([...groupedModels.values()].flat(), preference) ?? null}
             disabled={busy}
             inherits={false}
@@ -532,7 +532,7 @@ function FrontModelSettings({
       )}
       {picker && (
         <ModelPickerModal
-          title="Choose front model"
+          title="Choose Convo model"
           groupedModels={groupedModels}
           providerAuthStatuses={providerAuthStatuses}
           excludeModels={[]}
