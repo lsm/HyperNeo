@@ -1,6 +1,6 @@
 import { workerInputReads, workerInputWrites } from '../repositories/worker-input-worker.ts';
 import { neoFrontReads } from '../repositories/neo-front-read-worker.ts';
-import { neoFrontInputWrites } from '../repositories/neo-front-input-worker.ts';
+import { neoFrontInputWrites, neoFrontInputReads } from '../repositories/neo-front-input-worker.ts';
 import { neoAskInputReads, neoAskInputWrites } from '../repositories/neo-ask-input-worker.ts';
 import { neoTrackerReads, neoTrackerWrites } from '../repositories/neo-tracker-mirror.ts';
 import { gitHubWatchPollingWrite } from '../repositories/github-watch-polling-write.ts';
@@ -218,6 +218,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     turnVectorWrites,
     neoPublicationWrites,
     neoFrontInputWrites,
+    neoFrontInputReads,
     neoFrontReads,
     neoAskSettlementReads,
     neoAskSettlementWrites,

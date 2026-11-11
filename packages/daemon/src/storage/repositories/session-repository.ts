@@ -7,6 +7,7 @@ import type {
   SkillEnablementOverride,
 } from '@hyperneo/shared';
 import { initialSessionToolSelection } from './session-initial-tool-selection.ts';
+import type { SessionUpdate } from './session-status-write.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -341,7 +342,7 @@ export class SessionRepository {
 
   guardedUpdateSession(
     id: string,
-    updates: Partial<Session>,
+    updates: SessionUpdate,
     readStatus: SessionStatus | null
   ): SessionWriteOutcome {
     const refusal = updates.status
@@ -367,7 +368,7 @@ export class SessionRepository {
     return row ? { status: row.status, terminalTask: row.terminal_task === 1 } : null;
   }
 
-  updateSession(id: string, updates: Partial<Session>, now: number = Date.now()): void {
+  updateSession(id: string, updates: SessionUpdate, now: number = Date.now()): void {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 

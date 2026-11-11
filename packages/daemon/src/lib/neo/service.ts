@@ -1,5 +1,7 @@
 import { workerInputWrites } from '../../storage/repositories/worker-input-worker.ts';
 import { selectSendOrigin } from '../messaging/message-send.ts';
+import { frontSessionId, publicationSpeaker, frontModeNote } from './front-mode.ts';
+import { frontSession } from './front-session.ts';
 import { createWorkerNameSource } from '../drivers/worker-names.ts';
 import type { NeoWorkerNameSource } from './worker-name.ts';
 import { sweepNeoTrackerMirrors } from './tracker-mirror.ts';
@@ -216,6 +218,15 @@ export class NeoService {
       undefined,
       undefined,
       async (id, listening) => {
+        const conversation = this.repo.readConversationId();
+        const speaker =
+          conversation && id === this.defaultSessionId()
+            ? publicationSpeaker(
+                conversation,
+                this.db.getGlobalSettings().neo?.front?.enabled === true
+              )
+            : id;
+        id = speaker;
         if (this.sessions.getCachedSession(id)?.getProcessingState().status === 'processing')
           await ensurePrompt({
             db: this.db.getDatabase(),
@@ -234,9 +245,14 @@ export class NeoService {
                 content: [
                   {
                     type: 'text',
-                    text: listening
-                      ? 'The human is now listening.'
-                      : 'The human stopped listening.',
+                    text:
+                      conversation && id === frontSessionId(conversation)
+                        ? listening
+                          ? '[listening: yes] The human is now listening. If your current reply has not been spoken, give its short spoken version once using speech_say.'
+                          : '[listening: no] The human stopped listening.'
+                        : listening
+                          ? 'The human is now listening.'
+                          : 'The human stopped listening.',
                   },
                 ],
               },
@@ -245,7 +261,35 @@ export class NeoService {
             delivery: { origin: 'space_inject', injectedMidTurn: true },
           });
       },
-      (id) => !!this.db.getSession(id)
+      (id) => !!this.db.getSession(id),
+      (id) => {
+        const conversation = this.repo.readConversationId();
+        const listening = this.speech.isListening(this.defaultSessionId() ?? id);
+        return conversation &&
+          (id === this.defaultSessionId() || id === frontSessionId(conversation))
+          ? frontModeNote(
+              conversation,
+              this.db.getGlobalSettings().neo?.front?.enabled === true,
+              id === frontSessionId(conversation),
+              listening
+            ) + `\n[listening: ${listening ? 'yes' : 'no'}]`
+          : undefined;
+      },
+      (id) => {
+        const conversation = this.repo.readConversationId();
+        return (
+          !!conversation &&
+          id ===
+            publicationSpeaker(
+              conversation,
+              this.db.getGlobalSettings().neo?.front?.enabled === true
+            )
+        );
+      },
+      (id) => {
+        const conversation = this.repo.readConversationId();
+        return conversation && id === frontSessionId(conversation) ? `neo:${conversation}` : id;
+      }
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
@@ -313,7 +357,13 @@ export class NeoService {
       }
     };
     this.publish = createNeoPublisher({
-      receivedHumanInput: (sessionId, id) => !!receivedNeoHumanInput(this, sessionId, id),
+      receivedHumanInput: (sessionId, id) => {
+        const conversation = this.repo.readConversationId();
+        return conversation && sessionId === frontSessionId(conversation)
+          ? !!this.asks.find(conversation, id) &&
+              this.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [id]).length > 0
+          : !!receivedNeoHumanInput(this, sessionId, id);
+      },
       currentHumanInputs: (sessionId) => this.currentInputIds(sessionId),
       sourceSession: (sessionId) => {
         const conversation = this.repo.conversationId();
@@ -331,12 +381,22 @@ export class NeoService {
           ? sources[0]
           : undefined;
       },
-      getBinding: (id) => this.repo.getBindingBySession(id),
+      getBinding: (id) => this.repo.getPublicationBinding(id),
       getRootBinding: () => this.repo.defaultBinding(),
+      publicationSessionId: () => {
+        const conversation = this.repo.readConversationId();
+        return conversation
+          ? publicationSpeaker(
+              conversation,
+              this.db.getGlobalSettings().neo?.front?.enabled === true
+            )
+          : undefined;
+      },
       hasProject: (id) => !!this.repo.getProject(id),
       publication: (conversation, id) => this.publications.get(conversation, id),
       lookupSession: async (id) => (await this.resolveSessionSource(id)).status,
-      append: (input) => this.db.gateway.call(neoPublicationWrites, 'append', input),
+      append: (input, speaker) =>
+        this.db.gateway.call(neoPublicationWrites, 'append', input, speaker),
       speech: (sessionId, version, text) => this.speech.publish(sessionId, version, text),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
@@ -1008,7 +1068,41 @@ export class NeoService {
     return openNeoDefaultSession(this.repo, () => this.open());
   }
 
+  async prepareFront(
+    enabled = this.db.getGlobalSettings().neo?.front?.enabled === true
+  ): Promise<void> {
+    const conversationId = this.repo.readConversationId();
+    const root = this.defaultSessionId();
+    const front = this.db.getGlobalSettings().neo?.front;
+    if (conversationId && root && enabled && front?.model)
+      await frontSession(
+        this,
+        { conversationId, askOrigin: { sessionId: root, messageId: root } },
+        front.model
+      );
+  }
+
+  async frontModeChanged(): Promise<void> {
+    await this.prepareFront();
+    const conversation = this.repo.readConversationId();
+    const root = this.defaultSessionId();
+    if (!conversation || !root) return;
+    const dual = this.db.getGlobalSettings().neo?.front?.enabled === true;
+    for (const id of [root, frontSessionId(conversation)])
+      if (this.db.getSession(id))
+        await this.deliverForward(
+          id,
+          crypto.randomUUID(),
+          frontModeNote(conversation, dual, id !== root),
+          root,
+          'event'
+        );
+  }
+
   async recover(): Promise<void> {
+    await this.prepareFront().catch((error) =>
+      this.log.warn('Convo session not prepared during recovery', error)
+    );
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
     if (id) await this.alignCoordinatorConfig(id);

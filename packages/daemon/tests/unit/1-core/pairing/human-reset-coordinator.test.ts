@@ -114,7 +114,7 @@ describe('human reset receipt coordinator construction', () => {
       }
     >;
     for (const [name, group] of Object.entries(dependencies)) {
-      expect(group.lines).toBe(name === 'resetReceipt' ? 142 : 340);
+      expect(group.lines).toBe(name === 'resetReceipt' ? 142 : 368);
       expect(group.units.reduce((sum, unit) => sum + unit.lines, 0)).toBe(group.lines);
       expect(hash(JSON.stringify(group.units))).toBe(group.sha256);
       for (const unit of group.units) {

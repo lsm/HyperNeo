@@ -25,19 +25,19 @@ test('eligibility is stamped once even when a retry flips the setting', () => {
   expect(inputs.get('conversation', 'on')?.eligible).toBe(true);
 });
 
-test('front and Neo contend for the same durable input and a replay cannot take ownership', () => {
+test('recording an answer does not prevent later answers for the same input', () => {
   inputs.accept('conversation', 'input', true);
   expect(inputs.claim('conversation', ['input'], 'front')).toBe(true);
-  expect(inputs.claim('conversation', ['input'], 'neo')).toBe(false);
-  expect(inputs.claim('conversation', ['input'], 'front')).toBe(false);
+  expect(inputs.claim('conversation', ['input'], 'neo')).toBe(true);
+  expect(inputs.claim('conversation', ['input'], 'front')).toBe(true);
 });
 
-test('a mixed batch does not partially claim when one message already belongs to the front', () => {
+test('a mixed batch records all answers even when a member was already answered', () => {
   inputs.accept('conversation', 'first', true);
   inputs.accept('conversation', 'second', true);
   inputs.claim('conversation', ['first'], 'front');
-  expect(inputs.claim('conversation', ['first', 'second'], 'neo')).toBe(false);
-  expect(inputs.get('conversation', 'second')?.owner).toBe(null);
+  expect(inputs.claim('conversation', ['first', 'second'], 'neo')).toBe(true);
+  expect(inputs.get('conversation', 'second')?.owner).toBe('neo');
 });
 
 test('missing, cross-conversation and disabled inputs cannot be claimed', () => {
