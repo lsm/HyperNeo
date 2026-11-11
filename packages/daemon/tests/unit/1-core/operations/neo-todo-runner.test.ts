@@ -1251,7 +1251,13 @@ describe('neo todo runner', () => {
         const worker = { adapter, id };
         const link = `https://example.test/workers/${id}`;
         for (const kind of ['todo', 'notice', 'human', 'focused']) {
-          const currentAsk = kind === 'focused' ? { ...ask, focusedSession: worker } : ask;
+          const currentAsk =
+            kind === 'focused'
+              ? {
+                  ...ask,
+                  focusedSession: { ...workerIdentity(worker, title), provider: adapter, link },
+                }
+              : ask;
           const live = { status: 'running', title, link };
           await deliverNeoTurnReport(
             currentAsk,
@@ -1855,7 +1861,7 @@ describe('neo todo runner', () => {
         });
         await h.runner.refresh(() => {});
         expect(h.told).toContain(
-          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}, status done):\n\n${message || 'worker ended its turn with no reply'}`
+          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}, status done):\n\nWorker: hyperneo:worker-1\n\n${message || 'worker ended its turn with no reply'}`
         );
         expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'doing', report: prior });
       } finally {
