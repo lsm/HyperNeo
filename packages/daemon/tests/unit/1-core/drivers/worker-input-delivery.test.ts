@@ -323,6 +323,45 @@ describe('durable worker follow-ups', () => {
     });
   });
 
+  test.each(['unreachable', 'unknown'] as const)(
+    'an input for an %s worker is kept and its reason is reported once',
+    async (state) => {
+      const h = fixture('codex-desktop');
+      const status = h.adapter.status!;
+      h.adapter.status = async () =>
+        state === 'unreachable'
+          ? { ok: false, reason: 'unreachable', detail: 'Synthetic receiver is offline' }
+          : ({ ok: true, value: {} } as never);
+      await h.send('Retain this waiting input');
+      h.setReportUnavailable(true);
+      await h.tick();
+      expect(h.reports).toEqual([]);
+      h.setReportUnavailable(false);
+      await h.tick();
+      expect(h.reports).toEqual([
+        state === 'unreachable' ? 'Synthetic receiver is offline' : 'Worker status is unavailable.',
+      ]);
+      await h.tick();
+      expect(h.reports).toHaveLength(1);
+      expect(h.sent).toEqual([]);
+      expect(h.jobs.listJobs({ queue: 'worker_input' })[0]).toMatchObject({
+        status: 'pending',
+        retryCount: 0,
+      });
+      expect(h.db.prepare('SELECT message, outcome FROM work_delivery_inputs').get()).toMatchObject(
+        {
+          message: 'Retain this waiting input',
+          outcome: null,
+        }
+      );
+      h.adapter.status = status;
+      h.setStatus('done');
+      await h.tick();
+      expect(h.sent).toHaveLength(1);
+      expect(h.reports).toHaveLength(1);
+    }
+  );
+
   test('work.queue retains an input and releases it through ordinary send after the turn', async () => {
     const h = fixture('codex-desktop', {
       queue: async () => {
