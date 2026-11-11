@@ -198,9 +198,6 @@ jobs:
       - name: Test CI gate script
         run: bun run test:ci-gate
 
-      - name: Test cleanup sandbox mirror fallback
-        run: python3 scripts/check-cleanup-sandbox.test.py
-
       # Folded in from the former test-cli job: ~2s of tests that used to occupy
       # a whole runner. Gated to the same events test-cli ran on (push to dev
       # or a release tag, workflow_dispatch) — skipped on PRs, exactly as
@@ -392,11 +389,7 @@ jobs:
 
       - name: Install cleanup sandbox
         run: |
-          if ! (sudo apt-get update && sudo apt-get install -y bubblewrap); then
-            printf '%s\n' 'https://mirrors.edge.kernel.org/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
-            sudo apt-get update
-            sudo apt-get install -y bubblewrap
-          fi
+          sudo apt-get update && sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           /usr/bin/bwrap --die-with-parent --ro-bind / / -- /bin/true
 
@@ -482,11 +475,7 @@ jobs:
 
       - name: Install cleanup sandbox
         run: |
-          if ! (sudo apt-get update && sudo apt-get install -y bubblewrap); then
-            printf '%s\n' 'https://mirrors.edge.kernel.org/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
-            sudo apt-get update
-            sudo apt-get install -y bubblewrap
-          fi
+          sudo apt-get update && sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           /usr/bin/bwrap --die-with-parent --ro-bind / / -- /bin/true
 
