@@ -35,7 +35,8 @@ export async function settleConvoInput(
     );
     return { delivered: false, pending: true };
   };
-  if (failure === 'superseded' || (status && status !== 'failed')) return pending();
+  if ((failure === 'superseded' && Date.now() < deadline) || (status && status !== 'failed'))
+    return pending();
   const terminal =
     (await service.db.gateway.call(
       neoFrontInputReads,
