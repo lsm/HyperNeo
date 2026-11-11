@@ -759,10 +759,10 @@ test('Convo exposes reads, handoff and one publication path', () => {
     'asks_read',
     'cards_read',
     'handoff_read',
-    'run_in_background',
     'projects_read',
     'reply_detailed',
     'reply_short',
+    'run_in_background',
     'speech_say',
     'todos_read',
   ]);

@@ -374,7 +374,7 @@ export class NeoPublicationRepository {
         ...stored,
         ...(text.verbatim
           ? { verbatim: true as const, shortText: undefined }
-          : text.shortText !== undefined
+          : text.shortText !== undefined && text.fullText !== undefined
             ? { verbatim: undefined }
             : {}),
         ...(text.shortText !== undefined ? { shortText: text.shortText } : {}),
