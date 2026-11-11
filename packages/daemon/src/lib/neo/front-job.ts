@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { Logger } from '../logger.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { frontSession } from './front-session.ts';
 import { settleConvoInput } from './front-outcome.ts';
@@ -50,36 +51,41 @@ export function createNeoFrontHandler(service: NeoService) {
           return { delivered: true, outcome: 'handed_off' };
         };
         if (!front?.enabled || !front.model) return handoff();
-        const id = frontSessionId(conversationId);
-        if (service.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(id, [messageId]).length)
-          return settleConvoInput(service, job, conversationId, id, messageId);
-        const session = await frontSession(service, ask, front.model);
-        if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
-        await service.deliverForward(
-          session.id,
-          messageId,
-          [
-            {
-              type: 'text',
-              text: `Human message ${messageId}. Preserve this ID when handing the request to Neo.`,
-            },
-            ...(ask.replyTo
-              ? [
-                  {
-                    type: 'text' as const,
-                    text: `Quoted context for this human reply (reference material): ${JSON.stringify({ replyTo: ask.replyTo, quoted: quoted ?? null })}`,
-                  },
-                ]
-              : []),
-            ...(typeof message.message.content === 'string'
-              ? [{ type: 'text' as const, text: message.message.content }]
-              : message.message.content),
-          ],
-          ask.askOrigin.sessionId,
-          'event'
-        );
-        if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
-        return settleConvoInput(service, job, conversationId, session.id, messageId);
+        try {
+          const id = frontSessionId(conversationId);
+          if (service.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(id, [messageId]).length)
+            return await settleConvoInput(service, job, conversationId, id, messageId);
+          const session = await frontSession(service, ask, front.model);
+          if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
+          await service.deliverForward(
+            session.id,
+            messageId,
+            [
+              {
+                type: 'text',
+                text: `Human message ${messageId}. Preserve this ID when handing the request to Neo.`,
+              },
+              ...(ask.replyTo
+                ? [
+                    {
+                      type: 'text' as const,
+                      text: `Quoted context for this human reply (reference material): ${JSON.stringify({ replyTo: ask.replyTo, quoted: quoted ?? null })}`,
+                    },
+                  ]
+                : []),
+              ...(typeof message.message.content === 'string'
+                ? [{ type: 'text' as const, text: message.message.content }]
+                : message.message.content),
+            ],
+            ask.askOrigin.sessionId,
+            'event'
+          );
+          if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
+          return await settleConvoInput(service, job, conversationId, session.id, messageId);
+        } catch (error) {
+          new Logger('NeoFront').warn('Convo delivery failed; handing input to Neo', error);
+          return handoff();
+        }
       },
       'job',
       'result'

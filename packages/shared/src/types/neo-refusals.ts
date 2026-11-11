@@ -3,10 +3,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   front_not_speaking:
     'Convo may hand off requests only while dual-model mode is enabled for its current conversation.',
   front_model_required: 'Choose a Convo model before enabling dual-model mode.',
-  unknown_back_reply:
-    'Choose a stored message sent by the current Back Neo to this Front conversation.',
-  not_a_ready_reply:
-    'Ask Back Neo for a ready reply wrapped in a publication object, or compose a reply yourself.',
 
   updating:
     'A daemon restart is reserved. Retry speech after the brief update finishes; keep the reply on screen meanwhile.',

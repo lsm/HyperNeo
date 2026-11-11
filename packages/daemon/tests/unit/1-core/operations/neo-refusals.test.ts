@@ -68,9 +68,12 @@ describe('explainNeoRefusal', () => {
 });
 
 describe('NEO_REFUSALS', () => {
-  test('does not advertise the retired dual-mode speaker restriction', () => {
-    expect(NEO_REFUSALS).not.toHaveProperty('dual_model_front_required');
-  });
+  test.each(['dual_model_front_required', 'unknown_back_reply', 'not_a_ready_reply'])(
+    'does not advertise the retired Convo refusal %s',
+    (reason) => {
+      expect(NEO_REFUSALS).not.toHaveProperty(reason);
+    }
+  );
   test('explains every bare refusal code a Neo gate returns', () => {
     expect([...neoRefusalCodes()].filter((code) => !Object.hasOwn(NEO_REFUSALS, code))).toEqual([]);
   });

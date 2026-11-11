@@ -777,3 +777,24 @@ test('a pending Convo outcome does not reattach or redeliver the active session'
   expect(update).not.toHaveBeenCalled();
   expect(deliver).toHaveBeenCalledTimes(1);
 });
+
+test.each(['creation', 'delivery'])(
+  'a persistent Convo %s failure hands the original input to Neo once',
+  async (phase) => {
+    const { id, job } = await accept();
+    if (phase === 'creation')
+      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
+    else vi.spyOn(service, 'deliverForward').mockRejectedValue(new Error('Convo unavailable'));
+    const handler = createNeoFrontHandler(service);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+    }
+    const sdk = db.getSDKMessageRepo();
+    expect(sdk.getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+    expect(sdk.getMessageByStatusAndUuid(root, 'enqueued', id)).toMatchObject({
+      type: 'user',
+      inputKind: 'human',
+      uuid: id,
+    });
+  }
+);
