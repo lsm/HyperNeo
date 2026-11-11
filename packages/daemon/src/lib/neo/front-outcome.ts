@@ -14,7 +14,7 @@ export async function settleConvoInput(
   conversationId: string,
   sessionId: string,
   messageId: string,
-  failed = false
+  failure?: 'delivery' | 'superseded'
 ) {
   const owner = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, messageId);
   if (owner?.owner) return { delivered: true, outcome: 'answered' };
@@ -30,12 +30,12 @@ export async function settleConvoInput(
       jobQueueWrites,
       'requeue',
       job.id,
-      now < deadline ? Math.min(now + 1000, deadline) : now + 1000,
+      now < deadline ? Math.min(now + 1000, deadline) : now + 60_000,
       job.claimToken
     );
     return { delivered: false, pending: true };
   };
-  if (status && status !== 'failed') return pending();
+  if (failure === 'superseded' || (status && status !== 'failed')) return pending();
   const terminal =
     (await service.db.gateway.call(
       neoFrontInputReads,
@@ -44,7 +44,7 @@ export async function settleConvoInput(
       sessionId,
       messageId
     )) ??
-    (failed || status === 'failed' || Date.now() >= deadline
+    (failure === 'delivery' || status === 'failed' || Date.now() >= deadline
       ? { messageIds: [messageId], text: '' }
       : null);
   if (!terminal) return pending();

@@ -97,7 +97,9 @@ export function createNeoFrontHandler(service: NeoService) {
             conversationId,
             frontSessionId(conversationId),
             messageId,
-            true
+            error instanceof Error && error.message === 'front_session_tools_superseded'
+              ? 'superseded'
+              : 'delivery'
           );
         }
       },

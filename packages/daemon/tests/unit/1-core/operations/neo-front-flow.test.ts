@@ -1125,7 +1125,7 @@ test.each(['terminal', 'creation failure'])(
 );
 
 test.each(['disabled', 'dual'])(
-  'a manual Neo hold survives the Convo deadline in %s mode',
+  'a manual Neo hold backs off after the Convo deadline in %s mode',
   async (path) => {
     const { id } = await accept();
     const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
@@ -1162,7 +1162,7 @@ test.each(['disabled', 'dual'])(
     try {
       const held = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
       expect(await handler(held)).toMatchObject({ delivered: false, pending: true });
-      expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline + 1000);
+      expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline + 60_000);
       expect(service.publications.list(conversationId)).toHaveLength(0);
       const rowId = sdk.findMessageIdByUuid(root, id)!;
       sdk.updateMessageStatus([rowId], 'enqueued');
@@ -1170,18 +1170,21 @@ test.each(['disabled', 'dual'])(
         config: { ...db.getSession(root)!.config, queryMode: 'immediate' },
       });
       clock.mockReturnValue(deadline + 1000);
+      expect(db.getJobQueueRepo().dequeue('neo.front', 1)).toHaveLength(0);
+      clock.mockReturnValue(deadline + 60_000);
       const released = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
       expect(await handler(released)).toMatchObject({ delivered: false, pending: true });
-      expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline + 2000);
+      expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline + 120_000);
       expect(sdk.getUserSendStatus(root, id)).toBe('enqueued');
       expect(service.publications.list(conversationId)).toHaveLength(0);
       sdk.updateMessageStatus([rowId], 'submitted');
-      clock.mockReturnValue(deadline + 2000);
+      clock.mockReturnValue(deadline + 120_000);
       const submitted = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
       expect(await handler(submitted)).toMatchObject({ delivered: false, pending: true });
       expect(service.publications.list(conversationId)).toHaveLength(0);
+      expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline + 180_000);
       expect(sdk.markDeliveryConsumedByUuid(root, id)).not.toBeNull();
-      clock.mockReturnValue(deadline + 3000);
+      clock.mockReturnValue(deadline + 180_000);
       const consumed = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
       expect(await handler(consumed)).toMatchObject({ delivered: true, outcome: 'handed_off' });
       await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
@@ -1356,6 +1359,57 @@ test('Convo publication refuses an input it was never given and a stale dual-mod
   ).toMatchObject({ accepted: false });
   expect(service.publications.list(conversationId)).toHaveLength(0);
 });
+
+test.each([0, 30 * 60_000])(
+  'a lost Convo tool-selection CAS stays pending at input age %i',
+  async (age) => {
+    const { id } = await accept();
+    const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+    const existing = createTestSession(front);
+    await db.createSession({
+      ...existing,
+      config: {
+        ...existing.config,
+        toolSelection: {
+          version: 1,
+          choices: { 'mcp:legacy': { selected: true, aliases: ['legacy'] } },
+        },
+      },
+    });
+    const commit = db.casSessionRuntimeSettings.bind(db);
+    const selection = vi
+      .spyOn(db, 'casSessionRuntimeSettings')
+      .mockImplementationOnce(async (snapshot, patch) => {
+        expect(
+          await commit(snapshot, {
+            toolSelection: {
+              version: 1,
+              choices: { 'mcp:concurrent': { selected: true, aliases: ['concurrent'] } },
+            },
+          })
+        ).toBe('won');
+        return commit(snapshot, patch);
+      });
+    const now = Date.parse(service.asks.find(conversationId, id)!.createdAt) + age;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      expect(await createNeoFrontHandler(service)(job)).toMatchObject({
+        delivered: false,
+        pending: true,
+      });
+      expect(await selection.mock.results[0].value).toBe('superseded');
+      expect(db.getJobQueueRepo().getJob(job.id)).toMatchObject({
+        status: 'pending',
+        runAt: now + (age ? 60_000 : 1000),
+      });
+      expect(service.publications.list(conversationId)).toHaveLength(0);
+      expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(front, [id])).toHaveLength(0);
+    } finally {
+      clock.mockRestore();
+      selection.mockRestore();
+    }
+  }
+);
 
 test.each(['creation', 'delivery'])(
   'a Convo %s failure gives the human one visible failure without delegating to a silent Back',
