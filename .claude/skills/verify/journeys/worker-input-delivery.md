@@ -36,3 +36,8 @@ After native admission, the real driver refresh accepts the stored answer and
 the SDK inbox contains it. Consumer regressions additionally cover definite
 failure retries, uncertain-outcome reconciliation and scheduled wakes keeping
 their source baseline intact while their worker input is unconfirmed.
+
+An unknown worker also keeps its input pending while the originating Neo receives
+one waiting-reason notice. The proof restarts the isolated daemon and observes
+continued waiting with one notice and no settled input outcome. Unit fixtures
+cover unreachable and malformed status, notification recovery and later delivery.

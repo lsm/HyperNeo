@@ -124,9 +124,27 @@ try {
   assert.equal(todos.getTodo(todo.id)?.blockedBy, null);
   await until(() => messages().some((text) => text.includes('[worker-answer:')), 'the answer reaches the SDK inbox');
   evidence.questionAccepted = todos.questionAnswers.list(question.question.id);
+  const waitingId = await app.db.gateway.call(workerInputWrites, 'accept', { ref: { adapter: 'synthetic-unavailable', id: 'synthetic-worker' }, message: 'Retain this unknown worker input' }, `session:${root}`, caller);
+  const waitingJob = () => app.jobQueue.listJobs({ queue: 'worker_input' }).find((job) => job.payload.inputId === waitingId)!;
+  await until(() => waitingJob().payload.waitReported === true, 'the unknown worker wait is reported');
+  const waitingReason = waitingJob().error!;
+  await until(() => messages(root).some((text) => text.includes(waitingReason)), 'the originating Neo receives the waiting reason');
+  assert.equal(waitingJob().status, 'pending');
+  assert.equal(waitingJob().retryCount, 0);
+  assert.equal(inputs().find((input) => input.id === waitingId)?.outcome, null);
+  await app.cleanup();
+  app = await start();
+  const previousRun = waitingJob().runAt;
+  await until(() => waitingJob().runAt > previousRun, 'the retained unknown input retries after restart');
+  const waitingReports = messages(root).filter((text) => text.includes(waitingReason));
+  assert.equal(waitingReports.length, 1);
+  assert.equal(waitingJob().payload.waitReported, true);
+  assert.equal(waitingJob().status, 'pending');
+  assert.equal(inputs().find((input) => input.id === waitingId)?.outcome, null);
+  evidence.waiting = { input: inputs().find((input) => input.id === waitingId), job: waitingJob(), reports: waitingReports };
   evidence.port = app.server.port;
   evidence.passed = true;
-  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true }));
+  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length }));
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

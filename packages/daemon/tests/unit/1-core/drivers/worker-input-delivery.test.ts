@@ -326,12 +326,24 @@ describe('durable worker follow-ups', () => {
   test.each(['unreachable', 'unknown'] as const)(
     'an input for an %s worker is kept and its reason is reported once',
     async (state) => {
-      const h = fixture('codex-desktop');
-      const status = h.adapter.status!;
-      h.adapter.status = async () =>
-        state === 'unreachable'
-          ? { ok: false, reason: 'unreachable', detail: 'Synthetic receiver is offline' }
-          : ({ ok: true, value: {} } as never);
+      let recovered = false;
+      const h = fixture('codex-desktop', {
+        status: async () =>
+          recovered
+            ? {
+                ok: true,
+                value: {
+                  ref: { adapter: 'codex-desktop', id: 'synthetic-worker' },
+                  title: 'Synthetic worker',
+                  place: { machine: 'synthetic', name: 'Synthetic workspace' },
+                  status: 'done',
+                  lastActivityAt: 1,
+                },
+              }
+            : state === 'unreachable'
+              ? { ok: false, reason: 'unreachable', detail: 'Synthetic receiver is offline' }
+              : ({ ok: true, value: {} } as never),
+      });
       await h.send('Retain this waiting input');
       h.setReportUnavailable(true);
       await h.tick();
@@ -354,8 +366,7 @@ describe('durable worker follow-ups', () => {
           outcome: null,
         }
       );
-      h.adapter.status = status;
-      h.setStatus('done');
+      recovered = true;
       await h.tick();
       expect(h.sent).toHaveLength(1);
       expect(h.reports).toHaveLength(1);

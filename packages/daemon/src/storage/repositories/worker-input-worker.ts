@@ -26,6 +26,7 @@ export type WorkerInputPayload = {
   idempotencyKey?: string;
   continuation?: boolean;
   dispatched?: boolean;
+  waitReported?: boolean;
 };
 
 export class WorkerInputJobs {
@@ -115,13 +116,17 @@ export class WorkerInputJobs {
     return { ...row, failure, payload, ref, closed, head, todo };
   }
 
-  wait(job: Job, detail: string): void {
+  wait(job: Job, detail: string, reported = false): void {
     const waiting = new JobQueueRepository(this.db).requeueWaiting(
       job.id,
       Date.now() + 1000,
       job.claimToken!
     );
-    if (waiting) this.db.prepare('UPDATE job_queue SET error = ? WHERE id = ?').run(detail, job.id);
+    if (waiting)
+      this.db
+        .prepare(`UPDATE job_queue SET error = ?, payload = CASE WHEN ?
+          THEN json_set(payload, '$.waitReported', json('true')) ELSE payload END WHERE id = ?`)
+        .run(detail, reported ? 1 : 0, job.id);
   }
 
   dispatch(job: Job): boolean {

@@ -49,7 +49,7 @@ export function createWorkerInputDelivery(
   type Facts = Awaited<ReturnType<typeof read>>;
   const decide = (
     facts: Facts
-  ): { action: 'wait' | 'fail' | 'send' | 'uncertain'; detail: string } => {
+  ): { action: 'wait' | 'fail' | 'send' | 'uncertain'; detail: string; report?: true } => {
     if (facts.failure !== null) return { action: 'fail', detail: facts.failure };
     if (facts.payload.dispatched)
       return {
@@ -78,6 +78,7 @@ export function createWorkerInputDelivery(
     if (!live || isBusyWork(live.status))
       return {
         action: 'wait',
+        ...(!live ? { report: true as const } : {}),
         detail: live
           ? 'Waiting for the current worker turn to end.'
           : facts.status && !facts.status.ok
@@ -105,7 +106,16 @@ export function createWorkerInputDelivery(
   };
   const apply = async (job: Job, facts: Facts, plan: ReturnType<typeof decide>) => {
     if (plan.action === 'wait') {
-      await gateway.call(workerInputWrites, 'wait', job, plan.detail);
+      let reported = false;
+      if (plan.report && !facts.payload.waitReported) {
+        try {
+          await report(`${facts.payload.inputId}:waiting`, plan.detail, facts.payload.from);
+          reported = true;
+        } catch {
+          reported = false;
+        }
+      }
+      await gateway.call(workerInputWrites, 'wait', job, plan.detail, reported);
       return { waiting: plan.detail };
     }
     if (plan.action === 'fail' || plan.action === 'uncertain')
