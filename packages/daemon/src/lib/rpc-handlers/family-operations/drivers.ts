@@ -1,3 +1,4 @@
+import { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
 import {
   createWorkerInputDelivery,
   registerWorkerInputDelivery,
@@ -646,6 +647,11 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         ask.sessionId === sessionId
       );
     },
+    todoWorker: {
+      on: (todoId, ref) => new NeoTodoSessionRepository(db()).sendsNow(todoId, ref),
+      wait: (todoId, ref, message) =>
+        new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message),
+    } satisfies WorkVerbDeps['todoWorker'],
     workInputs: {
       accept: (todoId, from, target, message) =>
         new WorkDeliveryInputRepository(db()).accept(todoId, from, target, message, Date.now()),

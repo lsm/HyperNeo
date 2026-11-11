@@ -69,6 +69,14 @@ export interface WorkSendUncertainty {
   lastCompletion?: number;
 }
 
+const WORKER_BUSY_DETAIL = {
+  message:
+    'This worker is busy with other work. The todo waits in the queue with its reason, and this message goes when the worker is free; do not send it again.',
+  instruction:
+    'This worker is busy with other work. The todo waits in the queue with its reason, and its existing instruction goes when the worker is free. Your message text was not kept.',
+  none: 'This worker is busy with other work, and this todo is not waiting to start, so it cannot queue here. Nothing was queued or sent.',
+};
+
 export interface WorkVerbDeps {
   adapters(): readonly WorkAdapter[];
   health?: () => Record<string, DriverHealth> | Promise<Record<string, DriverHealth>>;
@@ -81,6 +89,10 @@ export interface WorkVerbDeps {
   ) => ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>;
   markUnusable?: (ref: WorkRef) => void;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
+  todoWorker?: {
+    on(todoId: string, ref: WorkRef): boolean;
+    wait(todoId: string, ref: WorkRef, message: string): Promise<keyof typeof WORKER_BUSY_DETAIL>;
+  };
   workInputs?: {
     accept(
       todoId: string | null,
@@ -314,6 +326,25 @@ function requireSendPurpose<Value>(
 
 export const isBusyWork = (status: string | undefined) =>
   status === 'running' || status === 'queued';
+
+async function requireFreeRemoteWorker<Value>(
+  input: QueuedInput,
+  caller: OperationCaller,
+  route: Value,
+  deps: WorkVerbDeps
+): Promise<{ value: Value } | { reason: SendResult }> {
+  if (!input.ref.daemon) return { value: route };
+  const todoId = 'message' in input && caller.role === 'neo' ? input.todoId : undefined;
+  const queue = deps.todoWorker;
+  if (!todoId || !queue || input.ref.adapter === 'space' || queue.on(todoId, input.ref))
+    return { value: route };
+  const status = routeStatus(input, deps);
+  if ('reason' in status) return { value: route };
+  const worker = await readWorkStatus(status.value, { ref: input.ref }, deps);
+  if (!worker.ok || !isBusyWork(worker.value.status)) return { value: route };
+  const queued = await queue.wait(todoId, input.ref, (input as SendInput).message);
+  return { reason: reject('worker_busy', WORKER_BUSY_DETAIL[queued], true) };
+}
 
 const workTarget = (input: StartInput | SendInput): WorkTarget =>
   'ref' in input
@@ -911,6 +942,7 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(queueOrdinaryInput, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
+  .pipe(requireFreeRemoteWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(acceptWorkInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
@@ -1038,6 +1070,7 @@ const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI
     ['input', 'caller', 'outcome', 'deps'],
     'result:outcome'
   )
+  .pipe(requireFreeRemoteWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(acceptWorkInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
