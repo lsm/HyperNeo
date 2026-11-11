@@ -278,7 +278,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       return plan.flatMap((next) =>
         (next.state === 'todo' || (next.state === 'blocked' && next.blockedBy === 'question')) &&
         next.startedAt === null &&
-        !neoTodoWaitReason(next, family, asked, trackerHolds[next.id])
+        !neoTodoWaitReason(next, family, asked, next.instruction ? trackerHolds[next.id] : null)
           ? [{ ask, next, target: this.get(next.id) }]
           : []
       );
