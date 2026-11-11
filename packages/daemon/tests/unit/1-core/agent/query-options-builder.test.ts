@@ -4838,6 +4838,18 @@ describe('QueryOptionsBuilder', () => {
         delete mockSession.config.mcpServers;
       });
 
+      it('omits the built-in operations server when the session opts out', async () => {
+        mockSession.config.operationTools = false;
+        try {
+          const options = await new QueryOptionsBuilder(
+            withOperationDoor(buildRegistryContext([]))
+          ).build();
+          expect(options.mcpServers?.['hyperneo-operations']).toBeUndefined();
+        } finally {
+          delete mockSession.config.operationTools;
+        }
+      });
+
       it('keeps the operations door on its canonical name when a registry server claims it', async () => {
         const ctx = withOperationDoor(
           buildRegistryContext([

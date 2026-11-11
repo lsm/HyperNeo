@@ -318,7 +318,7 @@ test('Back can use message.send to reach its ordinary Front session', async () =
   ).toMatchObject({ kind: 'completed', value: { kind: 'rejected' } });
 });
 
-test('Front publication supplies a spoken fallback on the human listening session', async () => {
+test('Front chooses the spoken text on the human listening session', async () => {
   await frontSession(
     service,
     { conversationId, askOrigin: { sessionId: root, messageId: root } },
@@ -328,8 +328,8 @@ test('Front publication supplies a spoken fallback on the human listening sessio
     .spyOn(service.speech, 'publish')
     .mockResolvedValue({ listening: 'yes', spokenDelivered: true });
   await service.publish(
-    { requestId: 'voice-reply', verbatim: true, fullText: 'Hello from Neo.' },
+    { requestId: 'voice-reply', verbatim: true, fullText: 'Hello from Neo.', spoken: 'Hello.' },
     { source: 'mcp', sessionId: front }
   );
-  expect(speech).toHaveBeenCalledWith(root, expect.any(String), undefined, 'Hello from Neo.');
+  expect(speech).toHaveBeenCalledWith(root, expect.any(String), 'Hello.');
 });

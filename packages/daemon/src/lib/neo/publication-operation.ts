@@ -78,8 +78,7 @@ interface NeoPublicationRuntime {
   speech(
     sessionId: string,
     version: string,
-    text?: string,
-    fallback?: string
+    text?: string
   ): Promise<{
     listening: 'yes' | 'no';
     spokenDelivered: boolean;
@@ -320,10 +319,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         const speech = await runtime.speech(
           runtime.getRootBinding()?.sessionId ?? caller.sessionId!,
           version,
-          fresh ? draft.spoken : undefined,
-          fresh && caller.sessionId !== runtime.getRootBinding()?.sessionId
-            ? draft.fullText
-            : undefined
+          fresh ? draft.spoken : undefined
         );
         runtime.notify();
         return {

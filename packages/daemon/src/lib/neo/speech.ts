@@ -299,9 +299,8 @@ export class NeoSpeech {
     return this.listeners.has(sessionId);
   }
 
-  async publish(sessionId: string, version: string, text?: string, fallback?: string) {
+  async publish(sessionId: string, version: string, text?: string) {
     await this.serial;
-    text ??= fallback && this.listeners.has(sessionId) ? spokenReply(fallback) : undefined;
     const receipt = text
       ? await this.enqueue(
           'say',

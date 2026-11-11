@@ -29,6 +29,7 @@ export async function frontSession(
     systemPrompt: NEO_FRONT,
     autoCompactPercent: model.autoCompactPercent,
     tools: { useClaudeCodePreset: false },
+    operationTools: false,
     sdkToolsPreset: [],
     allowedTools: [
       'projects_read',

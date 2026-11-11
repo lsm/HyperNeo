@@ -402,7 +402,10 @@ export class QueryOptionsBuilder {
       registryServers: inputs ? this.canonicalMcpServers(inputs) : this.getMcpServersFromRegistry(),
       skillServers: inputs ? {} : this.getMcpServersFromSkills(),
       runtimeServers: this.getMcpServers() as Record<string, SdkMcpServerConfig> | undefined,
-      operationServer: this.operationServer ?? this.ctx.getOperationMcpServer?.(),
+      operationServer:
+        this.ctx.session.config.operationTools === false
+          ? undefined
+          : (this.operationServer ?? this.ctx.getOperationMcpServer?.()),
     });
     for (const { from, to } of renamed) this.warnReservedMcpServerName(from, to);
     const exa = this.exaWebToolsActivation;
@@ -559,7 +562,10 @@ export class QueryOptionsBuilder {
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = await this.getSDKCliPath();
 
-    this.operationServer = this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin);
+    this.operationServer =
+      config.operationTools === false
+        ? undefined
+        : this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin);
     const mergedMcpServers = this.computeEffectiveMcpServers(toolInputs);
 
     const queryOptions: Options = {
