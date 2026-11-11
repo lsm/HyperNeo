@@ -6,12 +6,9 @@ import {
   type OperationRefusal,
 } from './mcp-adapter.ts';
 import type { CallerIdentity } from './caller.ts';
-import {
-  resolveOperationRegistry,
-  type OperationCallerRole,
-  type OperationRegistrySource,
-} from './registry.ts';
-import { coreOperationSignatures } from './core-signatures.ts';
+import { type OperationCallerRole, type OperationRegistrySource } from './registry.ts';
+import { z } from 'zod';
+import { NEO_RESIDENT_FAMILIES, residentOperation } from './resident-tools.ts';
 
 export function createOperationMcpServer(
   registry: OperationRegistrySource,
@@ -19,19 +16,38 @@ export function createOperationMcpServer(
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
   descriptionRole?: OperationCallerRole
 ) {
-  const signatures =
-    descriptionRole === 'neo' ? coreOperationSignatures(resolveOperationRegistry(registry)) : '';
+  const invoke = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
   const discovery =
     descriptionRole === 'neo'
-      ? 'operations.list {} returns rare-operation namespace counts; {prefix,cursor?} pages at most 20 names. all:true stays compact. operations.describe {name} returns one full schema.'
+      ? 'operations.list {prefix,cursor?}; operations.describe {name}. message.send acceptance means durable mailbox persistence, not an agent reply.'
       : 'operations.list discovers others; operations.describe {name} returns full schemas.';
-  const tools = [
+  const tools: NonNullable<Parameters<typeof createSdkMcpServer>[0]['tools']> = [
     tool(
       'invoke',
-      `Invoke {name,input}. ${discovery} message.send acceptance means durable mailbox persistence, not an agent reply.${signatures ? `\n\nCore input shapes:\n${signatures}` : ''}`,
+      descriptionRole === 'neo'
+        ? discovery
+        : `Invoke {name,input}. ${discovery} message.send acceptance means durable mailbox persistence, not an agent reply.`,
       OperationMcpInvocationSchema.shape,
-      createOperationMcpHandler(registry, resolveCaller, recordRefusal)
+      invoke
     ),
   ];
+  if (descriptionRole === 'neo') {
+    for (const family of NEO_RESIDENT_FAMILIES) {
+      const schema =
+        family.actions.length === 1
+          ? z.object({ input: z.looseObject({}), action: z.never().optional() })
+          : z.object({ action: z.enum(family.actions), input: z.looseObject({}) });
+      tools.push(
+        tool(family.name, family.description, schema.shape, async (args) => {
+          const input = schema.parse(args);
+          const action =
+            'action' in input && typeof input.action === 'string'
+              ? input.action
+              : family.actions[0];
+          return invoke({ name: residentOperation(family, action), input: input.input });
+        })
+      );
+    }
+  }
   return createSdkMcpServer({ name: OPERATIONS_MCP_SERVER_NAME, tools });
 }

@@ -46,7 +46,7 @@ const excludedOperations = {
 
 export function unclassifiedNeoOperations(operations: readonly OperationDefinition[]): string[] {
   const rare = new Set<string>(NEO_RARE_OPERATION_NAMES);
-  const resident = new Set(NEO_CORE_OPERATION_NAMES);
+  const resident = new Set<string>(NEO_CORE_OPERATION_NAMES);
   const enabled = [
     ...new Set(operations.flatMap((operation) => (operation.pack ? [operation.pack.id] : []))),
   ];
