@@ -704,6 +704,7 @@ test('Convo exposes reads, handoff and one publication path', () => {
     'projects_read',
     'reply_detailed',
     'reply_short',
+    'speech_say',
     'todos_read',
   ]);
 });
@@ -802,6 +803,69 @@ test.each([
     if (text) expect(replies[0].fullText).toBe(text);
     await handler(job);
     expect(service.publications.list(conversationId)).toHaveLength(1);
+  }
+);
+
+test.each(['user_message_uuid', 'user_message_uuids'] as const)(
+  'an overlapping terminal settles only the inputs named by %s',
+  async (attribution) => {
+    const previous = await accept();
+    const current = await accept();
+    const handler = createNeoFrontHandler(service);
+    await handler(previous.job);
+    await handler(current.job);
+    for (const { id } of [previous, current]) {
+      await db.saveUserMessage(
+        front,
+        {
+          type: 'user',
+          uuid: id as UUID,
+          session_id: front,
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'Human input' },
+        },
+        'enqueued'
+      );
+      expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+    }
+    await db.saveSDKMessage(front, {
+      type: 'result',
+      subtype: 'success',
+      uuid: crypto.randomUUID(),
+      session_id: front,
+      result: '',
+      is_error: false,
+      [attribution]: attribution === 'user_message_uuid' ? previous.id : [previous.id],
+    } as import('@hyperneo/shared/sdk').SDKMessage);
+    expect(await handler(current.job)).toMatchObject({ delivered: false, pending: true });
+    expect(service.publications.list(conversationId)).toHaveLength(0);
+    expect(await handler(previous.job)).toMatchObject({ delivered: true });
+    expect(service.publications.list(conversationId)).toHaveLength(1);
+    expect(service.publications.list(conversationId)![0].replyTo).toEqual([previous.id]);
+    expect(
+      await convoPublish({
+        requestId: 'current-ack',
+        replyTo: [current.id],
+        fullText: 'I will check that.',
+        verbatim: true,
+        progress: true,
+      })
+    ).toMatchObject({ accepted: true });
+    await db.saveSDKMessage(front, {
+      type: 'result',
+      subtype: 'success',
+      uuid: crypto.randomUUID(),
+      session_id: front,
+      result: 'The answer to the current input.',
+      is_error: false,
+      [attribution]: attribution === 'user_message_uuid' ? current.id : [current.id],
+    } as import('@hyperneo/shared/sdk').SDKMessage);
+    expect(await handler(current.job)).toMatchObject({ delivered: true });
+    const replies = service.publications
+      .list(conversationId)!
+      .filter((row) => row.replyTo?.includes(current.id));
+    expect(replies).toHaveLength(1);
+    expect(replies[0].fullText).toBe('The answer to the current input.');
   }
 );
 

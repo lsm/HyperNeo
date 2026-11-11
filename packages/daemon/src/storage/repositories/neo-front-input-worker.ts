@@ -33,18 +33,28 @@ export class NeoFrontInputRepository {
       .prepare(`WITH input AS (
       SELECT consumed_seq, send_status FROM sdk_messages
       WHERE session_id = ?1 AND sdk_uuid = ?2 AND message_type = 'user' LIMIT 1
-    ), ended AS (
+    ), candidates AS (
       SELECT r.consumed_seq, ${sdkMessageBodyAt('r.rowid')} AS body FROM sdk_messages r, input
       WHERE r.session_id = ?1 AND r.consumed_seq > input.consumed_seq
         AND ${SESSION_BILLING_TERMINAL}
-      ORDER BY r.consumed_seq LIMIT 1
+    ), ended AS (
+      SELECT consumed_seq, body FROM candidates WHERE
+        (json_type(body, '$.user_message_uuid') IS NULL
+          AND json_type(body, '$.user_message_uuids') IS NULL)
+        OR json_extract(body, '$.user_message_uuid') = ?2
+        OR ?2 IN (SELECT value FROM json_each(body, '$.user_message_uuids'))
+      ORDER BY consumed_seq LIMIT 1
     ) SELECT input.send_status AS sendStatus, ended.body,
       (SELECT json_group_array(u.sdk_uuid) FROM sdk_messages u
         JOIN neo_front_inputs f ON f.conversation_id = ?3 AND f.message_id = u.sdk_uuid AND f.eligible = 1 AND f.owner IS NULL
         WHERE u.session_id = ?1 AND ${CONSUMED_INPUT}
-        AND u.consumed_seq > COALESCE((SELECT MAX(consumed_seq) FROM sdk_messages
+        AND CASE WHEN json_type(ended.body, '$.user_message_uuid') IS NOT NULL
+          OR json_type(ended.body, '$.user_message_uuids') IS NOT NULL
+        THEN u.sdk_uuid = json_extract(ended.body, '$.user_message_uuid')
+          OR u.sdk_uuid IN (SELECT value FROM json_each(ended.body, '$.user_message_uuids'))
+        ELSE u.consumed_seq > COALESCE((SELECT MAX(consumed_seq) FROM sdk_messages
           WHERE session_id = ?1 AND ${SESSION_BILLING_TERMINAL}
-            AND consumed_seq < ended.consumed_seq), 0)
+            AND consumed_seq < ended.consumed_seq), 0) END
         AND u.consumed_seq < ended.consumed_seq) AS messageIds
       FROM input LEFT JOIN ended ON 1`)
       .get(sessionId, messageId, conversationId) as {
