@@ -17,6 +17,7 @@ import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { createPair2Route } from './lib/pairing/pair2-route.ts';
 import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
@@ -1212,6 +1213,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       db: () => db.gateway,
       now: Date.now,
     });
+    const handlePair2 =
+      process.env.HYPERNEO_PAIRING_V2 === 'on'
+        ? createPair2Route({
+            db: db.gateway,
+            limiter: daemonPairingLimiter,
+            now: Date.now,
+            authenticate: (req) => authenticateUpgrade(req, null),
+          })
+        : null;
     const handleAskMarkdown = createAskMarkdownHandler(
       () => sessionManager.getOperationRegistry(),
       createUpgradeAuthenticator({ db: () => db.gateway, now: Date.now, agentRead: true })
@@ -1345,6 +1355,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
+        if (handlePair2 && url.pathname.startsWith('/pair2/')) return handlePair2(req);
         if (url.pathname === '/neo-peer/message' && req.method === 'POST')
           return rpcHandlers.handlePeerMessage(req);
         if (url.pathname === '/neo-peer/pair' && req.method === 'POST') return handlePeerPair(req);
