@@ -14,6 +14,8 @@ import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/loca
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { neoIntakeMessage } from '../../../packages/daemon/src/lib/neo/intake.ts';
+import { NeoFrontInputRepository } from '../../../packages/daemon/src/storage/repositories/neo-front-input-worker.ts';
 import { frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
 
 const run = resolve(process.argv.at(-1)!);
@@ -26,6 +28,7 @@ process.env.CLAUDE_CONFIG_DIR = join(run, 'sdk');
 process.env.TEST_SDK_SESSION_DIR = join(run, 'sdk');
 const humanId = crypto.randomUUID();
 const handoffId = crypto.randomUUID();
+const failedDeliveryId = crypto.randomUUID();
 const requests: string[] = [];
 let exaRequests = 0;
 const model = KimiProvider.MODELS.find((entry) => entry.contextWindow >= 1_000_000)!;
@@ -268,6 +271,29 @@ try {
   assert.equal(batch.accepted, false);
   assert.match(batch.reason, /^publication_superseded(?::|$)/);
   await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
+  await app.db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: failedDeliveryId, content: 'Queued handoff' }),
+    'deferred'
+  );
+  assert.equal((await invoke<{ ok: boolean }>('neo.message.send', {
+    sessionId: root,
+    requestId: failedDeliveryId,
+    content: 'Queued handoff',
+  })).ok, true);
+  const outcomes = new NeoFrontInputRepository(app.db.getDatabase());
+  await waitFor(() => !!outcomes.terminal(conversationId, front, failedDeliveryId));
+  const failedJob = () => app!.db.getJobQueueRepo().listJobs({ queue: 'neo.front' })
+    .find((job) => job.payload.messageId === failedDeliveryId);
+  assert(['pending', 'processing'].includes(failedJob()?.status ?? ''));
+  assert.equal(publications.list(conversationId)?.some((row) => row.replyTo?.includes(failedDeliveryId)), false);
+  assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(root, failedDeliveryId), 'deferred');
+  assert(app.db.getSDKMessageRepo().markDeliveryFailedByUuid(root, failedDeliveryId));
+  await waitFor(() => !!publications.list(conversationId)?.some((row) => row.replyTo?.includes(failedDeliveryId)));
+  const failedReplies = publications.list(conversationId)!.filter((row) => row.replyTo?.includes(failedDeliveryId));
+  assert.equal(failedReplies.length, 1);
+  assert.equal(failedReplies[0].fullText, 'Hello from Neo.');
+  evidence.queuedThenFailedReply = { text: failedReplies[0].fullText, replyTo: failedReplies[0].replyTo };
   assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
   assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
   const rows = replies();

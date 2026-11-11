@@ -277,8 +277,8 @@ test('a queued Front delivery falls back to Back when dual mode is disabled', as
   const { id, job } = await accept();
   await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
   expect(await createNeoFrontHandler(service)(job)).toEqual({
-    delivered: true,
-    outcome: 'handed_off',
+    delivered: false,
+    pending: true,
   });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(db.getSession(front)).toBeNull();
@@ -727,7 +727,10 @@ test.each(['creation', 'delivery'])(
         await disable();
       });
     }
-    expect(await createNeoFrontHandler(service)(job)).toMatchObject({ delivered: true });
+    expect(await createNeoFrontHandler(service)(job)).toMatchObject({
+      delivered: false,
+      pending: true,
+    });
     expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   }
 );
@@ -828,7 +831,7 @@ test.each(['creation', 'delivery'])(
     else vi.spyOn(service, 'deliverForward').mockRejectedValue(new Error('Convo unavailable'));
     const handler = createNeoFrontHandler(service);
     for (let attempt = 0; attempt < 2; attempt++) {
-      expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+      expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
     }
     const sdk = db.getSDKMessageRepo();
     expect(sdk.getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
@@ -837,6 +840,8 @@ test.each(['creation', 'delivery'])(
       inputKind: 'human',
       uuid: id,
     });
+    expect(sdk.markDeliveryConsumedByUuid(root, id)).not.toBeNull();
+    expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
   }
 );
 
@@ -849,16 +854,71 @@ test('a failed Neo delivery cannot complete the Convo error fallback', async () 
   );
   vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
   const handler = createNeoFrontHandler(service);
-  expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
-  const deadline = Date.parse(service.asks.find(conversationId, id)!.createdAt) + 30 * 60_000;
-  const clock = vi.spyOn(Date, 'now').mockReturnValue(deadline);
-  try {
-    expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
-    const replies = service.publications.list(conversationId)!;
-    expect(replies).toHaveLength(1);
-    expect(replies[0].replyTo).toEqual([id]);
-    expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
-  } finally {
-    clock.mockRestore();
-  }
+  expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
+  const replies = service.publications.list(conversationId)!;
+  expect(replies).toHaveLength(1);
+  expect(replies[0].replyTo).toEqual([id]);
+  expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
 });
+
+test.each(['terminal', 'creation failure'])(
+  'a queued Neo delivery stays pending through %s and settles visibly after failure',
+  async (path) => {
+    const { id } = await accept();
+    const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+    const sdk = db.getSDKMessageRepo();
+    await db.saveUserMessage(
+      root,
+      neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+      'enqueued'
+    );
+    if (path === 'creation failure') {
+      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
+    } else {
+      await frontSession(service, service.asks.find(conversationId, id)!, model);
+      await db.saveUserMessage(
+        front,
+        {
+          type: 'user',
+          uuid: id as UUID,
+          session_id: front,
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'Hello' },
+        },
+        'enqueued'
+      );
+      expect(sdk.markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+      await db.saveSDKMessage(front, {
+        type: 'result',
+        subtype: 'success',
+        uuid: crypto.randomUUID(),
+        session_id: front,
+        result: '',
+        is_error: false,
+      } as import('@hyperneo/shared/sdk').SDKMessage);
+    }
+    const handler = createNeoFrontHandler(service);
+    expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
+    expect(db.getJobQueueRepo().getJob(job.id)?.status).toBe('pending');
+    expect(service.publications.list(conversationId)).toHaveLength(0);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 1000);
+    try {
+      const queued = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+      expect(await handler(queued)).toMatchObject({ delivered: false, pending: true });
+      expect(sdk.getUserSendStatus(root, id)).toBe('enqueued');
+      expect(sdk.markDeliveryFailedByUuid(root, id)).not.toBeNull();
+      clock.mockReturnValue(now + 2000);
+      const failed = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+      expect(await handler(failed)).toMatchObject({ delivered: true, outcome: 'answered' });
+      const replies = service.publications.list(conversationId)!;
+      expect(replies).toHaveLength(1);
+      expect(replies[0].replyTo).toEqual([id]);
+      expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+      await handler(failed);
+      expect(service.publications.list(conversationId)).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+    }
+  }
+);
