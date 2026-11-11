@@ -53,11 +53,16 @@ export function operationsCapabilityContribution(
   const listing = registry ? describeResolvedOperations(registry, caller) : '';
   const door =
     caller?.source === 'mcp' && caller.role === 'neo'
-      ? 'Use invoke with operations.list {} for rare-operation namespace counts, {prefix,cursor?} for pages of at most 20 names, and operations.describe {name} for one schema. all:true stays compact.'
+      ? 'Use neo_* for resident actions; invoke for rare calls. operations.list {} counts namespaces; {prefix,cursor?} pages names. operations.describe {name} gives full inputs. neo.snapshot is the current state index.'
       : SPACE_OPERATIONS_DOOR;
   return {
     kind: 'authored',
     server: { name: OPERATIONS_MCP_SERVER_NAME, config },
-    briefing: listing ? `${door}\n\n${listing}` : door,
+    briefing:
+      caller?.source === 'mcp' && caller.role === 'neo'
+        ? door
+        : listing
+          ? `${door}\n\n${listing}`
+          : door,
   };
 }

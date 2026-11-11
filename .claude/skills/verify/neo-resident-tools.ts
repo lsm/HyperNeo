@@ -2,10 +2,13 @@ process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
+import { createOperationRpcHandler } from '../../../packages/daemon/src/lib/operations/rpc-adapter.ts';
 import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
 import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { NEO_RESIDENT_FAMILIES, residentOperation } from '../../../packages/daemon/src/lib/operations/resident-tools.ts';
+import { operationsCapabilityContribution } from '../../../packages/daemon/src/lib/operations/door-briefing.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 
 const run = resolve(process.argv[2]);
@@ -24,18 +27,78 @@ try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
   const registry = app.sessionManager.getOperationRegistry();
-  const server = createOperationMcpServer(registry, () => ({ role: 'neo', sessionId: 'synthetic-neo' }), undefined, 'neo');
+  const rpc = createOperationRpcHandler(registry, () => ({}));
+  const root = await rpc({ name: 'neo.open', input: {} }, { messageId: 'proof', sessionId: 'global', method: 'operation.invoke', timestamp: 'proof' });
+  assert(root.sessionId);
+  const server = createOperationMcpServer(registry, () => ({ role: 'neo', sessionId: root.sessionId }), undefined, 'neo');
   const client = new Client({ name: 'resident-proof', version: '1' });
   const [left, right] = InMemoryTransport.createLinkedPair();
   await server.instance.connect(right);
   await client.connect(left);
   try {
     const tools = (await client.listTools()).tools;
-    evidence.push({ tools });
-    assert.deepEqual(tools.map(({ name }) => name).sort(), ['invoke', 'neo_work', 'neo_todo', 'neo_publish', 'neo_ask', 'neo_question', 'neo_session', 'neo_speech'].sort());
+    const names = tools.map(({ name }) => name).sort();
+    assert.deepEqual(names, ['invoke', ...NEO_RESIDENT_FAMILIES.map(({ name }) => name)].sort());
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const reply = await client.callTool({ name, arguments: args });
+      assert(Array.isArray(reply.content));
+      const text = reply.content[0] as { text: string };
+      let value: unknown;
+      try { value = JSON.parse(text.text); } catch { assert.equal(reply.isError, true); value = text.text; }
+      return { value: value as Record<string, unknown>, isError: reply.isError === true };
+    };
+    const invoke = (name: string, input: Record<string, unknown>) => call('invoke', { name, input });
+    let routes = 0;
+    for (const family of NEO_RESIDENT_FAMILIES) {
+      for (const action of family.actions) {
+        const name = residentOperation(family, action);
+        assert(registry.get(name), name);
+        const described = await invoke('operations.describe', { name });
+        assert.equal(described.value.found, true);
+        const input = { proof: true };
+        const wrapped = await call(family.name, { ...(family.actions.length > 1 ? { action } : {}), input });
+        const canonical = await invoke(name, input);
+        assert.deepEqual(wrapped, canonical, name);
+        routes++;
+      }
+    }
+    assert.equal(routes, 28);
+    assert.equal((await call('neo_todo', { action: 'start', input: {} })).isError, true);
+    const opened = await call('neo_ask', { action: 'open', input: { title: 'Resident proof', request: 'Check resident routing' } });
+    assert.equal(opened.isError, false);
+    assert.equal(opened.value.ok, true);
+    const askId = (opened.value.ask as { id: string }).id;
+    const read = await invoke('neo.ask.read', { askId });
+    assert.equal(read.value.ok, true);
+    assert.equal(((read.value.entry as { ask: { title: string } }).ask).title, 'Resident proof');
+    evidence.push({ opened, read });
+    const index = await invoke('operations.list', {});
+    assert.deepEqual(await invoke('operations.list', { all: true }), index);
+    const door = operationsCapabilityContribution(server, registry, { source: 'mcp', role: 'neo' }).briefing;
+    const definitions = tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
+    const bytes = Buffer.byteLength(JSON.stringify({ tools: definitions, door }));
+    const listBytes = Buffer.byteLength(JSON.stringify(index.value));
+    evidence.push({ tools: definitions, door, bytes, listBytes, routes });
+    assert(bytes < 3100, `tool definitions plus door: ${bytes}`);
+    assert(listBytes < 500, `list: ${listBytes}`);
+    console.log(`PASS tools=${tools.length} routes=${routes} bytes=${bytes} listBytes=${listBytes}`);
+
   } finally {
     await client.close();
     await server.instance.close();
+  }
+
+  const other = createOperationMcpServer(registry, () => ({ role: 'workflow_worker' }));
+  const otherClient = new Client({ name: 'non-neo-proof', version: '1' });
+  const [otherLeft, otherRight] = InMemoryTransport.createLinkedPair();
+  try {
+    await other.instance.connect(otherRight);
+    await otherClient.connect(otherLeft);
+    assert.deepEqual((await otherClient.listTools()).tools.map(({ name }) => name), ['invoke']);
+    evidence.push({ nonNeoTools: 1 });
+  } finally {
+    await otherClient.close();
+    await other.instance.close();
   }
 
 } finally {

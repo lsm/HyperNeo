@@ -38,7 +38,7 @@ describe('resident family tools', () => {
     );
     const server = createOperationMcpServer(
       registry,
-      () => ({ role: 'neo', sessionId: 'bound' }),
+      () => ({ role: 'neo', sessionId: 'bound', consumedInputId: 'human-input' }),
       undefined,
       'neo'
     );
@@ -58,14 +58,65 @@ describe('resident family tools', () => {
         expect(calls.at(-1)).toEqual({
           name: `${prefix}.${action}`,
           input: { text: 'hello' },
-          caller: { role: 'neo', sessionId: 'bound', source: 'mcp' },
+          caller: {
+            role: 'neo',
+            sessionId: 'bound',
+            consumedInputId: 'human-input',
+            source: 'mcp',
+          },
         });
         expect((await tools[name].handler({ ...args, input: { text: '' } })).isError).toBe(true);
       }
       expect(neoReadTools().allowedTools).toContain(`mcp__hyperneo-operations__${name}`);
     }
     expect(calls).toHaveLength(28);
-    await server.instance.close();
+  });
+
+  test('checks live pack admission and records dispatcher refusals', async () => {
+    let enabled: string[] = [];
+    const records: unknown[] = [];
+    let executions = 0;
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'neo.todo.add',
+        description: 'Add a todo',
+        pack: { id: 'coding', enabledIds: () => enabled },
+        inputSchema: z.object({ text: z.string() }),
+        resultSchema: z.unknown(),
+        execute: async () => {
+          executions++;
+          return { accepted: false, reason: 'not_allowed' };
+        },
+      }),
+    ]);
+    const server = createOperationMcpServer(
+      registry,
+      () => ({ role: 'neo' }),
+      (refusal) => {
+        records.push(refusal);
+      },
+      'neo'
+    );
+    const tools = (
+      server.instance as unknown as {
+        _registeredTools: Record<
+          string,
+          { handler: (args: unknown) => Promise<{ content: { text: string }[] }> }
+        >;
+      }
+    )._registeredTools;
+    const call = async (input: unknown) =>
+      JSON.parse((await tools.neo_todo.handler({ action: 'add', input })).content[0].text);
+    expect((await call({})).code).toBe('forbidden');
+    enabled = ['coding'];
+    expect((await call({})).code).toBe('invalid_input');
+    await call({ text: 'hello' });
+    expect(records).toEqual([
+      { operation: 'neo.todo.add', reason: 'forbidden' },
+      { operation: 'neo.todo.add', reason: 'invalid_input' },
+      { operation: 'neo.todo.add', reason: 'not_allowed' },
+    ]);
+    expect(executions).toBe(1);
   });
 
   test('keeps non-Neo sessions on the invoke tool', async () => {
@@ -75,6 +126,5 @@ describe('resident family tools', () => {
     expect(
       Object.keys((server.instance as unknown as { _registeredTools: object })._registeredTools)
     ).toEqual(['invoke']);
-    await server.instance.close();
   });
 });
