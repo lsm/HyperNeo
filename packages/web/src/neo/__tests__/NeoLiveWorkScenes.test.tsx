@@ -1,3 +1,4 @@
+vi.mock('../../components/SessionSchedules.tsx', () => ({ SessionSchedules: () => null }));
 import { locale } from '../../lib/i18n/index.ts';
 import type { NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';

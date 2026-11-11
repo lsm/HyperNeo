@@ -40,11 +40,7 @@ describe('Wake and conversation explicit disclosures', () => {
       settledAt: Date.now(),
       additions: [{ kind: 'journal' as const, id: 'journal', label: 'Synthetic wake detail' }],
     };
-    const view = render(
-      <NeoWakeRow entryKey="wake" conversationId={root.slice(4)} wake={wake}>
-        <p>Synthetic nested reply</p>
-      </NeoWakeRow>
-    );
+    const view = render(<NeoWakeRow entryKey="wake" conversationId={root.slice(4)} wake={wake} />);
     const row = view.container.querySelector<HTMLDetailsElement>('details')!;
     fireEvent.click(screen.getByText('Synthetic wake'));
     expect(row.open).toBe(false);
@@ -52,7 +48,7 @@ describe('Wake and conversation explicit disclosures', () => {
     fireEvent.click(more);
     expect(row.open).toBe(true);
     const less = assertTrailingControl(
-      screen.getByText('Synthetic nested reply'),
+      screen.getByText('Synthetic wake detail'),
       /less.*Synthetic wake/
     );
     view.rerender(
@@ -60,9 +56,7 @@ describe('Wake and conversation explicit disclosures', () => {
         entryKey="wake"
         conversationId={root.slice(4)}
         wake={{ ...wake, summary: 'Updated summary.' }}
-      >
-        <p>Synthetic nested reply</p>
-      </NeoWakeRow>
+      />
     );
     expect(row.open).toBe(true);
     fireEvent.click(less);

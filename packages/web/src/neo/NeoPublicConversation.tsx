@@ -36,7 +36,6 @@ import { NeoPreviewReference } from './NeoPreviewReference.tsx';
 import { NeoPublicationSession } from './NeoPublicationSession.tsx';
 import { NeoPublicationHistory } from './NeoPublicationHistory.tsx';
 import { NeoQuoteBar } from './NeoQuoteBar.tsx';
-import { NeoWakeRow } from './NeoWakeRow.tsx';
 import {
   type NeoPendingAsk,
   type NeoQuote,
@@ -973,12 +972,6 @@ export function NeoPublicConversation({
   onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
   onOpenSession?: (link: string, label: string) => void;
 }) {
-  const wakeFor = (id: string) =>
-    conversation.entries.find(
-      (entry) =>
-        entry.kind === 'wake' &&
-        entry.wake.additions.some((item) => item.kind === 'publication' && item.id === id)
-    );
   const labels = new Map([...neoMessageReplyLabels(conversation.entries), ...(replyLabels ?? [])]);
   const [seeking, setSeeking] = useState<string | null>(null);
   const seekPages = useRef(0);
@@ -1030,36 +1023,7 @@ export function NeoPublicConversation({
         </button>
       )}
       {conversation.entries.map((entry) =>
-        entry.kind === 'publication' &&
-        wakeFor(entry.publication.publicationId) ? null : entry.kind === 'wake' ? (
-          <NeoWakeRow
-            key={entry.key}
-            entryKey={entry.key}
-            wake={entry.wake}
-            conversationId={conversation.conversationId!}
-            onOpenWork={onOpenWork}
-          >
-            {conversation.entries
-              .filter(
-                (item) =>
-                  item.kind === 'publication' && wakeFor(item.publication.publicationId) === entry
-              )
-              .map(
-                (item) =>
-                  item.kind === 'publication' && (
-                    <PublicEntry
-                      key={item.key}
-                      entry={item}
-                      onOpenWork={onOpenWork}
-                      onOpenSession={onOpenSession}
-                      replyLabels={labels}
-                      onSeek={seek}
-                      onQuote={onQuote}
-                    />
-                  )
-              )}
-          </NeoWakeRow>
-        ) : entry.kind === 'notices' ? (
+        entry.kind === 'wake' ? null : entry.kind === 'notices' ? (
           <NoticeRow key={entry.key} entryKey={entry.key} group={entry.group} mute={mute} />
         ) : entry.kind === 'session' ? (
           <SessionMessageRow key={entry.key} entryKey={entry.key} message={entry.message} />

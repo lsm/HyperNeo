@@ -37,7 +37,6 @@ import { enqueueMailboxEntry } from '../mailbox/enqueue.ts';
 import { wrapSessionContent } from '../messaging/session-envelope.ts';
 import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
-import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
@@ -400,32 +399,6 @@ export class NeoService {
       offDeleted();
     };
   }
-
-  readonly notifyScheduleIdle = (schedule: SessionSchedule): void => {
-    const conversationId = this.repo.conversationId();
-    if (!conversationId) return;
-    const publicationId = neoDerivedId(`schedule-idle:${schedule.id}:${schedule.nextRunAt}`);
-    if (this.publications.get(conversationId, publicationId)) return;
-    const name = this.db.getSession(schedule.target.id)?.title ?? schedule.target.id;
-    const elapsed =
-      schedule.cadence.kind === 'every'
-        ? ` for ${Math.round((schedule.cadence.everyMs * 3) / 60_000)} minutes`
-        : '';
-    const suffix = ` has been idle${elapsed}, waiting for work.`;
-    const text = `${name.slice(0, 2000 - suffix.length)}${suffix}`;
-    const receipt = this.appendPublication({
-      conversationId,
-      publicationId,
-      shortText: text,
-      fullText: text,
-      links: [],
-    });
-    if (!receipt.accepted) throw new Error(`Idle notice: ${receipt.reason}`);
-    if (receipt.created) {
-      this.notifyPublicationsChanged(conversationId);
-      this.notifyChanged();
-    }
-  };
 
   private currentInputIds(sessionId: string): string[] {
     const state = parseProcessingState(this.db.getSession(sessionId)?.processingState);
