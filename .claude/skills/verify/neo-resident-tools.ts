@@ -9,6 +9,8 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { NEO_RESIDENT_FAMILIES, residentOperation } from '../../../packages/daemon/src/lib/operations/resident-tools.ts';
 import { operationsCapabilityContribution } from '../../../packages/daemon/src/lib/operations/door-briefing.ts';
+import { createOperationRegistry, defineOperation } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { z } from '../../../packages/daemon/node_modules/zod/index.js';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 
 const run = resolve(process.argv[2]);
@@ -89,6 +91,27 @@ try {
     await server.instance.close();
   }
 
+  let guardedExecutions = 0;
+  const guardRegistry = createOperationRegistry(['neo.publication.publish', 'neo.session.archive', 'neo.speech.say'].map(name => defineOperation({
+    name, description: name, inputSchema: z.object({ text: z.string() }), resultSchema: z.unknown(),
+    execute: async () => { guardedExecutions++; return {}; },
+  })));
+  const guardServer = createOperationMcpServer(guardRegistry, () => ({ role: 'neo' }), undefined, 'neo');
+  const guardClient = new Client({ name: 'single-action-proof', version: '1' });
+  const [guardLeft, guardRight] = InMemoryTransport.createLinkedPair();
+  try {
+    await guardServer.instance.connect(guardRight);
+    await guardClient.connect(guardLeft);
+    for (const name of ['neo_publish', 'neo_session', 'neo_speech']) {
+      const reply = await guardClient.callTool({ name, arguments: { action: 'wrong', input: { text: 'valid' } } });
+      assert.equal(reply.isError, true, name);
+    }
+    assert.equal(guardedExecutions, 0);
+    evidence.push({ guardedExecutions, rejectedSingleActions: 3 });
+  } finally {
+    await guardClient.close();
+    await guardServer.instance.close();
+  }
   const other = createOperationMcpServer(registry, () => ({ role: 'workflow_worker' }));
   const otherClient = new Client({ name: 'non-neo-proof', version: '1' });
   const [otherLeft, otherRight] = InMemoryTransport.createLinkedPair();

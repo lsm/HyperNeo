@@ -88,6 +88,37 @@ describe('resident family tools', () => {
     expect(calls).toHaveLength(28);
   });
 
+  test('single-action tools reject an action before dispatch', async () => {
+    let executions = 0;
+    const names = ['neo.publication.publish', 'neo.session.archive', 'neo.speech.say'];
+    const registry = createOperationRegistry(
+      names.map((name) =>
+        defineOperation({
+          name,
+          description: name,
+          inputSchema: z.object({ text: z.string() }),
+          resultSchema: z.unknown(),
+          execute: async () => {
+            executions++;
+            return {};
+          },
+        })
+      )
+    );
+    const server = createOperationMcpServer(registry, () => ({ role: 'neo' }), undefined, 'neo');
+    const tools = (
+      server.instance as unknown as {
+        _registeredTools: Record<string, { handler: (args: unknown) => Promise<unknown> }>;
+      }
+    )._registeredTools;
+    for (const name of ['neo_publish', 'neo_session', 'neo_speech']) {
+      await expect(
+        tools[name].handler({ action: 'wrong', input: { text: 'valid' } })
+      ).rejects.toThrow();
+    }
+    expect(executions).toBe(0);
+  });
+
   test('checks live pack admission and records dispatcher refusals', async () => {
     let enabled: string[] = [];
     const records: unknown[] = [];
