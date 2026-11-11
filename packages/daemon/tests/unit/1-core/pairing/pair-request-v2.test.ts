@@ -186,6 +186,54 @@ describe('pairing v2 one-time request repository', () => {
     if (!again.ok) expect(again.reason).toBe('used');
   });
 
+  test('a completed human request closes recovery and invalidates peer human approvals', async () => {
+    writer
+      .prepare('INSERT INTO human_device_resets (id, reset_at, devices_json) VALUES (?, ?, ?)')
+      .run('recovery', now, '[]');
+    const peer = devices.createCode('human', 'Recovery peer', true, now);
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+    await approveRequest(made.requestId, 'local-rpc:web');
+    expect(devices.humanRecoveryOpen()).toBe(true);
+    const done = await completeRequest(
+      made.requestId,
+      phone.publicKeyB64,
+      proof(phone, made.requestId, bound.bindNonce)
+    );
+    expect(done.ok).toBe(true);
+    expect(devices.humanRecoveryOpen()).toBe(false);
+    expect(devices.terminalMayApprove()).toBe(false);
+    expect(devices.redeem(peer.code, 'Recovery peer', now)).toBeNull();
+  });
+
+  test('device insertion failure rolls back the grant and recovery closure together', async () => {
+    writer
+      .prepare('INSERT INTO human_device_resets (id, reset_at, devices_json) VALUES (?, ?, ?)')
+      .run('recovery', now, '[]');
+    const peer = devices.createCode('human', 'Recovery peer', true, now);
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64, 'Rejected phone');
+    if (!bound.ok) throw new Error('bind failed');
+    await approveRequest(made.requestId, 'local-rpc:web');
+    writer.exec(
+      "CREATE TRIGGER reject_device BEFORE INSERT ON paired_devices WHEN NEW.name = 'Rejected phone' BEGIN SELECT RAISE(ABORT, 'synthetic insertion failure'); END"
+    );
+    await expect(
+      completeRequest(
+        made.requestId,
+        phone.publicKeyB64,
+        proof(phone, made.requestId, bound.bindNonce)
+      )
+    ).rejects.toThrow('synthetic insertion failure');
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'approved' });
+    expect(devices.humanRecoveryOpen()).toBe(true);
+    expect(devices.countDevices().humans).toBe(0);
+    expect(devices.redeem(peer.code, 'Recovery peer', now)).not.toBeNull();
+  });
+
   test('an expired request cannot be bound, approved or completed', async () => {
     const made = await createRequest();
     now += 91_000;
