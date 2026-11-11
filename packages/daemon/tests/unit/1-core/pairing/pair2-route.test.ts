@@ -335,4 +335,16 @@ describe('pairing v2 one-time request route', () => {
     const owner = seedDevice();
     expect((await approveRequest(made.requestId, { 'x-test-device': owner })).status).toBe(200);
   });
+
+  test('unknown /pair2 paths 404 without charging the limiter', async () => {
+    const bogus = await post('/pair2/nope', {});
+    expect(bogus.status).toBe(404);
+    const bogusGet = await route(new Request('http://localhost/pair2/nope'));
+    expect(bogusGet.status).toBe(404);
+    for (let i = 0; i < 10; i++) {
+      expect((await post('/pair2/nope', {})).status).toBe(404);
+    }
+    const res = await post('/pair2/request', {});
+    expect(res.status).toBe(200);
+  });
 });

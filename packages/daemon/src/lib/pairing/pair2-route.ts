@@ -77,6 +77,15 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
       );
       return status ? answer(200, status) : answer(404, { error: 'not_found' });
     }
+    const knownPath = [
+      '/pair2/bind',
+      '/pair2/request',
+      '/pair2/approve',
+      '/pair2/deny',
+      '/pair2/cancel',
+      '/pair2/complete',
+    ].includes(url.pathname);
+    if (!knownPath) return answer(404, { error: 'not_found' });
     if (req.method !== 'POST') return answer(405, { error: 'method_not_allowed' });
 
     if (url.pathname === '/pair2/bind') {
