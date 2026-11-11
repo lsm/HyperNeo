@@ -8,8 +8,7 @@ import type {
   AuthoredCapabilityContribution,
 } from '../briefings/contribution.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
-import { isOperationListed, listOperationSummaries } from './discovery.ts';
-import { neoRareNames } from './neo-discovery.ts';
+import { isOperationListed } from './discovery.ts';
 import type { OperationCaller, OperationRegistry } from './registry.ts';
 
 const DISCOVERY_OPERATION_NAMES = new Set(['operations.list', 'operations.describe']);
@@ -23,13 +22,10 @@ export function describeResolvedOperations(
   registry: OperationRegistry,
   caller: OperationCaller = { source: 'mcp' }
 ): string {
-  const names =
-    caller.source === 'mcp' && caller.role === 'neo'
-      ? neoRareNames(listOperationSummaries(registry, caller, true))
-      : registry.entries
-          .filter((entry) => isOperationListed(entry, caller))
-          .map((entry) => entry.name)
-          .filter((name) => !DISCOVERY_OPERATION_NAMES.has(name));
+  const names = registry.entries
+    .filter((entry) => isOperationListed(entry, caller))
+    .map((entry) => entry.name)
+    .filter((name) => !DISCOVERY_OPERATION_NAMES.has(name));
   if (names.length === 0) return '';
   const families = [...new Set(names.map(operationFamily))].sort((left, right) =>
     left < right ? -1 : left > right ? 1 : 0
