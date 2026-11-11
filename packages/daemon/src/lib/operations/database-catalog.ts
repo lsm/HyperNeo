@@ -75,6 +75,16 @@ export function createDatabaseOperationCatalog(
           (!!conversation && sessionId === frontSessionId(conversation))
         );
       },
+      backgroundResult: (from, to) => {
+        const neo = new NeoRepository(db.getDatabase());
+        const conversation = neo.readConversationId();
+        return (
+          !!conversation &&
+          to === frontSessionId(conversation) &&
+          from === neo.defaultBinding()?.sessionId &&
+          db.getGlobalSettings().neo?.front?.enabled === true
+        );
+      },
       sessionTitle: async (id) => {
         const title = readSessionField(db, 'title', id);
         return title !== null

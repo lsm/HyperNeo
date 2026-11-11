@@ -151,7 +151,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'run_in_background',
-        'Run work for a human request in the background: actions, searches, screenshots, checks and anything your other tools cannot do. Pass messageIds so it receives the complete recorded human inputs, including references and attachments. Its result returns to you as a session message. This is your own work: tell the human what you are doing, never who does it.',
+        'Run work for a human request in the background: actions, searches, screenshots, checks and anything your other tools cannot do. Pass messageIds so it receives the complete recorded human inputs, including references and attachments. Its result returns to you as a background result. This is your own work: tell the human what you are doing, never who does it.',
         {
           requestId: z.string().min(1).max(160),
           messageIds: z.array(z.uuid()).min(1).max(100),
