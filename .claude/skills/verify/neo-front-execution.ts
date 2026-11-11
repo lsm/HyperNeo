@@ -66,6 +66,7 @@ const fixture = createServer(async (request, response) => {
   const active = [failedDeliveryId, handoffId, humanId].find(id => history.includes(id)) ?? humanId;
   let stage = stages.get(active) ?? 0;
   if (front && content.includes('RESULT_FOR_HANDOFF')) stage = 3;
+  if (front && content.includes('UPDATE_FOR_HANDOFF')) stage = 5;
   let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
   if (front && stage === 0) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply_short',
@@ -81,6 +82,10 @@ const fixture = createServer(async (request, response) => {
         ? { requestId: `final-${active}`, replyTo: [active], text: 'Hello from Neo.' }
         : { requestId: `final-${active}`, replyTo: [active], summary: 'The requested work is complete.', details: 'The job is complete. All files were copied and their checksums match.' } };
     stages.set(active, 4);
+  } else if (front && stage === 5) {
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply_short',
+      input: { requestId: `later-${active}`, replyTo: [active], text: 'The review is complete. Here is the later result.' } };
+    stages.set(active, 6);
   }
   const publish = block.type === 'tool_use';
   requests.push(front ? String(block.name ?? 'convo-terminal') : 'neo-turn');
@@ -287,6 +292,12 @@ try {
   assert.equal(batch.accepted, false);
   assert.match(batch.reason, /^dual_model_front_required(?::|$)/);
   await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
+  const update = await back({ name: 'message.send', input: { to: front, text: `UPDATE_FOR_HANDOFF ${handoffId}: Send the later review result.`, idempotencyKey: 'native-back-update' } });
+  assert(!update.isError, JSON.stringify(update));
+  await waitFor(() => replies().length === 3);
+  assert.equal(replies().filter(row => row.replyTo?.includes(handoffId)).length, 2);
+  evidence.multipleRepliesAccepted = true;
+  await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
   await app.db.saveUserMessage(
     root,
     neoIntakeMessage({ sessionId: root, requestId: failedDeliveryId, content: 'Queued handoff' }),
@@ -314,10 +325,11 @@ try {
   assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
   const rows = replies();
   assert.deepEqual(rows.map((row) => row.fullText), [
-    'Hello from Neo.', 'The job is complete. All files were copied and their checksums match.', 'Single-mode reply.',
+    'Hello from Neo.', 'The job is complete. All files were copied and their checksums match.',
+    'The review is complete. Here is the later result.', 'Single-mode reply.',
   ]);
   assert.equal(rows.filter((row) => row.replyTo?.includes(humanId)).length, 1);
-  assert.equal(rows.filter((row) => row.replyTo?.includes(handoffId)).length, 1);
+  assert.equal(rows.filter((row) => row.replyTo?.includes(handoffId)).length, 2);
   assert.deepEqual(rows[0].replyTo, [humanId]);
   assert.deepEqual(rows[1].replyTo, [handoffId]);
   assert.equal(rows[1].shortText, 'The requested work is complete.');
@@ -349,5 +361,5 @@ try {
   writeFileSync(join(run, 'evidence/neo-front-execution.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(
-  'PASS ordinary Convo session, terminal reply, canonical handoff and atomic per-input ownership'
+  'PASS ordinary Convo session, terminal reply, Back handoff and multiple updates per human input'
 );

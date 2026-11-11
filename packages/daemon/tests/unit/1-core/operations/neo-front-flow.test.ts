@@ -1118,15 +1118,15 @@ test('Convo must publish a visible progress reply before sending work to Neo', a
   ).toMatchObject({ accepted: true });
   expect(
     await convoPublish({
-      requestId: 'duplicate',
+      requestId: 'later-result',
       replyTo: [id],
-      fullText: 'Done again.',
+      fullText: 'The review is complete. Here is the result.',
       verbatim: true,
     })
-  ).toMatchObject({ accepted: false });
+  ).toMatchObject({ accepted: true, created: true });
   expect(
     service.publications.list(conversationId)!.filter((row) => row.replyTo?.includes(id))
-  ).toHaveLength(1);
+  ).toHaveLength(2);
 });
 
 test('Convo publication refuses an input it was never given and a stale dual-mode tool', async () => {

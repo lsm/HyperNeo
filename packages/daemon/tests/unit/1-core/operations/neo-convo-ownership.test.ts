@@ -24,22 +24,22 @@ function publish(ids: string[], publicationId = crypto.randomUUID()) {
   });
 }
 
-test('a fresh publication id cannot answer an already claimed human input', () => {
+test('one human input can receive twenty distinct published updates', () => {
   const id = crypto.randomUUID();
   inputs.accept(conversationId, id, true);
-  expect(publish([id])).toMatchObject({ accepted: true, created: true });
-  expect(publish([id])).toMatchObject({ accepted: false });
-  expect(publications.list(conversationId)).toHaveLength(1);
+  for (let index = 0; index < 20; index++)
+    expect(publish([id])).toMatchObject({ accepted: true, created: true });
+  expect(publications.list(conversationId)).toHaveLength(20);
   expect(inputs.get(conversationId, id)?.owner).not.toBeNull();
 });
 
-test('a conflicting batch neither publishes nor claims its unclaimed members', () => {
+test('a batch can include an input that already has an answer', () => {
   const ids = [crypto.randomUUID(), crypto.randomUUID()];
   for (const id of ids) inputs.accept(conversationId, id, true);
   expect(publish([ids[0]])).toMatchObject({ accepted: true });
-  expect(publish(ids)).toMatchObject({ accepted: false });
-  expect(inputs.get(conversationId, ids[1])?.owner).toBeNull();
-  expect(publications.list(conversationId)).toHaveLength(1);
+  expect(publish(ids)).toMatchObject({ accepted: true, created: true });
+  expect(inputs.get(conversationId, ids[1])?.owner).not.toBeNull();
+  expect(publications.list(conversationId)).toHaveLength(2);
 });
 
 test('the original publication retries without claiming or publishing again', () => {
@@ -51,12 +51,12 @@ test('the original publication retries without claiming or publishing again', ()
   expect(publications.list(conversationId)).toHaveLength(1);
 });
 
-test('historical answers block a second claim even when their owner was not recorded', () => {
+test('historical answers allow a later result for the same input', () => {
   const id = crypto.randomUUID();
   expect(publish([id])).toMatchObject({ accepted: true });
   inputs.accept(conversationId, id, true);
-  expect(publish([id])).toMatchObject({ accepted: false });
-  expect(publications.list(conversationId)).toHaveLength(1);
+  expect(publish([id])).toMatchObject({ accepted: true, created: true });
+  expect(publications.list(conversationId)).toHaveLength(2);
 });
 
 test('an acknowledgment with no answer targets leaves the input claim available', () => {

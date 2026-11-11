@@ -70,7 +70,7 @@ export class NeoFrontInputRepository {
     if (!ids.length) return false;
     return this.db.transaction(() => {
       const rows = ids.map((id) => this.get(conversationId, id));
-      if (rows.some((row) => !row?.eligible || row.owner !== null)) return false;
+      if (rows.some((row) => !row?.eligible)) return false;
       for (const id of ids)
         this.db
           .prepare(`UPDATE neo_front_inputs SET owner = ?

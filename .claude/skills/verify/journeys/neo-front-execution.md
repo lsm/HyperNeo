@@ -8,8 +8,10 @@ It uses the real SDK through the ordinary session runtime.
 Enable dual-model mode and send a human message through the authenticated Neo
 operation. Require the daemon to present Convo's tool-free terminal answer with
 the original replyTo. Send a second input that Convo hands to Neo through neo_send.
-Require canonical Neo publication to succeed and fresh-request or batch duplicates
-to be refused. An acknowledgment with empty replyTo leaves the answer claim free.
+Require direct Neo publications to be refused in dual-model mode. Neo sends its
+result internally and Convo publishes it. Send a later result for the same input
+and require another Convo publication to succeed. An acknowledgment leaves the
+answer outcome pending.
 Switch to single-model mode and preserve the same Convo SDK session identity.
 
 Retain neo-front-execution.json with passed and resourcesClosed true and wrapper
