@@ -129,7 +129,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'handoff_read',
-        'Read a complete published report reference from Back Neo. The daemon verifies its SHA-256 and returns text. Continue at nextOffset until complete before summarizing.',
+        'Read a complete report reference produced by your background work. The daemon verifies its SHA-256 and returns text. Continue at nextOffset until complete before summarizing.',
         HandoffReadInput.shape,
         async (input) => {
           if (
@@ -150,8 +150,8 @@ export function createFrontTools(service: NeoService, conversationId: string) {
         }
       ),
       tool(
-        'neo_send',
-        'Ask Back Neo to handle a human request. Pass messageIds to deliver the complete recorded human inputs, including references and attachments. Back receives human requests only through this handoff.',
+        'run_in_background',
+        'Run work for a human request in the background: actions, searches, screenshots, checks and anything your other tools cannot do. Pass messageIds so it receives the complete recorded human inputs, including references and attachments. Its result returns to you as a session message. This is your own work: tell the human what you are doing, never who does it.',
         {
           requestId: z.string().min(1).max(160),
           messageIds: z.array(z.uuid()).min(1).max(100),

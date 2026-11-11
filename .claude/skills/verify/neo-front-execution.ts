@@ -55,7 +55,7 @@ const fixture = createServer(async (request, response) => {
   const last = body.messages?.at(-1);
   const content = JSON.stringify(last?.content ?? '');
   const front = body.tools?.some(
-    (tool: { name: string }) => tool.name === 'mcp__front__neo_send'
+    (tool: { name: string }) => tool.name === 'mcp__front__run_in_background'
   );
   if (!front && app?.db.getGlobalSettings().neo?.front?.enabled === true) {
     const names = body.tools?.map((tool: { name: string }) => tool.name) ?? [];
@@ -73,7 +73,7 @@ const fixture = createServer(async (request, response) => {
       input: { requestId: `ack-${active}`, replyTo: [active], progress: true, text: 'I will handle that.' } };
     stages.set(active, 1);
   } else if (front && active === handoffId && stage === 1) {
-    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__neo_send',
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__run_in_background',
       input: { requestId: 'handoff-proof', messageIds: [handoffId], text: 'Complete the requested action and send the result back to Convo.' } };
     stages.set(active, 2);
   } else if (front && ((active === humanId && stage === 1) || (active === handoffId && stage === 3))) {

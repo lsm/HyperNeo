@@ -318,7 +318,7 @@ test('Front notes go to the existing Back session and carry their original input
   const { id } = await accept();
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
-  const send = definitions.find((tool) => tool.name === 'neo_send')!;
+  const send = definitions.find((tool) => tool.name === 'run_in_background')!;
   await frontSession(
     service,
     { conversationId, askOrigin: { sessionId: root, messageId: id } },
@@ -445,7 +445,7 @@ test('Front keeps ordinary model settings and preserves a usable conversation', 
     autoCompactPercent: 80,
     queryMode: 'immediate',
   });
-  expect(next.config.allowedTools).toContain('mcp__front__neo_send');
+  expect(next.config.allowedTools).toContain('mcp__front__run_in_background');
   expect(next.config.allowedTools).toContain('mcp__front__reply_short');
 });
 
@@ -497,7 +497,7 @@ test('Front receives the quoted card and forwards the original human input only 
   const send = vi
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'neo_send')!;
+    .tools!.find((tool) => tool.name === 'run_in_background')!;
   await db.saveUserMessage(
     front,
     {
@@ -535,7 +535,7 @@ test('an unknown Front handoff creates no Back delivery', async () => {
   const send = vi
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'neo_send')!;
+    .tools!.find((tool) => tool.name === 'run_in_background')!;
   const id = crypto.randomUUID();
   const response = await send.handler(
     { requestId: 'unknown', messageIds: [id], text: 'Do this.' },
@@ -759,7 +759,7 @@ test('Convo exposes reads, handoff and one publication path', () => {
     'asks_read',
     'cards_read',
     'handoff_read',
-    'neo_send',
+    'run_in_background',
     'projects_read',
     'reply_detailed',
     'reply_short',
@@ -1290,7 +1290,7 @@ test('Convo must publish a visible progress reply before sending work to Neo', a
   const send = vi
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'neo_send')!;
+    .tools!.find((tool) => tool.name === 'run_in_background')!;
   const input = { requestId: 'work', messageIds: [id], text: 'Handle this request.' };
   const early = await send.handler(input, {} as never);
   expect(JSON.parse((early.content[0] as { text: string }).text)).toMatchObject({

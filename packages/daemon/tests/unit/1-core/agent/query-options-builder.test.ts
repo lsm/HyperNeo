@@ -2673,7 +2673,7 @@ describe('QueryOptionsBuilder', () => {
       enableExaSettings();
       useNonNativeProvider();
       mockSession.config.operationTools = false;
-      mockSession.config.allowedTools = ['mcp__front__neo_send'];
+      mockSession.config.allowedTools = ['mcp__front__run_in_background'];
       mockSession.config.disallowedTools = ['mcp__exa'];
       const options = await builder.build();
       expect(options.mcpServers?.exa).toBeUndefined();
@@ -2685,7 +2685,7 @@ describe('QueryOptionsBuilder', () => {
       enableExaSettings();
       useNonNativeProvider();
       mockSession.config.operationTools = false;
-      mockSession.config.allowedTools = ['mcp__front__neo_send'];
+      mockSession.config.allowedTools = ['mcp__front__run_in_background'];
       mockSession.config.disallowedTools = ['mcp__exa'];
       const kept = { type: 'http' as const, url: 'https://example.com/retained' };
       mockSession.config.mcpServers = {
@@ -2708,12 +2708,12 @@ describe('QueryOptionsBuilder', () => {
       expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
     });
 
-    it('keeps automatic Exa when neo_send is listed without an Exa veto', async () => {
+    it('keeps automatic Exa when run_in_background is listed without an Exa veto', async () => {
       process.env.EXA_API_KEY = EXA_TEST_KEY;
       enableExaSettings();
       useNonNativeProvider();
       mockSession.config.operationTools = false;
-      mockSession.config.allowedTools = ['mcp__front__neo_send'];
+      mockSession.config.allowedTools = ['mcp__front__run_in_background'];
       const options = await builder.build();
       expect(options.mcpServers?.exa).toMatchObject({
         type: 'http',

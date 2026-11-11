@@ -2,7 +2,7 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   dual_model_front_required:
     'In dual-model mode only Convo publishes to the human. Send your result and original human IDs to Convo using message.send.',
   front_ack_required:
-    'First use reply_short with progress:true to publish a brief acknowledgment for each original human replyTo ID, then call neo_send.',
+    'First use reply_short with progress:true to publish a brief acknowledgment for each original human replyTo ID, then call run_in_background.',
 
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',

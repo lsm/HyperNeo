@@ -38,7 +38,7 @@ export async function frontSession(
       'cards_read',
       'todos_read',
       'handoff_read',
-      'neo_send',
+      'run_in_background',
       'speech_say',
       'reply_short',
       'reply_detailed',
