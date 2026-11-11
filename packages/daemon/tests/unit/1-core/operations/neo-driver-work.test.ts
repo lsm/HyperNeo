@@ -57,6 +57,7 @@ test('worker delivery guidance uses a live owning-daemon path instead of requiri
 
 test('work guidance tells Neo-assigned workers not to poll for external progress', () => {
   const message = withWorkGoal('Ship the fix.', {
+    workId: 'w1',
     goal: 'Fix the bug',
     doneWhen: 'The fix is released',
   });
