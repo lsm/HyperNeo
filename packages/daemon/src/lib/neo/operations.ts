@@ -1,3 +1,4 @@
+import { publicationSpeaker } from './front-mode.ts';
 import { createNeoRelayOperations } from './relay-answer.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
@@ -762,6 +763,15 @@ export function createNeoOperations(
     ...createNeoPublicationChangeOperations({
       getBinding: (id) => service.repo.getBindingBySession(id),
       getRootBinding: () => service.repo.defaultBinding(),
+      publicationSessionId: () => {
+        const conversation = service.repo.readConversationId();
+        return conversation
+          ? publicationSpeaker(
+              conversation,
+              service.db.getGlobalSettings().neo?.front?.enabled === true
+            )
+          : undefined;
+      },
       publications: service.publications,
       present: (items) => service.presentPublications(items),
       notify: (conversationId) => {
@@ -951,11 +961,15 @@ export function createNeoOperations(
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true) })]),
       policy: { safetyClass: 'human_only' },
       execute: path('neo.front.set', async (input: { enabled: boolean }) => {
+        if (input.enabled && !service.db.getGlobalSettings().neo?.front?.model)
+          return { ok: false, reason: 'front_model_required' };
+        if (input.enabled) await service.prepareFront(true);
         const settings = await mutationGateway.call(
           globalSettingsWrites,
           'neoFront',
           input.enabled
         );
+        await service.frontModeChanged();
         service.publishSettings?.(settings);
         service.notifyChanged();
         return { ok: true as const };

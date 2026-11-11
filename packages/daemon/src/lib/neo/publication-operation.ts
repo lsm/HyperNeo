@@ -17,7 +17,7 @@ import {
   workerSession,
 } from './publication.ts';
 
-const Draft = NeoPublicationObject.omit({
+export const NeoPublicationDraft = NeoPublicationObject.omit({
   conversationId: true,
   publicationId: true,
   askOrigin: true,
@@ -43,6 +43,7 @@ const Draft = NeoPublicationObject.omit({
       .default([]),
   })
   .superRefine(publicationTextRule);
+const Draft = NeoPublicationDraft;
 type Draft = z.infer<typeof Draft>;
 const Result = NeoPublicationResultSchema.and(
   z.object({
@@ -63,6 +64,7 @@ interface NeoPublicationRuntime {
   currentHumanInputs(sessionId: string): string[];
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
+  publicationSessionId?(): string | undefined;
   hasProject(id: string): boolean;
   lookupSession(
     id: string
@@ -72,7 +74,7 @@ interface NeoPublicationRuntime {
     publicationId: string
   ): Pick<NeoPublicationInput, 'session'> | null;
   sourceSession(sessionId: string): string | undefined;
-  append(input: NeoPublicationInput): Receipt | Promise<Receipt>;
+  append(input: NeoPublicationInput, sessionId?: string): Receipt | Promise<Receipt>;
   speech(
     sessionId: string,
     version: string,
@@ -95,21 +97,34 @@ export function admitPublicationDraft(input: unknown): { value: Draft } | { reas
 export function requirePublicationProducer(
   caller: OperationCaller,
   binding: NeoBinding | null,
-  root: NeoBinding | null
+  root: NeoBinding | null,
+  speaker = root?.sessionId
 ): { value: Producer } | { reason: Rejection } {
   return caller.source === 'mcp' &&
     binding &&
     binding.sessionId === caller.sessionId &&
     isMainNeoBinding(root) &&
     isMainNeoBinding(binding) &&
-    binding.sessionId === root.sessionId
+    binding.sessionId === speaker
     ? {
         value: {
           binding,
           root,
         },
       }
-    : { reason: { accepted: false, reason: 'avatar_required' } };
+    : {
+        reason: {
+          accepted: false,
+          reason:
+            speaker && speaker !== root?.sessionId
+              ? 'dual_model_front_required'
+              : 'avatar_required',
+          detail:
+            speaker && speaker !== root?.sessionId
+              ? `Dual-model mode: send the result and original human message IDs to Front Neo using message.send {to: "${speaker}", text: "...", idempotencyKey: "..."}.`
+              : undefined,
+        },
+      };
 }
 
 export function requirePublicationLifetime(
@@ -139,11 +154,25 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'binding'
     )
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
-    .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
     .pipe(
-      (draft: Draft, caller: OperationCaller) =>
-        readCardArtifactFacts(draft.artifacts ?? [], caller, runtime.artifact),
-      ['submitted', 'caller'],
+      (caller: OperationCaller, binding: NeoBinding | null, root: NeoBinding | null) =>
+        requirePublicationProducer(
+          caller,
+          binding,
+          root,
+          runtime.publicationSessionId?.() ?? root?.sessionId
+        ),
+      ['caller', 'binding', 'root'],
+      'result:publication'
+    )
+    .pipe(
+      (draft: Draft, caller: OperationCaller, proof: Proof) =>
+        readCardArtifactFacts(
+          draft.artifacts ?? [],
+          { ...caller, sessionId: proof.root.sessionId, role: 'neo' },
+          runtime.artifact
+        ),
+      ['submitted', 'caller', 'publication'],
       'registeredArtifacts'
     )
     .pipe(
@@ -253,15 +282,23 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(
       (draft: Draft, proof: Proof) => {
+        if (
+          runtime.publicationSessionId &&
+          runtime.publicationSessionId() !== proof.binding.sessionId
+        )
+          return { accepted: false as const, reason: 'publication_superseded' };
         const { requestId, spoken: _spoken, ...message } = draft;
-        return runtime.append({
-          ...message,
-          session: message.session ?? undefined,
-          publicationId: neoDerivedId(
-            JSON.stringify(['neo.publication.publish', proof.binding.sessionId, requestId])
-          ),
-          conversationId: proof.root.sessionId.slice(4),
-        });
+        return runtime.append(
+          {
+            ...message,
+            session: message.session ?? undefined,
+            publicationId: neoDerivedId(
+              JSON.stringify(['neo.publication.publish', proof.binding.sessionId, requestId])
+            ),
+            conversationId: proof.root.sessionId.slice(4),
+          },
+          proof.binding.sessionId
+        );
       },
       ['draft', 'publication'],
       'publication'
@@ -280,7 +317,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         const fresh = receipt.created || versionCreated === true;
         const version = receipt.publication.revisionId ?? receipt.publication.publicationId;
         const speech = await runtime.speech(
-          caller.sessionId!,
+          runtime.getRootBinding()?.sessionId ?? caller.sessionId!,
           version,
           fresh ? draft.spoken : undefined
         );

@@ -1,10 +1,12 @@
 import { mkdirSync } from 'node:fs';
-import type { NeoModelPreference, Session } from '@hyperneo/shared';
+import type { McpServerConfig, NeoModelPreference, Session } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { SessionUpdate } from '../../storage/repositories/session-status-write.ts';
 import { Logger } from '../logger.ts';
 import { neoFolderPath } from './folder.ts';
-import { neoDerivedId } from './derived-id.ts';
+import { frontSessionId } from './front-mode.ts';
+import { createFrontTools } from './front-model.ts';
+import { NEO_FRONT } from '@hyperneo/prompts';
 import type { NeoService } from './service.ts';
 
 const CONVO_TITLE = 'Convo';
@@ -15,15 +17,29 @@ function unusable(session: Session): boolean {
 
 export async function frontSession(
   service: NeoService,
-  ask: NeoConversationAsk,
+  ask: Pick<NeoConversationAsk, 'conversationId' | 'askOrigin'>,
   model: NeoModelPreference
 ): Promise<Session> {
-  const id = neoDerivedId(`front-session:${ask.conversationId}`);
+  const id = frontSessionId(ask.conversationId);
   const config: Partial<Session['config']> = {
     model: model.model,
     provider: model.provider as Session['config']['provider'],
     thinkingLevel: model.thinkingLevel,
-    queryMode: 'manual',
+    queryMode: 'immediate',
+    systemPrompt: NEO_FRONT,
+    autoCompactPercent: model.autoCompactPercent,
+    tools: { useClaudeCodePreset: false },
+    sdkToolsPreset: [],
+    allowedTools: [
+      'projects_read',
+      'asks_read',
+      'cards_read',
+      'todos_read',
+      'publication_publish',
+      'neo_send',
+    ].map((name) => `mcp__front__${name}`),
+    permissionMode: 'dontAsk',
+    settingSources: [],
   };
   const neo = service.db.getSession(
     service.repo.defaultBinding()?.sessionId ?? ask.askOrigin.sessionId
@@ -34,6 +50,7 @@ export async function frontSession(
   const existing = service.db.getSession(id);
   if (!existing) {
     await createConvo(service, id, config, executionProjectPath);
+    await attachFrontTools(service, id, ask.conversationId);
     return requireSession(service, id);
   }
   if (unusable(existing)) {
@@ -52,6 +69,7 @@ export async function frontSession(
     config: { ...current.config, ...config },
     lastActiveAt: new Date().toISOString(),
   });
+  await attachFrontTools(service, id, ask.conversationId);
   return requireSession(service, id);
 }
 
@@ -83,4 +101,34 @@ async function createConvo(
     });
     throw error;
   }
+}
+
+async function attachFrontTools(
+  service: NeoService,
+  id: string,
+  conversationId: string
+): Promise<void> {
+  const live = await service.sessions.getSessionForControl(id);
+  if (!live) throw new Error('front_session_unavailable');
+  const config = requireSession(service, id).config;
+  const previous = live.getSessionData().config;
+  if (
+    live.queryObject &&
+    (previous.model !== config.model || previous.provider !== config.provider)
+  ) {
+    const switched = await live.requestModelSwitch(config.model, config.provider!);
+    if (!switched.success) throw new Error(switched.error ?? 'front_model_switch_failed');
+  }
+  await live.updateMetadata({ config });
+  if (live.queryObject && previous.thinkingLevel !== config.thinkingLevel)
+    await live.applyThinkingLevel();
+  if (live.queryObject && previous.autoCompactPercent !== config.autoCompactPercent) {
+    await live.updateMetadata({
+      config: { ...config, autoCompactPercent: previous.autoCompactPercent },
+    });
+    await live.updateConfig({ autoCompactPercent: config.autoCompactPercent });
+  }
+  live.mergeRuntimeMcpServers({
+    front: createFrontTools(service, conversationId) as unknown as McpServerConfig,
+  });
 }

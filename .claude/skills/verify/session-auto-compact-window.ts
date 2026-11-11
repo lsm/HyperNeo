@@ -44,13 +44,14 @@ assert(![8399, 8499].includes(fixturePort));
 const endpoint = `http://127.0.0.1:${fixturePort}`;
 const builds = new Map<
   string,
-  { window?: number | 'auto'; providerEnv?: string; childEnv?: string }
+  { window?: number | 'auto'; providerEnv?: string; childEnv?: string; spawned: boolean }
 >();
 const originalBuild = QueryOptionsBuilder.prototype.build;
 QueryOptionsBuilder.prototype.build = async function (...args) {
   const options = await originalBuild.apply(this, args);
   const id = options.env?.HYPERNEO_SESSION_ID!;
   const observed = {
+    spawned: false,
     window: options.settings?.autoCompactWindow,
     providerEnv: options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
     childEnv: undefined as string | undefined,
@@ -58,7 +59,11 @@ QueryOptionsBuilder.prototype.build = async function (...args) {
   builds.set(id, observed);
   return {
     ...options,
+    ...(process.env.VERIFY_CLAUDE
+      ? { pathToClaudeCodeExecutable: process.env.VERIFY_CLAUDE, executable: undefined }
+      : {}),
     spawnClaudeCodeProcess: (child) => {
+      observed.spawned = true;
       observed.childEnv = child.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       return spawn(child.command, child.args, {
         cwd: child.cwd,
@@ -86,7 +91,6 @@ try {
     },
     verbose: false,
   });
-  await app.jobProcessor.stop();
   assert(![8399, 8499].includes(app.server.port));
   const hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({
@@ -150,6 +154,49 @@ try {
     assert.equal(live.getSessionData().config['autoCompactWindow'], window);
     assert(context);
     assert.equal(context.autocompactSource === 'env', window === undefined);
+    if (window === undefined) {
+      const previous = observed;
+      await hub.request('session.update', {
+        sessionId: created.sessionId,
+        config: { autoCompactWindow: 450_000 },
+      });
+      const refreshDeadline = Date.now() + 60_000;
+      while (
+        (builds.get(created.sessionId) === previous ||
+          !builds.get(created.sessionId)?.spawned ||
+          !live.queryObject) &&
+        Date.now() < refreshDeadline
+      )
+        await new Promise((done) => setTimeout(done, 100));
+      const refreshed = builds.get(created.sessionId);
+      assert(refreshed && refreshed !== previous);
+      assert.equal(refreshed.window, 450_000);
+      assert.equal(refreshed.providerEnv, undefined);
+      assert.equal(refreshed.childEnv, undefined);
+      const replies: string[] = [];
+      const onMessage = live.onSDKMessage.bind(live);
+      live.onSDKMessage = async (...args) => {
+        const message = args[0];
+        if (message.type === 'result' && 'result' in message) replies.push(String(message.result));
+        return onMessage(...args);
+      };
+      await hub.request('message.send', {
+        sessionId: created.sessionId,
+        content: '/autocompact',
+        deliveryMode: 'immediate',
+      });
+      const replyDeadline = Date.now() + 60_000;
+      while (!replies.length && Date.now() < replyDeadline)
+        await new Promise((done) => setTimeout(done, 100));
+      evidence.updated = {
+        ...refreshed,
+        persistedWindow: live.getSessionData().config.autoCompactWindow,
+        replies,
+      };
+      console.log('AUTOCOMPACT_READBACK', JSON.stringify(replies));
+      assert(replies.some((reply) => reply.includes('450k tokens (from settings)')));
+      assert(!replies.some((reply) => /takes precedence/.test(reply)));
+    }
   }
   const explicit = evidence.explicit as { context: { autoCompactThreshold: number } };
   const inherited = evidence.inherited as { context: { autoCompactThreshold: number } };
@@ -168,4 +215,4 @@ try {
     JSON.stringify(evidence, null, 2)
   );
 }
-console.log('PASS persisted session window reaches SDK settings and child environment');
+console.log('PASS 3 session window cases; RPC readback is 450k from settings; resources closed');

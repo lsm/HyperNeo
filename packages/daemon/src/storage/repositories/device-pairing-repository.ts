@@ -456,6 +456,20 @@ export class DevicePairingRepository {
       .get();
   }
 
+  closeHumanRecovery(now: number): void {
+    if (!this.humanRecoveryOpen()) return;
+    this.db
+      .prepare(
+        'UPDATE human_device_resets SET recovered_at = ? WHERE rowid = (SELECT MAX(rowid) FROM human_device_resets)'
+      )
+      .run(now);
+    this.db
+      .prepare(
+        "UPDATE pairing_codes SET approved_at = NULL WHERE kind = 'human' AND used_at IS NULL"
+      )
+      .run();
+  }
+
   redeemAsync(request: PairRequest, now: number) {
     return gatewayFor(this.db).call(pairingRedeemWrite, 'redeem', request, now);
   }
@@ -475,18 +489,7 @@ export class DevicePairingRepository {
         )
         .get(now, hash(normalizePairingCode(code)), now) as { kind: DeviceKind } | null;
       if (!claimed) return null;
-      if (claimed.kind === 'human' && this.humanRecoveryOpen()) {
-        this.db
-          .prepare(
-            'UPDATE human_device_resets SET recovered_at = ? WHERE rowid = (SELECT MAX(rowid) FROM human_device_resets)'
-          )
-          .run(now);
-        this.db
-          .prepare(
-            "UPDATE pairing_codes SET approved_at = NULL WHERE kind = 'human' AND used_at IS NULL"
-          )
-          .run();
-      }
+      if (claimed.kind === 'human') this.closeHumanRecovery(now);
       insertDevice(this.db, { ...device, kind: claimed.kind }, credential);
       return { device: { ...device, kind: claimed.kind }, credential };
     })();

@@ -254,8 +254,15 @@ const idleMinutes = (incident: { since: number }, now: number) =>
 const neoTodoIdleReason = (minutes: number) =>
   `its worker has been idle with no progress for ${minutes} min.`;
 
-const neoTodoUnworkedNote = (todo: Pick<NeoTodo, 'id' | 'title' | 'doneWhen'>) =>
-  `Todo "${todo.title}" (${todo.id}) is approved and ready, but nothing runs it: it has no instruction or target, so it only waits for its check (${todo.doneWhen}). If someone must do the work, give it an instruction and target with neo.todo.edit, or do it yourself.`;
+const neoTodoUnworkedNote = (todo: NeoTodo, target: NeoDriverTarget | null) => {
+  const reason =
+    todo.approvedAt === null
+      ? 'it was not approved'
+      : !todo.instruction || !target || !['start', 'send'].includes(target.verb)
+        ? 'it needs an instruction and a start or send target'
+        : (todo.reason ?? 'worker capacity is unavailable');
+  return `Todo "${todo.title}" (${todo.id}) is ready but cannot start: ${reason}. Review it with neo.todo.read.`;
+};
 
 const neoTodoStallNote = (todo: Pick<NeoTodo, 'title'>, reason: string) =>
   `Todo "${todo.title}" is stalled: ${reason}\nNext: ${NEO_TODO_STALL_NEXT}`;
@@ -683,7 +690,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       waiting: () => readQueue(Date.now()),
       claim: (todoId, now, move) => nudge(todoId, now, move),
       act: (claim, now) => act(claim, now),
-      start: (todoId) => start(todoId),
+      start: async (todoId) => {
+        try {
+          return await start(todoId);
+        } catch (error) {
+          const todo = store.getTodo(todoId);
+          const ask = todo && store.getAsk(todo.askId);
+          if (!todo || !ask) throw error;
+          if (!noted.has(todoId)) {
+            await deps.tell(
+              ask,
+              todo,
+              `Todo "${todo.title}" (${todo.id}) could not start: ${String(error)}`,
+              `neo-todo-unworked:${todo.id}`
+            );
+            noted.add(todoId);
+          }
+          throw error;
+        }
+      },
     },
     deps.limits
   );
@@ -692,8 +717,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const noteUnworked = (superpipe({})('neo.todo.note-unworked') as PipelineAPI)
     .input(['facts'])
     .pipe(
-      (facts: { unworked: readonly string[] }) =>
-        facts.unworked.filter((todoId) => !noted.has(todoId)),
+      (facts: { unworked: readonly string[]; candidates: readonly { id: string }[] }) =>
+        [...facts.unworked, ...facts.candidates.map(({ id }) => id)].filter(
+          (todoId) => !noted.has(todoId)
+        ),
       'facts',
       'todoIds'
     )
@@ -703,14 +730,22 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           const todo = store.getTodo(todoId);
           const ask = todo && store.getAsk(todo.askId);
           if (!todo || !ask) continue;
-          await deps.tell(ask, todo, neoTodoUnworkedNote(todo), `neo-todo-unworked:${todo.id}`);
+          await deps.tell(
+            ask,
+            todo,
+            neoTodoUnworkedNote(todo, sessions.get(todo.id)),
+            `neo-todo-unworked:${todo.id}`
+          );
           noted.add(todoId);
         }
       },
       'todoIds',
       'told'
     )
-    .endAsync('told') as (facts: { unworked: readonly string[] }) => Promise<void>;
+    .endAsync('told') as (facts: {
+    unworked: readonly string[];
+    candidates: readonly { id: string }[];
+  }) => Promise<void>;
   type PrerequisiteNote = { todo: NeoTodo; family: NeoTodo[]; key: string };
   const tellCancelledPrerequisites = (
     superpipe({})('neo.todo.tell-cancelled-prerequisites') as PipelineAPI
@@ -1647,7 +1682,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         if (starting.has(todoId)) continue;
         await recoverStart(todoId).catch((error) => warn('Todo start recovery pending', error));
       }
-      await deps.write(neoTodoRunnerWrites, { method: 'cardUnapproved', args: [Date.now()] });
       await store
         .read('listAwaitingNeoDecision')
         .then(tellCancelledPrerequisites)

@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
-import { hasExplicitAutoCompactWindow } from '../session/create-session-config.ts';
+import { hasExplicitAutoCompactChoice } from '../session/create-session-config.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -1161,7 +1161,7 @@ export class QueryRunner {
           provider = liveProvider;
           providerEnvVars = await providerService.resolveSessionProviderEnvVars(providerSession);
         }
-        const sessionHasAutoCompactWindow = hasExplicitAutoCompactWindow(providerSession.config);
+        const sessionHasAutoCompactWindow = hasExplicitAutoCompactChoice(providerSession.config);
         if (sessionHasAutoCompactWindow) {
           providerEnvVars = { ...providerEnvVars };
           delete providerEnvVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;

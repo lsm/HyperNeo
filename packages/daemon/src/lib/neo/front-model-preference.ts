@@ -35,6 +35,7 @@ export function createNeoFrontModelOperation(service: NeoService) {
           'neoFrontModel',
           preferences
         );
+        await service.prepareFront();
         service.publishSettings?.(settings);
         service.notifyChanged();
         return { ok: true as const, preferences: settings.neo!.front!.model! };

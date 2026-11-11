@@ -1,3 +1,5 @@
+import { SettingsRepository } from './settings-repository.ts';
+import { publicationSpeaker } from '../../lib/neo/front-mode.ts';
 import { neoPublicationPageWrites } from './neo-publication-page-db.ts';
 import type { readNeoPublicationPage } from '../../lib/neo/publication-read-operation.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -272,10 +274,21 @@ export class NeoPublicationRepository {
     });
   }
 
-  append(input: unknown): NeoPublicationWriteResult {
-    const result = append(input, this.db);
-    if (result === 'invalid_publication') return { accepted: false, reason: result };
-    return result;
+  append(input: unknown, speaker?: string): NeoPublicationWriteResult {
+    return this.db.transaction(() => {
+      if (speaker) {
+        const parsed = admitNeoPublication(input);
+        if ('reason' in parsed)
+          return { accepted: false as const, reason: 'invalid_publication' as const };
+        const dual =
+          new SettingsRepository(this.db).getGlobalSettings().neo?.front?.enabled === true;
+        if (speaker !== publicationSpeaker(parsed.value.conversationId, dual))
+          return { accepted: false as const, reason: 'publication_superseded' as const };
+      }
+      const result = append(input, this.db);
+      if (result === 'invalid_publication') return { accepted: false as const, reason: result };
+      return result;
+    })();
   }
 
   get(conversationId: string, publicationId: string): NeoPublication | null {
