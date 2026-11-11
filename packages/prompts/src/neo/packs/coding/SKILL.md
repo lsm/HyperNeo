@@ -23,10 +23,17 @@ Example: for a parser PR followed by a caller PR, use the place from work.find:
 - When the parser PR opens, call neo.todo.edit {todoId:parserTodoId,addUrls:["https://github.com/example/project/pull/123"]}. Its merge completes that todo and the queue starts the caller todo.
 - When the caller PR opens, call neo.todo.edit {todoId:callerTodoId,addUrls:["https://github.com/example/project/pull/124"]}.
 
-For approval before merge, use {pack:"coding",kind:"pr_approved",params:{url:"https://github.com/example/project/pull/123"}} with neo.todo.add check or neo.question.ask retireWhen. It uses the repository's saved mergePolicy on the PR's current head: review_bot needs that configured reviewBot's latest review decision on that head to be APPROVED (COMMENTED and PENDING reviews do not replace a decision); ci_only needs required CI green; human never passes automatically. A new head needs fresh approval, and failed reads leave the check unmet. Login matching ignores case; a trailing [bot] alias requires a known GitHub Bot actor across approval checks, ledger and merge gates. User accounts or unknown actor types never qualify through a suffix alias. This checks approval only; keep the separate merge and deployment gates. Read GitHub facts with
-neo.github.read; never ask the human to confirm them. Name refs as owner/repo#N.
+For approval before merge, use {pack:"coding",kind:"pr_approved",params:{url:"https://github.com/example/project/pull/123"}} with neo.todo.add check or neo.question.ask retireWhen. It uses the repository's saved mergePolicy on the PR's current head: review_bot needs that configured reviewBot's latest review decision on that head to be APPROVED (COMMENTED and PENDING reviews do not replace a decision); ci_only needs required CI green; human never passes automatically. A new head needs fresh approval, and failed reads leave the check unmet. Login matching ignores case; a trailing [bot] alias requires a known GitHub Bot actor across approval checks, ledger and merge gates. User accounts or unknown actor types never qualify through a suffix alias. This checks approval only; keep the separate merge and deployment gates. Read GitHub facts through Bash and gh; never ask the human to confirm them.
+Use `gh pr view <url> --json number,title,state,headRefOid,statusCheckRollup,reviews`
+for one pull request and `gh issue view <url> --json number,title,state,closedAt`
+for one issue. Name refs as owner/repo#N. For recent activity, use
+`gh pr list --repo owner/name --state merged --search 'merged:>=<timestamp>' --json number,title,url,state,mergedAt --limit 100`.
+Choose the requested time window and date field (created, updated, merged or closed),
+report the window and any limit, and use the issue list for issue activity.
+When the limit is reached, say the list may be truncated.
+Read one reference by URL and list a repository for time-range questions.
 PR events, owner workers' reports and passing pr_merged/issue_closed checks reach
-you as messages; never sleep or poll gh / neo.github.read to wait for review, CI
+you as messages; never sleep or poll gh to wait for review, CI
 or merge.
 Coding worker briefs, work goals and PR notifications include repository merge
 preferences as data: merge policy, review bot, human sign-off, merge executor

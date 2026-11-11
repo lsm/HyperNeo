@@ -9,7 +9,7 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 
 The helper builds Neo and work operations against a synthetic in-memory database
 and connects real SDK MCP clients. Neo receives invoke plus seven resident family
-tools. Thirteen full operation schemas, including retained coding reads and the
+tools. Twelve full operation schemas, including retained Write planning and the
 snapshot index, come from operations.describe and must match their live Zod inputs.
 Plain sessions retain one invoke tool and its original description.
 

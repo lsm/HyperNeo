@@ -29,7 +29,6 @@
 55634	packages/daemon/tests/online/space/prompt-too-long-kimi-recovery.test.ts
 67205	packages/daemon/tests/online/space/task-agent-lifecycle.test.ts
 31648	packages/daemon/tests/online/space/task-agent-skills.test.ts
-802	packages/daemon/tests/unit/1-core/process-json-rpc.test.ts
 7	packages/daemon/tests/unit/1-core/agent/ack-selection.test.ts
 134	packages/daemon/tests/unit/1-core/agent/agent-session-clear-context.test.ts
 17014	packages/daemon/tests/unit/1-core/agent/agent-session.test.ts
@@ -151,7 +150,6 @@
 14	packages/daemon/tests/unit/1-core/credentials/oauth-refresh-scheduler.test.ts
 10	packages/daemon/tests/unit/1-core/credentials/provider-credential-manager.test.ts
 5	packages/daemon/tests/unit/1-core/credentials/refresh-due-gate.test.ts
-13	packages/daemon/tests/unit/1-core/drivers/copilot-discovery-groups.test.ts
 16	packages/daemon/tests/unit/1-core/drivers/claude-code-adapter.test.ts
 104	packages/daemon/tests/unit/1-core/drivers/claude-desktop-adapter.test.ts
 48	packages/daemon/tests/unit/1-core/drivers/claude-desktop-start.test.ts
@@ -165,6 +163,7 @@
 18	packages/daemon/tests/unit/1-core/drivers/codex-feed.test.ts
 14	packages/daemon/tests/unit/1-core/drivers/codex-start-configuration.test.ts
 12	packages/daemon/tests/unit/1-core/drivers/codex-state-readonly.test.ts
+13	packages/daemon/tests/unit/1-core/drivers/copilot-discovery-groups.test.ts
 11	packages/daemon/tests/unit/1-core/drivers/driver-session-worktree.test.ts
 11	packages/daemon/tests/unit/1-core/drivers/find-budget.test.ts
 20	packages/daemon/tests/unit/1-core/drivers/hyperneo-verbs.test.ts
@@ -266,7 +265,6 @@
 6	packages/daemon/tests/unit/1-core/operations/neo-snapshot-read.test.ts
 117	packages/daemon/tests/unit/1-core/operations/neo-tail-page-read.test.ts
 2718	packages/daemon/tests/unit/1-core/operations/neo-terminal-error-result.test.ts
-331	packages/daemon/tests/unit/1-core/operations/neo-watch-checks.test.ts
 59	packages/daemon/tests/unit/1-core/operations/neo-work-prs.test.ts
 14794	packages/daemon/tests/unit/1-core/operations/neo.test.ts
 5	packages/daemon/tests/unit/1-core/operations/operation-name-families.test.ts
@@ -281,6 +279,7 @@
 22	packages/daemon/tests/unit/1-core/operations/update-operation.test.ts
 15	packages/daemon/tests/unit/1-core/operations/work-start-configuration.test.ts
 63	packages/daemon/tests/unit/1-core/process-fatal-logger.test.ts
+802	packages/daemon/tests/unit/1-core/process-json-rpc.test.ts
 44	packages/daemon/tests/unit/1-core/process-watchdog.test.ts
 22	packages/daemon/tests/unit/1-core/providers/anthropic-copilot/conversation.test.ts
 5	packages/daemon/tests/unit/1-core/providers/anthropic-copilot/copilot-cli-resolver.test.ts
@@ -1052,12 +1051,12 @@
 19	packages/daemon/tests/unit/5-space/workspaces/workspace-manager.test.ts
 15656	packages/daemon/tests/unit/5-space/workspaces/worktree-manager.test.ts
 28	packages/daemon/tests/unit/helpers/dev-proxy.test.ts
-6	packages/daemon/tests/unit/lib/safe-process-env.test.ts
-11	packages/daemon/tests/unit/lib/safe-fs.test.ts
-16	packages/daemon/tests/unit/lib/process-json-rpc-env.test.ts
 10524	packages/daemon/tests/unit/lib/event-loop-watchdog.test.ts
 10	packages/daemon/tests/unit/lib/job-handlers/message-delivery-dead-letter.test.ts
 14	packages/daemon/tests/unit/lib/job-handlers/message-delivery.handler.test.ts
+16	packages/daemon/tests/unit/lib/process-json-rpc-env.test.ts
 515	packages/daemon/tests/unit/lib/runtime-server.test.ts
 31	packages/daemon/tests/unit/lib/runtime-spawn.test.ts
+11	packages/daemon/tests/unit/lib/safe-fs.test.ts
+6	packages/daemon/tests/unit/lib/safe-process-env.test.ts
 55	packages/daemon/tests/unit/lib/voice/transcribe-pipeline.test.ts

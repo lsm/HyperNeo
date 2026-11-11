@@ -4,7 +4,6 @@ Run from the existing checkout using only installed dependencies. The runner
 prints data-volume space and refuses to run below 25 GiB free:
 
 ```sh
-python3 .claude/skills/verify/coding-work-db-run.py bun before
 python3 .claude/skills/verify/coding-work-db-run.py bun verify
 ```
 
@@ -15,20 +14,20 @@ JSON and synthetic gh records are copied to a unique folder under
 `evidence/coding-work-db/` before the entire temporary daemon directory is immediately
 removed. The runner records cleanup and available disk space.
 
-Before mode temporarily restores only `work-facts.ts` from the pinned
-origin/dev revision and restores the draft in finally. Run proofs sequentially;
-do not run before mode alongside tests or checks. Both runtimes must reproduce
-work SQL on main before migration and record zero afterward. Fixture assertions
-are excluded from the measurement; identical alias SQL in other fact families
-is distinguished by its calling source frame.
+Use verify mode for the current checkout. The runner also retains its historical
+before mode for DB migration comparisons. Run proofs sequentially. The current
+run must record zero work SQL on main. Fixture assertions are excluded from the
+measurement, and identical alias SQL in other fact families is distinguished by
+its calling source frame.
 
-Drive the real `neo.github.read` WebSocket operation with five concurrent PR
-reads. They must share one work-detail acquisition with no separate reference
-lookup. Then change the head and require a fresh view without stale approval;
-fail detail acquisition and require unreadable coverage while retaining the
-last JSON; reopen the daemon and require retention and successful reacquisition.
-Also exercise host/fragment normalization, issue detail and an issue-form PR
-redirect through the same public operation.
+Read one PR and one issue through the coding skill's `gh pr view` and
+`gh issue view` commands against the synthetic CLI. Then drive the retained
+work-fact reader with five concurrent PR reads and require one shared acquisition.
+Change the head and require a fresh view without stale approval. Fail detail
+acquisition and require an unknown result while retaining the last JSON. Reopen
+the daemon and require retention and successful reacquisition. The helper records
+CLI reads separately from ledger acquisitions, and authenticates health RPC with
+its disposable daemon's local credential. It exercises the current skill and ledger read paths.
 
 The fixed run holds a collector until a newer observation commits through the
 real writer. The older response must return the winner and leave its revision

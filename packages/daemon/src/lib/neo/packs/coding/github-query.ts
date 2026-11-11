@@ -1,14 +1,9 @@
 import { homedir } from 'node:os';
-import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 
 type Failure = { ok: false; reason: string };
-export type NeoGithubLister = (
-  args: string[],
-  coverage: NeoGithubCollection
-) => Promise<{ data: unknown | null; at: string; coverage?: NeoGithubCollection }>;
 
 const When = z.string().datetime({ offset: true });
 
@@ -39,24 +34,6 @@ const Item = z.object({
 });
 
 export const NeoGithubQueryItems = z.array(Item);
-
-export const NeoGithubQueryResult = z.union([
-  z.object({ ok: z.literal(false), reason: z.string() }),
-  z.object({
-    ok: z.literal(true),
-    kind: z.literal('list'),
-    repo: z.string(),
-    search: z.string(),
-    window: z.object({
-      by: z.enum(['created', 'updated', 'merged', 'closed']),
-      since: z.string().nullable(),
-      until: z.string(),
-    }),
-    items: z.array(Item),
-    truncated: z.boolean(),
-  }),
-]);
-export type NeoGithubQueryResult = z.infer<typeof NeoGithubQueryResult>;
 
 type By = 'created' | 'updated' | 'merged' | 'closed';
 export type NeoGithubCollection = Omit<NeoGithubQuery, 'by'> & { by: By };
@@ -123,55 +100,6 @@ export function planNeoGithubQuery(
   };
 }
 
-export function presentNeoGithubQuery(
-  plan: Plan,
-  listed: { data: unknown | null; at: string; coverage?: NeoGithubCollection }
-): { value: NeoGithubQueryResult } | { reason: Failure } {
-  if (listed.coverage) {
-    const actual = planNeoGithubQuery({
-      ...listed.coverage,
-      repo: plan.query.repo,
-      withinHours: undefined,
-    });
-    if ('reason' in actual) return actual;
-    plan = actual.value;
-  }
-  const parsed = NeoGithubQueryItems.safeParse(listed.data);
-  if (!parsed.success)
-    return {
-      reason: {
-        ok: false,
-        reason: `unreadable: ${plan.query.repo} could not be listed from GitHub just now (missing, private, or gh failed); say you cannot see it rather than guessing.`,
-      },
-    };
-  const at = (item: z.infer<typeof Item>) =>
-    Date.parse(
-      (plan.by === 'merged'
-        ? item.mergedAt
-        : plan.by === 'closed'
-          ? item.closedAt
-          : plan.by === 'updated'
-            ? item.updatedAt
-            : null) ?? item.createdAt
-    );
-  const items = [...parsed.data].sort((a, b) => at(b) - at(a));
-  return {
-    value: {
-      ok: true,
-      kind: 'list',
-      repo: plan.query.repo,
-      search: plan.search,
-      window: {
-        by: plan.by,
-        since: plan.query.since ?? null,
-        until: plan.query.until ?? listed.at,
-      },
-      items: items.slice(0, plan.query.limit),
-      truncated: items.length > plan.query.limit,
-    },
-  };
-}
-
 export async function listNeoGithub(
   args: string[],
   spawnImpl: SpawnFn = spawnProcess
@@ -179,17 +107,3 @@ export async function listNeoGithub(
   const outcome = await runGhJson(args, homedir(), spawnImpl);
   return outcome.ok ? outcome.data : null;
 }
-
-export const queryNeoGithub = (superpipe({})('neo-github-query') as PipelineAPI)
-  .input(['list', 'query'])
-  .pipe(planNeoGithubQuery, 'query', 'result:query')
-  .pipe(
-    (list: NeoGithubLister, plan: Plan) => list(plan.args, { ...plan.query, by: plan.by }),
-    ['list', 'query'],
-    'listed'
-  )
-  .pipe(presentNeoGithubQuery, ['query', 'listed'], 'result:query')
-  .endAsync('query') as (
-  list: NeoGithubLister,
-  query: NeoGithubQuery
-) => Promise<NeoGithubQueryResult>;

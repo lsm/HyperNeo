@@ -7487,7 +7487,7 @@ describe('AgentSession', () => {
       let enabled = ['coding'];
       const registry = createOperationRegistry([
         {
-          ...stubOperation('neo.github.read'),
+          ...stubOperation('neo.coding.pr.file'),
           pack: { id: 'coding', enabledIds: () => enabled },
         },
       ]);

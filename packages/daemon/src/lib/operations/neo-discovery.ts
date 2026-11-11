@@ -44,7 +44,6 @@ export const NEO_RARE_OPERATION_NAMES = [
   'neo.conversation.asks.read',
   'neo.conversation.image.read',
   'neo.conversation.read',
-  'neo.github.read',
   'neo.home.github',
   'neo.home.init',
   'neo.home.read',
