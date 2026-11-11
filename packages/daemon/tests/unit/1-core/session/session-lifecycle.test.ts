@@ -1093,6 +1093,26 @@ describe('SessionLifecycle', () => {
   });
 
   describe('update', () => {
+    it('routes an absolute window edit through the cached session config handler', async () => {
+      (mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
+      const agent = {
+        updateMetadata: mock(async () => {}),
+        updateConfig: mock(async () => {}),
+        getSessionData: () => ({ config: { autoCompactWindow: 450_000 }, metadata: {} }),
+      };
+      (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agent);
+      await lifecycle.update('test-id', {
+        config: { model: 'default', maxTokens: 4096, temperature: 1, autoCompactWindow: 450_000 },
+      });
+      expect(agent.updateConfig).toHaveBeenCalledWith({
+        model: 'default',
+        maxTokens: 4096,
+        temperature: 1,
+        autoCompactWindow: 450_000,
+      });
+      expect(agent.updateMetadata).toHaveBeenCalledWith({});
+    });
+
     it('should update session in database', async () => {
       const sessionId = 'test-session-id';
       const updates = { title: 'Updated Title' };

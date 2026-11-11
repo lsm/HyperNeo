@@ -36,7 +36,9 @@ export class SessionConfigHandler {
     const { session, db, internalEventBus } = this.ctx;
 
     const changes = { ...configUpdates };
-    let refresh = false;
+    let refresh =
+      'autoCompactWindow' in changes &&
+      session.config.autoCompactWindow !== changes.autoCompactWindow;
     if ('autoCompactPercent' in changes) {
       const percent =
         changes.autoCompactPercent === undefined
@@ -46,7 +48,7 @@ export class SessionConfigHandler {
         session.metadata = { ...session.metadata, pendingAutoCompactPercent: percent ?? null };
         delete changes.autoCompactPercent;
       } else {
-        refresh = session.config.autoCompactPercent !== percent;
+        refresh ||= session.config.autoCompactPercent !== percent;
         changes.autoCompactPercent = percent;
         delete session.metadata.pendingAutoCompactPercent;
       }
