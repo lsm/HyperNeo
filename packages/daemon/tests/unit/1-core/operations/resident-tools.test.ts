@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { readFileSync } from 'node:fs';
+import {
+  NEO_RESIDENT_FAMILIES,
+  residentOperation,
+} from '../../../../src/lib/operations/resident-tools';
 import { createOperationMcpServer } from '../../../../src/lib/operations/mcp-server';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
 import { neoReadTools } from '../../../../src/lib/neo/session-config';
@@ -18,6 +23,17 @@ const families = {
 } as const;
 
 describe('resident family tools', () => {
+  test('every production family action exists in the checked daemon catalog', () => {
+    const surface = JSON.parse(
+      readFileSync(new URL('../../../../../../api-surface.json', import.meta.url), 'utf8')
+    ) as { operations: { name: string }[] };
+    const names = new Set(surface.operations.map(({ name }) => name));
+    for (const family of NEO_RESIDENT_FAMILIES) {
+      for (const action of family.actions)
+        expect(names.has(residentOperation(family, action))).toBe(true);
+    }
+  });
+
   test('maps every resident action through operation validation and the bound caller', async () => {
     const calls: unknown[] = [];
     const registry = createOperationRegistry(
