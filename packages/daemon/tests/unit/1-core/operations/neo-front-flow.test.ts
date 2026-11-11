@@ -78,6 +78,9 @@ test('Front uses the ordinary immediate session with its role and tools', async 
   expect(session.config.toolSelection).toEqual({ version: 1, choices: {} });
   expect(session.config.disallowedTools).toContain('mcp__exa');
   expect(session.config.systemPrompt).toContain('Front Neo');
+  expect(session.config.systemPrompt).toContain(
+    'publication_edit for an existing answer, publication_publish only for a permitted new message'
+  );
   expect(attach).toHaveBeenCalled();
 });
 
