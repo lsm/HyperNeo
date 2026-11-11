@@ -1,3 +1,5 @@
+import { StartWorkInputSchema } from '../../../../src/lib/drivers/work-operations';
+import { NeoTodoTargetSchema } from '../../../../src/lib/neo/driver-work';
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { hostname } from 'node:os';
 import { NEO_WORK_BLOCKER, NEO_WORK_GOAL, NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
@@ -88,6 +90,24 @@ const driverWorkCall = (
 ) => buildDriverWorkCall(target, work, goal, withWorkGoal);
 
 describe('driverWorkCall', () => {
+  test('start descriptions require a generic sessionTitle and forbid the task title for Codex', () => {
+    for (const schema of [StartWorkInputSchema, NeoTodoTargetSchema.options[0]]) {
+      const description = schema.shape.sessionTitle.description ?? '';
+      expect(description).toContain('sessionTitle');
+      expect(description).toContain('generic');
+      expect(description).toContain('never the task title');
+    }
+  });
+
+  test('passes a session title from the todo start target independently of its title', () => {
+    expect(
+      driverWorkCall({ ...startTarget, sessionTitle: 'Codex hyperneo 2' }, work).input
+    ).toMatchObject({
+      title: 'Codex dolmen 1',
+      sessionTitle: 'Codex hyperneo 2',
+    });
+  });
+
   test('a started worker is named after the project with the next free number', () => {
     const result = buildDriverWorkCall(startTarget, work, null, withWorkGoal, {
       place,

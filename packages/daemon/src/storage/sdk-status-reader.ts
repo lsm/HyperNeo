@@ -51,7 +51,14 @@ type SDKReadArgs =
   | MessageFeedArgs
   | { neoMessageStatus: NeoMessageStatusRef[] }
   | { claudeRecords: { sessionsDir: string } }
-  | { codexSnapshot: { statePath: string; includeClosed: boolean; idPrefix?: string } }
+  | {
+      codexSnapshot: {
+        statePath: string;
+        includeClosed: boolean;
+        idPrefix?: string;
+        fullTitles?: boolean;
+      };
+    }
   | { turnVectors: { model: string; dimensions: number; limit: number | null } }
   | CardSearchArgs;
 export type SDKReadResult =
@@ -237,10 +244,16 @@ export class SDKStatusReader {
   readCodexSnapshot(
     statePath: string,
     includeClosed: boolean,
-    idPrefix?: string
+    idPrefix?: string,
+    fullTitles?: boolean
   ): Promise<CodexSnapshot> {
     return this.enqueue({
-      codexSnapshot: { statePath, includeClosed, ...(idPrefix ? { idPrefix } : {}) },
+      codexSnapshot: {
+        statePath,
+        includeClosed,
+        ...(idPrefix ? { idPrefix } : {}),
+        ...(fullTitles ? { fullTitles } : {}),
+      },
     }) as Promise<CodexSnapshot>;
   }
 
