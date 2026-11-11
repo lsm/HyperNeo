@@ -946,11 +946,26 @@ test.each(['disabled', 'creation failure'])(
       expect(await handler(held)).toMatchObject({ delivered: false, pending: true });
       expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline + 1000);
       expect(service.publications.list(conversationId)).toHaveLength(0);
-      sdk.updateMessageStatus([sdk.findMessageIdByUuid(root, id)!], 'enqueued');
-      expect(sdk.markDeliveryConsumedByUuid(root, id)).not.toBeNull();
+      const rowId = sdk.findMessageIdByUuid(root, id)!;
+      sdk.updateMessageStatus([rowId], 'enqueued');
+      await db.updateSession(root, {
+        config: { ...db.getSession(root)!.config, queryMode: 'immediate' },
+      });
       clock.mockReturnValue(deadline + 1000);
       const released = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
-      expect(await handler(released)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+      expect(await handler(released)).toMatchObject({ delivered: false, pending: true });
+      expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline + 2000);
+      expect(sdk.getUserSendStatus(root, id)).toBe('enqueued');
+      expect(service.publications.list(conversationId)).toHaveLength(0);
+      sdk.updateMessageStatus([rowId], 'submitted');
+      clock.mockReturnValue(deadline + 2000);
+      const submitted = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+      expect(await handler(submitted)).toMatchObject({ delivered: false, pending: true });
+      expect(service.publications.list(conversationId)).toHaveLength(0);
+      expect(sdk.markDeliveryConsumedByUuid(root, id)).not.toBeNull();
+      clock.mockReturnValue(deadline + 3000);
+      const consumed = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
+      expect(await handler(consumed)).toMatchObject({ delivered: true, outcome: 'handed_off' });
       expect(
         await service.publish(
           {
