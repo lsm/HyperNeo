@@ -12,9 +12,10 @@ import type { NeoService } from './service.ts';
 const Input = ModelPreference.extend({
   autoCompactPercent: z.number().int().transform(resolveAutoCompactPercent).optional(),
 }).strict();
+const Saved = ModelPreference.extend({ autoCompactPercent: z.number().int().optional() }).strict();
 const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
-  z.object({ ok: z.literal(true), preferences: Input }),
+  z.object({ ok: z.literal(true), preferences: Saved }),
 ]);
 
 export function createNeoFrontModelOperation(service: NeoService) {

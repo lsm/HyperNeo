@@ -28325,6 +28325,11 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "autoCompactPercent": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
           "model": {
             "maxLength": 200,
             "minLength": 1,
@@ -28379,6 +28384,11 @@
               "preferences": {
                 "additionalProperties": false,
                 "properties": {
+                  "autoCompactPercent": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
                   "model": {
                     "maxLength": 200,
                     "minLength": 1,
