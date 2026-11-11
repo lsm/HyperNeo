@@ -26,10 +26,12 @@ describe('pairing v2 one-time request route', () => {
   let now = 1_000_000;
 
   const localIdentity: Pair2Identity = { deviceId: 'local-rpc:web', kind: 'human' };
-  const auth = async (req: Request) =>
-    req.headers.get('x-test-device')
-      ? { deviceId: req.headers.get('x-test-device') as string, kind: 'human' as const }
-      : localIdentity;
+  const auth = async (req: Request, remoteAddress?: string | null) =>
+    remoteAddress === '10.0.0.9'
+      ? null
+      : req.headers.get('x-test-device')
+        ? { deviceId: req.headers.get('x-test-device') as string, kind: 'human' as const }
+        : localIdentity;
 
   beforeEach(() => {
     now = 1_000_000;
@@ -89,6 +91,18 @@ describe('pairing v2 one-time request route', () => {
     });
     return { res, body: (await res.json()) as { credential?: string; error?: string } };
   };
+
+  test('the handler forwards the remote address to authentication', async () => {
+    const res = await route(
+      new Request('http://localhost/pair2/request', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      '10.0.0.9'
+    );
+    expect(res.status).toBe(403);
+  });
 
   test('a created request returns a ticket and a 90 second expiry', async () => {
     const made = await createRequest();

@@ -1219,7 +1219,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             db: db.gateway,
             limiter: daemonPairingLimiter,
             now: Date.now,
-            authenticate: (req) => authenticateUpgrade(req, null),
+            authenticate: (req, remoteAddress) => authenticateUpgrade(req, remoteAddress),
           })
         : null;
     const handleAskMarkdown = createAskMarkdownHandler(
@@ -1355,7 +1355,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
-        if (handlePair2 && url.pathname.startsWith('/pair2/')) return handlePair2(req);
+        if (handlePair2 && url.pathname.startsWith('/pair2/'))
+          return handlePair2(req, client?.remoteAddress ?? null);
         if (url.pathname === '/neo-peer/message' && req.method === 'POST')
           return rpcHandlers.handlePeerMessage(req);
         if (url.pathname === '/neo-peer/pair' && req.method === 'POST') return handlePeerPair(req);
