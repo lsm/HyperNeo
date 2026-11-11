@@ -60,7 +60,10 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       currentLive: Live
     ) => {
       const fullRef = `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}`;
-      const name = currentLive?.title ?? live?.title;
+      const name = (currentLive?.title ?? live?.title ?? '')
+        .replace(/[\s\p{Cc}\p{Cf}]+/gu, ' ')
+        .trim()
+        .slice(0, 200);
       const link =
         neoSafeSessionLink(currentLive?.remoteLink, true) ??
         neoSafeSessionLink(currentLive?.link, !!ref.daemon) ??

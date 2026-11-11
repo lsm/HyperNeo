@@ -8,6 +8,10 @@ TMPDIR=/tmp bash .claude/skills/verify/proof-run.sh "$EVIDENCE" \
   .claude/skills/verify/worker-report-identity.ts
 ```
 
+The helper seeds a title containing newlines, a null control and a tab. The
+received worker identity must use a single normalized display line. Unit
+contracts also cap long names at 200 characters and cover all-control names.
+
 The helper owns a test daemon on an ephemeral loopback port, a fresh HOME/data/DB,
 and a refusing GitHub stub. Its synthetic worker has a recorded notice dispatch
 without a todo. The worker ends with an empty result while its status is running.
