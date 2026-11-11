@@ -911,6 +911,7 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
         progress: true,
       })
     ).toMatchObject({ accepted: true });
+    const published = service.publications.list(conversationId)!.length;
     await db.saveSDKMessage(front, {
       type: 'result',
       subtype: 'success',
@@ -923,12 +924,8 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
         ? { user_message_uuid: current.id }
         : { user_message_uuids: [current.id] }),
     } as import('@hyperneo/shared/sdk').SDKMessage);
-    expect(await handler(current.job)).toMatchObject({ delivered: true });
-    const replies = service.publications
-      .list(conversationId)!
-      .filter((row) => row.replyTo?.includes(current.id));
-    expect(replies).toHaveLength(1);
-    expect(replies[0].fullText).toBe('I will check that.');
+    expect(await handler(current.job)).toMatchObject({ delivered: true, outcome: 'answered' });
+    expect(service.publications.list(conversationId)).toHaveLength(published);
   }
 );
 
