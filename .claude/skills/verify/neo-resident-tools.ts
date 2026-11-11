@@ -37,6 +37,7 @@ try {
   await client.connect(left);
   try {
     const tools = (await client.listTools()).tools;
+    assert(tools.find(tool => tool.name === 'invoke')!.description!.includes('message.send acceptance means durable mailbox persistence, not an agent reply'));
     const names = tools.map(({ name }) => name).sort();
     assert.deepEqual(names, ['invoke', ...NEO_RESIDENT_FAMILIES.map(({ name }) => name)].sort());
     const call = async (name: string, args: Record<string, unknown>) => {

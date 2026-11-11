@@ -75,6 +75,19 @@ describe('operation MCP server', () => {
     expect(calls).toEqual([]);
   });
 
+  test('Neo invoke explains that mailbox acceptance is separate from an agent reply', () => {
+    const server = createOperationMcpServer(
+      createOperationRegistry([]),
+      () => ({ role: 'neo' }),
+      undefined,
+      'neo'
+    );
+    const description = operationInvokeTool(server).description;
+    expect(description).toContain(
+      'message.send acceptance means durable mailbox persistence, not an agent reply'
+    );
+  });
+
   test('invokes the canonical implementation with a server-bound caller', async () => {
     const result = await call({
       name: 'example.echo',
