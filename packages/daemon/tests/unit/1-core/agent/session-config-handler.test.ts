@@ -99,6 +99,42 @@ describe('SessionConfigHandler', () => {
     }
   );
 
+  it('refreshes an explicit window edit and clearing it, but keeps unchanged defaults', async () => {
+    const restart = mock(async () => ({ blocked: false }));
+    const shared = new SessionConfigHandler({
+      session: mockSession,
+      db: mockDb,
+      internalEventBus: mockInternalEventBus,
+      settingsManager: mockSettingsManager,
+      getProcessingState: () => ({ status: 'idle' }),
+      restartQuery: restart,
+    });
+    await shared.updateConfig({ autoCompactWindow: 450_000 });
+    expect(mockSession.config.autoCompactWindow).toBe(450_000);
+    expect(restart).toHaveBeenCalledTimes(1);
+    await shared.updateConfig({ autoCompactWindow: 450_000 });
+    expect(restart).toHaveBeenCalledTimes(1);
+    await shared.updateConfig({ autoCompactWindow: undefined });
+    expect(restart).toHaveBeenCalledTimes(2);
+    await shared.updateConfig({ maxTurns: 5 });
+    expect(restart).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes a window edit combined with an unchanged percentage', async () => {
+    mockSession.config.autoCompactPercent = 70;
+    const restart = mock(async () => ({ blocked: false }));
+    const shared = new SessionConfigHandler({
+      session: mockSession,
+      db: mockDb,
+      internalEventBus: mockInternalEventBus,
+      settingsManager: mockSettingsManager,
+      getProcessingState: () => ({ status: 'idle' }),
+      restartQuery: restart,
+    });
+    await shared.updateConfig({ autoCompactWindow: 450_000, autoCompactPercent: 70 });
+    expect(restart).toHaveBeenCalledTimes(1);
+  });
+
   describe('updateConfig', () => {
     it('should merge config updates with existing config', async () => {
       await handler.updateConfig({ model: 'opus' });
