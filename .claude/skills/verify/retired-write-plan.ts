@@ -31,7 +31,9 @@ try {
   const call = async (name: string, input: unknown) => {
     const reply = await client!.callTool({ name: 'invoke', arguments: { name, input } });
     assert(Array.isArray(reply.content));
-    return JSON.parse((reply.content[0] as { text: string }).text);
+    const result = JSON.parse((reply.content[0] as { text: string }).text);
+    evidence.push({ name, input, result });
+    return result;
   };
   const settings = new SettingsRepository(app.db.getDatabase());
   for (const packs of [[], ['coding']]) {

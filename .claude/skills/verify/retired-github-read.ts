@@ -46,11 +46,11 @@ try {
   for (const packs of [[], ['coding']]) {
     settings.updateGlobalSettings({ neo: { ...settings.getGlobalSettings().neo, packs } });
     assert.equal(registry.get('neo.github.read'), undefined);
-    assert(registry.get('neo.coding.write.plan'));
+    assert(registry.get('neo.coding.assign'));
     assert.equal((await call('neo.github.read', {})).code, 'unknown_operation');
     assert.equal((await call('operations.describe', { name: 'neo.github.read' })).found, false);
     assert.deepEqual(await call('operations.list', { prefix: 'neo.github', all: true }), { total: 0, names: [], next: null });
-    evidence.push({ packs, retired: true, writePlanningPresent: true });
+    evidence.push({ packs, retired: true, codingAssignmentPresent: true });
   }
   for (const command of [
     'gh pr view https://github.com/example/project/pull/7 --json number,title,state',

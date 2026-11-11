@@ -9,7 +9,7 @@ import type { SessionManager } from '../../../../src/lib/session/session-manager
 import { createTestDb } from '../../../helpers/database';
 
 describe('retired GitHub read operation', () => {
-  test('is absent with coding enabled or disabled while write planning remains registered', async () => {
+  test('is absent with coding enabled or disabled while coding assignment remains registered', async () => {
     const db = await createTestDb();
     const service = createNeoService(
       db,
@@ -22,7 +22,7 @@ describe('retired GitHub read operation', () => {
         db.updateGlobalSettings({ neo: { packs } });
         const registry = createOperationRegistry(createNeoOperations(service));
         expect(registry.get('neo.github.read')).toBeUndefined();
-        expect(registry.get('neo.coding.write.plan')).toBeDefined();
+        expect(registry.get('neo.coding.assign')).toBeDefined();
         expect(
           await invokeOperation(
             registry,

@@ -94,11 +94,6 @@ const moved = [
     text: 'Record the assigned independent QA actor’s post-deploy smoke or explicit inapplicability. Reads actual merged-head and running-build containment facts; a failure is recorded for follow-up without changing the todo’s declared completion check. Does not merge, deploy or restart anything.',
   },
   {
-    file: 'packs/coding/stage-preferences.ts',
-    name: 'neo.coding.write.plan',
-    text: 'Choose a Write target from available adapter/place/model/effort configurations (first candidate is the default). Applies the same repository prefer settings used by Review and Verify; reports unavailable preferences without saving defaults. Use the returned target with the existing coding todo start. This read does not start work or change assignments.',
-  },
-  {
     file: 'peer-operations.ts',
     name: 'neo.peer.accept',
     text: 'On the current human request, accept a contact invitation at its HTTPS origin. Store the message credential privately.',
