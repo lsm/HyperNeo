@@ -10,6 +10,8 @@ import {
 } from '../../../helpers/database.ts';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
 import { NEO_FRONT_INFERENCE } from '../../../../src/lib/job-queue-constants.ts';
+import { DeadLetterImmediatelyError } from '../../../../src/storage/job-queue-processor.ts';
+import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: ReturnType<typeof createNeoService>;
@@ -134,6 +136,59 @@ test('disabling fast replies during inference prevents late publication', async 
   finish('Late reply');
   expect(await running).toEqual({ delivered: false });
   expect(service.publications.list(conversationId) ?? []).toEqual([]);
+});
+
+test('a deterministic inference failure dead-letters the job instead of retrying', async () => {
+  const [job] = await accept(true);
+  infer.mockRejectedValue(new Error('front_sdk_error_during_execution'));
+  await expect(createNeoFrontHandler(service, infer)(job)).rejects.toBeInstanceOf(
+    DeadLetterImmediatelyError
+  );
+  expect(infer).toHaveBeenCalledTimes(1);
+});
+
+test('enabled without a model skips the turn instead of failing the job', async () => {
+  await db.updateGlobalSettings({ neo: { front: { enabled: true } } });
+  const result = await service.asks.acceptPrompt(
+    conversationId,
+    neoIntakeMessage({ sessionId, requestId, content: 'Hello' }),
+    'manual',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  if (!result.accepted) return expect(result).toMatchObject({ accepted: false });
+  const job = db.getJobQueueRepo().listJobs({ queue: NEO_FRONT_INFERENCE })[0];
+  await createNeoFrontHandler(service, infer)(job);
+  expect(infer).not.toHaveBeenCalled();
+});
+
+test('a job for an already-failed turn dead-letters without repeating inference', async () => {
+  const [job] = await accept(true);
+  const sessionIdForConvo = neoDerivedId(`front-session:${conversationId}`);
+  await db.createSession({
+    ...createTestSession(sessionIdForConvo),
+    title: 'Convo',
+  });
+  await db.getSDKMessageRepo().saveSDKMessage(sessionIdForConvo, {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    uuid: neoDerivedId(`front-failure:${requestId}`),
+    session_id: sessionIdForConvo,
+    duration_ms: 0,
+    duration_api_ms: 0,
+    num_turns: 1,
+    stop_reason: 'error',
+    total_cost_usd: 0,
+    modelUsage: {},
+    permission_denials: [],
+    usage: {},
+    errors: ['Convo could not reply'],
+  });
+  await expect(createNeoFrontHandler(service, infer)(job)).rejects.toBeInstanceOf(
+    DeadLetterImmediatelyError
+  );
+  expect(infer).not.toHaveBeenCalled();
 });
 
 test('concurrent jobs publish at most one front answer', async () => {

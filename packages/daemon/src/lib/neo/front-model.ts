@@ -1,7 +1,9 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk';
+import { existsSync } from 'node:fs';
 import type { UUID } from 'node:crypto';
 import type {
   SDKAssistantMessage,
+  SDKMessage,
   SDKUserMessage,
   SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -18,6 +20,7 @@ import { sdkMessageWrites } from '../../storage/repositories/sdk-message-writes.
 import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.ts';
 import { getModelInfo } from '../model-service.ts';
 import { oneShotModelIds, readAssistantReply } from '../agent/one-shot-model.ts';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { awaitSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
 import { getProviderService } from '../provider-service.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -34,6 +37,9 @@ const Read = z
 const Reply = z
   .object({ kind: z.enum(['chat', 'status', 'defer']), text: z.string().trim().min(1).max(500) })
   .strict();
+const FRONT_DEADLINE_BASE_MS = 15_000;
+const FRONT_DEADLINE_PER_THINKING_TOKEN_MS = 1;
+const STALE_RESUME_PATTERN = /No conversation found|no conversation found/;
 const result = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
 });
@@ -103,15 +109,17 @@ export async function runNeoFrontModel(
       ? undefined
       : Math.floor((contextWindow * compactPercent) / 100);
   const budget = THINKING_LEVEL_TOKENS[model.thinkingLevel];
+  const deadlineMs = FRONT_DEADLINE_BASE_MS + (budget ?? 0) * FRONT_DEADLINE_PER_THINKING_TOKEN_MS;
+  const cwd = existsSync(session.workspacePath ?? '')
+    ? (session.workspacePath ?? undefined)
+    : undefined;
   let phase = 'sdk_path';
   const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), 15000);
+  const timer = setTimeout(() => abortController.abort(), deadlineMs);
   let text = '';
   let structured: unknown;
   let terminal: SDKResultMessage | undefined;
-  try {
-    const pathToClaudeCodeExecutable = await awaitSDKCliPath();
-    phase = 'sdk_query';
+  const runQuery = (resumeId: string | undefined, executablePath: string | undefined) => {
     const messages = query({
       prompt: (async function* () {
         const input: SDKUserMessage = {
@@ -145,37 +153,61 @@ export async function runNeoFrontModel(
         allowedTools: tools.map((entry) => `mcp__front__${entry.name}`),
         mcpServers: { front: createSdkMcpServer({ name: 'front', tools }) },
         permissionMode: 'dontAsk',
-        settings:
+        settings: withSdkTranscriptRetention(
           autoCompactWindow === undefined
             ? undefined
-            : { autoCompactEnabled: true, autoCompactWindow },
+            : { autoCompactEnabled: true, autoCompactWindow }
+        ),
         maxTurns: 4,
         persistSession: true,
-        ...(session.sdkSessionId ? { resume: session.sdkSessionId } : { sessionId: session.id }),
-        cwd: session.workspacePath ?? undefined,
+        ...(resumeId ? { resume: resumeId } : { sessionId: session.id }),
+        cwd,
         thinking:
           budget === undefined ? { type: 'disabled' } : { type: 'enabled', budgetTokens: budget },
         effort: THINKING_LEVEL_EFFORT[model.thinkingLevel],
         abortController,
-        pathToClaudeCodeExecutable,
+        pathToClaudeCodeExecutable: executablePath,
         executable: isRunningUnderBun() ? 'bun' : undefined,
       },
     });
-    for await (const message of messages) {
-      if (message.type === 'system' && message.subtype === 'init')
-        await service.db.updateSession(session.id, { sdkSessionId: message.session_id });
-      if (message.type === 'result') {
-        terminal = message;
-        if (message.subtype !== 'success' || message.is_error)
-          throw new Error(`front_sdk_${message.subtype}`);
-        structured = message.structured_output;
+    return messages;
+  };
+  try {
+    const pathToClaudeCodeExecutable = await awaitSDKCliPath();
+    phase = 'sdk_query';
+    let resumeId = session.sdkSessionId;
+    const drain = async (messages: AsyncIterable<SDKMessage>) => {
+      for await (const message of messages) {
+        if (message.type === 'system' && message.subtype === 'init')
+          await service.db.updateSession(session.id, { sdkSessionId: message.session_id });
+        if (message.type === 'result') {
+          terminal = message;
+          if (message.subtype !== 'success' || message.is_error)
+            throw new Error(`front_sdk_${message.subtype}`);
+          structured = message.structured_output;
+        }
+        if (message.type === 'assistant') {
+          assistant = message;
+          const reply = readAssistantReply(message);
+          if ('error' in reply) throw new Error(`front_sdk_${message.error}`);
+          if (reply.text) text = reply.text;
+        }
       }
-      if (message.type === 'assistant') {
-        assistant = message;
-        const reply = readAssistantReply(message);
-        if ('error' in reply) throw new Error(`front_sdk_${message.error}`);
-        if (reply.text) text = reply.text;
-      }
+    };
+    try {
+      await drain(runQuery(resumeId, pathToClaudeCodeExecutable));
+    } catch (error) {
+      if (!resumeId || !STALE_RESUME_PATTERN.test(error instanceof Error ? error.message : ''))
+        throw error;
+      phase = 'stale_resume';
+      new Logger('NeoFront').warn('Convo SDK conversation was missing; starting a fresh one');
+      await service.db.updateSession(session.id, { sdkSessionId: undefined });
+      resumeId = undefined;
+      terminal = undefined;
+      assistant = undefined;
+      text = '';
+      structured = undefined;
+      await drain(runQuery(undefined, pathToClaudeCodeExecutable));
     }
     phase = 'reply_validation';
     const reply = Reply.parse(
@@ -197,11 +229,11 @@ export async function runNeoFrontModel(
       throw new Error('front_history_write_failed');
     return reply.text;
   } catch (error) {
-    await service.db.gateway.call(sdkMessageWrites, 'saveSDKMessage', session.id, {
+    const failure: SDKResultMessage = {
       type: 'result',
       subtype: 'error_during_execution',
       is_error: true,
-      uuid: crypto.randomUUID(),
+      uuid: neoDerivedId(`front-failure:${ask.requestId}`) as UUID,
       session_id: session.sdkSessionId ?? session.id,
       duration_ms: 0,
       duration_api_ms: 0,
@@ -222,11 +254,13 @@ export async function runNeoFrontModel(
         server_tool_use: { web_fetch_requests: 0, web_search_requests: 0 },
         service_tier: 'standard',
         speed: 'standard',
+        fallback_credit: null,
       },
       errors: [
         `Convo could not reply (${abortController.signal.aborted ? 'deadline_exceeded' : phase}). See daemon logs.`,
       ],
-    });
+    };
+    await service.db.gateway.call(sdkMessageWrites, 'saveSDKMessage', session.id, failure);
     new Logger('NeoFront').warn('Front query failed', {
       phase: abortController.signal.aborted ? 'deadline_exceeded' : phase,
       provider: model.provider,
