@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { generateKeyPairSync, sign as edSign } from 'node:crypto';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository';
+import { pairingRequestWrites } from '../../../../src/storage/repositories/pairing-request-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createPair2Route, type Pair2Identity } from '../../../../src/lib/pairing/pair2-route';
@@ -75,6 +76,21 @@ describe('pairing v2 one-time request route', () => {
     const res = await post('/pair2/bind', { ticket, phoneKey: phone.publicKeyB64 });
     return { res, body: (await res.json()) as { requestId?: string; bindNonce?: string } };
   };
+
+  const seedDevice = (name = 'Seeded phone') => {
+    const id = crypto.randomUUID();
+    writer
+      .prepare(
+        "INSERT INTO paired_devices (id, name, kind, secret_hash, created_at) VALUES (?, ?, 'human', '', ?)"
+      )
+      .run(id, name, now);
+    return id;
+  };
+
+  const repoApprove = (requestId: string, approver = 'local-rpc:fixture') =>
+    gateway.call(pairingRequestWrites, 'approveRequest', requestId, approver, now) as Promise<
+      'approved' | 'not_pending' | 'not_allowed'
+    >;
 
   const approveRequest = async (requestId: string, headers: Record<string, string> = {}) =>
     post('/pair2/approve', { requestId }, headers);
@@ -162,7 +178,7 @@ describe('pairing v2 one-time request route', () => {
     for (let i = 0; i < 5; i++) {
       expect((await completeRequest(made.requestId, phone, nonce)).res.status).toBe(403);
     }
-    await approveRequest(made.requestId);
+    expect(await repoApprove(made.requestId)).toBe('approved');
     const done = await completeRequest(made.requestId, phone, nonce);
     expect(done.res.status).toBe(200);
     expect(done.body.credential).toBeTruthy();
@@ -178,7 +194,7 @@ describe('pairing v2 one-time request route', () => {
     expect(early.res.status).toBe(403);
     expect(early.body.error).toBe('not_approved');
 
-    expect((await approveRequest(made.requestId)).status).toBe(200);
+    expect(await repoApprove(made.requestId)).toBe('approved');
 
     const badSignature = await post('/pair2/complete', {
       requestId: made.requestId,
@@ -193,7 +209,7 @@ describe('pairing v2 one-time request route', () => {
     const made = await createRequest();
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
-    await approveRequest(made.requestId);
+    await repoApprove(made.requestId);
 
     const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
     expect(done.res.status).toBe(200);
@@ -209,7 +225,9 @@ describe('pairing v2 one-time request route', () => {
     const made = await createRequest();
     now += 91_000;
     expect((await bindRequest(made.ticket, phoneKeypair())).res.status).toBe(403);
-    expect((await approveRequest(made.requestId)).status).toBe(403);
+    expect((await approveRequest(made.requestId, { 'x-test-device': seedDevice() })).status).toBe(
+      403
+    );
     expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'expired' });
   });
 
@@ -217,7 +235,7 @@ describe('pairing v2 one-time request route', () => {
     const made = await createRequest();
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
-    await approveRequest(made.requestId);
+    await repoApprove(made.requestId);
     now += 91_000;
     const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
     expect(done.res.status).toBe(403);
@@ -230,7 +248,9 @@ describe('pairing v2 one-time request route', () => {
     const bound = await bindRequest(made.ticket, phone);
     expect((await post('/pair2/cancel', { requestId: made.requestId })).status).toBe(200);
     expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'cancelled' });
-    expect((await approveRequest(made.requestId)).status).toBe(403);
+    expect((await approveRequest(made.requestId, { 'x-test-device': seedDevice() })).status).toBe(
+      403
+    );
     const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
     expect(done.res.status).toBe(403);
     expect(done.body.error).toBe('cancelled');
@@ -240,8 +260,11 @@ describe('pairing v2 one-time request route', () => {
     const made = await createRequest();
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
-    await approveRequest(made.requestId);
-    expect((await post('/pair2/deny', { requestId: made.requestId })).status).toBe(200);
+    await repoApprove(made.requestId);
+    const denier = seedDevice();
+    expect(
+      (await post('/pair2/deny', { requestId: made.requestId }, { 'x-test-device': denier })).status
+    ).toBe(200);
     const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
     expect(done.res.status).toBe(403);
     expect(done.body.error).toBe('denied');
@@ -257,8 +280,8 @@ describe('pairing v2 one-time request route', () => {
     expect(boundA.res.status).toBe(200);
     expect(boundB.res.status).toBe(200);
 
-    expect((await approveRequest(madeA.requestId)).status).toBe(200);
-    expect((await approveRequest(madeB.requestId)).status).toBe(200);
+    expect(await repoApprove(madeA.requestId)).toBe('approved');
+    expect(await repoApprove(madeB.requestId)).toBe('approved');
 
     const first = await completeRequest(madeA.requestId, phoneA, boundA.body.bindNonce as string);
     expect(first.res.status).toBe(200);
@@ -272,7 +295,7 @@ describe('pairing v2 one-time request route', () => {
     const bootstrap = await createRequest();
     const owner = phoneKeypair();
     const bound = await bindRequest(bootstrap.ticket, owner);
-    await approveRequest(bootstrap.requestId);
+    await repoApprove(bootstrap.requestId);
     const granted = await completeRequest(
       bootstrap.requestId,
       owner,
@@ -295,5 +318,18 @@ describe('pairing v2 one-time request route', () => {
     );
     expect(done.res.status).toBe(200);
     expect(devices.countDevices().humans).toBe(2);
+  });
+
+  test('approve and deny refuse the local synthetic credential', async () => {
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    expect(bound.res.status).toBe(200);
+
+    expect((await approveRequest(made.requestId)).status).toBe(403);
+    expect((await post('/pair2/deny', { requestId: made.requestId })).status).toBe(403);
+
+    const owner = seedDevice();
+    expect((await approveRequest(made.requestId, { 'x-test-device': owner })).status).toBe(200);
   });
 });
