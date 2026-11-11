@@ -39,6 +39,7 @@ export async function frontSession(
       'todos_read',
       'handoff_read',
       'neo_send',
+      'speech_say',
       'reply_short',
       'reply_detailed',
     ].map((name) => `mcp__front__${name}`),
