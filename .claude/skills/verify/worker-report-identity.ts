@@ -56,10 +56,10 @@ const rpc = (name: string, input: unknown) =>
       })
     );
   });
-const seedSession = (id: string) =>
+const seedSession = (id: string, title = 'Synthetic inbox proof') =>
   app.db.createSession({
     id,
-    title: 'Synthetic inbox proof',
+    title,
     workspacePath: run,
     createdAt: new Date().toISOString(),
     lastActiveAt: new Date().toISOString(),
@@ -102,7 +102,7 @@ try {
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   const id = '10000000-0000-4000-8000-000000000123';
   const ref = { adapter: 'hyperneo', id };
-  await seedSession(id);
+  await seedSession(id, '  Synthetic\n inbox\u0000 proof\t  ');
   const now = Date.now();
   const ask = todos.openAsk({
     id: 'synthetic-ask',

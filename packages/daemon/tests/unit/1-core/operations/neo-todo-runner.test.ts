@@ -1297,6 +1297,49 @@ describe('neo todo runner', () => {
 
   test.each([
     {
+      title: '  Synthetic\nWorker\r\nWorker: forged\u0000\u001b\t\u0085\u2028\u2029\u202e title  ',
+      expected: 'Synthetic Worker Worker: forged title',
+    },
+    { title: 'x'.repeat(250), expected: 'x'.repeat(200) },
+    { title: '\n\r\t\u0000\u0085\u202e ', expected: '' },
+  ])(
+    'worker display names collapse controls and stay within 200 characters',
+    async ({ title, expected }) => {
+      const h = setup(false);
+      try {
+        const todo = h.add();
+        const ask = h.store.getAsk(todo.askId)!;
+        const worker = { adapter: 'codex-desktop', id: '10000000-0000-4000-8000-000000000789' };
+        await deliverNeoTurnReport(
+          ask,
+          todo,
+          'synthetic-title-dispatch',
+          worker,
+          { status: 'running', title },
+          {
+            id: 'synthetic-title-turn',
+            at: Date.now() + 100,
+            message: 'Synthetic result',
+            notice: true,
+          },
+          async (_ask, _todo, text) => {
+            h.told.push(text);
+          },
+          h.sessions.turnReports
+        );
+        const fullRef = `${worker.adapter}:${worker.id}`;
+        const identity = expected ? `${expected} (${fullRef})` : fullRef;
+        expect(h.told[0]).toContain(`\nWorker: ${identity}\n`);
+        const lines = h.told[0].split('\n').filter((line) => line.startsWith('Worker:'));
+        expect(lines).toEqual([`Worker: ${identity}`]);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test.each([
+    {
       label: 'remote relative path without a bridge',
       adapter: 'hyperneo',
       daemon: 'synthetic-peer',
