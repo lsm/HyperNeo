@@ -1233,7 +1233,58 @@ describe('neo todo runner', () => {
     }
   });
 
-  test('a turn started by a notice reaches Neo once, attached to no todo', async () => {
+  test.each([
+    ['codex-desktop', '10000000-0000-4000-8000-000000000123', 'Synthetic Codex worker'],
+    [
+      'claude-desktop',
+      'local_synthetic_worker_full_session_reference_123',
+      'Synthetic Claude worker',
+    ],
+    ['hyperneo', '10000000-0000-4000-8000-000000000456', 'Synthetic HyperNeo worker'],
+  ])(
+    'every %s turn report includes the worker name, full ref and known link',
+    async (adapter, id, title) => {
+      const h = setup(false);
+      try {
+        const todo = h.add();
+        const ask = h.store.getAsk(todo.askId)!;
+        const worker = { adapter, id };
+        const link = `https://example.test/workers/${id}`;
+        for (const kind of ['todo', 'notice', 'human', 'focused']) {
+          const currentAsk = kind === 'focused' ? { ...ask, focusedSession: worker } : ask;
+          const live = { status: 'running', title, link };
+          await deliverNeoTurnReport(
+            currentAsk,
+            todo,
+            `synthetic-${kind}`,
+            worker,
+            live,
+            {
+              id: `synthetic-${kind}`,
+              at: Date.now() + 100,
+              message: '',
+              ...(kind === 'notice' ? { notice: true } : {}),
+              ...(kind === 'human' ? { humanInput: 'Synthetic human instruction' } : {}),
+            },
+            async (_ask, _todo, text) => {
+              h.told.push(text);
+            },
+            h.sessions.turnReports
+          );
+          const report = h.told.at(-1)!;
+          expect(report).toContain(`${title} (${adapter}:${id})`);
+          expect(report).toContain(link);
+          expect(report).toContain('worker ended its turn with no reply');
+          if (kind === 'notice') expect(report).toContain('a notice, no todo');
+        }
+        expect(h.told).toHaveLength(4);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('a notice turn reaches Neo once with its worker name and full ref, attached to no todo', async () => {
     const h = setup(false);
     try {
       const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
@@ -1257,6 +1308,8 @@ describe('neo todo runner', () => {
         ok: true,
         value: {
           status: 'done',
+          title: 'Synthetic shared worker',
+          link: 'codex://threads/shared-thread',
           lastActivityAt: nudgedAt + 100,
           turnEnds: [
             {
@@ -1272,6 +1325,8 @@ describe('neo todo runner', () => {
       await h.runner.refresh(() => {});
       const reports = h.told.filter((text) => text.includes('which CI fix do you want?'));
       expect(reports).toHaveLength(1);
+      expect(reports[0]).toContain('Synthetic shared worker (codex-desktop:shared-thread)');
+      expect(reports[0]).toContain('codex://threads/shared-thread');
       expect(reports[0]).not.toContain(todo.id);
       expect(reports[0]).not.toContain(other.id);
       expect(h.store.getTodo(todo.id)).toMatchObject({
