@@ -45,6 +45,7 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   enableFileCheckpointing: 'carried',
   queryMode: 'carried',
   chatDisplayMode: 'carried',
+  operationTools: 'carried',
   workerOperations: 'carried',
 
   harness: 'creation-only',

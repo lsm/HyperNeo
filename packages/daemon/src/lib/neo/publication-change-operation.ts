@@ -21,6 +21,7 @@ const EditInput = z
   .object({
     requestId: z.string().min(1).max(160),
     publicationId: z.string().uuid(),
+    verbatim: z.literal(true).optional(),
     shortText: NeoPublicationObject.shape.shortText.optional(),
     fullText: NeoPublicationObject.shape.fullText.optional(),
   })
@@ -32,6 +33,7 @@ const EditInput = z
 export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
+  publicationSessionId?(): string | undefined;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent' | 'reviseCurrent'>;
   notify(conversationId: string): void;
   present?(items: NeoPublication[]): Promise<NeoPublication[]>;
@@ -83,7 +85,8 @@ function changePipeline(
         requirePublicationProducer(
           caller,
           runtime.getBinding(caller.sessionId ?? ''),
-          runtime.getRootBinding()
+          runtime.getRootBinding(),
+          runtime.publicationSessionId?.() ?? runtime.getRootBinding()?.sessionId
         ),
       'caller',
       'result:change'
@@ -135,11 +138,14 @@ export function createNeoPublicationChangeAdmission(
       name,
       schema,
       runtime,
-      (owned, input: { requestId: string; shortText?: string; fullText?: string }) =>
+      (
+        owned,
+        input: { requestId: string; shortText?: string; fullText?: string; verbatim?: true }
+      ) =>
         runtime.publications.edit(
           owned.publication.conversationId,
           owned.publication.publicationId,
-          { shortText: input.shortText, fullText: input.fullText },
+          { shortText: input.shortText, fullText: input.fullText, verbatim: input.verbatim },
           now().toISOString(),
           owned.producer.binding.sessionId,
           undefined,

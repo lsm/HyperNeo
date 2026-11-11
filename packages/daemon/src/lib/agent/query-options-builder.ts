@@ -396,19 +396,24 @@ export class QueryOptionsBuilder {
   }
 
   private computeEffectiveMcpServers(
-    inputs = this.canonicalToolInputs()
+    inputs = this.canonicalToolInputs(),
+    config = this.admittedConfig()
   ): Record<string, SdkMcpServerConfig> | undefined {
     const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
       registryServers: inputs ? this.canonicalMcpServers(inputs) : this.getMcpServersFromRegistry(),
       skillServers: inputs ? {} : this.getMcpServersFromSkills(),
       runtimeServers: this.getMcpServers() as Record<string, SdkMcpServerConfig> | undefined,
-      operationServer: this.operationServer ?? this.ctx.getOperationMcpServer?.(),
+      operationServer:
+        this.ctx.session.config.operationTools === false
+          ? undefined
+          : (this.operationServer ?? this.ctx.getOperationMcpServer?.()),
     });
     for (const { from, to } of renamed) this.warnReservedMcpServerName(from, to);
     const exa = this.exaWebToolsActivation;
     if (exa && !(exa.serverName in servers)) {
       servers[exa.serverName] = exa.serverConfig;
     }
+    if (config.disallowedTools?.includes('mcp__exa')) delete servers.exa;
     return Object.keys(servers).length > 0 ? servers : undefined;
   }
 
@@ -441,11 +446,13 @@ export class QueryOptionsBuilder {
     await contextManager.ensureContextReady(session);
     const providerContext = contextManager.createContext(session);
     const providerId = providerContext.provider.id;
-    this.exaWebToolsActivation = await resolveExaWebToolsActivation({
-      settings: this.ctx.settingsManager.getGlobalSettings(),
-      db: this.ctx.db,
-      nativeWebTools: providerContext.provider.capabilities.nativeWebTools === true,
-    });
+    this.exaWebToolsActivation = config.disallowedTools?.includes('mcp__exa')
+      ? undefined
+      : await resolveExaWebToolsActivation({
+          settings: this.ctx.settingsManager.getGlobalSettings(),
+          db: this.ctx.db,
+          nativeWebTools: providerContext.provider.capabilities.nativeWebTools === true,
+        });
     const { modelInfo } = await resolveSessionContextModelInfo(session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
@@ -559,8 +566,11 @@ export class QueryOptionsBuilder {
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = await this.getSDKCliPath();
 
-    this.operationServer = this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin);
-    const mergedMcpServers = this.computeEffectiveMcpServers(toolInputs);
+    this.operationServer =
+      config.operationTools === false
+        ? undefined
+        : this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin);
+    const mergedMcpServers = this.computeEffectiveMcpServers(toolInputs, config);
 
     const queryOptions: Options = {
       model: sdkModelId,

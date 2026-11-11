@@ -159,6 +159,8 @@ export function persistNeoIntakeTransaction(
           },
         });
     }
+    if (new NeoFrontInputRepository(db).get(ask.conversationId, ask.requestId)?.eligible)
+      return stored;
     if (stored.created)
       new NeoWakeQueueRepository(db).release(ask.askOrigin.sessionId, {
         at: Date.parse(stored.ask.createdAt) - 1,

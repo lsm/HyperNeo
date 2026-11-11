@@ -14,7 +14,7 @@ import {
 } from './outbox.ts';
 
 const Rejection = z.object({ kind: z.literal('rejected'), reason: z.string() });
-const ReadResult = z.union([
+export const HandoffReadResult = z.union([
   z.object({
     kind: z.literal('read'),
     data: z.string(),
@@ -25,6 +25,12 @@ const ReadResult = z.union([
   z.object({ kind: z.literal('unavailable') }),
   Rejection,
 ]);
+export const HandoffReadInput = z.strictObject({
+  reference: HandoffReference,
+  offset: z.number().int().nonnegative().default(0),
+  length: z.number().int().min(1).max(HANDOFF_CHUNK_BYTES).default(HANDOFF_CHUNK_BYTES),
+});
+
 type Reference = z.infer<typeof HandoffReference>;
 type Rejected = z.infer<typeof Rejection>;
 
@@ -99,7 +105,7 @@ export function createHandoffOperations(status: (id: string) => string | null) {
           reference: HandoffReference,
           publicReference: PublicHandoffReference,
         }),
-        ReadResult,
+        HandoffReadResult,
       ]),
       policy: { safetyClass: 'mutate' },
       execute: (input, caller) => publishArtifact(caller, status, input.name),
@@ -108,12 +114,8 @@ export function createHandoffOperations(status: (id: string) => string | null) {
       name: 'handoff.read',
       description:
         'Read a local published handoff by its complete reference, including SHA-256. Verifies the whole artifact before returning any bytes; a mismatch returns tampered without content. data is base64; continue at nextOffset until complete. At most 256 KiB per read. A foreign-daemon reference is unavailable; it is never reinterpreted as a local file. Neo and the human may read all published artifacts; workers may read only their own.',
-      inputSchema: z.strictObject({
-        reference: HandoffReference,
-        offset: z.number().int().nonnegative().default(0),
-        length: z.number().int().min(1).max(HANDOFF_CHUNK_BYTES).default(HANDOFF_CHUNK_BYTES),
-      }),
-      resultSchema: ReadResult,
+      inputSchema: HandoffReadInput,
+      resultSchema: HandoffReadResult,
       policy: { safetyClass: 'read' },
       execute: (input, caller) => readArtifact(input.reference, caller, input.offset, input.length),
     }),

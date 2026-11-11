@@ -1,3 +1,6 @@
+import { NeoFrontInputRepository } from './neo-front-input-worker.ts';
+import { SettingsRepository } from './settings-repository.ts';
+import { publicationSpeaker, frontSessionId } from '../../lib/neo/front-mode.ts';
 import { neoPublicationPageWrites } from './neo-publication-page-db.ts';
 import type { readNeoPublicationPage } from '../../lib/neo/publication-read-operation.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -66,9 +69,19 @@ function hasTrigger(
 function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
-  payload: string
+  payload: string,
+  speaker?: string
 ): NeoPublicationWriteResult {
   return db.transaction((): NeoPublicationWriteResult => {
+    if (
+      speaker &&
+      speaker !==
+        publicationSpeaker(
+          input.conversationId,
+          new SettingsRepository(db).getGlobalSettings().neo?.front?.enabled === true
+        )
+    )
+      return { accepted: false, reason: 'publication_superseded' };
     if (input.cardReply) {
       const target = db
         .prepare('SELECT ask_id FROM neo_questions WHERE id = ?')
@@ -153,6 +166,23 @@ function appendImmutable(
         };
       }
     }
+    const inputs = new NeoFrontInputRepository(db);
+    const ids = [
+      ...new Set([...(input.replyTo ?? []), ...(input.cardReply?.sourceMessageIds ?? [])]),
+    ].filter((id) => inputs.get(input.conversationId, id)?.eligible);
+    if (
+      ids.length &&
+      !new NeoPublicationRepository(db).get(input.conversationId, input.publicationId)
+    ) {
+      if (
+        !inputs.claim(
+          input.conversationId,
+          ids,
+          speaker === frontSessionId(input.conversationId) ? 'front' : 'neo'
+        )
+      )
+        return { accepted: false, reason: 'publication_superseded' };
+    }
     const inserted = db
       .prepare(`INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at)
         VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id, publication_id) DO NOTHING
@@ -201,7 +231,7 @@ function appendImmutable(
 }
 
 const append = (superpipe({})('neo-publication-append') as PipelineAPI)
-  .input(['input', 'db'])
+  .input(['input', 'db', 'speaker'])
   .pipe(admitNeoPublication, 'input', 'result:append')
   .pipe(
     (input: NeoPublicationInput) =>
@@ -219,10 +249,11 @@ const append = (superpipe({})('neo-publication-append') as PipelineAPI)
     'append'
   )
   .pipe(JSON.stringify, 'append', 'payload')
-  .pipe(appendImmutable, ['db', 'append', 'payload'], 'append')
+  .pipe(appendImmutable, ['db', 'append', 'payload', 'speaker'], 'append')
   .end('append') as (
   input: unknown,
-  db: Database
+  db: Database,
+  speaker?: string
 ) => NeoPublicationWriteResult | 'invalid_publication';
 
 const readPage = (superpipe({})('neo-publication-page') as PipelineAPI)
@@ -272,8 +303,8 @@ export class NeoPublicationRepository {
     });
   }
 
-  append(input: unknown): NeoPublicationWriteResult {
-    const result = append(input, this.db);
+  append(input: unknown, speaker?: string): NeoPublicationWriteResult {
+    const result = append(input, this.db, speaker);
     if (result === 'invalid_publication') return { accepted: false, reason: result };
     return result;
   }
@@ -290,7 +321,7 @@ export class NeoPublicationRepository {
   edit(
     conversationId: string,
     publicationId: string,
-    text: { shortText?: string; fullText?: string },
+    text: { shortText?: string; fullText?: string; verbatim?: true },
     at: string,
     by: string,
     input: NeoInputOrigin | undefined,
@@ -324,6 +355,7 @@ export class NeoPublicationRepository {
       if (prior) {
         const same =
           (text.shortText === undefined || text.shortText === prior.shortText) &&
+          (!text.verbatim || prior.shortText === undefined) &&
           (text.fullText === undefined || text.fullText === prior.fullText) &&
           (!input ||
             (input.sessionId === prior.producerInput?.sessionId &&
@@ -340,6 +372,11 @@ export class NeoPublicationRepository {
       } = current;
       const next = admitNeoPublication({
         ...stored,
+        ...(text.verbatim
+          ? { verbatim: true as const, shortText: undefined }
+          : text.shortText !== undefined && text.fullText !== undefined
+            ? { verbatim: undefined }
+            : {}),
         ...(text.shortText !== undefined ? { shortText: text.shortText } : {}),
         ...(text.fullText !== undefined ? { fullText: text.fullText } : {}),
         revisionId,

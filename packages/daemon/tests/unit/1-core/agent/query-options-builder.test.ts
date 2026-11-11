@@ -2668,6 +2668,70 @@ describe('QueryOptionsBuilder', () => {
       expect(options.disallowedTools).toContain('WebFetch');
     });
 
+    it('excludes automatic Exa attachment for the Convo lane', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+      mockSession.config.operationTools = false;
+      mockSession.config.allowedTools = ['mcp__front__run_in_background'];
+      mockSession.config.disallowedTools = ['mcp__exa'];
+      const options = await builder.build();
+      expect(options.mcpServers?.exa).toBeUndefined();
+      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+    });
+
+    it('excludes a configured Exa server from Convo attachment', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+      mockSession.config.operationTools = false;
+      mockSession.config.allowedTools = ['mcp__front__run_in_background'];
+      mockSession.config.disallowedTools = ['mcp__exa'];
+      const kept = { type: 'http' as const, url: 'https://example.com/retained' };
+      mockSession.config.mcpServers = {
+        exa: { type: 'http', url: 'https://example.com/configured-exa' },
+        kept,
+      };
+      const options = await builder.build();
+      expect(options.mcpServers?.exa).toBeUndefined();
+      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+      expect(options.mcpServers?.kept).toEqual(kept);
+    });
+
+    it('excludes live Exa attachment when a veto replaces cached activation', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+      await builder.build();
+      expect(builder.getEffectiveMcpServers()?.exa).toBeDefined();
+      mockSession.config.disallowedTools = ['mcp__exa'];
+      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+    });
+
+    it('keeps automatic Exa when run_in_background is listed without an Exa veto', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+      mockSession.config.operationTools = false;
+      mockSession.config.allowedTools = ['mcp__front__run_in_background'];
+      const options = await builder.build();
+      expect(options.mcpServers?.exa).toMatchObject({
+        type: 'http',
+        url: `https://mcp.exa.ai/mcp?exaApiKey=${EXA_TEST_KEY}`,
+      });
+      expect(builder.getEffectiveMcpServers()?.exa).toBeDefined();
+    });
+
+    it('honors an explicit automatic Exa veto without a Convo tool', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+      mockSession.config.disallowedTools = ['mcp__exa'];
+      const options = await builder.build();
+      expect(options.mcpServers?.exa).toBeUndefined();
+      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+    });
+
     it('does not attach exa for providers with native web tools', async () => {
       process.env.EXA_API_KEY = EXA_TEST_KEY;
       enableExaSettings();
@@ -4844,6 +4908,18 @@ describe('QueryOptionsBuilder', () => {
 
       afterEach(() => {
         delete mockSession.config.mcpServers;
+      });
+
+      it('omits the built-in operations server when the session opts out', async () => {
+        mockSession.config.operationTools = false;
+        try {
+          const options = await new QueryOptionsBuilder(
+            withOperationDoor(buildRegistryContext([]))
+          ).build();
+          expect(options.mcpServers?.['hyperneo-operations']).toBeUndefined();
+        } finally {
+          delete mockSession.config.operationTools;
+        }
       });
 
       it('keeps the operations door on its canonical name when a registry server claims it', async () => {

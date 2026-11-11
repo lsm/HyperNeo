@@ -14,7 +14,8 @@ export function createOperationMcpServer(
   registry: OperationRegistrySource,
   resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
-  descriptionRole?: OperationCallerRole
+  descriptionRole?: OperationCallerRole,
+  speaking = true
 ) {
   const invoke = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
   const discovery =
@@ -33,6 +34,7 @@ export function createOperationMcpServer(
   ];
   if (descriptionRole === 'neo') {
     for (const family of NEO_RESIDENT_FAMILIES) {
+      if (!speaking && (family.name === 'neo_publish' || family.name === 'neo_speech')) continue;
       const schema =
         family.actions.length === 1
           ? z.object({ input: z.looseObject({}), action: z.never().optional() })

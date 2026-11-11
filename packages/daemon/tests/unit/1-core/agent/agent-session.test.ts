@@ -7384,6 +7384,7 @@ describe('AgentSession', () => {
       const mockDb = {
         writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
+        getGlobalSettings: mock(() => ({})),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),

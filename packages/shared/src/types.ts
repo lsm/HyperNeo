@@ -287,6 +287,8 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
   toolGuards?: DeclarativeToolGuard[];
 
+  operationTools?: boolean;
+
   workerOperations?: boolean;
 }
 

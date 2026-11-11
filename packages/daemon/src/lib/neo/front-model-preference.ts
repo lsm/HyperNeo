@@ -1,4 +1,4 @@
-import type { NeoModelPreference } from '@hyperneo/shared';
+import { resolveAutoCompactPercent, type NeoModelPreference } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -9,10 +9,13 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { ModelPreference, requireNeoPreferenceModel } from './model-preference.ts';
 import type { NeoService } from './service.ts';
 
-const Input = ModelPreference.strict();
+const Input = ModelPreference.extend({
+  autoCompactPercent: z.number().int().transform(resolveAutoCompactPercent).optional(),
+}).strict();
+const Saved = ModelPreference.extend({ autoCompactPercent: z.number().int().optional() }).strict();
 const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
-  z.object({ ok: z.literal(true), preferences: Input }),
+  z.object({ ok: z.literal(true), preferences: Saved }),
 ]);
 
 export function createNeoFrontModelOperation(service: NeoService) {
@@ -32,6 +35,7 @@ export function createNeoFrontModelOperation(service: NeoService) {
           'neoFrontModel',
           preferences
         );
+        await service.prepareFront();
         service.publishSettings?.(settings);
         service.notifyChanged();
         return { ok: true as const, preferences: settings.neo!.front!.model! };
