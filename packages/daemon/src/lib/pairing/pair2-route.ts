@@ -51,11 +51,7 @@ async function readJson(req: Request): Promise<unknown | null> {
 export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteDeps) {
   const mayApprove = async (req: Request) => {
     const identity = await authenticate(req);
-    if (!identity || identity.kind !== 'human') return { allowed: false as const };
-    const local = identity.deviceId.startsWith('local-rpc:');
-    const owners = local ? await db.call(pairingRequestReads, 'ownerCount') : 0;
-    if (local && owners > 0) return { allowed: false as const };
-    return { allowed: true as const, identity };
+    return identity && identity.kind === 'human' ? identity : null;
   };
 
   return async (req: Request): Promise<Response> => {
@@ -112,18 +108,16 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
     }
 
     if (url.pathname === '/pair2/approve') {
-      const gate = await mayApprove(req);
-      if (!gate.allowed) return answer(403, { error: 'not_allowed' });
+      const identity = await mayApprove(req);
+      if (!identity) return answer(403, { error: 'not_allowed' });
       const outcome = await db.call(
         pairingRequestWrites,
         'approveRequest',
         parsed.data.requestId,
-        gate.identity.deviceId,
+        identity.deviceId,
         now()
       );
-      return outcome === 'approved'
-        ? answer(200, { ok: true })
-        : answer(403, { error: 'not_pending' });
+      return outcome === 'approved' ? answer(200, { ok: true }) : answer(403, { error: outcome });
     }
 
     if (url.pathname === '/pair2/deny') {

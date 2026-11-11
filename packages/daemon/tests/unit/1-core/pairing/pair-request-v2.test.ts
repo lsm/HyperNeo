@@ -50,8 +50,10 @@ describe('pairing v2 one-time request repository', () => {
 
   const approveRequest = (requestId: string, approver: string) =>
     gateway.call(pairingRequestWrites, 'approveRequest', requestId, approver, now) as Promise<
-      'approved' | 'not_pending'
+      'approved' | 'not_pending' | 'not_allowed'
     >;
+
+  const ownerCount = () => gateway.call(pairingRequestReads, 'ownerCount') as Promise<number>;
 
   const completeRequest = (requestId: string, phoneKey: string, signature: string) =>
     gateway.call(
@@ -324,6 +326,34 @@ describe('pairing v2 one-time request repository', () => {
     if (!second.ok) expect(second.reason).toBe('superseded');
     expect(devices.countDevices().humans).toBe(1);
     expect(await requestStatus(madeB.requestId)).toMatchObject({ state: 'cancelled' });
+  });
+
+  test('a local-rpc approval that raced a first-owner grant cannot approve a second device', async () => {
+    const madeA = await createRequest();
+    const madeB = await createRequest();
+    const phoneA = phoneKeypair();
+    const phoneB = phoneKeypair();
+    const boundA = await bindTicket(madeA.ticket, phoneA.publicKeyB64);
+    const boundB = await bindTicket(madeB.ticket, phoneB.publicKeyB64);
+    if (!boundA.ok || !boundB.ok) throw new Error('bind failed');
+
+    expect(await ownerCount()).toBe(0);
+    expect(await approveRequest(madeA.requestId, 'local-rpc:web')).toBe('approved');
+    const granted = await completeRequest(
+      madeA.requestId,
+      phoneA.publicKeyB64,
+      proof(phoneA, madeA.requestId, boundA.bindNonce)
+    );
+    expect(granted.ok).toBe(true);
+
+    expect(await approveRequest(madeB.requestId, 'local-rpc:web')).toBe('not_allowed');
+    const stolen = await completeRequest(
+      madeB.requestId,
+      phoneB.publicKeyB64,
+      proof(phoneB, madeB.requestId, boundB.bindNonce)
+    );
+    expect(stolen.ok).toBe(false);
+    expect(await ownerCount()).toBe(1);
   });
 
   test('owner approvals after the first device do not grant owner', async () => {

@@ -121,9 +121,15 @@ export class PairingRequestRepository {
       : { ok: false };
   }
 
-  approveRequest(requestId: string, approver: string, now: number): 'approved' | 'not_pending' {
+  approveRequest(
+    requestId: string,
+    approver: string,
+    now: number
+  ): 'approved' | 'not_pending' | 'not_allowed' {
     return this.db.transaction(() => {
-      const ownerGrant = this.ownerCount() === 0;
+      const owners = this.ownerCount();
+      if (approver.startsWith('local-rpc:') && owners > 0) return 'not_allowed';
+      const ownerGrant = owners === 0;
       const approved = this.db
         .prepare(
           `UPDATE pairing_requests SET approved_at = ?, approved_by = ?, grants_owner = ?
