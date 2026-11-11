@@ -853,3 +853,36 @@ test('all Neo model controls are visible without an Advanced disclosure', async 
   expect(ui.getByLabelText('Neo model 2 thinking').closest('details')).toBeNull();
   expect(ui.getByLabelText('Neo model 3 auto-compact percentage').closest('details')).toBeNull();
 });
+
+test.each(['percent', 'thinking'])(
+  'Front saves %s from the saved model when its provider is absent from the authenticated catalog',
+  async (control) => {
+    auth.mockResolvedValue({
+      providers: models.map((model) => ({
+        id: model.provider,
+        isAuthenticated: model.provider !== primary.provider,
+      })),
+    });
+    await frontEditor();
+    const front = within(screen.getByRole('region', { name: 'Front' }));
+    if (control === 'percent') {
+      const input = front.getByLabelText('Front model auto-compact percentage');
+      fireEvent.input(input, { target: { value: '65' } });
+      fireEvent.focusOut(input);
+    } else {
+      fireEvent.change(front.getByLabelText('Front model thinking'), {
+        target: { value: 'think8k' },
+      });
+    }
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.front.model.set',
+        input: {
+          ...primary,
+          ...(control === 'percent' ? { autoCompactPercent: 65 } : { thinkingLevel: 'think8k' }),
+        },
+      })
+    );
+    expect(globalSettings.value?.neo?.preferences?.model).toBe(primary.model);
+  }
+);

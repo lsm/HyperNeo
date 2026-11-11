@@ -549,7 +549,7 @@ function FrontModelSettings({
   const savedPercent = String(preference?.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT);
   useEffect(() => setPercent(savedPercent), [savedPercent]);
   async function save(
-    model: ModelInfo,
+    model: Pick<ModelInfo, 'id' | 'provider'>,
     thinkingLevel = preference?.thinkingLevel ?? 'off',
     autoCompactPercent = preference?.autoCompactPercent
   ) {
@@ -595,8 +595,11 @@ function FrontModelSettings({
     }
     setError('');
     if (String(value) === savedPercent) return;
-    const model = findSameModel(allModels, preference);
-    if (model) void save(model, preference.thinkingLevel, value);
+    void save(
+      { id: preference.model, provider: preference.provider },
+      preference.thinkingLevel,
+      value
+    );
   }
   return (
     <div class="space-y-4 rounded-xl border border-line bg-surface p-4 sm:p-5">
@@ -617,10 +620,9 @@ function FrontModelSettings({
           thinking={{
             saved: preference.thinkingLevel,
             label: 'Front model thinking',
-            capability: loading ? null : (findSameModel(allModels, preference) ?? null),
+            capability: loading ? null : (findSameModel(allModels, preference) ?? preference),
             onChange: (level) => {
-              const model = findSameModel(allModels, preference);
-              if (model) void save(model, level);
+              void save({ id: preference.model, provider: preference.provider }, level);
             },
           }}
           percent={{
