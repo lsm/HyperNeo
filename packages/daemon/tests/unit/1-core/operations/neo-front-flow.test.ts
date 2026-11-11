@@ -1248,3 +1248,20 @@ test('Convo uses distinct short and detailed reply tools with no format switch',
   });
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
+
+test('Convo prompt, tool descriptions and intake agree on the five-sentence boundary', async () => {
+  const { job } = await accept();
+  await createNeoFrontHandler(service)(job);
+  expect(db.getSession(front)!.config.systemPrompt).toContain('at most five short sentences');
+  createFrontTools(service, conversationId);
+  const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
+  expect(definitions.find((tool) => tool.name === 'reply_short')!.description).toContain(
+    'at most five short sentences'
+  );
+  expect(definitions.find((tool) => tool.name === 'reply_detailed')!.description).toContain(
+    'more than five sentences'
+  );
+  const intake = JSON.stringify(db.getJobQueueRepo().listJobs({ queue: 'mailbox' }));
+  expect(intake).toContain('at most five short sentences');
+  expect(intake).toContain('structured report');
+});

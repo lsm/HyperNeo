@@ -88,7 +88,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ...lookups,
       tool(
         'reply_short',
-        'Send one plain message with no Details. Use for acknowledgments, brief answers and progress updates. First call this with progress:true and the human replyTo ID before doing work. For a final short answer omit progress. To update your existing message, pass publicationId.',
+        'Send one plain message with no Details. Use for at most five short sentences in one brief paragraph. Use for acknowledgments, brief answers and progress updates. First call this with progress:true and the human replyTo ID for a one-sentence acknowledgment before doing work. For a final short answer omit progress. To update your existing message, pass publicationId.',
         {
           ...replyFields,
           text: z.string().trim().min(1).max(16000),
@@ -98,7 +98,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply_detailed',
-        'Send a substantial reply or a long Back report with a standalone summary and additional details. Details must add information beyond the summary. Give the original human replyTo IDs. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result.',
+        'Use for more than five sentences or any structured report, multi-topic update, list, table or long Back report. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the original human replyTo IDs. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result.',
         {
           ...replyFields,
           summary: z.string().trim().min(1).max(2000),
