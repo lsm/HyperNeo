@@ -147,7 +147,7 @@ try {
     topicPattern: 'github/synthetic/watch/pull_request/8.*',
   });
   evidence.watched = raw
-    .prepare('SELECT space_id, owner, repo, enabled, polling_enabled FROM space_github_watched_repos')
+    .prepare('SELECT space_id, owner, repo, enabled, polling_enabled FROM github_session_watched_repos')
     .all();
   assert.equal(evidence.watched.length, 1);
 
@@ -157,7 +157,7 @@ try {
   evidence.activityPoll = await poll();
   setPhase(closed(Date.now() + 2000));
   evidence.closedPoll = await poll();
-  evidence.pollCursor = raw.prepare('SELECT poll_cursor FROM space_github_watched_repos').all();
+  evidence.pollCursor = raw.prepare('SELECT poll_cursor FROM github_session_watched_repos').all();
   evidence.topics = (raw.prepare('SELECT topic FROM session_external_events ORDER BY rowid').all() as { topic: string }[])
     .map((row) => row.topic.split('/').at(-1));
   evidence.deliveries = await invoke('event.external.delivery.list');
