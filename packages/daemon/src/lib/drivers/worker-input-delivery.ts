@@ -58,10 +58,15 @@ export function createWorkerInputDelivery(
     return { ...stored, status };
   };
   type Facts = Awaited<ReturnType<typeof read>>;
-  const reportId = (facts: Facts) =>
+  const reportId = (facts: Facts, detail: string) =>
     facts.payload.idempotencyKey
       ? neoDerivedId(
-          JSON.stringify(['worker-input-report', facts.payload.from, facts.payload.idempotencyKey])
+          JSON.stringify([
+            'worker-input-report',
+            facts.payload.from,
+            facts.payload.idempotencyKey,
+            detail,
+          ])
         )
       : facts.payload.inputId;
   const decide = (
@@ -120,7 +125,7 @@ export function createWorkerInputDelivery(
     if (!(await gateway.call(workerInputWrites, 'recordFailure', job, outcome)))
       return { fenced: true };
     try {
-      await report(reportId(facts), outcome.failure, facts.payload.from);
+      await report(reportId(facts, outcome.failure), outcome.failure, facts.payload.from);
     } catch (error) {
       const detail = `Worker failure notification is pending: ${String(error)}`;
       await gateway.call(workerInputWrites, 'wait', job, detail);
@@ -138,7 +143,7 @@ export function createWorkerInputDelivery(
       let reported = false;
       if (plan.report && !facts.payload.waitReported) {
         try {
-          await report(`${reportId(facts)}:waiting`, plan.detail, facts.payload.from);
+          await report(`${reportId(facts, plan.detail)}:waiting`, plan.detail, facts.payload.from);
           reported = true;
         } catch {
           reported = false;

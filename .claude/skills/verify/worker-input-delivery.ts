@@ -207,9 +207,20 @@ try {
   const initialMessages = messages(initialWorker).filter((text) => text.includes('Initial binding proof message'));
   assert.equal(initialMessages.length, 1);
   evidence.initialBinding = { todo: bindingTodos.getTodo(initialTodo.id), input: inputs().find((input) => input.id === bindingId), messages: initialMessages };
+  await app.db.createSession({ id: 'synthetic-retired-worker', title: 'Synthetic archived worker', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'archived', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  const changedRefusalId = await app.db.gateway.call(workerInputWrites, 'accept', { ref: { adapter: 'hyperneo', id: 'synthetic-retired-worker' }, message: 'The same synthetic answer', idempotencyKey: 'synthetic-answer' }, `session:${root}`, caller);
+  await until(() => app.jobQueue.listJobs({ queue: 'worker_input' }).some((job) => job.payload.inputId === changedRefusalId && job.status === 'completed'), 'the changed answer failure is reported and settled');
+  const changedRefusal = inputs().find((input) => input.id === changedRefusalId)!;
+  const changedFailure = JSON.parse(changedRefusal.outcome!).failure;
+  assert.notEqual(changedFailure, refusal);
+  await until(() => messages(root).some((text) => text.includes(changedFailure)), 'Neo receives the changed refusal reason');
+  const changedRefusalReports = messages(root).filter((text) => text.includes(changedFailure));
+  assert.equal(changedRefusalReports.length, 1);
+  assert.equal(messages(root).filter((text) => text.includes(refusal)).length, 1);
+  evidence.changedRefusal = { input: changedRefusal, reports: changedRefusalReports };
   evidence.port = app.server.port;
   evidence.passed = true;
-  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length, refusalReports: refusalReports.length, exhaustedReports: exhaustedReports.length, initialBindings: 1 }));
+  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length, refusalReports: refusalReports.length, exhaustedReports: exhaustedReports.length, initialBindings: 1, changedRefusalReports: changedRefusalReports.length }));
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

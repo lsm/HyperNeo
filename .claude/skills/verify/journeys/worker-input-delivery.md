@@ -73,3 +73,8 @@ The initial-todo scheduler dispatches its instruction and binds the todo. If the
 new message supplies that instruction, its input retains the scheduler's native
 outcome. A separate follow-up waits behind an existing instruction. The daemon
 proof observes one initial message and the bound doing todo through this path.
+
+Report identities include the failure text for a submission. Repeated identical
+refusals share one notice, and a changed reason receives its own notice. The proof
+changes the synthetic retired worker from missing to archived with the same answer
+key and requires both reasons in Neo's inbox with all attempts settled.
