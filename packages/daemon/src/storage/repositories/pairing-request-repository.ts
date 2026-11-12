@@ -198,21 +198,28 @@ export class PairingRequestRepository {
     );
   }
 
-  cancelBoundRequest(requestId: string, signature: string, now: number): boolean {
+  cancelBoundRequest(
+    requestId: string,
+    signature: string,
+    now: number
+  ): 'cancelled' | 'granted' | 'not_pending' {
     return this.db.transaction(() => {
       const row = this.rowById(requestId);
-      if (!row || row.bindNonce === null || row.phoneKey === null) return false;
-      if (row.grantedAt !== null || row.deniedAt !== null || row.cancelledAt !== null) return false;
-      if (row.expiresAt <= now) return false;
-      if (!verifyBoundCancel(row.phoneKey, requestId, row.bindNonce, signature)) return false;
-      return (
-        this.db
-          .prepare(
-            `UPDATE pairing_requests SET cancelled_at = ?, expires_at = ?
-             WHERE id = ? AND granted_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL`
-          )
-          .run(now, now, requestId).changes > 0
-      );
+      if (!row || row.bindNonce === null || row.phoneKey === null) return 'not_pending';
+      if (row.grantedAt !== null) return 'granted';
+      if (row.deniedAt !== null || row.cancelledAt !== null) return 'not_pending';
+      if (row.expiresAt <= now) return 'not_pending';
+      if (!verifyBoundCancel(row.phoneKey, requestId, row.bindNonce, signature)) {
+        return 'not_pending';
+      }
+      return this.db
+        .prepare(
+          `UPDATE pairing_requests SET cancelled_at = ?, expires_at = ?
+           WHERE id = ? AND granted_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL`
+        )
+        .run(now, now, requestId).changes > 0
+        ? 'cancelled'
+        : 'not_pending';
     })();
   }
 

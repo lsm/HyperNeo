@@ -448,37 +448,72 @@ describe('pairing v2 one-time request route', () => {
     bindNonce: string
   ) => phone.sign(`cancel:${requestId}:${bindNonce}`);
 
+  const joinCancel = (
+    body: unknown,
+    remoteAddress: string | null = '10.0.0.9',
+    headers: Record<string, string> = {}
+  ) =>
+    route(
+      new Request('http://localhost/pair2/cancel', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+      }),
+      remoteAddress
+    );
+
   test('the joining phone cancels with its own signature and no caller credential', async () => {
     seedDevice('Existing phone');
     const made = await createRequest();
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
     const nonce = bound.body.bindNonce as string;
+    const signed = {
+      requestId: made.requestId,
+      signature: signCancel(phone, made.requestId, nonce),
+    };
 
-    const res = await route(
-      new Request('http://localhost/pair2/cancel', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          requestId: made.requestId,
-          signature: signCancel(phone, made.requestId, nonce),
-        }),
-      })
-    );
-    expect(res.status).toBe(200);
+    expect((await joinCancel(signed)).status).toBe(200);
     expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'cancelled' });
+    expect((await joinCancel(signed)).status).toBe(403);
+  });
 
-    const again = await route(
-      new Request('http://localhost/pair2/cancel', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          requestId: made.requestId,
-          signature: signCancel(phone, made.requestId, nonce),
-        }),
-      })
-    );
-    expect(again.status).toBe(403);
+  test('a signed cancel carrying the web session credential is refused', async () => {
+    seedDevice('Existing phone');
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    const signed = {
+      requestId: made.requestId,
+      signature: signCancel(phone, made.requestId, bound.body.bindNonce as string),
+    };
+
+    const web = await joinCancel(signed, null);
+    expect(web.status).toBe(403);
+    expect(await web.json()).toMatchObject({ error: 'signed_request_with_approver_credential' });
+
+    const phoneCredential = await joinCancel(signed, null, { 'x-test-device': approver() });
+    expect(phoneCredential.status).toBe(403);
+    expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'bound' });
+  });
+
+  test('a signed cancel after completion reports the granted state', async () => {
+    seedDevice('Existing phone');
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    const nonce = bound.body.bindNonce as string;
+    await repoApprove(made.requestId);
+    const done = await completeRequest(made.requestId, phone, nonce);
+    expect(done.res.status).toBe(200);
+
+    const late = await joinCancel({
+      requestId: made.requestId,
+      signature: signCancel(phone, made.requestId, nonce),
+    });
+    expect(late.status).toBe(409);
+    expect(await late.json()).toMatchObject({ error: 'granted' });
+    expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'granted' });
   });
 
   test('a forged join cancel never falls back to the approver path', async () => {

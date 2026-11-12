@@ -39,13 +39,9 @@ describe('pairing v2 one-time request repository', () => {
     gateway.call(pairingRequestWrites, 'cancelRequest', requestId, now) as Promise<boolean>;
 
   const cancelBound = (requestId: string, signature: string) =>
-    gateway.call(
-      pairingRequestWrites,
-      'cancelBoundRequest',
-      requestId,
-      signature,
-      now
-    ) as Promise<boolean>;
+    gateway.call(pairingRequestWrites, 'cancelBoundRequest', requestId, signature, now) as Promise<
+      'cancelled' | 'granted' | 'not_pending'
+    >;
 
   const createRequest = () =>
     gateway.call(pairingRequestWrites, 'createRequest', now) as Promise<{
@@ -326,15 +322,37 @@ describe('pairing v2 one-time request repository', () => {
     if (!bound.ok) throw new Error('bind failed');
 
     expect(await cancelBound(made.requestId, proof(phone, made.requestId, bound.bindNonce))).toBe(
-      false
+      'not_pending'
     );
     expect(await requestStatus(made.requestId)).toMatchObject({ state: 'bound' });
 
     const cancel = phone.sign(`cancel:${made.requestId}:${bound.bindNonce}`);
-    expect(await cancelBound(made.requestId, cancel)).toBe(true);
+    expect(await cancelBound(made.requestId, cancel)).toBe('cancelled');
     expect(await completeRequest(made.requestId, phone.publicKeyB64, cancel)).toMatchObject({
       ok: false,
     });
+    expect(await cancelBound(made.requestId, cancel)).toBe('not_pending');
+  });
+
+  test('a granted request reports its granted state to a join cancel', async () => {
+    seedPhone();
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+    expect(await approveRequest(made.requestId, seedPhone())).toBe('approved');
+    expect(
+      await completeRequest(
+        made.requestId,
+        phone.publicKeyB64,
+        proof(phone, made.requestId, bound.bindNonce)
+      )
+    ).toMatchObject({ ok: true });
+
+    expect(
+      await cancelBound(made.requestId, phone.sign(`cancel:${made.requestId}:${bound.bindNonce}`))
+    ).toBe('granted');
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'granted' });
   });
 
   test('a wrong key or an unbound request cannot join cancel', async () => {
@@ -347,11 +365,11 @@ describe('pairing v2 one-time request repository', () => {
 
     expect(
       await cancelBound(made.requestId, thief.sign(`cancel:${made.requestId}:${bound.bindNonce}`))
-    ).toBe(false);
+    ).toBe('not_pending');
     expect(await requestStatus(made.requestId)).toMatchObject({ state: 'bound' });
 
     const unbound = await createRequest();
-    expect(await cancelBound(unbound.requestId, 'not-a-signature')).toBe(false);
+    expect(await cancelBound(unbound.requestId, 'not-a-signature')).toBe('not_pending');
     expect(await requestStatus(unbound.requestId)).toMatchObject({ state: 'pending' });
   });
 

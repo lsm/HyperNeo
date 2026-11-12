@@ -166,16 +166,19 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
     if (url.pathname === '/pair2/cancel') {
       const join = JoinCancelBody.safeParse(body);
       if (join.success) {
-        if (await mayApprove(req, remoteAddress))
+        if (await admitHuman(req, remoteAddress))
           return answer(403, { error: 'signed_request_with_approver_credential' });
-        const cancelled = await db.call(
+        const outcome = await db.call(
           pairingRequestWrites,
           'cancelBoundRequest',
           join.data.requestId,
           join.data.signature,
           now()
         );
-        return cancelled ? answer(200, { ok: true }) : answer(403, { error: 'not_pending' });
+        if (outcome === 'cancelled') return answer(200, { ok: true });
+        return outcome === 'granted'
+          ? answer(409, { error: 'granted' })
+          : answer(403, { error: 'not_pending' });
       }
       const approver = RequestBody.strict().safeParse(body);
       if (!approver.success) {

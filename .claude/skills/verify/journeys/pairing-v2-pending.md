@@ -20,9 +20,15 @@ credential must get 403 there.
 
 The joining phone signs `cancel:requestId:bindNonce` with its bound key and
 cancels without any caller credential. The request must then be terminal: status
-reports `cancelled` and completion is refused. A forged signature sent with a
-paired phone's credential must be refused, so a signed cancel never falls back
-to the approver path. Require one active human phone at the end.
+reports `cancelled` and completion is refused. A signed cancel carrying the web
+setup credential or a paired phone's credential must be refused as
+`signed_request_with_approver_credential` and leave the request bound, so a
+signed cancel never falls back to the approver path. A forged signature with no
+credential is refused too.
+
+Approve and complete a second later-device request, then repeat its signed
+cancel: it must answer 409 `granted` because completion won, not `not_pending`.
+Require two active human phones at the end.
 
 Close the fixture database and daemon, retain `pairing-v2-pending.json` with
 `passed` and `resourcesClosed`, require wrapper exit 0 and remove temporary

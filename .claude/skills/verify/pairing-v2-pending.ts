@@ -46,14 +46,15 @@ const call = async (
   path: string,
   body: unknown,
   headers: Record<string, string> = {},
-  method: 'GET' | 'POST' = 'POST'
+  method: 'GET' | 'POST' = 'POST',
+  authenticated = true
 ) => {
   const response = await fetch(`${base}${path}`, {
     method,
     headers: {
       'content-type': 'application/json',
       origin: base,
-      authorization: `Bearer ${setupCredential}`,
+      ...(authenticated ? { authorization: `Bearer ${setupCredential}` } : {}),
       ...headers,
     },
     ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
@@ -75,7 +76,15 @@ const phone = () => {
 
 const lastPhone = () => {
   const rows = devices.listDevices();
-  return rows.find((row) => !row.id.startsWith('local-rpc:') && !row.revokedAt) ?? null;
+  return (
+    rows.find(
+      (row) =>
+        row.kind === 'human' &&
+        !row.id.startsWith('local-rpc:') &&
+        !row.id.startsWith('agent-read:') &&
+        !row.revokedAt
+    ) ?? null
+  );
 };
 
 const pairFirstPhone = async () => {
@@ -129,10 +138,26 @@ try {
   assert.equal(webPending.status, 403);
   evidence.webCannotReadPendingList = true;
 
-  const cancelled = await call('/pair2/cancel', {
+  const joinSignature = joiner.sign(`cancel:${ticket.requestId}:${bound.body.bindNonce}`);
+  const webCancelled = await call('/pair2/cancel', {
     requestId: ticket.requestId,
-    signature: joiner.sign(`cancel:${ticket.requestId}:${bound.body.bindNonce}`),
+    signature: joinSignature,
   });
+  assert.equal(webCancelled.status, 403);
+  assert.equal(webCancelled.body.error, 'signed_request_with_approver_credential');
+  evidence.webPlusSignatureRefused = true;
+  assert.equal(
+    (await call(`/pair2/status?requestId=${ticket.requestId}`, null, {}, 'GET')).body.state,
+    'bound'
+  );
+
+  const cancelled = await call(
+    '/pair2/cancel',
+    { requestId: ticket.requestId, signature: joinSignature },
+    {},
+    'POST',
+    false
+  );
   assert.equal(cancelled.status, 200);
   const status = await call(`/pair2/status?requestId=${ticket.requestId}`, null, {}, 'GET');
   assert.equal(status.body.state, 'cancelled');
@@ -147,6 +172,49 @@ try {
     403
   );
   evidence.joiningPhoneCancelIsTerminal = true;
+
+  const grantedTicket = (await call('/pair2/request', {})).body as {
+    requestId: string;
+    ticket: string;
+  };
+  const joiner2 = phone();
+  const grantedBound = await call('/pair2/bind', {
+    ticket: grantedTicket.ticket,
+    phoneKey: joiner2.key,
+  });
+  assert.equal(
+    (
+      await call(
+        '/pair2/approve',
+        { requestId: grantedTicket.requestId },
+        { authorization: `Bearer ${firstCredential}` }
+      )
+    ).status,
+    200
+  );
+  assert.equal(
+    (
+      await call('/pair2/complete', {
+        requestId: grantedTicket.requestId,
+        phoneKey: joiner2.key,
+        signature: joiner2.sign(`${grantedTicket.requestId}:${grantedBound.body.bindNonce}`),
+      })
+    ).status,
+    200
+  );
+  const late = await call(
+    '/pair2/cancel',
+    {
+      requestId: grantedTicket.requestId,
+      signature: joiner2.sign(`cancel:${grantedTicket.requestId}:${grantedBound.body.bindNonce}`),
+    },
+    {},
+    'POST',
+    false
+  );
+  assert.equal(late.status, 409);
+  assert.equal(late.body.error, 'granted');
+  evidence.grantedCancelReportsGranted = true;
 
   const laterTicket = (await call('/pair2/request', {})).body as {
     requestId: string;
@@ -163,12 +231,29 @@ try {
       requestId: laterTicket.requestId,
       signature: phone().sign(`cancel:${laterTicket.requestId}:${laterBound.body.bindNonce}`),
     },
-    { authorization: `Bearer ${firstCredential}` }
+    {},
+    'POST',
+    false
   );
   assert.equal(forged.status, 403);
+  assert.equal(forged.body.error, 'not_pending');
   evidence.forgedJoinCancelRefused = true;
 
-  assert.equal(devices.countDevices().humans, 1);
+  const forgedWithPhone = await call(
+    '/pair2/cancel',
+    {
+      requestId: laterTicket.requestId,
+      signature: phone().sign(`cancel:${laterTicket.requestId}:${laterBound.body.bindNonce}`),
+    },
+    { authorization: `Bearer ${firstCredential}` }
+  );
+  assert.equal(forgedWithPhone.status, 403);
+  assert.equal(
+    (await call(`/pair2/status?requestId=${laterTicket.requestId}`, null, {}, 'GET')).body.state,
+    'bound'
+  );
+
+  assert.equal(devices.countDevices().humans, 2);
   evidence.lastPhone = lastPhone()?.name ?? null;
   evidence.passed = true;
 } finally {
