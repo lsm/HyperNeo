@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { requireNeoTodoCardsAnswered } from '../../../../../src/lib/neo/todo-operations.ts';
 import { neoTodoStartRefusal } from '../../../../../src/lib/neo/todo-start-gate.ts';
 import { NeoAskTodoRepository } from '../../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../../src/storage/schema/index.ts';
@@ -169,6 +170,26 @@ describe('NeoAskTodoRepository.retireCheckedQuestion', () => {
       store.retireCheckedQuestion(store.getQuestion('targeted')!, check, 'Seen', 4)?.state
     ).toBe('retired');
     expect(store.getQuestion('whole')?.state).toBe('open');
+    db.close();
+  });
+});
+
+describe('requireNeoTodoCardsAnswered', () => {
+  test('a card with no todo of its own, like a rule or preference card, does not stop its one held todo from being marked done', () => {
+    const { db, store, ask, step } = world();
+    ask('ask');
+    const only = step('only', 'ask');
+    const whole = store.askQuestion('whole', 'ask', draft, 2);
+    const targeted = store.askQuestion('targeted', 'ask', { ...draft, todoId: 'only' }, 3);
+    expect(whole.todos).toEqual(['only']);
+    const plan = { todo: only, patch: { state: 'done' as const } };
+    expect(requireNeoTodoCardsAnswered(plan, [whole])).toEqual({ value: plan });
+    expect(requireNeoTodoCardsAnswered(plan, [whole, targeted])).toEqual({
+      reason: {
+        ok: false,
+        reason: 'card_unanswered: card targeted is still waiting for the human.',
+      },
+    });
     db.close();
   });
 });
