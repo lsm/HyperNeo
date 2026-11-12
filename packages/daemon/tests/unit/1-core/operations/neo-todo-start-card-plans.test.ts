@@ -27,9 +27,8 @@ const card = (change: Partial<NeoQuestion> = {}) =>
     askId: 'ask',
     kind: 'start',
     state: 'open',
-    todoId: null,
     text: 'Start?',
-    startTodos: ['first', 'second'],
+    todos: ['first', 'second'],
     ...change,
   }) as NeoQuestion;
 
@@ -46,7 +45,7 @@ describe('planNeoStartRelease', () => {
   });
 
   test('a step still listed on another open card is left alone', () => {
-    const other = card({ id: 'other', startTodos: ['first'] });
+    const other = card({ id: 'other', todos: ['first'] });
     const writes = planNeoStartRelease(
       card(),
       [step('first'), step('second')],
@@ -61,7 +60,7 @@ describe('planNeoStartRelease', () => {
 
 describe('planNeoQuestionPrune', () => {
   test('retires a question whose todo is finished', () => {
-    const question = card({ kind: 'reply' as NeoQuestion['kind'], todoId: 'first' });
+    const question = card({ kind: 'reply' as NeoQuestion['kind'], todos: ['first'] });
     expect(planNeoQuestionPrune(question, [step('first', { state: 'done' })])).toEqual({
       value: { retire: 'todo no longer active' },
     });
@@ -69,7 +68,7 @@ describe('planNeoQuestionPrune', () => {
 
   test('retires a card with nothing left and frees its approved steps', () => {
     const first = step('first', { approvedAt: 1 });
-    const plan = planNeoQuestionPrune(card({ startTodos: ['first'] }), [first]);
+    const plan = planNeoQuestionPrune(card({ todos: ['first'] }), [first]);
     expect(plan).toMatchObject({
       value: { kept: [], text: 'Start?', state: 'retired', released: [first] },
     });

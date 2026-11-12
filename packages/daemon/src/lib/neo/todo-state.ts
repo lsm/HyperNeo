@@ -22,16 +22,27 @@ export const NEO_TODO_STALLED_CARD_TAIL =
 export const isNeoTodoStalledCard = (text: string) => text.endsWith(NEO_TODO_STALLED_CARD_TAIL);
 
 export const neoQuestionCoversTodo = (
-  question: Pick<NeoQuestion, 'state' | 'todoId' | 'kind' | 'startTodos'>,
+  question: Pick<NeoQuestion, 'state' | 'todos'>,
   todo: Pick<NeoTodo, 'id'>
+) => question.state === 'open' && question.todos.includes(todo.id);
+
+export const neoQuestionTodo = (question: Pick<NeoQuestion, 'kind' | 'todos'>) =>
+  question.kind !== 'start' && question.todos.length === 1 ? question.todos[0] : null;
+
+export const neoAskQuestionHolds = (
+  todos: readonly Pick<NeoTodo, 'id' | 'state' | 'blockedBy' | 'startedAt'>[]
 ) =>
-  question.state === 'open' &&
-  (!question.todoId || question.todoId === todo.id) &&
-  (question.kind !== 'start' || !!question.startTodos?.includes(todo.id));
+  todos
+    .filter((todo) =>
+      todo.state === 'blocked'
+        ? todo.startedAt === null || todo.blockedBy === 'question'
+        : todo.state === 'todo' && todo.startedAt === null
+    )
+    .map((todo) => todo.id);
 
 export function neoTodoAwaitsHuman(
   todo: Pick<NeoTodo, 'id'>,
-  questions: readonly Pick<NeoQuestion, 'state' | 'todoId' | 'kind' | 'startTodos' | 'text'>[]
+  questions: readonly Pick<NeoQuestion, 'state' | 'todos' | 'text'>[]
 ): boolean {
   return questions.some(
     (question) => !isNeoTodoStalledCard(question.text) && neoQuestionCoversTodo(question, todo)

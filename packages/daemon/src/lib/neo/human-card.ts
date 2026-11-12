@@ -4,7 +4,7 @@ import type {
   NeoAskTodoRepository,
   NeoQuestionDraft,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import { isNeoTodoStalledCard } from './todo-state.ts';
+import { isNeoTodoStalledCard, neoQuestionTodo } from './todo-state.ts';
 
 export function openHumanCard(
   store: NeoAskTodoRepository,
@@ -43,7 +43,7 @@ const onlyCard = (open: readonly NeoQuestion[], replaced: NeoQuestion | null) =>
     (question) =>
       question.state === 'open' &&
       question.kind !== 'start' &&
-      (question.todoId || question.retireWhen) &&
+      (neoQuestionTodo(question) || question.retireWhen) &&
       question.id !== replaced?.id &&
       !isNeoTodoStalledCard(question.text)
   );

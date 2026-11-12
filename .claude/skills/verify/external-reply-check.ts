@@ -151,9 +151,9 @@ try {
         .run(id, JSON.stringify({ verb: 'send', ref }));
       seed
         .prepare(
-          "INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, state, created_at) VALUES (?, 'verify-ask', 'Start peer?', 'start', ?, 'open', ?)"
+          "INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, todos, state, created_at) VALUES (?, 'verify-ask', 'Start peer?', 'start', ?, ?, 'open', ?)"
         )
-        .run(`start-${id}`, JSON.stringify([id]), now);
+        .run(`start-${id}`, JSON.stringify([id]), JSON.stringify([id]), now);
     }
   } finally {
     seed.close();

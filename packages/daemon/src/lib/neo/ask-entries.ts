@@ -106,7 +106,7 @@ const neoHandlesBlocker = (todo: Pick<NeoTodo, 'state' | 'blockedBy'>) =>
 
 export function neoWorkCounts(
   openTodos: readonly Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy'>[],
-  openQuestions: readonly Pick<NeoQuestion, 'askId' | 'state' | 'kind' | 'todoId' | 'startTodos'>[],
+  openQuestions: readonly Pick<NeoQuestion, 'askId' | 'state' | 'todos'>[],
   awaitingNeo: readonly Pick<NeoTodo, 'id'>[]
 ): { needsYou: number; neoUnhandled: number } {
   const cards = openQuestions.filter((question) => question.state === 'open');
@@ -243,9 +243,9 @@ export function projectNeoAskEntries(
       questions: questions.map((question) => {
         if (question.kind === 'choice' && question.options)
           return { ...question, optionLabels: neoOptionLabels(question.options) };
-        if (question.kind !== 'start' || !question.startTodos?.length) return question;
+        if (question.kind !== 'start' || !question.todos.length) return question;
         const line = neoStartQuestionLine(
-          question.startTodos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
+          question.todos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
         );
         return line.status === question.text
           ? { ...question, textCodes: line.statusCodes }

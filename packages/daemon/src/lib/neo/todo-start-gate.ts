@@ -9,6 +9,7 @@ import {
   neoTodoFinished,
   neoTodoReady,
 } from './todo-dependencies.ts';
+import { neoQuestionTodo } from './todo-state.ts';
 
 export const NEO_TODO_NOT_APPROVED =
   'not_approved: the human has not approved this step; it waits on its Start card.';
@@ -36,9 +37,7 @@ export function neoTodoWaitReason(
   if (neoTodoPrerequisitesOpen(todo, family)) return NEO_TODO_NOT_READY;
   return questions.some(
     (question) =>
-      question.state === 'open' &&
-      question.kind !== 'start' &&
-      (!question.todoId || question.todoId === todo.id)
+      question.state === 'open' && question.kind !== 'start' && question.todos.includes(todo.id)
   )
     ? NEO_TODO_QUESTION_OPEN
     : trackerHold;
@@ -147,15 +146,16 @@ export function planNeoQuestionPrune(
   question: NeoQuestion,
   family: readonly NeoTodo[]
 ): { value: NeoQuestionPrune } | { reason: 'unchanged' } {
+  const about = neoQuestionTodo(question);
   const active = family.some(
     (todo) =>
-      todo.id === question.todoId &&
+      todo.id === about &&
       todo.askId === question.askId &&
       !['done', 'removed'].includes(todo.state)
   );
-  if (question.todoId && !active) return { value: { retire: 'todo no longer active' } };
-  if (question.kind !== 'start' || !question.startTodos) return { reason: 'unchanged' };
-  const listed = question.startTodos;
+  if (about && !active) return { value: { retire: 'todo no longer active' } };
+  if (question.kind !== 'start') return { reason: 'unchanged' };
+  const listed = question.todos;
   const kept = listed.filter((id) => {
     const todo = family.find((item) => item.id === id);
     return todo?.askId === question.askId && neoTodoOnStartCard(todo, family);
@@ -192,7 +192,7 @@ export const neoTodosAwaitingNeoDecision = (
       ask?.status === 'open' &&
       todo.askId === ask.id &&
       neoTodoCancellationPending(todo, family) &&
-      !questions.some((q) => q.state === 'open' && q.startTodos?.includes(todo.id))
+      !questions.some((q) => q.state === 'open' && q.kind === 'start' && q.todos.includes(todo.id))
   );
 
 export function planNeoStartAnswer(
@@ -235,10 +235,10 @@ export function planNeoStartRelease(
 ) {
   const waiting = questions
     .filter((other) => other.kind === 'start' && other.state === 'open')
-    .flatMap((other) => other.startTodos ?? []);
+    .flatMap((other) => other.todos);
   const writes: { todo: NeoTodo; patch: NeoTodoPatch }[] = [];
   let current = family;
-  for (const id of question.startTodos ?? []) {
+  for (const id of question.kind === 'start' ? question.todos : []) {
     const todo = current.find((item) => item.id === id);
     const approval =
       !withdrawn && ticked?.includes(id) ? { approvalQuestionId: question.id } : null;

@@ -19,6 +19,8 @@ import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { neoDerivedId } from '../../lib/neo/derived-id.ts';
 import {
   NEO_TODO_STALLED_CARD_TAIL,
+  neoAskQuestionHolds,
+  neoQuestionTodo,
   recomputeTodoState,
   recomputeTodoStateAsync,
   type TodoStateFacts,
@@ -158,7 +160,7 @@ export type NeoQuestionDraft = Pick<
 >;
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, multiple, no_label AS noLabel,
-  yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
+  yes_label AS yesLabel, start_todos AS startTodos, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
   retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, created_at AS createdAt FROM neo_questions`;
 
@@ -167,6 +169,7 @@ type QuestionRow = Omit<
   | 'options'
   | 'multiple'
   | 'startTodos'
+  | 'todos'
   | 'answer'
   | 'confirm'
   | 'replyTo'
@@ -183,6 +186,7 @@ type QuestionRow = Omit<
   options: string | null;
   multiple: number;
   startTodos: string | null;
+  todos: string;
   answer: string | null;
 };
 
@@ -213,6 +217,7 @@ const toQuestion = ({
   options: parsed<string[]>(row.options),
   multiple: row.multiple === 1,
   startTodos: parsed<string[]>(row.startTodos),
+  todos: JSON.parse(row.todos) as string[],
   answer: parsed<NeoQuestionAnswer>(row.answer),
 });
 
@@ -337,14 +342,12 @@ export class NeoAskTodoRepository {
     const questions = (
       this.db
         .prepare(
-          `SELECT q.ask_id AS askId, q.state, q.kind, q.todo_id AS todoId, q.start_todos AS startTodos
+          `SELECT q.ask_id AS askId, q.state, q.todos
            FROM neo_questions q JOIN neo_asks a ON a.id = q.ask_id
            WHERE q.state = 'open' AND a.status = 'open'`
         )
-        .all() as (Pick<NeoQuestion, 'askId' | 'state' | 'kind' | 'todoId'> & {
-        startTodos: string | null;
-      })[]
-    ).map((row) => ({ ...row, startTodos: parsed<string[]>(row.startTodos) }));
+        .all() as (Pick<NeoQuestion, 'askId' | 'state'> & { todos: string })[]
+    ).map((row) => ({ ...row, todos: JSON.parse(row.todos) as string[] }));
     return { todos, questions, awaitingNeo: this.listAwaitingNeoDecision() };
   }
 
@@ -727,7 +730,10 @@ export class NeoAskTodoRepository {
       triagePending:
         triagedAt !== undefined &&
         !this.listQuestions(todo.askId).some(
-          (q) => q.todoId === todo.id && q.state === 'answered' && (q.answeredAt ?? 0) >= triagedAt
+          (q) =>
+            neoQuestionTodo(q) === todo.id &&
+            q.state === 'answered' &&
+            (q.answeredAt ?? 0) >= triagedAt
         ),
       answerPending:
         todo.blockedBy === 'needs-human' &&
@@ -737,16 +743,14 @@ export class NeoAskTodoRepository {
         .prepare(
           `SELECT id, state, started_at AS startedAt,
             EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_todos.ask_id AND q.state = 'open'
-              AND (q.todo_id IS NULL OR q.todo_id = neo_todos.id)
-              AND (q.kind != 'start' OR EXISTS (SELECT 1 FROM json_each(q.start_todos) WHERE value = neo_todos.id))) AS questionOpen
+              AND EXISTS (SELECT 1 FROM json_each(q.todos) WHERE value = neo_todos.id)) AS questionOpen
            FROM neo_todos WHERE ask_id = ? ORDER BY position, created_at`
         )
         .all(todo.askId) as TodoStateFacts['order'],
       questionOpen: !!this.db
         .prepare(`SELECT 1 FROM neo_questions WHERE ask_id = ? AND state = 'open'
-        AND (todo_id IS NULL OR todo_id = ?) AND text NOT LIKE ?
-        AND (kind != 'start' OR EXISTS (SELECT 1 FROM json_each(start_todos) WHERE value = ?)) LIMIT 1`)
-        .get(todo.askId, todo.id, `%${NEO_TODO_STALLED_CARD_TAIL}`, todo.id),
+        AND text NOT LIKE ? AND EXISTS (SELECT 1 FROM json_each(todos) WHERE value = ?) LIMIT 1`)
+        .get(todo.askId, `%${NEO_TODO_STALLED_CARD_TAIL}`, todo.id),
       dispatched: !!live?.ref || todo.startedAt !== null,
       live: live?.status ?? null,
     };
@@ -882,10 +886,10 @@ export class NeoAskTodoRepository {
   openQuestionChecks() {
     return this.listQuestionsForAsks(this.listOpenAsks().map((ask) => ask.id))
       .filter((question) => question.state === 'open')
-      .map((question) => ({
-        question,
-        todo: question.todoId ? this.getTodo(question.todoId) : null,
-      }));
+      .map((question) => {
+        const about = neoQuestionTodo(question);
+        return { question, todo: about ? this.getTodo(about) : null };
+      });
   }
 
   retireCheckedQuestion(
@@ -896,12 +900,12 @@ export class NeoAskTodoRepository {
   ): NeoQuestion | null {
     const current = this.getQuestion(question.id);
     const ask = current ? this.getAsk(current.askId) : null;
+    const about = current ? neoQuestionTodo(current) : null;
     if (
       current?.state !== 'open' ||
       ask?.status !== 'open' ||
-      JSON.stringify(
-        current.retireWhen ?? (current.todoId ? this.getTodo(current.todoId)?.check : null)
-      ) !== JSON.stringify(check)
+      JSON.stringify(current.retireWhen ?? (about ? this.getTodo(about)?.check : null)) !==
+        JSON.stringify(check)
     )
       return null;
     const retired = this.retireQuestion(current, evidence, null, now);
@@ -958,7 +962,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           start_todos, todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -970,6 +974,17 @@ export class NeoAskTodoRepository {
         draft.noLabel,
         draft.yesLabel,
         draft.startTodos ? JSON.stringify(draft.startTodos) : null,
+        JSON.stringify(
+          draft.kind === 'start'
+            ? (draft.startTodos ?? [])
+            : draft.todoId
+              ? [draft.todoId]
+              : neoAskQuestionHolds(
+                  [askId, ...this.listChildAsks(askId).map((ask) => ask.id)].flatMap((id) =>
+                    this.listTodos(id)
+                  )
+                )
+        ),
         draft.confirm ? JSON.stringify(draft.confirm) : null,
         draft.document ?? null,
         draft.replyTo ? JSON.stringify(draft.replyTo) : null,
@@ -997,9 +1012,10 @@ export class NeoAskTodoRepository {
     if (!question) return;
     this.db
       .prepare(
-        "UPDATE neo_questions SET start_todos = ?, text = ?, reply_to_json = COALESCE(?, reply_to_json), artifacts_json = COALESCE(?, artifacts_json), source_session_json = ?, retire_when_json = COALESCE(?, retire_when_json) WHERE id = ? AND state = 'open'"
+        "UPDATE neo_questions SET start_todos = ?, todos = ?, text = ?, reply_to_json = COALESCE(?, reply_to_json), artifacts_json = COALESCE(?, artifacts_json), source_session_json = ?, retire_when_json = COALESCE(?, retire_when_json) WHERE id = ? AND state = 'open'"
       )
       .run(
+        JSON.stringify(startTodos),
         JSON.stringify(startTodos),
         text,
         replyTo ? JSON.stringify(replyTo) : null,
@@ -1016,7 +1032,7 @@ export class NeoAskTodoRepository {
     const open = this.listQuestions(todo.askId).find(
       (question) => question.kind === 'start' && question.state === 'open'
     );
-    const listed = (open?.startTodos ?? []).filter((id) =>
+    const listed = (open?.todos ?? []).filter((id) =>
       family.some(
         (item) => item.id === id && item.askId === todo.askId && neoTodoOnStartCard(item, family)
       )
@@ -1213,7 +1229,9 @@ export class NeoAskTodoRepository {
     .end('pruned') as (store: NeoAskTodoRepository, askId: string, now: number) => void;
 
   private startCardFamily(question: NeoQuestion): NeoTodo[] {
-    const members = (question.startTodos ?? []).flatMap((id) => this.getTodo(id) ?? []);
+    const members = (question.kind === 'start' ? question.todos : []).flatMap(
+      (id) => this.getTodo(id) ?? []
+    );
     const asks = new Set([question.askId, ...members.map((todo) => todo.askId)]);
     const todos = [...asks].flatMap((askId) => this.listFamilyTodos(askId));
     return [...new Map(todos.map((todo) => [todo.id, todo])).values()];
@@ -1226,9 +1244,16 @@ export class NeoAskTodoRepository {
   ): boolean {
     this.db
       .prepare(
-        'UPDATE neo_questions SET start_todos = ?, text = ?, state = ?, retired_reason = ? WHERE id = ?'
+        'UPDATE neo_questions SET start_todos = ?, todos = ?, text = ?, state = ?, retired_reason = ? WHERE id = ?'
       )
-      .run(JSON.stringify(plan.kept), plan.text, plan.state, plan.retiredReason, question.id);
+      .run(
+        JSON.stringify(plan.kept),
+        JSON.stringify(plan.kept),
+        plan.text,
+        plan.state,
+        plan.retiredReason,
+        question.id
+      );
     for (const todo of plan.released) this.writeTodo(todo, { state: 'todo' }, now);
     return true;
   }
@@ -1251,7 +1276,7 @@ export class NeoAskTodoRepository {
     for (const { id } of this.listOpenAsks()) {
       const listed = this.listQuestions(id)
         .filter((question) => question.kind === 'start' && question.state === 'open')
-        .flatMap((question) => question.startTodos ?? []);
+        .flatMap((question) => question.todos);
       for (const todo of this.listTodos(id)) {
         if (!todo.instruction || !neoTodoAwaitsApproval(todo) || listed.includes(todo.id)) continue;
         this.joinStartQuestion(todo, now);

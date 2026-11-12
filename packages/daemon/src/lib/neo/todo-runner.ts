@@ -5,7 +5,7 @@ import { planNeoTrackerStarts } from './tracker-start-gate.ts';
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
-import { neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
+import { neoQuestionCoversTodo, neoQuestionTodo, neoTodoAwaitsHuman } from './todo-state.ts';
 import { workerBlockerReminderDue } from './worker-blocker.ts';
 import {
   neoCancelledPrerequisiteKey,
@@ -1128,7 +1128,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           !store.questionAnswers.pending().some((route) => route.todoId === todo.id)
         ) {
           for (const card of store.listQuestions(todo.askId))
-            if (card.state === 'open' && card.todoId === todo.id)
+            if (card.state === 'open' && neoQuestionTodo(card) === todo.id)
               store.retireQuestion(card, 'The worker moved on from this question.', null, now);
           restartLadder(todo.id, now);
           store.updateTodo(todo, { state: 'doing' }, now);
@@ -1413,7 +1413,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     sessions.readNudge(todo.id)?.unreachableToldAt === todo.updatedAt ||
     store
       .listQuestions(ask.id)
-      .some((q) => q.todoId === todo.id && (q.state === 'open' || q.createdAt >= todo.updatedAt));
+      .some(
+        (q) =>
+          neoQuestionTodo(q) === todo.id && (q.state === 'open' || q.createdAt >= todo.updatedAt)
+      );
 
   const tellUnreachable = async (stalled: Stalled, now: number) => {
     if (handled(stalled)) return;

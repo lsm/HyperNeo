@@ -4,7 +4,7 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { isNeoTodoStalledCard } from './todo-state.ts';
+import { isNeoTodoStalledCard, neoQuestionCoversTodo, neoQuestionTodo } from './todo-state.ts';
 
 type Turn = { id: string; at: number; message: string };
 type Blocker = { kind: 'needs-human' | 'environment'; reason: string };
@@ -84,7 +84,7 @@ export const recordWorkerBlocker = (superpipe({})('neo.worker-final-blocker') as
       if (blocker.kind === 'needs-human') {
         for (const question of store.listQuestions(todo.askId))
           if (
-            question.todoId === todo.id &&
+            neoQuestionTodo(question) === todo.id &&
             question.state === 'open' &&
             isNeoTodoStalledCard(question.text)
           )
@@ -163,9 +163,7 @@ export function workerBlockerReminderDue(
     sessions.readRef(todoId) &&
     sessions.inputs.list(todoId).at(-1)?.id === prior.dispatchId &&
     !store.questionAnswers.pending().some((route) => route.todoId === todoId) &&
-    !store
-      .listQuestions(todo.askId)
-      .some((q) => q.state === 'open' && (q.todoId === todoId || q.startTodos?.includes(todoId)))
+    !store.listQuestions(todo.askId).some((q) => neoQuestionCoversTodo(q, { id: todoId }))
     ? todo
     : null;
 }

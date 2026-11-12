@@ -21112,6 +21112,12 @@
                               "null"
                             ]
                           },
+                          "todos": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "yesLabel": {
                             "type": [
                               "string",
@@ -21129,6 +21135,7 @@
                           "noLabel",
                           "yesLabel",
                           "startTodos",
+                          "todos",
                           "state",
                           "answer",
                           "answeredBy",
@@ -23553,6 +23560,12 @@
                             "null"
                           ]
                         },
+                        "todos": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
                         "yesLabel": {
                           "type": [
                             "string",
@@ -23570,6 +23583,7 @@
                         "noLabel",
                         "yesLabel",
                         "startTodos",
+                        "todos",
                         "state",
                         "answer",
                         "answeredBy",
@@ -30275,6 +30289,12 @@
                               "null"
                             ]
                           },
+                          "todos": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "yesLabel": {
                             "type": [
                               "string",
@@ -30292,6 +30312,7 @@
                           "noLabel",
                           "yesLabel",
                           "startTodos",
+                          "todos",
                           "state",
                           "answer",
                           "answeredBy",
@@ -34312,6 +34333,12 @@
                       "null"
                     ]
                   },
+                  "todos": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "yesLabel": {
                     "type": [
                       "string",
@@ -34329,6 +34356,7 @@
                   "noLabel",
                   "yesLabel",
                   "startTodos",
+                  "todos",
                   "state",
                   "answer",
                   "answeredBy",
@@ -35641,6 +35669,12 @@
                       "null"
                     ]
                   },
+                  "todos": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "yesLabel": {
                     "type": [
                       "string",
@@ -35658,6 +35692,7 @@
                   "noLabel",
                   "yesLabel",
                   "startTodos",
+                  "todos",
                   "state",
                   "answer",
                   "answeredBy",
@@ -36629,6 +36664,12 @@
                       "null"
                     ]
                   },
+                  "todos": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "yesLabel": {
                     "type": [
                       "string",
@@ -36646,6 +36687,7 @@
                   "noLabel",
                   "yesLabel",
                   "startTodos",
+                  "todos",
                   "state",
                   "answer",
                   "answeredBy",
@@ -37195,6 +37237,12 @@
                       "null"
                     ]
                   },
+                  "todos": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "yesLabel": {
                     "type": [
                       "string",
@@ -37212,6 +37260,7 @@
                   "noLabel",
                   "yesLabel",
                   "startTodos",
+                  "todos",
                   "state",
                   "answer",
                   "answeredBy",
@@ -37652,6 +37701,12 @@
                       "null"
                     ]
                   },
+                  "todos": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "yesLabel": {
                     "type": [
                       "string",
@@ -37669,6 +37724,7 @@
                   "noLabel",
                   "yesLabel",
                   "startTodos",
+                  "todos",
                   "state",
                   "answer",
                   "answeredBy",
@@ -39866,6 +39922,12 @@
                               "null"
                             ]
                           },
+                          "todos": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "yesLabel": {
                             "type": [
                               "string",
@@ -39883,6 +39945,7 @@
                           "noLabel",
                           "yesLabel",
                           "startTodos",
+                          "todos",
                           "state",
                           "answer",
                           "answeredBy",

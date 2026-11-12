@@ -29,7 +29,7 @@ const todo = (id: string, patch: Partial<NeoTodo> = {}) =>
 const question = {
   id: 'question',
   askId: 'ask-0',
-  todoId: 'second',
+  todos: ['second'],
   state: 'open',
   kind: 'reply',
 } as NeoQuestion;

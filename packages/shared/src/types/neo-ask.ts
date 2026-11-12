@@ -120,6 +120,7 @@ export interface NeoQuestion {
   noLabel: string | null;
   yesLabel: string | null;
   startTodos: string[] | null;
+  todos: string[];
   confirm?: { path: string; sha256: string } | null;
   state: NeoQuestionState;
   answer: NeoQuestionAnswer | null;

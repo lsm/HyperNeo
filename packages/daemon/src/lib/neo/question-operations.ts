@@ -2,7 +2,7 @@ import { neoToolDescription } from '@hyperneo/prompts';
 import { coreTodoPolicy } from './core-todo-checks.ts';
 import { planNeoTodoDraft, type NeoTodoPolicy } from './todo-operations.ts';
 import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
-import { isNeoTodoStalledCard } from './todo-state.ts';
+import { isNeoTodoStalledCard, neoQuestionTodo } from './todo-state.ts';
 import { openHumanCard, replaceHumanCard, requireHumanCard } from './human-card.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
@@ -186,7 +186,7 @@ export function createNeoWorkerQuestionWriter(
           }
           const open = store
             .listQuestions(todo.askId)
-            .find((q) => q.todoId === todo.id && q.state === 'open');
+            .find((q) => neoQuestionTodo(q) === todo.id && q.state === 'open');
           const daemonCard = !!open && isNeoTodoStalledCard(open.text);
           if (open && daemonCard)
             store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
@@ -389,6 +389,7 @@ export const NeoQuestionSchema = z.object({
   noLabel: z.string().nullable(),
   yesLabel: z.string().nullable(),
   startTodos: z.array(z.string()).nullable(),
+  todos: z.array(z.string()),
   confirm: Confirmation.nullable().optional(),
   state: z.enum(['open', 'answered', 'retired']),
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
@@ -568,7 +569,7 @@ export function planNeoQuestion(
     ? {
         value: {
           ask,
-          draft: { ...draft, startTodos: open.startTodos },
+          draft: { ...draft, startTodos: open.todos },
           reworded: open,
           ...records,
         },
@@ -608,7 +609,7 @@ export function planNeoQuestionAnswer(
       : question.kind === 'reply'
         ? typeof answer === 'string' && answer.trim().length > 0
         : picked.every((value) =>
-            (question.kind === 'choice' ? question.options : question.startTodos)?.includes(value)
+            (question.kind === 'choice' ? question.options : question.todos)?.includes(value)
           ) &&
           (question.kind !== 'choice' || question.multiple || picked.length === 1);
   if (!allowed)
@@ -817,10 +818,10 @@ export function createNeoQuestionOperations(
             return null;
           }
           if (plan.reworded) {
-            const { id, startTodos } = plan.reworded;
+            const { id, todos } = plan.reworded;
             store.extendStartQuestion(
               id,
-              startTodos ?? [],
+              todos,
               plan.draft.text,
               Date.now(),
               plan.draft.replyTo,
@@ -881,7 +882,8 @@ export function createNeoQuestionOperations(
     )
     .pipe(
       (question: NeoQuestion): Gate<NeoQuestion> => {
-        const todo = question.todoId ? store.getTodo(question.todoId) : null;
+        const about = neoQuestionTodo(question);
+        const todo = about ? store.getTodo(about) : null;
         return todo?.state === 'blocked' && todo.blockedBy === 'needs-human'
           ? fail(
               'todo_waiting: this card is what its todo waits on. Settle the todo first: neo.todo.remove when it is no longer needed, neo.todo.continue to send its worker on, or neo.question.ask with replaces to ask differently. Finished work needs nothing: its passing check closes both.'
