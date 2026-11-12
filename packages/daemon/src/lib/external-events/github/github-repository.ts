@@ -22,6 +22,7 @@ import {
 } from '../../../storage/repositories/github-space-settings-read.ts';
 import { persistGitHubSpaceEnabled } from '../../../storage/repositories/github-space-enabled-persist.ts';
 import {
+  GITHUB_SESSION_SCOPE,
   GITHUB_SESSION_WATCHED_TABLE,
   GITHUB_SPACE_WATCHED_TABLE,
   gitHubWatchedSource,
@@ -149,6 +150,16 @@ export class GitHubEventExtensionRepository {
   removeWatchedRepo(spaceId: string, owner: string, repo: string): boolean {
     const table = gitHubWatchedTableForScope(spaceId);
     if (!schemaTableExists(this.db, table)) return false;
+    if (
+      spaceId === GITHUB_SESSION_SCOPE &&
+      schemaTableExists(this.db, GITHUB_SPACE_WATCHED_TABLE)
+    ) {
+      this.db
+        .prepare(
+          `DELETE FROM ${GITHUB_SPACE_WATCHED_TABLE} WHERE space_id = ? AND lower(owner)=lower(?) AND lower(repo)=lower(?)`
+        )
+        .run(spaceId, owner, repo);
+    }
     return (
       this.db
         .prepare(
@@ -227,29 +238,31 @@ export class GitHubEventExtensionRepository {
       tables.push(GITHUB_SESSION_WATCHED_TABLE);
     if (schemaTableExists(this.db, GITHUB_SPACE_WATCHED_TABLE))
       tables.push(GITHUB_SPACE_WATCHED_TABLE);
-    for (const table of tables) {
-      const excluded = table === GITHUB_SPACE_WATCHED_TABLE ? ` AND space_id != 'sessions'` : '';
-      this.db
-        .prepare(
-          `UPDATE ${table}
+    this.db.transaction(() => {
+      for (const table of tables) {
+        const excluded = table === GITHUB_SPACE_WATCHED_TABLE ? ` AND space_id != 'sessions'` : '';
+        this.db
+          .prepare(
+            `UPDATE ${table}
 	         SET webhook_remote_id = ?, webhook_secret = ?, webhook_url = ?, webhook_active = ?, webhook_last_checked_at = ?,
 	             webhook_last_error = NULL, webhook_configured_at = ?, updated_at = ?
 	         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
 	           AND webhook_remote_id = ?${excluded}`
-        )
-        .run(
-          params.webhookRemoteId,
-          params.webhookSecret,
-          params.webhookUrl,
-          params.webhookActive === null ? null : params.webhookActive ? 1 : 0,
-          params.webhookLastCheckedAt,
-          params.webhookConfiguredAt,
-          Date.now(),
-          params.owner,
-          params.repo,
-          params.previousWebhookRemoteId
-        );
-    }
+          )
+          .run(
+            params.webhookRemoteId,
+            params.webhookSecret,
+            params.webhookUrl,
+            params.webhookActive === null ? null : params.webhookActive ? 1 : 0,
+            params.webhookLastCheckedAt,
+            params.webhookConfiguredAt,
+            Date.now(),
+            params.owner,
+            params.repo,
+            params.previousWebhookRemoteId
+          );
+      }
+    })();
   }
 
   updateSharedWebhookStatus(

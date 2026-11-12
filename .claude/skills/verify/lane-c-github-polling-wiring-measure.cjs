@@ -32,7 +32,7 @@ const data = dataSpecs.map(([name, expectedLines, expectedHash, contract]) => {
   return { file, lines: actualLines, sha256: expectedHash, contract, auditedStable: true };
 });
 const freshFiles = [
-  ['storage/repositories/github-watched-insert-persist.ts', 'Exact INSERT and supplied UUID/Space/time/defaults/caller transaction'],
+  ['storage/repositories/github-watched-insert-persist.ts', 'Exact INSERT and supplied UUID/Space/time/defaults; session scope mirrors the key into the retained legacy table atomically'],
   ['storage/repositories/github-polling-intent-persist.ts', 'Exact intent UPSERT, enabled preservation and supplied time'],
   ['storage/repositories/space-extension-config-persist.ts', 'Exact saved config JSON/key/creation time and caller transaction'],
   ['lib/external-events/github/github-watched-projection.ts', 'Sanitized saved projection, configured-secret marker, no secret/cursor leak'],

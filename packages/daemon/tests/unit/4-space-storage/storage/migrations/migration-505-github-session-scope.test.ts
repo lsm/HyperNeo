@@ -4,6 +4,7 @@ import { runMigration111, runMigrations } from '../../../../../src/storage/schem
 import { runMigration505 } from '../../../../../src/storage/schema/m505-github-session-scope.ts';
 import { createSpaceGitHubTables } from '../../../../../src/storage/schema/space-github.ts';
 import { createGitHubSessionTables } from '../../../../../src/storage/schema/github-session-schema.ts';
+import { upsertGitHubWatchedRepo } from '../../../../../src/storage/repositories/github-watched-upsert-persist.ts';
 
 const WATCHED_COLUMNS = [
   'id',
@@ -282,9 +283,11 @@ describe('migration 505 GitHub session scope', () => {
     expect(() => runMigration505(db)).toThrow(
       /migration_505: github_session_watched_repos already has a conflicting row/
     );
-    expect(watchedRows(db, 'github_session_watched_repos').map((row) => row.repo)).toEqual([
-      'synthetic-repo',
-    ]);
+    expect(
+      watchedRows(db, 'github_session_watched_repos')
+        .map((row) => row.repo)
+        .sort()
+    ).toEqual(['second', 'synthetic-repo']);
     expect(
       db.prepare(`SELECT poll_cursor FROM github_session_watched_repos WHERE id = 'watch-1'`).get()
     ).toEqual({ poll_cursor: '{"lastSeenAt":999}' });
@@ -346,6 +349,66 @@ describe('migration 505 GitHub session scope', () => {
         .map((row) => (row as { name: string }).name)
         .sort()
     ).toEqual(['github_session_source_settings', 'github_session_watched_repos']);
+    db.close();
+  });
+
+  test('schema init re-copies watch keys added while a rolled-back daemon wrote the legacy table', () => {
+    const db = new Database(':memory:');
+    createSpaceGitHubTables(db);
+    insertWatched(db, 'space_github_watched_repos', modernWatchedRow());
+    runMigration505(db);
+    insertWatched(
+      db,
+      'space_github_watched_repos',
+      modernWatchedRow({ id: 'watch-4', owner: 'RollbackOrg', repo: 'rollback-add' })
+    );
+    createGitHubSessionTables(db);
+    expect(
+      watchedRows(db, 'github_session_watched_repos')
+        .map((row) => row.repo)
+        .sort()
+    ).toEqual(['rollback-add', 'synthetic-repo']);
+    db.close();
+  });
+
+  test('schema init drops session rows a rolled-back daemon removed from the legacy table', () => {
+    const db = new Database(':memory:');
+    createSpaceGitHubTables(db);
+    insertWatched(db, 'space_github_watched_repos', modernWatchedRow());
+    runMigration505(db);
+    db.prepare(
+      `DELETE FROM space_github_watched_repos WHERE space_id = 'sessions' AND repo = 'synthetic-repo'`
+    ).run();
+    createGitHubSessionTables(db);
+    expect(watchedRows(db, 'github_session_watched_repos')).toEqual([]);
+    db.close();
+  });
+
+  test('upserting a session watch mirrors the key into the retained legacy table', () => {
+    const db = new Database(':memory:');
+    createSpaceGitHubTables(db);
+    insertWatched(db, 'space_github_watched_repos', modernWatchedRow());
+    runMigration505(db);
+    upsertGitHubWatchedRepo(db, {
+      spaceId: 'sessions',
+      owner: 'NewOrg',
+      repo: 'new-repo',
+      pollingEnabled: true,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT owner, repo FROM space_github_watched_repos
+             WHERE space_id = 'sessions' AND owner = 'NewOrg' AND repo = 'new-repo'`
+        )
+        .all()
+    ).toEqual([{ owner: 'NewOrg', repo: 'new-repo' }]);
+    createGitHubSessionTables(db);
+    expect(
+      watchedRows(db, 'github_session_watched_repos')
+        .map((row) => row.repo)
+        .sort()
+    ).toEqual(['new-repo', 'synthetic-repo']);
     db.close();
   });
 
