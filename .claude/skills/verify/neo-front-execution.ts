@@ -16,6 +16,8 @@ import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/r
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { neoIntakeMessage } from '../../../packages/daemon/src/lib/neo/intake.ts';
 import { NeoFrontInputRepository } from '../../../packages/daemon/src/storage/repositories/neo-front-input-worker.ts';
+import { NeoConversationReader } from '../../../packages/daemon/src/storage/repositories/neo-conversation-reader.ts';
+import { NeoSessionMessageRepository } from '../../../packages/daemon/src/storage/repositories/neo-session-message-repository.ts';
 import { frontProgressId, frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
 
 const run = resolve(process.argv.at(-1)!);
@@ -296,6 +298,18 @@ try {
   assert.equal((await publish('back-direct', [handoffId], 'Back must not publish.')).accepted, false);
   const relayed = await back({ name: 'message.send', input: { to: front, text: `RESULT_FOR_HANDOFF ${handoffId}: The job is complete.`, idempotencyKey: 'native-back-result' } });
   assert(!relayed.isError, JSON.stringify(relayed));
+  const sessionRows = new NeoSessionMessageRepository(app.db.getDatabase());
+  const reader = new NeoConversationReader(app.db.getDatabase());
+  const humanPage = await reader.read({ conversationId, limit: 20 }, true);
+  const humanSessionTexts = humanPage.items.flatMap((item) =>
+    item.role === 'session' ? [item.message.text] : []
+  );
+  assert.equal(humanSessionTexts.some((text) => text.startsWith('RESULT_FOR_HANDOFF')), false);
+  assert.equal(
+    sessionRows.latest(conversationId, 20).some((row) => row.text.startsWith('RESULT_FOR_HANDOFF')),
+    false
+  );
+  evidence.backConvoSendHiddenFromHuman = true;
   await waitFor(() => replies().length === 2);
   const duplicate = await publish('fresh-request', [handoffId], 'Duplicate answer');
   assert.equal(duplicate.accepted, false);

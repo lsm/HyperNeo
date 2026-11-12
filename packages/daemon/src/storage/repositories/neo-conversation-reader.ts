@@ -11,6 +11,7 @@ import type { Database } from '../sqlite-compat.ts';
 import { NeoConversationAskRepository } from './neo-conversation-ask-repository.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { NeoSessionMessageRepository, VISIBLE_IN_NEO } from './neo-session-message-repository.ts';
+import { frontSessionId } from '../../lib/neo/front-mode.ts';
 import { presentNeoAskImageRefs } from '../../lib/neo/conversation-ask-read-operation.ts';
 import type { NeoMessageStatusPresenter } from '../../lib/neo/message-status.ts';
 
@@ -65,14 +66,16 @@ export class NeoConversationReader {
         FROM neo_publications WHERE conversation_id = ?
       UNION ALL
       SELECT created_at AS at, 'session' AS role, sequence, message_id AS id
-        FROM neo_session_messages WHERE conversation_id = ?${humanView ? ` AND ${VISIBLE_IN_NEO}` : ''}
+        FROM neo_session_messages WHERE conversation_id = ?${humanView ? ` AND ${VISIBLE_IN_NEO} AND to_session <> ?` : ''}
       UNION ALL ${NEO_WAKE_SELECT})
       ${cursor ? `WHERE (at, role, sequence) ${page.after ? '>' : '<'} (?, ?, ?)` : ''}
       ORDER BY at ${direction}, role ${direction}, sequence ${direction} LIMIT ?`)
       .all(
         page.conversationId,
         page.conversationId,
-        page.conversationId,
+        ...(humanView
+          ? [page.conversationId, frontSessionId(page.conversationId)]
+          : [page.conversationId]),
         page.conversationId,
         ...(cursor ? [cursor.at, cursor.role, cursor.sequence] : []),
         page.limit
