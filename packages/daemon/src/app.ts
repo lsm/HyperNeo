@@ -985,17 +985,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     };
     const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
-    const sourceConfigTables: Record<string, string[]> = {
-      github: ['space_github_watched_repos'],
-    };
     const extensionContext = {
       publisher: spaceExternalEvents
         ? routeExternalEventPublisher(spaceExternalEvents.service, sessionExternalEventService)
         : sessionExternalEventService,
       config: extensionConfigStore,
-      onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }) {
+      onSourceConfigChanged(change: {
+        source: string;
+        spaceId?: string;
+        kind: string;
+        tables?: string[];
+      }) {
         logInfo('[Daemon] Extension config changed', change);
-        for (const table of sourceConfigTables[change.source] ?? []) {
+        for (const table of change.tables ?? []) {
           reactiveDb.notifyChange(table);
         }
       },

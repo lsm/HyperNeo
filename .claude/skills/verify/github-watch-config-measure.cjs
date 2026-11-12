@@ -20,7 +20,7 @@ walk(ast);
 if (!callback || !admission) throw Error('Missing complete caller or admission gate');
 const sliceStart = source.indexOf("    hub.onRequest('space.github.watchRepo'");
 const sliceEnd = source.indexOf("    hub.onRequest('space.github.autoConfigureWebhook'", sliceStart);
-if (hash((source.slice(0, sliceStart) + source.slice(sliceEnd)).replace(pollingImport, '')) !== '548e997aa023f87469d8720f77b22f98889c1ed0cf4dcf8f6c9dab769a3bb4f8') throw Error('Extension changed outside the watch callback');
+if (hash((source.slice(0, sliceStart) + source.slice(sliceEnd)).replace(pollingImport, '')) !== '415173c8ab611a826f2201a59e4bbed59d811c5ddef6cf50e3698b9ee31a906e') throw Error('Extension changed outside the watch callback');
 const sharedText = fs.readFileSync(shared, 'utf8');
 if (hash(sharedText.replace('export function readPollingSnapshot(', 'function readPollingSnapshot(')) !== '63c68646034af002fbd1e155e41e6092b61b840f5f59195c616829eb5a39869c') throw Error('Shared polling command changed beyond the snapshot export');
 const sharedAst = ts.createSourceFile(shared, sharedText, ts.ScriptTarget.Latest, true);

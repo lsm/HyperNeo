@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createSpaceGitHubTables } from '../../../../src/storage/schema/space-github';
 import {
   GitHubEventExtensionRepository,
   type GitHubWatchedRepo,
@@ -56,6 +57,7 @@ describe('GitHub watched repository UPDATE extraction', () => {
     db = new Database(':memory:');
     db.exec('CREATE TABLE spaces(id TEXT PRIMARY KEY)');
     createWatchedTable(db);
+    createSpaceGitHubTables(db);
     repo = new GitHubEventExtensionRepository(db);
     seed();
   });
@@ -66,13 +68,13 @@ describe('GitHub watched repository UPDATE extraction', () => {
   test('audited stable module hashes and constructor-free interfaces stay pinned', () => {
     const hashes = {
       'github-watched-repo-lookups.ts':
-        'efd6b45d927224ce17fb9d819a4c8d325dcde4cacf1e7c7e75ca7238b18d46c4',
+        'ed10d2284643624e608b22eff1c17f50c0848c567681b41d11ff7f0345c438df',
       'github-watched-repos-read.ts':
-        '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95',
+        'f41326de1acc9416d313230f3144405d21638e8c6d846149431558a26f883165',
       'github-space-settings-read.ts':
-        '821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681',
+        'b81f7c1ec84794b804f5308cc3a0c90306e3c60405fdddfd0dde70111a751752',
       'github-cursor-persist.ts':
-        '8ec4673c7f96429b885da9367af90c023bf161668f49607c799ea845658d3bae',
+        'fcef214c6ba43ee94d34e8ed44fcaa913ab0bf9761fd61404b4328eab70744f4',
     };
     for (const [name, sha] of Object.entries(hashes))
       expect(

@@ -50,7 +50,7 @@ try {
  for(const repo of ['conditional','large']) {
   const row=github.repo.upsertWatchedRepo({spaceId:'sessions',owner:'synthetic',repo,pollingEnabled:true});
   subscriptions.upsert({sessionId:'owner',topic:'github/synthetic/'+repo+'/pull_request/7.*'});
-  if(repo==='conditional')db.prepare('UPDATE space_github_watched_repos SET poll_cursor=? WHERE id=?').run(JSON.stringify({lastSeenAt:when-3600_000,etags:{issue_comments:'"fixture"',review_comments:'"fixture"',pulls:'"fixture"'},recentPullRequestNumbers:[7],recentPullRequestHeadShas:{7:'a'.repeat(40)}}),row.id);
+  if(repo==='conditional')db.prepare('UPDATE github_session_watched_repos SET poll_cursor=? WHERE id=?').run(JSON.stringify({lastSeenAt:when-3600_000,etags:{issue_comments:'"fixture"',review_comments:'"fixture"',pulls:'"fixture"'},recentPullRequestNumbers:[7],recentPullRequestHeadShas:{7:'a'.repeat(40)}}),row.id);
  }
  await new ExternalEventExtensionConfigStore(db).setGlobalConfig('github',{source:'github',globallyEnabled:true,capabilities:{polling:true,rpcConfig:true}});
  ws=createLocalSocket('ws://127.0.0.1:'+app.server.port+'/ws');

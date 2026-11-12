@@ -30,6 +30,7 @@ describe('Neo reads a current default-branch checkout', () => {
           HOME: join(run, 'home'),
           NODE_ENV: 'test',
           HYPERNEO_DATA_DIR: join(run, 'data'),
+          HYPERNEO_SPACE: 'on',
           HYPERNEO_USE_DEV_PROXY: '1',
           LOG_LEVEL: 'error',
         },
