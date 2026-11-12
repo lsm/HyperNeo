@@ -25,6 +25,7 @@ import { globalSettingsWrites } from '../../storage/repositories/global-settings
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
 import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
+import { neoFrontDeliveryWrites } from '../../storage/repositories/neo-front-input-worker.ts';
 import { decodeUlidTimestamp } from '../mailbox/ulid.ts';
 import { requireHumanCard } from './human-card.ts';
 import {
@@ -1336,6 +1337,16 @@ export class NeoService {
     );
   }
 
+  deliverFront(
+    sessionId: string,
+    messageId: string,
+    content: MailboxMessageContent,
+    fromSessionId: string,
+    conversationId: string
+  ): Promise<void> {
+    return this.deliver(sessionId, messageId, content, fromSessionId, false, conversationId);
+  }
+
   logReorganize(line: string): void {
     this.log.info(line);
   }
@@ -1345,13 +1356,16 @@ export class NeoService {
     messageId: string,
     content: MailboxMessageContent,
     originSessionId: string,
-    recordOnly = false
+    recordOnly = false,
+    catchUp?: string
   ): Promise<void> {
     const key = `${sessionId}:${messageId}`;
     const existing = this.deliveries.get(key);
     if (existing) return existing;
     const delivery = Promise.resolve()
-      .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId, recordOnly))
+      .then(() =>
+        this.enqueueDelivery(sessionId, messageId, content, originSessionId, recordOnly, catchUp)
+      )
       .finally(() => this.deliveries.delete(key));
     this.deliveries.set(key, delivery);
     return delivery;
@@ -1362,7 +1376,8 @@ export class NeoService {
     messageId: string,
     content: MailboxMessageContent,
     originSessionId: string,
-    recordOnly: boolean
+    recordOnly: boolean,
+    catchUp?: string
   ): Promise<void> {
     const queue = this.db.getJobQueueRepo();
     if (this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId)) return;
@@ -1397,6 +1412,27 @@ export class NeoService {
         isSynthetic: true,
       };
       await this.db.saveUserMessage(sessionId, message, 'consumed');
+      return;
+    }
+    if (catchUp) {
+      await gatewayFor(this.db.getDatabase()).call(
+        neoFrontDeliveryWrites,
+        'enqueueWithCatchUp',
+        catchUp,
+        createMailboxEntry({
+          to: { kind: 'session', sessionId },
+          origin: renderAddress({ kind: 'session', sessionId: originSessionId }),
+          messageUuid: messageId,
+          message: {
+            type: 'user',
+            message: { role: 'user', content },
+            parent_tool_use_id: null,
+            inputKind: 'system',
+            neoWakeEvent: true,
+          },
+          deliveryMode: 'immediate',
+        })
+      );
       return;
     }
     const outcome = await handoffPromptToMailbox({

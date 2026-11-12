@@ -231,18 +231,29 @@ const append = (superpipe({})('neo-publication-append') as PipelineAPI)
   .input(['input', 'db', 'speaker'])
   .pipe(admitNeoPublication, 'input', 'result:append')
   .pipe(
-    (input: NeoPublicationInput) =>
-      input.cardReply
+    (input: NeoPublicationInput, speaker?: string) => {
+      const { publishedBy: _publishedBy, ...admitted } = input;
+      const published = speaker
         ? {
-            ...input,
+            ...admitted,
+            publishedBy:
+              speaker === frontSessionId(input.conversationId)
+                ? ('front' as const)
+                : ('neo' as const),
+          }
+        : admitted;
+      return published.cardReply
+        ? {
+            ...published,
             replyTo: undefined,
             cardReply: {
-              ...input.cardReply,
-              sourceMessageIds: [...new Set(input.cardReply.sourceMessageIds)].sort(),
+              ...published.cardReply,
+              sourceMessageIds: [...new Set(published.cardReply.sourceMessageIds)].sort(),
             },
           }
-        : input,
-    'append',
+        : published;
+    },
+    ['append', 'speaker'],
     'append'
   )
   .pipe(JSON.stringify, 'append', 'payload')

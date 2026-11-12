@@ -7,6 +7,8 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { NeoFrontInputRepository } from '../../../../src/storage/repositories/neo-front-input-worker.ts';
+import { createMailboxEntry } from '../../../../src/lib/mailbox/entry.ts';
+import { runMigration503 } from '../../../../src/storage/schema/m503-neo-front-input-catch-up.ts';
 
 let db: Database;
 let inputs: NeoFrontInputRepository;
@@ -102,3 +104,44 @@ test.each(['text', 'dictation', 'live_voice'] as const)(
     expect(inputs.get(conversationId, requestId)).toEqual({ eligible: true, owner: null });
   }
 );
+
+test('migration 503 adds the catch-up range to an existing front input table', () => {
+  const raw = new Sqlite(':memory:');
+  raw.exec(`CREATE TABLE neo_front_inputs (
+    conversation_id TEXT NOT NULL, message_id TEXT NOT NULL,
+    eligible INTEGER NOT NULL, owner TEXT, PRIMARY KEY (conversation_id, message_id))`);
+  raw.exec("INSERT INTO neo_front_inputs VALUES ('c', 'm', 1, NULL)");
+  runMigration503(raw);
+  runMigration503(raw);
+  expect(raw.prepare('SELECT * FROM neo_front_inputs').get()).toEqual({
+    conversation_id: 'c',
+    message_id: 'm',
+    eligible: 1,
+    owner: null,
+    catch_up_from: null,
+    catch_up_through: null,
+  });
+  raw.close();
+});
+
+test('a front delivery with an invalid message records no range and no job', () => {
+  inputs.accept('conversation', 'input', true);
+  const entry = createMailboxEntry({
+    to: { kind: 'session', sessionId: 'front' },
+    origin: 'session:neo',
+    messageUuid: 'input',
+    message: { type: 'user', parent_tool_use_id: null, message: { content: 'Hello' } },
+  });
+  const invalid = {
+    ...entry,
+    message: { ...entry.message, message: { content: [{ type: 'text' as const, text: '' }] } },
+  };
+  expect(() => inputs.enqueueWithCatchUp('conversation', invalid)).toThrow();
+  expect(db.getJobQueueRepo().listJobs({ queue: 'mailbox' })).toHaveLength(0);
+  expect(
+    db
+      .getDatabase()
+      .prepare('SELECT catch_up_through AS through FROM neo_front_inputs WHERE message_id = ?')
+      .get('input')
+  ).toEqual({ through: null });
+});

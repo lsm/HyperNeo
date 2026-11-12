@@ -114,6 +114,16 @@ describe('authored publication client', () => {
     });
   });
 
+  it('preserves the speaker and rejects an unknown one', () => {
+    const row = { ...item(), publishedBy: 'neo' };
+    expect(presentPublicationPage(response([row]), page)).toEqual({
+      value: { state: 'ready', items: [row], nextAfter: 1 },
+    });
+    expect(presentPublicationPage(response([{ ...row, publishedBy: 'human' }]), page)).toEqual({
+      reason: { state: 'unavailable' },
+    });
+  });
+
   it('calls only the bounded authored operation and preserves all authored bytes and attribution', async () => {
     const io = transport();
     expect(await readNeoPublications({ conversationId, after: 0 }, io.getHub, current)).toEqual({
