@@ -11,7 +11,7 @@ describe('i18n', () => {
   it('uses the Front name in both dual-mode descriptions', () => {
     for (const language of [en, zhHans]) {
       expect(language['dual.description']).toContain('Front');
-      expect(language['dual.description']).not.toContain('Front');
+      expect(language['dual.description']).not.toContain('Convo');
     }
   });
   it('has a non-empty Simplified Chinese value for every English key', () => {
