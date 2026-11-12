@@ -268,6 +268,17 @@ async function handleMessages(
         );
         return;
       }
+      try {
+        collectImages(body.messages);
+      } catch (err) {
+        sendJsonError(
+          out,
+          400,
+          'invalid_request_error',
+          err instanceof Error ? err.message : 'Invalid image content'
+        );
+        return;
+      }
       const deliveredImages = toolResults.flatMap((r) => r.images ?? []);
       const visionError = await visionGate(body.model, deliveredImages);
       if (visionError) {

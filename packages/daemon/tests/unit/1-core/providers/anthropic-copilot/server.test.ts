@@ -1309,6 +1309,131 @@ describe('startEmbeddedServer', () => {
     }
   });
 
+  it('rejects malformed images in untracked tool_results without killing the session', async () => {
+    let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
+    const toolSession = new MockCopilotSession();
+    const toolClient = makeMockClient(() => toolSession);
+
+    spyOn(toolClient, 'createSession').mockImplementation(async (cfg: unknown) => {
+      toolSession.capturedConfig = cfg;
+      const tools = (cfg as Record<string, unknown>)?.['tools'] as
+        | Array<{ name: string; handler: (args: unknown, inv: unknown) => Promise<unknown> }>
+        | undefined;
+      if (tools?.[0]) toolHandler = tools[0].handler;
+      return toolSession as unknown as CopilotSession;
+    });
+
+    toolSession.send = async function (opts) {
+      this.capturedPrompt = opts.prompt;
+      Promise.resolve().then(() => {
+        if (toolHandler) {
+          toolHandler(
+            { command: 'screenshot' },
+            {
+              sessionId: 's1',
+              toolCallId: 'tc_live',
+              toolName: 'screenshot',
+              arguments: { command: 'screenshot' },
+            }
+          )
+            .then(() => {
+              toolSession.emit('assistant.message', { content: 'done', phase: 'final_answer' });
+              toolSession.emit('session.idle', {});
+            })
+            .catch(() => {});
+        }
+      });
+      return 'send-result';
+    };
+
+    const ts = await startEmbeddedServer(toolClient, '/tmp');
+    try {
+      const r1 = await postMessages(ts.url, {
+        model: 'claude-sonnet-4.6',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'take screenshot' }],
+        tools: [
+          { name: 'screenshot', description: 'Take screenshot', input_schema: { type: 'object' } },
+        ],
+      });
+      expect(r1.status).toBe(200);
+
+      const priorTurns = [
+        { role: 'user', content: 'take screenshot' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'tc_old', name: 'screenshot', input: {} },
+            { type: 'tool_use', id: 'tc_live', name: 'screenshot', input: { command: 's' } },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tc_old',
+              content: [
+                { type: 'image', source: { type: 'url', url: 'https://x/y.png' } } as never,
+              ],
+            },
+          ],
+        },
+      ];
+
+      const r2 = await postMessages(ts.url, {
+        model: 'claude-sonnet-4.6',
+        max_tokens: 100,
+        messages: [
+          ...priorTurns,
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tc_live',
+                content: 'screenshot captured',
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(r2.status).toBe(400);
+      const body = JSON.parse(r2.rawBody ?? '{}') as Record<string, unknown>;
+      const err = body['error'] as Record<string, unknown>;
+      expect(err['type']).toBe('invalid_request_error');
+      expect(err['message']).toMatch(/url|image/i);
+
+      const r3 = await postMessages(ts.url, {
+        model: 'claude-sonnet-4.6',
+        max_tokens: 100,
+        messages: [
+          { role: 'user', content: 'take screenshot' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tc_live', name: 'screenshot', input: { command: 's' } },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tc_live',
+                content: 'screenshot captured',
+              },
+            ],
+          },
+        ],
+      });
+      expect(r3.status).toBe(200);
+    } finally {
+      await ts.stop();
+    }
+  });
+
   it('routes tool_result continuation even when tools array is omitted from follow-up', async () => {
     let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
     const ts2Session = new MockCopilotSession();
