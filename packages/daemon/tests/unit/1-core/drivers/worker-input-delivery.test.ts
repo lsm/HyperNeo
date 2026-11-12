@@ -342,6 +342,37 @@ describe('durable worker follow-ups', () => {
     }
   );
 
+  test('continue delivers immediately to a running Space task', async () => {
+    const h = fixture('space');
+    const { todo, sessions, store, runner } = h.seedTodo();
+    sessions.recordRef(todo.id, h.ref, Date.now());
+    store.updateTodo(todo, { state: 'doing', startedAt: Date.now() }, Date.now());
+    expect(await runner.proceed(todo.id, 'Continue the running Space task')).toMatchObject({
+      ok: true,
+    });
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]).toContain('Continue the running Space task');
+    expect(h.jobs.listJobs({ queue: 'worker_input' })).toEqual([]);
+  });
+
+  test.each(['start', 'send'] as const)(
+    'continue preserves the pre-start Space %s result',
+    async (verb) => {
+      const h = fixture('space');
+      const { todo, sessions, runner } = h.seedTodo();
+      sessions.create(
+        todo.id,
+        verb === 'start' ? { verb, adapter: 'space' } : { verb, ref: h.ref }
+      );
+      expect(await runner.proceed(todo.id, 'Continue once available')).toMatchObject({
+        ok: true,
+        records: [expect.stringContaining('not_started:')],
+      });
+      expect(h.jobs.listJobs({ queue: 'worker_input' })).toEqual([]);
+      expect(h.sent).toEqual([]);
+    }
+  );
+
   test('question-stop answer is delivered immediately', async () => {
     const h = fixture();
     h.setStatus('needs_you', true);
