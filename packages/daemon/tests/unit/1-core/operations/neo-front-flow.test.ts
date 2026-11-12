@@ -872,8 +872,8 @@ test.each(['creation', 'delivery'])(
         return result;
       });
     } else {
-      const deliver = service.deliverForward.bind(service);
-      vi.spyOn(service, 'deliverForward').mockImplementation(async (...args) => {
+      const deliver = service.deliverFront.bind(service);
+      vi.spyOn(service, 'deliverFront').mockImplementation(async (...args) => {
         await deliver(...args);
         await disable();
       });
@@ -951,7 +951,7 @@ test('a shared terminal still answers an unclaimed input after Neo answered its 
 
 test('a pending Front outcome does not reattach or redeliver the active session', async () => {
   const { id, job } = await accept();
-  const deliver = vi.spyOn(service, 'deliverForward');
+  const deliver = vi.spyOn(service, 'deliverFront');
   const handler = createNeoFrontHandler(service);
   await handler(job);
   await db.saveUserMessage(
@@ -1355,7 +1355,7 @@ test.each(['creation', 'delivery'])(
     const { id, job } = await accept();
     if (phase === 'creation')
       vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Front unavailable'));
-    else vi.spyOn(service, 'deliverForward').mockRejectedValue(new Error('Front unavailable'));
+    else vi.spyOn(service, 'deliverFront').mockRejectedValue(new Error('Front unavailable'));
     const handler = createNeoFrontHandler(service);
     expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
     expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBeNull();
