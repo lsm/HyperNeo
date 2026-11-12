@@ -275,10 +275,14 @@ today, in this order:
    or not (`neoTodoDependencyNodes`).
 2. **Cancelled prerequisites.** Every edge to a prerequisite that counts as cancelled
    today (`neoTodoCancelledDependencies`: removed, or closed unverified without having
-   started) moves to that todo's live replacement. With no replacement, the dependents get
-   the rule 4 card: today they wait for a `neo.todo.proceed` that may never come, and the
-   human has not said they may go on. A dependent already on an open Start card is left
-   to that card (step 4), so each cancelled edge is decided on one card.
+   started) moves to that todo's live replacement. With no replacement:
+   - a dependent that has started loses the edge and gets no card. Today a started todo
+     does not wait on a cancelled prerequisite (`neoTodoDependenciesAfterApproval`), so
+     the migration must not add a hold;
+   - a dependent that has not started gets the rule 4 card: today it waits for a
+     `neo.todo.proceed` that may never come (`neoTodoCancellationPending`), and the human
+     has not said it may go on. One already on an open Start card is left to that card
+     (step 4), so each cancelled edge is decided on one card.
 3. **Cards.** `todo_id` and `start_todos` are copied into `todos`. An open question with
    neither, which today holds its whole ask (`neoTodoWaitReason`), lists the todos it
    holds: every unstarted live todo of the ask and every todo `blocked` by `question`
@@ -306,7 +310,7 @@ Each slice is its own issue under one epic and is measured before it is cut.
 | 1 | A card covers a list of todos | Every reader of `todo_id` and `start_todos` reads `todos`; an approved todo under an open ask-level question is still held after the switch |
 | 2 | Waiting is read from cards | The web sections, the counts and the runner agree on every live todo. A migrated todo with a failed check and an unrelated open question on it is still held, by its check card, after that question is answered |
 | 3 | Done without a gate | Neo marks an unstarted todo with an unmet check done and its dependents start |
-| 4 | Explicit dependencies and remove with dependents | A removed prerequisite ends in continued dependents, removed dependents, or one card; a migrated todo behind a cancelled prerequisite, stored or implicit, does not start without that decision |
+| 4 | Explicit dependencies and remove with dependents | A removed prerequisite ends in continued dependents, removed dependents, or one card; a migrated unstarted todo behind a cancelled prerequisite, stored or implicit, does not start without that decision; a migrated `doing` todo that had started, behind a removed prerequisite with no replacement, gets no cancelled-edge card |
 | 5 | Automatic start | An added todo with met prerequisites starts with no Start card. On one migrated Start card, a ticked dependent of a cancelled prerequisite continues and an unticked one is removed. A migrated unapproved dependent of a cancelled prerequisite that no Start card lists starts only after its approval card and its rule 4 card are both answered, in either order, and neither card is left open. Closing an unrelated card leaves an unapproved or held todo held. A fill that overlaps a stop admits nothing over a limit |
 | 6 | The daemon's cards | A blocker Neo ignores, a twice-failed start and an overdue check each end in exactly one card |
 | 7 | One ask per matter | A second ask for the same pull request is refused with the first one's id |
