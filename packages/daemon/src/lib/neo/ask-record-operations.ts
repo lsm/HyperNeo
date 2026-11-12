@@ -120,6 +120,24 @@ export function requireNeoAskProject(
   };
 }
 
+export function neoAskMatterRefusal(
+  draft: Pick<NeoAsk, 'title' | 'request'>,
+  open: readonly Pick<NeoAsk, 'id' | 'title' | 'request' | 'createdAt'>[],
+  packs: readonly Pick<NeoPack, 'matter'>[]
+): string | null {
+  const matter = (ask: Pick<NeoAsk, 'title' | 'request'>) =>
+    packs.map((pack) => pack.matter?.(ask)).find(Boolean) ?? null;
+  const key = matter(draft);
+  const first = key
+    ? open
+        .filter((ask) => matter(ask) === key)
+        .sort((left, right) => left.createdAt - right.createdAt)[0]
+    : null;
+  return first
+    ? `ask_open: "${first.title}" (${first.id}) is already open for ${key}. Add the todos to that ask with neo.todo.add; open another only after it is settled.`
+    : null;
+}
+
 export function requireNeoAskOwner(
   ask: NeoAsk,
   caller: OperationCaller,
@@ -271,6 +289,14 @@ export function createNeoAskRecordOperations(
           ? store.getAsk(priorAsk.id)
           : store.findAsk(sessionId, origin, input.title, goalId);
         if (priorAsk && !current) return { ok: false, reason: 'not_found: no such ask.' };
+        const taken = current
+          ? null
+          : neoAskMatterRefusal(
+              input,
+              store.listOpenAsks().filter((ask) => ask.sessionId === sessionId),
+              policies
+            );
+        if (taken) return { ok: false, reason: taken };
         const ask =
           current ??
           store.openAsk({
