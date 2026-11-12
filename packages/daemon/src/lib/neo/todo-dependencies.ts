@@ -8,20 +8,19 @@ import {
   requireExistingDependencies,
 } from '../work-queue/dependency-plan.ts';
 
-export function neoTodoDependencyNodes(todos: readonly NeoTodo[]): DependencyNode[] {
-  return todos.map((todo) => {
-    if (todo.dependsOn) return { id: todo.id, dependsOn: todo.dependsOn };
-    const previous = todos
-      .filter((other) => other.askId === todo.askId && other.position < todo.position)
-      .sort((a, b) => b.position - a.position)[0];
-    return { id: todo.id, dependsOn: previous ? [previous.id] : [] };
-  });
+export type NeoTodoEdge = Pick<
+  NeoTodo,
+  'id' | 'askId' | 'position' | 'dependsOn' | 'state' | 'startedAt' | 'replacedBy'
+>;
+
+export function neoTodoDependencyNodes(todos: readonly NeoTodoEdge[]): DependencyNode[] {
+  return todos.map((todo) => ({ id: todo.id, dependsOn: todo.dependsOn ?? [] }));
 }
 
 export const neoTodoFinished = (todo: NeoTodo | undefined) =>
   todo?.state === 'done' || (todo?.state === 'closed_unverified' && todo.startedAt !== null);
 
-const dependencies = (todos: readonly NeoTodo[], todoId: string) =>
+const dependencies = (todos: readonly NeoTodoEdge[], todoId: string) =>
   neoTodoDependencyNodes(todos).find((item) => item.id === todoId)?.dependsOn ?? [];
 
 export function neoTodoReady(todos: readonly NeoTodo[], todoId: string): boolean {
@@ -30,7 +29,10 @@ export function neoTodoReady(todos: readonly NeoTodo[], todoId: string): boolean
   );
 }
 
-export function neoTodoCancelledDependencies(todos: readonly NeoTodo[], todoId: string): NeoTodo[] {
+export function neoTodoCancelledDependencies<T extends NeoTodoEdge>(
+  todos: readonly T[],
+  todoId: string
+): T[] {
   const ids = dependencies(todos, todoId);
   return todos.filter(
     (todo) =>
@@ -61,8 +63,8 @@ export function neoTodoDependenciesAfterApproval(
 }
 
 function liveDependencyNodes(
-  todos: readonly NeoTodo[],
-  available: readonly NeoTodo[]
+  todos: readonly NeoTodoEdge[],
+  available: readonly NeoTodoEdge[]
 ): DependencyNode[] {
   const live = new Set(available.map((todo) => todo.id));
   return neoTodoDependencyNodes(todos)
@@ -74,7 +76,7 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
   .input(['todos', 'todoId', 'after'])
   .pipe(requireDistinctDependencies, ['todoId', 'after'], 'result:dependencies')
   .pipe(
-    (todos: readonly NeoTodo[]) => todos.filter((todo) => todo.state !== 'removed'),
+    (todos: readonly NeoTodoEdge[]) => todos.filter((todo) => todo.state !== 'removed'),
     'todos',
     'available'
   )
@@ -83,7 +85,7 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
   .pipe(requireAcyclicDependencies, ['nodes', 'todoId', 'after'], 'result:dependencies')
   .pipe((after: readonly string[]) => [...after], 'after', 'dependencies')
   .end('dependencies') as (
-  todos: readonly NeoTodo[],
+  todos: readonly NeoTodoEdge[],
   todoId: string,
   after: readonly string[]
 ) => string[] | DependencyRejection;

@@ -123,6 +123,7 @@ describe('neo.ask.open', () => {
   test('two asks for the same pull request opened at once leave one open ask', async () => {
     const { call, store } = setup();
     const step = {
+      after: [],
       title: 'Review it',
       doneWhen: 'Reviewed',
       check: pendingTodoCheck,

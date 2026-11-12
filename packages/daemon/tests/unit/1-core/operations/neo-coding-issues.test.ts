@@ -140,6 +140,7 @@ function fixture() {
         'ask',
         {
           approvedAt: 1,
+          dependsOn: id === 'next' ? ['first'] : [],
           title: id,
           doneWhen: 'Issue completed',
           check: {

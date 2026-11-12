@@ -1,3 +1,7 @@
+import {
+  neoTodoDependencyRefusal,
+  planNeoTodoDependencies,
+} from '../../lib/neo/todo-dependencies.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { z } from 'zod';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -77,7 +81,20 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       changes: ChangeRecorder
     ): Receipt => {
       const { draft } = plan;
-      let todo = store.addTodo(input.todoId, plan.ask.id, draft, input.now, plan.repo);
+      const dependsOn = planNeoTodoDependencies(
+        store.listFamilyTodos(plan.ask.id),
+        input.todoId,
+        draft.after.map(String)
+      );
+      if (typeof dependsOn === 'string')
+        return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
+      let todo = store.addTodo(
+        input.todoId,
+        plan.ask.id,
+        { ...draft, dependsOn },
+        input.now,
+        plan.repo
+      );
       if (draft.target) new NeoTodoSessionRepository(db).create(todo.id, draft.target);
       if (!draft.start && todo.instruction) {
         store.joinStartQuestion(todo, input.now);

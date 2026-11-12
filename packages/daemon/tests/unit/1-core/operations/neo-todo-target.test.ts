@@ -97,6 +97,7 @@ function fixture(
     const reply = await handler({
       name: 'neo.todo.add',
       input: {
+        after: [],
         askId: 'ask',
         title: 'Synthetic todo',
         check: pendingTodoCheck,

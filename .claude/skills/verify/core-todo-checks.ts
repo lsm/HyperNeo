@@ -111,7 +111,7 @@ try {
     ws!.onerror = () => fail(new Error('WebSocket open failed'));
   });
   const add = async (kind: string, params: Record<string, unknown>) => {
-    const result = await rpc('neo.todo.add', {
+    const result = await rpc('neo.todo.add', { after: [],
       askId: 'ask',
       title: `Verify ${kind}`,
       doneWhen: 'This sentence must be replaced',
@@ -140,7 +140,7 @@ try {
   db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('lsm/hyperneo', 'repo-ask');
   assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('repo-ask') as { repo: string }).repo, 'lsm/hyperneo');
   const repoCheck = (params: Record<string, unknown>) => ({ pack: 'core', kind: 'evidence', params });
-  const assigned = await rpc('neo.todo.add', { askId: 'repo-ask', title: 'Assigned evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({}) });
+  const assigned = await rpc('neo.todo.add', { after: [], askId: 'repo-ask', title: 'Assigned evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({}) });
   assert(assigned.ok && assigned.todo, JSON.stringify(assigned));
   const assignedPath = join(run, 'data/work/evidence', assigned.todo.id, 'result.md');
   assert.deepEqual(assigned.todo.check?.params, { path: assignedPath });
@@ -153,11 +153,11 @@ try {
   assert.equal(assignedRead.accepted, true, JSON.stringify(assignedRead));
   const userPath = join(run, 'user-folder/proof.md');
   const beforeRefusal = store.listTodos('repo-ask').length;
-  const refusedAdd = await rpc('neo.todo.add', { askId: 'repo-ask', title: 'User folder evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({ path: userPath }) });
+  const refusedAdd = await rpc('neo.todo.add', { after: [], askId: 'repo-ask', title: 'User folder evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({ path: userPath }) });
   assert.equal(refusedAdd.ok, false, JSON.stringify(refusedAdd));
   assert.match(refusedAdd.reason!, /Omit params\.path/);
   assert.equal(store.listTodos('repo-ask').length, beforeRefusal);
-  const editable = await rpc('neo.todo.add', { askId: 'repo-ask', title: 'Edited evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({ path: join(run, 'other.md') }) });
+  const editable = await rpc('neo.todo.add', { after: [], askId: 'repo-ask', title: 'Edited evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({ path: join(run, 'other.md') }) });
   assert(editable.ok && editable.todo, JSON.stringify(editable));
   const refusedEdit = await rpc('neo.todo.edit', { todoId: editable.todo.id, check: repoCheck({ path: userPath }) });
   assert.equal(refusedEdit.ok, false, JSON.stringify(refusedEdit));
@@ -168,7 +168,7 @@ try {
   assert.deepEqual(reassigned.todo?.check?.params, { path: join(run, 'data/work/evidence', editable.todo.id, 'result.md') });
   app.db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
   const countBeforeLegacyAdmission=store.listTodos('ask').length;
-  const refusedArtifact=await rpc('neo.todo.add',{askId:'ask',title:'New artifact evidence',check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}});
+  const refusedArtifact=await rpc('neo.todo.add',{ after: [],askId:'ask',title:'New artifact evidence',check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}});
   assert.equal(refusedArtifact.ok,false,'new artifact evidence must use an absolute path instead');
   assert.equal(store.listTodos('ask').length,countBeforeLegacyAdmission);
   const artifactTodo=store.addTodo('legacy-artifact-todo','ask',{title:'Legacy evidence',doneWhen:'Registered artifact synthetic-artifact exists.',instruction:null,named:null,check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}},Date.now());

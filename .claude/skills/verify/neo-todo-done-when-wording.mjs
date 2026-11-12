@@ -26,7 +26,7 @@ const ask = crypto.randomUUID();
 sql(`INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES(${quote(ask)},${quote(opened.sessionId)},'Synthetic wording','Synthetic verification only','open',${now},${now});`);
 
 const evidence = {};
-const added = rpc('neo.todo.add', {
+const added = rpc('neo.todo.add', { after: [],
   askId: ask,
   title: 'Reword the gauge',
   check: {

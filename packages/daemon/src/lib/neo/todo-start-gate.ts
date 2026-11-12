@@ -1,6 +1,7 @@
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoStartQuestionTitle } from './start-question.ts';
+import { NEO_REMOVED_PREREQUISITE } from './todo-removal.ts';
 import {
   NEO_TODO_NOT_READY,
   NEO_TODO_PREREQUISITE_UNFINISHED,
@@ -190,7 +191,12 @@ export const neoTodosAwaitingNeoDecision = (
       ask?.status === 'open' &&
       todo.askId === ask.id &&
       neoTodoCancellationPending(todo, family) &&
-      !questions.some((q) => q.state === 'open' && q.kind === 'start' && q.todos.includes(todo.id))
+      !questions.some(
+        (q) =>
+          q.state === 'open' &&
+          (q.kind === 'start' || q.cause === NEO_REMOVED_PREREQUISITE) &&
+          q.todos.includes(todo.id)
+      )
   );
 
 export function planNeoStartAnswer(

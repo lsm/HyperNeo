@@ -107,7 +107,7 @@ try {
   }) as typeof db.prepare;
   const handler = createOperationMcpHandler(() => app!.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
   const add = async (title: string) => {
-    const reply = await handler({ name: 'neo.todo.add', input: { askId: 'dispatch-ask', title, doneWhen: 'Facts retained', instruction: 'Only a synthetic opening instruction', target: { verb: 'send', ref: { adapter: 'codex-desktop', id: 'synthetic-thread' } }, start: true } });
+    const reply = await handler({ name: 'neo.todo.add', input: { after: [], askId: 'dispatch-ask', title, doneWhen: 'Facts retained', instruction: 'Only a synthetic opening instruction', target: { verb: 'send', ref: { adapter: 'codex-desktop', id: 'synthetic-thread' } }, start: true } });
     recording = false;
     assert.equal(reply.content[0].type, 'text');
     return JSON.parse(reply.content[0].text);

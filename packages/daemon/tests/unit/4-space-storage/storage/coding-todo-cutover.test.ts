@@ -182,6 +182,7 @@ test('the add writer publishes the pack fact notification after committing', asy
     askId: 'ask',
     todoId: 'announced',
     draft: {
+      after: [],
       title: 'Announced',
       check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/result' } },
       instruction: null,

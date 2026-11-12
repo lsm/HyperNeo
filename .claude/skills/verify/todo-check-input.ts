@@ -87,7 +87,7 @@ try {
     ws!.onopen = () => done();
     ws!.onerror = () => fail(new Error('WebSocket open failed'));
   });
-  const missing = await rpc('neo.todo.add', {
+  const missing = await rpc('neo.todo.add', { after: [],
     askId: 'ask',
     title: 'Missing check',
     doneWhen: 'Remember it',
@@ -95,10 +95,10 @@ try {
   assert.notEqual(missing.ok, true, 'adding a todo without a check must be rejected');
   assert.match(JSON.stringify(missing), /check/);
   const check = { pack: 'core', kind: 'evidence', params: { path: join(run, 'result.txt') } };
-  const added = await rpc('neo.todo.add', { askId: 'ask', title: 'Observe result', check });
+  const added = await rpc('neo.todo.add', { after: [], askId: 'ask', title: 'Observe result', check });
   assert(added.ok && added.todo, JSON.stringify(added));
   assert.equal(added.todo.doneWhen, `File ${check.params.path} exists.`);
-  const unknown = await rpc('neo.todo.add', {
+  const unknown = await rpc('neo.todo.add', { after: [],
     askId: 'ask',
     title: 'Unknown',
     check: { ...check, pack: 'unknown' },

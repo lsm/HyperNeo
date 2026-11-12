@@ -43,7 +43,7 @@ try {
   const store = new NeoAskTodoRepository(db);
   store.openAsk({ id: 'ask', sessionId: sender, projectId: null, originMessageId: null, title: 'Parser and callers', request: 'Track two PRs separately', createdAt: 1 });
   const check = { pack: 'coding', kind: 'pr_merged', params: {} };
-  const first = await invoke('neo.todo.add', { askId: 'ask', title: 'Extract parser', check });
+  const first = await invoke('neo.todo.add', { after: [], askId: 'ask', title: 'Extract parser', check });
   const second = await invoke('neo.todo.add', { askId: 'ask', title: 'Update callers', after: [first.todo.id], check });
   assert.deepEqual(store.getTodo(first.todo.id)!.check?.params, {});
   assert.deepEqual(store.getTodo(second.todo.id)!.check?.params, {});

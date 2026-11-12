@@ -73,7 +73,7 @@ try {
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WebSocket open failed')); });
   const preference = async (key: string, value: unknown) => { const result = await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/project' }, key, value }); assert.equal(result.ok, true); };
   await preference('mergePolicy', 'review_bot'); await preference('reviewBot', 'review-bot');
-  const added = await rpc('neo.todo.add', { askId: 'todo', title: 'Approval arrives', check });
+  const added = await rpc('neo.todo.add', { after: [], askId: 'todo', title: 'Approval arrives', check });
   assert(added.ok && added.todo, JSON.stringify(added));
   assert.deepEqual(added.todo.check, check);
   const ask = async (askId: string) => { const result = await rpc('neo.question.ask', { askId, kind: 'reply', text: 'The review requirement is unavailable', retireWhen: check }); assert(result.ok && result.question, JSON.stringify(result)); assert.equal(result.question.todoId, undefined); return result.question; };

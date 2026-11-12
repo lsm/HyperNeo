@@ -38,7 +38,7 @@ try {
   const stored = sessions.get(sent.todo.id)?.ref;
   assert.deepEqual(stored, { adapter: 'hyperneo', id: worker });
   evidence.push({ stored });
-  const legacyBind = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Legacy bind', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, target: { verb: 'bind', ref: { adapter: 'hyperneo', id: worker } } } });
+  const legacyBind = await handler({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title: 'Legacy bind', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, target: { verb: 'bind', ref: { adapter: 'hyperneo', id: worker } } } });
   assert.equal(legacyBind.isError, true, JSON.stringify(legacyBind));
   evidence.push({ legacyBind });
   const pending = await add('send', worker);
@@ -70,7 +70,7 @@ try {
   const beforeBatch = todos.listAsks(null, 100);
   const batch = await handler({ name: 'neo.ask.open', input: {
     title: 'Refused target batch', request: 'Resolve every target before recording',
-    todos: [worker.slice(0, 8), 'deadbeef'].map((id, n) => ({ title: `Batch item ${n}`, check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'hyperneo', id } } })),
+    todos: [worker.slice(0, 8), 'deadbeef'].map((id, n) => ({ after: [], title: `Batch item ${n}`, check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'hyperneo', id } } })),
   } });
   evidence.push({ operation: 'neo.ask.open', batch });
   assert.notEqual(batch.isError, true);
@@ -90,14 +90,14 @@ try {
     assert.deepEqual(result.places.flatMap((place: { work: { ref: unknown }[] }) => place.work.map(work => work.ref)), [{ adapter: 'space', id: taskId }]);
     assert.deepEqual(result.unreachable, []);
   }
-  const spaceTodo = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Space target', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'space', id: 'synthetic-full' } } } });
+  const spaceTodo = await handler({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title: 'Space target', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'space', id: 'synthetic-full' } } } });
   evidence.push({ operation: 'neo.todo.add', adapter: 'space', spaceTodo });
   assert.notEqual(spaceTodo.isError, true);
   const addedSpace = JSON.parse(spaceTodo.content[0].text);
   assert.equal(addedSpace.ok, true, JSON.stringify(addedSpace));
   assert.deepEqual(sessions.get(addedSpace.todo.id)?.ref, { adapter: 'space', id: taskId });
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
-  const reopenInput = { title: 'Idempotent worker ask', request: 'Keep tracking it', todos: [{ title: 'Recorded worker', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Work', target: { verb: 'send', ref: { adapter: 'hyperneo', id: worker } } }] };
+  const reopenInput = { title: 'Idempotent worker ask', request: 'Keep tracking it', todos: [{ after: [], title: 'Recorded worker', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Work', target: { verb: 'send', ref: { adapter: 'hyperneo', id: worker } } }] };
   const opened = JSON.parse((await handler({ name: 'neo.ask.open', input: reopenInput })).content[0].text);
   assert.equal(opened.ok, true);
   db.prepare('DELETE FROM sessions WHERE id=?').run(worker);

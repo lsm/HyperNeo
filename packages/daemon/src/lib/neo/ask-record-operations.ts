@@ -317,7 +317,7 @@ export function createNeoAskRecordOperations(
         const rows = drafts.map((todo) => recordedRow(todo, currentScope));
         for (const [index, todo] of drafts.entries()) {
           const row = rows[index];
-          const after = todo.after?.map((ref) =>
+          const after = todo.after.map((ref) =>
             typeof ref === 'number' ? (ref < index ? (ids[ref] ?? `#${ref}`) : `#${ref}`) : ref
           );
           const added = !row
@@ -326,14 +326,14 @@ export function createNeoAskRecordOperations(
                 sessions,
                 controls,
                 store.getAsk(ask.id)!,
-                { ...todo, ...(after ? { after } : {}) },
+                { ...todo, after },
                 policies
               )
             : todo.start && isNeoTodoStartable(row)
               ? await startNeoTodoWhenFree(store, controls, store.approveTodo(row, Date.now()))
               : { ok: true as const };
           if (!added.ok) return added;
-          if (row && todo.after)
+          if (row && [...after].sort().join() !== [...(row.dependsOn ?? [])].sort().join())
             records.push(
               `after_ignored: "${row.title}" already exists; change what it waits for with neo.todo.edit.`
             );

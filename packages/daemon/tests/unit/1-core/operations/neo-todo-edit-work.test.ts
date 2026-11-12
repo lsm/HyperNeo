@@ -83,11 +83,11 @@ function setup() {
       todos: NeoTodo[];
     };
   };
-  const step = (title: string, after?: (string | number)[]) => ({
+  const step = (title: string, after: (string | number)[] = []) => ({
     check: pendingTodoCheck,
     title,
     doneWhen: 'Result verified',
-    ...(after ? { after } : {}),
+    after,
   });
   return { db, store, sessions, runner, told, invoke, step };
 }

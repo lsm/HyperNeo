@@ -36,8 +36,8 @@ try {
   const present = join(run, 'result.txt');
   writeFileSync(present, 'Synthetic result');
   const opened = await invoke('neo.ask.open', { title: 'Synthetic close proof', request: 'Cancel work that never started', todos: [
-    { title: 'Cancelled before it started', check: { pack: 'core', kind: 'evidence', params: {} } },
-    { title: 'Result already there', check: { pack: 'core', kind: 'evidence', params: { path: present } } },
+    { after: [], title: 'Cancelled before it started', check: { pack: 'core', kind: 'evidence', params: {} } },
+    { after: [], title: 'Result already there', check: { pack: 'core', kind: 'evidence', params: { path: present } } },
   ] });
   const [cancelled, passing] = opened.todos.map((todo: { id: string }) => todo.id);
   const before = store.getTodo(cancelled)!;

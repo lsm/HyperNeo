@@ -1,5 +1,6 @@
 import { runMigration495 } from '../../../../src/storage/schema/m495-neo-answer-provenance.ts';
 import { runMigration502 } from '../../../../src/storage/schema/m502-neo-question-todos.ts';
+import { runMigration506 } from '../../../../src/storage/schema/m506-neo-removed-prerequisites.ts';
 import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
 import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
@@ -77,6 +78,7 @@ describe('neo.message.send replyTo', () => {
     runMigration466(mailbox.db);
     runMigration495(mailbox.db);
     runMigration502(mailbox.db);
+    runMigration506(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     prepareCodingTodoStorage(mailbox.db);

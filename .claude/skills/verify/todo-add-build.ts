@@ -39,7 +39,7 @@ const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketCli
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 type Input=Parameters<typeof neoTodoAddWrites.run>[1];type Receipt=ReturnType<typeof neoTodoAddWrites.run>;
 const op={name:'neo.todoAddWrites',mode:'write',run:()=>{throw new Error('Todo add must execute in writer worker');}} as DbOp<Input,Receipt>;
-const input=(id:string):Input=>({askId:'ask',todoId:id,now:123,draft:{title:id,check:{pack:'core',kind:'evidence',params:{path:'/synthetic/result'}},instruction:'Do the complete work',target:{verb:'start',adapter:'hyperneo'},named:null,start:false,priority:'high'}});
+const input=(id:string):Input=>({askId:'ask',todoId:id,now:123,draft:{ after: [],title:id,check:{pack:'core',kind:'evidence',params:{path:'/synthetic/result'}},instruction:'Do the complete work',target:{verb:'start',adapter:'hyperneo'},named:null,start:false,priority:'high'}});
 const call=(args:Input)=>app.db.gateway.run(op,args);
 const visible=()=>hub.request<{ok:boolean;entry:{ask:NeoAsk;todos:NeoTodo[];questions:unknown[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'ask'}});
 const replay=app.db.gateway.onChanges;let held=false;const tables:string[]=[];

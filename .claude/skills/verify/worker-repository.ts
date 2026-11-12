@@ -109,7 +109,7 @@ try {
     assert.equal(todos.getTodo(converted.todo.id)!.check!.pack, 'core');
     const deferredAsk = `edited-${ref.id}`;
     todos.openAsk({ id: deferredAsk, sessionId: sender, projectId: null, originMessageId: null, title: 'Edited repository', request: 'Introduce a coding check later', createdAt: 1 });
-    const deferred = await call('neo.todo.add', { askId: deferredAsk, title: 'Unassigned coding work', check: { pack: 'core', kind: 'evidence', params: {} } });
+    const deferred = await call('neo.todo.add', { after: [], askId: deferredAsk, title: 'Unassigned coding work', check: { pack: 'core', kind: 'evidence', params: {} } });
     assert.equal(coding.repository(todos.getTodo(deferred.todo.id)!, { ask: todos.getAsk(deferredAsk) }), null);
     assert.equal((await call('neo.todo.edit', { todoId: deferred.todo.id, check })).ok, true);
     assert.equal(coding.repository(todos.getTodo(deferred.todo.id)!, { ask: todos.getAsk(deferredAsk) }), 'github.com/example/repo');

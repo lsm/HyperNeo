@@ -60,14 +60,21 @@ test('new todo inputs require a check and expose no free-text completion input',
   expect(NeoTodoDraftSchema.safeParse({ title: 'Verify', doneWhen: 'Remember it' }).success).toBe(
     false
   );
-  expect(NeoTodoDraftSchema.safeParse({ title: 'Verify', check: null }).success).toBe(false);
-  const parsed = NeoTodoDraftSchema.parse({ title: 'Verify', check, doneWhen: 'Ignore this' });
+  expect(NeoTodoDraftSchema.safeParse({ after: [], title: 'Verify', check: null }).success).toBe(
+    false
+  );
+  const parsed = NeoTodoDraftSchema.parse({
+    after: [],
+    title: 'Verify',
+    check,
+    doneWhen: 'Ignore this',
+  });
   expect(parsed).not.toHaveProperty('doneWhen');
 });
 
 test('add derives completion text and rejects unsupported check packs and kinds', async () => {
   const { call, store } = fixture();
-  const added = await call('neo.todo.add', { askId: 'ask', title: 'Verify', check });
+  const added = await call('neo.todo.add', { after: [], askId: 'ask', title: 'Verify', check });
   expect(added).toMatchObject({
     ok: true,
     todo: { doneWhen: 'File /synthetic/result.txt exists.', check },
@@ -77,7 +84,7 @@ test('add derives completion text and rejects unsupported check packs and kinds'
     { ...check, kind: 'typo' },
   ])
     expect(
-      await call('neo.todo.add', { askId: 'ask', title: 'Invalid', check: invalid })
+      await call('neo.todo.add', { after: [], askId: 'ask', title: 'Invalid', check: invalid })
     ).toMatchObject({ ok: false });
   expect(store.listTodos('ask')).toHaveLength(1);
 });

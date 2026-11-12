@@ -106,13 +106,13 @@ try {
   });
   const askId = world.store.listOpenAsks()[0].id;
   assert(opened.ok);
-  const first = call('neo.todo.add', {
+  const first = call('neo.todo.add', { after: [],
     askId,
     ...world.draft('Investigate synthetic task'),
     target: { verb: 'start', adapter: 'hyperneo' },
   });
   await entered.promise;
-  const second = call('neo.todo.add', {
+  const second = call('neo.todo.add', { after: [],
     askId,
     ...world.draft('Implement synthetic task'),
     target: { verb: 'start', adapter: 'hyperneo', place },
@@ -157,7 +157,7 @@ try {
     })
   );
   for (const title of ['First Space task', 'Second Space task'])
-    await call('neo.todo.add', {
+    await call('neo.todo.add', { after: [],
       askId,
       ...world.draft(title),
       target: { verb: 'start', adapter: 'space', place: spacePlace },

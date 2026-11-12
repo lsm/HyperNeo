@@ -21,13 +21,21 @@ function store() {
   return { db, todos };
 }
 
-const draft = { title: 'Rows', doneWhen: 'done', check: null, instruction: null, named: null };
+const draft = {
+  after: [],
+  title: 'Rows',
+  doneWhen: 'done',
+  check: null,
+  instruction: null,
+  named: null,
+};
 
 describe('todo priority', () => {
   test('a todo is normal unless Neo sets a priority, and the priority can change later', () => {
     const { db, todos } = store();
     try {
       const parsed = NeoTodoDraftSchema.parse({
+        after: [],
         title: 'Rows',
         check: { pack: 'core', kind: 'evidence', params: {} },
       });

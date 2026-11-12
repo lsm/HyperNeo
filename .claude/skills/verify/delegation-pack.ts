@@ -135,7 +135,7 @@ try {
     todos: [],
   });
   const start = (title: string, instruction = 'Report the synthetic task result.') =>
-    mcp('neo.todo.add', {
+    mcp('neo.todo.add', { after: [],
       askId: ask.ask.id,
       title,
       check: {

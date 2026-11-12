@@ -3,6 +3,7 @@ import {
   neoAskInputWrites,
   type NeoAskInputClaim,
 } from './neo-ask-input-worker.ts';
+import { planNeoRemovedPrerequisiteAnswer } from '../../lib/neo/todo-removal.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoTodoStorage } from '../../lib/neo/packs/todo-storage.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
@@ -157,12 +158,13 @@ export type NeoQuestionDraft = Pick<
   | 'todoId'
   | 'artifacts'
   | 'sourceSession'
->;
+> &
+  Pick<NeoQuestion, 'cause'> & { todos?: readonly string[] };
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, created_at AS createdAt FROM neo_questions`;
+  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
@@ -200,8 +202,10 @@ const toQuestion = ({
   artifactsJson,
   sourceSessionJson,
   todoId,
+  cause,
   ...row
 }: QuestionRow): NeoQuestion => ({
+  ...(cause ? { cause } : {}),
   ...(answerProvenanceJson
     ? { answerProvenance: JSON.parse(answerProvenanceJson) as NeoAnswerProvenance }
     : {}),
@@ -690,7 +694,8 @@ export class NeoAskTodoRepository {
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
            added_after_start, priority, depends_on, approved_at, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?,
-           EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?, ?, ?, ?, ?)`
+           EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?,
+           ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -703,7 +708,7 @@ export class NeoAskTodoRepository {
         draft.named ? JSON.stringify(draft.named) : null,
         askId,
         draft.priority ?? 'normal',
-        draft.dependsOn ? JSON.stringify(draft.dependsOn) : null,
+        JSON.stringify(draft.dependsOn ?? []),
         draft.approvedAt ?? null,
         now,
         now
@@ -964,7 +969,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           start_todos, todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -979,13 +984,15 @@ export class NeoAskTodoRepository {
         JSON.stringify(
           draft.kind === 'start'
             ? (draft.startTodos ?? [])
-            : draft.todoId
-              ? [draft.todoId]
-              : neoAskQuestionHolds(
-                  [askId, ...this.listChildAsks(askId).map((ask) => ask.id)].flatMap((id) =>
-                    this.listTodos(id)
+            : draft.todos
+              ? draft.todos
+              : draft.todoId
+                ? [draft.todoId]
+                : neoAskQuestionHolds(
+                    [askId, ...this.listChildAsks(askId).map((ask) => ask.id)].flatMap((id) =>
+                      this.listTodos(id)
+                    )
                   )
-                )
         ),
         draft.confirm ? JSON.stringify(draft.confirm) : null,
         draft.document ?? null,
@@ -994,6 +1001,7 @@ export class NeoAskTodoRepository {
         draft.artifacts ? JSON.stringify(draft.artifacts) : null,
         draft.sourceSession ? JSON.stringify(draft.sourceSession) : null,
         draft.retireWhen ? JSON.stringify(draft.retireWhen) : null,
+        draft.cause ?? null,
         now
       );
     this.touchAsk(askId, now);
@@ -1097,6 +1105,13 @@ export class NeoAskTodoRepository {
           question.kind === 'start' ? [answer].flat().map(String) : undefined,
           undefined
         );
+        for (const { todo, patch } of planNeoRemovedPrerequisiteAnswer(
+          question,
+          this.listFamilyTodos(question.askId),
+          answer,
+          now
+        ))
+          this.writeTodo(todo, patch, now, false, false);
         if (answer === 'yes') {
           const preferences = applyPackPreferenceAnswer(this.db, question.id);
           if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
@@ -1184,6 +1199,11 @@ export class NeoAskTodoRepository {
 
   gateQuestions(ask: NeoAsk): NeoQuestion[] {
     return this.listQuestionsForAsks(ask.parentId ? [ask.parentId, ask.id] : [ask.id]);
+  }
+
+  familyQuestions(askId: string): NeoQuestion[] {
+    const root = this.getAsk(askId)?.parentId ?? askId;
+    return this.listQuestionsForAsks([root, ...this.listChildAsks(root).map((ask) => ask.id)]);
   }
 
   todoCards(todo: Pick<NeoTodo, 'askId'>): NeoQuestion[] {

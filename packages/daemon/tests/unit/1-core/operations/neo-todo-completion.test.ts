@@ -234,6 +234,7 @@ describe('coding todo PR ownership through add and edit', () => {
     const { db, store, call, runner } = setup();
     try {
       const added = await call('neo.todo.add', {
+        after: [],
         askId: 'ask',
         title: 'PR not yet known',
         doneWhen: 'Merged',
@@ -267,6 +268,7 @@ describe('coding todo PR ownership through add and edit', () => {
     try {
       store.addTodo('original', 'ask', draft([url(2)]), 1);
       const result = await call('neo.todo.add', {
+        after: [],
         askId: 'ask',
         title: 'Pin PR link',
         doneWhen: 'Merged',
@@ -332,7 +334,12 @@ describe('coding todo PR ownership through add and edit', () => {
         const old = store.addTodo('old', 'ask', draft([url(2)]), 1);
         store.updateTodo(old, { state }, 2);
         expect(
-          await call('neo.todo.add', { askId: 'ask', ...draft([url(2)]), instruction: null })
+          await call('neo.todo.add', {
+            after: [],
+            askId: 'ask',
+            ...draft([url(2)]),
+            instruction: null,
+          })
         ).toMatchObject({
           ok: true,
         });
@@ -518,7 +525,12 @@ describe('coding todo PR ownership through add and edit', () => {
         createdAt: 2,
       });
       expect(
-        await call('neo.todo.add', { askId: 'other', ...draft([url(2)]), instruction: null })
+        await call('neo.todo.add', {
+          after: [],
+          askId: 'other',
+          ...draft([url(2)]),
+          instruction: null,
+        })
       ).toMatchObject({
         ok: true,
       });
@@ -532,6 +544,7 @@ describe('coding todo PR ownership through add and edit', () => {
       const original = store.addTodo('original', 'ask', draft([url(1)]), 1);
       expect(
         await call('neo.todo.add', {
+          after: [],
           askId: 'ask',
           ...draft(['https://example.com/not-a-pr']),
           instruction: null,

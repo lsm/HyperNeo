@@ -380,6 +380,7 @@ export const NeoQuestionSchema = z.object({
   todoId: z.string().nullable().optional(),
   document: z.string().nullable().optional(),
   replyTo: z.array(z.uuid()).optional(),
+  cause: z.string().nullable().optional(),
   id: z.string(),
   askId: z.string(),
   text: z.string(),
