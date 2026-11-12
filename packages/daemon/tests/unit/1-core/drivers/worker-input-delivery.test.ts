@@ -208,6 +208,55 @@ describe('durable worker follow-ups', () => {
     expect(h.sent).toEqual([]);
   });
 
+  test('dispatcher contention retries promptly and preserves the prior worker wait reason', async () => {
+    let enter = () => {};
+    let release = () => {};
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = fixture('codex-desktop', {
+      status: async () => {
+        enter();
+        await blocked;
+        return { ok: false, reason: 'unreachable', detail: 'Synthetic receiver is offline' };
+      },
+    });
+    await h.delivery.accept(
+      { ref: h.ref, message: 'First worker input' },
+      'session:synthetic-neo',
+      caller
+    );
+    await h.delivery.accept(
+      { ref: { ...h.ref, id: 'synthetic-second-worker' }, message: 'Second worker input' },
+      'session:synthetic-neo',
+      caller
+    );
+    const [first, second] = h.jobs.dequeue('worker_input', 2);
+    h.db
+      .prepare('UPDATE job_queue SET error = ? WHERE id = ?')
+      .run('Synthetic prior worker wait', second.id);
+    const delivering = h.delivery.run(first);
+    try {
+      await entered;
+      await h.delivery.run(second);
+      const waiting = h.jobs.getJob(second.id)!;
+      expect(waiting).toMatchObject({
+        status: 'pending',
+        retryCount: 0,
+        error: 'Synthetic prior worker wait',
+      });
+      expect(waiting.runAt - Date.now()).toBeLessThanOrEqual(1000);
+      expect(waiting.runAt).toBeGreaterThan(Date.now());
+      expect(h.sent).toEqual([]);
+    } finally {
+      release();
+      await delivering;
+    }
+  });
+
   test('question-stop answer is delivered immediately', async () => {
     const h = fixture();
     h.setStatus('needs_you', true);
