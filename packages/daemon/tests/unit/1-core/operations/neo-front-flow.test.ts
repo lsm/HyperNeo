@@ -91,6 +91,8 @@ test('Front mode note asks for spoken only while listening', () => {
   );
   expect(frontModeNote(conversationId, true, true, false)).not.toContain('spoken');
   expect(frontModeNote(conversationId, true, true)).not.toMatch(/\b(Neo|Convo|Back)\b/);
+  for (const dual of [true, false])
+    expect(frontModeNote(conversationId, dual, false)).not.toContain('Convo');
 });
 
 test('Front uses the ordinary immediate session with its role and tools', async () => {
@@ -673,7 +675,7 @@ test.each([
     ],
   },
 ])(
-  'Convo edits the existing answer for $topic instead of publishing duplicates',
+  'Front edits the existing answer for $topic instead of publishing duplicates',
   async ({ original, updates }) => {
     const { id } = await deliveredConvoInput();
     await convoPublish({
@@ -717,7 +719,7 @@ test.each([
   }
 );
 
-test('Convo publishes an unrequested background result without borrowing a human message', async () => {
+test('Front publishes an unrequested background result without borrowing a human message', async () => {
   const { id } = await deliveredConvoInput();
   const standalone = await convoPublish({
     requestId: 'status-update',
@@ -792,7 +794,7 @@ test('editing a progress acknowledgment into an answer prevents a later fallback
   });
 });
 
-test('Convo exposes reads, handoff and one publication path', () => {
+test('Front exposes reads, handoff and one publication path', () => {
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   expect(definitions.map((entry) => entry.name).sort()).toEqual([
@@ -817,7 +819,7 @@ test('the canonical Neo publication path refuses Back in dual mode', async () =>
   ).toMatchObject({ accepted: false, reason: 'dual_model_front_required' });
 });
 
-test('Convo delivery remains pending only until the accepted input deadline', async () => {
+test('Front delivery remains pending only until the accepted input deadline', async () => {
   const { id } = await accept();
   const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
   const handler = createNeoFrontHandler(service);
@@ -847,7 +849,7 @@ test('Convo delivery remains pending only until the accepted input deadline', as
     const replies = service.publications.list(conversationId)!;
     expect(replies).toHaveLength(1);
     expect(replies[0].replyTo).toEqual([id]);
-    expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+    expect(replies[0].fullText).toBe('This reply could not be completed. Please try again.');
     await handler(expired);
     expect(service.publications.list(conversationId)).toHaveLength(1);
   } finally {
@@ -861,7 +863,7 @@ test.each([
   { text: 'A plain terminal answer', failedNeo: true },
   { text: '', failedNeo: true },
 ])(
-  'a tool-free Convo turn gets the fixed notice, never its closing text ($text, failed Neo delivery $failedNeo)',
+  'a tool-free Front turn gets the fixed notice, never its closing text ($text, failed Neo delivery $failedNeo)',
   async ({ text, failedNeo }) => {
     const { id, job } = await accept();
     const handler = createNeoFrontHandler(service);
@@ -898,7 +900,7 @@ test.each([
     const replies = service.publications.list(conversationId)!;
     expect(replies).toHaveLength(1);
     expect(replies[0].replyTo).toEqual([id]);
-    expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+    expect(replies[0].fullText).toBe('This reply could not be completed. Please try again.');
     await handler(job);
     expect(service.publications.list(conversationId)).toHaveLength(1);
   }
@@ -1059,7 +1061,7 @@ test('a shared terminal still answers an unclaimed input after Neo answered its 
   expect(replies.filter((reply) => reply.replyTo?.includes(first.id))).toHaveLength(1);
 });
 
-test('a pending Convo outcome does not reattach or redeliver the active session', async () => {
+test('a pending Front outcome does not reattach or redeliver the active session', async () => {
   const { id, job } = await accept();
   const deliver = vi.spyOn(service, 'deliverForward');
   const handler = createNeoFrontHandler(service);
@@ -1083,20 +1085,20 @@ test('a pending Convo outcome does not reattach or redeliver the active session'
   expect(deliver).toHaveBeenCalledTimes(1);
 });
 
-test('a failed Neo delivery cannot complete the Convo error fallback', async () => {
+test('a failed Neo delivery cannot complete the Front error fallback', async () => {
   const { id, job } = await accept();
   await db.saveUserMessage(
     root,
     neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
     'failed'
   );
-  vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
+  vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Front unavailable'));
   const handler = createNeoFrontHandler(service);
   expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
   const replies = service.publications.list(conversationId)!;
   expect(replies).toHaveLength(1);
   expect(replies[0].replyTo).toEqual([id]);
-  expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+  expect(replies[0].fullText).toBe('This reply could not be completed. Please try again.');
 });
 
 test.each(['terminal', 'creation failure'])(
@@ -1111,7 +1113,7 @@ test.each(['terminal', 'creation failure'])(
       'enqueued'
     );
     if (path === 'creation failure') {
-      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
+      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Front unavailable'));
     } else {
       await frontSession(service, service.asks.find(conversationId, id)!, model);
       await db.saveUserMessage(
@@ -1152,7 +1154,7 @@ test.each(['terminal', 'creation failure'])(
       const replies = service.publications.list(conversationId)!;
       expect(replies).toHaveLength(1);
       expect(replies[0].replyTo).toEqual([id]);
-      expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+      expect(replies[0].fullText).toBe('This reply could not be completed. Please try again.');
       await handler(failed);
       expect(service.publications.list(conversationId)).toHaveLength(1);
     } finally {
@@ -1162,7 +1164,7 @@ test.each(['terminal', 'creation failure'])(
 );
 
 test.each(['disabled', 'dual'])(
-  'a manual Neo hold backs off after the Convo deadline in %s mode',
+  'a manual Neo hold backs off after the Front deadline in %s mode',
   async (path) => {
     const { id } = await accept();
     const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
@@ -1315,7 +1317,7 @@ test('Front rejects a new reply without spoken while the human is listening', as
   speech.mockRestore();
 });
 
-test('only Convo can publish in dual mode and Neo can publish again in single mode', async () => {
+test('only Front can publish in dual mode and Neo can publish again in single mode', async () => {
   const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
   const input = { requestId: 'back-answer', fullText: 'Back answer', verbatim: true };
   expect(await service.publish(input, caller)).toMatchObject({ accepted: false });
@@ -1324,7 +1326,7 @@ test('only Convo can publish in dual mode and Neo can publish again in single mo
   expect(await service.publish(input, caller)).toMatchObject({ accepted: true });
 });
 
-test('Convo must publish a visible progress reply before sending work to Neo', async () => {
+test('Front must publish a visible progress reply before sending work to Neo', async () => {
   const { id } = await deliveredConvoInput();
   createFrontTools(service, conversationId);
   const send = vi
@@ -1369,7 +1371,7 @@ test('Convo must publish a visible progress reply before sending work to Neo', a
   ).toHaveLength(2);
 });
 
-test('Convo publication refuses an input it was never given and a stale dual-mode tool', async () => {
+test('Front publication refuses an input it was never given and a stale dual-mode tool', async () => {
   await frontSession(
     service,
     { conversationId, askOrigin: { sessionId: root, messageId: crypto.randomUUID() } },
@@ -1449,7 +1451,7 @@ test('a persistent tool-selection conflict falls back after the deadline', async
     const replies = service.publications.list(conversationId)!;
     expect(replies).toHaveLength(1);
     expect(replies[0].replyTo).toEqual([id]);
-    expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+    expect(replies[0].fullText).toBe('This reply could not be completed. Please try again.');
     expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(front, [id])).toHaveLength(0);
     await handler(expired);
     expect(service.publications.list(conversationId)).toHaveLength(1);
@@ -1460,25 +1462,25 @@ test('a persistent tool-selection conflict falls back after the deadline', async
 });
 
 test.each(['creation', 'delivery'])(
-  'a Convo %s failure gives the human one visible failure without delegating to a silent Back',
+  'a Front %s failure gives the human one visible failure without delegating to a silent Back',
   async (phase) => {
     const { id, job } = await accept();
     if (phase === 'creation')
-      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Convo unavailable'));
-    else vi.spyOn(service, 'deliverForward').mockRejectedValue(new Error('Convo unavailable'));
+      vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Front unavailable'));
+    else vi.spyOn(service, 'deliverForward').mockRejectedValue(new Error('Front unavailable'));
     const handler = createNeoFrontHandler(service);
     expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
     expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBeNull();
     const replies = service.publications.list(conversationId)!;
     expect(replies).toHaveLength(1);
     expect(replies[0].replyTo).toEqual([id]);
-    expect(replies[0].fullText).toBe('Convo could not complete this reply. Please try again.');
+    expect(replies[0].fullText).toBe('This reply could not be completed. Please try again.');
     await handler(job);
     expect(service.publications.list(conversationId)).toHaveLength(1);
   }
 );
 
-test('Convo uses distinct short and detailed reply tools with no format switch', async () => {
+test('Front uses distinct short and detailed reply tools with no format switch', async () => {
   const { id } = await deliveredConvoInput();
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
@@ -1551,7 +1553,7 @@ test('Convo uses distinct short and detailed reply tools with no format switch',
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
-test('Convo prompt, tool descriptions and intake agree on the five-sentence boundary', async () => {
+test('Front prompt, tool descriptions and intake agree on the five-sentence boundary', async () => {
   const { job } = await accept();
   await createNeoFrontHandler(service)(job);
   expect(db.getSession(front)!.config.systemPrompt).toContain('at most five short sentences');

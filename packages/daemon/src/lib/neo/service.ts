@@ -1086,7 +1086,7 @@ export class NeoService {
 
   async recover(): Promise<void> {
     await this.prepareFront().catch((error) =>
-      this.log.warn('Convo session not prepared during recovery', error)
+      this.log.warn('Front session not prepared during recovery', error)
     );
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();

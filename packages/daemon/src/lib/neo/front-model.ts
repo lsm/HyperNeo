@@ -209,7 +209,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           return result({
             delivered: await service.wakeNeo(
               neoDerivedId(`front-note:${conversationId}:${requestId}`),
-              `Convo is waiting for your result for human messages ${messageIds.join(', ')}. Send the result, original human IDs and references to Convo using message.send {to: "${sessionId}", text: "...", idempotencyKey: "..."}. Only Convo publishes or speaks to the human in dual-model mode.\n${text}`
+              `The front session is waiting for your result for human messages ${messageIds.join(', ')}. Send the result, original human IDs and references to the front session using message.send {to: "${sessionId}", text: "...", idempotencyKey: "..."}. Only the front session publishes or speaks to the human in dual-model mode.\n${text}`
             ),
           });
         }
