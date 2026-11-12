@@ -442,6 +442,135 @@ describe('pairing v2 one-time request route', () => {
     expect(devices.countDevices().humans).toBe(1);
   });
 
+  const signCancel = (
+    phone: ReturnType<typeof phoneKeypair>,
+    requestId: string,
+    bindNonce: string
+  ) => phone.sign(`cancel:${requestId}:${bindNonce}`);
+
+  test('the joining phone cancels with its own signature and no caller credential', async () => {
+    seedDevice('Existing phone');
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    const nonce = bound.body.bindNonce as string;
+
+    const res = await route(
+      new Request('http://localhost/pair2/cancel', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          requestId: made.requestId,
+          signature: signCancel(phone, made.requestId, nonce),
+        }),
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'cancelled' });
+
+    const again = await route(
+      new Request('http://localhost/pair2/cancel', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          requestId: made.requestId,
+          signature: signCancel(phone, made.requestId, nonce),
+        }),
+      })
+    );
+    expect(again.status).toBe(403);
+  });
+
+  test('a forged join cancel never falls back to the approver path', async () => {
+    seedDevice('Existing phone');
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    const thief = phoneKeypair();
+    const headers = { 'x-test-device': approver() };
+
+    const forged = await post(
+      '/pair2/cancel',
+      {
+        requestId: made.requestId,
+        signature: signCancel(thief, made.requestId, bound.body.bindNonce as string),
+      },
+      headers
+    );
+    expect(forged.status).toBe(403);
+    expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'bound' });
+
+    const mixed = await post(
+      '/pair2/cancel',
+      {
+        requestId: made.requestId,
+        signature: signCancel(phone, made.requestId, bound.body.bindNonce as string),
+      },
+      headers
+    );
+    expect(mixed.status).toBe(403);
+    expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'bound' });
+
+    const extra = await post('/pair2/cancel', { requestId: made.requestId, extra: 1 }, headers);
+    expect(extra.status).toBe(400);
+  });
+
+  const pending = (headers: Record<string, string> = {}) =>
+    route(
+      new Request('http://localhost/pair2/pending', {
+        method: 'GET',
+        headers: { 'x-test-device': approver(), ...headers },
+      })
+    );
+
+  test('the pending list shows only bound, unapproved later-device requests', async () => {
+    seedDevice('Existing phone');
+    const phone = phoneKeypair();
+    const made = await createRequest();
+    const unbound = await createRequest();
+    const bound = await bindRequest(made.ticket, phone);
+    expect(bound.res.status).toBe(200);
+
+    const res = await pending();
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const body = (await res.json()) as { requests: Record<string, unknown>[] };
+    expect(body.requests).toHaveLength(1);
+    expect(body.requests[0]).toEqual({
+      requestId: made.requestId,
+      name: null,
+      phoneKey: phone.publicKeyB64,
+      bindNonce: bound.body.bindNonce,
+      expiresAt: made.expiresAt,
+    });
+    expect(JSON.stringify(body)).not.toContain(unbound.ticket);
+
+    await repoApprove(made.requestId);
+    expect(((await (await pending()).json()) as { requests: unknown[] }).requests).toHaveLength(0);
+  });
+
+  test('the pending list hides the first-device request and refuses strangers', async () => {
+    const first = await createRequest();
+    const phone = phoneKeypair();
+    await bindRequest(first.ticket, phone);
+    expect(((await (await pending()).json()) as { requests: unknown[] }).requests).toHaveLength(0);
+
+    expect(
+      (
+        await route(
+          new Request('http://localhost/pair2/pending', {
+            method: 'GET',
+            headers: { 'x-test-device': 'local-rpc:web' },
+          })
+        )
+      ).status
+    ).toBe(403);
+    expect(
+      (await route(new Request('http://localhost/pair2/pending', { method: 'GET' }), '10.0.0.9'))
+        .status
+    ).toBe(403);
+  });
+
   test('unknown /pair2 paths 404 without charging the limiter', async () => {
     const bogus = await post('/pair2/nope', {});
     expect(bogus.status).toBe(404);

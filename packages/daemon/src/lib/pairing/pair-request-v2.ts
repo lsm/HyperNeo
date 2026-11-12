@@ -70,6 +70,34 @@ export function decidePairingComplete(
   return { action: 'grant', owner: row.grantsOwner };
 }
 
+export const cancelMessage = (requestId: string, bindNonce: string) =>
+  `cancel:${requestId}:${bindNonce}`;
+
+export function verifyBoundCancel(
+  phoneKey: string,
+  requestId: string,
+  bindNonce: string,
+  signatureB64: string
+): boolean {
+  try {
+    const raw = Buffer.from(phoneKey, 'base64url');
+    if (raw.length !== 32) return false;
+    const key = createPublicKey({
+      key: Buffer.concat([ED25519_SPKI_DER_PREFIX, raw]),
+      format: 'der',
+      type: 'spki',
+    });
+    return verify(
+      null,
+      Buffer.from(cancelMessage(requestId, bindNonce), 'utf8'),
+      key,
+      Buffer.from(signatureB64, 'base64url')
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function verifyPhoneProof(
   phoneKey: string,
   requestId: string,

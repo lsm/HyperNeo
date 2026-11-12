@@ -35,6 +35,9 @@ const CompleteBody = RequestBody.extend({
   phoneKey: z.string().trim().min(16).max(80),
   signature: z.string().trim().min(16).max(200),
 });
+const JoinCancelBody = RequestBody.extend({
+  signature: z.string().trim().min(16).max(200),
+}).strict();
 
 const answer = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -84,6 +87,14 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
       );
       return status ? answer(200, status) : answer(404, { error: 'not_found' });
     }
+
+    if (url.pathname === '/pair2/pending' && req.method === 'GET') {
+      const identity = await mayApprove(req, remoteAddress);
+      if (!identity) return answer(403, { error: 'not_allowed' });
+      return answer(200, {
+        requests: await db.call(pairingRequestReads, 'pendingForApproval', now()),
+      });
+    }
     const knownPath = [
       '/pair2/bind',
       '/pair2/request',
@@ -122,8 +133,9 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
       return answer(200, await db.call(pairingRequestWrites, 'createRequest', now()));
     }
 
+    const body = await readJson(req);
     const parsed = (url.pathname === '/pair2/complete' ? CompleteBody : RequestBody).safeParse(
-      await readJson(req)
+      body
     );
     if (!parsed.success) {
       limiter.fail(now());
@@ -152,9 +164,27 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
     }
 
     if (url.pathname === '/pair2/cancel') {
+      const join = JoinCancelBody.safeParse(body);
+      if (join.success) {
+        if (await mayApprove(req, remoteAddress))
+          return answer(403, { error: 'signed_request_with_approver_credential' });
+        const cancelled = await db.call(
+          pairingRequestWrites,
+          'cancelBoundRequest',
+          join.data.requestId,
+          join.data.signature,
+          now()
+        );
+        return cancelled ? answer(200, { ok: true }) : answer(403, { error: 'not_pending' });
+      }
+      const approver = RequestBody.strict().safeParse(body);
+      if (!approver.success) {
+        limiter.fail(now());
+        return answer(400, { error: 'invalid_request' });
+      }
       const identity = await admitHuman(req, remoteAddress);
       if (!identity) return answer(403, { error: 'not_allowed' });
-      return (await db.call(pairingRequestWrites, 'cancelRequest', parsed.data.requestId, now()))
+      return (await db.call(pairingRequestWrites, 'cancelRequest', approver.data.requestId, now()))
         ? answer(200, { ok: true })
         : answer(403, { error: 'not_pending' });
     }
