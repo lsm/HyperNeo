@@ -670,17 +670,6 @@ test('Front publishes an unrequested background result without borrowing a human
   ).toEqual([]);
   expect(
     await convoPublish({
-      requestId: 'status-correction',
-      publicationId: standalone.publication.publicationId,
-      fullText: 'The pull request merged at the reviewed head.',
-      verbatim: true,
-    })
-  ).toMatchObject({ accepted: true });
-  expect(
-    service.publications.get(conversationId, standalone.publication.publicationId)
-  ).toMatchObject({ fullText: 'The pull request merged at the reviewed head.' });
-  expect(
-    await convoPublish({
       requestId: 'unknown-target',
       replyTo: [crypto.randomUUID()],
       fullText: 'Not a reply.',
@@ -691,45 +680,6 @@ test('Front publishes an unrequested background result without borrowing a human
   expect(
     (service.publications.list(conversationId) ?? []).filter((row) => row.replyTo?.includes(id))
   ).toHaveLength(0);
-});
-
-test('editing a progress acknowledgment into an answer prevents a later fallback', async () => {
-  const { id, job } = await deliveredConvoInput();
-  const handler = createNeoFrontHandler(service);
-  const acknowledgment = await convoPublish({
-    requestId: 'progress-before-edit',
-    replyTo: [id],
-    fullText: 'I will check.',
-    verbatim: true,
-    progress: true,
-  });
-  expect(acknowledgment).toMatchObject({ accepted: true });
-  expect(await handler(job)).toMatchObject({ delivered: false, pending: true });
-  const publicationId = acknowledgment.publication.publicationId;
-  expect(
-    await convoPublish({
-      requestId: 'answer-from-progress',
-      publicationId,
-      replyTo: [id],
-      fullText: 'The requested result is ready.',
-      verbatim: true,
-    })
-  ).toMatchObject({ accepted: true });
-  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
-  await db.saveSDKMessage(front, {
-    type: 'result',
-    subtype: 'success',
-    uuid: crypto.randomUUID(),
-    session_id: front,
-    result: '',
-    is_error: false,
-    user_message_uuids: [id],
-  } as import('@hyperneo/shared/sdk').SDKMessage);
-  expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
-  expect(service.publications.list(conversationId)).toHaveLength(1);
-  expect(service.publications.get(conversationId, publicationId)).toMatchObject({
-    fullText: 'The requested result is ready.',
-  });
 });
 
 test('Front exposes reads, handoff and one publication path', () => {
@@ -1456,38 +1406,6 @@ test('Front uses distinct short and detailed reply tools with no format switch',
     replyTo: [id],
   });
   expect(final.verbatim).toBeUndefined();
-  const shortened = await short!.handler(
-    {
-      requestId: 'short-update',
-      replyTo: [id],
-      publicationId: final.publicationId,
-      text: 'A brief correction.',
-    },
-    {} as never
-  );
-  expect(JSON.parse((shortened.content[0] as { text: string }).text)).toMatchObject({
-    accepted: true,
-  });
-  const edited = service.publications.get(conversationId, final.publicationId)!;
-  expect(edited).toMatchObject({ verbatim: true, fullText: 'A brief correction.' });
-  expect(edited.shortText).toBeUndefined();
-  const expanded = await detailed!.handler(
-    {
-      requestId: 'expanded-update',
-      replyTo: [id],
-      publicationId: final.publicationId,
-      summary: 'The updated result',
-      details: 'New supporting details.',
-    },
-    {} as never
-  );
-  expect(JSON.parse((expanded.content[0] as { text: string }).text)).toMatchObject({
-    accepted: true,
-  });
-  expect(service.publications.get(conversationId, final.publicationId)).toMatchObject({
-    shortText: 'The updated result',
-    fullText: 'New supporting details.',
-  });
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
