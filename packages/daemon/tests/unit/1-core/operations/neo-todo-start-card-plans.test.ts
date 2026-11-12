@@ -66,6 +66,15 @@ describe('planNeoQuestionPrune', () => {
     });
   });
 
+  test('keeps a card on a parent ask that holds one live step of a child ask', () => {
+    const question = card({ kind: 'reply' as NeoQuestion['kind'], todos: ['first'] });
+    const child = step('first', { askId: 'child' });
+    expect(planNeoQuestionPrune(question, [child])).toEqual({ reason: 'unchanged' });
+    expect(planNeoQuestionPrune(question, [{ ...child, state: 'removed' }])).toEqual({
+      value: { retire: 'todo no longer active' },
+    });
+  });
+
   test('retires a card with nothing left and frees its approved steps', () => {
     const first = step('first', { approvedAt: 1 });
     const plan = planNeoQuestionPrune(card({ todos: ['first'] }), [first]);
