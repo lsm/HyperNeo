@@ -31,7 +31,7 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
   let question = false;
   const sent: string[] = [];
   const reports: string[] = [];
-  const reportIds = new Set<string>();
+  const reportIds = new Map<string, string>();
   let reportUnavailable = false;
   const adapter = {
     id: ref.adapter,
@@ -72,8 +72,9 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
   };
   const delivery = createWorkerInputDelivery(db, deps, async (id, detail) => {
     if (reportUnavailable) throw new Error('Synthetic report receiver is unavailable');
+    if (reportIds.has(id) && reportIds.get(id) !== detail) throw new Error('idempotency_conflict');
     if (!reportIds.has(id)) reports.push(detail);
-    reportIds.add(id);
+    reportIds.set(id, detail);
   });
   const registry = createOperationRegistry(
     createWorkVerbOperations({ ...deps, queueInput: delivery.accept })
@@ -417,6 +418,44 @@ describe('durable worker follow-ups', () => {
       ).toBe(true);
     }
   );
+
+  test('a changed failure on the same answer notifies Neo and settles the retry', async () => {
+    let closed = false;
+    const h = fixture('codex-desktop', {
+      status: async () =>
+        closed
+          ? { ok: false, reason: 'not_open', detail: 'Synthetic worker is closed' }
+          : {
+              ok: true,
+              value: {
+                ref: { adapter: 'codex-desktop', id: 'synthetic-worker' },
+                title: 'Synthetic worker',
+                place: { machine: 'synthetic', name: 'Synthetic workspace' },
+                status: 'needs_you',
+                lastActivityAt: 1,
+              },
+            },
+    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await h.delivery.accept(
+        { ref: h.ref, message: 'The same human answer', idempotencyKey: 'synthetic-answer' },
+        'session:synthetic-neo',
+        caller
+      );
+      await h.tick();
+      closed = true;
+    }
+    expect(h.reports).toEqual([
+      'needs_you: its session is waiting on the human.',
+      'Synthetic worker is closed',
+    ]);
+    expect(
+      h.jobs.listJobs({ queue: 'worker_input' }).every((job) => job.status === 'completed')
+    ).toBe(true);
+    await h.tick();
+    expect(h.reports).toHaveLength(2);
+    expect(h.sent).toEqual([]);
+  });
 
   test('question-stop answer is delivered immediately', async () => {
     const h = fixture();
