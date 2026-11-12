@@ -63,7 +63,7 @@ The daemon enforces every rule. None depends on a prompt.
 
 **1. Start.** A todo starts by itself when its ask is open, it is `todo`, it has an
 instruction and a target, every todo in `depends_on` is `done`, no open card covers it,
-and a worker slot is free. There is no approval fact and no Start card. Today
+and a worker slot is free (rule 9). There is no approval fact and no Start card. Today
 `neo.todo.add` records approval when Neo passes `start: true`; here starting is the
 default and asking is the explicit act. When the human's word is needed first, Neo asks
 with a card; when the human already said to go, the work goes.
@@ -128,6 +128,22 @@ and returns the existing one. A pack supplies the matter key (the coding pack: t
 request or issue); core only compares keys. An open ask with no live todo and no open
 card is settled by the daemon after Neo has had one turn to write its outcome.
 
+**9. Limits and priority.** How many todos run at once is decided by the program, in
+core: `planWorkQueue` in `packages/daemon/src/lib/work-queue/` is a pure function, and no
+pack and no prompt takes part. It is the same for every kind of work. This stays as it is:
+
+- At most 6 todos run in total and 3 per project, by default (`neoTodoLimits`).
+- A slot is held only by a todo whose worker is live. A todo covered by an open card
+  holds none, so work waiting on the human never stops other work from starting. A todo
+  that only waits on its check holds none either.
+- Queued todos start in priority order (`urgent`, `high`, `normal`, `low`), then oldest
+  first (`orderWork`).
+- The limit holds back new starts only. A started todo that an answer sends on continues
+  at once and counts against the limit from then.
+
+Priority stays on the todo with its four levels. Neo sets it from the human's words, and
+the human can change it.
+
 ## Cards the daemon opens
 
 A daemon card is an ordinary choice card. Its text and options are status codes the
@@ -169,15 +185,16 @@ One list, in this order:
 1. **Needs you:** every open card, answerable in place. Questions come before holds;
    within each, urgent first, then the longest wait.
 2. **In progress:** running todos, most recent activity first.
-3. **Queued.**
+3. **Queued:** in the order they will start.
 4. **Done:** collapsed.
 
-Each ask is one row that names who moves next. A retired card that Neo still points to
+Each ask is one row that names who moves next. A step shows its priority when it is not
+`normal`; today the list does not show priority at all. A retired card that Neo still points to
 shows why it was retired. The "Neo has N still to handle" line goes away, because rule 6
 keeps that number at zero.
 
-The human can act on a step directly: Done, Cancel and Hold. These buttons come in a later
-slice; Neo's operations cover the same actions first.
+The human can act on a step directly: Done, Cancel, Hold and its priority. These controls
+come in a later slice; Neo's operations cover the same actions first.
 
 ## What goes away
 
@@ -236,7 +253,7 @@ Each slice is its own issue under one epic and is measured before it is cut.
 | 5 | Automatic start | An added todo with met prerequisites starts with no Start card; a migrated Start card keeps its per-todo answer |
 | 6 | The daemon's cards | A blocker Neo ignores, a twice-failed start and an overdue check each end in exactly one card |
 | 7 | One ask per matter | A second ask for the same pull request is refused with the first one's id |
-| 8 | Human buttons | Done, Cancel and Hold work from the list |
+| 8 | Human controls | Done, Cancel, Hold and priority work from the list |
 | 9 | Deletion | No removed state, column, operation or prompt is left |
 
 ## Earlier designs
