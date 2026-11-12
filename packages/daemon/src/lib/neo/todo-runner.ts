@@ -1560,8 +1560,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const proceed = async (todoId: string, message: string) => {
     const pending = read(todoId);
+    const targetAdapter =
+      pending.target?.verb === 'start'
+        ? pending.target.adapter
+        : pending.target && 'ref' in pending.target
+          ? pending.target.ref.adapter
+          : undefined;
     if (
       deps.queueFollowUp &&
+      targetAdapter !== 'space' &&
       pending.todo?.state === 'todo' &&
       pending.ask?.status === 'open' &&
       !pending.ref &&
@@ -1590,7 +1597,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return fail(
         'needs_you: its session is waiting on the human; ask them to answer it there, then continue.'
       ).reason;
-    if (deps.queueFollowUp && !ref.daemon) {
+    if (deps.queueFollowUp && !ref.daemon && ref.adapter !== 'space') {
       const inputId = await deps.queueFollowUp(todoId, text, ask.sessionId, ref);
       return { ok: true as const, todo, records: [`queued: follow-up ${inputId} is saved.`] };
     }

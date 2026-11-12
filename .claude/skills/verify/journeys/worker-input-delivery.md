@@ -63,3 +63,7 @@ DB until real processor retries exhaust, then requires one Neo notice and zero
 native submissions. The unit fixtures also cover interrupted dispatch and a
 notification receiver that recovers later. Unbound follow-ups report their reason
 once after one minute while preserving the input for a later binding.
+
+Space tasks retain their direct continuation send while running. The regression
+uses a synthetic Space adapter and checks pre-start start/send targets preserve
+their existing not_started result.
