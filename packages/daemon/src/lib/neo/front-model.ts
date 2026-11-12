@@ -151,10 +151,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           )
             return result({ delivered: false, reason: 'front_ack_required' });
           const prompts = asks.flatMap((ask) =>
-            ask &&
-            !service.db
-              .getSDKMessageRepo()
-              .getDeliveryMessageIdsByUuids(ask.askOrigin.sessionId, [ask.requestId]).length
+            ask
               ? [
                   {
                     sessionId: ask.askOrigin.sessionId,
@@ -170,15 +167,21 @@ export function createFrontTools(service: NeoService, conversationId: string) {
                 ]
               : []
           );
-          return (await service.db.gateway.call(
+          const reserved = await service.db.gateway.call(
             neoFrontInputWrites,
             'reserve',
             conversationId,
             messageIds,
             prompts
-          ))
-            ? result({ delivered: true })
-            : result({ delivered: false, reason: 'input_handed_off' });
+          );
+          return result(
+            reserved === 'reserved'
+              ? { delivered: true }
+              : {
+                  delivered: false,
+                  reason: reserved === 'handed_off' ? 'input_handed_off' : 'delivery_failed',
+                }
+          );
         }
       ),
     ],

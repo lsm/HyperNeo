@@ -185,25 +185,32 @@ export class NeoFrontInputRepository {
     conversationId: string,
     messageIds: readonly string[],
     prompts: readonly Pick<PersistPromptArgs, 'sessionId' | 'message'>[]
-  ): boolean {
+  ): 'reserved' | 'handed_off' | 'undeliverable' {
     return this.db.transaction(() => {
       const rows = messageIds.map((id) => this.get(conversationId, id));
-      if (rows.some((row) => !row?.eligible || row.owner)) return false;
+      if (rows.some((row) => !row?.eligible || row.owner)) return 'handed_off';
+      const sdk = new SDKMessageRepository(this.db);
+      const statuses = prompts.map((prompt) =>
+        sdk.getUserSendStatus(prompt.sessionId, prompt.message.uuid!)
+      );
+      if (statuses.includes('failed')) return 'undeliverable';
       for (const id of messageIds)
         this.db
           .prepare(`UPDATE neo_front_inputs SET owner = 'neo'
           WHERE conversation_id = ? AND message_id = ?`)
           .run(conversationId, id);
-      for (const prompt of prompts)
+      prompts.forEach((prompt, index) => {
+        if (statuses[index]) return;
         ensurePromptInTransaction({
           ...prompt,
           db: this.db,
-          sdkMessageRepo: new SDKMessageRepository(this.db),
+          sdkMessageRepo: sdk,
           jobQueue: new JobQueueRepository(this.db),
           hold: 'immediate',
           delivery: { origin: 'chat' },
         });
-      return true;
+      });
+      return 'reserved' as const;
     })();
   }
 }

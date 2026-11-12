@@ -1693,7 +1693,7 @@ test('a hand-off that lands before the fallback append requeues and the fallback
       raced = true;
       expect(
         new NeoFrontInputRepository(db.getDatabase()).reserve(conversationId, [second.id], [])
-      ).toBe(true);
+      ).toBe('reserved');
     }
     return (call as (...rest: unknown[]) => unknown)(...args);
   }) as never);

@@ -213,10 +213,29 @@ test('a hand-off reserves its inputs and enqueues the human message together, or
   expect(inputs.get('conversation', 'handed')?.owner).toBeNull();
   const uuid = crypto.randomUUID();
   expect(inputs.reserve('conversation', ['handed'], [{ sessionId, message: message(uuid) }])).toBe(
-    true
+    'reserved'
   );
   expect(inputs.get('conversation', 'handed')?.owner).toBe('neo');
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [uuid])).toHaveLength(1);
-  expect(inputs.reserve('conversation', ['handed'], [])).toBe(false);
+  expect(inputs.reserve('conversation', ['handed'], [])).toBe('handed_off');
   expect(inputs.claim('conversation', ['handed'], 'front')).toBe('handed_off');
+});
+
+test('a failed delivery alone cannot reserve an input for Neo', async () => {
+  await db.createSession(createTestSession(sessionId));
+  inputs.accept('conversation', 'failed', true);
+  const uuid = crypto.randomUUID();
+  const message = {
+    type: 'user',
+    uuid,
+    session_id: sessionId,
+    parent_tool_use_id: null,
+    message: { role: 'user', content: 'Check the build.' },
+  } as never;
+  await db.saveUserMessage(sessionId, message, 'failed');
+  expect(inputs.reserve('conversation', ['failed'], [{ sessionId, message }])).toBe(
+    'undeliverable'
+  );
+  expect(inputs.get('conversation', 'failed')?.owner).toBeNull();
+  expect(db.getSDKMessageRepo().getUserSendStatus(sessionId, uuid)).toBe('failed');
 });
