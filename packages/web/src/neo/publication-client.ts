@@ -175,6 +175,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     (row.revisionId !== undefined &&
       (typeof row.revisionId !== 'string' || !uuid.test(row.revisionId))) ||
     (row.revisions !== undefined && !Array.isArray(row.revisions)) ||
+    (row.publishedBy !== undefined && row.publishedBy !== 'front' && row.publishedBy !== 'neo') ||
     (row.replyTo !== undefined &&
       (!Array.isArray(row.replyTo) ||
         row.replyTo.length > 100 ||
@@ -241,6 +242,9 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     ...(answer ? { answerInput: answer } : {}),
     ...(answerOrigin ? { answerOrigin } : {}),
     ...(typeof row.revisionId === 'string' ? { revisionId: row.revisionId } : {}),
+    ...(row.publishedBy === 'front' || row.publishedBy === 'neo'
+      ? { publishedBy: row.publishedBy }
+      : {}),
     ...(row.revisions !== undefined ? { revisions } : {}),
     ...(artifacts ? { artifacts } : {}),
   };

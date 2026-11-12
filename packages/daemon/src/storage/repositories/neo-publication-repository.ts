@@ -1,6 +1,6 @@
 import { NeoFrontInputRepository } from './neo-front-input-worker.ts';
 import { SettingsRepository } from './settings-repository.ts';
-import { publicationSpeaker, frontSessionId } from '../../lib/neo/front-mode.ts';
+import { isPublicationSpeaker, frontSessionId } from '../../lib/neo/front-mode.ts';
 import { neoPublicationPageWrites } from './neo-publication-page-db.ts';
 import type { readNeoPublicationPage } from '../../lib/neo/publication-read-operation.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -72,11 +72,11 @@ function appendImmutable(
   return db.transaction((): NeoPublicationWriteResult => {
     if (
       speaker &&
-      speaker !==
-        publicationSpeaker(
-          input.conversationId,
-          new SettingsRepository(db).getGlobalSettings().neo?.front?.enabled === true
-        )
+      !isPublicationSpeaker(
+        input.conversationId,
+        speaker,
+        new SettingsRepository(db).getGlobalSettings().neo?.front?.enabled === true
+      )
     )
       return { accepted: false, reason: 'publication_superseded' };
     if (input.cardReply) {
@@ -171,14 +171,17 @@ function appendImmutable(
       ids.length &&
       !new NeoPublicationRepository(db).get(input.conversationId, input.publicationId)
     ) {
-      if (
-        !inputs.claim(
-          input.conversationId,
-          ids,
-          speaker === frontSessionId(input.conversationId) ? 'front' : 'neo'
-        )
-      )
-        return { accepted: false, reason: 'publication_superseded' };
+      const claimed = inputs.claim(
+        input.conversationId,
+        ids,
+        speaker === frontSessionId(input.conversationId) ? 'front' : 'neo',
+        !speaker
+      );
+      if (claimed !== 'claimed')
+        return {
+          accepted: false,
+          reason: claimed === 'handed_off' ? 'input_handed_off' : 'publication_superseded',
+        };
     }
     const inserted = db
       .prepare(`INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at)
@@ -231,18 +234,29 @@ const append = (superpipe({})('neo-publication-append') as PipelineAPI)
   .input(['input', 'db', 'speaker'])
   .pipe(admitNeoPublication, 'input', 'result:append')
   .pipe(
-    (input: NeoPublicationInput) =>
-      input.cardReply
+    (input: NeoPublicationInput, speaker?: string) => {
+      const { publishedBy: _publishedBy, ...admitted } = input;
+      const published = speaker
         ? {
-            ...input,
+            ...admitted,
+            publishedBy:
+              speaker === frontSessionId(input.conversationId)
+                ? ('front' as const)
+                : ('neo' as const),
+          }
+        : admitted;
+      return published.cardReply
+        ? {
+            ...published,
             replyTo: undefined,
             cardReply: {
-              ...input.cardReply,
-              sourceMessageIds: [...new Set(input.cardReply.sourceMessageIds)].sort(),
+              ...published.cardReply,
+              sourceMessageIds: [...new Set(published.cardReply.sourceMessageIds)].sort(),
             },
           }
-        : input,
-    'append',
+        : published;
+    },
+    ['append', 'speaker'],
     'append'
   )
   .pipe(JSON.stringify, 'append', 'payload')

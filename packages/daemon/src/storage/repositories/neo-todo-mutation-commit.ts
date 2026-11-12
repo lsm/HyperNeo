@@ -37,6 +37,7 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
   )
   .pipe(
     (plan: Plan, args: Input) =>
+      args.input.kind === 'done' ||
       !['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
       !args.checked ||
       sameNeoTodoCheck({ ...plan.todo, check: args.checked.check }, plan.todo)
@@ -51,7 +52,10 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
     'result:outcome'
   )
   .pipe(
-    (plan: Plan, args: Input) => requireNeoTodoMayFinish(plan, args.checked?.result ?? null),
+    (plan: Plan, args: Input) =>
+      args.input.kind === 'done'
+        ? { value: plan }
+        : requireNeoTodoMayFinish(plan, args.checked?.result ?? null),
     ['outcome', 'args'],
     'result:outcome'
   )
@@ -64,9 +68,13 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
         undefined,
         changes
       );
-      const committed = todos.commitState(plan.todo.id, plan.patch, args.now, {
-        state: 'no_opinion',
-      });
+      const committed = todos.commitState(
+        plan.todo.id,
+        plan.patch,
+        args.now,
+        { state: 'no_opinion' },
+        args.input.kind === 'done'
+      );
       if (args.input.kind === 'edit' && args.input.target)
         new NeoTodoSessionRepository(db, changes).create(plan.todo.id, args.input.target);
       return {

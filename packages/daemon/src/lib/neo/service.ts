@@ -1,6 +1,6 @@
 import { workerInputWrites } from '../../storage/repositories/worker-input-worker.ts';
 import { selectSendOrigin } from '../messaging/message-send.ts';
-import { frontSessionId, publicationSpeaker, frontModeNote } from './front-mode.ts';
+import { frontSessionId, isPublicationSpeaker, frontModeNote } from './front-mode.ts';
 import { frontSession } from './front-session.ts';
 import { createWorkerNameSource } from '../drivers/worker-names.ts';
 import type { NeoWorkerNameSource } from './worker-name.ts';
@@ -25,6 +25,7 @@ import { globalSettingsWrites } from '../../storage/repositories/global-settings
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
 import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
+import { neoFrontDeliveryWrites } from '../../storage/repositories/neo-front-input-worker.ts';
 import { decodeUlidTimestamp } from '../mailbox/ulid.ts';
 import { requireHumanCard } from './human-card.ts';
 import {
@@ -217,49 +218,51 @@ export class NeoService {
       (id) => this.repo.getBindingBySession(id)?.kind === 'neo',
       undefined,
       undefined,
-      async (id, listening) => {
+      async (target, listening) => {
         const conversation = this.repo.readConversationId();
-        const speaker =
-          conversation && id === this.defaultSessionId()
-            ? publicationSpeaker(
-                conversation,
-                this.db.getGlobalSettings().neo?.front?.enabled === true
-              )
-            : id;
-        id = speaker;
-        if (this.sessions.getCachedSession(id)?.getProcessingState().status === 'processing')
-          await ensurePrompt({
-            db: this.db.getDatabase(),
-            sdkMessageRepo: this.db.getSDKMessageRepo(),
-            jobQueue: this.db.getJobQueueRepo(),
-            sessionId: id,
-            message: {
-              type: 'user',
-              uuid: crypto.randomUUID() as UUID,
-              session_id: id,
-              parent_tool_use_id: null,
-              inputKind: 'system',
-              isSynthetic: true,
+        const ids =
+          conversation && target === this.defaultSessionId()
+            ? [
+                target,
+                ...(this.db.getGlobalSettings().neo?.front?.enabled === true
+                  ? [frontSessionId(conversation)]
+                  : []),
+              ]
+            : [target];
+        for (const id of ids)
+          if (this.sessions.getCachedSession(id)?.getProcessingState().status === 'processing')
+            await ensurePrompt({
+              db: this.db.getDatabase(),
+              sdkMessageRepo: this.db.getSDKMessageRepo(),
+              jobQueue: this.db.getJobQueueRepo(),
+              sessionId: id,
               message: {
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text:
-                      conversation && id === frontSessionId(conversation)
-                        ? listening
-                          ? '[listening: yes] The human is now listening. If your current reply has not been spoken, give its short spoken version once using speech_say.'
-                          : '[listening: no] The human stopped listening.'
-                        : listening
-                          ? 'The human is now listening.'
-                          : 'The human stopped listening.',
-                  },
-                ],
-              },
-            } as SDKUserMessage,
-            origin: 'system',
-            delivery: { origin: 'space_inject', injectedMidTurn: true },
-          });
+                type: 'user',
+                uuid: crypto.randomUUID() as UUID,
+                session_id: id,
+                parent_tool_use_id: null,
+                inputKind: 'system',
+                isSynthetic: true,
+                message: {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text:
+                        conversation && id === frontSessionId(conversation)
+                          ? listening
+                            ? '[listening: yes] The human is now listening. If your current reply has not been spoken, give its short spoken version once using speech_say.'
+                            : '[listening: no] The human stopped listening.'
+                          : listening
+                            ? 'The human is now listening.'
+                            : 'The human stopped listening.',
+                    },
+                  ],
+                },
+              } as SDKUserMessage,
+              origin: 'system',
+              delivery: { origin: 'space_inject', injectedMidTurn: true },
+            });
       },
       (id) => !!this.db.getSession(id),
       (id) => {
@@ -276,11 +279,11 @@ export class NeoService {
         const conversation = this.repo.readConversationId();
         return (
           !!conversation &&
-          id ===
-            publicationSpeaker(
-              conversation,
-              this.db.getGlobalSettings().neo?.front?.enabled === true
-            )
+          isPublicationSpeaker(
+            conversation,
+            id,
+            this.db.getGlobalSettings().neo?.front?.enabled === true
+          )
         );
       },
       (id) => {
@@ -380,14 +383,15 @@ export class NeoService {
       },
       getBinding: (id) => this.repo.getPublicationBinding(id),
       getRootBinding: () => this.repo.defaultBinding(),
-      publicationSessionId: () => {
+      isPublicationSpeaker: (id) => {
         const conversation = this.repo.readConversationId();
         return conversation
-          ? publicationSpeaker(
+          ? isPublicationSpeaker(
               conversation,
+              id,
               this.db.getGlobalSettings().neo?.front?.enabled === true
             )
-          : undefined;
+          : id === this.defaultSessionId();
       },
       hasProject: (id) => !!this.repo.getProject(id),
       publication: (conversation, id) => this.publications.get(conversation, id),
@@ -1336,6 +1340,16 @@ export class NeoService {
     );
   }
 
+  deliverFront(
+    sessionId: string,
+    messageId: string,
+    content: MailboxMessageContent,
+    fromSessionId: string,
+    conversationId: string
+  ): Promise<void> {
+    return this.deliver(sessionId, messageId, content, fromSessionId, false, conversationId);
+  }
+
   logReorganize(line: string): void {
     this.log.info(line);
   }
@@ -1345,13 +1359,16 @@ export class NeoService {
     messageId: string,
     content: MailboxMessageContent,
     originSessionId: string,
-    recordOnly = false
+    recordOnly = false,
+    catchUp?: string
   ): Promise<void> {
     const key = `${sessionId}:${messageId}`;
     const existing = this.deliveries.get(key);
     if (existing) return existing;
     const delivery = Promise.resolve()
-      .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId, recordOnly))
+      .then(() =>
+        this.enqueueDelivery(sessionId, messageId, content, originSessionId, recordOnly, catchUp)
+      )
       .finally(() => this.deliveries.delete(key));
     this.deliveries.set(key, delivery);
     return delivery;
@@ -1362,7 +1379,8 @@ export class NeoService {
     messageId: string,
     content: MailboxMessageContent,
     originSessionId: string,
-    recordOnly: boolean
+    recordOnly: boolean,
+    catchUp?: string
   ): Promise<void> {
     const queue = this.db.getJobQueueRepo();
     if (this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId)) return;
@@ -1397,6 +1415,27 @@ export class NeoService {
         isSynthetic: true,
       };
       await this.db.saveUserMessage(sessionId, message, 'consumed');
+      return;
+    }
+    if (catchUp) {
+      await gatewayFor(this.db.getDatabase()).call(
+        neoFrontDeliveryWrites,
+        'enqueueWithCatchUp',
+        catchUp,
+        createMailboxEntry({
+          to: { kind: 'session', sessionId },
+          origin: renderAddress({ kind: 'session', sessionId: originSessionId }),
+          messageUuid: messageId,
+          message: {
+            type: 'user',
+            message: { role: 'user', content },
+            parent_tool_use_id: null,
+            inputKind: 'system',
+            neoWakeEvent: true,
+          },
+          deliveryMode: 'immediate',
+        })
+      );
       return;
     }
     const outcome = await handoffPromptToMailbox({

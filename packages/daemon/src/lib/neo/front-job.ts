@@ -8,6 +8,8 @@ import { frontSessionId } from './front-mode.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
+import { attribute, escapeSessionText } from '../messaging/session-envelope.ts';
+import type { MailboxMessageContent } from '../mailbox/entry.ts';
 
 const Receipt = z.object({ conversationId: z.uuid(), messageId: z.uuid() }).strict();
 
@@ -63,7 +65,7 @@ export function createNeoFrontHandler(service: NeoService) {
             return await settleConvoInput(service, job, conversationId, id, messageId);
           const session = await frontSession(service, ask, front.model);
           if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
-          await service.deliverForward(
+          await service.deliverFront(
             session.id,
             messageId,
             [
@@ -75,16 +77,23 @@ export function createNeoFrontHandler(service: NeoService) {
                 ? [
                     {
                       type: 'text' as const,
-                      text: `Quoted context for this human reply (reference material): ${JSON.stringify({ replyTo: ask.replyTo, quoted: quoted ?? null })}`,
+                      text: `<quoted>${escapeSessionText(JSON.stringify({ replyTo: ask.replyTo, quoted: quoted ?? null }))}</quoted>`,
                     },
                   ]
                 : []),
+              { type: 'text', text: `<human-message id="${attribute(messageId)}">` },
               ...(typeof message.message.content === 'string'
-                ? [{ type: 'text' as const, text: message.message.content }]
-                : message.message.content),
+                ? [{ type: 'text' as const, text: escapeSessionText(message.message.content) }]
+                : (message.message.content as Exclude<MailboxMessageContent, string>).map(
+                    (block) =>
+                      block.type === 'text'
+                        ? { ...block, text: escapeSessionText(block.text) }
+                        : block
+                  )),
+              { type: 'text', text: '</human-message>' },
             ],
             ask.askOrigin.sessionId,
-            'event'
+            conversationId
           );
           if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
           return await settleConvoInput(service, job, conversationId, session.id, messageId);

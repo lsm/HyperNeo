@@ -52,6 +52,7 @@ export interface NeoPublicationInput {
   readonly requestedLanguage?: string;
   readonly revisionId?: string;
   readonly revisions?: readonly NeoPublicationRevision[];
+  readonly publishedBy?: 'front' | 'neo';
 }
 
 export interface NeoPublication extends NeoPublicationInput {
@@ -64,5 +65,9 @@ export type NeoPublicationAppendResult =
   | { accepted: true; created: boolean; publication: NeoPublication }
   | {
       accepted: false;
-      reason: 'invalid_publication' | 'publication_conflict' | 'publication_superseded';
+      reason:
+        | 'invalid_publication'
+        | 'publication_conflict'
+        | 'publication_superseded'
+        | 'input_handed_off';
     };

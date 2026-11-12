@@ -1,9 +1,9 @@
-import { publicationSpeaker } from './front-mode.ts';
+import { frontSessionId } from './front-mode.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { jobQueueWrites } from '../../storage/repositories/job-queue-repository.ts';
 import { neoFrontInputReads } from '../../storage/repositories/neo-front-input-worker.ts';
 import { neoPublicationWrites } from '../../storage/repositories/neo-publication-repository.ts';
-import { neoDerivedId } from './derived-id.ts';
+import { FRONT_FALLBACK_TEXT, frontFallbackId } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
@@ -17,7 +17,8 @@ export async function settleConvoInput(
   failure?: 'delivery' | 'superseded'
 ) {
   const owner = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, messageId);
-  if (owner?.owner) return { delivered: true, outcome: 'answered' };
+  if (owner?.owner)
+    return { delivered: true, outcome: owner.owner === 'neo' ? 'handed_off' : 'answered' };
   const ask = service.asks.find(conversationId, messageId);
   if (!ask) return { delivered: false };
   const sdk = service.db.getSDKMessageRepo();
@@ -63,16 +64,19 @@ export async function settleConvoInput(
     'append',
     {
       conversationId,
-      publicationId: neoDerivedId(`convo-reply:${conversationId}:${[...ids].sort().join(',')}`),
+      publicationId: frontFallbackId(conversationId, ids),
       verbatim: true,
-      fullText: 'This reply could not be completed. Please try again.',
+      fullText: FRONT_FALLBACK_TEXT,
       replyTo: ids,
       links: [],
     },
-    publicationSpeaker(conversationId, service.db.getGlobalSettings().neo?.front?.enabled === true)
+    service.db.getGlobalSettings().neo?.front?.enabled === true
+      ? frontSessionId(conversationId)
+      : `neo:${conversationId}`
   );
   if (!receipt.accepted) {
-    if (receipt.reason === 'publication_superseded') return pending();
+    if (receipt.reason === 'publication_superseded' || receipt.reason === 'input_handed_off')
+      return pending();
     throw new Error(receipt.reason);
   }
   service.notifyPublicationsChanged(conversationId);

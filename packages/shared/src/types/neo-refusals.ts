@@ -6,6 +6,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
 
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
+  input_handed_off:
+    'You are already working on this message; its answer reaches the human by itself.',
   front_not_speaking:
     'Background work is available only while dual-model mode is on for this conversation.',
   front_model_required: 'Choose a front model before enabling dual-model mode.',

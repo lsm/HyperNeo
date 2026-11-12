@@ -714,7 +714,8 @@ export class NeoAskTodoRepository {
   private stateFacts(
     todo: NeoTodo,
     change: NeoTodoPatch,
-    judgement: NeoTodoJudgement
+    judgement: NeoTodoJudgement,
+    markedDone = false
   ): TodoStateFacts {
     const live = this.db
       .prepare('SELECT ref, live_status AS status FROM neo_todo_sessions WHERE todo_id = ?')
@@ -728,6 +729,7 @@ export class NeoAskTodoRepository {
       todo,
       change,
       judgement,
+      markedDone,
       triagePending:
         triagedAt !== undefined &&
         !this.listQuestions(todo.askId).some(
@@ -789,14 +791,15 @@ export class NeoAskTodoRepository {
     todoId: string,
     change: NeoTodoPatch,
     now: number,
-    judgement: NeoTodoJudgement
+    judgement: NeoTodoJudgement,
+    markedDone = false
   ): { todo: NeoTodo | null; startNext: string | null } {
     const current = this.getTodo(todoId);
     if (!current) return { todo: null, startNext: null };
     this.pruneQuestions(current.askId, now);
     if (current.state === 'removed') return { todo: current, startNext: null };
     return recomputeTodoState(
-      () => this.stateFacts(current, change, judgement),
+      () => this.stateFacts(current, change, judgement, markedDone),
       (plan) => ({ todo: this.writeTodo(current, plan.patch, now)!, startNext: plan.startNext }),
       now
     );
