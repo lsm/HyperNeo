@@ -53,8 +53,6 @@ describe('pairing v2 one-time request repository', () => {
       'approved' | 'not_pending' | 'not_allowed'
     >;
 
-  const ownerCount = () => gateway.call(pairingRequestReads, 'ownerCount') as Promise<number>;
-
   const completeRequest = (requestId: string, phoneKey: string, signature: string) =>
     gateway.call(
       pairingRequestWrites,
