@@ -54,10 +54,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'Observe the named running build and confirm it contains the merge commit before recording smoke.',
   already_claimed:
     'Another start already claimed this card. Read the card with neo.snapshot and wait for that start to finish instead of starting it again.',
-  already_corrected:
-    'This reply already has a correction, and a correction cannot itself be corrected. Publish any further change as a new reply.',
-  already_edited:
-    'This reply was already edited in this turn. Make one edit per message per turn; a new fact goes out as its own reply.',
   already_started:
     'This card already has a working session. Use neo.work.continue to send it more instructions instead of starting it again.',
   ambiguous_target_agent:
@@ -94,8 +90,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The same prerequisite card is listed more than once. Name each prerequisite once.',
   duplicate_setting:
     'The proposal lists the same pack, scope and key more than once. Include each setting once.',
-  edit_unchanged:
-    'The edit leaves the reply exactly as it was. Pass the changed wording, or skip the edit.',
   head_changed_or_failed_stage:
     'The PR head changed or this stage already failed. Read the current assignment and findings; validate the current head rather than replacing a failure with a pass.',
   epic_unavailable:

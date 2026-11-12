@@ -28,7 +28,7 @@ let consumedInputId: string | undefined;
 const evidence: unknown[] = [];
 const handler = () => createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo', consumedInputId }));
 const ask = async (input: Record<string, unknown>) => {
-  const result = await handler()({ name: 'neo.question.ask', input: { askId: 'sign-off-8442', kind: 'choice', text: 'How should we sign off?', options: ['Keep', 'Change'], ...input } });
+  const result = await handler()({ name: 'neo.question.ask', input: { askId: 'sign-off-8442', kind: 'choice', text: 'How should we sign off?', options: ['Keep', 'Change'], retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } }, ...input } });
   assert(!result.isError, JSON.stringify(result)); return JSON.parse(result.content[0].text);
 };
 const readPage = async () => {
@@ -66,19 +66,10 @@ try {
   assert(!rows()[0].fullText.includes('Keep'));
   const firstSequence = rows()[0].sequence;
   assert.equal((await ask({})).question.id, first.question.id);
-  const editRequest = { requestId: 'edit-card-before-retarget', publicationId: rows()[0].publicationId, shortText: 'Edited synthetic notice', fullText: 'Edited synthetic notice' };
-  const edited = JSON.parse((await handler()({ name: 'neo.publication.edit', input: editRequest })).content[0].text);
-  assert(edited.accepted);
   const replacement = { replaces: first.question.id, text: 'A revised sign-off' };
   const next = await ask(replacement); assert(next.ok); assert.equal(rows().length, 1);
   assert.equal(rows()[0].cardReply?.questionId, next.question.id); assert.equal(rows()[0].sequence, firstSequence);
-  assert.equal(rows()[0].editedAt, edited.publication.editedAt);
-  assert.equal(rows()[0].editedBy, edited.publication.editedBy);
-  assert(rows()[0].revisions?.some(revision => revision.revisionId === edited.publication.revisionId));
-  const editRetry = JSON.parse((await handler()({ name: 'neo.publication.edit', input: editRequest })).content[0].text);
-  assert(editRetry.accepted && !editRetry.created);
-  assert.equal(rows()[0].cardReply?.questionId, next.question.id);
-  evidence.push({ first, next, edited, editRetry, publications: rows() });
+  evidence.push({ first, next, publications: rows() });
   await app.cleanup();
   app = await createDaemonApp({ config: config(), verbose: false }); await app.jobProcessor.stop();
   assert.equal((await ask(replacement)).question.id, next.question.id); assert.equal(rows().length, 1);
@@ -96,7 +87,7 @@ try {
   assert.deepEqual(await readPage(), page, 'reconnecting readers see the same persisted rows');
   assert(JSON.stringify(page).includes(next.question.id));
   const parsedPage = await readNeoPublications({ conversationId, after: 0 }, async () => ({ request: async () => page }) as unknown as MessageHub, () => true);
-  assert.equal(parsedPage.state, 'ready', 'edited and retargeted notices must not reject the client page');
+  assert.equal(parsedPage.state, 'ready', 'retargeted notices must not reject the client page');
   evidence.push({ afterRestart: rows(), inputFacts: facts, manual, reconnectedPage: page });
   console.log(`PASS card reply daemon; ${run}/evidence/card-reply.json`);
 } finally {

@@ -70,9 +70,9 @@ new NeoRepository(db).reserveBinding({ sessionId: 'neo', kind: 'neo', projectId:
 const publicationId = randomUUID(); const revisionId = randomUUID();
 const origin = { sessionId: 'worker', messageId: 'source' };
 assert(publications.append({ conversationId, publicationId, producerInput: origin, askOrigin: origin, shortText: '```', fullText: 'Read `report.md`', links: [{ kind: 'work', id: 'todo', label: 'Report' }] }).accepted);
-assert(publications.edit(conversationId, publicationId, { shortText: 'New report', fullText: '`missing.md`' }, new Date().toISOString(), 'human', origin, revisionId).accepted);
+assert(publications.append({ conversationId, publicationId: revisionId, producerInput: origin, askOrigin: origin, shortText: 'New report', fullText: '`missing.md`', links: [{ kind: 'work', id: 'todo', label: 'Report' }] }).accepted);
 assert.deepEqual(await call('artifact.reference.resolve', { ...request, requestId: randomUUID(), sourceMessageOrCard: { kind: 'publication', id: publicationId, revisionId: publicationId } }), upgrade);
-assert.deepEqual(await call('artifact.reference.resolve', { ...request, sourceMessageOrCard: { kind: 'publication', id: publicationId, revisionId } }), unavailable);
+assert.deepEqual(await call('artifact.reference.resolve', { ...request, sourceMessageOrCard: { kind: 'publication', id: revisionId, revisionId } }), unavailable);
 db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('neo','Synthetic',?,'now','now','active','{}','{}')`).run(join(root, 'workspace'));
 const unlinked = randomUUID();
 assert(publications.append({ conversationId, publicationId: unlinked, producerInput: origin, askOrigin: { sessionId: 'neo', messageId: 'm' }, shortText: 'Report', fullText: '`report.md`', links: [] }).accepted);

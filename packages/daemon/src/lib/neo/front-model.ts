@@ -49,7 +49,6 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       .describe(
         'The human message IDs this answers. Omit only for a background result that answers no human message.'
       ),
-    publicationId: z.uuid().optional(),
     artifacts: NeoPublicationDraft.shape.artifacts,
     session: NeoPublicationDraft.shape.session,
     links: NeoPublicationDraft.shape.links,
@@ -57,47 +56,18 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       "Required while the latest fact is [listening: yes]: one or two natural spoken lines in the human's language, consistent with the text, without paths, IDs, hashes, long numbers or Markdown. Omit when [listening: no]."
     ),
   };
-  const publish = async ({
-    publicationId,
-    ...input
-  }: z.infer<typeof NeoPublicationDraft> & { publicationId?: string; replyTo?: string[] }) => {
+  const publish = async (input: z.infer<typeof NeoPublicationDraft> & { replyTo?: string[] }) => {
     const replyTo = input.replyTo ?? [];
     if (
-      !publicationId &&
       !input.progress &&
       replyTo.some(
         (id) => !service.publications.get(conversationId, frontProgressId(conversationId, [id]))
       )
     )
       return result({ accepted: false, reason: 'front_ack_required' });
-    if (
-      !publicationId &&
-      !input.spoken &&
-      service.speech.isListening(service.defaultSessionId() ?? sessionId)
-    )
+    if (!input.spoken && service.speech.isListening(service.defaultSessionId() ?? sessionId))
       return result({ accepted: false, reason: 'spoken_required', listening: 'yes' });
-    if (!publicationId)
-      return result(await service.publish({ ...input, replyTo }, { source: 'mcp', sessionId }));
-    const current = service.publications.get(conversationId, publicationId);
-    const ids = current?.replyTo?.length
-      ? current.replyTo
-      : current?.producerInput
-        ? [current.producerInput.messageId]
-        : [];
-    if (!current || (ids.length ? !ids.every((id) => replyTo.includes(id)) : replyTo.length))
-      return result({ accepted: false, reason: 'unknown_reply_target' });
-    const edited = await service.publications.reviseCurrent(
-      {
-        requestId: input.requestId,
-        publicationId,
-        fullText: input.fullText,
-        shortText: input.shortText,
-        verbatim: input.verbatim,
-      },
-      { source: 'mcp', sessionId }
-    );
-    if (edited.accepted) service.notifyPublicationsChanged(conversationId);
-    return result(edited);
+    return result(await service.publish({ ...input, replyTo }, { source: 'mcp', sessionId }));
   };
   return createSdkMcpServer({
     name: 'front',
@@ -116,7 +86,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply_short',
-        'Send one plain message with no Details. Use for at most five short sentences in one brief paragraph. Use for acknowledgments, brief answers and progress updates. First call this with progress:true and the human replyTo ID for a one-sentence acknowledgment before doing work. For a final short answer omit progress. To update your existing message, pass publicationId. While [listening: yes], include spoken.',
+        'Send one plain message with no Details. Use for at most five short sentences in one brief paragraph. Use for acknowledgments, brief answers and progress updates. First call this with progress:true and the human replyTo ID for a one-sentence acknowledgment before doing work. For a final short answer omit progress. While [listening: yes], include spoken.',
         {
           ...replyFields,
           text: z.string().trim().min(1).max(16000),
@@ -126,7 +96,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply_detailed',
-        'Use for more than five sentences or any structured report, multi-topic update, list, table or long background result. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the human replyTo IDs it answers. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result. While [listening: yes], include spoken.',
+        'Use for more than five sentences or any structured report, multi-topic update, list, table or long background result. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the human replyTo IDs it answers. Start the conversation with reply_short, then use this for the full result. While [listening: yes], include spoken.',
         {
           ...replyFields,
           summary: z.string().trim().min(1).max(2000),

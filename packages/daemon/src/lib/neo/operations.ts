@@ -42,7 +42,6 @@ import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import { readNeoProjectIdentities } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
-import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
 import { NeoConversationReader } from '../../storage/repositories/neo-conversation-reader.ts';
@@ -759,16 +758,6 @@ export function createNeoOperations(
     ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, identity)),
     createNeoPublicationOperation(service.publish, (items) => service.presentPublications(items)),
-    ...createNeoPublicationChangeOperations({
-      getBinding: (id) => service.repo.getBindingBySession(id),
-      getRootBinding: () => service.repo.defaultBinding(),
-      publications: service.publications,
-      present: (items) => service.presentPublications(items),
-      notify: (conversationId) => {
-        service.notifyChanged();
-        service.notifyPublicationsChanged(conversationId);
-      },
-    }),
     createNeoPublicationReadOperation(service.publications, (items) =>
       service.presentPublications(items)
     ),

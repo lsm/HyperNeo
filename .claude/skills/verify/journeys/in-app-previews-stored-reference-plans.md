@@ -24,7 +24,7 @@ base commit, never a claim of HEAD bytes) from exact full-SHA Git blobs. PR/blob
 URLs must match the repository supplied by the trusted binding, including host;
 no host discovery, arbitrary fetching, credentials or redirects are introduced.
 
-For actual persisted publication revisions, run the native Bun helper from a
+For actual persisted publications, run the native Bun helper from a
 fresh directory with a synthetic HOME:
 
 ```bash
@@ -34,11 +34,11 @@ env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
   NODE_ENV=test bun .claude/skills/verify/preview-candidates.ts "$RUN"
 ```
 
-It seeds its own migrated SQLite database, stores and edits a real publication,
-renames/retains the synthetic workspace, reopens SQLite read-only and plans the
-original historical reference independently of the latest revision. It refuses
-references absent from that specific revision and refuses the previous worker
-after its persisted binding changes. Retain candidate-evidence.json and fixtures.
+It seeds its own migrated SQLite database, stores a real publication and a later
+one, renames/retains the synthetic workspace, reopens SQLite read-only and plans
+each message's reference from its own text. It refuses references absent from
+that specific message and refuses the previous worker after its persisted binding
+changes. Retain candidate-evidence.json and fixtures.
 No artifacts directory is created, no source bytes are opened and no Git/network
 command is run by planning. Candidate parsing and sensitive-name/path denials are
 defense in depth only. A plan is not a file grant: future tap capture must recheck

@@ -13,7 +13,6 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   await wake.waitFor();
   const message = page.locator('details[aria-label="Message from Neo to Synthetic worker"]');
   await message.waitFor();
-  const pub = page.locator(`[data-message-ref="${seed.pub}"]`);
   const failed = page.locator(`[data-message-ref="${seed.failed}"]`);
   const toggle = row => row.getByRole('button', { name: /(?:more|less).*./ });
   const result = { phase, width, controls: [] };
@@ -68,23 +67,6 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   await settle(page);
   await page.screenshot({ path: `${dir}/session-expanded-${width}.png`, scale: 'css' });
   if (after) await toggle(message).click(); else await message.locator('summary').click();
-  const historyToggle = () => pub.getByRole('button', { name: /Edited/ });
-  if (after) {
-    await pub.getByText('Edited', { exact: true }).click();
-    assert.equal(await pub.getByRole('region', { name: 'Revision history' }).count(), 0);
-  }
-  await historyToggle().click();
-  const original = pub.getByText('Synthetic original history detail', { exact: true });
-  await original.waitFor();
-  if (after) {
-    await original.click();
-    assert.equal(await historyToggle().getAttribute('aria-expanded'), 'true');
-    result.controls.push(await controlBounds(historyToggle()));
-  }
-  await historyToggle().scrollIntoViewIfNeeded();
-  await settle(page);
-  await page.screenshot({ path: `${dir}/history-expanded-${width}.png`, scale: 'css' });
-  await historyToggle().click();
   const reasonToggle = () => failed.getByRole('button', { name: /Not delivered/ });
   if (after) {
     await failed.getByRole('img', { name: /Not delivered/ }).click();

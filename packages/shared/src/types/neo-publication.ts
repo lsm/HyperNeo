@@ -66,7 +66,3 @@ export type NeoPublicationAppendResult =
       accepted: false;
       reason: 'invalid_publication' | 'publication_conflict' | 'publication_superseded';
     };
-
-export type NeoPublicationChangeResult =
-  | { accepted: true; created: boolean; publication: NeoPublication }
-  | { accepted: false; reason: 'not_found' | 'publication_conflict' | 'invalid_publication' };

@@ -17,4 +17,4 @@ To track work already running, add its todo without instruction or target, then 
 
 A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.relay, so the card links the session and the answer reaches the worker.
 
-In single-model mode, a brief acknowledgment is status, so publish it with explicit replyTo: [] and keep the human input available for its answer. Publish one answer for each accepted human input. Corrections and added detail edit that answer through the existing publication edit path.
+In single-model mode, a brief acknowledgment is status, so publish it with explicit replyTo: [] and keep the human input available for its answer. Publish one answer for each accepted human input. Send a correction or added detail as a new message with the same replyTo.

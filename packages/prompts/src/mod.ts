@@ -256,7 +256,6 @@ import mdToolProjectForget from './neo/tools/neo.project.forget.md' with { type:
 import mdToolProjectMove from './neo/tools/neo.project.move.md' with { type: 'text' };
 import mdToolProjectSection from './neo/tools/neo.project.section.md' with { type: 'text' };
 import mdToolProjectsReorganize from './neo/tools/neo.projects.reorganize.md' with { type: 'text' };
-import mdToolPublicationEdit from './neo/tools/neo.publication.edit.md' with { type: 'text' };
 import mdToolPublicationPublish from './neo/tools/neo.publication.publish.md' with { type: 'text' };
 import mdToolPublicationRead from './neo/tools/neo.publication.read.md' with { type: 'text' };
 import mdToolSessionArchive from './neo/tools/neo.session.archive.md' with { type: 'text' };
@@ -744,7 +743,6 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.project.move.md': mdToolProjectMove,
     'neo/tools/neo.project.section.md': mdToolProjectSection,
     'neo/tools/neo.projects.reorganize.md': mdToolProjectsReorganize,
-    'neo/tools/neo.publication.edit.md': mdToolPublicationEdit,
     'neo/tools/neo.publication.publish.md': mdToolPublicationPublish,
     'neo/tools/neo.publication.read.md': mdToolPublicationRead,
     'neo/tools/neo.session.archive.md': mdToolSessionArchive,

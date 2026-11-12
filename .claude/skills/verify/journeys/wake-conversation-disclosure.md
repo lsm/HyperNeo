@@ -14,7 +14,7 @@ env -i PATH="$PATH" HOME="$RUN/home" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data"
 
 Keep the terminal alive; `doctor.sh "$PORT" "$RUN"` must say usable. No real
 provider, model, files, transcript or credentials are used. The fixture includes
-a settled wake with attributed content, one Neo-to-worker message, a revised
+a settled wake with attributed content, one Neo-to-worker message, a
 publication and a permanently failed human ask. It delegates fresh-DB protection
 to the base synthetic seed.
 
@@ -29,7 +29,6 @@ finite animations before screenshots.
 | --- | --- |
 | Work-panel wake title/state | Clicking title/summary stays closed; more/Enter opens additions; less/Space closes; focus follows the new button; wake-expanded and collapsed screenshots |
 | Session message | Preview stays inert; more reveals complete selectable text; body click/drag never closes it; final-line and right-edge bounds in JSON; session-expanded screenshots |
-| Edited history | Edited marker stays inert; explicit more shows ordered original/current text; less sits after the history; copy/reply remain separate; history-expanded screenshots |
 | Stored delivery failure | Alert indicator stays inert; more/less controls the reason; edit/resend remains separate; reason-expanded screenshots |
 | Native behavior | Native details/open/entry identity retained; question link still opens the owning work card on desktop and the phone sheet; publication href still resolves to its retained article |
 | Phone fit | No horizontal overflow; inspect controls, content and composer separately at 390 |
