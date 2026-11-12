@@ -15,6 +15,10 @@ export function resetHumanDevices(db: Database, now: number, requestId?: string)
     db.prepare(
       'UPDATE pairing_codes SET expires_at = MIN(expires_at, ?) WHERE used_at IS NULL'
     ).run(now);
+    db.prepare(
+      `UPDATE pairing_requests SET cancelled_at = ?, expires_at = ?
+       WHERE granted_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL`
+    ).run(now, now);
     db.prepare('INSERT INTO human_device_resets (id, reset_at, devices_json) VALUES (?, ?, ?)').run(
       id,
       now,

@@ -6,6 +6,7 @@ import {
   pairingRequestWrites,
 } from '../../../../src/storage/repositories/pairing-request-repository';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository';
+import { resetHumanDevices } from '../../../../src/storage/repositories/human-device-reset-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -467,6 +468,26 @@ describe('pairing v2 one-time request repository', () => {
     if (!done.ok) return;
     expect(done.owner).toBe(false);
     expect(devices.countDevices().humans).toBe(2);
+  });
+
+  test('a request approved before a lost-phone reset cannot complete afterwards', async () => {
+    const existing = seedPhone();
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+    expect(await approveRequest(made.requestId, existing)).toBe('approved');
+
+    resetHumanDevices(writer, now, 'reset');
+
+    const done = await completeRequest(
+      made.requestId,
+      phone.publicKeyB64,
+      proof(phone, made.requestId, bound.bindNonce)
+    );
+    expect(done.ok).toBe(false);
+    expect(devices.humanRecoveryOpen()).toBe(true);
+    expect(devices.countDevices().humans).toBe(0);
   });
 
   test('revoking the only phone does not reopen first-device pairing', async () => {

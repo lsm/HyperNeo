@@ -11,7 +11,7 @@ resource owner, not a worker command. Only time and a UUID cross to the writer;
 notifications and closures stay on main after an exact committed receipt. Preserve
 the caller's original unknown-outcome error. Never repeat its reset command.
 
-The dependency manifest pins exact source hashes for the unchanged 142-line
+The dependency manifest pins exact source hashes for the 146-line
 reset/receipt subtree and separately audited 283-line core append subtree. Neo
 authorized this audited-dependency split. The append manifest includes the later
 authorized optional publication session field and its revision retention, plus
@@ -20,7 +20,8 @@ the transient versionCreated receipt flag for a newly appended card revision
 the public handoff schema and its filename check are included, and card replies
 retain existing handoffs. Reset notices carry no card reply or artifacts, so the
 new conflict branch does not apply to them. The
-142-line reset/receipt subtree and its hash remain unchanged. Original measurement
+146-line reset/receipt subtree, revised so the reset also cancels open pairing
+requests, is pinned by its updated hash. Original measurement
 files retain the historical 277-line construction baseline. Keep both interfaces and all hashes in
 the contract test and each PR body. Do not change app.ts, service/publication,
 WorkerLane or shared gateway plumbing. This construction journey invokes the
