@@ -416,6 +416,7 @@ describe('Neo MVP', () => {
       'neo.todo.continue',
       'neo.todo.proceed',
       'neo.todo.retry',
+      'neo.todo.done',
       'neo.todo.close',
       'neo.ask.search',
       'neo.ask.read',

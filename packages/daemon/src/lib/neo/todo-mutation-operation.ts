@@ -38,6 +38,7 @@ const kinds = new Map<string, Input['kind']>([
   ['neo.todo.edit', 'edit'],
   ['neo.todo.hold', 'edit'],
   ['neo.todo.close', 'close'],
+  ['neo.todo.done', 'done'],
   ['neo.todo.remove', 'remove'],
 ]);
 
@@ -139,9 +140,11 @@ export function wireNeoTodoMutations(
       'result:outcome'
     )
     .pipe(
-      (plan: Plan) =>
-        plan.patch.state === 'done' ? readNeoTodoCompletion(deps.packs(), plan.todo) : null,
-      'outcome',
+      (plan: Plan, input: Input) =>
+        plan.patch.state === 'done' && input.kind !== 'done'
+          ? readNeoTodoCompletion(deps.packs(), plan.todo)
+          : null,
+      ['outcome', 'input'],
       'completion'
     )
     .pipe(

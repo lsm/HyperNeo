@@ -228,6 +228,92 @@ describe('Writer-backed todo operation activation', () => {
     expect(order).toEqual([]);
   });
 
+  test('done marks a never-started todo with an unmet check done, with no reason, and its dependent starts', async () => {
+    checkDone = false;
+    const result = await call('neo.todo.done', { todoId: 'first' });
+    expect(result).toMatchObject({
+      ok: true,
+      todo: { id: 'first', state: 'done', startedAt: null, evidence: null, blockedBy: null },
+    });
+    expect(order).toEqual(['stop', 'commit', 'announce', 'start:peer']);
+    expect(result.ok && result.todos.find((todo) => todo.id === 'peer')?.state).toBe('doing');
+  });
+
+  test('done is not refused by an open card or a block on the human; its own card retires and a shared card stays open', async () => {
+    checkDone = false;
+    const card = {
+      kind: 'reply' as const,
+      options: null,
+      multiple: false,
+      yesLabel: null,
+      noLabel: null,
+      startTodos: null,
+    };
+    expect(
+      store.askQuestion('shared', 'ask', { ...card, text: 'Which release?' }, 2).todos
+    ).toEqual(['first', 'peer']);
+    store.askQuestion('own', 'ask', { ...card, text: 'Answer first', todoId: 'first' }, 2);
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 2 }, 2);
+    store.updateTodo(
+      store.getTodo('first')!,
+      { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Answer first' },
+      3
+    );
+    expect(store.getTodo('first')).toMatchObject({ state: 'blocked', blockedBy: 'needs-human' });
+    expect(
+      await call('neo.todo.done', { todoId: 'first', reason: 'No longer needed' })
+    ).toMatchObject({
+      ok: true,
+      todo: { state: 'done', evidence: 'No longer needed', blockedBy: null },
+    });
+    expect(store.getQuestion('own')?.state).toBe('retired');
+    expect(store.getQuestion('shared')?.state).toBe('open');
+    expect(order.slice(0, 2)).toEqual(['stop', 'commit']);
+  });
+
+  test('a block on the human under an open ask-level card still holds the legacy close, and done clears it', async () => {
+    store.askQuestion(
+      'shared',
+      'ask',
+      {
+        kind: 'reply',
+        text: 'Which release?',
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        startTodos: null,
+      },
+      2
+    );
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 2 }, 2);
+    store.updateTodo(
+      store.getTodo('first')!,
+      { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Answer first' },
+      3
+    );
+    expect(await call('neo.todo.close', { todoId: 'first', reason: 'Finished' })).toMatchObject({
+      ok: true,
+      todo: { state: 'blocked', blockedBy: 'needs-human' },
+    });
+    expect(await call('neo.todo.done', { todoId: 'first' })).toMatchObject({
+      ok: true,
+      todo: { state: 'done', blockedBy: null },
+    });
+    expect(store.getQuestion('shared')?.state).toBe('open');
+  });
+
+  test('done leaves a removed todo as it is', async () => {
+    await call('neo.todo.remove', { todoId: 'first', reason: 'Cancelled' });
+    order.length = 0;
+    expect(await call('neo.todo.done', { todoId: 'first' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('todo_not_live:'),
+    });
+    expect(store.getTodo('first')!.state).toBe('removed');
+    expect(order).toEqual([]);
+  });
+
   test('close of a started todo whose check has not passed still waits on the check', async () => {
     checkDone = false;
     store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 2 }, 2);

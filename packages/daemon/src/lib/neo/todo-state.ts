@@ -10,6 +10,7 @@ export interface TodoStateFacts {
   questionOpen: boolean;
   answerPending?: boolean;
   triagePending?: boolean;
+  markedDone?: boolean;
   dispatched: boolean;
   live: string | null;
   change: NeoTodoPatch;
@@ -58,6 +59,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     todo.blockedBy === 'needs-human' &&
     judgement.state !== 'done' &&
     change.state !== 'removed' &&
+    !facts.markedDone &&
     facts.askOpen &&
     (facts.questionOpen ||
       facts.answerPending ||

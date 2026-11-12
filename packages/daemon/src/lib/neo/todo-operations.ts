@@ -587,6 +587,27 @@ export function planNeoTodoClose(
   };
 }
 
+const Done = z.object({ todoId: Text, reason: Text.optional() });
+
+export function planNeoTodoDone(
+  todo: NeoTodo,
+  input: z.infer<typeof Done>,
+  now = Date.now()
+): Gate<TodoPlan> {
+  if (!['todo', 'doing', 'blocked', 'failed'].includes(todo.state))
+    return fail(`todo_not_live: this todo is ${todo.state}.`);
+  return {
+    value: {
+      todo,
+      patch: {
+        state: 'done',
+        finishedAt: now,
+        ...(input.reason ? { evidence: input.reason } : {}),
+      },
+    },
+  };
+}
+
 export function createNeoTodoOperations(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -944,6 +965,16 @@ export function createNeoTodoOperations(
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await retry(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.todo.done',
+      description: neoToolDescription('neo.todo.done'),
+      inputSchema: Done,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async () => {
+        throw new Error('neo.todo.done runs through the todo writer');
+      },
     }),
     defineOperation({
       name: 'neo.todo.close',
