@@ -120,6 +120,24 @@ export function requireNeoAskProject(
   };
 }
 
+export function neoAskMatterRefusal(
+  draft: Pick<NeoAsk, 'title' | 'request'>,
+  open: readonly Pick<NeoAsk, 'id' | 'title' | 'request' | 'createdAt'>[],
+  packs: readonly Pick<NeoPack, 'matter'>[]
+): string | null {
+  const matter = (ask: Pick<NeoAsk, 'title' | 'request'>) =>
+    packs.map((pack) => pack.matter?.(ask)).find(Boolean) ?? null;
+  const key = matter(draft);
+  const first = key
+    ? open
+        .filter((ask) => matter(ask) === key)
+        .sort((left, right) => left.createdAt - right.createdAt)[0]
+    : null;
+  return first
+    ? `ask_open: "${first.title}" (${first.id}) is already open for ${key}. Add the todos to that ask with neo.todo.add; open another only after it is settled.`
+    : null;
+}
+
 export function requireNeoAskOwner(
   ask: NeoAsk,
   caller: OperationCaller,
@@ -164,6 +182,23 @@ export function createNeoAskRecordOperations(
         const id = input.goalId ?? null;
         const goal = requireNeoAskGoal(id, sessionId, id ? readGoal(id) : null);
         return 'value' in goal ? { value: { sessionId, projectId, goalId: goal.value } } : goal;
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (
+        scope: { sessionId: string; projectId: string | null; goalId: string | null },
+        input: z.infer<typeof Open>
+      ) => {
+        const reason = store.findAsk(scope.sessionId, null, input.title, scope.goalId)
+          ? null
+          : neoAskMatterRefusal(
+              input,
+              store.listOpenAsks().filter((ask) => ask.sessionId === scope.sessionId),
+              packs()
+            );
+        return reason ? { reason: { ok: false as const, reason } } : { value: scope };
       },
       ['outcome', 'input'],
       'result:outcome'
