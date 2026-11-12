@@ -41,6 +41,7 @@ describe('pairing v2 one-time request route', () => {
 
   beforeEach(() => {
     now = 1_000_000;
+    approverId = null;
     writer = new Database(':memory:');
     runMigrations(writer, () => {});
     createTables(writer);
@@ -92,8 +93,11 @@ describe('pairing v2 one-time request route', () => {
     return id;
   };
 
-  const repoApprove = (requestId: string, approver = 'signer:fixture') =>
-    gateway.call(pairingRequestWrites, 'approveRequest', requestId, approver, now) as Promise<
+  let approverId: string | null = null;
+  const approver = () => (approverId ??= seedDevice('Approver phone', 0));
+
+  const repoApprove = (requestId: string, approverDevice = approver()) =>
+    gateway.call(pairingRequestWrites, 'approveRequest', requestId, approverDevice, now) as Promise<
       'approved' | 'not_pending' | 'not_allowed'
     >;
 
@@ -176,6 +180,7 @@ describe('pairing v2 one-time request route', () => {
   });
 
   test('a phone retrying complete while awaiting approval does not trip the limiter', async () => {
+    seedDevice('Existing phone');
     const made = await createRequest();
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
@@ -189,7 +194,8 @@ describe('pairing v2 one-time request route', () => {
     expect(done.body.credential).toBeTruthy();
   });
 
-  test('completion needs approval and proof of possession', async () => {
+  test('a later phone needs approval and proof of possession', async () => {
+    const existing = seedDevice('Existing phone');
     const made = await createRequest();
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
@@ -199,7 +205,7 @@ describe('pairing v2 one-time request route', () => {
     expect(early.res.status).toBe(403);
     expect(early.body.error).toBe('not_approved');
 
-    expect(await repoApprove(made.requestId)).toBe('approved');
+    expect(await repoApprove(made.requestId, existing)).toBe('approved');
 
     const badSignature = await post('/pair2/complete', {
       requestId: made.requestId,
@@ -207,19 +213,20 @@ describe('pairing v2 one-time request route', () => {
       signature: phone.sign(`${made.requestId}:other-nonce`),
     });
     expect(badSignature.status).toBe(403);
-    expect(devices.countDevices().humans).toBe(0);
+    expect(devices.countDevices().humans).toBe(1);
   });
 
   test('an approved bound request completes once and only that phone gets the credential', async () => {
+    const existing = seedDevice('Existing phone');
     const made = await createRequest();
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
-    await repoApprove(made.requestId);
+    expect(await repoApprove(made.requestId, existing)).toBe('approved');
 
     const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
     expect(done.res.status).toBe(200);
     expect(done.body.credential).toBeTruthy();
-    expect(devices.countDevices().humans).toBe(1);
+    expect(devices.countDevices().humans).toBe(2);
     expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'granted' });
 
     const again = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
@@ -272,7 +279,7 @@ describe('pairing v2 one-time request route', () => {
     expect(done.body.error).toBe('denied');
   });
 
-  test('two simultaneous first-owner approvals grant exactly one owner', async () => {
+  test('two simultaneous first-device completions grant exactly one owner', async () => {
     const madeA = await createRequest();
     const madeB = await createRequest();
     const phoneA = phoneKeypair();
@@ -282,22 +289,17 @@ describe('pairing v2 one-time request route', () => {
     expect(boundA.res.status).toBe(200);
     expect(boundB.res.status).toBe(200);
 
-    expect(await repoApprove(madeA.requestId)).toBe('approved');
-    expect(await repoApprove(madeB.requestId)).toBe('approved');
-
     const first = await completeRequest(madeA.requestId, phoneA, boundA.body.bindNonce as string);
     expect(first.res.status).toBe(200);
     const second = await completeRequest(madeB.requestId, phoneB, boundB.body.bindNonce as string);
     expect(second.res.status).toBe(403);
-    expect(second.body.error).toBe('superseded');
     expect(devices.countDevices().humans).toBe(1);
   });
 
-  test('a paired owner device approves a second phone without the bootstrap flag', async () => {
+  test('a paired first phone approves a second phone without any bootstrap flag', async () => {
     const bootstrap = await createRequest();
     const owner = phoneKeypair();
     const bound = await bindRequest(bootstrap.ticket, owner);
-    await repoApprove(bootstrap.requestId);
     const granted = await completeRequest(
       bootstrap.requestId,
       owner,
@@ -338,7 +340,8 @@ describe('pairing v2 one-time request route', () => {
     expect(await (await status(second.requestId)).json()).toMatchObject({ state: 'cancelled' });
   });
 
-  test('only a paired owner device can approve a bound request', async () => {
+  test('any active paired phone can approve; agents, strangers and revoked phones cannot', async () => {
+    seedDevice('Existing phone');
     const made = await createRequest();
     const phone = phoneKeypair();
     const bound = await bindRequest(made.ticket, phone);
@@ -347,14 +350,96 @@ describe('pairing v2 one-time request route', () => {
     expect(
       (await approveRequest(made.requestId, { 'x-test-device': 'agent-read:cli' })).status
     ).toBe(403);
-    const nonOwner = seedDevice('Paired non-owner', 0);
-    expect((await approveRequest(made.requestId, { 'x-test-device': nonOwner })).status).toBe(403);
+    const stranger = seedDevice('Revoked phone', 0);
+    writer.prepare('UPDATE paired_devices SET revoked_at = ? WHERE id = ?').run(now, stranger);
+    expect((await approveRequest(made.requestId, { 'x-test-device': stranger })).status).toBe(403);
     expect(
       (await approveRequest(made.requestId, { 'x-test-device': crypto.randomUUID() })).status
     ).toBe(403);
 
-    const owner = seedDevice('Owner phone');
-    expect((await approveRequest(made.requestId, { 'x-test-device': owner })).status).toBe(200);
+    const member = seedDevice('Paired member', 0);
+    expect((await approveRequest(made.requestId, { 'x-test-device': member })).status).toBe(200);
+    expect((await status(made.requestId).then((r) => r.json())).state).toBe('approved');
+  });
+
+  test('a first phone completes right after the scan with no approval step', async () => {
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    expect(bound.res.status).toBe(200);
+    const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
+    expect(done.res.status).toBe(200);
+    expect(done.body.credential).toBeTruthy();
+    expect(devices.countDevices().humans).toBe(1);
+    expect(devices.listDevices()[0].name).toBe('Paired phone');
+  });
+
+  test('an active paired phone without the owner bit may approve the next phone', async () => {
+    const member = seedDevice('Paired member', 0);
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    expect(bound.res.status).toBe(200);
+    expect((await approveRequest(made.requestId, { 'x-test-device': member })).status).toBe(200);
+    const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
+    expect(done.res.status).toBe(200);
+    expect(devices.countDevices().humans).toBe(2);
+  });
+
+  test('a legacy code device paired on this daemon may approve the next v2 phone', async () => {
+    const legacy = devices.createCode('human', 'Legacy phone', true, now);
+    const redeemed = await devices.redeemAsync({ code: legacy.code, name: 'Legacy phone' }, now);
+    expect(redeemed.paired).toBeTruthy();
+    const legacyDeviceId = (redeemed.paired as { device: { id: string } }).device.id;
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    expect((await approveRequest(made.requestId, { 'x-test-device': legacyDeviceId })).status).toBe(
+      200
+    );
+    const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
+    expect(done.res.status).toBe(200);
+  });
+
+  test('a first-device request cannot be approved through the approve route', async () => {
+    const bootstrap = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(bootstrap.ticket, phone);
+    expect(bound.res.status).toBe(200);
+    const member = seedDevice('Existing member', 0);
+    expect((await approveRequest(bootstrap.requestId, { 'x-test-device': member })).status).toBe(
+      403
+    );
+    const done = await completeRequest(bootstrap.requestId, phone, bound.body.bindNonce as string);
+    expect(done.res.status).toBe(403);
+    expect(devices.countDevices().humans).toBe(1);
+  });
+
+  test('a legacy first-device grant refuses an outstanding v2 first-device attempt', async () => {
+    const phone = phoneKeypair();
+    const made = await createRequest();
+    const bound = await bindRequest(made.ticket, phone);
+    expect(bound.res.status).toBe(200);
+    const legacy = devices.createCode('human', 'Typed phone', true, now);
+    const redeemed = await devices.redeemAsync({ code: legacy.code, name: 'Typed phone' }, now);
+    expect(redeemed.paired).toBeTruthy();
+    const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
+    expect(done.res.status).toBe(403);
+    expect(done.body.error).toBe('cancelled');
+    expect(devices.countDevices().humans).toBe(1);
+  });
+
+  test('a v2 first-device grant refuses an outstanding legacy human code', async () => {
+    const legacy = devices.createCode('human', 'Typed phone', true, now);
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindRequest(made.ticket, phone);
+    const done = await completeRequest(made.requestId, phone, bound.body.bindNonce as string);
+    expect(done.res.status).toBe(200);
+    expect(
+      await devices.redeemAsync({ code: legacy.code, name: 'Typed phone' }, now)
+    ).toMatchObject({ paired: null });
+    expect(devices.countDevices().humans).toBe(1);
   });
 
   test('unknown /pair2 paths 404 without charging the limiter', async () => {

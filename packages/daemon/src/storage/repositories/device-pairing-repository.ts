@@ -227,6 +227,25 @@ export class DevicePairingRepository {
       .get(id);
   }
 
+  cancelFirstDeviceRequests(now: number): void {
+    this.db
+      .prepare(
+        `UPDATE pairing_requests SET cancelled_at = ?, expires_at = ?
+         WHERE first_device = 1 AND granted_at IS NULL AND denied_at IS NULL
+           AND cancelled_at IS NULL AND expires_at > ?`
+      )
+      .run(now, now, now);
+  }
+
+  activeHumanPhoneExists(): boolean {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM paired_devices WHERE kind = 'human' AND revoked_at IS NULL " +
+          "AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%' LIMIT 1"
+      )
+      .get();
+  }
+
   isOwnerDevice(id: string): boolean {
     return !!this.db
       .prepare(
@@ -312,10 +331,21 @@ export class DevicePairingRepository {
     const expiresAt = now + PAIRING_CODE_TTL_MS;
     this.db
       .prepare(
-        `INSERT INTO pairing_codes (id, code_hash, kind, name, created_at, expires_at, approved_at, two_way)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO pairing_codes (id, code_hash, kind, name, created_at, expires_at, approved_at,
+           two_way, first_device)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, hash(code), kind, name, now, expiresAt, approved ? now : null, twoWay ? 1 : 0);
+      .run(
+        id,
+        hash(code),
+        kind,
+        name,
+        now,
+        expiresAt,
+        approved ? now : null,
+        twoWay ? 1 : 0,
+        kind === 'human' && !this.activeHumanPhoneExists() ? 1 : 0
+      );
     return { id, code, expiresAt };
   }
 
@@ -501,10 +531,21 @@ export class DevicePairingRepository {
       const claimed = this.db
         .prepare(
           `UPDATE pairing_codes SET used_at = ? WHERE code_hash = ? AND approved_at IS NOT NULL
-             AND used_at IS NULL AND expires_at > ? RETURNING kind`
+             AND used_at IS NULL AND expires_at > ? RETURNING kind, first_device`
         )
-        .get(now, hash(normalizePairingCode(code)), now) as { kind: DeviceKind } | null;
+        .get(now, hash(normalizePairingCode(code)), now) as {
+        kind: DeviceKind;
+        first_device: number;
+      } | null;
       if (!claimed) return null;
+      const firstDevice = claimed.first_device === 1;
+      if (firstDevice && this.activeHumanPhoneExists()) {
+        this.db
+          .prepare('UPDATE pairing_codes SET used_at = NULL WHERE code_hash = ?')
+          .run(hash(normalizePairingCode(code)));
+        return null;
+      }
+      if (firstDevice) this.cancelFirstDeviceRequests(now);
       if (claimed.kind === 'human') this.closeHumanRecovery(now);
       insertDevice(
         this.db,

@@ -64,8 +64,8 @@ export function createPair2Route({ db, limiter, now, authenticate }: Pair2RouteD
     const synthetic =
       identity.deviceId.startsWith('local-rpc:') || identity.deviceId.startsWith('agent-read:');
     if (synthetic) return null;
-    const owner = await db.call(pairingStateReads, 'isOwnerDevice', identity.deviceId);
-    return owner ? identity : null;
+    const active = await db.call(pairingStateReads, 'isActiveDevice', identity.deviceId);
+    return active ? identity : null;
   };
 
   return async (req: Request, remoteAddress: string | null = null): Promise<Response> => {

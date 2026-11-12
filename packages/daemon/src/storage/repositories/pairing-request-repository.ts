@@ -26,6 +26,7 @@ type RawRow = {
   name: string | null;
   approved_at: number | null;
   approved_by: string | null;
+  first_device: number;
   grants_owner: number;
   granted_at: number | null;
   denied_at: number | null;
@@ -42,6 +43,7 @@ const toRow = (raw: RawRow): PairingRequestRow => ({
   name: raw.name,
   approvedAt: raw.approved_at,
   approvedBy: raw.approved_by,
+  firstDevice: raw.first_device === 1,
   grantsOwner: raw.grants_owner === 1,
   grantedAt: raw.granted_at,
   deniedAt: raw.denied_at,
@@ -86,16 +88,28 @@ export class PairingRequestRepository {
     ).humans;
   }
 
+  activePhoneCount(): number {
+    return (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS humans FROM paired_devices WHERE kind = 'human' " +
+            'AND revoked_at IS NULL ' +
+            "AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
+        )
+        .get() as { humans: number }
+    ).humans;
+  }
+
   createRequest(now: number): { requestId: string; ticket: string; expiresAt: number } {
     const id = randomUUID();
     const ticket = newTicket();
     const expiresAt = now + PAIRING_REQUEST_TTL_MS;
     this.db
       .prepare(
-        `INSERT INTO pairing_requests (id, ticket_hash, created_at, expires_at)
-         VALUES (?, ?, ?, ?)`
+        `INSERT INTO pairing_requests (id, ticket_hash, created_at, expires_at, first_device)
+         VALUES (?, ?, ?, ?, ?)`
       )
-      .run(id, ticketHash(ticket), now, expiresAt);
+      .run(id, ticketHash(ticket), now, expiresAt, this.activePhoneCount() === 0 ? 1 : 0);
     return { requestId: id, ticket, expiresAt };
   }
 
@@ -131,20 +145,15 @@ export class PairingRequestRepository {
       if (approver.startsWith('local-rpc:') || approver.startsWith('agent-read:'))
         return 'not_allowed';
       const devices = new DevicePairingRepository(this.db);
-      const owners = this.ownerCount();
-      if (owners > 0) {
-        if (!devices.isOwnerDevice(approver)) return 'not_allowed';
-      } else if (this.db.prepare('SELECT 1 FROM paired_devices WHERE id = ?').get(approver)) {
-        return 'not_allowed';
-      }
-      const ownerGrant = owners === 0;
+      if (!devices.isActiveDevice(approver)) return 'not_allowed';
       const approved = this.db
         .prepare(
-          `UPDATE pairing_requests SET approved_at = ?, approved_by = ?, grants_owner = ?
+          `UPDATE pairing_requests SET approved_at = ?, approved_by = ?, grants_owner = 0
            WHERE id = ? AND bound_at IS NOT NULL AND approved_at IS NULL AND granted_at IS NULL
-             AND denied_at IS NULL AND cancelled_at IS NULL AND expires_at > ?`
+             AND denied_at IS NULL AND cancelled_at IS NULL AND expires_at > ?
+             AND first_device = 0`
         )
-        .run(now, approver, ownerGrant ? 1 : 0, requestId, now);
+        .run(now, approver, requestId, now);
       return approved.changes > 0 ? 'approved' : 'not_pending';
     })();
   }
@@ -203,7 +212,7 @@ export class PairingRequestRepository {
       const row = this.rowById(requestId);
       if (!row) return { ok: false as const, reason: 'not_found' as const };
       if (row.grantedAt !== null) return { ok: false as const, reason: 'used' as const };
-      const step = decidePairingComplete(row, phoneKey, this.ownerCount() > 0, now);
+      const step = decidePairingComplete(row, phoneKey, this.activePhoneCount() > 0, now);
       if (step.action === 'refuse') return { ok: false as const, reason: step.reason };
       if (step.action === 'supersede') {
         this.db
@@ -217,6 +226,8 @@ export class PairingRequestRepository {
       if (!verifyPhoneProof(phoneKey, requestId, row.bindNonce as string, signature)) {
         return { ok: false as const, reason: 'bad_proof' as const };
       }
+      if (step.owner && this.activePhoneCount() > 0)
+        return { ok: false as const, reason: 'superseded' as const };
       const claimed = this.db
         .prepare(
           `UPDATE pairing_requests SET granted_at = ?
@@ -225,14 +236,19 @@ export class PairingRequestRepository {
         )
         .run(now, requestId, now);
       if (claimed.changes === 0) return { ok: false as const, reason: 'used' as const };
-      new DevicePairingRepository(this.db).closeHumanRecovery(now);
+      const devices = new DevicePairingRepository(this.db);
+      if (step.owner) devices.cancelFirstDeviceRequests(now);
+      devices.closeHumanRecovery(now);
+      this.db
+        .prepare('UPDATE pairing_codes SET approved_at = NULL WHERE kind = ? AND used_at IS NULL')
+        .run('human');
       this.db
         .prepare(
           `INSERT INTO paired_devices (id, name, kind, secret_hash, created_at, owner)
            VALUES (?, ?, 'human', ?, ?, ?)`
         )
-        .run(deviceId, row.name ?? 'Paired phone', hash(credential), now, row.grantsOwner ? 1 : 0);
-      return { ok: true as const, deviceId, credential, owner: row.grantsOwner };
+        .run(deviceId, row.name ?? 'Paired phone', hash(credential), now, step.owner ? 1 : 0);
+      return { ok: true as const, deviceId, credential, owner: step.owner };
     })();
   }
 }
