@@ -2,6 +2,8 @@
 
 Status: the human's decision of 2026-10-18, with the open questions answered. Revised 2026-10-18 against an external review (done at `f8e74900a`); code references are on `dev` at `56701759d7`; unprefixed paths are under `packages/daemon/src/lib/neo/`, `lib/` paths under `packages/daemon/src/`, `shared/` paths under `packages/`, and prompt (`.md`) paths under `packages/prompts/src/`.
 
+The todo states, blockers and approvals below are proposed for replacement by [Minimal asks, todos and cards](../design/neo-todo-minimal.md).
+
 ## The core
 
 Neo is one session that holds the whole conversation. It listens to the human, decides, and hands work to an executor. Each item it hands off is `todo` (not started), then in one of four states:

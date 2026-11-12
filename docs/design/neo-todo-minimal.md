@@ -1,0 +1,229 @@
+# Minimal asks, todos and cards
+
+Status: proposal for human review, 2026-11-12. Design only. Refs lsm/HyperNeo#10476.
+Paths without a prefix are under `packages/daemon/src/lib/neo/`.
+
+## Why
+
+A todo list is a simple thing, and this one stopped being simple. In real use:
+
+- A todo says it waits on the human, and no card exists for the human to answer.
+- A todo is parked with a written reason and nothing ever raises it again.
+- One stuck or removed step silently stops every step after it.
+- Every step waits for a Start answer, even when the human already said "go".
+- One matter is opened as many asks, and one failure repeats on many todos, each with its own card.
+
+Two causes sit under all five.
+
+**One fact is stored in five places.** Whether a todo waits on the human is written in
+`neo_todos.state` with `blocked_by` (seven states, eight blockers), in
+`neo_todos.approved_at`, in `neo_questions.todo_id`, in `neo_questions.start_todos`, and
+in `neo_todo_sessions.needs_you_since`. Different code writes each one. The web groups
+asks by open cards (`neoAskEntryState` in `ask-entries.ts`); the runner starts and holds
+work by `state`, `blocked_by` and `approved_at`. They disagree.
+
+**Progress depends on the model noticing.** A worker's stored report
+(`neo.question.storeWorkerReport` in `question-operations.ts`) writes the card and the
+`blocked` / `needs-human` state together. Two other paths write only the state: a staged
+worker question (`stageNeoWorkerQuestion`) and a worker's final-line blocker
+(`worker-blocker.ts`). Both leave a note that Neo must answer the worker or ask the human.
+A removed prerequisite tells Neo once (`neoCancelledPrerequisiteNote`). Stall reminders
+stop after three. When the model misses a note, the work stays where it is.
+
+## The model
+
+Three records stay: an **ask** (one thing the human wants), its **todos** (steps), and
+**cards** (questions for the human, `neo_questions`).
+
+A todo has four stored states:
+
+| State | Meaning |
+|---|---|
+| `todo` | Not started. |
+| `doing` | Started and not finished. |
+| `done` | Finished. Anyone may say so. |
+| `removed` | Cancelled. |
+
+**Waiting on the human is not stored. A todo waits on the human exactly when an open card
+covers it.** The web, the counts and the runner all read that one fact.
+
+A card has one relation to todos: `todos`, the list it covers. A card with an empty list
+is a question about the ask itself. A todo has at most one open card; a new reason
+replaces the card (`replaced_by`), so the human never sees two cards for one step.
+
+## Rules
+
+The daemon enforces every rule. None depends on a prompt.
+
+**1. Start.** A todo starts by itself when its ask is open, it is `todo`, it has an
+instruction and a target, every todo in `depends_on` is `done`, no open card covers it,
+and a worker slot is free. There is no approval step and no Start card. When the human's
+word is needed first, Neo asks with a card; when the human already said to go, the work
+goes.
+
+**2. Dependencies are explicit.** Only `depends_on` holds a todo back. `position` is
+display order. `neo.todo.add` requires `after`; `[]` means it waits for nothing.
+
+| Prerequisite is | Dependents |
+|---|---|
+| `done` | start |
+| `todo`, `doing`, or waiting on a card | stay queued |
+| `removed` | never start by themselves; see rule 4 |
+
+**3. Done.** The human or Neo may mark any live todo `done`, without evidence and
+whatever its check says. A plan changes, and a step that is no longer needed is simply
+done. Its worker stops, its card is retired, its dependents start. A check exists so the
+daemon can finish a todo by itself; it never refuses a person.
+
+**4. Remove.** Removing a todo that has live dependents needs an answer for them.
+`neo.todo.remove` takes `dependents: 'continue' | 'remove'`. `continue` drops the edge to
+the removed todo; `remove` removes them too. When Neo cannot tell from the human's words,
+it leaves the field out and the daemon opens one card in the same write, covering the
+direct dependents, with those two options and a free reply. Later steps stay queued behind
+them.
+
+**5. Hold.** Holding is a card, not a state. Hold on an unstarted todo opens a card with
+the reason and the options Start and Remove. Pause on a running todo stops its worker and
+opens the same card with Resume. An unanswered card is the hold.
+
+**6. Every live todo has a place.** A live todo is in exactly one of three places:
+
+- **Waiting on you:** an open card covers it.
+- **Queued:** it is `todo` with no card, held back only by prerequisites or worker capacity.
+- **Running:** it is `doing` with no card, and a worker is live on it, the daemon is
+  retrying it, or its check is being polled.
+
+A todo in none of these is repaired by the daemon, not by a reminder. An event that needs
+a decision (a worker finished, a worker reported a blocker, retries ran out) wakes Neo
+once. Neo answers the worker, marks the todo done, removes it, or asks the human. If the
+todo is still out of place when that turn ends, the daemon opens the card itself, with the
+worker's own words as the card's document. Progress events never wake Neo.
+
+`neo.todo.add` refuses a todo with neither an instruction and target nor a check, since
+nothing could ever move it.
+
+**7. Failures.** The daemon retries a failed start or a dead worker itself: the same
+worker once, then a fresh one. After that it opens a card with Retry, Mark done and
+Remove. Todos failing for the same cause share one card, keyed by the failure code and
+place; the answer applies to all of them. A todo that only waits on its check gets a card
+once the check has not passed within its deadline, with Keep waiting, Mark done and
+Remove.
+
+**8. One ask per matter.** `neo.ask.open` refuses a second open ask for the same matter
+and returns the existing one. A pack supplies the matter key (the coding pack: the pull
+request or issue); core only compares keys. An open ask with no live todo and no open
+card is settled by the daemon after Neo has had one turn to write its outcome.
+
+## Cards the daemon opens
+
+A daemon card is an ordinary choice card. Its text and options are status codes the
+client localizes; Neo may replace it with a better worded one. The daemon applies the
+answer itself, so these never wait on a model turn.
+
+| Opened when | Options |
+|---|---|
+| A worker's blocker or question was left unanswered | free reply, Mark done, Remove |
+| A finished report was left unconfirmed | Accept, free reply |
+| Retries ran out | Retry, Mark done, Remove |
+| A check is past its deadline | Keep waiting, Mark done, Remove |
+| A prerequisite was removed | Continue, Remove these |
+| Hold or pause | Start or Resume, Remove |
+
+## Operations
+
+Today Neo has 24 ask, todo and question operations (`packages/prompts/src/neo/tools/`).
+The todo and card mutations shrink to these:
+
+| Kept | Replaces |
+|---|---|
+| `neo.todo.add` | `add`; `bind` becomes a target of `add` |
+| `neo.todo.edit` | `edit` for title, instruction and `after` before the start |
+| `neo.todo.done` | `close`, and `edit` with `done` |
+| `neo.todo.remove` | `remove`, `proceed` |
+| `neo.todo.continue` | `continue`, `retry` |
+| `neo.question.ask` | `ask`, `relay`, `hold` |
+| `neo.question.retire` | `retire`, `resolve` |
+
+A human answer goes straight to the bound worker and into Neo's context, as
+`question-answer-delivery.ts` does today, so `relayAnswer` has no separate job. Read
+operations and the ask operations are unchanged, except the refusal in rule 8.
+
+## What the human sees
+
+One list, in this order:
+
+1. **Needs you:** every open card, answerable in place. Questions come before holds;
+   within each, urgent first, then the longest wait.
+2. **In progress:** running todos, most recent activity first.
+3. **Queued.**
+4. **Done:** collapsed.
+
+Each ask is one row that names who moves next. A retired card that Neo still points to
+shows why it was retired. The "Neo has N still to handle" line goes away, because rule 6
+keeps that number at zero.
+
+The human can act on a step directly: Done, Cancel and Hold. These buttons come in a later
+slice; Neo's operations cover the same actions first.
+
+## What goes away
+
+| Kind | Removed |
+|---|---|
+| States | `blocked`, `failed`, `closed_unverified` |
+| Columns | `blocked_by`, `blocked_reason`, `next_action`, `approved_at`, `approval_question_id`, `added_after_start` on `neo_todos`; `todo_id`, `start_todos` on `neo_questions` (one `todos` list instead); `needs_you_since` on `neo_todo_sessions` |
+| Card kind | `start` |
+| Behaviour | positional order as a dependency, per-step approval, evidence required to mark done, the three-reminder ladders, notes told once from in-memory sets |
+| Operations | `neo.todo.hold`, `.proceed`, `.retry`, `.close`, `.bind`; `neo.question.relay`, `.relayAnswer`, `.resolve` |
+
+## Moving live rows
+
+Nothing may start on deploy that the human had not approved, and nothing may be lost.
+
+- `blocked` becomes `todo` if it never started, otherwise `doing`. If no open card covers
+  it, the migration opens one with the stored `blocked_reason` as its text. This covers
+  `needs-human`, `held`, `stalled`, `environment`, `failure`, `check` and `worker`.
+- `failed` in an open ask becomes `doing` with a rule 7 card; in a settled ask it becomes
+  `removed` and keeps its reason.
+- `closed_unverified` becomes `done`.
+- A todo with no `depends_on` gets the nearest earlier todo of its ask that is not
+  `removed`, so plans in flight keep their order.
+- An open Start card becomes a yes/no card covering the same todos. An unapproved,
+  unstarted todo on no card gets one.
+- `todo_id` and `start_todos` are copied into `todos`.
+
+## Slices
+
+Each slice is its own issue under one epic and is measured before it is cut.
+
+| # | Slice | Accepted when |
+|---|---|---|
+| 1 | A card covers a list of todos | Every reader of `todo_id` and `start_todos` reads `todos`; behaviour is unchanged |
+| 2 | Waiting is read from cards | The web sections, the counts and the runner agree on every live todo |
+| 3 | Done without a gate | Neo marks an unstarted todo with an unmet check done and its dependents start |
+| 4 | Explicit dependencies and remove with dependents | A removed prerequisite ends in continued dependents, removed dependents, or one card |
+| 5 | Automatic start | An added todo with met prerequisites starts with no Start card; live unapproved todos keep a card |
+| 6 | The daemon's cards | A blocker Neo ignores, a twice-failed start and an overdue check each end in exactly one card |
+| 7 | One ask per matter | A second ask for the same pull request is refused with the first one's id |
+| 8 | Human buttons | Done, Cancel and Hold work from the list |
+| 9 | Deletion | No removed state, column, operation or prompt is left |
+
+## Earlier designs
+
+- [Neo simplify](../architecture/neo-simplify.md) (2026-10-18) set four todo states and
+  made `blocked` stored (its B1), because a derived block lost its reason and next action
+  on a restart. Here the reason lives on the card, which is stored, so the restart case
+  holds without a second copy of the state. Its `ask_open` refusal is not in the code
+  today; rule 8 is that refusal.
+- [One plan, one ask](neo-plan-dependencies.md) added `depends_on`. This keeps it and
+  drops the fallback to positional order and the approvals it relied on.
+- The tasks subsystem (`packages/daemon/src/lib/tasks/`, with its runtime in
+  `packages/space/`) reads attention from status, uses explicit dependencies and starts
+  work from a tick. Those three ideas are taken.
+  The system itself is not: it has no cards and does not drive external workers.
+
+## Numbers to confirm
+
+| Number | Proposed | Cost of a higher value |
+|---|---|---|
+| Automatic retries before a card | 2 | The human hears about a real failure later |
+| Deadline for a check-only todo | 24 hours | A merge or deploy that will never happen stays quiet longer |
