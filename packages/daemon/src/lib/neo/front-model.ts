@@ -42,7 +42,13 @@ export function createFrontTools(service: NeoService, conversationId: string) {
   );
   const replyFields = {
     requestId: NeoPublicationDraft.shape.requestId,
-    replyTo: z.array(z.uuid()).min(1).max(100),
+    replyTo: z
+      .array(z.uuid())
+      .max(100)
+      .optional()
+      .describe(
+        'The human message IDs this answers. Omit only for a background result that answers no human message.'
+      ),
     publicationId: z.uuid().optional(),
     artifacts: NeoPublicationDraft.shape.artifacts,
     session: NeoPublicationDraft.shape.session,
@@ -54,11 +60,12 @@ export function createFrontTools(service: NeoService, conversationId: string) {
   const publish = async ({
     publicationId,
     ...input
-  }: z.infer<typeof NeoPublicationDraft> & { publicationId?: string; replyTo: string[] }) => {
+  }: z.infer<typeof NeoPublicationDraft> & { publicationId?: string; replyTo?: string[] }) => {
+    const replyTo = input.replyTo ?? [];
     if (
       !publicationId &&
       !input.progress &&
-      input.replyTo.some(
+      replyTo.some(
         (id) => !service.publications.get(conversationId, frontProgressId(conversationId, [id]))
       )
     )
@@ -69,14 +76,15 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       service.speech.isListening(service.defaultSessionId() ?? sessionId)
     )
       return result({ accepted: false, reason: 'spoken_required', listening: 'yes' });
-    if (!publicationId) return result(await service.publish(input, { source: 'mcp', sessionId }));
+    if (!publicationId)
+      return result(await service.publish({ ...input, replyTo }, { source: 'mcp', sessionId }));
     const current = service.publications.get(conversationId, publicationId);
     const ids = current?.replyTo?.length
       ? current.replyTo
       : current?.producerInput
         ? [current.producerInput.messageId]
         : [];
-    if (!ids.length || !ids.every((id) => input.replyTo.includes(id)))
+    if (!current || (ids.length ? !ids.every((id) => replyTo.includes(id)) : replyTo.length))
       return result({ accepted: false, reason: 'unknown_reply_target' });
     const edited = await service.publications.reviseCurrent(
       {
@@ -118,7 +126,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply_detailed',
-        'Use for more than five sentences or any structured report, multi-topic update, list, table or long Back report. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the original human replyTo IDs. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result. While [listening: yes], include spoken.',
+        'Use for more than five sentences or any structured report, multi-topic update, list, table or long Back report. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the human replyTo IDs it answers. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result. While [listening: yes], include spoken.',
         {
           ...replyFields,
           summary: z.string().trim().min(1).max(2000),

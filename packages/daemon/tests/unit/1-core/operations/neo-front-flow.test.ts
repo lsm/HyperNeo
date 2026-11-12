@@ -713,6 +713,42 @@ test.each([
   }
 );
 
+test('Convo publishes an unrequested background result without borrowing a human message', async () => {
+  const { id } = await deliveredConvoInput();
+  const standalone = await convoPublish({
+    requestId: 'status-update',
+    fullText: 'The pull request merged.',
+    verbatim: true,
+  });
+  expect(standalone).toMatchObject({ accepted: true });
+  expect(
+    service.publications.get(conversationId, standalone.publication.publicationId)?.replyTo ?? []
+  ).toEqual([]);
+  expect(
+    await convoPublish({
+      requestId: 'status-correction',
+      publicationId: standalone.publication.publicationId,
+      fullText: 'The pull request merged at the reviewed head.',
+      verbatim: true,
+    })
+  ).toMatchObject({ accepted: true });
+  expect(
+    service.publications.get(conversationId, standalone.publication.publicationId)
+  ).toMatchObject({ fullText: 'The pull request merged at the reviewed head.' });
+  expect(
+    await convoPublish({
+      requestId: 'unknown-target',
+      replyTo: [crypto.randomUUID()],
+      fullText: 'Not a reply.',
+      verbatim: true,
+      progress: true,
+    })
+  ).toMatchObject({ accepted: false, reason: 'unknown_reply_target' });
+  expect(
+    (service.publications.list(conversationId) ?? []).filter((row) => row.replyTo?.includes(id))
+  ).toHaveLength(0);
+});
+
 test('editing a progress acknowledgment into an answer prevents a later fallback', async () => {
   const { id, job } = await deliveredConvoInput();
   const handler = createNeoFrontHandler(service);

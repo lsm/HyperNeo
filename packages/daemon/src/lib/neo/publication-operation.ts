@@ -178,8 +178,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(
       (draft: Draft, caller: OperationCaller, proof: Proof) =>
         caller.sessionId === frontSessionId(proof.root.sessionId.slice(4)) &&
-        (!draft.replyTo?.length ||
-          !draft.replyTo.every((id) => runtime.receivedHumanInput(caller.sessionId!, id)))
+        draft.replyTo?.some((id) => !runtime.receivedHumanInput(caller.sessionId!, id))
           ? { reason: { accepted: false as const, reason: 'unknown_reply_target' } }
           : { value: proof },
       ['submitted', 'caller', 'publication'],
