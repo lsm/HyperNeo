@@ -10,9 +10,10 @@ A todo list is a simple thing, and this one stopped being simple. In real use:
 - A todo says it waits on the human, and no card exists for the human to answer.
 - A todo is parked with a written reason and nothing ever raises it again.
 - One stuck or removed step silently stops every step after it.
-- Approval is a second fact on every step. A step starts without asking only when Neo
-  adds it with `start: true`; a step added without it waits for a Start answer even when
-  the human already said "go", and some wait with no card at all.
+- Approval is a second fact on every step. A newly added step starts without asking only
+  when Neo marks it approved, with `start: true` on add or by binding it to work already
+  running. One added without the mark waits for a Start answer even when the human already
+  said "go", and some wait with no card at all.
 - One matter is opened as many asks, and one failure repeats on many todos, each with its own card.
 
 Two causes sit under all five.
@@ -49,11 +50,12 @@ A todo has four stored states:
 **Waiting on the human is not stored. A todo waits on the human exactly when an open card
 covers it.** The web, the counts and the runner all read that one fact.
 
-A card has one relation to todos: `todos`, the list it covers. A card with an empty list
-is a question about the ask itself. A todo has at most one open card; a new reason
-replaces the card (`replaced_by`), so the human never sees two cards for one step. A todo
-that becomes `done` or `removed` leaves its card's list, and a card that covered todos and
-now covers none is retired.
+A card has one relation to todos: `todos`, the list it covers. A card holds exactly the
+todos it lists; one with an empty list is a question about the ask and holds nothing. A
+todo covered by more than one open card moves when the last one closes. The daemon never
+opens a second card for the same todo and cause: a new reason replaces its earlier card
+(`replaced_by`). A todo that becomes `done` or `removed` leaves its cards' lists, and a
+card that covered todos and now covers none is retired.
 
 ## Rules
 
@@ -81,7 +83,7 @@ display order. `neo.todo.add` requires `after`; `[]` means it waits for nothing.
 
 **3. Done.** The human or Neo may mark any live todo `done`, without evidence and
 whatever its check says. A plan changes, and a step that is no longer needed is simply
-done. Its worker stops, it leaves its card, its dependents start. A card shared with
+done. Its worker stops, it leaves its cards, its dependents start. A card shared with
 other todos stays open for them. A check exists so the
 daemon can finish a todo by itself; it never refuses a person.
 
@@ -196,15 +198,30 @@ Nothing may start on deploy that the human had not approved, and nothing may be 
   `needs-human`, `held`, `stalled`, `environment`, `failure`, `check` and `worker`.
 - `failed` in an open ask becomes `doing` with a rule 7 card; in a settled ask it becomes
   `removed` and keeps its reason.
-- `closed_unverified` becomes `done`.
-- A todo with no `depends_on` gets the nearest earlier todo of its ask that is not
-  `removed`, so plans in flight keep their order.
-- A stored `depends_on` edge to a `removed` todo moves to that todo's live replacement.
-  With no replacement, the dependents get the rule 4 card: today they wait for a
-  `neo.todo.proceed` that may never come, and the human has not said they may go on.
-- An open Start card becomes a yes/no card covering the same todos. An unapproved,
-  unstarted todo on no card gets one.
-- `todo_id` and `start_todos` are copied into `todos`.
+- `closed_unverified` becomes `done` if it had started and `removed` if it never started,
+  which is how its dependents read it today (`neoTodoFinished`).
+
+Those rewrites come last. Before them, the migration writes down what holds each live todo
+today, in this order:
+
+1. **Prerequisites.** Every live todo gets its effective prerequisites in `depends_on`:
+   the stored list, or with none stored the immediately preceding todo of its ask, removed
+   or not (`neoTodoDependencyNodes`).
+2. **Cancelled prerequisites.** Every edge to a prerequisite that counts as cancelled
+   today (`neoTodoCancelledDependencies`: removed, or closed unverified without having
+   started) moves to that todo's live replacement. With no replacement, the dependents get
+   the rule 4 card: today they wait for a `neo.todo.proceed` that may never come, and the
+   human has not said they may go on. A dependent already on an open Start card is left
+   to that card (step 4).
+3. **Cards.** `todo_id` and `start_todos` are copied into `todos`. An open question with
+   neither, which today holds its whole ask (`neoTodoWaitReason`), lists the todos it
+   holds: every unstarted live todo of the ask and every todo `blocked` by `question`
+   under it. Cards that overlap on a todo all stay open.
+4. **Start cards.** An open Start card becomes a multi-select choice card whose options
+   are its todos, and the answer keeps today's effects (`planNeoStartAnswer`): a ticked
+   todo may start, an unticked todo behind a cancelled prerequisite is removed, and any
+   other unticked todo gets a hold card (rule 5). An unapproved, unstarted todo on no
+   card gets a card of the same form.
 
 ## Slices
 
@@ -212,11 +229,11 @@ Each slice is its own issue under one epic and is measured before it is cut.
 
 | # | Slice | Accepted when |
 |---|---|---|
-| 1 | A card covers a list of todos | Every reader of `todo_id` and `start_todos` reads `todos`; behaviour is unchanged |
+| 1 | A card covers a list of todos | Every reader of `todo_id` and `start_todos` reads `todos`; an approved todo under an open ask-level question is still held after the switch |
 | 2 | Waiting is read from cards | The web sections, the counts and the runner agree on every live todo |
 | 3 | Done without a gate | Neo marks an unstarted todo with an unmet check done and its dependents start |
-| 4 | Explicit dependencies and remove with dependents | A removed prerequisite ends in continued dependents, removed dependents, or one card |
-| 5 | Automatic start | An added todo with met prerequisites starts with no Start card; live unapproved todos keep a card |
+| 4 | Explicit dependencies and remove with dependents | A removed prerequisite ends in continued dependents, removed dependents, or one card; a migrated todo behind a cancelled prerequisite, stored or implicit, does not start without that decision |
+| 5 | Automatic start | An added todo with met prerequisites starts with no Start card; a migrated Start card keeps its per-todo answer |
 | 6 | The daemon's cards | A blocker Neo ignores, a twice-failed start and an overdue check each end in exactly one card |
 | 7 | One ask per matter | A second ask for the same pull request is refused with the first one's id |
 | 8 | Human buttons | Done, Cancel and Hold work from the list |
