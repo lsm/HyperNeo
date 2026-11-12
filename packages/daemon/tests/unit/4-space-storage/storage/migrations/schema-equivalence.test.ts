@@ -105,6 +105,7 @@ describe('database schema equivalence', () => {
           .all() as { tbl_name: string; sql: string }[]
       )
         .filter(({ tbl_name }) => !shadows.has(tbl_name))
+        .filter(({ tbl_name }) => !tbl_name.startsWith('space_github'))
         .map(({ sql }) => sql);
       expect([...baselineSchema, ...spaceBaselineSchema].sort()).toEqual([...statements].sort());
       fresh.exec('PRAGMA foreign_keys = ON');

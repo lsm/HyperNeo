@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
-import { runMigration111 } from '../../../../../src/storage/schema';
+import { runMigration111, runMigrations } from '../../../../../src/storage/schema';
 import { runMigration504 } from '../../../../../src/storage/schema/m504-github-session-scope.ts';
 import { createSpaceGitHubTables } from '../../../../../src/storage/schema/space-github.ts';
 import { createGitHubSessionTables } from '../../../../../src/storage/schema/github-session-schema.ts';
@@ -88,7 +88,7 @@ function settingsRows(db: Database, table: string): Record<string, unknown>[] {
     .all() as Record<string, unknown>[];
 }
 
-describe('migration 502 GitHub session scope', () => {
+describe('migration 504 GitHub session scope', () => {
   test('creates empty session tables on a database without legacy tables', () => {
     const db = new Database(':memory:');
     runMigration504(db);
@@ -346,6 +346,36 @@ describe('migration 502 GitHub session scope', () => {
         .map((row) => (row as { name: string }).name)
         .sort()
     ).toEqual(['github_session_source_settings', 'github_session_watched_repos']);
+    db.close();
+  });
+
+  test('first Space enablement on a database without spaces tolerates pre-existing github tables', () => {
+    const db = new Database(':memory:');
+    runMigration111(db);
+    db.exec(`CREATE TABLE migration_markers (key TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`);
+    db.exec(
+      `CREATE TABLE migration_space_reclaims (migration_key TEXT PRIMARY KEY, reclaimed_at INTEGER NOT NULL)`
+    );
+    for (let version = 1; version <= 238; version++)
+      db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, 1)`).run(
+        `migration_${version}`
+      );
+    runMigrations(db, () => {});
+    expect(
+      db
+        .prepare(
+          `SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN
+           ('spaces', 'space_github_watched_repos', 'space_github_events', 'github_session_watched_repos')`
+        )
+        .all()
+        .map((row) => (row as { name: string }).name)
+        .sort()
+    ).toEqual([
+      'github_session_watched_repos',
+      'space_github_events',
+      'space_github_watched_repos',
+      'spaces',
+    ]);
     db.close();
   });
 });
