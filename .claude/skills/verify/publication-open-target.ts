@@ -63,7 +63,6 @@ try{
  const truncatedLink=await invoke('neo.session.link',{session:'truncated'});assert.equal(truncatedLink.ok,false,'a truncated lookup must not guess an Open target');
  const truncatedPublish=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session:'truncated'});assert.equal(truncatedPublish.reason,'session_lookup_failed');assert.deepEqual(app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get(),beforeTruncated);
  const unavailable=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session:'codex-desktop:unavailable'});assert.equal(unavailable.reason,'session_lookup_failed');
- const edited=await invoke('neo.publication.edit',{requestId:crypto.randomUUID(),publicationId:first.publication.publicationId,fullText:'Edited report'});assert(edited.accepted);assert.equal(edited.publication.sessionSource.adapter,'codex-desktop');
  ws=createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);await new Promise((resolve,reject)=>{ws!.onopen=resolve;ws!.onerror=reject;});
  const rpc=(name:string,input:unknown)=>new Promise<Record<string,unknown>>((resolve,reject)=>{
   const id=crypto.randomUUID(),timeout=setTimeout(()=>reject(new Error('RPC timeout')),10000);
@@ -76,16 +75,16 @@ try{
   const items=page.items as {role?:string;publication?:typeof first.publication;sessionSource?:{adapter:string}}[];
   const publications=name==='neo.publication.read'?items:items.filter(item=>item.role==='neo').map(item=>item.publication!);
   assert.equal(publications.length,9);
-  const current=publications.find(item=>item.publicationId===first.publication.publicationId)!;assert.equal(current.sessionSource.adapter,'codex-desktop');assert.equal(current.revisions[0].sessionSource.adapter,'codex-desktop');
+  const current=publications.find(item=>item.publicationId===first.publication.publicationId)!;assert.equal(current.sessionSource.adapter,'codex-desktop');
   assert(reads.filter(id=>id==='native-thread').length<=2,'repeated sessions share one resolution per page');
  }
  nativeUnavailable=true;
  const unavailablePage=await rpc('neo.publication.read',{conversationId,limit:100});
  assert.equal(unavailablePage.ok,true);
  const retained=(unavailablePage.items as typeof first.publication[]).find(item=>item.publicationId===first.publication.publicationId)!;
- assert.equal(retained.fullText,'Edited report');assert.equal(retained.sessionSource,null);
+ assert.equal(retained.fullText,first.publication.fullText);assert.equal(retained.sessionSource,null);
  assert.deepEqual(app.db.getDatabase().prepare('SELECT payload_json FROM neo_publications ORDER BY sequence').all(),before);
  assert(before.every(row=>!String((row as {payload_json:string}).payload_json).includes('sessionSource')));
- Object.assign(observed,{passed:true,wireField:'sessionSource',qualifiedAndBare:true,localNeoAndSpace:true,safeLinks:true,producerCannotInject:true,retryAndRevision:true,bothReadDoors:true,batchDedup:true,storedPayloadUnchanged:true});
+ Object.assign(observed,{passed:true,wireField:'sessionSource',qualifiedAndBare:true,localNeoAndSpace:true,safeLinks:true,producerCannotInject:true,retry:true,bothReadDoors:true,batchDedup:true,storedPayloadUnchanged:true});
 }finally{ws?.close();await app?.cleanup();}
 observed.resourcesClosed=true;writeFileSync(join(run,'evidence/publication-open-target.json'),JSON.stringify(observed,null,2));console.log(JSON.stringify(observed));

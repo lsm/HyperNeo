@@ -116,78 +116,6 @@ describe('Neo publication ledger', () => {
     expect(repo.list(input.conversationId)![0].fullText).toBe(input.fullText);
   });
 
-  test('editing a verbatim reply rejects a split rewrite instead of a conflict', () => {
-    runMigration387(db);
-    const created = repo.append({
-      ...next(92),
-      shortText: undefined,
-      verbatim: true,
-      fullText: 'The deliverable, unchanged.',
-      links: [],
-    });
-    expect(created).toMatchObject({ accepted: true });
-    const id = (created as { publication: { publicationId: string } }).publication.publicationId;
-    expect(
-      repo.edit(
-        input.conversationId,
-        id,
-        { shortText: 'New preview' },
-        '2026-10-26T00:00:00.000Z',
-        'avatar',
-        undefined,
-        '40000000-0000-4000-8000-000000000001'
-      )
-    ).toMatchObject({ accepted: false, reason: 'invalid_publication' });
-    expect(
-      repo.edit(
-        input.conversationId,
-        id,
-        { fullText: 'The deliverable, revised.' },
-        '2026-10-26T00:00:01.000Z',
-        'avatar',
-        undefined,
-        '40000000-0000-4000-8000-000000000002'
-      )
-    ).toMatchObject({
-      accepted: true,
-      publication: { verbatim: true, fullText: 'The deliverable, revised.' },
-    });
-  });
-
-  test('a complete edit converts a verbatim reply to a detailed reply', () => {
-    runMigration387(db);
-    const created = repo.append({
-      ...next(93),
-      shortText: undefined,
-      verbatim: true,
-      fullText: 'I will check.',
-      links: [],
-    });
-    expect(created).toMatchObject({ accepted: true });
-    const id = (created as { publication: { publicationId: string } }).publication.publicationId;
-    expect(
-      repo.edit(
-        input.conversationId,
-        id,
-        { shortText: 'The check is complete.', fullText: 'The detailed result.' },
-        '2026-10-26T00:00:00.000Z',
-        'avatar',
-        undefined,
-        '40000000-0000-4000-8000-000000000003'
-      )
-    ).toMatchObject({
-      accepted: true,
-      publication: {
-        shortText: 'The check is complete.',
-        fullText: 'The detailed result.',
-      },
-    });
-    const updated = repo.get(input.conversationId, id)!;
-    expect(updated.verbatim).toBeUndefined();
-    expect(updated.revisions).toHaveLength(1);
-    expect(repo.list(input.conversationId)).toHaveLength(1);
-  });
-
   test.each([
     null,
     {},
@@ -386,27 +314,14 @@ describe('migration 288 publication durability', () => {
       const writer = new NeoPublicationRepository(daemon.getDatabase());
       const first = writer.append(input);
       expect(first.accepted).toBe(true);
-      const revised = writer.edit(
-        input.conversationId,
-        input.publicationId,
-        { shortText: 'Revised after delivery.' },
-        '2026-10-16T10:00:00.000Z',
-        'editor',
-        { sessionId: 'editor', messageId: 'revision-input' },
-        '30000000-0000-4000-8000-000000000003'
-      );
-      expect(revised.accepted).toBe(true);
       daemon.close();
       daemon = new DaemonDatabase(path, { messageSearchIndexFlushIntervalMs: 0 });
       await daemon.initialize(createReactiveDatabase(daemon));
       const repo = new NeoPublicationRepository(daemon.getDatabase());
-      expect(revised.accepted && repo.list(input.conversationId)).toEqual(
-        revised.accepted ? [revised.publication] : false
+      expect(first.accepted && repo.list(input.conversationId)).toEqual(
+        first.accepted ? [first.publication] : false
       );
-      expect(repo.append(input)).toEqual({ ...revised, created: false });
-      expect(repo.get(input.conversationId, input.publicationId)?.revisions?.[0].shortText).toBe(
-        input.shortText
-      );
+      expect(repo.append(input)).toEqual({ ...first, created: false });
     } finally {
       daemon?.close();
       rmSync(directory, { recursive: true, force: true });

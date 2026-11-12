@@ -657,68 +657,6 @@ test('Front gets the complete quoted question with its options and references', 
     expect(content).toContain(expected);
 });
 
-test.each([
-  {
-    topic: 'the C explanation',
-    original: 'C removes the write-plan preview.',
-    updates: [
-      'The preview returns adapter, place, model and effort.',
-      'The preview returns adapter, place, model and effort. Neo uses it through prompt guidance.',
-    ],
-  },
-  {
-    topic: 'the native screenshot request',
-    original: 'The screenshot is pending because the Mac is locked.',
-    updates: [
-      'The Mac is still locked; the screenshot remains pending.',
-      'The Mac is still locked; three native screenshots will follow after unlock.',
-    ],
-  },
-])(
-  'Front edits the existing answer for $topic instead of publishing duplicates',
-  async ({ original, updates }) => {
-    const { id } = await deliveredConvoInput();
-    await convoPublish({
-      requestId: 'ack',
-      replyTo: [id],
-      fullText: 'I will check.',
-      verbatim: true,
-      progress: true,
-    });
-    const saved = await service.publish(
-      { requestId: 'original', verbatim: true, fullText: original, replyTo: [id] },
-      { source: 'mcp', sessionId: front }
-    );
-    if (!saved.accepted) throw new Error('Original publication failed');
-    for (const [index, fullText] of updates.entries()) {
-      const input = {
-        publicationId: saved.publication.publicationId,
-        requestId: `correction-${index}`,
-        fullText,
-      };
-      for (let retry = 0; retry < 2; retry++) {
-        const response = await service.publications.reviseCurrent(input, {
-          source: 'mcp',
-          sessionId: front,
-        });
-        expect(response).toMatchObject({
-          accepted: true,
-        });
-      }
-    }
-    const publications = (service.publications.list(conversationId) ?? []).filter((row) =>
-      row.replyTo?.includes(id)
-    );
-    expect(publications.filter((row) => row.replyTo?.includes(id))).toHaveLength(1);
-    expect(publications[0]).toMatchObject({
-      publicationId: saved.publication.publicationId,
-      fullText: updates.at(-1),
-      replyTo: [id],
-    });
-    expect(publications[0].revisions).toHaveLength(updates.length);
-  }
-);
-
 test('Front publishes an unrequested background result without borrowing a human message', async () => {
   const { id } = await deliveredConvoInput();
   const standalone = await convoPublish({

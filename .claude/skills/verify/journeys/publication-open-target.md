@@ -16,8 +16,8 @@ source shape (id, adapter, name, label, provider, link, optional daemon).
 
 Check qualified and exact bare Codex IDs, local/Neo/Space sessions, Claude,
 linkless/unsafe native links, ambiguous IDs, unavailable lookup, input injection,
-idempotent retries and edit history. Old `session` values stay unchanged. Both
-neo.publication.read and neo.conversation.read carry targets, including revisions;
+and idempotent retries. Old `session` values stay unchanged. Both
+neo.publication.read and neo.conversation.read carry targets;
 repeated sessions share a page-local lookup. No source metadata is persisted in
 publication payloads. Require wrapper exit zero and resourcesClosed true.
 

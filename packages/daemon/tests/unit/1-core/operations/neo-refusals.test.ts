@@ -45,10 +45,10 @@ describe('explainNeoRefusal', () => {
       reason: `work_not_found: ${NEO_REFUSALS.work_not_found}`,
     });
     expect(
-      explainNeoRefusal({ accepted: false, reason: 'edit_unchanged', publicationId: 'p1' })
+      explainNeoRefusal({ accepted: false, reason: 'already_claimed', publicationId: 'p1' })
     ).toEqual({
       accepted: false,
-      reason: `edit_unchanged: ${NEO_REFUSALS.edit_unchanged}`,
+      reason: `already_claimed: ${NEO_REFUSALS.already_claimed}`,
       publicationId: 'p1',
     });
   });

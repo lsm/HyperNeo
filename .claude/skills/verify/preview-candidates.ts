@@ -22,7 +22,7 @@ const publicationId = '22222222-2222-4222-8222-222222222222';
 const revisionId = '33333333-3333-4333-8333-333333333333';
 const origin = { sessionId: 'worker', messageId: 'source' };
 assert(publications.append({ conversationId, publicationId, askOrigin: origin, producerInput: origin, shortText: 'Report', fullText: 'Read `report.md`.', links: [{ kind: 'work', id: 'todo', label: 'Report' }] }).accepted);
-assert(publications.edit(conversationId, publicationId, { fullText: 'Read `new-report.md`.' }, new Date().toISOString(), 'human', origin, revisionId).accepted);
+assert(publications.append({ conversationId, publicationId: revisionId, askOrigin: origin, producerInput: origin, shortText: 'Report', fullText: 'Read `new-report.md`.', links: [{ kind: 'work', id: 'todo', label: 'Report' }] }).accepted);
 db.close();
 renameSync(join(root, 'workspace'), join(root, 'workspace.retained'));
 db = new Database(path, { readonly: true });
@@ -34,7 +34,7 @@ const deps = {
   loadSource: async (key: typeof source) => {
     const publication = new NeoPublicationRepository(db).get(conversationId, key.id);
     if (!publication || key.kind !== 'publication') return null;
-    const text = key.revisionId === publication.revisionId ? publication.fullText : publication.revisions?.find((revision) => revision.revisionId === key.revisionId)?.fullText;
+    const text = key.revisionId === (publication.revisionId ?? publication.publicationId) ? publication.fullText : publication.revisions?.find((revision) => revision.revisionId === key.revisionId)?.fullText;
     const link = publication.links.find((item) => item.kind === 'work');
     const binding = link ? loadRegistrationBinding(db, 'synthetic-daemon', { kind: 'todo', id: link.id }) : null;
     return text && binding ? { key, text, bindings: [{ ...binding, repository: 'github.com/lsm/hyperneo', revision: { kind: 'worktree' as const } }] } : null;
@@ -44,8 +44,8 @@ const request = { source, reference: 'report.md' };
 const original = await planStoredReference(request, caller, deps);
 assert.deepEqual(original, { accepted: true, kind: 'worktree', context, root: join(root, 'workspace'), relativePath: 'report.md', revision: { kind: 'worktree' } });
 assert.deepEqual(await planStoredReference({ ...request, reference: 'new-report.md' }, caller, deps), { accepted: false, reason: 'unavailable' });
-assert.deepEqual(await planStoredReference({ ...request, source: { ...source, revisionId }, reference: 'report.md' }, caller, deps), { accepted: false, reason: 'unavailable' });
-assert.equal((await planStoredReference({ ...request, source: { ...source, revisionId }, reference: 'new-report.md' }, caller, deps)).accepted, true);
+assert.deepEqual(await planStoredReference({ ...request, source: { ...source, id: revisionId, revisionId }, reference: 'report.md' }, caller, deps), { accepted: false, reason: 'unavailable' });
+assert.equal((await planStoredReference({ ...request, source: { ...source, id: revisionId, revisionId }, reference: 'new-report.md' }, caller, deps)).accepted, true);
 assert(!existsSync(join(root, 'data', 'artifacts')));
 db.close();
 db = new Database(path);

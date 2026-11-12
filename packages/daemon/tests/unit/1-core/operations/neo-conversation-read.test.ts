@@ -131,16 +131,15 @@ describe('neo.conversation.read', () => {
 
   test('can read historical full text and revision history outside the injected seven', async () => {
     const first = publish(1);
-    const revised = new NeoPublicationRepository(db.getDatabase()).edit(
-      conversationId,
-      first.publicationId,
-      { fullText: 'Revised full details.' },
-      '2026-10-16T13:00:00.000Z',
-      root.sessionId,
-      { sessionId: root.sessionId, messageId: 'revision' },
-      '40000000-0000-4000-8000-000000000001'
-    );
-    expect(revised.accepted).toBe(true);
+    db.getDatabase()
+      .prepare(
+        `UPDATE neo_publications SET payload_json = json_set(payload_json,
+          '$.fullText', 'Revised full details.',
+          '$.revisions', json_array(json_object('revisionId', publication_id,
+            'fullText', json_extract(payload_json, '$.fullText'), 'createdAt', created_at)))
+        WHERE publication_id = ?`
+      )
+      .run(first.publicationId);
     for (let n = 2; n <= 12; n++) publish(n);
     const full = (await reader.read({ conversationId, limit: 100 })).items;
     expect(full[0]).toMatchObject({
