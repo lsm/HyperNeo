@@ -142,10 +142,13 @@ export class PairingRequestRepository {
     now: number
   ): 'approved' | 'not_pending' | 'not_allowed' {
     return this.db.transaction(() => {
-      if (approver.startsWith('local-rpc:') || approver.startsWith('agent-read:'))
-        return 'not_allowed';
-      const devices = new DevicePairingRepository(this.db);
-      if (!devices.isActiveDevice(approver)) return 'not_allowed';
+      const admitted = this.db
+        .prepare(
+          `SELECT 1 FROM paired_devices WHERE id = ? AND kind = 'human' AND revoked_at IS NULL
+             AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'`
+        )
+        .get(approver);
+      if (!admitted) return 'not_allowed';
       const approved = this.db
         .prepare(
           `UPDATE pairing_requests SET approved_at = ?, approved_by = ?, grants_owner = 0

@@ -368,6 +368,24 @@ describe('pairing v2 one-time request repository', () => {
     expect(await approveRequest(made.requestId, existing)).toBe('approved');
   });
 
+  test('an active approver that is not a human phone is refused', async () => {
+    const existing = seedPhone();
+    const relay = crypto.randomUUID();
+    writer
+      .prepare(
+        "INSERT INTO paired_devices (id, name, kind, secret_hash, created_at, owner) VALUES (?, ?, 'relay', ?, ?, 0)"
+      )
+      .run(relay, 'Relay device', `hash-${relay}`, now);
+    expect(devices.isActiveDevice(relay)).toBe(true);
+    const made = await createRequest();
+    const bound = await bindTicket(made.ticket, phoneKeypair().publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+
+    expect(await approveRequest(made.requestId, relay)).toBe('not_allowed');
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'bound' });
+    expect(await approveRequest(made.requestId, existing)).toBe('approved');
+  });
+
   test('a revoked phone cannot approve a successor', async () => {
     const bootstrap = await createRequest();
     const phone = phoneKeypair();
