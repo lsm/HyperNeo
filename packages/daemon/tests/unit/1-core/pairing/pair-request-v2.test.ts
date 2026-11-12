@@ -38,6 +38,15 @@ describe('pairing v2 one-time request repository', () => {
   const cancelRequest = (requestId: string) =>
     gateway.call(pairingRequestWrites, 'cancelRequest', requestId, now) as Promise<boolean>;
 
+  const cancelBound = (requestId: string, signature: string) =>
+    gateway.call(
+      pairingRequestWrites,
+      'cancelBoundRequest',
+      requestId,
+      signature,
+      now
+    ) as Promise<boolean>;
+
   const createRequest = () =>
     gateway.call(pairingRequestWrites, 'createRequest', now) as Promise<{
       requestId: string;
@@ -307,6 +316,43 @@ describe('pairing v2 one-time request repository', () => {
     );
     expect(done.ok).toBe(false);
     if (!done.ok) expect(done.reason).toBe('cancelled');
+  });
+
+  test('a proof signature cannot cancel and a cancel signature cannot complete', async () => {
+    seedPhone();
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+
+    expect(await cancelBound(made.requestId, proof(phone, made.requestId, bound.bindNonce))).toBe(
+      false
+    );
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'bound' });
+
+    const cancel = phone.sign(`cancel:${made.requestId}:${bound.bindNonce}`);
+    expect(await cancelBound(made.requestId, cancel)).toBe(true);
+    expect(await completeRequest(made.requestId, phone.publicKeyB64, cancel)).toMatchObject({
+      ok: false,
+    });
+  });
+
+  test('a wrong key or an unbound request cannot join cancel', async () => {
+    seedPhone();
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+    const thief = phoneKeypair();
+
+    expect(
+      await cancelBound(made.requestId, thief.sign(`cancel:${made.requestId}:${bound.bindNonce}`))
+    ).toBe(false);
+    expect(await requestStatus(made.requestId)).toMatchObject({ state: 'bound' });
+
+    const unbound = await createRequest();
+    expect(await cancelBound(unbound.requestId, 'not-a-signature')).toBe(false);
+    expect(await requestStatus(unbound.requestId)).toMatchObject({ state: 'pending' });
   });
 
   test('a denied request cannot complete', async () => {

@@ -73,12 +73,7 @@ export function decidePairingComplete(
 export const cancelMessage = (requestId: string, bindNonce: string) =>
   `cancel:${requestId}:${bindNonce}`;
 
-export function verifyBoundCancel(
-  phoneKey: string,
-  requestId: string,
-  bindNonce: string,
-  signatureB64: string
-): boolean {
+function verifySignature(phoneKey: string, message: string, signatureB64: string): boolean {
   try {
     const raw = Buffer.from(phoneKey, 'base64url');
     if (raw.length !== 32) return false;
@@ -87,38 +82,22 @@ export function verifyBoundCancel(
       format: 'der',
       type: 'spki',
     });
-    return verify(
-      null,
-      Buffer.from(cancelMessage(requestId, bindNonce), 'utf8'),
-      key,
-      Buffer.from(signatureB64, 'base64url')
-    );
+    return verify(null, Buffer.from(message, 'utf8'), key, Buffer.from(signatureB64, 'base64url'));
   } catch {
     return false;
   }
 }
 
-export function verifyPhoneProof(
+export const verifyBoundCancel = (
   phoneKey: string,
   requestId: string,
   bindNonce: string,
   signatureB64: string
-): boolean {
-  try {
-    const raw = Buffer.from(phoneKey, 'base64url');
-    if (raw.length !== 32) return false;
-    const key = createPublicKey({
-      key: Buffer.concat([ED25519_SPKI_DER_PREFIX, raw]),
-      format: 'der',
-      type: 'spki',
-    });
-    return verify(
-      null,
-      Buffer.from(proofMessage(requestId, bindNonce), 'utf8'),
-      key,
-      Buffer.from(signatureB64, 'base64url')
-    );
-  } catch {
-    return false;
-  }
-}
+): boolean => verifySignature(phoneKey, cancelMessage(requestId, bindNonce), signatureB64);
+
+export const verifyPhoneProof = (
+  phoneKey: string,
+  requestId: string,
+  bindNonce: string,
+  signatureB64: string
+): boolean => verifySignature(phoneKey, proofMessage(requestId, bindNonce), signatureB64);
