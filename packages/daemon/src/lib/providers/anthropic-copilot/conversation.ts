@@ -4,8 +4,9 @@ import type { ReasoningEffort } from './reasoning-effort.js';
 import type { AnthropicMessage, AnthropicTool } from './types.js';
 import {
   extractToolResultIds,
-  extractToolResultContent,
+  extractToolResultParts,
   extractToolResultIsError,
+  type BridgeImage,
 } from './prompt.js';
 import { mapAnthropicToolsToSdkTools, ToolBridgeRegistry } from './tool-bridge.js';
 import { Logger } from '../../logger.js';
@@ -23,6 +24,7 @@ export interface ToolResult {
   toolUseId: string;
   result: string;
   isError?: boolean;
+  images?: BridgeImage[];
 }
 
 export class ConversationManager {
@@ -55,12 +57,13 @@ export class ConversationManager {
     const toolResults: ToolResult[] = [];
     for (const id of ids) {
       if (this.byToolCallId.get(id) !== conv) continue;
-      const result = extractToolResultContent(messages, id);
-      if (result !== undefined) {
+      const parts = extractToolResultParts(messages, id);
+      if (parts !== undefined) {
         toolResults.push({
           toolUseId: id,
-          result,
+          result: parts.text,
           isError: extractToolResultIsError(messages, id),
+          ...(parts.images.length ? { images: parts.images } : {}),
         });
       }
     }

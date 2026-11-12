@@ -3,8 +3,10 @@ import {
   formatAnthropicPrompt,
   extractSystemText,
   extractToolResultIds,
-  extractToolResultContent,
+  extractToolResultParts,
   extractToolResultIsError,
+  collectImages,
+  messageTopLevelImages,
 } from '../../../../../src/lib/providers/anthropic-copilot/prompt';
 
 describe('formatAnthropicPrompt', () => {
@@ -136,6 +138,39 @@ describe('formatAnthropicPrompt', () => {
   it('returns empty string for empty messages array', () => {
     expect(formatAnthropicPrompt([])).toBe('');
   });
+
+  it('skips image blocks and keeps surrounding text', () => {
+    const result = formatAnthropicPrompt([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what does this say' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+          { type: 'text', text: 'answer briefly' },
+        ],
+      },
+    ]);
+    expect(result).toBe('[User]: what does this say\n\n[User]: answer briefly');
+  });
+
+  it('skips images nested inside tool_result content when flattening', () => {
+    const result = formatAnthropicPrompt([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'tu_1',
+            content: [
+              { type: 'text', text: 'screenshot:' },
+              { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(result).toBe('[Tool result for tu_1]: screenshot:');
+  });
 });
 
 describe('extractSystemText', () => {
@@ -204,10 +239,10 @@ describe('extractToolResultIds', () => {
   });
 });
 
-describe('extractToolResultContent', () => {
+describe('extractToolResultParts', () => {
   it('returns undefined when id not found', () => {
     expect(
-      extractToolResultContent(
+      extractToolResultParts(
         [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu_other' }] }],
         'tu_1'
       )
@@ -216,7 +251,7 @@ describe('extractToolResultContent', () => {
 
   it('extracts string content', () => {
     expect(
-      extractToolResultContent(
+      extractToolResultParts(
         [
           {
             role: 'user',
@@ -225,12 +260,12 @@ describe('extractToolResultContent', () => {
         ],
         'tu_1'
       )
-    ).toBe('output');
+    ).toEqual({ text: 'output', images: [] });
   });
 
   it('extracts text-block array content', () => {
     expect(
-      extractToolResultContent(
+      extractToolResultParts(
         [
           {
             role: 'user',
@@ -245,7 +280,61 @@ describe('extractToolResultContent', () => {
         ],
         'tu_1'
       )
-    ).toBe('result');
+    ).toEqual({ text: 'result', images: [] });
+  });
+
+  it('extracts image blocks alongside text', () => {
+    expect(
+      extractToolResultParts(
+        [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  { type: 'text', text: 'screenshot' },
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        'tu_1'
+      )
+    ).toEqual({
+      text: 'screenshot',
+      images: [{ data: 'AAAA', mediaType: 'image/png', bytes: 3 }],
+    });
+  });
+
+  it('returns empty text for image-only content', () => {
+    expect(
+      extractToolResultParts(
+        [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        'tu_1'
+      )
+    ).toEqual({ text: '', images: [{ data: 'AAAA', mediaType: 'image/png', bytes: 3 }] });
   });
 });
 
@@ -289,5 +378,80 @@ describe('extractToolResultIsError', () => {
         'tu_1'
       )
     ).toBe(false);
+  });
+});
+
+describe('collectImages', () => {
+  const png = (data: string) => ({
+    type: 'image' as const,
+    source: { type: 'base64', media_type: 'image/png', data },
+  });
+
+  it('returns empty for text-only messages', () => {
+    expect(collectImages([{ role: 'user', content: 'hi' }])).toEqual([]);
+  });
+
+  it('collects top-level and tool_result images in order', () => {
+    const images = collectImages([
+      {
+        role: 'user',
+        content: [
+          png('AAAA'),
+          {
+            type: 'tool_result',
+            tool_use_id: 'tu_1',
+            content: [png('BBBB')],
+          },
+          png('CCCC'),
+        ],
+      },
+    ]);
+    expect(images.map((i) => i.data)).toEqual(['AAAA', 'BBBB', 'CCCC']);
+    expect(images[0]).toEqual({ data: 'AAAA', mediaType: 'image/png', bytes: 3 });
+  });
+
+  it('throws on URL image sources', () => {
+    expect(() =>
+      collectImages([
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'url', url: 'https://example.com/x.png' },
+            } as never,
+          ],
+        },
+      ])
+    ).toThrow(/url/i);
+  });
+
+  it('throws on malformed image sources', () => {
+    expect(() =>
+      collectImages([{ role: 'user', content: [{ type: 'image', source: { type: 'base64' } }] }])
+    ).toThrow();
+  });
+});
+
+describe('messageTopLevelImages', () => {
+  it('returns images from the given message only, excluding tool_result content', () => {
+    const images = messageTopLevelImages({
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tu_1',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+          ],
+        },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'BBBB' } },
+      ],
+    });
+    expect(images.map((i) => i.data)).toEqual(['BBBB']);
+  });
+
+  it('returns empty for string content', () => {
+    expect(messageTopLevelImages({ role: 'user', content: 'hi' })).toEqual([]);
   });
 });

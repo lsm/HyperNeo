@@ -5,16 +5,19 @@ import { isAbsolute, normalize } from 'node:path';
 import {
   approveAll,
   type CopilotClient,
+  type MessageOptions,
   type ModelInfo,
   type SessionConfig,
 } from '@github/copilot-sdk';
 import { isAnthropicRequest, type AnthropicMessage, type AnthropicRequest } from './types.js';
 import {
-  ensureNoImageBlocks,
+  collectImages,
+  messageTopLevelImages,
   formatAnthropicPrompt,
   extractSystemText,
   extractToolResultIds,
 } from './prompt.js';
+import { createVisionGate } from './vision.js';
 import { ConversationManager } from './conversation.js';
 import {
   createReasoningSupport,
@@ -182,6 +185,7 @@ async function handleMessages(
   contextUsageStore: ContextUsageStore,
   cwd: string,
   reasoningSupport: ReturnType<typeof createReasoningSupport>,
+  visionGate: ReturnType<typeof createVisionGate>,
   thinkingFor: (sessionId: string) => string | undefined
 ): Promise<void> {
   let bodyText: string;
@@ -242,15 +246,43 @@ async function handleMessages(
     }
     if (continuation) {
       const { conv, toolResults } = continuation;
+      const lastMessage = body.messages.at(-1);
+      let pendingImages;
       try {
-        ensureNoImageBlocks(body.messages);
+        pendingImages = lastMessage ? messageTopLevelImages(lastMessage) : [];
       } catch (err) {
         sendJsonError(
           out,
           400,
           'invalid_request_error',
-          err instanceof Error ? err.message : 'Invalid request content'
+          err instanceof Error ? err.message : 'Invalid image content'
         );
+        return;
+      }
+      if (pendingImages.length > 0) {
+        sendJsonError(
+          out,
+          400,
+          'invalid_request_error',
+          'Image blocks outside tool_result content cannot be forwarded while a tool call is pending'
+        );
+        return;
+      }
+      try {
+        collectImages(body.messages);
+      } catch (err) {
+        sendJsonError(
+          out,
+          400,
+          'invalid_request_error',
+          err instanceof Error ? err.message : 'Invalid image content'
+        );
+        return;
+      }
+      const deliveredImages = toolResults.flatMap((r) => r.images ?? []);
+      const visionError = await visionGate(body.model, deliveredImages);
+      if (visionError) {
+        sendJsonError(out, 400, 'invalid_request_error', visionError);
         return;
       }
       const usageKey = requestUsageKey(req, cwd, body.model);
@@ -288,6 +320,27 @@ async function handleMessages(
     }
   }
 
+  let images;
+  try {
+    images = collectImages(body.messages);
+  } catch (err) {
+    sendJsonError(
+      out,
+      400,
+      'invalid_request_error',
+      err instanceof Error ? err.message : 'Invalid image content'
+    );
+    return;
+  }
+  const visionError = await visionGate(body.model, images);
+  if (visionError) {
+    sendJsonError(out, 400, 'invalid_request_error', visionError);
+    return;
+  }
+  const attachments: MessageOptions['attachments'] | undefined = images.length
+    ? images.map((i) => ({ type: 'blob' as const, data: i.data, mimeType: i.mediaType }))
+    : undefined;
+
   let prompt: string;
   try {
     prompt = formatAnthropicPrompt(body.messages);
@@ -322,7 +375,8 @@ async function handleMessages(
       systemMessage,
       prompt,
       requestCwd,
-      reasoningEffort
+      reasoningEffort,
+      attachments
     );
   } else {
     await handlePlainRequest(
@@ -334,7 +388,8 @@ async function handleMessages(
       systemMessage,
       prompt,
       requestCwd,
-      reasoningEffort
+      reasoningEffort,
+      attachments
     );
   }
 }
@@ -349,7 +404,8 @@ async function handleNewToolConversation(
   systemMessage: string | undefined,
   prompt: string,
   cwd: string,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ReasoningEffort,
+  attachments?: MessageOptions['attachments']
 ): Promise<void> {
   let conv;
   try {
@@ -386,7 +442,8 @@ async function handleNewToolConversation(
         store: contextUsageStore,
         requestKey: requestUsageKey(req, cwd, body.model),
         outputTokenLimit: body.max_tokens,
-      }
+      },
+      attachments
     );
     if (outcome.kind === 'completed') {
       manager.cleanupConversation(conv);
@@ -409,7 +466,8 @@ async function handlePlainRequest(
   systemMessage: string | undefined,
   prompt: string,
   cwd: string,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ReasoningEffort,
+  attachments?: MessageOptions['attachments']
 ): Promise<void> {
   const sessionConfig = buildPlainSessionConfig(body.model, systemMessage, cwd, reasoningEffort);
 
@@ -441,7 +499,8 @@ async function handlePlainRequest(
         store: contextUsageStore,
         requestKey: requestUsageKey(req, cwd, body.model),
         outputTokenLimit: body.max_tokens,
-      }
+      },
+      attachments
     );
   } catch (err) {
     logger.error('Streaming failed:', err);
@@ -523,6 +582,7 @@ export function startEmbeddedServer(
   const manager = new ConversationManager();
   const contextUsageStore = new ContextUsageStore();
   const reasoningSupport = createReasoningSupport(client);
+  const visionGate = createVisionGate(client);
 
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? '';
@@ -537,6 +597,7 @@ export function startEmbeddedServer(
         contextUsageStore,
         cwd,
         reasoningSupport,
+        visionGate,
         thinkingFor
       ).catch((err: unknown) => {
         logger.error('Unhandled error in handleMessages:', err);

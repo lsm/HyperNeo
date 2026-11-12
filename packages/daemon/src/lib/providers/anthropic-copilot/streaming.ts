@@ -1,6 +1,6 @@
 import { sendNodeJsonError as sendJsonError } from '../shared/json-error-response.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { CopilotSession, SessionEvent } from '@github/copilot-sdk';
+import type { CopilotSession, MessageOptions, SessionEvent } from '@github/copilot-sdk';
 import type { ToolBridgeRegistry } from './tool-bridge.js';
 import type { ToolResult } from './conversation.js';
 import { AnthropicStreamWriter, estimateTokens } from './sse.js';
@@ -196,7 +196,8 @@ export function runSessionStreaming(
   registry?: ToolBridgeRegistry,
   onDone: () => void = () => {},
   inputText = '',
-  contextUsage?: StreamingContextUsageOptions
+  contextUsage?: StreamingContextUsageOptions,
+  attachments?: MessageOptions['attachments']
 ): Promise<StreamingOutcome> {
   return streamSession(
     session,
@@ -205,12 +206,14 @@ export function runSessionStreaming(
     res,
     registry,
     (finish, writeFailed) => {
-      session.send({ prompt }).catch((err: unknown) => {
-        logger.error('Failed to send prompt to Copilot session:', err);
-        writeFailed();
-        session.abort().catch(() => {});
-        finish();
-      });
+      session
+        .send({ prompt, ...(attachments?.length ? { attachments } : {}) })
+        .catch((err: unknown) => {
+          logger.error('Failed to send prompt to Copilot session:', err);
+          writeFailed();
+          session.abort().catch(() => {});
+          finish();
+        });
     },
     onDone,
     inputText,
@@ -236,8 +239,8 @@ export function resumeSessionStreaming(
     res,
     registry,
     (_finish, _writeFailed) => {
-      for (const { toolUseId, result, isError } of toolResults) {
-        registry.resolveToolResult(toolUseId, result, isError);
+      for (const { toolUseId, result, isError, images } of toolResults) {
+        registry.resolveToolResult(toolUseId, result, isError, images);
       }
     },
     onDone,
