@@ -176,24 +176,18 @@ describe('resident family tools', () => {
   });
 });
 
-test('a dual-mode Back tool surface omits publication and speech while single mode keeps them', () => {
-  const registry = createOperationRegistry([]);
-  const names = (speaking: boolean) => {
-    const server = createOperationMcpServer(
-      registry,
-      () => ({ role: 'neo' }),
-      undefined,
-      'neo',
-      speaking
-    );
-    return Object.keys(
-      (server.instance as unknown as { _registeredTools: Record<string, unknown> })._registeredTools
-    );
-  };
-  expect(names(false)).not.toContain('neo_publish');
-  expect(names(false)).not.toContain('neo_speech');
-  expect(names(false)).toContain('neo_work');
-  expect(names(false)).toContain('invoke');
-  expect(names(true)).toContain('neo_publish');
-  expect(names(true)).toContain('neo_speech');
+test('a Neo tool surface keeps publication and speech', () => {
+  const server = createOperationMcpServer(
+    createOperationRegistry([]),
+    () => ({ role: 'neo' }),
+    undefined,
+    'neo'
+  );
+  const names = Object.keys(
+    (server.instance as unknown as { _registeredTools: Record<string, unknown> })._registeredTools
+  );
+  expect(names).toContain('neo_publish');
+  expect(names).toContain('neo_speech');
+  expect(names).toContain('neo_work');
+  expect(names).toContain('invoke');
 });

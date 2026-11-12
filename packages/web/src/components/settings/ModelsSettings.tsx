@@ -560,7 +560,7 @@ function FrontModelSettings({
     setError('');
     try {
       const hub = connectionManager.getHubIfConnected();
-      if (!hub) throw new Error('Reconnect before changing the front model.');
+      if (!hub) throw new Error('Reconnect before changing the fast reply model.');
       const result = await invokeOperation<{ ok: boolean; reason?: string }>(
         hub,
         'neo.front.model.set',
@@ -571,10 +571,10 @@ function FrontModelSettings({
           ...(autoCompactPercent === undefined ? {} : { autoCompactPercent }),
         }
       );
-      if (!result.ok) throw new Error(result.reason ?? 'Could not save the front model.');
+      if (!result.ok) throw new Error(result.reason ?? 'Could not save the fast reply model.');
     } catch (cause) {
       setPercent(savedPercent);
-      setError(cause instanceof Error ? cause.message : 'Could not save the front model.');
+      setError(cause instanceof Error ? cause.message : 'Could not save the fast reply model.');
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -604,9 +604,9 @@ function FrontModelSettings({
   return (
     <div class="space-y-4 rounded-xl border border-line bg-surface p-4 sm:p-5">
       <div class="border-b border-line pb-4">
-        <h4 class="text-sm font-semibold text-fg">Front</h4>
+        <h4 class="text-sm font-semibold text-fg">Fast reply model</h4>
         <p class="mt-1 text-xs leading-relaxed text-fg-muted">
-          Receives your messages and replies. Hands work to Neo when needed.
+          Answers your messages first and hands work to Neo.
         </p>
       </div>
       {preference ? (
@@ -614,20 +614,20 @@ function FrontModelSettings({
           heading="Model"
           name={findSameModel(allModels, preference)?.name ?? preference.model}
           provider={getProviderLabel(preference.provider)}
-          pickLabel="Choose front model"
+          pickLabel="Choose fast reply model"
           disabled={busy}
           onPick={() => setPicker(true)}
           thinking={{
             saved: preference.thinkingLevel,
-            label: 'front model thinking',
+            label: 'fast reply model thinking',
             capability: loading ? null : (findSameModel(allModels, preference) ?? preference),
             onChange: (level) => {
               void save({ id: preference.model, provider: preference.provider }, level);
             },
           }}
           percent={{
-            label: 'front model auto-compact percentage',
-            title: 'Applies to front replies as they run',
+            label: 'fast reply model auto-compact percentage',
+            title: 'Applies to fast replies as they run',
             value: percent,
             onInput: setPercent,
             onBlur: savePercent,
@@ -635,7 +635,7 @@ function FrontModelSettings({
         />
       ) : (
         <Button variant="secondary" size="sm" disabled={busy} onClick={() => setPicker(true)}>
-          Choose front model
+          Choose fast reply model
         </Button>
       )}
       {error && (
@@ -645,7 +645,7 @@ function FrontModelSettings({
       )}
       {picker && (
         <ModelPickerModal
-          title="Choose front model"
+          title="Choose fast reply model"
           groupedModels={groupedModels}
           providerAuthStatuses={providerAuthStatuses}
           excludeModels={[]}
@@ -813,7 +813,7 @@ function NeoModelSettings({
       <div class="border-b border-line pb-4">
         <h4 class="text-sm font-semibold text-fg">Neo</h4>
         <p class="mt-1 text-xs leading-relaxed text-fg-muted">
-          Handles work and investigations. Publishes delegated results.
+          Handles work and investigations, and answers you directly.
         </p>
       </div>
       {draft ? (
@@ -1347,7 +1347,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
         )}
         <NeoFrontSettings />
         <div class="grid items-start gap-4 xl:grid-cols-2">
-          <section aria-label="Front">
+          <section aria-label="Fast reply model">
             <FrontModelSettings
               groupedModels={groupedModels}
               providerAuthStatuses={providerAuthStatuses}

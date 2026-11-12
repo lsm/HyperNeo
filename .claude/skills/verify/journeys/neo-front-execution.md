@@ -6,13 +6,12 @@ The helper owns a disposable HOME, DB and loopback model fixture on random ports
 It uses the real SDK through the ordinary session runtime.
 
 Enable dual-model mode and send a human message through the authenticated Neo
-operation. Require the daemon to present Front's tool-free terminal answer with
-the original replyTo. Send a second input that Front hands to Neo through run_in_background.
-Require direct Neo publications to be refused in dual-model mode. Neo sends its
-result internally and Front publishes it. Send a later result for the same input
-and require another Front publication to succeed. An acknowledgment leaves the
-answer outcome pending.
-Switch to single-model mode and preserve the same Front SDK session identity.
+operation. Require the daemon to present the front's tool-free terminal answer with
+the original replyTo. Send a second input that the front hands to Neo through work_on. Require Neo's
+turn to offer its publish and speech tools, then require two direct Neo
+publications for that input to succeed with publishedBy neo. An acknowledgment
+leaves the answer outcome pending.
+Switch to single-model mode and preserve the same front SDK session identity.
 
 Retain neo-front-execution.json with passed and resourcesClosed true and wrapper
 exit 0. The helper closes the daemon, SDK queries, provider bridges and HTTP

@@ -9,7 +9,7 @@ import { createFrontTools } from './front-model.ts';
 import { NEO_FRONT } from '@hyperneo/prompts';
 import type { NeoService } from './service.ts';
 
-const CONVO_TITLE = 'Convo';
+const CONVO_TITLE = 'Neo fast replies';
 
 function unusable(session: Session): boolean {
   return session.status === 'archived' || session.status === 'ended';
@@ -37,8 +37,7 @@ export async function frontSession(
       'asks_read',
       'cards_read',
       'todos_read',
-      'handoff_read',
-      'run_in_background',
+      'work_on',
       'speech_say',
       'reply_short',
       'reply_detailed',

@@ -56,7 +56,7 @@ export async function fileNeoSessions(
   if (front?.metadata) {
     const neo = sessions[0];
     await db.updateSession(front.id, {
-      title: 'Convo',
+      title: 'Neo fast replies',
       metadata: {
         ...front.metadata,
         executionProjectPath: neo?.metadata?.executionProjectPath ?? neo?.workspacePath ?? folder,

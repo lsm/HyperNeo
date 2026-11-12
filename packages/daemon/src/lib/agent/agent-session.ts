@@ -358,15 +358,9 @@ export class AgentSession
     inputOrigin?: () => { messageId: string } | null
   ): ReturnType<typeof createOperationMcpServer> {
     const descriptionRole = this.operationCallerIdentity().role;
-    const speaking =
-      descriptionRole !== 'neo' || this.db.getGlobalSettings().neo?.front?.enabled !== true;
     const descriptionKey =
       descriptionRole === 'neo'
-        ? JSON.stringify([
-            descriptionRole,
-            enabledOperationPacks(this.resolveOperationRegistry()),
-            speaking,
-          ])
+        ? JSON.stringify([descriptionRole, enabledOperationPacks(this.resolveOperationRegistry())])
         : descriptionRole;
     if (!inputOrigin && this.operationMcpServer && this.operationMcpServerKey === descriptionKey)
       return this.operationMcpServer;
@@ -377,8 +371,7 @@ export class AgentSession
         consumedInputId: inputOrigin?.()?.messageId,
       }),
       this.recordOperationRefusal,
-      descriptionRole,
-      speaking
+      descriptionRole
     );
     if (!inputOrigin) {
       this.operationMcpServer = server;

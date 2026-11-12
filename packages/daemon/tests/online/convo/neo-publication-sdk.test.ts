@@ -858,7 +858,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),
       'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
       '[listening: no]\nBefore time-consuming work, publish one short reply first: what you will do, plus a line or two of what you already know. Answer a quick question directly instead. Then continue.',
-      expect.stringContaining('[Single-model mode]'),
+      '[listening: no]',
     ]);
     expect(human.map((part) => part.text).join('\n')).not.toContain('<human-input>');
     expect(human.map((part) => part.text)).toContain(`[message id: ${requestId}]`);
