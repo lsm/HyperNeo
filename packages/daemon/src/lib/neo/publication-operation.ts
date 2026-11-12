@@ -131,7 +131,7 @@ export function requirePublicationProducer(
               : 'avatar_required',
           detail:
             speaker && speaker !== root?.sessionId
-              ? `Dual-model mode: send your result and the original human message IDs to Convo using message.send {to: "${speaker}", text: "...", idempotencyKey: "..."}. Convo publishes to the human.`
+              ? `Dual-model mode: send your result and the original human message IDs to the front session using message.send {to: "${speaker}", text: "...", idempotencyKey: "..."}. The front session publishes to the human.`
               : undefined,
         },
       };

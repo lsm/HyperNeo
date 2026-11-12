@@ -89,7 +89,7 @@ export function createNeoFrontHandler(service: NeoService) {
           if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
           return await settleConvoInput(service, job, conversationId, session.id, messageId);
         } catch (error) {
-          new Logger('NeoFront').warn('Convo delivery failed', error);
+          new Logger('NeoFront').warn('Front delivery failed', error);
           if (service.db.getGlobalSettings().neo?.front?.enabled !== true) return handoff();
           return settleConvoInput(
             service,

@@ -759,8 +759,8 @@ async function frontEditor() {
 
 test('chooses a separate provider/model through the targeted front operation', async () => {
   await frontEditor();
-  const convo = within(screen.getByRole('region', { name: 'Convo' }));
-  fireEvent.click(convo.getByRole('button', { name: 'Choose Convo model' }));
+  const convo = within(screen.getByRole('region', { name: 'Front' }));
+  fireEvent.click(convo.getByRole('button', { name: 'Choose front model' }));
   fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -773,7 +773,7 @@ test('chooses a separate provider/model through the targeted front operation', a
 });
 
 test.each(['refused', 'failed'])(
-  'a %s Convo model save retains the saved selection',
+  'a %s Front model save retains the saved selection',
   async (mode) => {
     request.mockImplementation(async (method) => {
       if (method === 'models.list') return { models };
@@ -781,8 +781,8 @@ test.each(['refused', 'failed'])(
       return { ok: false, reason: 'Unavailable model' };
     });
     await frontEditor();
-    const convo = within(screen.getByRole('region', { name: 'Convo' }));
-    fireEvent.click(convo.getByRole('button', { name: 'Choose Convo model' }));
+    const convo = within(screen.getByRole('region', { name: 'Front' }));
+    fireEvent.click(convo.getByRole('button', { name: 'Choose front model' }));
     fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
     expect((await convo.findByRole('alert')).textContent).toBeTruthy();
     expect(convo.getByText('opus')).toBeTruthy();
@@ -792,8 +792,8 @@ test.each(['refused', 'failed'])(
 
 test('the Front compact percentage saves through the targeted front operation', async () => {
   await frontEditor();
-  const convo = within(screen.getByRole('region', { name: 'Convo' }));
-  const input = convo.getByLabelText('Convo model auto-compact percentage') as HTMLInputElement;
+  const convo = within(screen.getByRole('region', { name: 'Front' }));
+  const input = convo.getByLabelText('front model auto-compact percentage') as HTMLInputElement;
   expect(input.value).toBe('90');
   fireEvent.input(input, { target: { value: '65' } });
   fireEvent.focusOut(input);
@@ -819,14 +819,14 @@ test('primary model groups visibly labeled thinking and compaction controls', as
 
 test('the mode switch sits above the separate Front and Neo sections', async () => {
   await frontEditor();
-  const convo = screen.getByRole('region', { name: 'Convo' });
+  const convo = screen.getByRole('region', { name: 'Front' });
   const neo = screen.getByRole('region', { name: 'Neo models' });
   expect(neo.contains(convo)).toBe(false);
   expect(convo.contains(neo)).toBe(false);
   expect(screen.getByRole('checkbox', { name: 'Dual-model mode' })).toBeTruthy();
   expect(within(convo).queryByRole('checkbox')).toBeNull();
-  expect(within(convo).getByRole('button', { name: 'Choose Convo model' })).toBeTruthy();
-  expect(within(neo).queryByRole('button', { name: 'Choose Convo model' })).toBeNull();
+  expect(within(convo).getByRole('button', { name: 'Choose front model' })).toBeTruthy();
+  expect(within(neo).queryByRole('button', { name: 'Choose front model' })).toBeNull();
 });
 
 test('Neo and Front render the same model row component', async () => {
@@ -835,12 +835,12 @@ test('Neo and Front render the same model row component', async () => {
     .getByRole('button', { name: 'Change Neo primary' })
     .closest('[data-model-row]')!;
   const convoRow = screen
-    .getByRole('button', { name: 'Choose Convo model' })
+    .getByRole('button', { name: 'Choose front model' })
     .closest('[data-model-row]')!;
   expect(neoRow).toBeTruthy();
   expect(convoRow).toBeTruthy();
-  expect(convoRow.contains(screen.getByLabelText('Convo model thinking'))).toBe(true);
-  expect(convoRow.contains(screen.getByLabelText('Convo model auto-compact percentage'))).toBe(
+  expect(convoRow.contains(screen.getByLabelText('front model thinking'))).toBe(true);
+  expect(convoRow.contains(screen.getByLabelText('front model auto-compact percentage'))).toBe(
     true
   );
   expect(neoRow.contains(screen.getByLabelText('Neo model 1 thinking'))).toBe(true);
@@ -864,13 +864,13 @@ test.each(['percent', 'thinking'])(
       })),
     });
     await frontEditor();
-    const front = within(screen.getByRole('region', { name: 'Convo' }));
+    const front = within(screen.getByRole('region', { name: 'Front' }));
     if (control === 'percent') {
-      const input = front.getByLabelText('Convo model auto-compact percentage');
+      const input = front.getByLabelText('front model auto-compact percentage');
       fireEvent.input(input, { target: { value: '65' } });
       fireEvent.focusOut(input);
     } else {
-      fireEvent.change(front.getByLabelText('Convo model thinking'), {
+      fireEvent.change(front.getByLabelText('front model thinking'), {
         target: { value: 'think8k' },
       });
     }

@@ -2668,7 +2668,7 @@ describe('QueryOptionsBuilder', () => {
       expect(options.disallowedTools).toContain('WebFetch');
     });
 
-    it('excludes automatic Exa attachment for the Convo lane', async () => {
+    it('excludes automatic Exa attachment for the Front lane', async () => {
       process.env.EXA_API_KEY = EXA_TEST_KEY;
       enableExaSettings();
       useNonNativeProvider();
@@ -2680,7 +2680,7 @@ describe('QueryOptionsBuilder', () => {
       expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
     });
 
-    it('excludes a configured Exa server from Convo attachment', async () => {
+    it('excludes a configured Exa server from Front attachment', async () => {
       process.env.EXA_API_KEY = EXA_TEST_KEY;
       enableExaSettings();
       useNonNativeProvider();
@@ -2722,7 +2722,7 @@ describe('QueryOptionsBuilder', () => {
       expect(builder.getEffectiveMcpServers()?.exa).toBeDefined();
     });
 
-    it('honors an explicit automatic Exa veto without a Convo tool', async () => {
+    it('honors an explicit automatic Exa veto without a Front tool', async () => {
       process.env.EXA_API_KEY = EXA_TEST_KEY;
       enableExaSettings();
       useNonNativeProvider();

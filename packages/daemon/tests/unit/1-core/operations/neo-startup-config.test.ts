@@ -170,13 +170,13 @@ describe('Neo startup configuration', () => {
     expect(prompt).toContain('"key":"reviewBot","value":"synthetic-prompt-bot"');
   });
 
-  test('a failed Convo preparation still refreshes coordinator startup configuration', async () => {
+  test('a failed Front preparation still refreshes coordinator startup configuration', async () => {
     const id = await service.open();
     const packs = [
       { id: 'synthetic', describe: 'Test domain', guidance: 'Recovered pack instruction' },
     ];
     vi.spyOn(service, 'packBriefs').mockReturnValue(packs);
-    vi.spyOn(service, 'prepareFront').mockRejectedValue(new Error('Convo unavailable'));
+    vi.spyOn(service, 'prepareFront').mockRejectedValue(new Error('Front unavailable'));
     await expect(service.recover()).resolves.toBeUndefined();
     expect(db.getSession(id)?.config.systemPrompt).toBe(
       neoPrompt(packs, [], service.packPreferences())

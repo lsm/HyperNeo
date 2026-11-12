@@ -1,14 +1,14 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   dual_model_front_required:
-    'In dual-model mode only Convo publishes to the human. Send your result and original human IDs to Convo using message.send.',
+    'In dual-model mode only the front session publishes to the human. Send your result and original human IDs to the front session using message.send.',
   front_ack_required:
     'First use reply_short with progress:true to publish a brief acknowledgment for each original human replyTo ID, then call run_in_background.',
 
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
   front_not_speaking:
-    'Convo may hand off requests only while dual-model mode is enabled for its current conversation.',
-  front_model_required: 'Choose a Convo model before enabling dual-model mode.',
+    'Background work is available only while dual-model mode is on for this conversation.',
+  front_model_required: 'Choose a front model before enabling dual-model mode.',
 
   updating:
     'A daemon restart is reserved. Retry speech after the brief update finishes; keep the reply on screen meanwhile.',

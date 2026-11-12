@@ -399,7 +399,7 @@ export const en = {
   'artifact.loadingSource': 'Loading source…',
   'dual.label': 'Dual-model mode',
   'dual.description':
-    'Convo receives your messages and replies; Neo handles delegated work. Turn off to use Neo directly.',
+    'Front receives your messages and replies; Neo handles delegated work. Turn off to use Neo directly.',
   'dual.reconnect': 'Reconnect before changing dual-model mode.',
   'dual.saveError': 'Could not save dual-model settings.',
 } as const;

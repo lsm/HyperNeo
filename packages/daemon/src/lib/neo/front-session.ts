@@ -59,7 +59,7 @@ export async function frontSession(
     return requireSession(service, id);
   }
   if (unusable(existing)) {
-    new Logger('NeoFront').warn('Convo session was unusable; restoring it', {
+    new Logger('NeoFront').warn('Front session was unusable; restoring it', {
       status: existing.status,
     });
     const restore: SessionUpdate = { status: 'active', archivedAt: null };
@@ -107,7 +107,7 @@ async function createConvo(
       service.db.getSession(id)
     )
       return;
-    new Logger('NeoFront').warn('Convo session creation failed', {
+    new Logger('NeoFront').warn('Front session creation failed', {
       errorType: error instanceof Error ? error.name : 'unknown',
     });
     throw error;

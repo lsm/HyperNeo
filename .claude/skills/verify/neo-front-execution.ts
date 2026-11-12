@@ -74,7 +74,7 @@ const fixture = createServer(async (request, response) => {
     stages.set(active, 1);
   } else if (front && active === handoffId && stage === 1) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__run_in_background',
-      input: { requestId: 'handoff-proof', messageIds: [handoffId], text: 'Complete the requested action and send the result back to Convo.' } };
+      input: { requestId: 'handoff-proof', messageIds: [handoffId], text: 'Complete the requested action and send the result back to the front session.' } };
     stages.set(active, 2);
   } else if (front && ((active === humanId && stage === 1) || (active === handoffId && stage === 3))) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: active === humanId ? 'mcp__front__reply_short' : 'mcp__front__reply_detailed',
@@ -377,5 +377,5 @@ try {
   writeFileSync(join(run, 'evidence/neo-front-execution.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(
-  'PASS ordinary Convo session, terminal reply, Back handoff and multiple updates per human input'
+  'PASS ordinary Front session, terminal reply, Back handoff and multiple updates per human input'
 );

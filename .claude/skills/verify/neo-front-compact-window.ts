@@ -116,7 +116,7 @@ try {
     ['twentyfive', { autoCompactPercent: 25 }],
   ] as const) {
     const created = await hub.request<{ sessionId: string }>('session.create', {
-      title: `Convo window ${label}`,
+      title: `Front window ${label}`,
       workspacePath: join(run, 'workspace'),
       config: { provider: 'kimi', model: model.id, ...config },
     });

@@ -65,7 +65,7 @@ export async function settleConvoInput(
       conversationId,
       publicationId: neoDerivedId(`convo-reply:${conversationId}:${[...ids].sort().join(',')}`),
       verbatim: true,
-      fullText: 'Convo could not complete this reply. Please try again.',
+      fullText: 'This reply could not be completed. Please try again.',
       replyTo: ids,
       links: [],
     },
