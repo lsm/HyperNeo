@@ -299,27 +299,16 @@ export class DevicePairingRepository {
   }
 
   firstDeviceOpen(): boolean {
-    if (this.everPairedHumanCount() === 0) return true;
+    if (this.countDevices().humansEver === 0) return true;
     return this.humanRecoveryOpen();
   }
 
-  everPairedHumanCount(): number {
-    return (
-      this.db
-        .prepare(
-          "SELECT COUNT(*) AS humans FROM paired_devices WHERE kind = 'human' " +
-            "AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
-        )
-        .get() as { humans: number }
-    ).humans;
-  }
-
-  countDevices(): { all: number; humans: number } {
+  countDevices(): { all: number; humans: number; humansEver: number } {
     return this.db
       .prepare(
-        "SELECT COUNT(*) AS \"all\", COUNT(*) FILTER (WHERE kind = 'human' AND revoked_at IS NULL) AS humans FROM paired_devices WHERE id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
+        "SELECT COUNT(*) AS \"all\", COUNT(*) FILTER (WHERE kind = 'human' AND revoked_at IS NULL) AS humans, COUNT(*) FILTER (WHERE kind = 'human') AS humansEver FROM paired_devices WHERE id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
       )
-      .get() as { all: number; humans: number };
+      .get() as { all: number; humans: number; humansEver: number };
   }
 
   createCodeAsync(draft: PairingCodeDraft) {

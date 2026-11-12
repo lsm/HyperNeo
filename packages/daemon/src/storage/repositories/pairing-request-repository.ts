@@ -101,7 +101,7 @@ export class PairingRequestRepository {
   }
 
   grantedFirstDevice(): boolean {
-    if (!this.everPairedPhoneCount()) return false;
+    if (this.everPairedPhoneCount() === 0) return false;
     return !new DevicePairingRepository(this.db).humanRecoveryOpen();
   }
 
@@ -111,14 +111,7 @@ export class PairingRequestRepository {
   }
 
   everPairedPhoneCount(): number {
-    return (
-      this.db
-        .prepare(
-          "SELECT COUNT(*) AS humans FROM paired_devices WHERE kind = 'human' " +
-            "AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
-        )
-        .get() as { humans: number }
-    ).humans;
+    return new DevicePairingRepository(this.db).countDevices().humansEver;
   }
 
   createRequest(now: number): { requestId: string; ticket: string; expiresAt: number } {
