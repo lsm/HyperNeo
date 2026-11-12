@@ -587,6 +587,27 @@ export function planNeoTodoClose(
   };
 }
 
+const Done = z.object({ todoId: Text, reason: Text.optional() });
+
+export function planNeoTodoDone(
+  todo: NeoTodo,
+  input: z.infer<typeof Done>,
+  now = Date.now()
+): Gate<TodoPlan> {
+  if (!['todo', 'doing', 'blocked', 'failed'].includes(todo.state))
+    return fail(`todo_not_live: this todo is ${todo.state}.`);
+  return {
+    value: {
+      todo,
+      patch: {
+        state: 'done',
+        finishedAt: now,
+        ...(input.reason ? { evidence: input.reason } : {}),
+      },
+    },
+  };
+}
+
 export function createNeoTodoOperations(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -647,7 +668,11 @@ export function createNeoTodoOperations(
       },
     };
   };
-  const write = async (plan: TodoPlan, input?: EditPlan): Promise<TodoReceipt | Rejection> => {
+  const write = async (
+    plan: TodoPlan,
+    input?: EditPlan,
+    gated = true
+  ): Promise<TodoReceipt | Rejection> => {
     const checked = plan.todo;
     if (input?.addUrls || input?.check || input?.hold !== undefined) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
@@ -659,8 +684,9 @@ export function createNeoTodoOperations(
       plan = rebased.value;
     }
     if (
-      ['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
-      plan.patch.blockedBy === 'check'
+      gated &&
+      (['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
+        plan.patch.blockedBy === 'check')
     ) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
@@ -684,11 +710,11 @@ export function createNeoTodoOperations(
       ...(plan.records ? { records: plan.records } : {}),
     };
   };
-  const stopAndWrite = async (plan: TodoPlan): Promise<TodoReceipt | Rejection> => {
+  const stopAndWrite = async (plan: TodoPlan, gated = true): Promise<TodoReceipt | Rejection> => {
     const failed = await controls.stop(plan.todo);
     return failed
       ? { ok: false, reason: `${failed}; the todo is unchanged, its session may still run.` }
-      : write(plan);
+      : write(plan, undefined, gated);
   };
   const ran = async (
     result: Awaited<ReturnType<typeof addNeoTodo>>
@@ -866,6 +892,14 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
+  const done = owned(superpipe({})('neo.todo.done') as PipelineAPI)
+    .pipe(planNeoTodoDone, ['outcome', 'input'], 'result:outcome')
+    .pipe((plan: TodoPlan) => stopAndWrite(plan, false), 'outcome', 'outcome')
+    .endAsync('outcome') as (
+    input: z.infer<typeof Done>,
+    caller: OperationCaller
+  ) => Promise<TodoReceipt | Rejection>;
+
   const close = owned(superpipe({})('neo.todo.close') as PipelineAPI)
     .pipe(planNeoTodoClose, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
@@ -944,6 +978,14 @@ export function createNeoTodoOperations(
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await retry(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.todo.done',
+      description: neoToolDescription('neo.todo.done'),
+      inputSchema: Done,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => present(await done(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.close',

@@ -217,6 +217,7 @@ import mdToolTodoAdd from './neo/tools/neo.todo.add.md' with { type: 'text' };
 import mdToolTodoBind from './neo/tools/neo.todo.bind.md' with { type: 'text' };
 import mdToolTodoClose from './neo/tools/neo.todo.close.md' with { type: 'text' };
 import mdToolTodoContinue from './neo/tools/neo.todo.continue.md' with { type: 'text' };
+import mdToolTodoDone from './neo/tools/neo.todo.done.md' with { type: 'text' };
 import mdToolTodoEdit from './neo/tools/neo.todo.edit.md' with { type: 'text' };
 import mdToolTodoHold from './neo/tools/neo.todo.hold.md' with { type: 'text' };
 import mdToolTodoProceed from './neo/tools/neo.todo.proceed.md' with { type: 'text' };
@@ -708,6 +709,7 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.todo.bind.md': mdToolTodoBind,
     'neo/tools/neo.todo.close.md': mdToolTodoClose,
     'neo/tools/neo.todo.continue.md': mdToolTodoContinue,
+    'neo/tools/neo.todo.done.md': mdToolTodoDone,
     'neo/tools/neo.todo.edit.md': mdToolTodoEdit,
     'neo/tools/neo.todo.hold.md': mdToolTodoHold,
     'neo/tools/neo.todo.proceed.md': mdToolTodoProceed,

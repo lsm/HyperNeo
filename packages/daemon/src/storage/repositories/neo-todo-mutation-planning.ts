@@ -14,6 +14,7 @@ import {
   planNeoTodoDraft,
   planNeoTodoEdit,
   planNeoTodoClose,
+  planNeoTodoDone,
   planNeoTodoRemove,
   requireNeoOpenTodo,
   requireNeoTodoArtifacts,
@@ -28,6 +29,7 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 type Input =
   | ({ kind: 'edit'; workerRemotes?: readonly string[] } & Parameters<typeof planNeoTodoEdit>[1])
   | ({ kind: 'close' } & Parameters<typeof planNeoTodoClose>[1])
+  | ({ kind: 'done' } & Parameters<typeof planNeoTodoDone>[1])
   | ({ kind: 'remove' } & Parameters<typeof planNeoTodoRemove>[2]);
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
 type Outcome =
@@ -125,7 +127,9 @@ class NeoTodoMutationPlanner {
             ? planNeoTodoEdit(todo, input, now)
             : input.kind === 'close'
               ? planNeoTodoClose(todo, input, now)
-              : planNeoTodoRemove(todo, todos.listTodos(todo.askId), input),
+              : input.kind === 'done'
+                ? planNeoTodoDone(todo, input, now)
+                : planNeoTodoRemove(todo, todos.listTodos(todo.askId), input),
         ['outcome', 'input', 'now'],
         'result:outcome'
       )
@@ -189,8 +193,11 @@ class NeoTodoMutationPlanner {
         'result:outcome'
       )
       .pipe(
-        (plan: Plan) => requireNeoTodoCardsAnswered(plan, todos.listQuestions(plan.todo.askId)),
-        'outcome',
+        (plan: Plan, input: Input) =>
+          input.kind === 'done'
+            ? { value: plan }
+            : requireNeoTodoCardsAnswered(plan, todos.listQuestions(plan.todo.askId)),
+        ['outcome', 'input'],
         'result:outcome'
       )
       .pipe((plan: Plan) => ({ ok: true as const, ...plan }), 'outcome', 'outcome')

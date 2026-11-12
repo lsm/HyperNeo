@@ -58,6 +58,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     todo.blockedBy === 'needs-human' &&
     judgement.state !== 'done' &&
     change.state !== 'removed' &&
+    change.state !== 'done' &&
     facts.askOpen &&
     (facts.questionOpen ||
       facts.answerPending ||
