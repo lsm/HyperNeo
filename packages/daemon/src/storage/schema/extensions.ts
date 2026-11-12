@@ -1,5 +1,4 @@
 import type { PromptProvenanceInit } from '../../lib/agent/agent-session.ts';
-import type { NamedQuery } from '../../lib/live-query/types.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export interface SchemaExtension {
@@ -11,7 +10,6 @@ export interface SchemaExtension {
   migrations?: Readonly<Record<string, (db: BunDatabase) => void>>;
   sessionSkillVetoes?(db: BunDatabase, provenance: PromptProvenanceInit): string[];
   workspaceSources?(db: BunDatabase): { path: string; label: string }[];
-  liveQueries?: Record<string, NamedQuery>;
 }
 
 const schemaExtensions = new Map<string, SchemaExtension>();
@@ -48,13 +46,6 @@ export function extensionSessionSkillVetoes(
 export function extensionWorkspaceSources(db: BunDatabase): { path: string; label: string }[] {
   return [...schemaExtensions.values()].flatMap(
     (extension) => extension.workspaceSources?.(db) ?? []
-  );
-}
-
-export function extensionLiveQueries(): Record<string, NamedQuery> {
-  return Object.assign(
-    {},
-    ...[...schemaExtensions.values()].map((extension) => extension.liveQueries ?? {})
   );
 }
 

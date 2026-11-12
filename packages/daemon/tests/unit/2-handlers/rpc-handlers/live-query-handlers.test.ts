@@ -7,7 +7,6 @@ import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 import type { RoomGoal } from '@hyperneo/shared/types/neo';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
-import { mergedNamedQueries } from '../../../../src/lib/live-query/registry';
 import { mapActiveTurnEntryRow } from '../../../../src/lib/rpc-handlers/activity-preview';
 import { Database } from '../../../../src/storage/index';
 import type { QueryDiff } from '../../../../src/storage/live-query';
@@ -116,9 +115,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect(NAMED_QUERY_REGISTRY.has('goals.byRoom')).toBe(false);
     expect(NAMED_QUERY_REGISTRY.has('sessionGroupMessages.byGroup')).toBe(true);
     expect(NAMED_QUERY_REGISTRY.has('spaceTaskActivity.byTask')).toBe(true);
-    expect(mergedNamedQueries().has('spaceTaskMessages.byTask')).toBe(true);
-    expect(mergedNamedQueries().has('spaceTaskMessages.byTask.compact')).toBe(true);
-    expect(mergedNamedQueries().has('spaceTaskActiveTurn.byTask')).toBe(true);
+    expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask')).toBe(true);
+    expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask.compact')).toBe(true);
+    expect(NAMED_QUERY_REGISTRY.has('spaceTaskActiveTurn.byTask')).toBe(true);
     expect(NAMED_QUERY_REGISTRY.has('actorMessages.byTask')).toBe(false);
     expect(NAMED_QUERY_REGISTRY.has('actorMessages.byWorkflowRun')).toBe(false);
     expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(false);
@@ -127,9 +126,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
   test('all registry entries have correct paramCount', () => {
     expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!.paramCount).toBe(1);
-    expect(mergedNamedQueries().get('spaceTaskMessages.byTask')!.paramCount).toBe(1);
-    expect(mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(2);
-    expect(mergedNamedQueries().get('spaceTaskActiveTurn.byTask')!.paramCount).toBe(1);
+    expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.paramCount).toBe(1);
+    expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(2);
+    expect(NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.paramCount).toBe(1);
   });
 
   test('retired Room-scoped query names are not active contracts', () => {
@@ -359,7 +358,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
     function queryMessages(taskId: string): Record<string, unknown>[] {
       fillSdkMessageFixtureColumns(db);
-      const entry = mergedNamedQueries().get('spaceTaskMessages.byTask')!;
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
       return entry.mapRow ? rows.map(entry.mapRow) : rows;
     }
@@ -1244,7 +1243,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       );
       insertSdkMessageAt('assist', sessionIdValue, now + 3000, 'assistant', 'consumed', 'system');
 
-      const entry = mergedNamedQueries().get('spaceTaskMessages.byTask')!;
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
       const assistRow = rows.find((r) => r.id === 'assist');
       expect(assistRow).toBeTruthy();
@@ -1258,7 +1257,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         'spaceTaskMessages.byTask.compact',
         'spaceTaskActiveTurn.byTask',
       ]) {
-        const entry = mergedNamedQueries().get(name)!;
+        const entry = NAMED_QUERY_REGISTRY.get(name)!;
         const params = entry.paramCount === 2 ? [taskId, 20] : [taskId];
         const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(...params) as Array<{
           detail: string;
@@ -1342,7 +1341,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(messageRow?.label).toBe('Fresh Label');
 
       backfillConversationTurns();
-      const compactEntry = mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!;
+      const compactEntry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
       const compactRows = db.prepare(compactEntry.sql).all(taskId, 1000) as Record<
         string,
         unknown
@@ -1448,14 +1447,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       function queryCompact(taskId: string, limit = 1000): Record<string, unknown>[] {
         backfillConversationTurns();
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
         const rows = db.prepare(entry.sql).all(taskId, limit) as Record<string, unknown>[];
         return entry.mapRow ? rows.map(entry.mapRow) : rows;
       }
 
       test('artifact pins read the task message rows, not message JSON', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
         const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(taskId, 100) as Array<{
           detail: string;
         }>;
@@ -1839,7 +1838,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const ids = queryCompact(taskId).map((r) => r.id as string);
         expect(ids).toContain('done-write');
 
-        const activeTurnSql = mergedNamedQueries().get('spaceTaskActiveTurn.byTask')!.sql;
+        const activeTurnSql = NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.sql;
         const activeRows = db.prepare(activeTurnSql).all(taskId) as Record<string, unknown>[];
         expect(activeRows.every((r) => r.sessionId !== sessionId)).toBe(true);
       });
@@ -2313,7 +2312,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         });
 
         backfillConversationTurns();
-        const sql = mergedNamedQueries().get('spaceTaskMessages.byTask')!.sql;
+        const sql = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.sql;
         const rows = db.prepare(sql).all(taskId) as Record<string, unknown>[];
         expect(rows.map((r) => r.id)).toEqual(['b-user', 'a-assist']);
         const assist = rows.find((r) => r.id === 'a-assist');
@@ -2463,7 +2462,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         );
 
         const compactRows = queryCompact(taskId);
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
@@ -2545,7 +2544,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         );
 
         const compactRows = queryCompact(taskId);
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
@@ -2583,7 +2582,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         );
 
         const compactRows = queryCompact(taskId);
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
@@ -2629,7 +2628,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           `UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = 'sibling-queued-user'`
         ).run();
 
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
         const queryFull = () => {
           const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
           return entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
@@ -2687,7 +2686,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           `UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = 'nested-queued-user'`
         ).run();
 
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
         const queryFull = () => {
           const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
           return entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
@@ -2750,7 +2749,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         }
 
         const compactRows = queryCompact(taskId);
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
@@ -2777,7 +2776,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           insertSdkMessageAt(`sdk-full-${i}`, sessionId, now + i * 1000);
         }
 
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
@@ -3702,7 +3701,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       }
 
       backfillConversationTurns();
-      const entry = mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!;
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
       const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
       const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
       expect(rows.map((r) => String(r.id))).toEqual(['u-3', 'a-3', 'u-4', 'a-4']);
@@ -3752,7 +3751,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       insertSdkMessageAt('quiet-only-row', 'quiet-agent-session', now + 500, 'assistant');
 
       backfillConversationTurns();
-      const entry = mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!;
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
       const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
       const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
       const ids = rows.map((r) => r.id);
@@ -3790,7 +3789,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       }
 
       backfillConversationTurns();
-      const entry = mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!;
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
       const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
       const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
       const ids = rows.map((r) => String(r.id));
@@ -3841,7 +3840,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       }
 
       backfillConversationTurns();
-      const entry = mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!;
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
       const rawRows = db.prepare(entry.sql).all(taskId, 5) as Record<string, unknown>[];
       const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
       const ids = rows.map((r) => r.id);
@@ -3884,7 +3883,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       backfillConversationTurns();
       const engine = new LiveQueryEngine(db, reactiveDb);
-      const entry = mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!;
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
       const diffs: QueryDiff<Record<string, unknown>>[] = [];
 
       const handle = engine.subscribe(entry.sql, [taskId, 3], (diff) => diffs.push(diff), {
@@ -3954,7 +3953,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       function queryCompact(taskId: string, limit = 1000): Record<string, unknown>[] {
         backfillConversationTurns();
-        const entry = mergedNamedQueries().get('spaceTaskMessages.byTask.compact')!;
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
         const rows = db.prepare(entry.sql).all(taskId, limit) as Record<string, unknown>[];
         return entry.mapRow ? rows.map(entry.mapRow) : rows;
       }

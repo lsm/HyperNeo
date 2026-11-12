@@ -91,9 +91,8 @@ export function createSpaceGitHubTables(db: BunDatabase): void {
     }
     if (!schemaTableExists(db, 'spaces')) return;
     const now = Date.now();
-    if (pollingIntentAdded) {
-      db.prepare(
-        `INSERT INTO space_github_source_settings (space_id, enabled, polling_intent, created_at, updated_at)
+    db.prepare(
+      `INSERT INTO space_github_source_settings (space_id, enabled, polling_intent, created_at, updated_at)
          SELECT DISTINCT s.space_id, 1, 1, ?, ?
          FROM space_github_watched_repos s
          JOIN spaces sp ON sp.id = s.space_id
@@ -102,15 +101,6 @@ export function createSpaceGitHubTables(db: BunDatabase): void {
            polling_intent = excluded.polling_intent,
            updated_at = excluded.updated_at
          WHERE polling_intent = 0`
-      ).run(now, now);
-      return;
-    }
-    db.prepare(
-      `INSERT OR IGNORE INTO space_github_source_settings (space_id, enabled, polling_intent, created_at, updated_at)
-       SELECT DISTINCT s.space_id, 1, 1, ?, ?
-       FROM space_github_watched_repos s
-       JOIN spaces sp ON sp.id = s.space_id
-       WHERE s.polling_enabled = 1`
     ).run(now, now);
   })();
 }

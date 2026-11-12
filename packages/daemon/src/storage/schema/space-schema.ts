@@ -39,7 +39,6 @@ import {
   createSpaceGitHubIndexes,
   createSpaceGitHubTables,
 } from './space-github.ts';
-import { SPACE_LIVE_QUERIES } from '../../lib/live-query/space/queries.ts';
 import { createEvolutionTables } from './evolution.ts';
 import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
 import { createSpaceSessionEventSubscriptionTables } from './space-session-event-subscriptions.ts';
@@ -337,7 +336,6 @@ export const SPACE_SCHEMA: SchemaExtension = {
   baselineEffect: createSpaceGitHubBaselineObjects,
   sessionSkillVetoes: spaceSlotSkillVetoes,
   workspaceSources: spaceWorkspaceSources,
-  liveQueries: SPACE_LIVE_QUERIES,
   migrations: {
     migration_239: runMigration239,
     migration_240: runMigration240,

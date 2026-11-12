@@ -1,6 +1,6 @@
 import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 import { spaceTaskFlagRowsBaseCte } from './task-message-window.ts';
-import { HOOK_SUBTYPE_NAMES, HOOK_SUBTYPES } from '../queries/task-delivery.ts';
+import { HOOK_SUBTYPE_NAMES, HOOK_SUBTYPES } from './task-delivery.ts';
 
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
 ${spaceTaskFlagRowsBaseCte(false)},

@@ -8,6 +8,7 @@ import {
 } from '../../../../../src/storage/schema/index.ts';
 import { runMigration472 } from '../../../../../src/storage/schema/m472-drop-room-era-tables.ts';
 import { runMigration473 } from '../../../../../src/storage/schema/m473-drop-inbox-items.ts';
+import { createSpaceGitHubTables } from '../../../../../src/storage/schema/space-github.ts';
 import { humanSessionColumnsPredicate } from '../../../../../src/storage/schema/session-counters.ts';
 import spaceBaselineSchema from '../../../../../src/storage/schema/baseline-space-v041.json' with {
   type: 'json',
@@ -201,6 +202,57 @@ describe('database schema equivalence', () => {
         "DROP TRIGGER parity_probe_trigger; CREATE TRIGGER parity_probe_trigger AFTER INSERT ON parity_probe BEGIN UPDATE parity_probe SET value = 'different' WHERE id = new.id; END"
       );
       expect(fullSchema(db)).not.toEqual(before);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('fresh space github creation keeps the column order stored on existing databases', () => {
+    const fresh = new Database(':memory:');
+    const stored = new Database(':memory:');
+    try {
+      stored.exec(
+        readFileSync(new URL('./fixtures/schema-baseline/v0.41.0.sql', import.meta.url), 'utf8')
+      );
+      createSpaceGitHubTables(fresh);
+      const columns = (db: Database, table: string) =>
+        (db.prepare('SELECT name FROM pragma_table_info(?)').all(table) as { name: string }[]).map(
+          (row) => row.name
+        );
+      expect(columns(fresh, 'space_github_watched_repos')).toEqual(
+        columns(stored, 'space_github_watched_repos')
+      );
+      expect(columns(fresh, 'space_github_events')).toEqual(columns(stored, 'space_github_events'));
+    } finally {
+      fresh.close();
+      stored.close();
+    }
+  });
+
+  test('schema init promotes a stored zero polling intent for spaces with polling watches', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(`CREATE TABLE spaces (id TEXT PRIMARY KEY)`);
+      db.exec(`INSERT INTO spaces (id) VALUES ('space-a')`);
+      createSpaceGitHubTables(db);
+      db.prepare(
+        `INSERT INTO space_github_watched_repos
+           (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, created_at, updated_at)
+         VALUES ('w1', 'space-a', 'O', 'R', 1, 0, 1, 1, 1)`
+      ).run();
+      db.prepare(
+        `INSERT INTO space_github_source_settings
+           (space_id, enabled, polling_intent, created_at, updated_at)
+         VALUES ('space-a', 1, 0, 5, 5)`
+      ).run();
+      createSpaceGitHubTables(db);
+      expect(
+        db
+          .prepare(
+            `SELECT polling_intent FROM space_github_source_settings WHERE space_id = 'space-a'`
+          )
+          .get()
+      ).toEqual({ polling_intent: 1 });
     } finally {
       db.close();
     }
