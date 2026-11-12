@@ -373,6 +373,51 @@ describe('durable worker follow-ups', () => {
     }
   );
 
+  test.each([false, true])(
+    'a pre-start todo send binds through the initial scheduler, existingInstruction=%s',
+    async (existingInstruction) => {
+      const h = fixture();
+      const { todo, store, sessions, runner } = h.seedTodo();
+      if (!existingInstruction) store.updateTodo(todo, { instruction: null }, Date.now());
+      const accepted = await invokeOperation(
+        h.registry,
+        'work.send',
+        {
+          ref: h.ref,
+          todoId: todo.id,
+          message: 'New pre-start message',
+        },
+        caller
+      );
+      expect(accepted).toMatchObject({
+        value: { ok: true, value: { delivered: false, inputId: expect.any(String) } },
+      });
+      expect(sessions.get(todo.id)).toEqual({ verb: 'send', ref: h.ref });
+      expect(store.getTodo(todo.id)?.instruction).toBe(
+        existingInstruction ? 'Original instruction' : 'New pre-start message'
+      );
+      await h.tick();
+      await runner.start(todo.id);
+      expect(store.getTodo(todo.id)?.state).toBe('todo');
+      expect(h.sent).toEqual([]);
+      h.setStatus('done');
+      expect(await runner.start(todo.id)).toMatchObject({ ok: true });
+      await h.tick();
+      await h.tick();
+      await h.tick();
+      expect(sessions.readRef(todo.id)).toEqual(h.ref);
+      expect(store.getTodo(todo.id)?.state).toBe('doing');
+      expect(h.sent).toHaveLength(existingInstruction ? 2 : 1);
+      expect(h.sent[0]).toContain(
+        existingInstruction ? 'Original instruction' : 'New pre-start message'
+      );
+      if (existingInstruction) expect(h.sent[1]).toContain('New pre-start message');
+      expect(
+        h.jobs.listJobs({ queue: 'worker_input' }).every((job) => job.status === 'completed')
+      ).toBe(true);
+    }
+  );
+
   test('question-stop answer is delivered immediately', async () => {
     const h = fixture();
     h.setStatus('needs_you', true);
