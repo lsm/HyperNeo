@@ -4,7 +4,11 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { WorkAdapter, WorkStatus } from '../../../../src/lib/drivers/types.ts';
-import { createWorkerInputDelivery } from '../../../../src/lib/drivers/worker-input-delivery.ts';
+import type { JobQueueProcessor } from '../../../../src/storage/job-queue-processor.ts';
+import {
+  createWorkerInputDelivery,
+  registerWorkerInputDelivery,
+} from '../../../../src/lib/drivers/worker-input-delivery.ts';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -256,6 +260,87 @@ describe('durable worker follow-ups', () => {
       await delivering;
     }
   });
+
+  test.each([false, true])(
+    'exhausted infrastructure retries retain and report the input, dispatched=%s',
+    async (dispatched) => {
+      const h = fixture();
+      await h.send('Retain the exhausted input');
+      let dead = h.jobs.listJobs({ queue: 'worker_input' })[0];
+      for (let attempt = 0; attempt <= dead.maxRetries; attempt++) {
+        h.db.prepare('UPDATE job_queue SET run_at = 0 WHERE id = ?').run(dead.id);
+        const claimed = h.jobs.dequeue('worker_input', 1)[0];
+        if (dispatched)
+          h.db
+            .prepare(
+              "UPDATE job_queue SET payload = json_set(payload, '$.dispatched', json('true')) WHERE id = ?"
+            )
+            .run(dead.id);
+        dead = h.jobs.fail(claimed.id, 'Synthetic gateway watchdog failure', claimed.claimToken)!;
+      }
+      expect(dead.status).toBe('dead');
+      let onDead: ((job: typeof dead) => void) | undefined;
+      registerWorkerInputDelivery(
+        {
+          register: (_queue, _handler, options) => {
+            onDead = options?.onDead;
+          },
+        } as JobQueueProcessor,
+        h.delivery
+      );
+      expect(onDead).toBeFunction();
+      h.setReportUnavailable(true);
+      onDead!(dead);
+      const deadline = Date.now() + 2000;
+      while (h.jobs.getJob(dead.id)?.status === 'dead' && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      const row = () =>
+        h.db.prepare('SELECT message, outcome FROM work_delivery_inputs').get() as {
+          message: string;
+          outcome: string;
+        };
+      expect(row().message).toBe('Retain the exhausted input');
+      expect(JSON.parse(row().outcome)).toMatchObject({
+        failure: expect.stringContaining('Synthetic gateway watchdog failure'),
+        ...(!dispatched ? { notSent: true } : {}),
+      });
+      if (dispatched) expect(JSON.parse(row().outcome).notSent).toBeUndefined();
+      await h.tick();
+      expect(h.jobs.getJob(dead.id)?.status).toBe('pending');
+      expect(h.reports).toEqual([]);
+      h.setReportUnavailable(false);
+      await h.tick();
+      await h.tick();
+      expect(h.jobs.getJob(dead.id)?.status).toBe('completed');
+      expect(h.reports).toHaveLength(1);
+      expect(h.sent).toEqual([]);
+    }
+  );
+
+  test.each(['todo', 'failed', 'blocked'] as const)(
+    'an unbound %s follow-up reports its reason after a bounded wait',
+    async (state) => {
+      const h = fixture();
+      const { todo, store, runner } = h.seedTodo();
+      await runner.proceed(todo.id, 'Retain the unbound follow-up');
+      store.updateTodo(store.getTodo(todo.id)!, { state }, Date.now());
+      await h.tick();
+      expect(h.reports).toEqual([]);
+      h.db.prepare('UPDATE work_delivery_inputs SET accepted_at = ?').run(Date.now() - 60_001);
+      await h.tick();
+      await h.tick();
+      expect(h.reports).toEqual(['Waiting for the worker to start or an earlier input to finish.']);
+      expect(h.jobs.listJobs({ queue: 'worker_input' })[0]).toMatchObject({
+        status: 'pending',
+        retryCount: 0,
+      });
+      expect(h.db.prepare('SELECT message, outcome FROM work_delivery_inputs').get()).toEqual({
+        message: 'Retain the unbound follow-up',
+        outcome: null,
+      });
+      expect(h.sent).toEqual([]);
+    }
+  );
 
   test('question-stop answer is delivered immediately', async () => {
     const h = fixture();
