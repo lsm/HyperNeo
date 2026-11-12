@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { runMigration111, runMigrations } from '../../../../../src/storage/schema';
-import { runMigration504 } from '../../../../../src/storage/schema/m504-github-session-scope.ts';
+import { runMigration505 } from '../../../../../src/storage/schema/m505-github-session-scope.ts';
 import { createSpaceGitHubTables } from '../../../../../src/storage/schema/space-github.ts';
 import { createGitHubSessionTables } from '../../../../../src/storage/schema/github-session-schema.ts';
 
@@ -88,15 +88,15 @@ function settingsRows(db: Database, table: string): Record<string, unknown>[] {
     .all() as Record<string, unknown>[];
 }
 
-describe('migration 504 GitHub session scope', () => {
+describe('migration 505 GitHub session scope', () => {
   test('creates empty session tables on a database without legacy tables', () => {
     const db = new Database(':memory:');
-    runMigration504(db);
+    runMigration505(db);
     expect(watchedRows(db, 'github_session_watched_repos')).toEqual([]);
     expect(settingsRows(db, 'github_session_source_settings')).toEqual([]);
     expect(
-      db.prepare(`SELECT key FROM migration_markers WHERE key = 'migration_504'`).get()
-    ).toEqual({ key: 'migration_504' });
+      db.prepare(`SELECT key FROM migration_markers WHERE key = 'migration_505'`).get()
+    ).toEqual({ key: 'migration_505' });
     db.close();
   });
 
@@ -117,7 +117,7 @@ describe('migration 504 GitHub session scope', () => {
        VALUES (${SETTINGS_COLUMNS.map(() => '?').join(', ')})`
     ).run('sessions', 0, 0, 0, 200, 201);
 
-    runMigration504(db);
+    runMigration505(db);
 
     expect(watchedRows(db, 'github_session_watched_repos')).toEqual([session]);
     expect(watchedRows(db, 'space_github_watched_repos')).toEqual([spaceRow, session]);
@@ -148,7 +148,7 @@ describe('migration 504 GitHub session scope', () => {
     const db = new Database(':memory:');
     createSpaceGitHubTables(db);
     insertWatched(db, 'space_github_watched_repos', modernWatchedRow({ space_id: 'space-a' }));
-    runMigration504(db);
+    runMigration505(db);
     expect(watchedRows(db, 'github_session_watched_repos')).toEqual([]);
     expect(settingsRows(db, 'github_session_source_settings')).toEqual([]);
     db.close();
@@ -158,7 +158,7 @@ describe('migration 504 GitHub session scope', () => {
     const db = new Database(':memory:');
     createSpaceGitHubTables(db);
     insertWatched(db, 'space_github_watched_repos', modernWatchedRow({ polling_enabled: 1 }));
-    runMigration504(db);
+    runMigration505(db);
     expect(settingsRows(db, 'github_session_source_settings')).toEqual([
       {
         space_id: 'sessions',
@@ -180,7 +180,7 @@ describe('migration 504 GitHub session scope', () => {
       `INSERT INTO space_github_source_settings (${SETTINGS_COLUMNS.join(', ')})
        VALUES (${SETTINGS_COLUMNS.map(() => '?').join(', ')})`
     ).run('sessions', 1, 0, 1, 10, 11);
-    runMigration504(db);
+    runMigration505(db);
     expect(settingsRows(db, 'github_session_source_settings')).toEqual([
       {
         space_id: 'sessions',
@@ -215,7 +215,7 @@ describe('migration 504 GitHub session scope', () => {
        VALUES ('sessions', 0, 60, 61)`
     ).run();
 
-    runMigration504(db);
+    runMigration505(db);
 
     expect(watchedRows(db, 'github_session_watched_repos')).toEqual([
       {
@@ -258,8 +258,8 @@ describe('migration 504 GitHub session scope', () => {
     const db = new Database(':memory:');
     createSpaceGitHubTables(db);
     insertWatched(db, 'space_github_watched_repos', modernWatchedRow());
-    runMigration504(db);
-    runMigration504(db);
+    runMigration505(db);
+    runMigration505(db);
     expect(watchedRows(db, 'github_session_watched_repos')).toEqual([modernWatchedRow()]);
     db.close();
   });
@@ -279,8 +279,8 @@ describe('migration 504 GitHub session scope', () => {
       'github_session_watched_repos',
       modernWatchedRow({ poll_cursor: '{"lastSeenAt":999}' })
     );
-    expect(() => runMigration504(db)).toThrow(
-      /migration_504: github_session_watched_repos already has a conflicting row/
+    expect(() => runMigration505(db)).toThrow(
+      /migration_505: github_session_watched_repos already has a conflicting row/
     );
     expect(watchedRows(db, 'github_session_watched_repos').map((row) => row.repo)).toEqual([
       'synthetic-repo',
@@ -305,8 +305,8 @@ describe('migration 504 GitHub session scope', () => {
       `INSERT INTO github_session_source_settings (${SETTINGS_COLUMNS.join(', ')})
        VALUES (${SETTINGS_COLUMNS.map(() => '?').join(', ')})`
     ).run('sessions', 1, 0, 1, 300, 301);
-    expect(() => runMigration504(db)).toThrow(
-      /migration_504: github_session_source_settings already has a conflicting row/
+    expect(() => runMigration505(db)).toThrow(
+      /migration_505: github_session_source_settings already has a conflicting row/
     );
     expect(db.prepare(`SELECT key FROM migration_markers`).all()).toEqual([]);
     db.close();
@@ -318,7 +318,7 @@ describe('migration 504 GitHub session scope', () => {
     createGitHubSessionTables(db);
     insertWatched(db, 'space_github_watched_repos', modernWatchedRow());
     insertWatched(db, 'github_session_watched_repos', modernWatchedRow());
-    runMigration504(db);
+    runMigration505(db);
     expect(watchedRows(db, 'github_session_watched_repos')).toEqual([modernWatchedRow()]);
     db.close();
   });
@@ -335,7 +335,7 @@ describe('migration 504 GitHub session scope', () => {
         'Org', 'Repo', 1, 'https://example.invalid/pr/1', 'dev', 'User', 1, 'key-1', '{}',
         'received', 1, 1)`
     ).run();
-    runMigration504(db);
+    runMigration505(db);
     expect(db.prepare(`SELECT COUNT(*) AS n FROM space_github_events`).get()).toEqual({ n: 1 });
     expect(
       db

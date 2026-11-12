@@ -3,7 +3,7 @@ import { schemaTableExists } from './extensions.ts';
 import { createGitHubSessionTables } from './github-session-schema.ts';
 
 const SESSION_SCOPE = 'sessions';
-const MARKER_KEY = 'migration_504';
+const MARKER_KEY = 'migration_505';
 
 const WATCHED_COLUMNS: Array<{ name: string; fallback: string }> = [
   { name: 'id', fallback: `''` },
@@ -87,7 +87,7 @@ function copySessionWatchedRows(db: Database): number {
     if (existing) {
       if (!rowsEqual(row, existing, WATCHED_COLUMNS)) {
         throw new Error(
-          `migration_504: github_session_watched_repos already has a conflicting row for ` +
+          `migration_505: github_session_watched_repos already has a conflicting row for ` +
             `scope 'sessions' ${String(row.owner)}/${String(row.repo)}`
         );
       }
@@ -110,7 +110,7 @@ function copySessionSettingsRow(db: Database): boolean {
   if (existing) {
     if (!rowsEqual(row, existing, SETTINGS_COLUMNS)) {
       throw new Error(
-        `migration_504: github_session_source_settings already has a conflicting row for scope 'sessions'`
+        `migration_505: github_session_source_settings already has a conflicting row for scope 'sessions'`
       );
     }
     return false;
@@ -122,7 +122,7 @@ function copySessionSettingsRow(db: Database): boolean {
   return true;
 }
 
-export function runMigration504(db: Database): void {
+export function runMigration505(db: Database): void {
   createGitHubSessionTables(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS migration_markers (
