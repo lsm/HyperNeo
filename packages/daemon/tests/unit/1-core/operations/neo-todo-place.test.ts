@@ -178,9 +178,15 @@ describe('projectNeoAskEntries', () => {
     );
     expect(asked.todos).toEqual(['step']);
     const read = () => {
+      const { detail, ...rest } = facts();
+      return { ...rest, detail: detail.state, detailCards: detail.questions.length };
+    };
+    const facts = () => {
       const snapshot = store.snapshot(undefined, 10, true);
       const step = store.getTodo('step')!;
+      const detail = store.askFacts({ askId: 'child' });
       return {
+        detail: projectNeoAskEntries([detail.ask!], detail, [])[0],
         section: projectNeoAskEntries(snapshot.asks, snapshot.facts, []).find(
           (entry) => entry.ask.id === 'child'
         )?.state,
@@ -201,6 +207,8 @@ describe('projectNeoAskEntries', () => {
     };
     expect(read()).toEqual({
       section: 'waiting',
+      detail: 'waiting',
+      detailCards: 0,
       needsYou: 2,
       place: 'waiting',
       refused: 'question_open',
@@ -211,6 +219,8 @@ describe('projectNeoAskEntries', () => {
     store.answerQuestion(store.getQuestion('card')!, 'The next one', 'button', 4);
     expect(read()).toEqual({
       section: 'doing',
+      detail: 'doing',
+      detailCards: 0,
       needsYou: 0,
       place: 'queued',
       refused: undefined,
@@ -221,7 +231,12 @@ describe('projectNeoAskEntries', () => {
       state: 'todo',
       blockedBy: null,
     });
-    expect(read()).toMatchObject({ section: 'todo', place: 'queued', queued: ['step'] });
+    expect(read()).toMatchObject({
+      section: 'todo',
+      detail: 'todo',
+      place: 'queued',
+      queued: ['step'],
+    });
     db.close();
   });
 });

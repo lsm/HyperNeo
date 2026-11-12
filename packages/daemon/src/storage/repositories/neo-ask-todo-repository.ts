@@ -357,7 +357,8 @@ export class NeoAskTodoRepository {
       (input.todoId ? this.getTodo(input.todoId)?.askId : undefined) ??
       (input.questionId ? this.getQuestion(input.questionId)?.askId : undefined) ??
       '';
-    return { ...this.doneTodoFacts(askId), questions: this.listQuestionsForAsks([askId]) };
+    const facts = this.doneTodoFacts(askId);
+    return { ...facts, questions: facts.ask ? this.gateQuestions(facts.ask) : [] };
   }
 
   doneTodoFacts(askId: string) {
