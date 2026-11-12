@@ -443,7 +443,6 @@ describe('pairing v2 one-time request repository', () => {
     const owner = phoneKeypair();
     const bound = await bindTicket(bootstrap.ticket, owner.publicKeyB64);
     if (!bound.ok) throw new Error('bind failed');
-    await approveRequest(bootstrap.requestId, 'signer:fixture');
     const first = await completeRequest(
       bootstrap.requestId,
       owner.publicKeyB64,
