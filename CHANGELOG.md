@@ -4,6 +4,11 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.57.1] - 2026-11-11
+
+- Ship the 0.57.0 changes below; the 0.57.0 tag was never published because its Intel macOS desktop build failed.
+- Build the Intel macOS desktop app with Xcode 26 so its Metal dependency compiles (#10471).
+
 ## [0.57.0] - 2026-11-11
 
 - Add opt-in dual-model conversations with a reusable front session, short and detailed replies, quoted context, spoken responses, and live model settings (#10419, #10425, #10430).
@@ -27,7 +32,7 @@ Compared with v0.56.2, the pinned phone source inventory reports 7 breaking, 4 r
 - Neo ask/todo results remove legacy `repo` fields. `neo.open` and `neo.snapshot` also remove `trimmed`.
 - Artifact results add the `video` kind, classified as risky for older enum readers.
 
-The inventory describes source usage at `5a35d4d4bcabb7866ddfc95212a775ebc465979b`. Installed-client compatibility remains unverified. The [complete compatibility report](https://github.com/lsm/HyperNeo/releases/download/v0.57.0/api-diff.json) includes every classified change.
+The inventory describes source usage at `5a35d4d4bcabb7866ddfc95212a775ebc465979b`. Installed-client compatibility remains unverified. The [complete compatibility report](https://github.com/lsm/HyperNeo/releases/download/v0.57.1/api-diff.json) includes every classified change.
 
 ## [0.56.2] - 2026-11-09
 
