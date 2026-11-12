@@ -33,6 +33,7 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
   const reports: string[] = [];
   const reportIds = new Map<string, string>();
   let reportUnavailable = false;
+  let reportReplyLost = false;
   const adapter = {
     id: ref.adapter,
     capabilities: ['send', 'steer', 'queue', 'status'],
@@ -75,6 +76,10 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
     if (reportIds.has(id) && reportIds.get(id) !== detail) throw new Error('idempotency_conflict');
     if (!reportIds.has(id)) reports.push(detail);
     reportIds.set(id, detail);
+    if (reportReplyLost) {
+      reportReplyLost = false;
+      throw new Error('Synthetic report response lost');
+    }
   });
   const registry = createOperationRegistry(
     createWorkVerbOperations({ ...deps, queueInput: delivery.accept })
@@ -95,6 +100,9 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
     db,
     sent,
     reports,
+    loseNextReportReply: () => {
+      reportReplyLost = true;
+    },
     setReportUnavailable: (value: boolean) => {
       reportUnavailable = value;
     },
@@ -459,6 +467,36 @@ describe('durable worker follow-ups', () => {
     await h.tick();
     expect(h.reports).toHaveLength(2);
     expect(h.sent).toEqual([]);
+  });
+
+  test('an unkeyed waiting notice recovers after a lost reply and changed detail', async () => {
+    let detail = 'Synthetic first transport error';
+    const h = fixture('codex-desktop', {
+      status: async () => ({ ok: false, reason: 'unreachable', detail }),
+    });
+    await h.send('Retain the changing wait');
+    h.loseNextReportReply();
+    await h.tick();
+    expect(h.reports).toEqual(['Synthetic first transport error']);
+    expect(h.jobs.listJobs({ queue: 'worker_input' })[0].payload.waitReported).toBeUndefined();
+    detail = 'Synthetic second transport error';
+    await h.tick();
+    expect(h.reports).toEqual([
+      'Synthetic first transport error',
+      'Synthetic second transport error',
+    ]);
+    expect(h.jobs.listJobs({ queue: 'worker_input' })[0]).toMatchObject({
+      status: 'pending',
+      retryCount: 0,
+      payload: { waitReported: true },
+    });
+    await h.tick();
+    expect(h.reports).toHaveLength(2);
+    expect(h.sent).toEqual([]);
+    expect(h.db.prepare('SELECT message, outcome FROM work_delivery_inputs').get()).toEqual({
+      message: 'Retain the changing wait',
+      outcome: null,
+    });
   });
 
   test('question-stop answer is delivered immediately', async () => {
