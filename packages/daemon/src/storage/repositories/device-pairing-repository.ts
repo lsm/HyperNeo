@@ -237,15 +237,6 @@ export class DevicePairingRepository {
       .run(now, now, now);
   }
 
-  activeHumanPhoneExists(): boolean {
-    return !!this.db
-      .prepare(
-        "SELECT 1 FROM paired_devices WHERE kind = 'human' AND revoked_at IS NULL " +
-          "AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%' LIMIT 1"
-      )
-      .get();
-  }
-
   isOwnerDevice(id: string): boolean {
     return !!this.db
       .prepare(
@@ -344,7 +335,7 @@ export class DevicePairingRepository {
         expiresAt,
         approved ? now : null,
         twoWay ? 1 : 0,
-        kind === 'human' && !this.activeHumanPhoneExists() ? 1 : 0
+        kind === 'human' && this.countDevices().humans === 0 ? 1 : 0
       );
     return { id, code, expiresAt };
   }
@@ -531,7 +522,11 @@ export class DevicePairingRepository {
       const claimed = this.db
         .prepare(
           `UPDATE pairing_codes SET used_at = ? WHERE code_hash = ? AND approved_at IS NOT NULL
-             AND used_at IS NULL AND expires_at > ? RETURNING kind, first_device`
+             AND used_at IS NULL AND expires_at > ?
+             AND (first_device = 0 OR NOT EXISTS (
+               SELECT 1 FROM paired_devices WHERE kind = 'human' AND revoked_at IS NULL
+                 AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'))
+             RETURNING kind, first_device`
         )
         .get(now, hash(normalizePairingCode(code)), now) as {
         kind: DeviceKind;
@@ -539,12 +534,6 @@ export class DevicePairingRepository {
       } | null;
       if (!claimed) return null;
       const firstDevice = claimed.first_device === 1;
-      if (firstDevice && this.activeHumanPhoneExists()) {
-        this.db
-          .prepare('UPDATE pairing_codes SET used_at = NULL WHERE code_hash = ?')
-          .run(hash(normalizePairingCode(code)));
-        return null;
-      }
       if (firstDevice) this.cancelFirstDeviceRequests(now);
       if (claimed.kind === 'human') this.closeHumanRecovery(now);
       insertDevice(
