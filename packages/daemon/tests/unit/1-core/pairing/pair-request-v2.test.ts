@@ -471,4 +471,25 @@ describe('pairing v2 one-time request repository', () => {
     expect(done.owner).toBe(false);
     expect(devices.countDevices().humans).toBe(2);
   });
+
+  test('a first legacy typed code grants the owner bit', async () => {
+    const made = devices.createCode('human', 'First typed phone', true, now);
+    expect(devices.redeem(made.code, 'First typed phone', now)).not.toBeNull();
+    const [row] = devices.listDevices();
+    expect(row).toMatchObject({ name: 'First typed phone' });
+    expect(writer.prepare('SELECT owner FROM paired_devices WHERE id = ?').get(row.id)).toEqual({
+      owner: 1,
+    });
+  });
+
+  test('a legacy typed code after a phone exists does not grant the owner bit', async () => {
+    seedPhone(1);
+    const made = devices.createCode('human', 'Later typed phone', true, now);
+    expect(devices.redeem(made.code, 'Later typed phone', now)).not.toBeNull();
+    const later = devices.listDevices().find((device) => device.name === 'Later typed phone');
+    expect(later).toBeTruthy();
+    expect(writer.prepare('SELECT owner FROM paired_devices WHERE id = ?').get(later!.id)).toEqual({
+      owner: 0,
+    });
+  });
 });

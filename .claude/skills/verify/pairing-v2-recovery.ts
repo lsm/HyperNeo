@@ -53,6 +53,9 @@ try {
   main.exec('PRAGMA query_only = ON');
   assert.deepEqual(main.prepare('PRAGMA query_only').get(), { query_only: 1 });
   devices.setTerminalApproval(false, 'fixture', now);
+  fixture
+    .prepare('INSERT INTO human_device_resets(id, reset_at, devices_json) VALUES (?, ?, ?)')
+    .run('first', now, '[]');
   const peer = devices.createCode('human', 'Recovery peer', true, now);
   const request = await pending('First phone');
   const granted = await complete(request);

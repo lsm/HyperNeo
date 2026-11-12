@@ -536,11 +536,7 @@ export class DevicePairingRepository {
       const firstDevice = claimed.first_device === 1;
       if (firstDevice) this.cancelFirstDeviceRequests(now);
       if (claimed.kind === 'human') this.closeHumanRecovery(now);
-      insertDevice(
-        this.db,
-        { ...device, kind: claimed.kind, owner: claimed.kind === 'human' },
-        credential
-      );
+      insertDevice(this.db, { ...device, kind: claimed.kind, owner: firstDevice }, credential);
       return { device: { ...device, kind: claimed.kind }, credential };
     })();
   }
