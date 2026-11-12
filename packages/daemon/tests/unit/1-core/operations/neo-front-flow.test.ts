@@ -1515,6 +1515,27 @@ test('a redelivered front input keeps its bytes after a later message and a list
   ).toHaveLength(1);
 });
 
+test('a front input queued before the upgrade keeps its bytes and its old tool name maps to work_on', async () => {
+  const { id, job } = await frontInput();
+  const mailbox = db
+    .getJobQueueRepo()
+    .listJobs({ queue: 'mailbox' })
+    .find((item) => item.payload.messageUuid === id && item.payload.to)!;
+  const stored = JSON.parse(
+    JSON.stringify(mailbox.payload).replace('call work_on', 'call run_in_background')
+  );
+  db.getDatabase()
+    .prepare('UPDATE job_queue SET payload = ? WHERE id = ?')
+    .run(JSON.stringify(stored), mailbox.id);
+  const before = JSON.stringify(delivered(id));
+  expect(before).toContain('call run_in_background');
+  await createNeoFrontHandler(service)(job);
+  expect(JSON.stringify(delivered(id))).toBe(before);
+  const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
+  expect(definitions.map((entry) => entry.name)).not.toContain('run_in_background');
+  expect(frontModeNote()).toContain('A message that names run_in_background means work_on.');
+});
+
 test('the front only sees its own replies in its transcript, not in the catch-up', async () => {
   await frontInput();
   expect(
