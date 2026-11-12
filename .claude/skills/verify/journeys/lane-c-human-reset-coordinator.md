@@ -21,7 +21,10 @@ the public handoff schema and its filename check are included, and card replies
 retain existing handoffs. Reset notices carry no card reply or artifacts, so the
 new conflict branch does not apply to them. The publishing lane, an optional
 `publishedBy` set from the append speaker, expands the append graph to 380
-lines; reset notices have no speaker, so they record none. The
+lines; reset notices have no speaker, so they record none. The per-input lane
+claim, which refuses the other lane with `input_handed_off` and exempts
+speakerless appends, makes it 383 lines; reset notices are speakerless and
+claim nothing. The
 144-line reset/receipt subtree, revised so the reset also cancels open pairing
 requests, is pinned by its updated hash. Original measurement
 files retain the historical 277-line construction baseline. Keep both interfaces and all hashes in

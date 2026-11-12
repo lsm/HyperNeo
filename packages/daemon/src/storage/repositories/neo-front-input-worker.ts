@@ -4,6 +4,10 @@ import { sdkMessageBodyAt } from './sdk-message-body-read.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
+import {
+  ensurePromptInTransaction,
+  type PersistPromptArgs,
+} from '../../lib/agent/message-delivery-outbox.ts';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../lib/mailbox/enqueue.ts';
 import { toMailboxMessage, type MailboxEntry } from '../../lib/mailbox/entry.ts';
 import {
@@ -17,14 +21,7 @@ export class NeoFrontInputRepository {
 
   get(conversationId: string, messageId: string) {
     const row = this.db
-      .prepare(`SELECT eligible, COALESCE(owner, CASE WHEN EXISTS (
-        SELECT 1 FROM neo_publications p WHERE p.conversation_id = f.conversation_id AND (
-          f.message_id IN (SELECT value FROM json_each(p.payload_json, '$.replyTo'))
-          OR f.message_id IN (SELECT value FROM json_each(p.payload_json, '$.cardReply.sourceMessageIds'))
-          OR (json_extract(p.payload_json, '$.producerInput.messageId') = f.message_id
-            AND json_type(p.payload_json, '$.revisionId') = 'text')
-        )
-      ) THEN 'neo' END) AS owner FROM neo_front_inputs f
+      .prepare(`SELECT eligible, owner FROM neo_front_inputs
       WHERE conversation_id = ? AND message_id = ?`)
       .get(conversationId, messageId) as { eligible: number; owner: 'front' | 'neo' | null } | null;
     return row ? { eligible: row.eligible === 1, owner: row.owner } : null;
@@ -163,17 +160,49 @@ export class NeoFrontInputRepository {
     })();
   }
 
-  claim(conversationId: string, messageIds: readonly string[], owner: 'front' | 'neo'): boolean {
+  claim(
+    conversationId: string,
+    messageIds: readonly string[],
+    owner: 'front' | 'neo',
+    exempt = false
+  ): 'claimed' | 'ineligible' | 'handed_off' {
     const ids = [...new Set(messageIds)];
-    if (!ids.length) return false;
+    if (!ids.length) return 'ineligible';
     return this.db.transaction(() => {
       const rows = ids.map((id) => this.get(conversationId, id));
-      if (rows.some((row) => !row?.eligible)) return false;
+      if (rows.some((row) => !row?.eligible)) return 'ineligible';
+      if (!exempt && rows.some((row) => row?.owner && row.owner !== owner)) return 'handed_off';
       for (const id of ids)
         this.db
           .prepare(`UPDATE neo_front_inputs SET owner = ?
-          WHERE conversation_id = ? AND message_id = ?`)
+          WHERE conversation_id = ? AND message_id = ? AND owner IS NULL`)
           .run(owner, conversationId, id);
+      return 'claimed' as const;
+    })();
+  }
+
+  reserve(
+    conversationId: string,
+    messageIds: readonly string[],
+    prompts: readonly Pick<PersistPromptArgs, 'sessionId' | 'message'>[]
+  ): boolean {
+    return this.db.transaction(() => {
+      const rows = messageIds.map((id) => this.get(conversationId, id));
+      if (rows.some((row) => !row?.eligible || row.owner)) return false;
+      for (const id of messageIds)
+        this.db
+          .prepare(`UPDATE neo_front_inputs SET owner = 'neo'
+          WHERE conversation_id = ? AND message_id = ?`)
+          .run(conversationId, id);
+      for (const prompt of prompts)
+        ensurePromptInTransaction({
+          ...prompt,
+          db: this.db,
+          sdkMessageRepo: new SDKMessageRepository(this.db),
+          jobQueue: new JobQueueRepository(this.db),
+          hold: 'immediate',
+          delivery: { origin: 'chat' },
+        });
       return true;
     })();
   }
@@ -183,7 +212,7 @@ export const neoFrontInputWrites = defineRepositoryOp(
   'neo.front.inputs',
   'write',
   NeoFrontInputRepository,
-  ['claim']
+  ['claim', 'reserve']
 );
 
 export const neoFrontDeliveryWrites = defineRepositoryOp(

@@ -1,6 +1,6 @@
 import { workerInputWrites } from '../../storage/repositories/worker-input-worker.ts';
 import { selectSendOrigin } from '../messaging/message-send.ts';
-import { frontSessionId, publicationSpeaker, frontModeNote } from './front-mode.ts';
+import { frontSessionId, isPublicationSpeaker, frontModeNote } from './front-mode.ts';
 import { frontSession } from './front-session.ts';
 import { createWorkerNameSource } from '../drivers/worker-names.ts';
 import type { NeoWorkerNameSource } from './worker-name.ts';
@@ -218,49 +218,51 @@ export class NeoService {
       (id) => this.repo.getBindingBySession(id)?.kind === 'neo',
       undefined,
       undefined,
-      async (id, listening) => {
+      async (target, listening) => {
         const conversation = this.repo.readConversationId();
-        const speaker =
-          conversation && id === this.defaultSessionId()
-            ? publicationSpeaker(
-                conversation,
-                this.db.getGlobalSettings().neo?.front?.enabled === true
-              )
-            : id;
-        id = speaker;
-        if (this.sessions.getCachedSession(id)?.getProcessingState().status === 'processing')
-          await ensurePrompt({
-            db: this.db.getDatabase(),
-            sdkMessageRepo: this.db.getSDKMessageRepo(),
-            jobQueue: this.db.getJobQueueRepo(),
-            sessionId: id,
-            message: {
-              type: 'user',
-              uuid: crypto.randomUUID() as UUID,
-              session_id: id,
-              parent_tool_use_id: null,
-              inputKind: 'system',
-              isSynthetic: true,
+        const ids =
+          conversation && target === this.defaultSessionId()
+            ? [
+                target,
+                ...(this.db.getGlobalSettings().neo?.front?.enabled === true
+                  ? [frontSessionId(conversation)]
+                  : []),
+              ]
+            : [target];
+        for (const id of ids)
+          if (this.sessions.getCachedSession(id)?.getProcessingState().status === 'processing')
+            await ensurePrompt({
+              db: this.db.getDatabase(),
+              sdkMessageRepo: this.db.getSDKMessageRepo(),
+              jobQueue: this.db.getJobQueueRepo(),
+              sessionId: id,
               message: {
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text:
-                      conversation && id === frontSessionId(conversation)
-                        ? listening
-                          ? '[listening: yes] The human is now listening. If your current reply has not been spoken, give its short spoken version once using speech_say.'
-                          : '[listening: no] The human stopped listening.'
-                        : listening
-                          ? 'The human is now listening.'
-                          : 'The human stopped listening.',
-                  },
-                ],
-              },
-            } as SDKUserMessage,
-            origin: 'system',
-            delivery: { origin: 'space_inject', injectedMidTurn: true },
-          });
+                type: 'user',
+                uuid: crypto.randomUUID() as UUID,
+                session_id: id,
+                parent_tool_use_id: null,
+                inputKind: 'system',
+                isSynthetic: true,
+                message: {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text:
+                        conversation && id === frontSessionId(conversation)
+                          ? listening
+                            ? '[listening: yes] The human is now listening. If your current reply has not been spoken, give its short spoken version once using speech_say.'
+                            : '[listening: no] The human stopped listening.'
+                          : listening
+                            ? 'The human is now listening.'
+                            : 'The human stopped listening.',
+                    },
+                  ],
+                },
+              } as SDKUserMessage,
+              origin: 'system',
+              delivery: { origin: 'space_inject', injectedMidTurn: true },
+            });
       },
       (id) => !!this.db.getSession(id),
       (id) => {
@@ -277,11 +279,11 @@ export class NeoService {
         const conversation = this.repo.readConversationId();
         return (
           !!conversation &&
-          id ===
-            publicationSpeaker(
-              conversation,
-              this.db.getGlobalSettings().neo?.front?.enabled === true
-            )
+          isPublicationSpeaker(
+            conversation,
+            id,
+            this.db.getGlobalSettings().neo?.front?.enabled === true
+          )
         );
       },
       (id) => {
@@ -381,14 +383,16 @@ export class NeoService {
       },
       getBinding: (id) => this.repo.getPublicationBinding(id),
       getRootBinding: () => this.repo.defaultBinding(),
-      publicationSessionId: () => {
+      isPublicationSpeaker: (id) => {
         const conversation = this.repo.readConversationId();
-        return conversation
-          ? publicationSpeaker(
-              conversation,
-              this.db.getGlobalSettings().neo?.front?.enabled === true
-            )
-          : undefined;
+        return (
+          !!conversation &&
+          isPublicationSpeaker(
+            conversation,
+            id,
+            this.db.getGlobalSettings().neo?.front?.enabled === true
+          )
+        );
       },
       hasProject: (id) => !!this.repo.getProject(id),
       publication: (conversation, id) => this.publications.get(conversation, id),
