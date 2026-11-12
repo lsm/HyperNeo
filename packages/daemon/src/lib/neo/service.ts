@@ -263,14 +263,11 @@ export class NeoService {
       (id) => {
         const conversation = this.repo.readConversationId();
         const listening = this.speech.isListening(this.defaultSessionId() ?? id);
+        const dual = this.db.getGlobalSettings().neo?.front?.enabled === true;
         return conversation &&
-          (id === this.defaultSessionId() || id === frontSessionId(conversation))
-          ? frontModeNote(
-              conversation,
-              this.db.getGlobalSettings().neo?.front?.enabled === true,
-              id === frontSessionId(conversation),
-              listening
-            ) + `\n[listening: ${listening ? 'yes' : 'no'}]`
+          (id === this.defaultSessionId() || (dual && id === frontSessionId(conversation)))
+          ? frontModeNote(conversation, dual, id === frontSessionId(conversation), listening) +
+              `\n[listening: ${listening ? 'yes' : 'no'}]`
           : undefined;
       },
       (id) => {

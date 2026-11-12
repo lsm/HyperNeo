@@ -276,6 +276,8 @@ test('switching modes notifies only Neo and preserves the Front SDK identity', a
   expect(text).toContain('Single-model mode');
   expect(text).not.toContain(front);
   expect(text).toContain(root);
+  const result = { content: 'A late background result', sendStatus: 'enqueued' };
+  expect(service.speech.prepareInput(front, result).content).toBe('A late background result');
 });
 
 test('Back results use the ordinary Front mailbox with a separate delivery identity', async () => {
