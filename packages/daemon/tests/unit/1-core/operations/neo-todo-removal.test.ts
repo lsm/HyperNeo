@@ -124,14 +124,25 @@ describe('planNeoRemovedPrerequisiteAnswer', () => {
     ).toEqual({ b: gone, c: gone });
   });
 
-  test('Continue puts an unstarted todo its check had blocked back in the queue', () => {
+  test('Continue drops the edge and leaves a check hold in place', () => {
     const blocked = [
       step('a', [], { state: 'removed' }),
       step('b', ['a'], { state: 'blocked', blockedBy: 'check' }),
     ];
     expect(
       brief({ writes: planNeoRemovedPrerequisiteAnswer(card, blocked, ['Continue'], 9) })
-    ).toEqual({ b: { state: 'todo', dependsOn: [] } });
+    ).toEqual({ b: { dependsOn: [] } });
+    expect(
+      brief(
+        planNeoTodoRemoval(
+          step('a', []),
+          [step('a', []), blocked[1]],
+          [],
+          { dependents: 'continue' },
+          9
+        )
+      )
+    ).toEqual({ b: { dependsOn: [] } });
   });
 
   test('Remove these still removes a todo whose edge was dropped while the card was open', () => {

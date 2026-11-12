@@ -63,7 +63,7 @@ describe('runMigration506', () => {
       handed: ['next'],
       finished: null,
       before: null,
-      old: ['before'],
+      old: null,
     });
     expect(cards(db)).toEqual([
       {

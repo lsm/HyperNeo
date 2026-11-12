@@ -28,7 +28,8 @@ export function runMigration506(db: Database): void {
         SELECT json_array(before.id) FROM neo_todos before
         WHERE before.ask_id = neo_todos.ask_id AND before.position < neo_todos.position
         ORDER BY before.position DESC LIMIT 1
-      ), '[]') WHERE depends_on IS NULL AND state IN ('todo', 'doing', 'blocked', 'failed');
+      ), '[]') WHERE depends_on IS NULL AND state IN ('todo', 'doing', 'blocked', 'failed')
+        AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open');
     `);
     const rows = db
       .prepare(

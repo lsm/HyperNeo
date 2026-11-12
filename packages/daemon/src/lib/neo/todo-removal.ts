@@ -11,7 +11,7 @@ export const NEO_REMOVED_PREREQUISITE = 'removed_prerequisite';
 export const NEO_REMOVED_PREREQUISITE_OPTIONS = ['Continue', 'Remove these'];
 
 type Card = Pick<NeoQuestion, 'state' | 'kind' | 'todos' | 'cause'>;
-type Row = NeoTodoEdge & Pick<NeoTodo, 'title'> & Partial<Pick<NeoTodo, 'blockedBy'>>;
+type Row = NeoTodoEdge & Pick<NeoTodo, 'title'>;
 type Write<T> = { todo: T; patch: NeoTodoPatch };
 type CardPlan = { askId: string; todos: string[]; text: string };
 
@@ -72,11 +72,6 @@ function removeLine<T extends Row>(
   return writes;
 }
 
-const released = (todo: Row, dependsOn: string[]): NeoTodoPatch =>
-  todo.startedAt === null && todo.state === 'blocked' && todo.blockedBy === 'check'
-    ? { state: 'todo', dependsOn }
-    : { dependsOn };
-
 const quoted = (todos: readonly Row[]) => todos.map((todo) => `"${todo.title}"`).join(', ');
 
 export const neoRemovedPrerequisiteText = (gone: readonly Row[], dependents: readonly Row[]) =>
@@ -109,7 +104,7 @@ export function planNeoTodoRemoval<T extends Row>(
     const dependsOn = without(after, dependent, [gone]);
     const handed = replacement(after, gone, dependent.id).length > 0;
     if (handed || dependent.startedAt !== null || input.dependents === 'continue')
-      writes.push({ todo: dependent, patch: released(dependent, dependsOn) });
+      writes.push({ todo: dependent, patch: { dependsOn } });
     else undecided.push(dependent);
   }
   if (input.dependents === 'remove')
@@ -161,7 +156,7 @@ export function planNeoRemovedPrerequisiteAnswer<T extends Row>(
     .filter((todo) => neoTodoCancelledDependencies(family, todo.id).length > 0)
     .map((todo) => ({
       todo,
-      patch: released(todo, without(family, todo, neoTodoCancelledDependencies(family, todo.id))),
+      patch: { dependsOn: without(family, todo, neoTodoCancelledDependencies(family, todo.id)) },
     }));
 }
 
