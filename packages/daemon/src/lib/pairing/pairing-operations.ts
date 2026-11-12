@@ -328,7 +328,7 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.revoke',
       description:
-        'Revoke a paired device: its credential stops working and its open connections close. Pairing without Allow reopens once no active human phone remains.',
+        'Revoke a paired device: its credential stops working and its open connections close. Ordinary revocation never reopens pairing without Allow; the explicit lost-phone reset does.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({ deviceId: z.string().min(1) }).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),

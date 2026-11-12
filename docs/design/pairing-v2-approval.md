@@ -9,11 +9,11 @@ read-only agent credentials (`agent-read:*`) are refused on every request. Deny
 and cancel only terminate a request; they keep the authenticated human-session
 admission, including the web session.
 
-A ticket issued while no active paired phone exists is a first-device ticket.
-Its completion needs only the bound-key proof and atomically rechecks that no
-active paired phone exists, so it grants the first device and its owner bit with
-no separate approval. A later-device ticket cannot become a bootstrap ticket if
-the existing devices are removed.
+A ticket issued while no human phone has ever been paired, or while a lost-phone
+reset is open, is a first-device ticket. Its completion needs only the bound-key
+proof and atomically rechecks that same window, so it grants the first device and
+its owner bit with no separate approval. Ordinary revocation does not reopen the
+window, and a later-device ticket cannot become a bootstrap ticket.
 
 The approve route refuses first-device requests: they never appear as approvable
 and completing one after another phone has paired returns `cancelled`. Legacy
