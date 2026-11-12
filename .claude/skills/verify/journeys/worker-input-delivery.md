@@ -34,8 +34,11 @@ The helper also answers a real worker card through neo.question.answer while
 that worker is busy. The route and todo stay held after daemon acceptance.
 After native admission, the real driver refresh accepts the stored answer and
 the SDK inbox contains it. Consumer regressions additionally cover definite
-failure retries, uncertain-outcome reconciliation and scheduled wakes keeping
-their source baseline intact while their worker input is unconfirmed.
+failure retries and uncertain-outcome reconciliation. Scheduled wakes advance
+their source baseline once the daemon durably accepts their input, matching
+the existing HyperNeo mailbox boundary. Native unconfirmed outcomes keep their
+source baseline. The scheduler regression checks two later unchanged cadences
+for each local Desktop adapter and requires no duplicate wake.
 
 An unknown worker also keeps its input pending while the originating Neo receives
 one waiting-reason notice. The proof restarts the isolated daemon and observes
@@ -46,3 +49,6 @@ Waiting inputs use the existing driver's 60-second refresh cadence. The syntheti
 proof advances only its disposable job deadlines after fixture state changes.
 Repeated attempts for one answer share a report identity, so a persistent refusal
 leaves one blocked notice in Neo's inbox. The proof checks two refused attempts.
+
+Steering remains immediate for its owning todo. The admission regression checks
+that a worker running or queued on another todo retains the existing busy refusal.

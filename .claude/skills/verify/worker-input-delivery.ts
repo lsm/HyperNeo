@@ -126,6 +126,7 @@ try {
   await until(() => sessions.inputs.list(todo.id).some((input) => input.outcome && 'ref' in input.outcome), 'question answer receives native admission');
   app.jobQueue.enqueue({ queue: 'neo.work.driver.refresh', payload: { scope: 'neo' }, runAt: Date.now() });
   await until(() => todos.questionAnswers.list(question.question.id)[0].state === 'accepted', 'driver refresh confirms the stored answer admission');
+  await until(() => todos.getTodo(todo.id)?.blockedBy === null, 'the confirmed answer releases its todo hold');
   assert.equal(todos.getTodo(todo.id)?.blockedBy, null);
   await until(() => messages().some((text) => text.includes('[worker-answer:')), 'the answer reaches the SDK inbox');
   evidence.questionAccepted = todos.questionAnswers.list(question.question.id);

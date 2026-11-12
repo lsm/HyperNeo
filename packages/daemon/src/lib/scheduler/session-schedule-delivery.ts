@@ -78,7 +78,7 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
           return 'unconfirmed';
         const sent = await invoke('work.send', { ref, message, from: origin, notice: true });
         if (!sent.ok) return 'target_gone';
-        return sent.value.unconfirmed || sent.value.inputId ? 'unconfirmed' : undefined;
+        return sent.value.unconfirmed ? 'unconfirmed' : undefined;
       }
       const sent = await gatewayFor(db.getDatabase()).call(
         enqueueMailboxAdmission,

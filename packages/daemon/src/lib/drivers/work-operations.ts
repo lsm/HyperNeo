@@ -327,13 +327,12 @@ function requireSendPurpose<Value>(
 export const isBusyWork = (status: string | undefined) =>
   status === 'running' || status === 'queued';
 
-async function requireFreeRemoteWorker<Value>(
+async function requireFreeWorker<Value>(
   input: QueuedInput,
   caller: OperationCaller,
   route: Value,
   deps: WorkVerbDeps
 ): Promise<{ value: Value } | { reason: SendResult }> {
-  if (!input.ref.daemon) return { value: route };
   const todoId = 'message' in input && caller.role === 'neo' ? input.todoId : undefined;
   const queue = deps.todoWorker;
   if (!todoId || !queue || input.ref.adapter === 'space' || queue.on(todoId, input.ref))
@@ -942,7 +941,7 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(queueOrdinaryInput, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
-  .pipe(requireFreeRemoteWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
+  .pipe(requireFreeWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(acceptWorkInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
@@ -1070,7 +1069,7 @@ const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI
     ['input', 'caller', 'outcome', 'deps'],
     'result:outcome'
   )
-  .pipe(requireFreeRemoteWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
+  .pipe(requireFreeWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(acceptWorkInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
