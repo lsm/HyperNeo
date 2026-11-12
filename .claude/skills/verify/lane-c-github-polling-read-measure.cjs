@@ -31,15 +31,15 @@ function units(file) {
   return found;
 }
 const contracts = [
-  ['countSpacesWithPollingIntent', 'countGitHubSpacesWithPollingIntent', 'bd97191ac0706b63a10525de02fecd6aae367e4b24e6457c64ee01df4b1b9016', false],
-  ['listPollingRepos', 'listGitHubPollingRepos', '3b410d5c508a4f9615be4c10928e5471f785795bc0beb8b2c8893bd78c8c9bfc', true],
-  ['listAllPollingConfiguredRepos', 'listGitHubPollingConfiguredRepos', '398040635a0c60d1fd726ecde0d286347edf18f6bcdeafd6dbb4afb95e8cb5ab', true],
+  ['countSpacesWithPollingIntent', 'countGitHubSpacesWithPollingIntent', 'f101cc0cdbd1465b68796b9fef4d627a3015a15a124f38ebbc40c4916115b2fa', false],
+  ['listPollingRepos', 'listGitHubPollingRepos', '9912d576ac968369717d599699d5e36aea7e61046a9ab5126170554ccb90e5d1', true],
+  ['listAllPollingConfiguredRepos', 'listGitHubPollingConfiguredRepos', 'd11efe71dedd859e2d1a688a157b46514067efa66a13fd2e77cab03cd6501b05', true],
 ];
 const methods = units(repo), helpers = units(helper), names = contracts.map(row => row[0]);
 if (methods.some(row => ['clearWebhookRegistration', 'clearWebhookDeliveryHistory'].includes(row.name))) throw Error('Retired watched webhook wrappers remain');
 const untouched = methods.filter(row => !names.includes(row.name)).map(row => [row.name, row.sha256]);
-if (hash(JSON.stringify(untouched)) !== 'd856690376cbcd94b65d6b24f83b7a9aabdc980682e701a19e8eda365fd6c774') throw Error('Other repository method or constructor changed');
-if (hash(read(mapper)) !== '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95') throw Error('Complete mapper module changed');
+if (hash(JSON.stringify(untouched)) !== 'b1b1d8c3b6578688c1a8faa303e510305d3c1e35a3e40b48ded663e07ef2f101') throw Error('Other repository method or constructor changed');
+if (hash(read(mapper)) !== 'f41326de1acc9416d313230f3144405d21638e8c6d846149431558a26f883165') throw Error('Complete mapper module changed');
 for (const [name, fn, expected, scoped] of contracts) {
   const extracted = helpers.find(row => row.name === fn), wrapper = methods.find(row => row.name === name);
   if (!extracted || hash(shape(extracted.body)) !== expected) throw Error('SQL/map/parse/result body changed: ' + fn);

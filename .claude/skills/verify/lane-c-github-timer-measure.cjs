@@ -21,7 +21,7 @@ function walk(node) {
       const body = callback.getText(sf);
       if (!body.includes('await this.stopIdlePollingOnReader();')) throw Error('Polling caller does not await timer ownership');
       const before = body.replace('await this.stopIdlePollingOnReader();', 'this.maybeStopPolling();');
-      if (hash(before) !== '76341d9ac84de31d87649c450efca347b38cffe265aff7661c82d1c2267cd747') throw Error('Polling caller changed beyond one awaited timer call');
+      if (hash(before) !== '6b54c7241754c7ef21ab271cdf9e0e633ab5d96255a58864885eb838e4e572e2') throw Error('Polling caller changed beyond one awaited timer call');
       caller = { file, name, lines: lines(callback), sha256: hash(body), onlyAwaitedTimerCallChanged: true };
     } else otherRpcs.push([name, hash(callback.getText(sf))]);
   }
@@ -30,11 +30,11 @@ function walk(node) {
 walk(sf);
 if (!caller || selected.length !== selectedNames.length) throw Error('Missing owned timer roots');
 if (hash(JSON.stringify(unchanged)) !== '3d36aa2e60b741fcb96f0b445ddcd7323ceee770c34b952c5b65c613370e2cd6') throw Error('Other extension method or field changed');
-if (hash(JSON.stringify(otherRpcs)) !== 'e97570083abce25a0f7438e870683425ba08c88a87ef80b552465bf364e9eb1e') throw Error('Other public RPC caller changed');
+if (hash(JSON.stringify(otherRpcs)) !== '9879bba995657bbbe54ed36ef788becddb65eec9e7cfe2488f443b9c46dcf534') throw Error('Other public RPC caller changed');
 const specs = [
   ['github-polling-usage-read.ts', 47, '84752c5c336df50f98a7941c53eb93c343ac0ff443e7c669fc52566a33145289'],
-  ['github-polling-repos-read.ts', 56, '39618e09a7cd70b7325cf31b205eb221f338ebe58ff6ea50bebef49a22b28d06'],
-  ['github-watched-repos-read.ts', 44, '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95'],
+  ['github-polling-repos-read.ts', 25, '220a093bb172a2d4c160242c862a1fa310384dffbc422180a8055fed56f2d8e9'],
+  ['github-watched-repos-read.ts', 38, 'f41326de1acc9416d313230f3144405d21638e8c6d846149431558a26f883165'],
 ];
 const data = specs.map(([name, expectedLines, expected]) => {
   const path = 'packages/daemon/src/storage/repositories/' + name, body = fs.readFileSync(path, 'utf8');

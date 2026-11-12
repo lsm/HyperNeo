@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/live-query/registry';
+import { mergedNamedQueries } from '../../../../src/lib/live-query/registry';
 import { BACKGROUND_TASK_METADATA_SQL } from '../../../../src/lib/live-query/queries/messages';
 import {
   readHyperneoLastResult,
@@ -100,7 +100,7 @@ function reads() {
     ['spaceTaskActiveTurn.byTask', ['t']],
     ['sessionGroupMessages.byGroup', ['g']],
   ] as [string, (string | number)[]][]) {
-    const query = NAMED_QUERY_REGISTRY.get(name)!;
+    const query = mergedNamedQueries().get(name)!;
     let rows = db.prepare(query.sql).all(...params) as Record<string, unknown>[];
     if (query.expandRows) rows = query.expandRows(rows, params, db);
     feeds[name] = rows.map(query.mapRow ?? ((row) => row));

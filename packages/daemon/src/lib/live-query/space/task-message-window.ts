@@ -4,7 +4,7 @@ import {
   NODE_EXECUTION_RELEVANCE_ORDER,
   TASK_AGENT_SESSION_PREDICATE,
   deliveryStateCase,
-} from './task-delivery.ts';
+} from '../queries/task-delivery.ts';
 import { TASK_MESSAGE_FLAG } from '../../../storage/schema/task-message-rows.ts';
 
 export const SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS = 100;

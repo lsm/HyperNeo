@@ -34,6 +34,8 @@ import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts'
 import { runMigration272 } from './m272-space-session-event-subscriptions.ts';
 import { runMigration281 } from './m281-space-agent-template-hides.ts';
 import spaceBaseline from './baseline-space-v041.json' with { type: 'json' };
+import { createSpaceGitHubIndexes, createSpaceGitHubTables } from './space-github.ts';
+import { SPACE_LIVE_QUERIES } from '../../lib/live-query/space/queries.ts';
 import { createEvolutionTables } from './evolution.ts';
 import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
 import { createSpaceSessionEventSubscriptionTables } from './space-session-event-subscriptions.ts';
@@ -250,6 +252,7 @@ function createSpaceTables(db: BunDatabase): void {
         FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
       )
     `);
+  createSpaceGitHubTables(db);
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
   createSpaceSessionEventSubscriptionTables(db);
@@ -316,6 +319,7 @@ function createSpaceIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_space_pending
       ON space_goal_outcome_notifications(space_id, status, created_at)`
   );
+  createSpaceGitHubIndexes(db);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_schedule ON space_goals(task_schedule_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
@@ -328,6 +332,7 @@ export const SPACE_SCHEMA: SchemaExtension = {
   baseline: { statements: spaceBaseline, presentWhenTable: 'spaces' },
   sessionSkillVetoes: spaceSlotSkillVetoes,
   workspaceSources: spaceWorkspaceSources,
+  liveQueries: SPACE_LIVE_QUERIES,
   migrations: {
     migration_239: runMigration239,
     migration_240: runMigration240,

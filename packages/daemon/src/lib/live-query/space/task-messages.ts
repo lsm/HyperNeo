@@ -8,7 +8,7 @@ import {
   TASK_SHUTDOWN_BOUNDARY_CTE_SQL,
   TASK_AGENT_SESSION_PREDICATE,
   WORKER_SHUTDOWN_TAIL_FILTER_SQL,
-} from './task-delivery.ts';
+} from '../queries/task-delivery.ts';
 
 export const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
 

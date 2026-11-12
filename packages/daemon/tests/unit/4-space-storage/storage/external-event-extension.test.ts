@@ -135,11 +135,17 @@ describe('external event extension startup primitives', () => {
     const extension = new GitHubEventExtension(db);
     manager.register(extension);
     const hub = new MessageHub({ defaultSessionId: 'global' });
-    const changes: Array<{ source: string; spaceId?: string; kind: string }> = [];
+    const changes: Array<{ source: string; spaceId?: string; kind: string; tables?: string[] }> =
+      [];
     const context = {
       publisher: service,
       config,
-      onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }) {
+      onSourceConfigChanged(change: {
+        source: string;
+        spaceId?: string;
+        kind: string;
+        tables?: string[];
+      }) {
         changes.push(change);
       },
     };
@@ -167,7 +173,12 @@ describe('external event extension startup primitives', () => {
     })) as { webhookUrl: string };
     expect(watchResult.webhookUrl).toBe('/webhook/github/space');
     expect(changes).toEqual([
-      { source: 'github', spaceId: 'space-1', kind: 'watched_repo_changed' },
+      {
+        source: 'github',
+        spaceId: 'space-1',
+        kind: 'watched_repo_changed',
+        tables: ['space_github_watched_repos'],
+      },
     ]);
 
     const payload = githubPayload();

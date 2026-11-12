@@ -1,4 +1,5 @@
 import type { NamedQuery } from './types.ts';
+import { extensionLiveQueries } from '../../storage/schema/extensions.ts';
 import { mayChangeSessionList } from '../../storage/repositories/session-list-live-read.ts';
 import {
   SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
@@ -10,15 +11,8 @@ import {
   mapSpaceTaskActivityRow,
   NODE_EXECUTIONS_BY_RUN_SQL,
 } from './queries/task-activity.ts';
-import {
-  DEBOUNCE_SPACE_TASK_FEEDS_MS,
-  SPACE_TASK_MESSAGES_BY_TASK_SQL,
-  mapSpaceTaskMessageRow,
-} from './queries/task-messages.ts';
+import { DEBOUNCE_SPACE_TASK_FEEDS_MS } from './space/task-messages.ts';
 import { buildTaskScopeFilter } from './queries/task-delivery.ts';
-import { SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL } from './queries/compact-task-messages.ts';
-import { SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL } from './queries/task-active-turn.ts';
-import { mapActiveTurnEntryRow } from '../rpc-handlers/activity-preview.ts';
 import {
   MCP_SERVERS_GLOBAL_SQL,
   mapMcpServerRow,
@@ -77,36 +71,6 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       paramCount: 1,
       debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
       mapRow: mapSpaceTaskActivityRow,
-      buildScopeFilter: buildTaskScopeFilter,
-    },
-  ],
-  [
-    'spaceTaskMessages.byTask',
-    {
-      sql: SPACE_TASK_MESSAGES_BY_TASK_SQL,
-      paramCount: 1,
-      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-      mapRow: mapSpaceTaskMessageRow,
-      buildScopeFilter: buildTaskScopeFilter,
-    },
-  ],
-  [
-    'spaceTaskMessages.byTask.compact',
-    {
-      sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
-      paramCount: 2,
-      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-      mapRow: mapSpaceTaskMessageRow,
-      buildScopeFilter: buildTaskScopeFilter,
-    },
-  ],
-  [
-    'spaceTaskActiveTurn.byTask',
-    {
-      sql: SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL,
-      paramCount: 1,
-      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-      mapRow: mapActiveTurnEntryRow,
       buildScopeFilter: buildTaskScopeFilter,
     },
   ],
@@ -196,3 +160,11 @@ NAMED_QUERY_REGISTRY.set('messages.bySession.compact', {
 ${MESSAGES_BY_SESSION_SQL}`,
   mapRow: mapThinMessageRow,
 });
+
+export function mergedNamedQueries(): Map<string, NamedQuery> {
+  const merged = new Map(NAMED_QUERY_REGISTRY);
+  for (const [name, query] of Object.entries(extensionLiveQueries())) {
+    merged.set(name, query);
+  }
+  return merged;
+}

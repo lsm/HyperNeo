@@ -12,7 +12,7 @@ import type {
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { NAMED_QUERY_REGISTRY } from '../live-query/registry.ts';
+import { NAMED_QUERY_REGISTRY, mergedNamedQueries } from '../live-query/registry.ts';
 import {
   BACKGROUND_TASK_METADATA_SQL,
   mapMessageRow,
@@ -24,13 +24,13 @@ import {
 import {
   MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW,
   SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT,
-} from '../live-query/queries/compact-task-messages.ts';
+} from '../live-query/space/compact-task-messages.ts';
 import type { NamedQuery } from '../live-query/types.ts';
 import { schemaTableExists } from '../../storage/schema/extensions.ts';
 import { ensureTaskMessageRows } from '../../storage/schema/task-message-rows.ts';
 import { MessageHubHandlerError, ErrorCode, createEventMessage } from '@hyperneo/shared';
-import { SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS } from '../live-query/queries/task-message-window.ts';
-import { SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL } from '../live-query/queries/task-active-turn.ts';
+import { SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS } from '../live-query/space/task-message-window.ts';
+import { SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL } from '../live-query/space/task-active-turn.ts';
 
 export { NAMED_QUERY_REGISTRY };
 
@@ -62,7 +62,7 @@ export function setupLiveQueryHandlers(
   const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
 
   const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
-  const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
+  const activeRegistry = mergedNamedQueries();
 
   const stmtBackgroundTaskMetadata = readMessageFeed
     ? undefined

@@ -1,7 +1,7 @@
 import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 import { spaceTaskFlagRowsBaseCte } from './task-message-window.ts';
 import { TASK_MESSAGE_FLAG } from '../../../storage/schema/task-message-rows.ts';
-import { HOOK_SUBTYPES, HOOK_SUBTYPE_NAMES } from './task-delivery.ts';
+import { HOOK_SUBTYPES, HOOK_SUBTYPE_NAMES } from '../queries/task-delivery.ts';
 
 export const MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW = 100;
 
