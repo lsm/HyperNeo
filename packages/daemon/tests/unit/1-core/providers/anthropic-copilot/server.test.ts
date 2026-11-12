@@ -29,6 +29,8 @@ class MockCopilotSession {
   readonly sessionId = 'mock-session';
   private subs: AnyHandler[] = [];
   capturedPrompt: string | undefined = undefined;
+  capturedAttachments: Array<{ type: string; data?: string; mimeType?: string }> | undefined =
+    undefined;
   capturedConfig: unknown = undefined;
   shouldError = false;
   shouldRejectSend = false;
@@ -49,8 +51,12 @@ class MockCopilotSession {
     for (const h of [...this.subs]) h({ type, data });
   }
 
-  async send(opts: { prompt: string }): Promise<string> {
+  async send(opts: {
+    prompt: string;
+    attachments?: Array<{ type: string; data?: string; mimeType?: string }>;
+  }): Promise<string> {
     this.capturedPrompt = opts.prompt;
+    this.capturedAttachments = opts.attachments;
     if (this.shouldRejectSend) throw new Error('connection lost');
     if (this.shouldHang) {
       Promise.resolve().then(() => {
@@ -105,6 +111,21 @@ function makeMockClient(
           capabilities: {
             supports: { vision: false, reasoningEffort: true },
             limits: { max_context_window_tokens: 160000, max_prompt_tokens: 32000 },
+          },
+        },
+        {
+          id: 'claude-sonnet-4.6',
+          name: 'Claude Sonnet 4.6',
+          capabilities: {
+            supports: { vision: true, reasoningEffort: true },
+            limits: {
+              max_context_window_tokens: 200000,
+              vision: {
+                supported_media_types: ['image/png', 'image/jpeg'],
+                max_prompt_images: 4,
+                max_prompt_image_size: 100,
+              },
+            },
           },
         },
       ];
@@ -347,7 +368,7 @@ describe('startEmbeddedServer', () => {
     expect(err['type']).toBe('request_too_large');
   });
 
-  it('rejects image blocks before creating a Copilot session', async () => {
+  it('rejects image blocks when the model does not support vision', async () => {
     const r = await postMessages(serverUrl, {
       model: 'gpt-5-mini',
       max_tokens: 100,
@@ -366,11 +387,12 @@ describe('startEmbeddedServer', () => {
     const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
     const err = body['error'] as Record<string, unknown>;
     expect(err['type']).toBe('invalid_request_error');
-    expect(err['message']).toContain('image content blocks');
+    expect(err['message']).toContain('gpt-5-mini');
+    expect(err['message']).toMatch(/vision|image/i);
     expect(client.lastSession).toBeUndefined();
   });
 
-  it('rejects image blocks nested in Copilot tool results', async () => {
+  it('rejects image blocks nested in tool results when the model has no vision', async () => {
     const r = await postMessages(serverUrl, {
       model: 'gpt-5-mini',
       max_tokens: 100,
@@ -395,7 +417,79 @@ describe('startEmbeddedServer', () => {
     const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
     const err = body['error'] as Record<string, unknown>;
     expect(err['type']).toBe('invalid_request_error');
-    expect(err['message']).toContain('image content blocks');
+    expect(err['message']).toContain('gpt-5-mini');
+    expect(client.lastSession).toBeUndefined();
+  });
+
+  it('sends user image blocks as blob attachments for vision models', async () => {
+    const r = await postMessages(serverUrl, {
+      model: 'claude-sonnet-4.6',
+      max_tokens: 100,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe this' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+          ],
+        },
+      ],
+    });
+
+    expect(r.status).toBe(200);
+    expect(session.capturedPrompt).toContain('describe this');
+    expect(session.capturedAttachments).toEqual([
+      { type: 'blob', data: 'QUJD', mimeType: 'image/png' },
+    ]);
+  });
+
+  it('rejects image media types outside the model vision limits', async () => {
+    const r = await postMessages(serverUrl, {
+      model: 'claude-sonnet-4.6',
+      max_tokens: 100,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/webp', data: 'QUJD' },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(r.status).toBe(400);
+    const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
+    const err = body['error'] as Record<string, unknown>;
+    expect(err['message']).toContain('claude-sonnet-4.6');
+    expect(err['message']).toContain('image/webp');
+    expect(client.lastSession).toBeUndefined();
+  });
+
+  it('rejects images over the model size limit', async () => {
+    const r = await postMessages(serverUrl, {
+      model: 'claude-sonnet-4.6',
+      max_tokens: 100,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/png', data: 'Q'.repeat(200) },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(r.status).toBe(400);
+    const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
+    const err = body['error'] as Record<string, unknown>;
+    expect(err['message']).toContain('claude-sonnet-4.6');
+    expect(err['message']).toMatch(/size|bytes/i);
     expect(client.lastSession).toBeUndefined();
   });
 
@@ -1008,7 +1102,107 @@ describe('startEmbeddedServer', () => {
     }
   });
 
-  it('rejects image tool_result continuation with 400', async () => {
+  it('forwards tool_result images as binaryResultsForLlm on continuation', async () => {
+    let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
+    let toolOutcome: Record<string, unknown> | undefined;
+    const toolSession = new MockCopilotSession();
+    const toolClient = makeMockClient(() => toolSession);
+
+    spyOn(toolClient, 'createSession').mockImplementation(async (cfg: unknown) => {
+      toolSession.capturedConfig = cfg;
+      const tools = (cfg as Record<string, unknown>)?.['tools'] as
+        | Array<{ name: string; handler: (args: unknown, inv: unknown) => Promise<unknown> }>
+        | undefined;
+      if (tools?.[0]) toolHandler = tools[0].handler;
+      return toolSession as unknown as CopilotSession;
+    });
+
+    toolSession.send = async function (opts) {
+      this.capturedPrompt = opts.prompt;
+      Promise.resolve().then(() => {
+        if (toolHandler) {
+          toolHandler(
+            { command: 'screenshot' },
+            {
+              sessionId: 's1',
+              toolCallId: 'tc_image',
+              toolName: 'screenshot',
+              arguments: { command: 'screenshot' },
+            }
+          )
+            .then((result) => {
+              toolOutcome = result as Record<string, unknown>;
+              toolSession.emit('assistant.message', {
+                content: 'It says HELLO-VISION',
+                phase: 'final_answer',
+              });
+              toolSession.emit('session.idle', {});
+            })
+            .catch(() => {});
+        }
+      });
+      return 'send-result';
+    };
+
+    const ts = await startEmbeddedServer(toolClient, '/tmp');
+    try {
+      const r1 = await postMessages(ts.url, {
+        model: 'claude-sonnet-4.6',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'take screenshot' }],
+        tools: [
+          { name: 'screenshot', description: 'Take screenshot', input_schema: { type: 'object' } },
+        ],
+      });
+      expect(r1.status).toBe(200);
+
+      const r2 = await postMessages(ts.url, {
+        model: 'claude-sonnet-4.6',
+        max_tokens: 100,
+        messages: [
+          { role: 'user', content: 'take screenshot' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tc_image',
+                name: 'screenshot',
+                input: { command: 'screenshot' },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tc_image',
+                content: [
+                  { type: 'text', text: 'screenshot captured' },
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(r2.status).toBe(200);
+      expect(toolOutcome).toEqual({
+        textResultForLlm: 'screenshot captured',
+        binaryResultsForLlm: [{ type: 'image', data: 'QUJD', mimeType: 'image/png' }],
+        resultType: 'success',
+      });
+    } finally {
+      await ts.stop();
+    }
+  });
+
+  it('rejects top-level user images on tool_result continuations', async () => {
     let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
     const toolSession = new MockCopilotSession();
     const toolClient = makeMockClient(() => toolSession);
@@ -1043,7 +1237,7 @@ describe('startEmbeddedServer', () => {
     const ts = await startEmbeddedServer(toolClient, '/tmp');
     try {
       const r1 = await postMessages(ts.url, {
-        model: 'x',
+        model: 'claude-sonnet-4.6',
         max_tokens: 100,
         messages: [{ role: 'user', content: 'take screenshot' }],
         tools: [
@@ -1053,7 +1247,7 @@ describe('startEmbeddedServer', () => {
       expect(r1.status).toBe(200);
 
       const r2 = await postMessages(ts.url, {
-        model: 'x',
+        model: 'claude-sonnet-4.6',
         max_tokens: 100,
         messages: [
           { role: 'user', content: 'take screenshot' },
@@ -1078,7 +1272,7 @@ describe('startEmbeddedServer', () => {
               },
               {
                 type: 'image',
-                source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+                source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
               },
             ],
           },
@@ -1089,7 +1283,7 @@ describe('startEmbeddedServer', () => {
       const body = JSON.parse(r2.rawBody ?? '{}') as Record<string, unknown>;
       const err = body['error'] as Record<string, unknown>;
       expect(err['type']).toBe('invalid_request_error');
-      expect(err['message']).toContain('image content blocks');
+      expect(err['message']).toMatch(/image/i);
     } finally {
       await ts.stop();
     }

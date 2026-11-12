@@ -255,4 +255,30 @@ describe('mapAnthropicToolsToSdkTools', () => {
     expect((result as Record<string, unknown>)['textResultForLlm']).toBe('permission denied');
     expect((result as Record<string, unknown>)['resultType']).toBe('failure');
   });
+
+  it('tool handler forwards images as binaryResultsForLlm', async () => {
+    const tools: AnthropicTool[] = [{ name: 'screenshot', input_schema: {} }];
+    const reg = new ToolBridgeRegistry();
+    const sdkTools = mapAnthropicToolsToSdkTools(tools, reg);
+
+    const writer = new AnthropicStreamWriter();
+    const { res } = makeRes();
+    writer.start(res, 'model');
+    reg.setActiveResponse(writer, res);
+
+    const handlerResult = sdkTools[0].handler(
+      {},
+      { sessionId: 's1', toolCallId: 'tc_img', toolName: 'screenshot', arguments: {} }
+    ) as Promise<unknown>;
+
+    reg.resolveToolResult('tc_img', 'captured', false, [
+      { data: 'QUJD', mediaType: 'image/png', bytes: 3 },
+    ]);
+
+    const result = await handlerResult;
+    expect((result as Record<string, unknown>)['binaryResultsForLlm']).toEqual([
+      { type: 'image', data: 'QUJD', mimeType: 'image/png' },
+    ]);
+    expect((result as Record<string, unknown>)['textResultForLlm']).toBe('captured');
+  });
 });
