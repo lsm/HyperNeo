@@ -71,15 +71,11 @@ export class NeoFrontInputRepository {
       messageIds: string | null;
     } | null;
     if (!row || (!row.body && row.sendStatus !== 'failed')) return null;
-    const result = row.body
-      ? (JSON.parse(row.body) as { subtype?: string; num_turns?: number; is_error?: boolean })
-      : null;
     const ids = JSON.parse(row.messageIds ?? '[]') as string[];
     return {
       messageIds: (ids.length ? ids : [messageId]).filter(
         (id) => !this.get(conversationId, id)?.owner
       ),
-      toolUsed: result?.subtype === 'success' && !result.is_error && (result.num_turns ?? 0) > 1,
     };
   }
 
