@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { GitHubEventExtensionRepository } from '../../../../src/lib/external-events/github/github-repository';
+import { createSpaceGitHubTables } from '../../../../src/storage/schema/space-github';
 
 type Persist = (db: Database, spaceId: string, enabled: boolean, now: number) => void;
 async function persistence(): Promise<Persist> {
@@ -20,6 +21,7 @@ describe('GitHub filter SQL extraction', () => {
     db.exec(
       'CREATE TABLE spaces(id TEXT PRIMARY KEY);CREATE TABLE space_github_watched_repos(space_id TEXT,polling_enabled INTEGER)'
     );
+    createSpaceGitHubTables(db);
     repo = new GitHubEventExtensionRepository(db);
   });
   afterEach(() => {

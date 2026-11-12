@@ -8,6 +8,7 @@ import {
 } from '../../../../../src/storage/schema/index.ts';
 import { runMigration472 } from '../../../../../src/storage/schema/m472-drop-room-era-tables.ts';
 import { runMigration473 } from '../../../../../src/storage/schema/m473-drop-inbox-items.ts';
+import { createSpaceGitHubTables } from '../../../../../src/storage/schema/space-github.ts';
 import { humanSessionColumnsPredicate } from '../../../../../src/storage/schema/session-counters.ts';
 import spaceBaselineSchema from '../../../../../src/storage/schema/baseline-space-v041.json' with {
   type: 'json',
@@ -15,6 +16,54 @@ import spaceBaselineSchema from '../../../../../src/storage/schema/baseline-spac
 import baselineSchema from '../../../../../src/storage/schema/baseline-v041.json' with {
   type: 'json',
 };
+
+const BASE_V041_GITHUB_FRESH_DDL = [
+  `CREATE TABLE space_github_watched_repos (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			owner TEXT NOT NULL,
+			repo TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			webhook_enabled INTEGER NOT NULL DEFAULT 1,
+			polling_enabled INTEGER NOT NULL DEFAULT 0,
+			webhook_secret TEXT,
+			last_webhook_at INTEGER,
+			last_poll_at INTEGER,
+			poll_cursor TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL, webhook_remote_id INTEGER, webhook_url TEXT, webhook_auto_registered INTEGER NOT NULL DEFAULT 0, webhook_active INTEGER, webhook_last_checked_at INTEGER, webhook_last_error TEXT, webhook_configured_at INTEGER,
+			UNIQUE(space_id, owner, repo)
+		)`,
+  `CREATE TABLE space_github_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_id TEXT,
+			source TEXT NOT NULL CHECK(source IN ('webhook', 'polling')),
+			delivery_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			action TEXT NOT NULL,
+			repo_owner TEXT NOT NULL,
+			repo_name TEXT NOT NULL,
+			pr_number INTEGER NOT NULL,
+			pr_url TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			actor_type TEXT NOT NULL,
+			body TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			external_url TEXT NOT NULL DEFAULT '',
+			external_id TEXT NOT NULL DEFAULT '',
+			occurred_at INTEGER NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			raw_payload TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'received' CHECK(state IN ('received', 'processed', 'ignored', 'ambiguous', 'routed', 'delivered', 'failed')),
+			matched_by TEXT,
+			confidence TEXT,
+			route_note TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, dedupe_key)
+		)`,
+];
 
 interface SchemaObject {
   type: string;
@@ -105,6 +154,7 @@ describe('database schema equivalence', () => {
           .all() as { tbl_name: string; sql: string }[]
       )
         .filter(({ tbl_name }) => !shadows.has(tbl_name))
+        .filter(({ tbl_name }) => !tbl_name.startsWith('space_github'))
         .map(({ sql }) => sql);
       expect([...baselineSchema, ...spaceBaselineSchema].sort()).toEqual([...statements].sort());
       fresh.exec('PRAGMA foreign_keys = ON');
@@ -200,6 +250,68 @@ describe('database schema equivalence', () => {
         "DROP TRIGGER parity_probe_trigger; CREATE TRIGGER parity_probe_trigger AFTER INSERT ON parity_probe BEGIN UPDATE parity_probe SET value = 'different' WHERE id = new.id; END"
       );
       expect(fullSchema(db)).not.toEqual(before);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('fresh space github creation keeps the base branch fresh column order', () => {
+    const fresh = new Database(':memory:');
+    const baseFresh = new Database(':memory:');
+    const stored = new Database(':memory:');
+    try {
+      for (const sql of BASE_V041_GITHUB_FRESH_DDL) baseFresh.exec(sql);
+      stored.exec(
+        readFileSync(new URL('./fixtures/schema-baseline/v0.41.0.sql', import.meta.url), 'utf8')
+      );
+      createSpaceGitHubTables(fresh);
+      const columns = (db: Database, table: string) =>
+        (db.prepare('SELECT name FROM pragma_table_info(?)').all(table) as { name: string }[]).map(
+          (row) => row.name
+        );
+      expect(columns(fresh, 'space_github_watched_repos')).toEqual(
+        columns(baseFresh, 'space_github_watched_repos')
+      );
+      expect(columns(fresh, 'space_github_events')).toEqual(
+        columns(baseFresh, 'space_github_events')
+      );
+      expect(columns(baseFresh, 'space_github_watched_repos')).toEqual(
+        columns(stored, 'space_github_watched_repos')
+      );
+      expect(columns(baseFresh, 'space_github_events')).toEqual(
+        columns(stored, 'space_github_events')
+      );
+    } finally {
+      fresh.close();
+      baseFresh.close();
+      stored.close();
+    }
+  });
+
+  test('schema init promotes a stored zero polling intent for spaces with polling watches', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(`CREATE TABLE spaces (id TEXT PRIMARY KEY)`);
+      db.exec(`INSERT INTO spaces (id) VALUES ('space-a')`);
+      createSpaceGitHubTables(db);
+      db.prepare(
+        `INSERT INTO space_github_watched_repos
+           (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, created_at, updated_at)
+         VALUES ('w1', 'space-a', 'O', 'R', 1, 0, 1, 1, 1)`
+      ).run();
+      db.prepare(
+        `INSERT INTO space_github_source_settings
+           (space_id, enabled, polling_intent, created_at, updated_at)
+         VALUES ('space-a', 1, 0, 5, 5)`
+      ).run();
+      createSpaceGitHubTables(db);
+      expect(
+        db
+          .prepare(
+            `SELECT polling_intent FROM space_github_source_settings WHERE space_id = 'space-a'`
+          )
+          .get()
+      ).toEqual({ polling_intent: 1 });
     } finally {
       db.close();
     }

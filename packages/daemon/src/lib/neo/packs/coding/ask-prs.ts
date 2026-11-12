@@ -87,6 +87,16 @@ function neoRefFromUrl(url: string): NeoRef | null {
   return parseGitHubRefUrl(url);
 }
 
+export function codingAskMatter(ask: { title: string; request: string }): string | null {
+  const text = `${ask.title}\n${ask.request}`;
+  const named = new Set(
+    [...text.matchAll(REF_URL), ...text.matchAll(REF_NAME)].map(([, owner, repo, number]) =>
+      refKey({ owner, repo, number: Number(number) })
+    )
+  );
+  return named.size === 1 ? [...named][0] : null;
+}
+
 export function extractNeoAskRefs(
   ask: Pick<NeoAsk, 'ask' | 'doneWhen' | 'outcome' | 'evidence' | 'doneItems'>,
   tracked: readonly string[]

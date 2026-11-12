@@ -3,6 +3,7 @@ import type {
   GitHubEventExtensionRepository,
   GitHubWatchedRepo,
 } from '../../lib/external-events/github/github-repository.ts';
+import { gitHubWatchedTableForId } from './github-scope.ts';
 type Params = Parameters<GitHubEventExtensionRepository['upsertWatchedRepo']>[0];
 
 export function persistGitHubWatchedRepoUpdate(
@@ -11,8 +12,10 @@ export function persistGitHubWatchedRepoUpdate(
   existing: GitHubWatchedRepo,
   now: number
 ): void {
+  const table = gitHubWatchedTableForId(db, existing.id);
+  if (!table) return;
   db.prepare(
-    `UPDATE space_github_watched_repos
+    `UPDATE ${table}
 						 SET enabled = ?, webhook_enabled = ?, polling_enabled = ?, webhook_secret = COALESCE(?, webhook_secret),
 						     webhook_remote_id = COALESCE(?, webhook_remote_id), webhook_url = COALESCE(?, webhook_url),
 						     webhook_auto_registered = ?, webhook_active = ?, webhook_last_checked_at = COALESCE(?, webhook_last_checked_at),

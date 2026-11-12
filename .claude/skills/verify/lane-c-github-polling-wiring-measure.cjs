@@ -17,11 +17,11 @@ function named(sf, name) {
   return found;
 }
 const dataSpecs = [
-  ['github-watched-repo-lookups.ts', 24, 'efd6b45d927224ce17fb9d819a4c8d325dcde4cacf1e7c7e75ca7238b18d46c4', 'Key/id SELECT, lower owner/repo and exact Space/id; existing mapper/null/errors'],
-  ['github-watched-repos-read.ts', 44, '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95', 'Ordered complete SELECT and flags/null/default/cursor mapper, no initialization'],
-  ['github-space-settings-read.ts', 26, '821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681', 'Enabled/intent/filter defaults, no initialization'],
-  ['github-cursor-persist.ts', 8, '8ec4673c7f96429b885da9367af90c023bf161668f49607c799ea845658d3bae', 'Existing cursor JSON/time/ID bind order and caller rollback'],
-  ['github-watched-update-persist.ts', 64, 'c4a07d91b0c58eb2983c0c367c4e31b8943a8569ba48f6c2a9ccace218215e54', 'Exact UPDATE flags/null/COALESCE/binds, supplied time, caller transaction'],
+  ['github-watched-repo-lookups.ts', 28, 'ed10d2284643624e608b22eff1c17f50c0848c567681b41d11ff7f0345c438df', 'Key/id SELECT, lower owner/repo and exact Space/id; existing mapper/null/errors'],
+  ['github-watched-repos-read.ts', 38, 'f41326de1acc9416d313230f3144405d21638e8c6d846149431558a26f883165', 'Ordered complete SELECT and flags/null/default/cursor mapper, no initialization'],
+  ['github-space-settings-read.ts', 30, 'b81f7c1ec84794b804f5308cc3a0c90306e3c60405fdddfd0dde70111a751752', 'Enabled/intent/filter defaults, no initialization'],
+  ['github-cursor-persist.ts', 13, 'fcef214c6ba43ee94d34e8ed44fcaa913ab0bf9761fd61404b4328eab70744f4', 'Existing cursor JSON/time/ID bind order and caller rollback'],
+  ['github-watched-update-persist.ts', 67, '193d6426e2c4bc6e70449a6ca53f75b2a18375a1f07d12215816617978f4b5c4', 'Exact UPDATE flags/null/COALESCE/binds, supplied time, caller transaction'],
   ['github-watched-upsert-persist.ts', 40, 'c108d5f4cff7893041110ad4c28154c7922b8a6204388a68ab7ab9a0cf5addd9', 'Constructor-free UPSERT/UUID/clock/Space fallback and cursor policy'],
   ['github-polling-enabled-write.ts', 66, '35ea83f321ef4b0d1dc211a079fd10422dc6407b557e8f40f369b600cb99a75a', 'Serializable Space/enabled input; one existing gateway transaction; exact committed config receipt; no replay'],
 ];
@@ -32,7 +32,7 @@ const data = dataSpecs.map(([name, expectedLines, expectedHash, contract]) => {
   return { file, lines: actualLines, sha256: expectedHash, contract, auditedStable: true };
 });
 const freshFiles = [
-  ['storage/repositories/github-watched-insert-persist.ts', 'Exact INSERT and supplied UUID/Space/time/defaults/caller transaction'],
+  ['storage/repositories/github-watched-insert-persist.ts', 'Exact INSERT and supplied UUID/Space/time/defaults'],
   ['storage/repositories/github-polling-intent-persist.ts', 'Exact intent UPSERT, enabled preservation and supplied time'],
   ['storage/repositories/space-extension-config-persist.ts', 'Exact saved config JSON/key/creation time and caller transaction'],
   ['lib/external-events/github/github-watched-projection.ts', 'Sanitized saved projection, configured-secret marker, no secret/cursor leak'],

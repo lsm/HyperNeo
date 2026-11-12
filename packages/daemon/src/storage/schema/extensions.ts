@@ -6,6 +6,7 @@ export interface SchemaExtension {
   tables(db: BunDatabase): void;
   indexes?(db: BunDatabase): void;
   baseline?: { statements: readonly string[]; presentWhenTable: string };
+  baselineEffect?(db: BunDatabase): void;
   migrations?: Readonly<Record<string, (db: BunDatabase) => void>>;
   sessionSkillVetoes?(db: BunDatabase, provenance: PromptProvenanceInit): string[];
   workspaceSources?(db: BunDatabase): { path: string; label: string }[];
@@ -61,12 +62,16 @@ export function applyExtensionBaselines(
   markers: { baselineDone: boolean; applied(key: string): boolean; mark(key: string): void }
 ): void {
   if (!markers.baselineDone) return;
-  for (const { id, baseline } of schemaExtensions.values()) {
+  for (const extension of schemaExtensions.values()) {
+    const { id, baseline } = extension;
     const key = `schema_baseline_${id}`;
-    if (!baseline || markers.applied(key)) continue;
-    const present = schemaTableExists(db, baseline.presentWhenTable);
+    if ((!baseline && !extension.baselineEffect) || markers.applied(key)) continue;
+    const present = baseline ? schemaTableExists(db, baseline.presentWhenTable) : false;
     db.transaction(() => {
-      if (!present) for (const sql of baseline.statements) db.exec(sql);
+      if (!present) {
+        for (const sql of baseline?.statements ?? []) db.exec(sql);
+        extension.baselineEffect?.(db);
+      }
       markers.mark(key);
     })();
   }

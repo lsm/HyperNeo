@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createSpaceGitHubTables } from '../../../../src/storage/schema/space-github';
 import {
   GitHubEventExtensionRepository,
   type GitHubWatchedRepo,
@@ -32,6 +33,7 @@ describe('GitHub watched repository read extraction', () => {
     db = new Database(':memory:');
     db.exec('CREATE TABLE spaces(id TEXT PRIMARY KEY)');
     createWatchedTable(db);
+    createSpaceGitHubTables(db);
     repo = new GitHubEventExtensionRepository(db);
     insertWatchedRow(db);
     insertWatchedRow(db, { id: 'synthetic-two', owner: 'OwnerA', repo: 'repo-b' });

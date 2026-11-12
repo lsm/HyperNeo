@@ -91,7 +91,7 @@ try {
   for (const repo of repos) {
     const row = github.repo.upsertWatchedRepo({ spaceId: 'sessions', owner: 'synthetic', repo, pollingEnabled: true });
     subscriptions.upsert({ sessionId, topic: `github/synthetic/${repo}/pull_request/162.*` });
-    if (repos.indexOf(repo) < 3) db.prepare('UPDATE space_github_watched_repos SET last_poll_at = ? WHERE id = ?').run(Date.now() - 3600_000, row.id);
+    if (repos.indexOf(repo) < 3) db.prepare('UPDATE github_session_watched_repos SET last_poll_at = ? WHERE id = ?').run(Date.now() - 3600_000, row.id);
   }
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });

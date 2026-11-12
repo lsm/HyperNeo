@@ -1,16 +1,13 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
-  dual_model_front_required:
-    'In dual-model mode only the front session publishes to the human. Send your result and original human IDs to the front session using message.send.',
   front_ack_required:
-    'First use reply_short with progress:true to publish a brief acknowledgment for each original human replyTo ID, then call run_in_background.',
+    'First use reply_short with progress:true to publish a brief acknowledgment for each original human replyTo ID, then call work_on.',
 
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
   input_handed_off:
     'You are already working on this message; its answer reaches the human by itself.',
-  front_not_speaking:
-    'Background work is available only while dual-model mode is on for this conversation.',
-  front_model_required: 'Choose a front model before enabling dual-model mode.',
+  front_not_speaking: 'work_on is available only while fast replies are on for this conversation.',
+  front_model_required: 'Choose a fast reply model before turning on fast replies.',
 
   updating:
     'A daemon restart is reserved. Retry speech after the brief update finishes; keep the reply on screen meanwhile.',
@@ -163,7 +160,7 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   proposal_is_immutable:
     'This requestId already binds a different proposal. Keep its stored values, or ask a new question with a new requestId.',
   publication_superseded:
-    'This input already has an answer, or its session or conversation changed. Edit the existing answer or publish from the current live turn.',
+    "This input's session or conversation changed. Publish from the current live turn.",
   question_closed:
     'This question is already answered or retired. Read it with neo.question.get; use a new requestId if the human needs a new question.',
   recipient_is_coordinator:

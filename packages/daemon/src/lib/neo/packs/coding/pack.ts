@@ -13,7 +13,7 @@ import { createCodingPrFileOperation } from './pr-file-operation.ts';
 import { runCodingReview } from './review.ts';
 import { withCodingWorkGoal } from './work-goal.ts';
 import { withCodingWorkerProvenance } from './worker-provenance.ts';
-import type { NeoRefStateReader } from './ask-prs.ts';
+import { codingAskMatter, type NeoRefStateReader } from './ask-prs.ts';
 import { createCodingRefReader } from './ref-reader.ts';
 import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
@@ -212,6 +212,7 @@ export function createCodingPack(deps: {
       },
     },
     prepareExecution: prepareCodingExecution,
+    matter: codingAskMatter,
     review: runCodingReview,
     todos: {
       ...todos,

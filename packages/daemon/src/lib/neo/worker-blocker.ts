@@ -163,7 +163,7 @@ export function workerBlockerReminderDue(
     sessions.readRef(todoId) &&
     sessions.inputs.list(todoId).at(-1)?.id === prior.dispatchId &&
     !store.questionAnswers.pending().some((route) => route.todoId === todoId) &&
-    !store.listQuestions(todo.askId).some((q) => neoQuestionCoversTodo(q, { id: todoId }))
+    !store.todoCards(todo).some((q) => neoQuestionCoversTodo(q, { id: todoId }))
     ? todo
     : null;
 }

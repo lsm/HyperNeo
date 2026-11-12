@@ -192,8 +192,8 @@ describe('watchRepo validation reader', () => {
       });
       const report = JSON.parse(readFileSync(output, 'utf8'));
       expect(report.excludedLines).toBe(0);
-      expect(report.productionGraphLines).toBe(175);
-      expect(report.caller.lines).toBe(85);
+      expect(report.productionGraphLines).toBe(174);
+      expect(report.caller.lines).toBe(86);
       expect(report.modules).toHaveLength(3);
       for (const module of report.modules) {
         expect(module.counted).toBe(true);
@@ -203,7 +203,7 @@ describe('watchRepo validation reader', () => {
         cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)),
         env: { ...process.env, PATH: dir },
       });
-      expect(JSON.parse(readFileSync(output, 'utf8')).ownedRootLines).toBe(140);
+      expect(JSON.parse(readFileSync(output, 'utf8')).ownedRootLines).toBe(141);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

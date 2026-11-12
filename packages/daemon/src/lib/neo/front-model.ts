@@ -7,13 +7,6 @@ import { frontProgressId, frontSessionId } from './front-mode.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
-import {
-  createHandoffOperations,
-  HandoffReadInput,
-  HandoffReadResult,
-} from '../handoffs/operations.ts';
-import { createOperationRegistry } from '../operations/registry.ts';
-import { invokeOperation } from '../operations/invoke.ts';
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -25,9 +18,6 @@ const result = (value: unknown) => ({
 
 export function createFrontTools(service: NeoService, conversationId: string) {
   const sessionId = frontSessionId(conversationId);
-  const handoffs = createOperationRegistry(
-    createHandoffOperations((id) => service.db.getSession(id)?.status ?? null)
-  );
   const lookups = (['projects', 'asks', 'cards', 'todos'] as const).map((kind) =>
     tool(`${kind}_read`, `Read current ${kind} for this conversation.`, Read, async (input) =>
       result(
@@ -46,7 +36,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       .max(100)
       .optional()
       .describe(
-        'The human message IDs this answers. Omit only for a background result that answers no human message.'
+        'The human message IDs this answers. Omit only for a message that answers no human message.'
       ),
     artifacts: NeoPublicationDraft.shape.artifacts,
     session: NeoPublicationDraft.shape.session,
@@ -95,7 +85,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply_detailed',
-        'Use for more than five sentences or any structured report, multi-topic update, list, table or long background result. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the human replyTo IDs it answers. Start the conversation with reply_short, then use this for the full result. While [listening: yes], include spoken.',
+        'Use for more than five sentences or any structured report, multi-topic update, list, table or long report. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the human replyTo IDs it answers. Start the conversation with reply_short, then use this for the full answer. While [listening: yes], include spoken.',
         {
           ...replyFields,
           summary: z.string().trim().min(1).max(2000),
@@ -105,51 +95,28 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           publish({ ...input, shortText: summary, fullText: details })
       ),
       tool(
-        'handoff_read',
-        'Read a complete report reference produced by your background work. The daemon verifies its SHA-256 and returns text. Continue at nextOffset until complete before summarizing.',
-        HandoffReadInput.shape,
-        async (input) => {
-          if (
-            service.repo.readConversationId() !== conversationId ||
-            service.db.getGlobalSettings().neo?.front?.enabled !== true
-          )
-            return result({ kind: 'rejected', reason: 'front_not_speaking' });
-          const outcome = await invokeOperation(handoffs, 'handoff.read', input, {
-            source: 'mcp',
-            role: 'neo',
-            sessionId,
-          });
-          if (outcome.kind !== 'completed') return result(outcome);
-          const read = HandoffReadResult.parse(outcome.value);
-          if (read.kind !== 'read') return result(read);
-          const { data, ...metadata } = read;
-          return result({ ...metadata, text: Buffer.from(data, 'base64').toString('utf8') });
-        }
-      ),
-      tool(
-        'run_in_background',
-        'Run work for a human request in the background: actions, searches, screenshots, checks and anything your other tools cannot do. Pass messageIds so it receives the complete recorded human inputs, including references and attachments. When it is done, the answer goes to the human by itself. This is your own work: tell the human what you are doing, never who does it.',
+        'work_on',
+        'For anything you cannot answer from your reads (check, search, change or run), call this with the human message IDs. It takes a while. When it is done, the answer goes to the human by itself, and you will see it in <already-said> on your next turn.',
         {
           requestId: z.string().min(1).max(160),
           messageIds: z.array(z.uuid()).min(1).max(100),
-          text: z.string().trim().min(1).max(16000),
         },
         async ({ messageIds }) => {
           const asks = messageIds.map((id) => service.asks.find(conversationId, id));
           if (asks.some((ask) => !ask))
-            return result({ delivered: false, reason: 'unknown_reply_target' });
+            return result({ started: false, reason: 'unknown_reply_target' });
           if (
             service.repo.readConversationId() !== conversationId ||
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
-            return result({ delivered: false, reason: 'front_not_speaking' });
+            return result({ started: false, reason: 'front_not_speaking' });
           if (
             messageIds.some(
               (id) =>
                 !service.publications.get(conversationId, frontProgressId(conversationId, [id]))
             )
           )
-            return result({ delivered: false, reason: 'front_ack_required' });
+            return result({ started: false, reason: 'front_ack_required' });
           const prompts = asks.flatMap((ask) =>
             ask
               ? [
@@ -176,9 +143,9 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           );
           return result(
             reserved === 'reserved'
-              ? { delivered: true }
+              ? { started: true }
               : {
-                  delivered: false,
+                  started: false,
                   reason: reserved === 'handed_off' ? 'input_handed_off' : 'delivery_failed',
                 }
           );

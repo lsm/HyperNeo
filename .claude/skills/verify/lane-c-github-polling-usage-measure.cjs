@@ -5,8 +5,8 @@ const hash = text => createHash('sha256').update(text).digest('hex');
 const root = 'packages/daemon/src/storage/repositories/';
 const specs = [
   ['github-polling-usage-read.ts', 47, null],
-  ['github-polling-repos-read.ts', 56, '39618e09a7cd70b7325cf31b205eb221f338ebe58ff6ea50bebef49a22b28d06'],
-  ['github-watched-repos-read.ts', 44, '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95'],
+  ['github-polling-repos-read.ts', 25, '220a093bb172a2d4c160242c862a1fa310384dffbc422180a8055fed56f2d8e9'],
+  ['github-watched-repos-read.ts', 38, 'f41326de1acc9416d313230f3144405d21638e8c6d846149431558a26f883165'],
 ];
 const modules = specs.map(([name, expectedLines, expectedHash]) => {
   const file = root + name, text = fs.readFileSync(file, 'utf8');

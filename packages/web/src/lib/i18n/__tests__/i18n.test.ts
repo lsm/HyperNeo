@@ -8,10 +8,10 @@ afterEach(() => {
 });
 
 describe('i18n', () => {
-  it('uses the Front name in both dual-mode descriptions', () => {
+  it('describes fast replies without the old session names', () => {
     for (const language of [en, zhHans]) {
-      expect(language['dual.description']).toContain('Front');
-      expect(language['dual.description']).not.toContain('Convo');
+      expect(language['dual.description']).toContain('Neo');
+      expect(language['dual.description']).not.toMatch(/Convo|Front|双模型/);
     }
   });
   it('has a non-empty Simplified Chinese value for every English key', () => {

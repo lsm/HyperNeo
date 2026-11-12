@@ -1,4 +1,3 @@
-import { schemaTableExists } from '../../../storage/schema/extensions.ts';
 import {
   countGitHubSpacesWithPollingIntent,
   listGitHubPollingRepos,
@@ -22,6 +21,15 @@ import {
   readGitHubFilterCurrentUser,
 } from '../../../storage/repositories/github-space-settings-read.ts';
 import { persistGitHubSpaceEnabled } from '../../../storage/repositories/github-space-enabled-persist.ts';
+import {
+  GITHUB_SESSION_SCOPE,
+  GITHUB_SESSION_WATCHED_TABLE,
+  GITHUB_SPACE_WATCHED_TABLE,
+  gitHubWatchedSource,
+  gitHubWatchedTableForId,
+  gitHubWatchedTableForScope,
+} from '../../../storage/repositories/github-scope.ts';
+import { schemaTableExists } from '../../../storage/schema/extensions.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { GitHubPollResume } from './github-poll-slice.ts';
 
@@ -82,44 +90,7 @@ export interface GitHubWatchedRepo {
 }
 
 export class GitHubEventExtensionRepository {
-  constructor(private readonly db: BunDatabase) {
-    this.db.exec(`
-			CREATE TABLE IF NOT EXISTS space_github_source_settings (
-				space_id TEXT PRIMARY KEY,
-				enabled INTEGER NOT NULL DEFAULT 1,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL
-			)
-		`);
-    const columns = this.db
-      .prepare('PRAGMA table_info(space_github_source_settings)')
-      .all() as Array<{ name: string }>;
-    if (!columns.some((column) => column.name === 'polling_intent')) {
-      this.db.exec(
-        'ALTER TABLE space_github_source_settings ADD COLUMN polling_intent INTEGER NOT NULL DEFAULT 0'
-      );
-    }
-    if (!columns.some((column) => column.name === 'filter_current_user')) {
-      this.db.exec(
-        'ALTER TABLE space_github_source_settings ADD COLUMN filter_current_user INTEGER NOT NULL DEFAULT 1'
-      );
-    }
-    if (!schemaTableExists(this.db, 'spaces')) return;
-    const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO space_github_source_settings (space_id, enabled, polling_intent, created_at, updated_at)
-         SELECT DISTINCT s.space_id, 1, 1, ?, ?
-         FROM space_github_watched_repos s
-         JOIN spaces sp ON sp.id = s.space_id
-         WHERE s.polling_enabled = 1
-         ON CONFLICT(space_id) DO UPDATE SET
-           polling_intent = excluded.polling_intent,
-           updated_at = excluded.updated_at
-         WHERE polling_intent = 0`
-      )
-      .run(now, now);
-  }
+  constructor(private readonly db: BunDatabase) {}
 
   upsertWatchedRepo(params: {
     spaceId: string;
@@ -170,17 +141,19 @@ export class GitHubEventExtensionRepository {
   countAllAutoRegisteredHookRefs(): number {
     const row = this.db
       .prepare(
-        'SELECT COUNT(*) AS count FROM space_github_watched_repos WHERE webhook_auto_registered = 1 AND webhook_remote_id IS NOT NULL'
+        `SELECT COUNT(*) AS count FROM ${gitHubWatchedSource(this.db)} WHERE webhook_auto_registered = 1 AND webhook_remote_id IS NOT NULL`
       )
       .get() as { count: number } | undefined;
     return row?.count ?? 0;
   }
 
   removeWatchedRepo(spaceId: string, owner: string, repo: string): boolean {
+    const table = gitHubWatchedTableForScope(spaceId);
+    if (!schemaTableExists(this.db, table)) return false;
     return (
       this.db
         .prepare(
-          `DELETE FROM space_github_watched_repos WHERE space_id = ? AND lower(owner)=lower(?) AND lower(repo)=lower(?)`
+          `DELETE FROM ${table} WHERE space_id = ? AND lower(owner)=lower(?) AND lower(repo)=lower(?)`
         )
         .run(spaceId, owner, repo).changes > 0
     );
@@ -198,7 +171,7 @@ export class GitHubEventExtensionRepository {
     return (
       this.db
         .prepare(
-          `SELECT * FROM space_github_watched_repos WHERE webhook_enabled = 1 AND webhook_secret IS NOT NULL`
+          `SELECT * FROM ${gitHubWatchedSource(this.db)} WHERE webhook_enabled = 1 AND webhook_secret IS NOT NULL`
         )
         .all() as Record<string, unknown>[]
     ).map((r) => this.rowToRepo(r));
@@ -219,7 +192,7 @@ export class GitHubEventExtensionRepository {
   getAutoRegisteredRepo(owner: string, repo: string, webhookUrl: string): GitHubWatchedRepo | null {
     const row = this.db
       .prepare(
-        `SELECT * FROM space_github_watched_repos
+        `SELECT * FROM ${gitHubWatchedSource(this.db)}
          WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
            AND webhook_remote_id IS NOT NULL AND webhook_secret IS NOT NULL AND webhook_url = ?
          ORDER BY updated_at DESC LIMIT 1`
@@ -231,7 +204,7 @@ export class GitHubEventExtensionRepository {
   countAutoRegisteredHookRefs(owner: string, repo: string, webhookRemoteId: number): number {
     const row = this.db
       .prepare(
-        `SELECT COUNT(*) AS count FROM space_github_watched_repos
+        `SELECT COUNT(*) AS count FROM ${gitHubWatchedSource(this.db)}
          WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
            AND webhook_remote_id = ?`
       )
@@ -250,26 +223,37 @@ export class GitHubEventExtensionRepository {
     webhookLastCheckedAt: number;
     webhookConfiguredAt: number;
   }): void {
-    this.db
-      .prepare(
-        `UPDATE space_github_watched_repos
-         SET webhook_remote_id = ?, webhook_secret = ?, webhook_url = ?, webhook_active = ?, webhook_last_checked_at = ?,
-             webhook_last_error = NULL, webhook_configured_at = ?, updated_at = ?
-         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
-           AND webhook_remote_id = ?`
-      )
-      .run(
-        params.webhookRemoteId,
-        params.webhookSecret,
-        params.webhookUrl,
-        params.webhookActive === null ? null : params.webhookActive ? 1 : 0,
-        params.webhookLastCheckedAt,
-        params.webhookConfiguredAt,
-        Date.now(),
-        params.owner,
-        params.repo,
-        params.previousWebhookRemoteId
-      );
+    const tables: string[] = [];
+    if (schemaTableExists(this.db, GITHUB_SESSION_WATCHED_TABLE))
+      tables.push(GITHUB_SESSION_WATCHED_TABLE);
+    if (schemaTableExists(this.db, GITHUB_SPACE_WATCHED_TABLE))
+      tables.push(GITHUB_SPACE_WATCHED_TABLE);
+    this.db.transaction(() => {
+      for (const table of tables) {
+        const excluded =
+          table === GITHUB_SPACE_WATCHED_TABLE ? ` AND space_id != '${GITHUB_SESSION_SCOPE}'` : '';
+        this.db
+          .prepare(
+            `UPDATE ${table}
+	         SET webhook_remote_id = ?, webhook_secret = ?, webhook_url = ?, webhook_active = ?, webhook_last_checked_at = ?,
+	             webhook_last_error = NULL, webhook_configured_at = ?, updated_at = ?
+	         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
+	           AND webhook_remote_id = ?${excluded}`
+          )
+          .run(
+            params.webhookRemoteId,
+            params.webhookSecret,
+            params.webhookUrl,
+            params.webhookActive === null ? null : params.webhookActive ? 1 : 0,
+            params.webhookLastCheckedAt,
+            params.webhookConfiguredAt,
+            Date.now(),
+            params.owner,
+            params.repo,
+            params.previousWebhookRemoteId
+          );
+      }
+    })();
   }
 
   updateSharedWebhookStatus(
@@ -284,7 +268,7 @@ export class GitHubEventExtensionRepository {
   ): void {
     const rows = this.db
       .prepare(
-        `SELECT id FROM space_github_watched_repos
+        `SELECT id FROM ${gitHubWatchedSource(this.db)}
          WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
            AND webhook_remote_id = ?`
       )
@@ -299,9 +283,11 @@ export class GitHubEventExtensionRepository {
   }
 
   markWebhookReceived(id: string): void {
+    const table = gitHubWatchedTableForId(this.db, id);
+    if (!table) return;
     this.db
       .prepare(
-        `UPDATE space_github_watched_repos
+        `UPDATE ${table}
          SET last_webhook_at = ?,
              webhook_last_error = CASE
                WHEN webhook_active = 0 THEN webhook_last_error
@@ -314,10 +300,10 @@ export class GitHubEventExtensionRepository {
   }
 
   updatePollCursor(id: string, cursor: PollCursor): void {
+    const table = gitHubWatchedTableForId(this.db, id);
+    if (!table) return;
     this.db
-      .prepare(
-        `UPDATE space_github_watched_repos SET last_poll_at = ?, poll_cursor = ?, updated_at = ? WHERE id = ?`
-      )
+      .prepare(`UPDATE ${table} SET last_poll_at = ?, poll_cursor = ?, updated_at = ? WHERE id = ?`)
       .run(Date.now(), JSON.stringify(cursor), Date.now(), id);
   }
 
@@ -363,11 +349,13 @@ export class GitHubEventExtensionRepository {
   ): void {
     const existing = this.getWatchedRepoById(id);
     if (!existing) return;
+    const table = gitHubWatchedTableForId(this.db, id);
+    if (!table) return;
     this.db
       .prepare(
-        `UPDATE space_github_watched_repos
-         SET webhook_active = ?, webhook_last_checked_at = ?, webhook_last_error = ?, updated_at = ?
-         WHERE id = ?`
+        `UPDATE ${table}
+	         SET webhook_active = ?, webhook_last_checked_at = ?, webhook_last_error = ?, updated_at = ?
+	         WHERE id = ?`
       )
       .run(
         status.active === undefined

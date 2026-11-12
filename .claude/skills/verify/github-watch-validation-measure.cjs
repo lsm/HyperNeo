@@ -8,7 +8,7 @@ const text = fs.readFileSync(file, 'utf8');
 const added = "import { gitHubWatchedConfigWrite } from '../../../storage/repositories/github-watched-config-write.ts';\n";
 const callback = body => body.slice(body.indexOf("    hub.onRequest('space.github.watchRepo'"), body.indexOf("    hub.onRequest('space.github.autoConfigureWebhook'"));
 const outsideCallback = text.replace(added, '').replace("import { gitHubWatchPollingWrite } from '../../../storage/repositories/github-watch-polling-write.ts';\n", '').replace(callback(text), '');
-if (hash(outsideCallback) !== 'a73a5bf10d1bcffe57f0f4ef65a3420fa29cdb08d50b171a35bcb33cce156c40')
+if (hash(outsideCallback) !== '9440e1da26f9757f0ac0ba03b6b43368dea975865f033a2ebcb1524ccabd9a66')
   throw Error('Extension changed beyond the reviewed watch config callback');
 const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
 const lines = node => source.getLineAndCharacterOfPosition(node.end).line - source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;

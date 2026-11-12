@@ -47,7 +47,7 @@ export async function settleConvoInput(
       messageId
     )) ??
     (failure === 'delivery' || status === 'failed' || Date.now() >= deadline
-      ? { messageIds: [messageId], toolUsed: false }
+      ? { messageIds: [messageId] }
       : null);
   if (!terminal) return pending();
   const deliveries = terminal.messageIds.map((id) => ({
@@ -58,7 +58,6 @@ export async function settleConvoInput(
     return pending();
   const ids = deliveries.filter(({ status }) => status !== 'consumed').map(({ id }) => id);
   if (!ids.length) return { delivered: true, outcome: 'handed_off' };
-  if (terminal.toolUsed) return { delivered: true, outcome: 'answered' };
   const receipt = await service.db.gateway.call(
     neoPublicationWrites,
     'append',

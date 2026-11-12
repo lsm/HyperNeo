@@ -163,7 +163,6 @@ export type SessionReportHandler = (
 
 export type SessionStatusRead = (sessionId: string) => string | null;
 export type SessionTitleRead = (sessionId: string) => string | null | Promise<string | null>;
-export type BackgroundResultRead = (from: string, to: string) => boolean;
 export type SessionSendLimiter = {
   admit(origin: string, to: string, text: string): string | null;
   release(origin: string, to: string, text: string): void;
@@ -373,18 +372,12 @@ export function releaseUnsentSend(
 export async function stampSessionMessage(
   input: SendInput,
   origin: string,
-  sessionTitle: SessionTitleRead,
-  backgroundResult: BackgroundResultRead
+  sessionTitle: SessionTitleRead
 ): Promise<SendInput> {
   const sender = sessionSender(origin);
   if (sender === null) return input;
-  const background = backgroundResult(sender, input.sessionId);
-  const name = background ? null : await sessionTitle(sender);
-  const content = wrapSessionContent(
-    input.message.message.content,
-    { sessionId: sender, name },
-    background
-  );
+  const name = await sessionTitle(sender);
+  const content = wrapSessionContent(input.message.message.content, { sessionId: sender, name });
   return {
     ...input,
     message: {
@@ -527,7 +520,6 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
     'sent',
     'report',
     'inNeoProject',
-    'backgroundResult',
   ])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
   .pipe(selectSendOrigin, ['input', 'caller'], 'origin')
@@ -555,7 +547,7 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
     ['receipt', 'origin', 'retry', 'report', 'sent'],
     'result:receipt'
   )
-  .pipe(stampSessionMessage, ['receipt', 'origin', 'sessionTitle', 'backgroundResult'], 'outgoing')
+  .pipe(stampSessionMessage, ['receipt', 'origin', 'sessionTitle'], 'outgoing')
   .pipe(generateUUID, undefined, 'messageId')
   .pipe(
     persistOperationMessage,
@@ -575,8 +567,7 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   limit: SessionSendLimiter,
   sent: SessionSentObserver,
   report: SessionReportHandler,
-  inNeoProject: (sessionId: string) => boolean,
-  backgroundResult: BackgroundResultRead
+  inNeoProject: (sessionId: string) => boolean
 ) => Promise<SendResult>;
 
 export function createSendMessageOperation(
@@ -588,8 +579,7 @@ export function createSendMessageOperation(
   sent: SessionSentObserver = () => {},
   isNeo: (sessionId: string) => boolean = () => false,
   report: SessionReportHandler = async () => null,
-  inNeoProject: (sessionId: string) => boolean = () => true,
-  backgroundResult: BackgroundResultRead = () => false
+  inNeoProject: (sessionId: string) => boolean = () => true
 ) {
   const ordinaryLimit = createSessionSendLimiter();
   const limit: SessionSendLimiter = {
@@ -625,8 +615,7 @@ export function createSendMessageOperation(
         limit,
         sent,
         report,
-        inNeoProject,
-        backgroundResult
+        inNeoProject
       ),
   });
 }
