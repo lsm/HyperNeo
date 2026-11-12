@@ -5,7 +5,7 @@ import { JobQueueRepository } from './job-queue-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
 import { sdkMailboxFailure } from './sdk-message-transactions.ts';
 import { neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
-import { neoQuestionTodo, neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
+import { neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
   advanceFollowThrough,
@@ -175,7 +175,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     });
     if (todo.blockedBy === 'needs-human')
       for (const card of store.listQuestions(todo.askId))
-        if (card.state === 'open' && neoQuestionTodo(card) === todoId)
+        if (card.state === 'open' && card.todoId === todoId)
           store.retireQuestion(card, 'Neo sent the worker on.', null, now);
     store.updateTodo(todo, { state: 'doing', report: null, evidence: null, finishedAt: null }, now);
   }

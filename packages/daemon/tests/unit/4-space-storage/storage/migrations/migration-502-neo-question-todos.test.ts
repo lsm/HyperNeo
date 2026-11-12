@@ -143,3 +143,32 @@ describe('NeoAskTodoRepository.askQuestion', () => {
     db.close();
   });
 });
+
+describe('NeoAskTodoRepository.retireCheckedQuestion', () => {
+  test('a passing todo check retires the card that targets the todo, not a card that only holds it', () => {
+    const { db, store, ask } = world();
+    ask('ask');
+    const check = { pack: 'core', kind: 'evidence', params: { path: '/synthetic/seen' } };
+    store.addTodo(
+      'only',
+      'ask',
+      { title: 'only', doneWhen: 'Seen', check, instruction: 'Continue', named: null },
+      1
+    );
+    store.askQuestion('targeted', 'ask', { ...draft, todoId: 'only' }, 2);
+    store.askQuestion('whole', 'ask', draft, 3);
+    expect(store.getQuestion('targeted')?.todos).toEqual(['only']);
+    expect(store.getQuestion('whole')?.todos).toEqual(['only']);
+    expect(
+      Object.fromEntries(
+        store.openQuestionChecks().map(({ question, todo }) => [question.id, todo?.id ?? null])
+      )
+    ).toEqual({ targeted: 'only', whole: null });
+    expect(store.retireCheckedQuestion(store.getQuestion('whole')!, check, 'Seen', 4)).toBeNull();
+    expect(
+      store.retireCheckedQuestion(store.getQuestion('targeted')!, check, 'Seen', 4)?.state
+    ).toBe('retired');
+    expect(store.getQuestion('whole')?.state).toBe('open');
+    db.close();
+  });
+});

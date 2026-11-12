@@ -26,9 +26,6 @@ export const neoQuestionCoversTodo = (
   todo: Pick<NeoTodo, 'id'>
 ) => question.state === 'open' && question.todos.includes(todo.id);
 
-export const neoQuestionTodo = (question: Pick<NeoQuestion, 'kind' | 'todos'>) =>
-  question.kind !== 'start' && question.todos.length === 1 ? question.todos[0] : null;
-
 export const neoAskQuestionHolds = (
   todos: readonly Pick<NeoTodo, 'id' | 'state' | 'blockedBy' | 'startedAt'>[]
 ) =>

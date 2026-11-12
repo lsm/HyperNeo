@@ -2,7 +2,7 @@ import { neoToolDescription } from '@hyperneo/prompts';
 import { coreTodoPolicy } from './core-todo-checks.ts';
 import { planNeoTodoDraft, type NeoTodoPolicy } from './todo-operations.ts';
 import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
-import { isNeoTodoStalledCard, neoQuestionTodo } from './todo-state.ts';
+import { isNeoTodoStalledCard } from './todo-state.ts';
 import { openHumanCard, replaceHumanCard, requireHumanCard } from './human-card.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
@@ -186,7 +186,7 @@ export function createNeoWorkerQuestionWriter(
           }
           const open = store
             .listQuestions(todo.askId)
-            .find((q) => neoQuestionTodo(q) === todo.id && q.state === 'open');
+            .find((q) => q.todoId === todo.id && q.state === 'open');
           const daemonCard = !!open && isNeoTodoStalledCard(open.text);
           if (open && daemonCard)
             store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
@@ -882,8 +882,7 @@ export function createNeoQuestionOperations(
     )
     .pipe(
       (question: NeoQuestion): Gate<NeoQuestion> => {
-        const about = neoQuestionTodo(question);
-        const todo = about ? store.getTodo(about) : null;
+        const todo = question.todoId ? store.getTodo(question.todoId) : null;
         return todo?.state === 'blocked' && todo.blockedBy === 'needs-human'
           ? fail(
               'todo_waiting: this card is what its todo waits on. Settle the todo first: neo.todo.remove when it is no longer needed, neo.todo.continue to send its worker on, or neo.question.ask with replaces to ask differently. Finished work needs nothing: its passing check closes both.'

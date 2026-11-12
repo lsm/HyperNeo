@@ -20,7 +20,6 @@ import { neoDerivedId } from '../../lib/neo/derived-id.ts';
 import {
   NEO_TODO_STALLED_CARD_TAIL,
   neoAskQuestionHolds,
-  neoQuestionTodo,
   recomputeTodoState,
   recomputeTodoStateAsync,
   type TodoStateFacts,
@@ -730,10 +729,7 @@ export class NeoAskTodoRepository {
       triagePending:
         triagedAt !== undefined &&
         !this.listQuestions(todo.askId).some(
-          (q) =>
-            neoQuestionTodo(q) === todo.id &&
-            q.state === 'answered' &&
-            (q.answeredAt ?? 0) >= triagedAt
+          (q) => q.todoId === todo.id && q.state === 'answered' && (q.answeredAt ?? 0) >= triagedAt
         ),
       answerPending:
         todo.blockedBy === 'needs-human' &&
@@ -886,10 +882,10 @@ export class NeoAskTodoRepository {
   openQuestionChecks() {
     return this.listQuestionsForAsks(this.listOpenAsks().map((ask) => ask.id))
       .filter((question) => question.state === 'open')
-      .map((question) => {
-        const about = neoQuestionTodo(question);
-        return { question, todo: about ? this.getTodo(about) : null };
-      });
+      .map((question) => ({
+        question,
+        todo: question.todoId ? this.getTodo(question.todoId) : null,
+      }));
   }
 
   retireCheckedQuestion(
@@ -900,12 +896,12 @@ export class NeoAskTodoRepository {
   ): NeoQuestion | null {
     const current = this.getQuestion(question.id);
     const ask = current ? this.getAsk(current.askId) : null;
-    const about = current ? neoQuestionTodo(current) : null;
     if (
       current?.state !== 'open' ||
       ask?.status !== 'open' ||
-      JSON.stringify(current.retireWhen ?? (about ? this.getTodo(about)?.check : null)) !==
-        JSON.stringify(check)
+      JSON.stringify(
+        current.retireWhen ?? (current.todoId ? this.getTodo(current.todoId)?.check : null)
+      ) !== JSON.stringify(check)
     )
       return null;
     const retired = this.retireQuestion(current, evidence, null, now);

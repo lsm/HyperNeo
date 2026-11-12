@@ -4,7 +4,7 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { isNeoTodoStalledCard, neoQuestionCoversTodo, neoQuestionTodo } from './todo-state.ts';
+import { isNeoTodoStalledCard, neoQuestionCoversTodo } from './todo-state.ts';
 
 type Turn = { id: string; at: number; message: string };
 type Blocker = { kind: 'needs-human' | 'environment'; reason: string };
@@ -84,7 +84,7 @@ export const recordWorkerBlocker = (superpipe({})('neo.worker-final-blocker') as
       if (blocker.kind === 'needs-human') {
         for (const question of store.listQuestions(todo.askId))
           if (
-            neoQuestionTodo(question) === todo.id &&
+            question.todoId === todo.id &&
             question.state === 'open' &&
             isNeoTodoStalledCard(question.text)
           )

@@ -60,19 +60,22 @@ describe('planNeoStartRelease', () => {
 
 describe('planNeoQuestionPrune', () => {
   test('retires a question whose todo is finished', () => {
-    const question = card({ kind: 'reply' as NeoQuestion['kind'], todos: ['first'] });
+    const question = card({
+      kind: 'reply' as NeoQuestion['kind'],
+      todoId: 'first',
+      todos: ['first'],
+    });
     expect(planNeoQuestionPrune(question, [step('first', { state: 'done' })])).toEqual({
       value: { retire: 'todo no longer active' },
     });
   });
 
-  test('keeps a card on a parent ask that holds one live step of a child ask', () => {
+  test('leaves a card that only holds one step open, whatever becomes of the step', () => {
     const question = card({ kind: 'reply' as NeoQuestion['kind'], todos: ['first'] });
-    const child = step('first', { askId: 'child' });
-    expect(planNeoQuestionPrune(question, [child])).toEqual({ reason: 'unchanged' });
-    expect(planNeoQuestionPrune(question, [{ ...child, state: 'removed' }])).toEqual({
-      value: { retire: 'todo no longer active' },
-    });
+    for (const change of [{}, { askId: 'child' }, { state: 'done' as const }])
+      expect(planNeoQuestionPrune(question, [step('first', change)])).toEqual({
+        reason: 'unchanged',
+      });
   });
 
   test('retires a card with nothing left and frees its approved steps', () => {

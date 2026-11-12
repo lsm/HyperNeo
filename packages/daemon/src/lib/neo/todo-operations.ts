@@ -38,7 +38,6 @@ import {
   sameNeoTodoCheck,
 } from './todo-completion.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
-import { neoQuestionTodo } from './todo-state.ts';
 import {
   NEO_TODO_NOT_APPROVED,
   neoTodoCancellationPending,
@@ -524,9 +523,7 @@ export function requireNeoTodoCardsAnswered<T extends TodoPlan>(
   const card =
     (['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
       plan.patch.blockedBy === 'check') &&
-    questions.find(
-      (question) => question.state === 'open' && neoQuestionTodo(question) === plan.todo.id
-    );
+    questions.find((question) => question.state === 'open' && question.todoId === plan.todo.id);
   return card
     ? fail(`card_unanswered: card ${card.id} is still waiting for the human.`)
     : { value: plan };

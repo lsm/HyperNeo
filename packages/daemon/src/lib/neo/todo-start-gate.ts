@@ -9,7 +9,6 @@ import {
   neoTodoFinished,
   neoTodoReady,
 } from './todo-dependencies.ts';
-import { neoQuestionTodo } from './todo-state.ts';
 
 export const NEO_TODO_NOT_APPROVED =
   'not_approved: the human has not approved this step; it waits on its Start card.';
@@ -146,11 +145,13 @@ export function planNeoQuestionPrune(
   question: NeoQuestion,
   family: readonly NeoTodo[]
 ): { value: NeoQuestionPrune } | { reason: 'unchanged' } {
-  const about = neoQuestionTodo(question);
   const active = family.some(
-    (todo) => todo.id === about && !['done', 'removed'].includes(todo.state)
+    (todo) =>
+      todo.id === question.todoId &&
+      todo.askId === question.askId &&
+      !['done', 'removed'].includes(todo.state)
   );
-  if (about && !active) return { value: { retire: 'todo no longer active' } };
+  if (question.todoId && !active) return { value: { retire: 'todo no longer active' } };
   if (question.kind !== 'start') return { reason: 'unchanged' };
   const listed = question.todos;
   const kept = listed.filter((id) => {
