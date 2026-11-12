@@ -377,6 +377,12 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      # apple-metal uses macOS 26 Metal APIs, so the Intel runner needs a
+      # macOS 26 SDK instead of its default Xcode 16.
+      - name: Select Xcode 26 on Intel
+        if: matrix.arch == 'darwin-x64'
+        run: echo "DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer" >> "$GITHUB_ENV"
+
       - name: Setup Rust target
         run: rustup target add ${{ matrix.rust-target }}
 
