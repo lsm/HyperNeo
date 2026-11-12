@@ -75,7 +75,7 @@ interface NeoPublicationRuntime {
   currentHumanInputs(sessionId: string): string[];
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
-  publicationSessionId?(): string | undefined;
+  isPublicationSpeaker?(sessionId: string): boolean;
   hasProject(id: string): boolean;
   lookupSession(
     id: string
@@ -109,33 +109,21 @@ export function requirePublicationProducer(
   caller: OperationCaller,
   binding: NeoBinding | null,
   root: NeoBinding | null,
-  speaker = root?.sessionId
+  isSpeaker: (sessionId: string) => boolean = (id) => id === root?.sessionId
 ): { value: Producer } | { reason: Rejection } {
   return caller.source === 'mcp' &&
     binding &&
     binding.sessionId === caller.sessionId &&
     isMainNeoBinding(root) &&
     isMainNeoBinding(binding) &&
-    binding.sessionId === speaker
+    isSpeaker(binding.sessionId)
     ? {
         value: {
           binding,
           root,
         },
       }
-    : {
-        reason: {
-          accepted: false,
-          reason:
-            speaker && speaker !== root?.sessionId
-              ? 'dual_model_front_required'
-              : 'avatar_required',
-          detail:
-            speaker && speaker !== root?.sessionId
-              ? `Dual-model mode: send your result and the original human message IDs to the front session using message.send {to: "${speaker}", text: "...", idempotencyKey: "..."}. The front session publishes to the human.`
-              : undefined,
-        },
-      };
+    : { reason: { accepted: false, reason: 'avatar_required' } };
 }
 
 export function requirePublicationLifetime(
@@ -171,7 +159,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           caller,
           binding,
           root,
-          runtime.publicationSessionId?.() ?? root?.sessionId
+          runtime.isPublicationSpeaker ?? ((id) => id === root?.sessionId)
         ),
       ['caller', 'binding', 'root'],
       'result:publication'

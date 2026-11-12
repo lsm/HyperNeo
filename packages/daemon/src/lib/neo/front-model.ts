@@ -2,12 +2,11 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.ts';
 import { NeoSpeechSay } from './speech.ts';
-import { neoDerivedId } from './derived-id.ts';
 import { NeoPublicationDraft } from './publication-operation.ts';
 import { frontProgressId, frontSessionId } from './front-mode.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
-import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
+import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
 import {
   createHandoffOperations,
   HandoffReadInput,
@@ -129,13 +128,13 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'run_in_background',
-        'Run work for a human request in the background: actions, searches, screenshots, checks and anything your other tools cannot do. Pass messageIds so it receives the complete recorded human inputs, including references and attachments. Its result returns to you as a background result. This is your own work: tell the human what you are doing, never who does it.',
+        'Run work for a human request in the background: actions, searches, screenshots, checks and anything your other tools cannot do. Pass messageIds so it receives the complete recorded human inputs, including references and attachments. When it is done, the answer goes to the human by itself. This is your own work: tell the human what you are doing, never who does it.',
         {
           requestId: z.string().min(1).max(160),
           messageIds: z.array(z.uuid()).min(1).max(100),
           text: z.string().trim().min(1).max(16000),
         },
-        async ({ requestId, messageIds, text }) => {
+        async ({ messageIds }) => {
           const asks = messageIds.map((id) => service.asks.find(conversationId, id));
           if (asks.some((ask) => !ask))
             return result({ delivered: false, reason: 'unknown_reply_target' });
@@ -151,37 +150,38 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             )
           )
             return result({ delivered: false, reason: 'front_ack_required' });
-          for (const ask of asks) {
-            if (!ask) continue;
-            const message = neoIntakeMessage(
-              { ...ask, sessionId: ask.askOrigin.sessionId },
-              ask.askOrigin.sessionId,
-              readNeoReply(ask.replyTo, service.todos),
-              null,
-              undefined,
-              ask.previewContext ?? null
-            );
-            if (
-              !service.db
-                .getSDKMessageRepo()
-                .getDeliveryMessageIdsByUuids(ask.askOrigin.sessionId, [ask.requestId]).length
-            )
-              await ensurePrompt({
-                db: service.db.getDatabase(),
-                sdkMessageRepo: service.db.getSDKMessageRepo(),
-                jobQueue: service.db.getJobQueueRepo(),
-                sessionId: ask.askOrigin.sessionId,
-                message,
-                hold: 'immediate',
-                delivery: { origin: 'chat' },
-              });
-          }
-          return result({
-            delivered: await service.wakeNeo(
-              neoDerivedId(`front-note:${conversationId}:${requestId}`),
-              `The front session is waiting for your result for human messages ${messageIds.join(', ')}. Send the result, original human IDs and references to the front session using message.send {to: "${sessionId}", text: "...", idempotencyKey: "..."}. Only the front session publishes or speaks to the human in dual-model mode.\n${text}`
-            ),
-          });
+          const prompts = asks.flatMap((ask) =>
+            ask
+              ? [
+                  {
+                    sessionId: ask.askOrigin.sessionId,
+                    message: neoIntakeMessage(
+                      { ...ask, sessionId: ask.askOrigin.sessionId },
+                      ask.askOrigin.sessionId,
+                      readNeoReply(ask.replyTo, service.todos),
+                      null,
+                      undefined,
+                      ask.previewContext ?? null
+                    ),
+                  },
+                ]
+              : []
+          );
+          const reserved = await service.db.gateway.call(
+            neoFrontInputWrites,
+            'reserve',
+            conversationId,
+            messageIds,
+            prompts
+          );
+          return result(
+            reserved === 'reserved'
+              ? { delivered: true }
+              : {
+                  delivered: false,
+                  reason: reserved === 'handed_off' ? 'input_handed_off' : 'delivery_failed',
+                }
+          );
         }
       ),
     ],

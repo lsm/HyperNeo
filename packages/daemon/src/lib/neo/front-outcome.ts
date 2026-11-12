@@ -1,4 +1,4 @@
-import { publicationSpeaker } from './front-mode.ts';
+import { frontSessionId } from './front-mode.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { jobQueueWrites } from '../../storage/repositories/job-queue-repository.ts';
 import { neoFrontInputReads } from '../../storage/repositories/neo-front-input-worker.ts';
@@ -17,7 +17,8 @@ export async function settleConvoInput(
   failure?: 'delivery' | 'superseded'
 ) {
   const owner = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, messageId);
-  if (owner?.owner) return { delivered: true, outcome: 'answered' };
+  if (owner?.owner)
+    return { delivered: true, outcome: owner.owner === 'neo' ? 'handed_off' : 'answered' };
   const ask = service.asks.find(conversationId, messageId);
   if (!ask) return { delivered: false };
   const sdk = service.db.getSDKMessageRepo();
@@ -69,10 +70,13 @@ export async function settleConvoInput(
       replyTo: ids,
       links: [],
     },
-    publicationSpeaker(conversationId, service.db.getGlobalSettings().neo?.front?.enabled === true)
+    service.db.getGlobalSettings().neo?.front?.enabled === true
+      ? frontSessionId(conversationId)
+      : `neo:${conversationId}`
   );
   if (!receipt.accepted) {
-    if (receipt.reason === 'publication_superseded') return pending();
+    if (receipt.reason === 'publication_superseded' || receipt.reason === 'input_handed_off')
+      return pending();
     throw new Error(receipt.reason);
   }
   service.notifyPublicationsChanged(conversationId);
