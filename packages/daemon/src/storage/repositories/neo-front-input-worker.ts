@@ -6,7 +6,11 @@ import { JobQueueRepository } from './job-queue-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../lib/mailbox/enqueue.ts';
 import type { MailboxEntry } from '../../lib/mailbox/entry.ts';
-import { catchUpBlock, FRONT_FALLBACK_TEXT } from '../../lib/neo/front-catch-up.ts';
+import {
+  catchUpBlock,
+  FRONT_FALLBACK_TEXT,
+  frontFallbackId,
+} from '../../lib/neo/front-catch-up.ts';
 
 export class NeoFrontInputRepository {
   constructor(private readonly db: Database) {}
@@ -102,18 +106,26 @@ export class NeoFrontInputRepository {
           'SELECT COALESCE(MAX(sequence), 0) AS upper FROM neo_publications WHERE conversation_id = ?'
         )
         .get(conversationId) as { upper: number };
-      const prior = this.db
-        .prepare(`SELECT f.catch_up_through AS through FROM neo_front_inputs f
-        WHERE f.conversation_id = ?1 AND f.message_id <> ?2 AND f.catch_up_through IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM sdk_messages s WHERE s.session_id = ?3
-            AND s.sdk_uuid = f.message_id AND s.send_status = 'failed')
-          AND NOT EXISTS (SELECT 1 FROM neo_publications p WHERE p.conversation_id = f.conversation_id
-            AND json_extract(p.payload_json, '$.fullText') = ?4
-            AND f.message_id IN (SELECT value FROM json_each(p.payload_json, '$.replyTo')))
-        ORDER BY f.catch_up_through DESC LIMIT 1`)
-        .get(conversationId, messageId, sessionId, FRONT_FALLBACK_TEXT) as {
-        through: number;
-      } | null;
+      const fallenBack = new Set(
+        (
+          this.db
+            .prepare(`SELECT publication_id AS id, payload_json AS payload FROM neo_publications
+            WHERE conversation_id = ? AND json_extract(payload_json, '$.fullText') = ?`)
+            .all(conversationId, FRONT_FALLBACK_TEXT) as { id: string; payload: string }[]
+        ).flatMap((row) => {
+          const replyTo = (JSON.parse(row.payload) as { replyTo?: string[] }).replyTo ?? [];
+          return row.id === frontFallbackId(conversationId, replyTo) ? replyTo : [];
+        })
+      );
+      const prior = (
+        this.db
+          .prepare(`SELECT f.message_id AS id, f.catch_up_through AS through FROM neo_front_inputs f
+          WHERE f.conversation_id = ?1 AND f.message_id <> ?2 AND f.catch_up_through IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM sdk_messages s WHERE s.session_id = ?3
+              AND s.sdk_uuid = f.message_id AND s.send_status = 'failed')
+          ORDER BY f.catch_up_through DESC`)
+          .all(conversationId, messageId, sessionId) as { id: string; through: number }[]
+      ).find((row) => !fallenBack.has(row.id));
       const from = prior?.through ?? upper;
       const said = (
         this.db

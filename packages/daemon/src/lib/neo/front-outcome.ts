@@ -3,8 +3,7 @@ import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { jobQueueWrites } from '../../storage/repositories/job-queue-repository.ts';
 import { neoFrontInputReads } from '../../storage/repositories/neo-front-input-worker.ts';
 import { neoPublicationWrites } from '../../storage/repositories/neo-publication-repository.ts';
-import { neoDerivedId } from './derived-id.ts';
-import { FRONT_FALLBACK_TEXT } from './front-catch-up.ts';
+import { FRONT_FALLBACK_TEXT, frontFallbackId } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
@@ -64,7 +63,7 @@ export async function settleConvoInput(
     'append',
     {
       conversationId,
-      publicationId: neoDerivedId(`convo-reply:${conversationId}:${[...ids].sort().join(',')}`),
+      publicationId: frontFallbackId(conversationId, ids),
       verbatim: true,
       fullText: FRONT_FALLBACK_TEXT,
       replyTo: ids,

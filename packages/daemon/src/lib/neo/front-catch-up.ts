@@ -1,6 +1,10 @@
 import { attribute, escapeSessionText } from '../messaging/session-envelope.ts';
+import { neoDerivedId } from './derived-id.ts';
 
 export const FRONT_FALLBACK_TEXT = 'This reply could not be completed. Please try again.';
+
+export const frontFallbackId = (conversationId: string, ids: readonly string[]) =>
+  neoDerivedId(`convo-reply:${conversationId}:${[...ids].sort().join(',')}`);
 
 const LIMIT = 4096;
 const CUT = '… (shown in full to the human)';
@@ -19,7 +23,7 @@ export function catchUpBlock(
   return `<already-said>\n${said
     .map(
       (row) =>
-        `<said replyTo="${attribute((row.replyTo ?? []).join(','))}">${escapeSessionText(cutForFront(row.fullText))}</said>`
+        `<said replyTo="${attribute((row.replyTo ?? []).join(','))}">${cutForFront(escapeSessionText(row.fullText))}</said>`
     )
     .join('\n')}\n</already-said>`;
 }

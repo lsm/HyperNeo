@@ -19,6 +19,11 @@ import { admitCreateSessionConfig } from '../../../../src/lib/session/create-ses
 import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 import { frontModeNote } from '../../../../src/lib/neo/front-mode.ts';
 import {
+  catchUpBlock,
+  FRONT_FALLBACK_TEXT,
+  frontFallbackId,
+} from '../../../../src/lib/neo/front-catch-up.ts';
+import {
   createTestDb,
   createTestInternalEventBus,
   createTestSession,
@@ -1521,6 +1526,46 @@ test('a failed front input leaves its range for the next input', async () => {
   );
   const next = await frontInput();
   expect(delivered(next.id)[0].text).toContain('Result the front never saw.');
+});
+
+test.each(['fallback', 'ordinary'])(
+  'only a daemon fallback, not a %s-looking reply, releases its input range',
+  async (kind) => {
+    await frontInput();
+    await neoSays('Before the reply.');
+    const answered = await frontInput();
+    expect(
+      service.publications.append(
+        {
+          conversationId,
+          publicationId:
+            kind === 'fallback'
+              ? frontFallbackId(conversationId, [answered.id])
+              : crypto.randomUUID(),
+          verbatim: true,
+          fullText: FRONT_FALLBACK_TEXT,
+          replyTo: [answered.id],
+          links: [],
+        },
+        front
+      )
+    ).toMatchObject({ accepted: true });
+    await neoSays('After the reply.');
+    const next = await frontInput();
+    const said = delivered(next.id)[0].text!;
+    expect(said).toContain('After the reply.');
+    if (kind === 'fallback') expect(said).toContain('Before the reply.');
+    else expect(said).not.toContain('Before the reply.');
+  }
+);
+
+test('catchUpBlock cuts each escaped said text to 4 KiB', () => {
+  const block = catchUpBlock([{ fullText: '<said '.repeat(680) }])!;
+  const inner = block.slice(block.indexOf('">') + 2, block.lastIndexOf('</said>'));
+  expect(new TextEncoder().encode('<said '.repeat(680)).length).toBeLessThan(4096);
+  expect(new TextEncoder().encode(inner).length).toBeLessThanOrEqual(4096);
+  expect(inner.endsWith('… (shown in full to the human)')).toBe(true);
+  expect(inner).not.toMatch(/<said/);
 });
 
 test('a redelivered front input keeps its bytes after a later message and a listening change', async () => {
