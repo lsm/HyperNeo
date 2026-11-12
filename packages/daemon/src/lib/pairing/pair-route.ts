@@ -19,7 +19,7 @@ export interface PairRouteDeps {
 
 const MAX_BODY_BYTES = 4 * 1024;
 
-async function readBoundedText(req: Request): Promise<string | null> {
+export async function readBoundedText(req: Request): Promise<string | null> {
   if (Number(req.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return null;
   const reader = req.body?.getReader();
   if (!reader) return '';

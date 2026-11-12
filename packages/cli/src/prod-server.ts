@@ -162,6 +162,8 @@ export async function startProdServer(config: Config) {
       }
 
       if (url.pathname === '/pair' && req.method === 'POST') return daemonContext.handlePair(req);
+      if (daemonContext.handlePair2 && url.pathname.startsWith('/pair2/'))
+        return daemonContext.handlePair2(req, server.requestIP(req)?.address ?? null);
 
       if (isWebSocketPath(url.pathname)) {
         const device = await daemonContext.authenticateUpgrade(
@@ -216,4 +218,6 @@ export async function startProdServer(config: Config) {
   console.log(`\n✨ Production server running!`);
   printServerUrls(config.port, config.host);
   console.log(`\n📝 Press Ctrl+C to stop\n`);
+
+  return { server, daemonContext };
 }

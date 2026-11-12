@@ -17,6 +17,7 @@ import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { createPair2Route } from './lib/pairing/pair2-route.ts';
 import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
@@ -361,6 +362,7 @@ export interface DaemonAppContext {
   oapEngine: OapEngine;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
+  handlePair2: ((req: Request, remoteAddress: string | null) => Promise<Response>) | null;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   handleMessageImage: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   authenticateUpgrade: (
@@ -1210,6 +1212,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       db: () => db.gateway,
       now: Date.now,
     });
+    const handlePair2 =
+      process.env.HYPERNEO_PAIRING_V2 === 'on'
+        ? createPair2Route({
+            db: db.gateway,
+            limiter: daemonPairingLimiter,
+            now: Date.now,
+            authenticate: (req, remoteAddress) => authenticateUpgrade(req, remoteAddress),
+          })
+        : null;
     const handleAskMarkdown = createAskMarkdownHandler(
       () => sessionManager.getOperationRegistry(),
       createUpgradeAuthenticator({ db: () => db.gateway, now: Date.now, agentRead: true })
@@ -1341,6 +1352,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
+        if (handlePair2 && url.pathname.startsWith('/pair2/'))
+          return handlePair2(req, client?.remoteAddress ?? null);
         if (url.pathname === '/neo-peer/message' && req.method === 'POST')
           return rpcHandlers.handlePeerMessage(req);
         if (url.pathname === '/neo-peer/pair' && req.method === 'POST') return handlePeerPair(req);
@@ -1773,6 +1786,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       oapEngine,
       server,
       handlePair,
+      handlePair2,
       handleAskMarkdown,
       handleMessageImage,
       authenticateUpgrade,

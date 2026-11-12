@@ -144,6 +144,8 @@ export async function startProdServer(config: Config) {
       }
 
       if (url.pathname === '/pair' && req.method === 'POST') return daemonContext.handlePair(req);
+      if (daemonContext.handlePair2 && url.pathname.startsWith('/pair2/'))
+        return daemonContext.handlePair2(req, client?.remoteAddress ?? null);
 
       if (isWebSocketPath(url.pathname)) {
         const device = await daemonContext.authenticateUpgrade(req, client?.remoteAddress ?? null);

@@ -1,7 +1,7 @@
 {
   "resetReceipt": {
-    "lines": 142,
-    "sha256": "9045b040532038732ab3d193ddb6e57288f3c7af5b8dc91bde4b371973992bfe",
+    "lines": 144,
+    "sha256": "61602fa22c8b5a1e0779bc9b54347b85195e2bcfb538a8deca24beb2823d8bcb",
     "units": [
       {
         "file": "packages/daemon/src/storage/repositories/human-device-reset-read.ts",
@@ -18,8 +18,8 @@
       {
         "file": "packages/daemon/src/storage/repositories/human-device-reset-repository.ts",
         "name": "whole local module",
-        "lines": 41,
-        "sha256": "203cb78dbd17cc41a39a7d300c1848eb173bf4b69d96ae6c9a1d0db5d2806573"
+        "lines": 43,
+        "sha256": "c319f851ed94f4ea32a3d4678599016a741967adfbe74b52e1c5a85721028915"
       },
       {
         "file": "packages/daemon/src/storage/repositories/human-device-reset-write.ts",

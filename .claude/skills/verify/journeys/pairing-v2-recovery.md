@@ -17,8 +17,9 @@ SQL there; the registered operations must continue through native DB workers.
 A completed human grant must close recovery, remove peer human-code approvals,
 end recovery-based terminal approval, and authenticate an actual WebSocket.
 
-Reject device insertion inside a second grant. The request must remain approved,
-recovery must remain open, no extra device may exist, and the prior peer approval
-must still redeem. Require zero target main SQL attempts. Close the socket, DB
+Reject device insertion inside a second grant. That grant follows a fresh reset
+row, so it is a first-device request and needs no approval; it must stay bound
+after the failure, recovery must remain open, no extra device may exist, and the
+prior peer approval must still redeem. Require zero target main SQL attempts. Close the socket, DB
 workers and daemon, retain `pairing-v2-recovery.json` and wrapper exit status,
 and remove temporary data. Phone UI and `/pair2` routing are outside this proof.

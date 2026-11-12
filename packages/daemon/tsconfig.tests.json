@@ -1,7 +1,16 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@hyperneo/prompts": ["../prompts/src/mod.ts"],
+      "@hyperneo/prompts/*": ["../prompts/src/*"],
+      "@hyperneo/shared": ["../shared/src/mod.ts"],
+      "@hyperneo/shared/*": ["../shared/src/*"],
+      "@hyperneo/daemon": ["./src/app.ts"],
+      "@hyperneo/daemon/*": ["./src/*"]
+    }
   },
   "include": [
     "src/**/*",

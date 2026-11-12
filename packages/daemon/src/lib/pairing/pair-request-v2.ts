@@ -29,6 +29,7 @@ export interface PairingRequestRow {
   name: string | null;
   approvedAt: number | null;
   approvedBy: string | null;
+  firstDevice: boolean;
   grantsOwner: boolean;
   grantedAt: number | null;
   deniedAt: number | null;
@@ -46,7 +47,7 @@ export function pairingRequestState(row: PairingRequestRow, now: number): Pairin
 }
 
 export type PairingCompleteStep =
-  | { action: 'grant' }
+  | { action: 'grant'; owner: boolean }
   | { action: 'supersede' }
   | { action: 'refuse'; reason: 'expired' | 'denied' | 'cancelled' | 'not_approved' | 'wrong_key' };
 
@@ -59,12 +60,14 @@ export function decidePairingComplete(
   if (row.cancelledAt !== null) return { action: 'refuse', reason: 'cancelled' };
   if (row.deniedAt !== null) return { action: 'refuse', reason: 'denied' };
   if (row.expiresAt <= now) return { action: 'refuse', reason: 'expired' };
-  if (row.approvedAt === null) return { action: 'refuse', reason: 'not_approved' };
   if (row.phoneKey === null || phoneKey !== row.phoneKey) {
     return { action: 'refuse', reason: 'wrong_key' };
   }
+  if (row.firstDevice)
+    return ownersExist ? { action: 'supersede' } : { action: 'grant', owner: true };
+  if (row.approvedAt === null) return { action: 'refuse', reason: 'not_approved' };
   if (row.grantsOwner && ownersExist) return { action: 'supersede' };
-  return { action: 'grant' };
+  return { action: 'grant', owner: row.grantsOwner };
 }
 
 export function verifyPhoneProof(

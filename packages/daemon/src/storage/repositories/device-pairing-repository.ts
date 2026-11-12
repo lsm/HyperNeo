@@ -9,6 +9,7 @@ import {
 } from './pairing-approve-write.ts';
 import type { PairApprovalRequest } from './pairing-approve-write.ts';
 import { pairingRedeemWrite } from './pairing-redeem-write.ts';
+import { PairingRequestRepository } from './pairing-request-repository.ts';
 import type { PairRequest, PairRequestRecord } from '../../lib/pairing/pair-request.ts';
 import { pairingCodeCreateWrites, type PairingCodeDraft } from './pairing-code-create-write.ts';
 import type { PairingCodeCaller } from './pairing-code-create-write.ts';
@@ -22,6 +23,7 @@ export interface PairedDevice {
   name: string;
   kind: DeviceKind;
   createdAt: number;
+  owner?: boolean;
 }
 
 const CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -36,8 +38,15 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 function insertDevice(db: Database, device: PairedDevice, credential: string, reuse = false): void {
   db.prepare(
-    `INSERT ${reuse ? 'OR IGNORE ' : ''}INTO paired_devices (id, name, kind, secret_hash, created_at) VALUES (?, ?, ?, ?, ?)`
-  ).run(device.id, device.name, device.kind, hash(credential), device.createdAt);
+    `INSERT ${reuse ? 'OR IGNORE ' : ''}INTO paired_devices (id, name, kind, secret_hash, created_at, owner) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    device.id,
+    device.name,
+    device.kind,
+    hash(credential),
+    device.createdAt,
+    device.owner ? 1 : 0
+  );
 }
 
 export const enrollLocalDevice = defineDbOp({
@@ -272,12 +281,17 @@ export class DevicePairingRepository {
     );
   }
 
-  countDevices(): { all: number; humans: number } {
+  firstDeviceOpen(): boolean {
+    if (this.countDevices().humansEver === 0) return true;
+    return this.humanRecoveryOpen();
+  }
+
+  countDevices(): { all: number; humans: number; humansEver: number } {
     return this.db
       .prepare(
-        "SELECT COUNT(*) AS \"all\", COUNT(*) FILTER (WHERE kind = 'human' AND revoked_at IS NULL) AS humans FROM paired_devices WHERE id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
+        "SELECT COUNT(*) AS \"all\", COUNT(*) FILTER (WHERE kind = 'human' AND revoked_at IS NULL) AS humans, COUNT(*) FILTER (WHERE kind = 'human') AS humansEver FROM paired_devices WHERE id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
       )
-      .get() as { all: number; humans: number };
+      .get() as { all: number; humans: number; humansEver: number };
   }
 
   createCodeAsync(draft: PairingCodeDraft) {
@@ -296,10 +310,21 @@ export class DevicePairingRepository {
     const expiresAt = now + PAIRING_CODE_TTL_MS;
     this.db
       .prepare(
-        `INSERT INTO pairing_codes (id, code_hash, kind, name, created_at, expires_at, approved_at, two_way)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO pairing_codes (id, code_hash, kind, name, created_at, expires_at, approved_at,
+           two_way, first_device)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, hash(code), kind, name, now, expiresAt, approved ? now : null, twoWay ? 1 : 0);
+      .run(
+        id,
+        hash(code),
+        kind,
+        name,
+        now,
+        expiresAt,
+        approved ? now : null,
+        twoWay ? 1 : 0,
+        kind === 'human' && this.firstDeviceOpen() ? 1 : 0
+      );
     return { id, code, expiresAt };
   }
 
@@ -456,6 +481,15 @@ export class DevicePairingRepository {
       .get();
   }
 
+  unapproveHumanCodes(): void {
+    this.db
+      .prepare(
+        `UPDATE pairing_codes SET approved_at = NULL, first_device = 0
+         WHERE kind = 'human' AND used_at IS NULL`
+      )
+      .run();
+  }
+
   closeHumanRecovery(now: number): void {
     if (!this.humanRecoveryOpen()) return;
     this.db
@@ -463,11 +497,7 @@ export class DevicePairingRepository {
         'UPDATE human_device_resets SET recovered_at = ? WHERE rowid = (SELECT MAX(rowid) FROM human_device_resets)'
       )
       .run(now);
-    this.db
-      .prepare(
-        "UPDATE pairing_codes SET approved_at = NULL WHERE kind = 'human' AND used_at IS NULL"
-      )
-      .run();
+    this.unapproveHumanCodes();
   }
 
   redeemAsync(request: PairRequest, now: number) {
@@ -485,12 +515,27 @@ export class DevicePairingRepository {
       const claimed = this.db
         .prepare(
           `UPDATE pairing_codes SET used_at = ? WHERE code_hash = ? AND approved_at IS NOT NULL
-             AND used_at IS NULL AND expires_at > ? RETURNING kind`
+             AND used_at IS NULL AND expires_at > ?
+             AND (first_device = 0 OR NOT EXISTS (
+               SELECT 1 FROM paired_devices WHERE kind = 'human'
+                 AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%')
+               OR EXISTS (SELECT 1 FROM (
+                 SELECT recovered_at FROM human_device_resets ORDER BY rowid DESC LIMIT 1
+               ) WHERE recovered_at IS NULL))
+             RETURNING kind, first_device`
         )
-        .get(now, hash(normalizePairingCode(code)), now) as { kind: DeviceKind } | null;
+        .get(now, hash(normalizePairingCode(code)), now) as {
+        kind: DeviceKind;
+        first_device: number;
+      } | null;
       if (!claimed) return null;
+      const firstDevice = claimed.first_device === 1;
+      if (firstDevice) {
+        new PairingRequestRepository(this.db).cancelFirstDeviceRequests(now);
+        this.unapproveHumanCodes();
+      }
       if (claimed.kind === 'human') this.closeHumanRecovery(now);
-      insertDevice(this.db, { ...device, kind: claimed.kind }, credential);
+      insertDevice(this.db, { ...device, kind: claimed.kind, owner: firstDevice }, credential);
       return { device: { ...device, kind: claimed.kind }, credential };
     })();
   }

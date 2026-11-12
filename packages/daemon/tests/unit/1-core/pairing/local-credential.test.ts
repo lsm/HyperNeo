@@ -23,7 +23,11 @@ describe('local owner credential', () => {
     try {
       await gateway.run(enrollLocalDevice, { credential: 'h'.repeat(43), now: 1 });
       await gateway.run(enrollLocalDevice, { credential: 'a'.repeat(43), now: 1, kind: 'agent' });
-      expect(new DevicePairingRepository(db).countDevices()).toEqual({ all: 0, humans: 0 });
+      expect(new DevicePairingRepository(db).countDevices()).toEqual({
+        all: 0,
+        humans: 0,
+        humansEver: 0,
+      });
     } finally {
       db.close();
     }
@@ -65,7 +69,11 @@ describe('local owner credential', () => {
         secret_hash: string;
       }[];
       expect(rows).toHaveLength(1);
-      expect(new DevicePairingRepository(db).countDevices()).toEqual({ all: 0, humans: 0 });
+      expect(new DevicePairingRepository(db).countDevices()).toEqual({
+        all: 0,
+        humans: 0,
+        humansEver: 0,
+      });
       expect(rows[0].secret_hash).not.toContain(credential);
       resetHumanDevices(db, 3000);
       expect(await gateway.run(touchDevice, { credential, host: null, now: 4000 })).not.toBeNull();
