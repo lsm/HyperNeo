@@ -244,17 +244,24 @@ come in a later slice; Neo's operations cover the same actions first.
 
 Nothing may start on deploy that the human had not approved, and nothing may be lost.
 
-Each hold or approval a todo carries today gets its own card, unless an open card already
-encodes that same decision: a Start card that lists the todo encodes its approval, and a
-question with its `todo_id` encodes its question or blocker. Being covered by some other
-card, such as an ask-level question, does not count. Answering that card leaves the todo
-held by its own.
+Each hold or approval a todo carries today gets its own card, unless a recorded fact ties
+an open card to that same decision. Covering the same todo is not such a fact: a question
+with the todo's `todo_id` can be about something else, and so can an ask-level question.
+Each decision sits on exactly one card, and answering a card releases only what that card
+decides.
 
-- `blocked` becomes `todo` if it never started, otherwise `doing`. Unless a question with
-  its `todo_id` is open, the migration opens a card with the stored `blocked_reason` as
-  its text. This covers `needs-human`, `stalled`, `environment`, `failure`, `check` and
-  `worker`. A `held` todo always gets its hold card (rule 5), since no card encodes a hold
-  today.
+- `blocked` becomes `todo` if it never started, otherwise `doing`, and keeps its hold:
+
+  | `blocked_by` | Open card a recorded fact ties to it | Without one |
+  |---|---|---|
+  | `question` | Every open question that covers the todo. This blocker is written only while one does and has no cause of its own (`decideTodoState`) | Nothing holds it, as today |
+  | `needs-human` | The card bound to the todo in its answer routes, written with the block by `neo.question.storeWorkerReport` | A card with the stored `blocked_reason` |
+  | `stalled` | The stalled card on the todo (`isNeoTodoStalledCard`) | A card with the stored `blocked_reason` |
+  | `check`, `failure`, `environment`, `worker` | None is recorded | Always a card with the stored `blocked_reason` |
+  | `held` | None is recorded | Always its hold card (rule 5) |
+
+  So a todo whose check failed and that also has an unrelated open question on it ends
+  with two cards, and answering the question leaves it held by the check card.
 - `failed` in an open ask becomes `doing` with a rule 7 card; in a settled ask it becomes
   `removed` and keeps its reason.
 - `closed_unverified` becomes `done` if it had started and `removed` if it never started,
@@ -271,7 +278,7 @@ today, in this order:
    started) moves to that todo's live replacement. With no replacement, the dependents get
    the rule 4 card: today they wait for a `neo.todo.proceed` that may never come, and the
    human has not said they may go on. A dependent already on an open Start card is left
-   to that card (step 4).
+   to that card (step 4), so each cancelled edge is decided on one card.
 3. **Cards.** `todo_id` and `start_todos` are copied into `todos`. An open question with
    neither, which today holds its whole ask (`neoTodoWaitReason`), lists the todos it
    holds: every unstarted live todo of the ask and every todo `blocked` by `question`
@@ -281,8 +288,14 @@ today, in this order:
    todo is approved; if it sits behind a cancelled prerequisite, the tick is rule 4's
    Continue for that edge (`neoTodoProceedPatch`), and its other prerequisites and cards
    still hold it. An unticked todo behind a cancelled prerequisite is removed, and any
-   other unticked todo gets a hold card (rule 5). An unapproved, unstarted todo that no
-   Start card lists gets a card of the same form, whatever else covers it.
+   other unticked todo gets a hold card (rule 5).
+5. **Approval with no Start card.** An unapproved, unstarted todo that no Start card lists
+   gets an approval card, whatever else covers it. That card decides approval only: a
+   tick approves the todo and no tick gives it a hold card (rule 5). It never decides a
+   cancelled edge, because step 2 already put that on the rule 4 card. Such a todo starts
+   once both are answered, in either order: Continue first leaves it held by the approval
+   card, and a tick first leaves it held by the rule 4 card. Remove on the rule 4 card
+   takes it off the approval card.
 
 ## Slices
 
@@ -291,10 +304,10 @@ Each slice is its own issue under one epic and is measured before it is cut.
 | # | Slice | Accepted when |
 |---|---|---|
 | 1 | A card covers a list of todos | Every reader of `todo_id` and `start_todos` reads `todos`; an approved todo under an open ask-level question is still held after the switch |
-| 2 | Waiting is read from cards | The web sections, the counts and the runner agree on every live todo |
+| 2 | Waiting is read from cards | The web sections, the counts and the runner agree on every live todo. A migrated todo with a failed check and an unrelated open question on it is still held, by its check card, after that question is answered |
 | 3 | Done without a gate | Neo marks an unstarted todo with an unmet check done and its dependents start |
 | 4 | Explicit dependencies and remove with dependents | A removed prerequisite ends in continued dependents, removed dependents, or one card; a migrated todo behind a cancelled prerequisite, stored or implicit, does not start without that decision |
-| 5 | Automatic start | An added todo with met prerequisites starts with no Start card. On one migrated Start card, a ticked dependent of a cancelled prerequisite continues and an unticked one is removed. Closing an unrelated card leaves an unapproved or held todo held. A fill that overlaps a stop admits nothing over a limit |
+| 5 | Automatic start | An added todo with met prerequisites starts with no Start card. On one migrated Start card, a ticked dependent of a cancelled prerequisite continues and an unticked one is removed. A migrated unapproved dependent of a cancelled prerequisite that no Start card lists starts only after its approval card and its rule 4 card are both answered, in either order, and neither card is left open. Closing an unrelated card leaves an unapproved or held todo held. A fill that overlaps a stop admits nothing over a limit |
 | 6 | The daemon's cards | A blocker Neo ignores, a twice-failed start and an overdue check each end in exactly one card |
 | 7 | One ask per matter | A second ask for the same pull request is refused with the first one's id |
 | 8 | Human controls | Done, Cancel, Hold and priority work from the list; the two limits are set in Neo's settings |
