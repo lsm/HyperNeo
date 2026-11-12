@@ -1,12 +1,19 @@
 import type { Database } from '../sqlite-compat.ts';
 
 export function backfillFirstDeviceCodes(db: Database): void {
-  db.exec(`
-    UPDATE pairing_codes SET first_device = 1
-    WHERE kind = 'human' AND used_at IS NULL
-      AND NOT EXISTS (SELECT 1 FROM paired_devices WHERE kind = 'human'
-        AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%')
-  `);
+  const firstDeviceWindow = !db
+    .prepare("SELECT 1 FROM paired_devices WHERE kind = 'human' LIMIT 1")
+    .get();
+  const resetOpen = !!db
+    .prepare(
+      'SELECT 1 FROM (SELECT recovered_at FROM human_device_resets ORDER BY rowid DESC LIMIT 1) WHERE recovered_at IS NULL'
+    )
+    .get();
+  if (firstDeviceWindow || resetOpen)
+    db.exec(`
+      UPDATE pairing_codes SET first_device = 1
+      WHERE kind = 'human' AND used_at IS NULL
+    `);
 }
 
 export function runMigration501(db: Database): void {

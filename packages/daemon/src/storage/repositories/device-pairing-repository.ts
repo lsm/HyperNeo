@@ -484,7 +484,8 @@ export class DevicePairingRepository {
   unapproveHumanCodes(): void {
     this.db
       .prepare(
-        "UPDATE pairing_codes SET approved_at = NULL WHERE kind = 'human' AND used_at IS NULL"
+        `UPDATE pairing_codes SET approved_at = NULL, first_device = 0
+         WHERE kind = 'human' AND used_at IS NULL`
       )
       .run();
   }

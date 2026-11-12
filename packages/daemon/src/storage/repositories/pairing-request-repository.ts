@@ -275,9 +275,7 @@ export class PairingRequestRepository {
       const devices = new DevicePairingRepository(this.db);
       if (step.owner) {
         this.cancelFirstDeviceRequests(now);
-        this.db
-          .prepare('UPDATE pairing_codes SET approved_at = NULL WHERE kind = ? AND used_at IS NULL')
-          .run('human');
+        devices.unapproveHumanCodes();
       }
       devices.closeHumanRecovery(now);
       this.db

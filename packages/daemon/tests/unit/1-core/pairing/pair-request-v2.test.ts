@@ -565,7 +565,7 @@ describe('pairing v2 one-time request repository', () => {
     ).toEqual({ first_device: 0 });
   });
 
-  test('a losing first-device legacy code is un-approved so it needs Allow', async () => {
+  test('a losing first-device legacy code needs Allow and then redeems', async () => {
     const winner = devices.createCode('human', 'Winner phone', true, now);
     const sibling = devices.createCode('human', 'Sibling phone', true, now);
     expect(devices.redeem(winner.code, 'Winner phone', now)).not.toBeNull();
@@ -574,6 +574,27 @@ describe('pairing v2 one-time request repository', () => {
       .prepare('SELECT approved_at FROM pairing_codes WHERE id = ?')
       .get(sibling.id) as { approved_at: number | null };
     expect(row.approved_at).toBeNull();
+
+    expect(devices.approve(sibling.id, now)).toBe(true);
+    const allowed = devices.redeem(sibling.code, 'Sibling phone', now);
+    expect(allowed).not.toBeNull();
+    expect(
+      writer.prepare('SELECT owner FROM paired_devices WHERE id = ?').get(allowed!.device.id)
+    ).toEqual({ owner: 0 });
+  });
+
+  test('the upgrade marks an outstanding code first-device while a reset is open', async () => {
+    const revoked = seedPhone(1);
+    writer.prepare('UPDATE paired_devices SET revoked_at = ? WHERE id = ?').run(now, revoked);
+    const made = devices.createCode('human', 'Post-reset phone', true, now);
+    writer.prepare('UPDATE pairing_codes SET first_device = 0 WHERE id = ?').run(made.id);
+    writer
+      .prepare('INSERT INTO human_device_resets (id, reset_at, devices_json) VALUES (?, ?, ?)')
+      .run('open-reset', now, '[]');
+    backfillFirstDeviceCodes(writer);
+    expect(
+      writer.prepare('SELECT first_device FROM pairing_codes WHERE id = ?').get(made.id)
+    ).toEqual({ first_device: 1 });
   });
 
   test('a first legacy typed code grants the owner bit', async () => {
