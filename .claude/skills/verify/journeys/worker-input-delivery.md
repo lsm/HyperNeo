@@ -61,8 +61,10 @@ An exhausted worker-input job retains a failure outcome and re-enters the same
 lane to deliver its notice. The proof rejects dispatch writes in its disposable
 DB until real processor retries exhaust, then requires one Neo notice and zero
 native submissions. The unit fixtures also cover interrupted dispatch and a
-notification receiver that recovers later. Unbound follow-ups report their reason
-once after one minute while preserving the input for a later binding.
+notification receiver that recovers later. Ordinary pre-start, initial and busy
+waits retain their queue state. Waiting reports cover unknown or unreachable
+worker status. The proof ages a pending initial input past one minute and
+requires zero ordinary-wait blocker notices before and after scheduler binding.
 
 Space tasks retain their direct continuation send while running. The regression
 uses a synthetic Space adapter and checks pre-start start/send targets preserve

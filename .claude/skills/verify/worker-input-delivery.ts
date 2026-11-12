@@ -191,11 +191,13 @@ try {
   const bindingReply = SendWorkResultSchema.parse(binding.value);
   assert(bindingReply.ok && bindingReply.value.inputId);
   const bindingId = bindingReply.value.inputId;
+  db().prepare('UPDATE work_delivery_inputs SET accepted_at = ? WHERE id = ?').run(Date.now() - 60_001, bindingId);
   const bindingSessions = new NeoTodoSessionRepository(db());
   assert.deepEqual(bindingSessions.get(initialTodo.id), { verb: 'send', ref: initialRef });
   app.jobProcessor.start();
   await until(() => app.jobQueue.listJobs({ queue: 'worker_input' }).some((job) => job.payload.inputId === bindingId && !!job.error), 'the pre-start input waits while its worker is busy');
   assert.equal(bindingTodos.getTodo(initialTodo.id)?.state, 'todo');
+  assert.equal(app.jobQueue.listJobs({ queue: 'worker_input' }).find((job) => job.payload.inputId === bindingId)!.payload.waitReported, undefined);
   assert.equal(messages(initialWorker).length, 0);
   db().prepare('UPDATE sessions SET processing_state = ? WHERE id = ?').run(JSON.stringify({ status: 'idle' }), initialWorker);
   app.jobQueue.enqueue({ queue: 'neo.work.driver.refresh', payload: { scope: 'neo' }, runAt: Date.now() });
@@ -206,6 +208,8 @@ try {
   assert.deepEqual(bindingSessions.readRef(initialTodo.id), initialRef);
   const initialMessages = messages(initialWorker).filter((text) => text.includes('Initial binding proof message'));
   assert.equal(initialMessages.length, 1);
+  const ordinaryWaitReports = messages(root).filter((text) => text.includes('Waiting for the worker to start or an earlier input to finish.'));
+  assert.equal(ordinaryWaitReports.length, 0);
   evidence.initialBinding = { todo: bindingTodos.getTodo(initialTodo.id), input: inputs().find((input) => input.id === bindingId), messages: initialMessages };
   await app.db.createSession({ id: 'synthetic-retired-worker', title: 'Synthetic archived worker', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'archived', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   const changedRefusalId = await app.db.gateway.call(workerInputWrites, 'accept', { ref: { adapter: 'hyperneo', id: 'synthetic-retired-worker' }, message: 'The same synthetic answer', idempotencyKey: 'synthetic-answer' }, `session:${root}`, caller);
@@ -220,7 +224,7 @@ try {
   evidence.changedRefusal = { input: changedRefusal, reports: changedRefusalReports };
   evidence.port = app.server.port;
   evidence.passed = true;
-  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length, refusalReports: refusalReports.length, exhaustedReports: exhaustedReports.length, initialBindings: 1, changedRefusalReports: changedRefusalReports.length }));
+  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length, refusalReports: refusalReports.length, exhaustedReports: exhaustedReports.length, initialBindings: 1, changedRefusalReports: changedRefusalReports.length, ordinaryWaitReports: ordinaryWaitReports.length }));
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

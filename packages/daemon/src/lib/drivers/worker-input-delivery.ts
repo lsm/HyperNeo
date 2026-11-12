@@ -36,7 +36,7 @@ export function createWorkerInputDelivery(
 ) {
   const gateway = gatewayFor(db);
   const read = async (job: Job) => {
-    const stored = { ...(await gateway.call(workerInputReads, 'read', job)), now: Date.now() };
+    const stored = await gateway.call(workerInputReads, 'read', job);
     if (
       !stored.ref ||
       stored.closed ||
@@ -89,9 +89,6 @@ export function createWorkerInputDelivery(
       return {
         action: 'wait',
         detail: 'Waiting for the worker to start or an earlier input to finish.',
-        ...((!facts.ref || facts.payload.initial) && facts.now - facts.acceptedAt >= 60_000
-          ? { report: true as const }
-          : {}),
       };
     if (facts.ref.daemon)
       return {
