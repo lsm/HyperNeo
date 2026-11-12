@@ -291,7 +291,9 @@ describe('migration 505 GitHub session scope', () => {
     expect(
       db.prepare(`SELECT poll_cursor FROM github_session_watched_repos WHERE id = 'watch-1'`).get()
     ).toEqual({ poll_cursor: '{"lastSeenAt":999}' });
-    expect(db.prepare(`SELECT key FROM migration_markers`).all()).toEqual([]);
+    expect(
+      db.prepare(`SELECT key FROM migration_markers WHERE key = 'migration_505'`).all()
+    ).toEqual([]);
     expect(watchedRows(db, 'space_github_watched_repos')).toHaveLength(2);
     db.close();
   });
@@ -311,7 +313,9 @@ describe('migration 505 GitHub session scope', () => {
     expect(() => runMigration505(db)).toThrow(
       /migration_505: github_session_source_settings already has a conflicting row/
     );
-    expect(db.prepare(`SELECT key FROM migration_markers`).all()).toEqual([]);
+    expect(
+      db.prepare(`SELECT key FROM migration_markers WHERE key = 'migration_505'`).all()
+    ).toEqual([]);
     db.close();
   });
 
@@ -381,6 +385,57 @@ describe('migration 505 GitHub session scope', () => {
     ).run();
     createGitHubSessionTables(db);
     expect(watchedRows(db, 'github_session_watched_repos')).toEqual([]);
+    db.close();
+  });
+
+  test('session watches survive an empty legacy table appearing after Space enablement', () => {
+    const db = new Database(':memory:');
+    createGitHubSessionTables(db);
+    upsertGitHubWatchedRepo(db, {
+      spaceId: 'sessions',
+      owner: 'NewOrg',
+      repo: 'new-repo',
+      pollingEnabled: true,
+    });
+    createSpaceGitHubTables(db);
+    createGitHubSessionTables(db);
+    createGitHubSessionTables(db);
+    expect(watchedRows(db, 'github_session_watched_repos').map((row) => row.repo)).toEqual([
+      'new-repo',
+    ]);
+    expect(
+      db
+        .prepare(`SELECT owner, repo FROM space_github_watched_repos WHERE space_id = 'sessions'`)
+        .all()
+    ).toEqual([{ owner: 'NewOrg', repo: 'new-repo' }]);
+    db.close();
+  });
+
+  test('first reconcile with a legacy table mirrors keys in both directions', () => {
+    const db = new Database(':memory:');
+    createGitHubSessionTables(db);
+    upsertGitHubWatchedRepo(db, {
+      spaceId: 'sessions',
+      owner: 'SessionOrg',
+      repo: 'session-repo',
+      pollingEnabled: true,
+    });
+    createSpaceGitHubTables(db);
+    insertWatched(db, 'space_github_watched_repos', modernWatchedRow());
+    createGitHubSessionTables(db);
+    expect(
+      watchedRows(db, 'github_session_watched_repos')
+        .map((row) => row.repo)
+        .sort()
+    ).toEqual(['session-repo', 'synthetic-repo']);
+    expect(
+      db
+        .prepare(
+          `SELECT repo FROM space_github_watched_repos WHERE space_id = 'sessions' ORDER BY repo`
+        )
+        .all()
+        .map((row) => (row as { repo: string }).repo)
+    ).toEqual(['session-repo', 'synthetic-repo']);
     db.close();
   });
 

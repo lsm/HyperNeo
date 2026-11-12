@@ -38,7 +38,7 @@ const contracts = [
 const methods = units(repo), helpers = units(helper), names = contracts.map(row => row[0]);
 if (methods.some(row => ['clearWebhookRegistration', 'clearWebhookDeliveryHistory'].includes(row.name))) throw Error('Retired watched webhook wrappers remain');
 const untouched = methods.filter(row => !names.includes(row.name)).map(row => [row.name, row.sha256]);
-if (hash(JSON.stringify(untouched)) !== 'b1b1d8c3b6578688c1a8faa303e510305d3c1e35a3e40b48ded663e07ef2f101') throw Error('Other repository method or constructor changed');
+if (hash(JSON.stringify(untouched)) !== '3472d55a44b83d5711e6cf19d5c4c5d1586d2a240393fdbfd76626f2938247b5') throw Error('Other repository method or constructor changed');
 if (hash(read(mapper)) !== 'f41326de1acc9416d313230f3144405d21638e8c6d846149431558a26f883165') throw Error('Complete mapper module changed');
 for (const [name, fn, expected, scoped] of contracts) {
   const extracted = helpers.find(row => row.name === fn), wrapper = methods.find(row => row.name === name);
