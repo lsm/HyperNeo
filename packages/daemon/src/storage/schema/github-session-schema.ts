@@ -1,6 +1,5 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
-
-const SESSION_SCOPE = 'sessions';
+import { GITHUB_SESSION_SCOPE } from '../repositories/github-scope.ts';
 
 export const GITHUB_SESSION_WATCHED_COLUMNS: Array<{ name: string; fallback: string }> = [
   { name: 'id', fallback: `''` },
@@ -54,7 +53,7 @@ export function legacyGitHubSessionRows(
     )
     .join(', ');
   return db
-    .prepare(`SELECT ${selects} FROM ${legacyTable} WHERE space_id = '${SESSION_SCOPE}'`)
+    .prepare(`SELECT ${selects} FROM ${legacyTable} WHERE space_id = '${GITHUB_SESSION_SCOPE}'`)
     .all() as Record<string, unknown>[];
 }
 

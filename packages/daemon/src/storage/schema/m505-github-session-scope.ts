@@ -1,4 +1,5 @@
 import type { Database } from '../sqlite-compat.ts';
+import { GITHUB_SESSION_SCOPE } from '../repositories/github-scope.ts';
 import { schemaTableExists } from './extensions.ts';
 import {
   createGitHubSessionTables,
@@ -8,7 +9,6 @@ import {
   legacyGitHubSessionRows,
 } from './github-session-schema.ts';
 
-const SESSION_SCOPE = 'sessions';
 const MARKER_KEY = 'migration_505';
 
 function copySessionWatchedRows(db: Database): number {
@@ -56,7 +56,7 @@ function copySessionSettingsRow(db: Database): boolean {
   if (!row) return false;
   const existing = db
     .prepare(`SELECT * FROM github_session_source_settings WHERE space_id = ?`)
-    .get(SESSION_SCOPE) as Record<string, unknown> | undefined;
+    .get(GITHUB_SESSION_SCOPE) as Record<string, unknown> | undefined;
   if (existing) {
     if (!githubRowsEqual(row, existing, GITHUB_SESSION_SETTINGS_COLUMNS)) {
       throw new Error(
@@ -86,10 +86,10 @@ export function runMigration505(db: Database): void {
     db.prepare(
       `INSERT OR IGNORE INTO github_session_source_settings
          (space_id, enabled, polling_intent, created_at, updated_at)
-       SELECT '${SESSION_SCOPE}', 1, 1, 0, 0
+       SELECT '${GITHUB_SESSION_SCOPE}', 1, 1, 0, 0
        WHERE EXISTS (
          SELECT 1 FROM github_session_watched_repos
-         WHERE space_id = '${SESSION_SCOPE}' AND polling_enabled = 1
+         WHERE space_id = '${GITHUB_SESSION_SCOPE}' AND polling_enabled = 1
        )`
     ).run();
     db.prepare(`INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
