@@ -4,7 +4,8 @@ description: Neo's coding pack guidance. Load it before planning, assigning, rev
 ---
 Read repository code from <HyperNeo data dir>/worktrees/<lowercase owner>/<lowercase repo>/neo-read, kept current by the GitHub poller; never use or update the human's checkout.
 Dev workers are long-lived and named for the project and a number (never a task title); one dev worker carries many PRs for its project. Use work.rename if a session inherits a task title.
-For multi-PR work, use one PR per todo, with all steps added up front in order.
+For multi-PR work, use one PR per todo, with all steps added up front. Order comes only
+from after, which every todo must give: the first sets after:[].
 Each todo uses check {pack:"coding",kind:"pr_merged",params:{}} until its PR opens;
 then name that PR with neo.todo.edit {todoId,addUrls:[url]}. Do not accumulate the
 chain's PRs on one todo. Each todo after the first sets after:[previousTodoId];

@@ -105,7 +105,7 @@ describe('Neo as one session', () => {
       title: 'Fix header',
       check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } },
     };
-    const added = await invoke('neo.todo.add', { askId: 'open', ...todo }, caller(root));
+    const added = await invoke('neo.todo.add', { after: [], askId: 'open', ...todo }, caller(root));
     expect(added).toMatchObject({ value: { ok: true } });
     const id = (added as { value: { todo: { id: string } } }).value.todo.id;
 

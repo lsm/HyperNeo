@@ -23,9 +23,9 @@ db.query(`INSERT INTO neo_todos (id,ask_id,position,title,done_when,check_json,i
 db.query(`UPDATE neo_todos SET check_json = ? WHERE id = 'claim-original'`).run(JSON.stringify({ ...check, params: { urls: [url] } }));
 const pr = { url, number: 14, state: 'OPEN', createdAt: new Date(now).toISOString(), mergedAt: null, headRefOid: 'verify-head', reviews: [], statusCheckRollup: [], title: 'Synthetic fix' };
 await writeFile(`${run}/pr.json`, JSON.stringify(pr));
-const duplicate = await rpc('neo.todo.add', { askId, title: 'Pin PR link', doneWhen: 'Merged', check: { ...check, params: { urls: [url] } } });
+const duplicate = await rpc('neo.todo.add', { after: [], askId, title: 'Pin PR link', doneWhen: 'Merged', check: { ...check, params: { urls: [url] } } });
 const edited = await rpc('neo.todo.edit', { todoId: 'claim-original', addUrls: [url] });
-const other = await rpc('neo.todo.add', { askId, title: 'Other work', doneWhen: 'Merged', check: { ...check, params: { urls: ['https://github.com/verify-test/demo/pull/15'] } } });
+const other = await rpc('neo.todo.add', { after: [], askId, title: 'Other work', doneWhen: 'Merged', check: { ...check, params: { urls: ['https://github.com/verify-test/demo/pull/15'] } } });
 const collision = await rpc('neo.todo.edit', { todoId: other.todo?.id, addUrls: [url] });
 const evidence = { askId, duplicate, edited, collision, final: null as unknown, snapshot: null as unknown };
 await writeFile(`${run}/evidence/todo-pr-claims.json`, JSON.stringify(evidence, null, 2));

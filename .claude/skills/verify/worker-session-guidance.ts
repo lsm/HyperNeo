@@ -60,7 +60,7 @@ try {
   db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata,type) VALUES ('synthetic-worker','HyperNeo dev 1',?,'2026-10-25','2026-10-25','active','{}','{}','worker')").run(join(run, 'workspace'));
   const store = new NeoAskTodoRepository(db);
   store.openAsk({ id: 'synthetic-ask', sessionId: root, projectId: null, originMessageId: null, title: 'Synthetic task', request: 'Synthetic task', createdAt: Date.now() });
-  const result = await rpc('neo.todo.add', {
+  const result = await rpc('neo.todo.add', { after: [],
     askId: 'synthetic-ask', title: 'Synthetic task', doneWhen: 'Evidence delivered',
     instruction: 'SYNTHETIC_WORKER_GUIDANCE', check: { pack: 'coding', kind: 'issue_closed', params: { issue: 'example/synthetic#1' } },
     target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'synthetic-worker' } }, start: true,

@@ -69,7 +69,7 @@ async function phase(reopen:boolean){
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
   store.openAsk({id:'work',title:'Multi-repository work',request:'Keep canonical facts',sessionId:root,projectId:null,originMessageId:null,createdAt:2});
   const mcp=createOperationMcpHandler(app.sessionManager.getOperationRegistry(),()=>({sessionId:root,role:'neo'}));
-  const input=(title:string,repo?:string)=>({askId:'work',title,check:{pack:'core',kind:'evidence',params:{}},...(repo?{named:{repository:repo}}:{})});
+  const input=(title:string,repo?:string)=>({ after: [],askId:'work',title,check:{pack:'core',kind:'evidence',params:{}},...(repo?{named:{repository:repo}}:{})});
   const call=async(name:string,input:unknown)=>{const reply=await mcp({name,input});assert(!reply.isError,JSON.stringify(reply));const receipt=JSON.parse(reply.content[0].text);assert(receipt.ok,JSON.stringify(receipt));return receipt;};
   const first=(await call('neo.todo.add',input('First','synthetic/one'))).todo as NeoTodo;
   assert.equal(recorded(first.id),'github.com/synthetic/one');assert(!('repo' in first));
@@ -87,7 +87,7 @@ async function phase(reopen:boolean){
   const edited=await call('neo.todo.edit',{todoId:first.id,title:'Updated'});assert(!('repo' in edited.todo));assert.equal(recorded(first.id),'github.com/synthetic/one');
   assert(!('repo' in (await visible()).entry.todos.find(t=>t.id===first.id)!));
   result.publicReceiptsAndIndependentGatewayReaders=true;result.homogeneousInheritanceAndNoDualWrites=true;
-  const watched=(await call('neo.todo.add',{askId:'work',title:'Watch canonical',check:{pack:'coding',kind:'pr_merged',params:{urls:['https://github.com/synthetic/watch/pull/1']}}})).todo as NeoTodo;
+  const watched=(await call('neo.todo.add',{ after: [],askId:'work',title:'Watch canonical',check:{pack:'coding',kind:'pr_merged',params:{urls:['https://github.com/synthetic/watch/pull/1']}}})).todo as NeoTodo;
   const inventory=new GitHubWatchInventory(db,new SessionEventSubscriptionRepository(db));assert(inventory.references('synthetic','watch'));assert(!inventory.references('synthetic','stale'));result.watcherUsesPackFact=true;
   const before=await visible();db.exec("CREATE TRIGGER refuse_pack BEFORE INSERT ON pack_coding_todos BEGIN SELECT RAISE(ABORT,'late pack failure'); END");
   recording=true;const failed=await mcp({name:'neo.todo.add',input:input('Fail after core insert','synthetic/failure')});recording=false;

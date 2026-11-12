@@ -101,11 +101,11 @@ function setup() {
       todos: NeoTodo[];
     };
   };
-  const step = (title: string, after?: (string | number)[]) => ({
+  const step = (title: string, after: (string | number)[] = []) => ({
     check: pendingTodoCheck,
     title,
     doneWhen: 'Result verified',
-    ...(after ? { after } : {}),
+    after,
   });
   const target = { verb: 'send' as const, ref: { adapter: 'hyperneo', id: 'w' } };
   const work = { target, instruction: 'Perform the approved step.' };
@@ -146,8 +146,8 @@ describe('todo approval', () => {
         request: 'A, then B, then C.',
         todos: [
           { ...step('A', []), ...work },
-          { ...step('B'), ...work },
-          { ...step('C'), ...work },
+          { ...step('B', [0]), ...work },
+          { ...step('C', [1]), ...work },
         ],
       });
       const [a, b, c] = opened.todos;
@@ -177,7 +177,7 @@ describe('todo approval', () => {
         request: 'A, then B.',
         todos: [
           { ...step('A', []), ...work, start: true },
-          { ...step('B'), ...work, start: true },
+          { ...step('B', [0]), ...work, start: true },
         ],
       });
       expect(opened).toMatchObject({ ok: true });

@@ -98,7 +98,10 @@ describe('core todo starts respect pack worker exclusions', () => {
     try {
       await world.open();
       const ask = world.store.listOpenAsks()[0];
-      adding = world.invoke('neo.todo.add', { askId: ask.id, ...world.draft('Pending start') });
+      adding = world.invoke('neo.todo.add', {
+        askId: ask.id,
+        ...world.draft('Pending start'),
+      });
       await called;
       const todo = world.store.listTodos(ask.id)[0];
       expect(todo).toMatchObject({ state: 'doing', blockedBy: null });

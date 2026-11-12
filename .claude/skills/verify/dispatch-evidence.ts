@@ -121,11 +121,11 @@ try {
         db.exec(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('${sessionId}','Synthetic Neo','/tmp','2026-10-20T00:00:00Z','2026-10-20T00:00:00Z','active','{}','{}')`);
         new NeoRepository(db).reserveBinding({ sessionId, kind: 'neo', projectId: null });
         new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-ask', projectId: null, sessionId, originMessageId: null, title: 'Synthetic evidence', request: 'Retain peer acknowledgement', createdAt: 1 });
-        const started = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic idle turn', doneWhen: 'Facts retained', instruction: 'Only a synthetic opening instruction', target: { verb: 'send', ref }, start: true });
+        const started = await invoke('neo.todo.add', { after: [], askId: 'synthetic-ask', title: 'Synthetic idle turn', doneWhen: 'Facts retained', instruction: 'Only a synthetic opening instruction', target: { verb: 'send', ref }, start: true });
         assert.equal(started.todo.state, 'doing', JSON.stringify(started.todo));
         todoId = started.todo.id;
         if (obligations) assert(beforeEffects.some(event => event.method === 'turn/start' && event.inputs.some(row => row.todo_id === todoId && row.outcome === null && event.message?.includes(String(row.message)))), 'durable accepted input must exist before external turn start');
-        const unconfirmed = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic inbox', doneWhen: 'Facts retained', instruction: 'Unconfirmed synthetic instruction', target: { verb: 'send', ref: { adapter: 'claude-code', id: cliSession } }, start: true });
+        const unconfirmed = await invoke('neo.todo.add', { after: [], askId: 'synthetic-ask', title: 'Synthetic inbox', doneWhen: 'Facts retained', instruction: 'Unconfirmed synthetic instruction', target: { verb: 'send', ref: { adapter: 'claude-code', id: cliSession } }, start: true });
         assert.equal(unconfirmed.todo.state, 'doing', JSON.stringify(unconfirmed.todo));
         unconfirmedId = unconfirmed.todo.id;
         if (obligations) assert(beforeEffects.some(event => event.method === 'claude/inbox' && event.inputs.some(row => row.todo_id === unconfirmedId && row.outcome === null)));

@@ -17,6 +17,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const draft = {
+  after: [],
   title: 'Fix it',
   doneWhen: 'Merged',
   check: pendingTodoCheck,

@@ -99,7 +99,7 @@ try {
   assert(place, JSON.stringify(found));
   const opened = await call('neo.ask.open', { title: 'Fictional seed library positioning', request: humanWords });
   assert(opened.ok, JSON.stringify(opened));
-  const added = await call('neo.todo.add', { askId: opened.ask.id, title: 'Focused positioning discussion', doneWhen: 'Prepared options discussed with the human', instruction: seed, target: { verb: 'start', adapter: 'hyperneo', place }, start: true });
+  const added = await call('neo.todo.add', { after: [], askId: opened.ask.id, title: 'Focused positioning discussion', doneWhen: 'Prepared options discussed with the human', instruction: seed, target: { verb: 'start', adapter: 'hyperneo', place }, start: true });
   assert(added.ok && added.todo.state === 'doing', JSON.stringify(added));
   const snapshot = await call('neo.snapshot');
   const entry = snapshot.todoAsks.find((entry: { ask: { id: string } }) => entry.ask.id === opened.ask.id);

@@ -124,6 +124,7 @@ describe('operation validation examples through MCP', () => {
         () => null
       ).find((op) => op.name === 'neo.todo.add')!;
       const { message } = await failure(operation.inputSchema, {
+        after: [],
         askId: 'synthetic',
         title: 'Example',
         doneWhen: 'Finished',

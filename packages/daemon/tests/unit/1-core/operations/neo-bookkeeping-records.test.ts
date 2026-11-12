@@ -111,6 +111,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
         request: 'Track its result',
         todos: [
           {
+            after: [],
             title: 'Worker task',
             check: pendingTodoCheck,
             instruction: 'Work',
@@ -162,6 +163,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       const before = h.store.listTodos(h.ask.id);
       expect(
         await h.call(name, {
+          after: [],
           check: pendingTodoCheck,
           askId: h.ask.id,
           todoId: h.todo.id,

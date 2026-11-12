@@ -6,6 +6,7 @@ const source = (path: string) =>
   readFileSync(new URL(`../../../../src/lib/${path}`, import.meta.url), 'utf8');
 const ref = { adapter: 'hyperneo' as const, id: 'synthetic-worker', daemon: 'synthetic-owner' };
 const draft = {
+  after: [],
   title: 'Synthetic work',
   check: { pack: 'core', kind: 'evidence', params: {} },
   instruction: null,

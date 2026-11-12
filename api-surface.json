@@ -21681,7 +21681,7 @@
             "items": {
               "properties": {
                 "after": {
-                  "description": "Earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts each step once everything it waits for is done.",
+                  "description": "Required. The earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] means it waits for nothing. The daemon starts each step once everything it waits for is done.",
                   "items": {
                     "anyOf": [
                       {
@@ -21917,7 +21917,8 @@
               },
               "required": [
                 "title",
-                "check"
+                "check",
+                "after"
               ],
               "type": "object"
             },
@@ -40288,7 +40289,7 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "after": {
-            "description": "Ids of todos in this ask this one waits for. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts it once everything it waits for is done.",
+            "description": "Required. Ids of the todos in this ask this one waits for. [] means it waits for nothing. The daemon starts it once everything it waits for is done.",
             "items": {
               "minLength": 1,
               "type": "string"
@@ -40525,7 +40526,8 @@
         },
         "required": [
           "title",
-          "check"
+          "check",
+          "after"
         ],
         "type": "object"
       },

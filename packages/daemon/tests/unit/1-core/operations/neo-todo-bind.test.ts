@@ -96,6 +96,7 @@ describe('bind an already running worker without dispatch', () => {
                 request: 'Give the worker a task',
                 todos: [
                   {
+                    after: [],
                     check: pendingTodoCheck,
                     title: 'Running work',
                     instruction: 'Do the task',
@@ -104,7 +105,7 @@ describe('bind an already running worker without dispatch', () => {
                 ],
               }
             : name === 'neo.todo.add'
-              ? { askId: 'ask', title: 'Running work', check: pendingTodoCheck, target }
+              ? { after: [], askId: 'ask', title: 'Running work', check: pendingTodoCheck, target }
               : { todoId: 'todo', instruction: 'Do the task', target };
         await expect(invoke(name, input)).rejects.toThrow(
           'bind is its own operation: use neo.todo.bind {todoId, ref} for work already running; to give a worker a new task use target {verb: send, ref}.'
@@ -123,7 +124,7 @@ describe('bind an already running worker without dispatch', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Observed worker',
         request: 'Track work',
-        todos: [{ title: 'Worker task', check: pendingTodoCheck }],
+        todos: [{ after: [], title: 'Worker task', check: pendingTodoCheck }],
       });
       const todoId = opened.todos[0].id;
       const result = await invoke('neo.todo.bind', { todoId, ref });
@@ -147,6 +148,7 @@ describe('bind an already running worker without dispatch', () => {
         request: 'Track work',
         todos: [
           {
+            after: [],
             check: pendingTodoCheck,
             title: 'Failed backfill',
             doneWhen: 'Result verified',
@@ -191,7 +193,9 @@ describe('bind an already running worker without dispatch', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Synthetic work',
         request: 'Track work',
-        todos: [{ check: pendingTodoCheck, title: 'Held step', doneWhen: 'Result verified' }],
+        todos: [
+          { after: [], check: pendingTodoCheck, title: 'Held step', doneWhen: 'Result verified' },
+        ],
       });
       const todo = opened.todos[0];
       await invoke('neo.todo.hold', { todoId: todo.id, reason: 'The human said wait.' });
@@ -210,7 +214,14 @@ describe('bind an already running worker without dispatch', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Synthetic work',
         request: 'Track work',
-        todos: [{ check: pendingTodoCheck, title: 'Waiting step', doneWhen: 'Result verified' }],
+        todos: [
+          {
+            after: [],
+            check: pendingTodoCheck,
+            title: 'Waiting step',
+            doneWhen: 'Result verified',
+          },
+        ],
       });
       const todo = opened.todos[0];
       await expect(

@@ -18,6 +18,7 @@ describe('Whole todo-add writer', () => {
   let store: NeoAskTodoRepository;
   let changes: string[];
   const draft = () => ({
+    after: [],
     title: 'Ship 🦊',
     check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/result' } },
     instruction: 'Do the whole job',

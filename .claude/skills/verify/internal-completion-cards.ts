@@ -59,7 +59,7 @@ try {
   store.openAsk({ id: 'synthetic-ask', sessionId: owner, projectId: null, originMessageId: null, title: 'Prepare the travel report', request: 'Prepare a synthetic report', createdAt: Date.now() });
   const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: owner, role: 'neo' }));
   async function add(title: string, params: Record<string, string>) {
-    const reply = JSON.parse((await invoke({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title, check: { pack: 'core', kind: 'evidence', params } } })).content[0].text);
+    const reply = JSON.parse((await invoke({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title, check: { pack: 'core', kind: 'evidence', params } } })).content[0].text);
     assert(reply.ok && reply.todo, JSON.stringify(reply));
     return reply.todo as NeoTodo;
   }

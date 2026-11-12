@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 
 const MARKER = 'verify-cross-repo';
-const pr = (repo: string, number: number) => ({
+const pr = (repo: string, number: number) => ({ after: [],
   title: `Attach lsm/${repo}#${number}`,
   doneWhen: `lsm/${repo}#${number} merged`,
   check: {
@@ -48,7 +48,7 @@ createServer(async (req, res) => {
   const ask = goalId ? {
     name: 'neo.ask.open',
     input: { title: 'Ship the goal guide', request: 'Publish the adapter guide', goalId,
-      todos: [{ title: 'Publish guide', doneWhen: 'Guide published', check: { pack: 'core', kind: 'evidence', params: {} } }] },
+      todos: [{ after: [], title: 'Publish guide', doneWhen: 'Guide published', check: { pack: 'core', kind: 'evidence', params: {} } }] },
   } : ASK;
   const block =
     invoke && (goalId || last.includes(MARKER)) && !toolResult

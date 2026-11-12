@@ -9,13 +9,7 @@ import {
 } from '../work-queue/dependency-plan.ts';
 
 export function neoTodoDependencyNodes(todos: readonly NeoTodo[]): DependencyNode[] {
-  return todos.map((todo) => {
-    if (todo.dependsOn) return { id: todo.id, dependsOn: todo.dependsOn };
-    const previous = todos
-      .filter((other) => other.askId === todo.askId && other.position < todo.position)
-      .sort((a, b) => b.position - a.position)[0];
-    return { id: todo.id, dependsOn: previous ? [previous.id] : [] };
-  });
+  return todos.map((todo) => ({ id: todo.id, dependsOn: todo.dependsOn ?? [] }));
 }
 
 export const neoTodoFinished = (todo: NeoTodo | undefined) =>

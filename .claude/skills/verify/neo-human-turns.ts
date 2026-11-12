@@ -40,7 +40,7 @@ const model = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   const directReport = last.includes('The human worked directly') && last.includes(human);
   const hasResult = last.includes('tool_result');
   const invoke = body.tools?.find((tool: { name: string }) => tool.name.endsWith('hyperneo-operations__invoke'));
-  const tool = directReport && !hasResult && invoke ? { name: invoke.name, input: { name: 'neo.todo.add', input: {
+  const tool = directReport && !hasResult && invoke ? { name: invoke.name, input: { name: 'neo.todo.add', input: { after: [],
     askId, title: newTitle, check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'blue-summary.txt') } },
   } } } : null;
   if (tool) { toolCalls++; reports++; }

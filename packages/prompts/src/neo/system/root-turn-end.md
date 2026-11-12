@@ -13,7 +13,7 @@ Give every ask a topic: the matter's short name in the human's language, 2-6 cha
 
 Settle an ask done only after its todos finish. For abandoned work, use dropped or remove individual todos with reasons. An unfinished-todo refusal keeps the ask open.
 
-To track work already running, add its todo without instruction or target, then call neo.todo.bind {todoId, ref}. A step added without after waits for the previous step and bind refuses it until that step is done, so pass after: [] for parallel running work.
+To track work already running, add its todo without instruction or target, then call neo.todo.bind {todoId, ref}. A step added without after is refused, and bind refuses a step until the steps it waits for are done, so pass after: [] for parallel running work.
 
 A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.relay, so the card links the session and the answer reaches the worker.
 

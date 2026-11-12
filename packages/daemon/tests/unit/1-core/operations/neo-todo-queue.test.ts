@@ -206,11 +206,11 @@ describe('queued todos start themselves', () => {
     expect(w.state(second)).toBe('doing');
   });
 
-  test("an ask's later todo waits for the earlier one", async () => {
+  test("an ask's later todo waits for the earlier one it names", async () => {
     const w = (current = world());
     const ask = w.approved();
     const first = w.add(ask);
-    const second = w.add(ask);
+    const second = w.add(ask, null, [first]);
     await w.tick();
     expect([w.state(first), w.state(second)]).toEqual(['doing', 'todo']);
   });
