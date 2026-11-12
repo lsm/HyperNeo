@@ -123,24 +123,15 @@ export function selectGitHubSpaceJoinedPollingRows(
 }
 
 export function countGitHubPollingIntentRows(db: Database): number {
-  let count = 0;
-  if (schemaTableExists(db, 'spaces') && schemaTableExists(db, GITHUB_SPACE_SETTINGS_TABLE)) {
-    const row = db
-      .prepare(
-        `SELECT COUNT(*) AS count FROM ${GITHUB_SPACE_SETTINGS_TABLE} s
+  if (!schemaTableExists(db, 'spaces') || !schemaTableExists(db, GITHUB_SPACE_SETTINGS_TABLE)) {
+    return 0;
+  }
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM ${GITHUB_SPACE_SETTINGS_TABLE} s
          JOIN spaces sp ON sp.id = s.space_id
          WHERE s.polling_intent = 1`
-      )
-      .get() as { count: number } | undefined;
-    count += row?.count ?? 0;
-  }
-  if (schemaTableExists(db, GITHUB_SESSION_SETTINGS_TABLE)) {
-    const row = db
-      .prepare(
-        `SELECT COUNT(*) AS count FROM ${GITHUB_SESSION_SETTINGS_TABLE} WHERE polling_intent = 1`
-      )
-      .get() as { count: number } | undefined;
-    count += row?.count ?? 0;
-  }
-  return count;
+    )
+    .get() as { count: number } | undefined;
+  return row?.count ?? 0;
 }

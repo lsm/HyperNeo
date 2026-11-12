@@ -119,6 +119,14 @@ describe('GitHub polling usage read commands', () => {
     expect(await timer()).toBe(true);
     expect(await capability()).toBe(false);
   });
+  test('unwatching the last session polling repo releases the capability despite stored intent', async () => {
+    insertWatchedRow(db, { id: 'session', space_id: SESSION_EVENT_SCOPE });
+    db.exec("INSERT INTO github_session_source_settings VALUES('sessions',1,1)");
+    expect(await capability()).toBe(true);
+    db.exec('DELETE FROM github_session_watched_repos');
+    expect(await capability()).toBe(false);
+    expect(await timer()).toBe(false);
+  });
   test('malformed configured cursors fail before a positive intent can short-circuit', async () => {
     insertWatchedRow(db, { enabled: 0, poll_cursor: '{broken' });
     db.exec("INSERT INTO space_github_source_settings VALUES('synthetic-space',1,1)");
