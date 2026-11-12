@@ -266,7 +266,9 @@ describe('mapAnthropicToolsToSdkTools', () => {
     writer.start(res, 'model');
     reg.setActiveResponse(writer, res);
 
-    const handlerResult = sdkTools[0].handler(
+    const handler = sdkTools[0].handler;
+    if (!handler) throw new Error('tool handler missing');
+    const handlerResult = handler(
       {},
       { sessionId: 's1', toolCallId: 'tc_img', toolName: 'screenshot', arguments: {} }
     ) as Promise<unknown>;

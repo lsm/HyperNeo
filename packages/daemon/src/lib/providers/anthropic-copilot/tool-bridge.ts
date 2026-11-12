@@ -1,6 +1,7 @@
-import type { Tool, ToolInvocation } from '@github/copilot-sdk';
+import type { Tool, ToolInvocation, ToolResultObject } from '@github/copilot-sdk';
 import type { ServerResponse } from 'node:http';
 import type { AnthropicTool } from './types.js';
+import type { BridgeImage } from './prompt.js';
 import { AnthropicStreamWriter } from './sse.js';
 
 const TOOL_RESULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -9,7 +10,7 @@ export class ToolBridgeRegistry {
   private pending = new Map<
     string,
     {
-      resolve: (result: { text: string; isError: boolean }) => void;
+      resolve: (result: { text: string; isError: boolean; images?: BridgeImage[] }) => void;
       reject: (err: Error) => void;
       timer: ReturnType<typeof setTimeout>;
     }
@@ -51,7 +52,7 @@ export class ToolBridgeRegistry {
     toolCallId: string,
     toolName: string,
     toolInput: unknown
-  ): Promise<{ text: string; isError: boolean }> {
+  ): Promise<{ text: string; isError: boolean; images?: BridgeImage[] }> {
     this.pendingEmissions.push({ toolCallId, toolName, toolInput });
 
     if (!this.flushScheduled) {
@@ -61,16 +62,18 @@ export class ToolBridgeRegistry {
       });
     }
 
-    return new Promise<{ text: string; isError: boolean }>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(toolCallId);
-        reject(new Error(`Tool call "${toolName}" (${toolCallId}) timed out waiting for result`));
-      }, TOOL_RESULT_TIMEOUT_MS);
-      timer.unref();
+    return new Promise<{ text: string; isError: boolean; images?: BridgeImage[] }>(
+      (resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pending.delete(toolCallId);
+          reject(new Error(`Tool call "${toolName}" (${toolCallId}) timed out waiting for result`));
+        }, TOOL_RESULT_TIMEOUT_MS);
+        timer.unref();
 
-      this.pending.set(toolCallId, { resolve, reject, timer });
-      this.onPendingToolCall?.(toolCallId);
-    });
+        this.pending.set(toolCallId, { resolve, reject, timer });
+        this.onPendingToolCall?.(toolCallId);
+      }
+    );
   }
 
   private flushEmissions(): void {
@@ -108,12 +111,17 @@ export class ToolBridgeRegistry {
     this.onToolUseEmitted?.(emissions.map((e) => e.toolCallId));
   }
 
-  resolveToolResult(toolCallId: string, result: string, isError = false): boolean {
+  resolveToolResult(
+    toolCallId: string,
+    result: string,
+    isError = false,
+    images?: BridgeImage[]
+  ): boolean {
     const pending = this.pending.get(toolCallId);
     if (!pending) return false;
     clearTimeout(pending.timer);
     this.pending.delete(toolCallId);
-    pending.resolve({ text: result, isError });
+    pending.resolve({ text: result, isError, images });
     return true;
   }
 
@@ -147,13 +155,17 @@ export function mapAnthropicToolsToSdkTools(
     parameters: tool.input_schema,
     overridesBuiltInTool: true,
     handler: async (args: unknown, invocation: ToolInvocation) => {
-      const { text, isError } = await registry.emitToolUseAndWait(
+      const { text, isError, images } = await registry.emitToolUseAndWait(
         invocation.toolCallId,
         tool.name,
         args
       );
+      const binaryResultsForLlm: ToolResultObject['binaryResultsForLlm'] = images?.length
+        ? images.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mediaType }))
+        : undefined;
       return {
         textResultForLlm: text,
+        ...(binaryResultsForLlm ? { binaryResultsForLlm } : {}),
         resultType: isError ? ('failure' as const) : ('success' as const),
       };
     },
