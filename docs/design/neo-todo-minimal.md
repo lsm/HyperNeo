@@ -10,7 +10,9 @@ A todo list is a simple thing, and this one stopped being simple. In real use:
 - A todo says it waits on the human, and no card exists for the human to answer.
 - A todo is parked with a written reason and nothing ever raises it again.
 - One stuck or removed step silently stops every step after it.
-- Every step waits for a Start answer, even when the human already said "go".
+- Approval is a second fact on every step. A step starts without asking only when Neo
+  adds it with `start: true`; a step added without it waits for a Start answer even when
+  the human already said "go", and some wait with no card at all.
 - One matter is opened as many asks, and one failure repeats on many todos, each with its own card.
 
 Two causes sit under all five.
@@ -59,9 +61,10 @@ The daemon enforces every rule. None depends on a prompt.
 
 **1. Start.** A todo starts by itself when its ask is open, it is `todo`, it has an
 instruction and a target, every todo in `depends_on` is `done`, no open card covers it,
-and a worker slot is free. There is no approval step and no Start card. When the human's
-word is needed first, Neo asks with a card; when the human already said to go, the work
-goes.
+and a worker slot is free. There is no approval fact and no Start card. Today
+`neo.todo.add` records approval when Neo passes `start: true`; here starting is the
+default and asking is the explicit act. When the human's word is needed first, Neo asks
+with a card; when the human already said to go, the work goes.
 
 A todo with a check and no instruction has nothing to run. Under the same conditions,
 without the instruction and the worker slot, it becomes `doing` with no worker, and the
@@ -87,7 +90,8 @@ daemon can finish a todo by itself; it never refuses a person.
 the removed todo; `remove` removes them too. When Neo cannot tell from the human's words,
 it leaves the field out and the daemon opens one card in the same write, covering the
 direct dependents, with those two options and a free reply. Later steps stay queued behind
-them.
+them. A removed todo that names a live replacement (`replaced_by`) hands its dependents to
+it instead, as `neoTodoDependenciesAfterApproval` does today.
 
 **5. Hold.** Holding is a card, not a state. Hold on an unstarted todo opens a card with
 the reason and the options Start and Remove. Pause on a running todo stops its worker and
@@ -96,7 +100,8 @@ opens the same card with Resume. An unanswered card is the hold.
 **6. Every live todo has a place.** A live todo is in exactly one of three places:
 
 - **Waiting on you:** an open card covers it.
-- **Queued:** it is `todo` with no card, held back only by prerequisites or worker capacity.
+- **Queued:** it is `todo` with no card, held back only by worker capacity or by
+  prerequisites that can still finish. A `removed` prerequisite cannot.
 - **Running:** it is `doing` with no card, and a worker is live on it, the daemon is
   retrying it, or its check is being polled.
 
@@ -194,6 +199,9 @@ Nothing may start on deploy that the human had not approved, and nothing may be 
 - `closed_unverified` becomes `done`.
 - A todo with no `depends_on` gets the nearest earlier todo of its ask that is not
   `removed`, so plans in flight keep their order.
+- A stored `depends_on` edge to a `removed` todo moves to that todo's live replacement.
+  With no replacement, the dependents get the rule 4 card: today they wait for a
+  `neo.todo.proceed` that may never come, and the human has not said they may go on.
 - An open Start card becomes a yes/no card covering the same todos. An unapproved,
   unstarted todo on no card gets one.
 - `todo_id` and `start_todos` are copied into `todos`.
