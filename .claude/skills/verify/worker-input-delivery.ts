@@ -222,9 +222,27 @@ try {
   assert.equal(changedRefusalReports.length, 1);
   assert.equal(messages(root).filter((text) => text.includes(refusal)).length, 1);
   evidence.changedRefusal = { input: changedRefusal, reports: changedRefusalReports };
+  await app.jobProcessor.stop();
+  const unkeyedWaitId = await app.db.gateway.call(workerInputWrites, 'accept', { ref: { adapter: 'synthetic-waiting-recovery', id: 'synthetic-waiting-worker' }, message: 'Retain the changing unkeyed wait' }, `session:${root}`, caller);
+  const priorWaitingDetail = 'Prior synthetic waiting diagnostic';
+  const priorWaitingNotice = await invokeOperation(app.sessionManager.getOperationRegistry(), 'message.send', { to: root, kind: 'blocked', text: priorWaitingDetail, idempotencyKey: `worker-input:${unkeyedWaitId}:waiting` }, { source: 'internal' });
+  assert(priorWaitingNotice.kind === 'completed' && (priorWaitingNotice.value as { kind: string }).kind === 'accepted');
+  app.jobProcessor.start();
+  const unkeyedWaitJob = () => app.jobQueue.listJobs({ queue: 'worker_input' }).find((job) => job.payload.inputId === unkeyedWaitId)!;
+  await until(() => unkeyedWaitJob().payload.waitReported === true, 'the new unkeyed diagnostic is reported after a legacy notice acknowledgement was lost');
+  const currentWaitingDetail = unkeyedWaitJob().error!;
+  assert.notEqual(currentWaitingDetail, priorWaitingDetail);
+  await until(() => messages(root).some((text) => text.includes(currentWaitingDetail)) && messages(root).some((text) => text.includes(priorWaitingDetail)), 'Neo receives both waiting diagnostics');
+  wakeInputs();
+  const unkeyedWaitRunAt = unkeyedWaitJob().runAt;
+  await until(() => unkeyedWaitJob().runAt > unkeyedWaitRunAt, 'the retained unkeyed input waits again after acknowledgement');
+  assert.equal(messages(root).filter((text) => text.includes(priorWaitingDetail)).length, 1);
+  assert.equal(messages(root).filter((text) => text.includes(currentWaitingDetail)).length, 1);
+  assert.equal(inputs().find((input) => input.id === unkeyedWaitId)?.outcome, null);
+  evidence.unkeyedWaiting = { input: inputs().find((input) => input.id === unkeyedWaitId), job: unkeyedWaitJob(), priorWaitingDetail, currentWaitingDetail };
   evidence.port = app.server.port;
   evidence.passed = true;
-  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length, refusalReports: refusalReports.length, exhaustedReports: exhaustedReports.length, initialBindings: 1, changedRefusalReports: changedRefusalReports.length, ordinaryWaitReports: ordinaryWaitReports.length }));
+  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length, refusalReports: refusalReports.length, exhaustedReports: exhaustedReports.length, initialBindings: 1, changedRefusalReports: changedRefusalReports.length, ordinaryWaitReports: ordinaryWaitReports.length, unkeyedWaitNotices: 2 }));
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

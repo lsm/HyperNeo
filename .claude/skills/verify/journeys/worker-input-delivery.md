@@ -80,3 +80,8 @@ Report identities include the failure text for a submission. Repeated identical
 refusals share one notice, and a changed reason receives its own notice. The proof
 changes the synthetic retired worker from missing to archived with the same answer
 key and requires both reasons in Neo's inbox with all attempts settled.
+
+Unkeyed wait-report identities also include the diagnostic text. The proof seeds
+a legacy accepted notice to represent a lost acknowledgement, then requires the
+actual queued input to report its new diagnostic once and remain pending after
+another wait cycle. The unit fixture loses a report reply before the detail changes.

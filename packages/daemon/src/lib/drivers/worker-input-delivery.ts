@@ -58,13 +58,13 @@ export function createWorkerInputDelivery(
     return { ...stored, status };
   };
   type Facts = Awaited<ReturnType<typeof read>>;
-  const reportId = (facts: Facts, detail: string) =>
-    facts.payload.idempotencyKey
+  const reportId = (facts: Facts, detail: string, phase: 'failure' | 'waiting' = 'failure') =>
+    facts.payload.idempotencyKey || phase === 'waiting'
       ? neoDerivedId(
           JSON.stringify([
             'worker-input-report',
             facts.payload.from,
-            facts.payload.idempotencyKey,
+            facts.payload.idempotencyKey ?? facts.payload.inputId,
             detail,
           ])
         )
@@ -140,7 +140,11 @@ export function createWorkerInputDelivery(
       let reported = false;
       if (plan.report && !facts.payload.waitReported) {
         try {
-          await report(`${reportId(facts, plan.detail)}:waiting`, plan.detail, facts.payload.from);
+          await report(
+            `${reportId(facts, plan.detail, 'waiting')}:waiting`,
+            plan.detail,
+            facts.payload.from
+          );
           reported = true;
         } catch {
           reported = false;
