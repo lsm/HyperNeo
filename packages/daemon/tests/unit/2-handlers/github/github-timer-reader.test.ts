@@ -133,11 +133,11 @@ describe('Public polling timer callback reader wiring', () => {
         { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
-        fullOwnedGraphLines: 201,
+        fullOwnedGraphLines: 165,
         excludedLines: 0,
         caller: {
           name: 'space.github.setPollingEnabled',
-          lines: 27,
+          lines: 28,
           onlyAwaitedTimerCallChanged: true,
         },
       });

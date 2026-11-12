@@ -34,6 +34,9 @@ describe('GitHub polling query extraction', () => {
       "CREATE TABLE spaces(id TEXT PRIMARY KEY); INSERT INTO spaces VALUES('a-space'),('z-space')"
     );
     createWatchedTable(db);
+    db.exec(
+      'CREATE TABLE space_github_source_settings(space_id TEXT PRIMARY KEY,enabled INTEGER,polling_intent INTEGER,filter_current_user INTEGER,created_at INTEGER,updated_at INTEGER)'
+    );
     repo = new GitHubEventExtensionRepository(db);
     for (const [id, space, enabled, polling, owner] of [
       ['active', 'a-space', 1, 1, 'Z'],
@@ -79,12 +82,12 @@ describe('GitHub polling query extraction', () => {
         { cwd: root }
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
-        fullOwnedGraphLines: 150,
+        fullOwnedGraphLines: 76,
         excludedLines: 0,
         netPrepare: 0,
         netRun: 0,
-        completeHelper: { lines: 56 },
-        completeMapper: { lines: 44 },
+        completeHelper: { lines: 25 },
+        completeMapper: { lines: 38 },
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -130,7 +133,7 @@ describe('GitHub polling query extraction', () => {
     try {
       empty.exec('PRAGMA query_only=ON');
       expect(r.countGitHubSpacesWithPollingIntent(empty)).toBe(0);
-      expect(() => r.listGitHubPollingRepos(empty)).toThrow(/no such table/);
+      expect(r.listGitHubPollingRepos(empty)).toEqual([]);
       expect(r.listGitHubPollingConfiguredRepos(empty)).toEqual([]);
       expect(empty.prepare('SELECT name FROM sqlite_master').all()).toEqual([]);
     } finally {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { GitHubEventExtensionRepository } from '../../../../src/lib/external-events/github/github-repository';
+import { createSpaceGitHubTables } from '../../../../src/storage/schema/space-github';
 
 type Readers = {
   readGitHubSpaceEnabled: (db: Database, spaceId: string) => boolean;
@@ -26,6 +27,7 @@ describe('GitHub Space settings read extraction', () => {
     db.exec(
       'CREATE TABLE spaces(id TEXT PRIMARY KEY); CREATE TABLE space_github_watched_repos(space_id TEXT, polling_enabled INTEGER)'
     );
+    createSpaceGitHubTables(db);
     repo = new GitHubEventExtensionRepository(db);
   });
   afterEach(() => db.close());
@@ -94,27 +96,23 @@ describe('GitHub Space settings read extraction', () => {
       scratch.close();
     }
   });
-  test('helper failures preserve the existing query error', async () => {
+  test('helpers and repository return scope defaults when the settings table is missing', async () => {
     const r = await readers();
     db.exec('DROP TABLE space_github_source_settings');
-    const message = (read: () => unknown) => {
-      let failure: unknown;
-      try {
-        read();
-      } catch (error) {
-        failure = error;
-      }
-      expect(failure).toBeInstanceOf(Error);
-      return (failure as Error).message;
-    };
-    expect(message(() => r.readGitHubSpaceEnabled(db, 'missing'))).toEqual(
-      message(() => repo.isSpaceEnabled('missing'))
-    );
-    expect(message(() => r.readGitHubPollingIntent(db, 'missing'))).toEqual(
-      message(() => repo.getPollingIntent('missing'))
-    );
-    expect(message(() => r.readGitHubFilterCurrentUser(db, 'missing'))).toEqual(
-      message(() => repo.getFilterCurrentUser('missing'))
-    );
+    expect([
+      r.readGitHubSpaceEnabled(db, 'missing'),
+      r.readGitHubPollingIntent(db, 'missing'),
+      r.readGitHubFilterCurrentUser(db, 'missing'),
+    ]).toEqual([true, false, true]);
+    expect([
+      repo.isSpaceEnabled('missing'),
+      repo.getPollingIntent('missing'),
+      repo.getFilterCurrentUser('missing'),
+    ]).toEqual([true, false, true]);
+    expect([
+      r.readGitHubSpaceEnabled(db, 'sessions'),
+      r.readGitHubPollingIntent(db, 'sessions'),
+      r.readGitHubFilterCurrentUser(db, 'sessions'),
+    ]).toEqual([true, false, true]);
   });
 });

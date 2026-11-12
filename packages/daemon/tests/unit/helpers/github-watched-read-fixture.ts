@@ -67,13 +67,17 @@ export const mappedWatchedRow = {
   updatedAt: 18,
 };
 export function createWatchedTable(db: Database): void {
-  db.exec(
-    'CREATE TABLE space_github_watched_repos(' +
-      Object.entries(watchedColumns)
-        .map(([name, type]) => name + ' ' + type)
-        .join(',') +
-      ')'
-  );
+  const ddl =
+    '(' +
+    Object.entries(watchedColumns)
+      .map(([name, type]) => name + ' ' + type)
+      .join(',') +
+    ')';
+  db.exec('CREATE TABLE IF NOT EXISTS space_github_watched_repos' + ddl);
+  db.exec('CREATE TABLE IF NOT EXISTS github_session_watched_repos' + ddl);
+}
+function watchedTableFor(spaceId: unknown): string {
+  return spaceId === 'sessions' ? 'github_session_watched_repos' : 'space_github_watched_repos';
 }
 export function insertWatchedRow(
   db: Database,
@@ -82,7 +86,9 @@ export function insertWatchedRow(
   const row = { ...watchedRow, ...overrides },
     keys = Object.keys(row);
   db.prepare(
-    'INSERT INTO space_github_watched_repos(' +
+    'INSERT INTO ' +
+      watchedTableFor(row.space_id) +
+      '(' +
       keys.join(',') +
       ') VALUES(' +
       keys.map(() => '?').join(',') +

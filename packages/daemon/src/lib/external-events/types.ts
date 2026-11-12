@@ -111,7 +111,12 @@ export interface SpaceExternalEventSourceConfig {
 export interface ExternalEventExtensionContext {
   publisher: ExternalEventPublisher;
   config: ExternalEventExtensionConfigStore;
-  onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }): void;
+  onSourceConfigChanged(change: {
+    source: string;
+    spaceId?: string;
+    kind: string;
+    tables?: string[];
+  }): void;
 }
 
 export interface ExternalEventExtensionConfigStore {

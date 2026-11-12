@@ -35,6 +35,9 @@ describe('GitHub polling usage read commands', () => {
       "CREATE TABLE spaces(id TEXT PRIMARY KEY);INSERT INTO spaces VALUES('synthetic-space');CREATE TABLE space_github_source_settings(space_id TEXT PRIMARY KEY,enabled INTEGER,polling_intent INTEGER)"
     );
     createWatchedTable(db);
+    db.exec(
+      'CREATE TABLE github_session_source_settings(space_id TEXT PRIMARY KEY,enabled INTEGER,polling_intent INTEGER)'
+    );
     gateway = new DbGateway(':memory:', db);
   });
   afterEach(async () => {
@@ -66,8 +69,8 @@ describe('GitHub polling usage read commands', () => {
         { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
-        fullOwnedGraphLines: 147,
-        knownTotal: 154,
+        fullOwnedGraphLines: 110,
+        knownTotal: 117,
         excludedLines: 0,
       });
     } finally {
@@ -114,7 +117,15 @@ describe('GitHub polling usage read commands', () => {
     expect(await capability()).toBe(false);
     db.exec('DROP TABLE space_github_source_settings');
     expect(await timer()).toBe(true);
-    await expect(capability()).rejects.toThrow(/no such table/);
+    expect(await capability()).toBe(false);
+  });
+  test('unwatching the last session polling repo releases the capability despite stored intent', async () => {
+    insertWatchedRow(db, { id: 'session', space_id: SESSION_EVENT_SCOPE });
+    db.exec("INSERT INTO github_session_source_settings VALUES('sessions',1,1)");
+    expect(await capability()).toBe(true);
+    db.exec('DELETE FROM github_session_watched_repos');
+    expect(await capability()).toBe(false);
+    expect(await timer()).toBe(false);
   });
   test('malformed configured cursors fail before a positive intent can short-circuit', async () => {
     insertWatchedRow(db, { enabled: 0, poll_cursor: '{broken' });

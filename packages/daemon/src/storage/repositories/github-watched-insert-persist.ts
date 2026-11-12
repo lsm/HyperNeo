@@ -1,5 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 import type { GitHubEventExtensionRepository } from '../../lib/external-events/github/github-repository.ts';
+import { requireGitHubScopeTable } from './github-scope.ts';
 type Params = Parameters<GitHubEventExtensionRepository['upsertWatchedRepo']>[0];
 
 export function persistGitHubWatchedRepoInsert(
@@ -9,8 +10,9 @@ export function persistGitHubWatchedRepoInsert(
   spaceEnabled: boolean,
   now: number
 ): void {
+  const table = requireGitHubScopeTable(db, params.spaceId);
   db.prepare(
-    `INSERT INTO space_github_watched_repos
+    `INSERT INTO ${table}
 					 (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, webhook_secret, webhook_remote_id, webhook_url,
 					  webhook_auto_registered, webhook_active, webhook_last_checked_at, webhook_last_error, webhook_configured_at, created_at, updated_at)
 					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`

@@ -16,6 +16,10 @@ import { runMigration260 } from '../../../src/storage/schema/m260-direct-start-r
 import { createSessionIncarnationTable } from '../../../src/storage/schema/m290-session-incarnations';
 import { createSessionCounters } from '../../../src/storage/schema/session-counters';
 import { createSpaceSessionEventSubscriptionTables } from '../../../src/storage/schema/space-session-event-subscriptions';
+import {
+  createSpaceGitHubIndexes,
+  createSpaceGitHubTables,
+} from '../../../src/storage/schema/space-github';
 import { createTaskMessageRows } from '../../../src/storage/schema/task-message-rows';
 import { runMigration419 } from '../../../src/storage/schema/m419-task-message-body-triggers';
 import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
@@ -23,6 +27,8 @@ import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat
 
 export function createSpaceTables(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = ON');
+  createSpaceGitHubTables(db);
+  createSpaceGitHubIndexes(db);
   runMigration248(db);
   runMigration250(db);
   runMigration251(db);

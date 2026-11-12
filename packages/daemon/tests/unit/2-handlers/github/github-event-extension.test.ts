@@ -2,6 +2,7 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
+import { createSpaceGitHubTables } from '../../../../src/storage/schema/space-github';
 import { ExternalEventService, type ExternalEvent } from '../../../../src/lib/external-events';
 import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
@@ -9230,7 +9231,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
-  test('constructor backfills polling intent from existing polling-enabled repos', async () => {
+  test('schema init backfills polling intent from existing polling-enabled repos', async () => {
     const db = setupDb();
     db.prepare(
       `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
@@ -9243,6 +9244,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
        VALUES (?, 'space-1', 'acme', 'widgets', 1, 1, 1, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, 1, 1)`
     ).run('repo-1');
 
+    createSpaceGitHubTables(db);
     const extension = new GitHubEventExtension(db);
     expect(extension.repo.getPollingIntent('space-1')).toBe(true);
     await extension.stop();

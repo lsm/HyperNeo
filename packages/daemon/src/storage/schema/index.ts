@@ -127,6 +127,7 @@ import {
   registerSchemaExtension,
 } from './extensions.ts';
 import { prepareCodingTodoStorage } from '../../lib/neo/packs/coding/schema/coding-tables.ts';
+import { createGitHubSessionIndexes, createGitHubSessionTables } from './github-session-schema.ts';
 
 registerSchemaExtension({ id: 'coding-todos', tables: prepareCodingTodoStorage });
 
@@ -348,63 +349,6 @@ export function createTables(db: BunDatabase): void {
     `);
 
   db.exec(`
-      CREATE TABLE IF NOT EXISTS space_github_watched_repos (
-        id TEXT PRIMARY KEY,
-        space_id TEXT NOT NULL,
-        owner TEXT NOT NULL,
-        repo TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        webhook_enabled INTEGER NOT NULL DEFAULT 1,
-        polling_enabled INTEGER NOT NULL DEFAULT 0,
-        webhook_secret TEXT,
-        webhook_remote_id INTEGER,
-        webhook_url TEXT,
-        webhook_auto_registered INTEGER NOT NULL DEFAULT 0,
-        webhook_active INTEGER,
-        webhook_last_checked_at INTEGER,
-        webhook_last_error TEXT,
-        webhook_configured_at INTEGER,
-        last_webhook_at INTEGER,
-        last_poll_at INTEGER,
-        poll_cursor TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        UNIQUE(space_id, owner, repo)
-      )
-    `);
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS space_github_events (
-        id TEXT PRIMARY KEY,
-        space_id TEXT NOT NULL,
-        task_id TEXT,
-        source TEXT NOT NULL CHECK(source IN ('webhook', 'polling')),
-        delivery_id TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        action TEXT NOT NULL,
-        repo_owner TEXT NOT NULL,
-        repo_name TEXT NOT NULL,
-        pr_number INTEGER NOT NULL,
-        pr_url TEXT NOT NULL,
-        actor TEXT NOT NULL,
-        actor_type TEXT NOT NULL,
-        body TEXT NOT NULL DEFAULT '',
-        summary TEXT NOT NULL DEFAULT '',
-        external_url TEXT NOT NULL DEFAULT '',
-        external_id TEXT NOT NULL DEFAULT '',
-        occurred_at INTEGER NOT NULL,
-        dedupe_key TEXT NOT NULL,
-        raw_payload TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'received' CHECK(state IN ('received', 'processed', 'ignored', 'ambiguous', 'routed', 'delivered', 'failed')),
-        matched_by TEXT,
-        confidence TEXT,
-        route_note TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        UNIQUE(space_id, dedupe_key)
-      )
-    `);
-
-  db.exec(`
       CREATE TABLE IF NOT EXISTS session_groups (
         id TEXT PRIMARY KEY,
         group_type TEXT NOT NULL DEFAULT 'task',
@@ -577,6 +521,7 @@ export function createTables(db: BunDatabase): void {
 	    `);
 
   createSessionAgentIndexes(db);
+  createGitHubSessionTables(db);
   createExtensionTables(db);
   createSessionCounters(db);
   backfillSessionCounters(db);
@@ -622,15 +567,6 @@ function createIndexes(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
       ON sdk_messages(task_id, session_id, conversation_turn_index) WHERE task_id IS NOT NULL`);
 
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_space_github_watched_repo_lookup ON space_github_watched_repos(owner, repo, enabled)`
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_space_github_events_task ON space_github_events(task_id, occurred_at)`
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_space_github_events_repo ON space_github_events(space_id, repo_owner, repo_name, pr_number)`
-  );
   db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
@@ -683,6 +619,7 @@ function createIndexes(db: BunDatabase): void {
   );
   runMigration422(db);
   runMigration425(db);
+  createGitHubSessionIndexes(db);
   createNeoPackPreferencesTable(db);
   runMigration428(db);
   runMigration429(db);

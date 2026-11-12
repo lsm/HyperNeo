@@ -128,7 +128,7 @@ try {
     topicPattern: 'github/synthetic/watch/pull_request/8.*',
   });
   evidence.watched = raw
-    .prepare('SELECT space_id, owner, repo, enabled, polling_enabled FROM space_github_watched_repos')
+    .prepare('SELECT space_id, owner, repo, enabled, polling_enabled FROM github_session_watched_repos')
     .all();
   assert.equal(evidence.watched.length, 1);
 
@@ -136,7 +136,7 @@ try {
   writeFileSync(join(run, 'phase'), 'review');
   evidence.reviewPoll = await hub.request('space.github.pollOnce', {});
   evidence.pollCursor = raw
-    .prepare('SELECT poll_cursor FROM space_github_watched_repos')
+    .prepare('SELECT poll_cursor FROM github_session_watched_repos')
     .all();
   evidence.events = raw.prepare('SELECT id, topic, summary FROM session_external_events').all();
   for (let attempt = 0; attempt < 50; attempt++) {

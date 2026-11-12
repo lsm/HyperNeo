@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createSpaceGitHubTables } from '../../../../src/storage/schema/space-github';
 import {
   GitHubEventExtensionRepository,
   type PollCursor,
@@ -31,6 +32,7 @@ describe('GitHub cursor persistence extraction', () => {
     db = new Database(':memory:');
     db.exec('CREATE TABLE spaces(id TEXT PRIMARY KEY)');
     createWatchedTable(db);
+    createSpaceGitHubTables(db);
     repo = new GitHubEventExtensionRepository(db);
     insertWatchedRow(db);
     insertWatchedRow(db, { id: 'synthetic-peer', space_id: 'another-space' });
@@ -116,7 +118,7 @@ describe('GitHub cursor persistence extraction', () => {
     const invalid = { toJSON: serialize } as unknown as PollCursor;
     const clock = vi.spyOn(Date, 'now');
     try {
-      expect(() => persist(scratch, 'synthetic-one', invalid)).toThrow(/no such table/);
+      persist(scratch, 'synthetic-one', invalid);
       expect(serialize).not.toHaveBeenCalled();
       expect(clock).not.toHaveBeenCalled();
       expect(

@@ -4,6 +4,7 @@ import { runMigration504 } from './m504-neo-front-input-owner-backfill.ts';
 import { runMigration506 } from './m506-neo-todo-stored-prerequisites.ts';
 import { runMigration503 } from './m503-neo-front-input-catch-up.ts';
 import { runMigration502 } from './m502-neo-question-todos.ts';
+import { runMigration505 } from './m505-github-session-scope.ts';
 import { runMigration499 } from './m499-pairing-requests.ts';
 import { runMigration498 } from './m498-session-external-event-topic-index.ts';
 import { runMigration497 } from './m497-neo-front-search.ts';
@@ -1044,6 +1045,7 @@ export function runMigrations(
   run(migrationMarkerKey(502), () => runMigration502(db));
   run(migrationMarkerKey(503), () => runMigration503(db));
   run(migrationMarkerKey(504), () => runMigration504(db));
+  run(migrationMarkerKey(505), () => runMigration505(db));
   run(migrationMarkerKey(506), () => runMigration506(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);

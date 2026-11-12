@@ -3,6 +3,7 @@ import type {
   GitHubWatchedRepo,
   PollCursor,
 } from '../../lib/external-events/github/github-repository.ts';
+import { selectGitHubWatchedRows } from './github-scope.ts';
 
 export function mapGitHubWatchedRepo(row: Record<string, unknown>): GitHubWatchedRepo {
   return {
@@ -33,12 +34,5 @@ export function mapGitHubWatchedRepo(row: Record<string, unknown>): GitHubWatche
 }
 
 export function listGitHubWatchedRepos(db: Database, spaceId?: string): GitHubWatchedRepo[] {
-  const rows = spaceId
-    ? (db
-        .prepare(`SELECT * FROM space_github_watched_repos WHERE space_id = ? ORDER BY owner, repo`)
-        .all(spaceId) as Record<string, unknown>[])
-    : (db
-        .prepare(`SELECT * FROM space_github_watched_repos ORDER BY space_id, owner, repo`)
-        .all() as Record<string, unknown>[]);
-  return rows.map((r) => mapGitHubWatchedRepo(r));
+  return selectGitHubWatchedRows(db, spaceId).map(mapGitHubWatchedRepo);
 }

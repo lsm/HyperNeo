@@ -157,16 +157,16 @@ describe('Public watch timer callback reader wiring', () => {
       );
       const report = JSON.parse(readFileSync(output, 'utf8'));
       expect(report).toMatchObject({
-        fresh: 159,
-        excludedLines: 100,
-        knownTotal: 259,
-        caller: { name: 'space.github.watchRepo', lines: 85, reviewedWatchBridgesOnly: true },
+        fresh: 160,
+        excludedLines: 63,
+        knownTotal: 223,
+        caller: { name: 'space.github.watchRepo', lines: 86, reviewedWatchBridgesOnly: true },
       });
       expect(
         report.data.filter((row: { auditedStable: boolean }) => row.auditedStable)
       ).toMatchObject([
-        { lines: 56, sha256: '39618e09a7cd70b7325cf31b205eb221f338ebe58ff6ea50bebef49a22b28d06' },
-        { lines: 44, sha256: '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95' },
+        { lines: 25, sha256: '220a093bb172a2d4c160242c862a1fa310384dffbc422180a8055fed56f2d8e9' },
+        { lines: 38, sha256: 'f41326de1acc9416d313230f3144405d21638e8c6d846149431558a26f883165' },
       ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

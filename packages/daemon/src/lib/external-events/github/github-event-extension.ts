@@ -1,4 +1,5 @@
 import { gitHubWatchPollingWrite } from '../../../storage/repositories/github-watch-polling-write.ts';
+import { gitHubWatchedTableForScope } from '../../../storage/repositories/github-scope.ts';
 import { gitHubWatchedConfigWrite } from '../../../storage/repositories/github-watched-config-write.ts';
 import { gitHubWatchedRepoRead } from '../../../storage/repositories/github-watched-repo-read.ts';
 import { gitHubPollingTimerReads } from '../../../storage/repositories/github-polling-usage-read.ts';
@@ -382,6 +383,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         source: this.sourceId,
         spaceId: params.spaceId,
         kind: 'space_enabled',
+        tables: [gitHubWatchedTableForScope(params.spaceId)],
       });
       return { spaceId: params.spaceId, source: this.sourceId, enabled: true };
     });
@@ -401,6 +403,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         source: this.sourceId,
         spaceId: params.spaceId,
         kind: 'space_disabled',
+        tables: [gitHubWatchedTableForScope(params.spaceId)],
       });
       return { spaceId: params.spaceId, source: this.sourceId, enabled: false };
     });
@@ -484,6 +487,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         source: this.sourceId,
         spaceId: watchedRepo.spaceId,
         kind: 'watched_repo_changed',
+        tables: [gitHubWatchedTableForScope(watchedRepo.spaceId)],
       });
       return {
         watchedRepo: this.sanitizeWatchedRepo(watchedRepo),
@@ -512,6 +516,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         source: this.sourceId,
         spaceId: watchedRepo.spaceId,
         kind: 'watched_repo_changed',
+        tables: [gitHubWatchedTableForScope(watchedRepo.spaceId)],
       });
       return {
         watchedRepo: this.sanitizeWatchedRepo(watchedRepo),
@@ -563,6 +568,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         source: this.sourceId,
         spaceId: params.spaceId,
         kind: 'watched_repo_removed',
+        tables: [gitHubWatchedTableForScope(params.spaceId)],
       });
       return { removed };
     });
@@ -668,6 +674,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         source: this.sourceId,
         spaceId: params.spaceId,
         kind: 'watched_repo_changed',
+        tables: [gitHubWatchedTableForScope(params.spaceId)],
       });
       return { spaceId: params.spaceId, pollingEnabled: params.enabled };
     });
@@ -689,6 +696,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         source: this.sourceId,
         spaceId: params.spaceId,
         kind: 'watched_repo_changed',
+        tables: [gitHubWatchedTableForScope(params.spaceId)],
       });
       return { spaceId: params.spaceId, filterCurrentUser: params.enabled };
     });
