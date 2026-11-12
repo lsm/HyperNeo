@@ -116,15 +116,15 @@ export class WorkerInputJobs {
     return { ...row, failure, payload, ref, closed, head, todo };
   }
 
-  wait(job: Job, detail: string, reported = false): void {
+  wait(job: Job, detail: string | null, reported = false, delayMs = 60_000): void {
     const waiting = new JobQueueRepository(this.db).requeueWaiting(
       job.id,
-      Date.now() + 60_000,
+      Date.now() + delayMs,
       job.claimToken!
     );
     if (waiting)
       this.db
-        .prepare(`UPDATE job_queue SET error = ?, payload = CASE WHEN ?
+        .prepare(`UPDATE job_queue SET error = COALESCE(?, error), payload = CASE WHEN ?
           THEN json_set(payload, '$.waitReported', json('true')) ELSE payload END WHERE id = ?`)
         .run(detail, reported ? 1 : 0, job.id);
   }

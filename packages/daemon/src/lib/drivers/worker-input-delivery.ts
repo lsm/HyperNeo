@@ -199,7 +199,7 @@ export function createWorkerInputDelivery(
   let active = false;
   const run = async (job: Job) => {
     if (active) {
-      await gateway.call(workerInputWrites, 'wait', job, 'Waiting for the input dispatcher.');
+      await gateway.call(workerInputWrites, 'wait', job, null, false, 1000);
       return { waiting: 'dispatcher' };
     }
     active = true;

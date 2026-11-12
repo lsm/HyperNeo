@@ -52,3 +52,7 @@ leaves one blocked notice in Neo's inbox. The proof checks two refused attempts.
 
 Steering remains immediate for its owning todo. The admission regression checks
 that a worker running or queued on another todo retains the existing busy refusal.
+
+Dispatcher contention uses a one-second retry and preserves the stored worker
+wait reason. The concurrency regression blocks one worker's status read while
+a second worker is claimed, then checks its pending job deadline and reason.
