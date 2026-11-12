@@ -420,44 +420,57 @@ describe('schedule target lifecycle and external delivery', () => {
       factsDigest: null,
     });
   });
-  test('a queued worker input keeps its schedule unconfirmed and its source baseline intact', async () => {
-    const { scheduler, row, job } = create('codex-desktop');
-    let commits = 0;
-    scheduler.registerSource({
-      kind: 'reminder',
-      facts: async () => ({
-        digest: 'reminder',
-        summary: 'Check release',
-        commit: () => {
-          commits++;
-        },
-      }),
-      message: (_id, change) => change.summary,
-    });
-    const registry = createOperationRegistry([
-      defineOperation({
-        name: 'work.send',
-        description: 'Synthetic queued input',
-        inputSchema: z.unknown(),
-        resultSchema: z.unknown(),
-        execute: async () => ({
-          ok: true,
-          value: { delivered: false, inputId: 'synthetic-pending-input' },
+  test.each(['codex-desktop', 'claude-desktop', 'claude-code'])(
+    'a durably queued %s wake advances its source baseline once',
+    async (adapter) => {
+      const { scheduler, row, job } = create(adapter);
+      let sends = 0;
+      let commits = 0;
+      scheduler.registerSource({
+        kind: 'reminder',
+        facts: async () => ({
+          digest: 'reminder',
+          summary: 'Check release',
+          commit: () => {
+            commits++;
+          },
         }),
-      }),
-    ]);
-    const result = await createSessionScheduleFire({
-      scheduler,
-      status: async () => 'done',
-      deliver: createScheduleDelivery(db, () => registry).deliver,
-    })(job);
-    expect(result).toEqual({ outcome: 'skipped_delivery_unconfirmed' });
-    expect(scheduler.repo.get(row.id)).toMatchObject({
-      status: 'active',
-      factsDigest: null,
-      lastOutcome: 'skipped_delivery_unconfirmed',
-      pendingJobId: expect.any(String),
-    });
-    expect(commits).toBe(0);
-  });
+        message: (_id, change) => change.summary,
+      });
+      const registry = createOperationRegistry([
+        defineOperation({
+          name: 'work.send',
+          description: 'Synthetic queued input',
+          inputSchema: z.unknown(),
+          resultSchema: z.unknown(),
+          execute: async () => {
+            sends++;
+            return { ok: true, value: { delivered: false, inputId: 'synthetic-pending-input' } };
+          },
+        }),
+      ]);
+      const handler = createSessionScheduleFire({
+        scheduler,
+        status: async () => 'done',
+        deliver: createScheduleDelivery(db, () => registry).deliver,
+      });
+      const result = await handler(job);
+      expect(result).toEqual({ outcome: 'fired' });
+      expect(scheduler.repo.get(row.id)).toMatchObject({
+        status: 'active',
+        factsDigest: 'reminder',
+        lastOutcome: 'fired',
+        pendingJobId: expect.any(String),
+      });
+      expect(commits).toBe(1);
+      for (let cadence = 0; cadence < 2; cadence++) {
+        const next = scheduler.repo.get(row.id)!;
+        expect(await handler(db.getJobQueueRepo().getJob(next.pendingJobId!)!)).toEqual({
+          outcome: 'skipped_unchanged',
+        });
+      }
+      expect(sends).toBe(1);
+      expect(commits).toBe(1);
+    }
+  );
 });

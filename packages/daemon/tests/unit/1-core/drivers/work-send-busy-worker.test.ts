@@ -10,7 +10,7 @@ import {
 const ref = { adapter: 'codex-desktop', id: 'synthetic-worker' };
 const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'synthetic-neo' };
 
-function fixture(status: string, adapterId = ref.adapter) {
+function fixture(status: string, adapterId = ref.adapter, ownsWorker = true) {
   const reached: string[] = [];
   const saved: string[] = [];
   const send = async (_ref: unknown, message: string) => {
@@ -31,6 +31,13 @@ function fixture(status: string, adapterId = ref.adapter) {
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'synthetic',
+      todoWorker: {
+        on: () => ownsWorker,
+        wait: async (_todoId, _ref, message) => {
+          saved.push(message);
+          return 'message';
+        },
+      },
       queueInput: async (input) => {
         saved.push(input.message);
         return 'synthetic-input';
@@ -84,6 +91,27 @@ describe('local Neo follow-up admission', () => {
     expect(h.reached).toHaveLength(1);
     expect(h.saved).toEqual([]);
   });
+
+  test.each(['running', 'queued'])(
+    'steering refuses a %s worker owned by another todo',
+    async (status) => {
+      const h = fixture(status, 'codex-desktop', false);
+      const reply = await invokeOperation(
+        h.registry,
+        'work.send',
+        {
+          ref,
+          message: 'Correct now',
+          todoId: 'synthetic-other-todo',
+          mode: 'steer',
+        },
+        neo
+      );
+      expect(reply).toMatchObject({ value: { ok: false, reason: 'worker_busy', notSent: true } });
+      expect(h.reached).toEqual([]);
+      expect(h.saved).toEqual(['Correct now']);
+    }
+  );
 
   test('a human send reaches the existing adapter path', async () => {
     const h = fixture('running');
