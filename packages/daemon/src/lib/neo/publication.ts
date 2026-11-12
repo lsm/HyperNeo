@@ -64,6 +64,7 @@ export const NeoPublicationObject = z
     languageMismatch: text(120).optional(),
     requestedLanguage: text(60).optional(),
     revisionId: z.uuid().optional(),
+    publishedBy: z.enum(['front', 'neo']).optional(),
     revisions: z
       .array(
         z
