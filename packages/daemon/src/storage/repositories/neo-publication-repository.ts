@@ -363,17 +363,6 @@ export class NeoPublicationRepository {
   list(conversationId: string, after = 0, limit = 50, before?: number): NeoPublication[] | null {
     return readPage({ conversationId, after, limit, before }, this.db);
   }
-
-  listRecent(conversationId: string, limit: number): NeoPublication[] {
-    return (
-      this.db
-        .prepare(
-          `SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
-          ORDER BY sequence DESC LIMIT ?`
-        )
-        .all(conversationId, limit) as Row[]
-    ).map(decode);
-  }
 }
 
 export const neoPublicationWrites = defineRepositoryOp(

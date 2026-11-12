@@ -236,7 +236,7 @@ describe('Neo publication ledger', () => {
       '2026-10-16T10:00:00.000Z'
     );
     expect(repo.get(input.conversationId, input.publicationId)).toMatchObject(input);
-    expect(repo.listRecent(input.conversationId, 10)).toHaveLength(1);
+    expect(repo.list(input.conversationId)).toHaveLength(1);
     expect(repo.get(input.conversationId, input.publicationId)).not.toHaveProperty('interim');
     expect(repo.get(input.conversationId, input.publicationId)).not.toHaveProperty('corrects');
   });
