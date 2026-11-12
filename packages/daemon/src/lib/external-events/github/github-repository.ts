@@ -22,7 +22,6 @@ import {
 } from '../../../storage/repositories/github-space-settings-read.ts';
 import { persistGitHubSpaceEnabled } from '../../../storage/repositories/github-space-enabled-persist.ts';
 import {
-  GITHUB_SESSION_SCOPE,
   GITHUB_SESSION_WATCHED_TABLE,
   GITHUB_SPACE_WATCHED_TABLE,
   gitHubWatchedSource,
@@ -150,16 +149,6 @@ export class GitHubEventExtensionRepository {
   removeWatchedRepo(spaceId: string, owner: string, repo: string): boolean {
     const table = gitHubWatchedTableForScope(spaceId);
     if (!schemaTableExists(this.db, table)) return false;
-    if (
-      spaceId === GITHUB_SESSION_SCOPE &&
-      schemaTableExists(this.db, GITHUB_SPACE_WATCHED_TABLE)
-    ) {
-      this.db
-        .prepare(
-          `DELETE FROM ${GITHUB_SPACE_WATCHED_TABLE} WHERE space_id = ? AND lower(owner)=lower(?) AND lower(repo)=lower(?)`
-        )
-        .run(spaceId, owner, repo);
-    }
     return (
       this.db
         .prepare(

@@ -1,9 +1,6 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import { schemaTableExists } from './extensions.ts';
 
 const SESSION_SCOPE = 'sessions';
-const LEGACY_WATCHED_TABLE = 'space_github_watched_repos';
-const LEGACY_MIRROR_MARKER = 'github_session_watched_legacy_mirror';
 
 export const GITHUB_SESSION_WATCHED_COLUMNS: Array<{ name: string; fallback: string }> = [
   { name: 'id', fallback: `''` },
@@ -69,75 +66,6 @@ export function githubRowsEqual(
   return columns.every(({ name }) => incoming[name] === existing[name]);
 }
 
-function reconcileSessionWatchedKeys(db: BunDatabase): void {
-  db.exec(
-    `CREATE TABLE IF NOT EXISTS migration_markers (
-      key TEXT PRIMARY KEY,
-      applied_at INTEGER NOT NULL
-    )`
-  );
-  if (!schemaTableExists(db, LEGACY_WATCHED_TABLE)) {
-    db.prepare(`DELETE FROM migration_markers WHERE key = ?`).run(LEGACY_MIRROR_MARKER);
-    return;
-  }
-  const rows = legacyGitHubSessionRows(db, LEGACY_WATCHED_TABLE, GITHUB_SESSION_WATCHED_COLUMNS);
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO github_session_watched_repos
-       (${GITHUB_SESSION_WATCHED_COLUMNS.map((c) => c.name).join(', ')})
-     VALUES (${GITHUB_SESSION_WATCHED_COLUMNS.map(() => '?').join(', ')})`
-  );
-  db.transaction(() => {
-    for (const row of rows) {
-      insert.run(...GITHUB_SESSION_WATCHED_COLUMNS.map((c) => row[c.name] as never));
-    }
-    const mirrored = db
-      .prepare(`SELECT 1 FROM migration_markers WHERE key = ?`)
-      .get(LEGACY_MIRROR_MARKER);
-    if (mirrored) {
-      db.prepare(
-        `DELETE FROM github_session_watched_repos
-           WHERE space_id = '${SESSION_SCOPE}'
-             AND NOT EXISTS (
-               SELECT 1 FROM ${LEGACY_WATCHED_TABLE} l
-               WHERE l.space_id = '${SESSION_SCOPE}'
-                 AND lower(l.owner) = lower(github_session_watched_repos.owner)
-                 AND lower(l.repo) = lower(github_session_watched_repos.repo)
-             )`
-      ).run();
-      return;
-    }
-    const present = githubTableColumns(db, LEGACY_WATCHED_TABLE);
-    const columns = GITHUB_SESSION_WATCHED_COLUMNS.map((c) => c.name).filter((name) =>
-      present.has(name)
-    );
-    const sessionRows = db
-      .prepare(
-        `SELECT ${columns.join(', ')} FROM github_session_watched_repos
-         WHERE space_id = '${SESSION_SCOPE}'`
-      )
-      .all() as Record<string, unknown>[];
-    const mirror = db.prepare(
-      `INSERT INTO ${LEGACY_WATCHED_TABLE} (${columns.join(', ')})
-       SELECT ${columns.map(() => '?').join(', ')}
-       WHERE NOT EXISTS (
-         SELECT 1 FROM ${LEGACY_WATCHED_TABLE}
-         WHERE space_id = '${SESSION_SCOPE}' AND lower(owner) = lower(?) AND lower(repo) = lower(?)
-       )`
-    );
-    for (const row of sessionRows) {
-      mirror.run(
-        ...columns.map((name) => row[name] as never),
-        row.owner as never,
-        row.repo as never
-      );
-    }
-    db.prepare(`INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
-      LEGACY_MIRROR_MARKER,
-      Date.now()
-    );
-  })();
-}
-
 export function createGitHubSessionTables(db: BunDatabase): void {
   db.exec(`
       CREATE TABLE IF NOT EXISTS github_session_watched_repos (
@@ -174,7 +102,6 @@ export function createGitHubSessionTables(db: BunDatabase): void {
         updated_at INTEGER NOT NULL
       )
     `);
-  reconcileSessionWatchedKeys(db);
 }
 
 export function createGitHubSessionIndexes(db: BunDatabase): void {

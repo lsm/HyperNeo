@@ -209,12 +209,14 @@ describe('database schema equivalence', () => {
 
   test('fresh space github creation keeps the column order stored on existing databases', () => {
     const fresh = new Database(':memory:');
+    const booted = new Database(':memory:');
     const stored = new Database(':memory:');
     try {
       stored.exec(
         readFileSync(new URL('./fixtures/schema-baseline/v0.41.0.sql', import.meta.url), 'utf8')
       );
       createSpaceGitHubTables(fresh);
+      migrate(booted);
       const columns = (db: Database, table: string) =>
         (db.prepare('SELECT name FROM pragma_table_info(?)').all(table) as { name: string }[]).map(
           (row) => row.name
@@ -223,8 +225,15 @@ describe('database schema equivalence', () => {
         columns(stored, 'space_github_watched_repos')
       );
       expect(columns(fresh, 'space_github_events')).toEqual(columns(stored, 'space_github_events'));
+      expect(columns(booted, 'space_github_watched_repos')).toEqual(
+        columns(stored, 'space_github_watched_repos')
+      );
+      expect(columns(booted, 'space_github_events')).toEqual(
+        columns(stored, 'space_github_events')
+      );
     } finally {
       fresh.close();
+      booted.close();
       stored.close();
     }
   });

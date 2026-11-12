@@ -201,9 +201,9 @@ describe('GitHub polling RPC writer wiring', () => {
       const measured = JSON.parse(readFileSync(output, 'utf8'));
       expect(measured).toMatchObject({
         phase: 'wired',
-        fresh: 167,
+        fresh: 161,
         dataExcluded: 282,
-        ownedKnown: 449,
+        ownedKnown: 443,
         interfaceLines: 67,
       });
       expect(measured.data).toHaveLength(7);
