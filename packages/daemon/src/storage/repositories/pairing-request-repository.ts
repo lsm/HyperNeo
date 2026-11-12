@@ -4,6 +4,7 @@ import type { Database } from '../sqlite-compat.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import {
   decidePairingComplete,
+  verifyBoundCancel,
   newBindNonce,
   newTicket,
   PAIRING_REQUEST_TTL_MS,
@@ -197,6 +198,57 @@ export class PairingRequestRepository {
     );
   }
 
+  cancelBoundRequest(
+    requestId: string,
+    signature: string,
+    now: number
+  ): 'cancelled' | 'granted' | 'not_pending' {
+    return this.db.transaction(() => {
+      const row = this.rowById(requestId);
+      if (!row || row.bindNonce === null || row.phoneKey === null) return 'not_pending';
+      if (row.grantedAt !== null) return 'granted';
+      if (row.deniedAt !== null || row.cancelledAt !== null) return 'not_pending';
+      if (row.expiresAt <= now) return 'not_pending';
+      if (!verifyBoundCancel(row.phoneKey, requestId, row.bindNonce, signature)) {
+        return 'not_pending';
+      }
+      return this.db
+        .prepare(
+          `UPDATE pairing_requests SET cancelled_at = ?, expires_at = ?
+           WHERE id = ? AND granted_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL`
+        )
+        .run(now, now, requestId).changes > 0
+        ? 'cancelled'
+        : 'not_pending';
+    })();
+  }
+
+  pendingForApproval(now: number): {
+    requestId: string;
+    name: string | null;
+    phoneKey: string;
+    bindNonce: string;
+    expiresAt: number;
+  }[] {
+    return this.db
+      .prepare(
+        `SELECT id AS requestId, name, phone_key AS phoneKey, bind_nonce AS bindNonce,
+           expires_at AS expiresAt
+         FROM pairing_requests
+         WHERE granted_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL
+           AND approved_at IS NULL AND bound_at IS NOT NULL AND expires_at > ?
+           AND first_device = 0
+         ORDER BY created_at ASC`
+      )
+      .all(now) as {
+      requestId: string;
+      name: string | null;
+      phoneKey: string;
+      bindNonce: string;
+      expiresAt: number;
+    }[];
+  }
+
   cancelOpenRequests(now: number): void {
     this.db
       .prepare(
@@ -293,7 +345,13 @@ export const pairingRequestReads = defineRepositoryOp(
   'pairing.request.read',
   'read',
   PairingRequestRepository,
-  ['requestStatus', 'ownerCount', 'activePhoneCount', 'firstDeviceOpen'] as const
+  [
+    'requestStatus',
+    'ownerCount',
+    'activePhoneCount',
+    'firstDeviceOpen',
+    'pendingForApproval',
+  ] as const
 );
 
 export const pairingRequestWrites = defineRepositoryOp(
@@ -306,6 +364,7 @@ export const pairingRequestWrites = defineRepositoryOp(
     'approveRequest',
     'denyRequest',
     'cancelRequest',
+    'cancelBoundRequest',
     'completeRequest',
   ] as const
 );

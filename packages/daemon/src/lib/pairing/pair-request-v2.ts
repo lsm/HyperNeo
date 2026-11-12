@@ -70,12 +70,10 @@ export function decidePairingComplete(
   return { action: 'grant', owner: row.grantsOwner };
 }
 
-export function verifyPhoneProof(
-  phoneKey: string,
-  requestId: string,
-  bindNonce: string,
-  signatureB64: string
-): boolean {
+export const cancelMessage = (requestId: string, bindNonce: string) =>
+  `cancel:${requestId}:${bindNonce}`;
+
+function verifySignature(phoneKey: string, message: string, signatureB64: string): boolean {
   try {
     const raw = Buffer.from(phoneKey, 'base64url');
     if (raw.length !== 32) return false;
@@ -84,13 +82,22 @@ export function verifyPhoneProof(
       format: 'der',
       type: 'spki',
     });
-    return verify(
-      null,
-      Buffer.from(proofMessage(requestId, bindNonce), 'utf8'),
-      key,
-      Buffer.from(signatureB64, 'base64url')
-    );
+    return verify(null, Buffer.from(message, 'utf8'), key, Buffer.from(signatureB64, 'base64url'));
   } catch {
     return false;
   }
 }
+
+export const verifyBoundCancel = (
+  phoneKey: string,
+  requestId: string,
+  bindNonce: string,
+  signatureB64: string
+): boolean => verifySignature(phoneKey, cancelMessage(requestId, bindNonce), signatureB64);
+
+export const verifyPhoneProof = (
+  phoneKey: string,
+  requestId: string,
+  bindNonce: string,
+  signatureB64: string
+): boolean => verifySignature(phoneKey, proofMessage(requestId, bindNonce), signatureB64);
