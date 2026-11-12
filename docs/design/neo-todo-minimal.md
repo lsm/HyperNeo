@@ -141,8 +141,34 @@ pack and no prompt takes part. It is the same for every kind of work. This stays
 - The limit holds back new starts only. A started todo that an answer sends on continues
   at once and counts against the limit from then.
 
+Both limits are settings (`maxRunningTodos`, `maxRunningTodosPerProject`), read each time
+the queue fills, so a change applies without a restart. The per-project number is one
+value for every project. Today nothing in the app sets them; a control in Neo's settings
+comes with the human controls.
+
 Priority stays on the todo with its four levels. Neo sets it from the human's words, and
 the human can change it.
+
+## How it is built
+
+Every rule above is a pure function over recorded facts, run inside one superpipe pipeline
+per business path ([ADR 0004](../adr/0004-superpipe-pipelines.md)). This is the point of
+the design, not a detail of it: a rule that lives in a prompt, a reminder or hand-written
+control flow is the thing being removed.
+
+- **Decisions are pure.** A decision takes facts and returns a plan. It reads nothing and
+  writes nothing. The place of a todo (rule 6), which todos start (`planWorkQueue`), what
+  a remove does to its dependents (rule 4), which card to open and for which todos
+  (rule 7), and the migration of one ask are each one such function.
+- **Effects sit at the edges.** Database writes, card creation, worker starts and stops,
+  and wakes come after the decision. A state change and its card are one write, so a
+  failure leaves both or neither.
+- **One pipeline per path,** named for its operation (`neo.todo.done`, `neo.todo.remove`).
+  No path gets a second pipeline or a hand-rolled gate cascade, and rejections use the
+  `result:` gate shape.
+- **Each fact is recorded once.** Waiting comes from cards, order from `depends_on`.
+- **Tests need no model.** Each slice is accepted on unit tests of its pure functions,
+  facts in and plan out, before it is wired.
 
 ## Cards the daemon opens
 
@@ -253,7 +279,7 @@ Each slice is its own issue under one epic and is measured before it is cut.
 | 5 | Automatic start | An added todo with met prerequisites starts with no Start card; a migrated Start card keeps its per-todo answer |
 | 6 | The daemon's cards | A blocker Neo ignores, a twice-failed start and an overdue check each end in exactly one card |
 | 7 | One ask per matter | A second ask for the same pull request is refused with the first one's id |
-| 8 | Human controls | Done, Cancel, Hold and priority work from the list |
+| 8 | Human controls | Done, Cancel, Hold and priority work from the list; the two limits are set in Neo's settings |
 | 9 | Deletion | No removed state, column, operation or prompt is left |
 
 ## Earlier designs
