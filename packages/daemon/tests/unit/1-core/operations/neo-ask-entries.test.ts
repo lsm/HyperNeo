@@ -577,7 +577,13 @@ describe('NeoTodoSessionRepository.readLinks', () => {
 
 describe('neoWorkCounts', () => {
   test('counts a todo waiting on a cancelled prerequisite once', () => {
-    const stalled = { id: 'both', askId: 'a', state: 'blocked', blockedBy: 'stalled' } as const;
+    const stalled = {
+      id: 'both',
+      askId: 'a',
+      state: 'blocked',
+      blockedBy: 'stalled',
+      startedAt: 5,
+    } as const;
     expect(neoWorkCounts([stalled], [], [{ id: 'both' }, { id: 'waiting' }])).toEqual({
       needsYou: 0,
       neoUnhandled: 2,

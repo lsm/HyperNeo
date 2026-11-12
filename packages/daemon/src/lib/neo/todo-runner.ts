@@ -1012,7 +1012,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const notice = dispatch && 'todoId' in dispatch && dispatch.todoId === null;
       if (dispatch && (notice || !('todoId' in dispatch) || dispatch.todoId === id)) {
         const reportTodo = store.getTodo(todo.id) ?? todo;
-        const questions = store.listQuestions(ask.id);
+        const questions = store.todoCards(reportTodo);
         await deliverNeoTurnReport(
           ask,
           reportTodo,
@@ -1043,7 +1043,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       ...(prior?.live ? { live: prior.live } : {}),
     });
   };
-  const awaitsHuman = (todo: NeoTodo) => neoTodoAwaitsHuman(todo, store.listQuestions(todo.askId));
+  const awaitsHuman = (todo: NeoTodo) => neoTodoAwaitsHuman(todo, store.todoCards(todo));
   const waitOnHuman = (superpipe({})('neo.todo.wait-on-human') as PipelineAPI)
     .input(['todo', 'now'])
     .pipe(

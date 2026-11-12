@@ -18,8 +18,9 @@ import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { neoDerivedId } from '../../lib/neo/derived-id.ts';
 import {
-  NEO_TODO_STALLED_CARD_TAIL,
   neoAskQuestionHolds,
+  neoQuestionCoversTodo,
+  neoTodoAwaitsHuman,
   recomputeTodoState,
   recomputeTodoStateAsync,
   type TodoStateFacts,
@@ -333,11 +334,11 @@ export class NeoAskTodoRepository {
   openWorkFacts() {
     const todos = this.db
       .prepare(
-        `SELECT t.id, t.ask_id AS askId, t.state, t.blocked_by AS blockedBy
+        `SELECT t.id, t.ask_id AS askId, t.state, t.blocked_by AS blockedBy, t.started_at AS startedAt
          FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
-         WHERE t.state = 'blocked' AND a.status = 'open'`
+         WHERE t.state IN ('todo', 'doing', 'blocked', 'failed') AND a.status = 'open'`
       )
-      .all() as Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy'>[];
+      .all() as Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy' | 'startedAt'>[];
     const questions = (
       this.db
         .prepare(
@@ -722,6 +723,7 @@ export class NeoAskTodoRepository {
       todo.blockedBy === 'needs-human'
         ? new NeoTodoSessionRepository(this.db).readNudge(todo.id)?.blockerReport?.triagedAt
         : undefined;
+    const cards = this.todoCards(todo);
     return {
       todo,
       change,
@@ -735,18 +737,18 @@ export class NeoAskTodoRepository {
         todo.blockedBy === 'needs-human' &&
         this.questionAnswers.pending().some((route) => route.todoId === todo.id),
       askOpen: this.getAsk(todo.askId)?.status === 'open',
-      order: this.db
-        .prepare(
-          `SELECT id, state, started_at AS startedAt,
-            EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_todos.ask_id AND q.state = 'open'
-              AND EXISTS (SELECT 1 FROM json_each(q.todos) WHERE value = neo_todos.id)) AS questionOpen
-           FROM neo_todos WHERE ask_id = ? ORDER BY position, created_at`
-        )
-        .all(todo.askId) as TodoStateFacts['order'],
-      questionOpen: !!this.db
-        .prepare(`SELECT 1 FROM neo_questions WHERE ask_id = ? AND state = 'open'
-        AND text NOT LIKE ? AND EXISTS (SELECT 1 FROM json_each(todos) WHERE value = ?) LIMIT 1`)
-        .get(todo.askId, `%${NEO_TODO_STALLED_CARD_TAIL}`, todo.id),
+      order: (
+        this.db
+          .prepare(
+            `SELECT id, state, started_at AS startedAt FROM neo_todos
+             WHERE ask_id = ? ORDER BY position, created_at`
+          )
+          .all(todo.askId) as Pick<NeoTodo, 'id' | 'state' | 'startedAt'>[]
+      ).map((row) => ({
+        ...row,
+        questionOpen: Number(cards.some((card) => neoQuestionCoversTodo(card, row))),
+      })),
+      questionOpen: neoTodoAwaitsHuman(todo, cards),
       dispatched: !!live?.ref || todo.startedAt !== null,
       live: live?.status ?? null,
     };
@@ -1178,6 +1180,11 @@ export class NeoAskTodoRepository {
 
   gateQuestions(ask: NeoAsk): NeoQuestion[] {
     return this.listQuestionsForAsks(ask.parentId ? [ask.parentId, ask.id] : [ask.id]);
+  }
+
+  todoCards(todo: Pick<NeoTodo, 'askId'>): NeoQuestion[] {
+    const ask = this.getAsk(todo.askId);
+    return ask ? this.gateQuestions(ask) : [];
   }
 
   private pruneQuestions(askId: string, now: number): void {

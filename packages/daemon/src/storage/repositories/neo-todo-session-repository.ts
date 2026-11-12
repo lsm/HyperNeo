@@ -349,10 +349,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       context.todo.updatedAt !== updatedAt ||
       JSON.stringify(context.ref) !== JSON.stringify(ref) ||
       live.status === 'queued' ||
-      neoTodoAwaitsHuman(
-        context.todo,
-        new NeoAskTodoRepository(this.db).listQuestions(context.todo.askId)
-      )
+      neoTodoAwaitsHuman(context.todo, new NeoAskTodoRepository(this.db).todoCards(context.todo))
     )
       return null;
     const since = Math.max(
