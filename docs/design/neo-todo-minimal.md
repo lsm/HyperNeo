@@ -49,7 +49,9 @@ covers it.** The web, the counts and the runner all read that one fact.
 
 A card has one relation to todos: `todos`, the list it covers. A card with an empty list
 is a question about the ask itself. A todo has at most one open card; a new reason
-replaces the card (`replaced_by`), so the human never sees two cards for one step.
+replaces the card (`replaced_by`), so the human never sees two cards for one step. A todo
+that becomes `done` or `removed` leaves its card's list, and a card that covered todos and
+now covers none is retired.
 
 ## Rules
 
@@ -60,6 +62,10 @@ instruction and a target, every todo in `depends_on` is `done`, no open card cov
 and a worker slot is free. There is no approval step and no Start card. When the human's
 word is needed first, Neo asks with a card; when the human already said to go, the work
 goes.
+
+A todo with a check and no instruction has nothing to run. Under the same conditions,
+without the instruction and the worker slot, it becomes `doing` with no worker, and the
+runner's check pass (`listCheckable`, then the pack's `check`) polls it as it does today.
 
 **2. Dependencies are explicit.** Only `depends_on` holds a todo back. `position` is
 display order. `neo.todo.add` requires `after`; `[]` means it waits for nothing.
@@ -72,7 +78,8 @@ display order. `neo.todo.add` requires `after`; `[]` means it waits for nothing.
 
 **3. Done.** The human or Neo may mark any live todo `done`, without evidence and
 whatever its check says. A plan changes, and a step that is no longer needed is simply
-done. Its worker stops, its card is retired, its dependents start. A check exists so the
+done. Its worker stops, it leaves its card, its dependents start. A card shared with
+other todos stays open for them. A check exists so the
 daemon can finish a todo by itself; it never refuses a person.
 
 **4. Remove.** Removing a todo that has live dependents needs an answer for them.
