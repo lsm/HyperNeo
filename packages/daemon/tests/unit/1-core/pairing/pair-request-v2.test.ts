@@ -246,6 +246,25 @@ describe('pairing v2 one-time request repository', () => {
     expect(devices.redeem(peer.code, 'Recovery peer', now)).not.toBeNull();
   });
 
+  test('a later phone completion keeps an approved legacy code usable', async () => {
+    const existing = seedPhone();
+    const legacy = devices.createCode('human', 'Legacy peer', true, now);
+    const made = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(made.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+    expect(await approveRequest(made.requestId, existing)).toBe('approved');
+    const done = await completeRequest(
+      made.requestId,
+      phone.publicKeyB64,
+      proof(phone, made.requestId, bound.bindNonce)
+    );
+    expect(done.ok).toBe(true);
+    if (!done.ok) return;
+    expect(done.owner).toBe(false);
+    expect(devices.pairRequest(legacy.code, now)).toMatchObject({ approved: true });
+  });
+
   test('an expired request cannot be bound, approved or completed', async () => {
     const existing = seedPhone();
     const made = await createRequest();

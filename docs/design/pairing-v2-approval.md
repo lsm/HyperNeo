@@ -19,4 +19,6 @@ The approve route refuses first-device requests: they never appear as approvable
 and completing one after another phone has paired returns `superseded`. Legacy
 typed-code pairing remains available and shares the same atomic active-phone
 check inside its grant transaction: if either path grants the first device, the
-other path refuses its outstanding first-device attempt.
+other path refuses its outstanding first-device attempt. A first-device grant
+also un-approves unused human pairing codes; a later-device completion leaves
+them alone.

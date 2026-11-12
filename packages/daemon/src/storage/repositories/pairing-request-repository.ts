@@ -237,11 +237,13 @@ export class PairingRequestRepository {
         .run(now, requestId, now);
       if (claimed.changes === 0) return { ok: false as const, reason: 'used' as const };
       const devices = new DevicePairingRepository(this.db);
-      if (step.owner) devices.cancelFirstDeviceRequests(now);
+      if (step.owner) {
+        devices.cancelFirstDeviceRequests(now);
+        this.db
+          .prepare('UPDATE pairing_codes SET approved_at = NULL WHERE kind = ? AND used_at IS NULL')
+          .run('human');
+      }
       devices.closeHumanRecovery(now);
-      this.db
-        .prepare('UPDATE pairing_codes SET approved_at = NULL WHERE kind = ? AND used_at IS NULL')
-        .run('human');
       this.db
         .prepare(
           `INSERT INTO paired_devices (id, name, kind, secret_hash, created_at, owner)
