@@ -132,14 +132,22 @@ card is settled by the daemon after Neo has had one turn to write its outcome.
 core: `planWorkQueue` in `packages/daemon/src/lib/work-queue/` is a pure function, and no
 pack and no prompt takes part. It is the same for every kind of work. This stays as it is:
 
-- At most 6 todos run in total and 3 per project, by default (`neoTodoLimits`).
-- A slot is held only by a todo whose worker is live. A todo covered by an open card
-  holds none, so work waiting on the human never stops other work from starting. A todo
-  that only waits on its check holds none either.
-- Queued todos start in priority order (`urgent`, `high`, `normal`, `low`), then oldest
-  first (`orderWork`).
-- The limit holds back new starts only. A started todo that an answer sends on continues
-  at once and counts against the limit from then.
+- The limits are on admission: they decide whether a queued todo may start. By default
+  the queue admits a start while fewer than 6 todos hold a slot in total and fewer than 3
+  in its project (`neoTodoLimits`).
+- A todo holds a slot from the moment the queue claims it (`claimStart` writes `doing`
+  before the worker is reached) until its worker has failed or is confirmed stopped
+  (`workerIdle`). A card neither holds nor frees a slot. A todo waiting on the human frees
+  its slot once its worker has stopped, so work waiting on the human does not keep other
+  work from starting; a paused todo whose worker is still stopping still counts.
+- A todo that only waits on its check never holds a slot.
+- Queued todos are admitted in priority order (`urgent`, `high`, `normal`, `low`), then
+  oldest first (`orderWork`).
+- A started todo that an answer sends on is not admitted again. It continues at once and
+  holds a slot from then, so running work can pass a limit for a while; nothing new is
+  admitted until the count is back under.
+- Fills run one after another (`createWorkQueue`), so a fill that overlaps a stop sees the
+  slot as held until the stop is confirmed.
 
 Both limits are settings (`maxRunningTodos`, `maxRunningTodosPerProject`), read each time
 the queue fills, so a change applies without a restart. The per-project number is one
@@ -236,9 +244,17 @@ come in a later slice; Neo's operations cover the same actions first.
 
 Nothing may start on deploy that the human had not approved, and nothing may be lost.
 
-- `blocked` becomes `todo` if it never started, otherwise `doing`. If no open card covers
-  it, the migration opens one with the stored `blocked_reason` as its text. This covers
-  `needs-human`, `held`, `stalled`, `environment`, `failure`, `check` and `worker`.
+Each hold or approval a todo carries today gets its own card, unless an open card already
+encodes that same decision: a Start card that lists the todo encodes its approval, and a
+question with its `todo_id` encodes its question or blocker. Being covered by some other
+card, such as an ask-level question, does not count. Answering that card leaves the todo
+held by its own.
+
+- `blocked` becomes `todo` if it never started, otherwise `doing`. Unless a question with
+  its `todo_id` is open, the migration opens a card with the stored `blocked_reason` as
+  its text. This covers `needs-human`, `stalled`, `environment`, `failure`, `check` and
+  `worker`. A `held` todo always gets its hold card (rule 5), since no card encodes a hold
+  today.
 - `failed` in an open ask becomes `doing` with a rule 7 card; in a settled ask it becomes
   `removed` and keeps its reason.
 - `closed_unverified` becomes `done` if it had started and `removed` if it never started,
@@ -261,10 +277,12 @@ today, in this order:
    holds: every unstarted live todo of the ask and every todo `blocked` by `question`
    under it. Cards that overlap on a todo all stay open.
 4. **Start cards.** An open Start card becomes a multi-select choice card whose options
-   are its todos, and the answer keeps today's effects (`planNeoStartAnswer`): a ticked
-   todo may start, an unticked todo behind a cancelled prerequisite is removed, and any
-   other unticked todo gets a hold card (rule 5). An unapproved, unstarted todo on no
-   card gets a card of the same form.
+   are its todos, and the answer keeps today's effects (`planNeoStartAnswer`). A ticked
+   todo is approved; if it sits behind a cancelled prerequisite, the tick is rule 4's
+   Continue for that edge (`neoTodoProceedPatch`), and its other prerequisites and cards
+   still hold it. An unticked todo behind a cancelled prerequisite is removed, and any
+   other unticked todo gets a hold card (rule 5). An unapproved, unstarted todo that no
+   Start card lists gets a card of the same form, whatever else covers it.
 
 ## Slices
 
@@ -276,7 +294,7 @@ Each slice is its own issue under one epic and is measured before it is cut.
 | 2 | Waiting is read from cards | The web sections, the counts and the runner agree on every live todo |
 | 3 | Done without a gate | Neo marks an unstarted todo with an unmet check done and its dependents start |
 | 4 | Explicit dependencies and remove with dependents | A removed prerequisite ends in continued dependents, removed dependents, or one card; a migrated todo behind a cancelled prerequisite, stored or implicit, does not start without that decision |
-| 5 | Automatic start | An added todo with met prerequisites starts with no Start card; a migrated Start card keeps its per-todo answer |
+| 5 | Automatic start | An added todo with met prerequisites starts with no Start card. On one migrated Start card, a ticked dependent of a cancelled prerequisite continues and an unticked one is removed. Closing an unrelated card leaves an unapproved or held todo held. A fill that overlaps a stop admits nothing over a limit |
 | 6 | The daemon's cards | A blocker Neo ignores, a twice-failed start and an overdue check each end in exactly one card |
 | 7 | One ask per matter | A second ask for the same pull request is refused with the first one's id |
 | 8 | Human controls | Done, Cancel, Hold and priority work from the list; the two limits are set in Neo's settings |
