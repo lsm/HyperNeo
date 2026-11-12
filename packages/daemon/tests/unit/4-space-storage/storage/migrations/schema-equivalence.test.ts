@@ -17,6 +17,54 @@ import baselineSchema from '../../../../../src/storage/schema/baseline-v041.json
   type: 'json',
 };
 
+const BASE_V041_GITHUB_FRESH_DDL = [
+  `CREATE TABLE space_github_watched_repos (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			owner TEXT NOT NULL,
+			repo TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			webhook_enabled INTEGER NOT NULL DEFAULT 1,
+			polling_enabled INTEGER NOT NULL DEFAULT 0,
+			webhook_secret TEXT,
+			last_webhook_at INTEGER,
+			last_poll_at INTEGER,
+			poll_cursor TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL, webhook_remote_id INTEGER, webhook_url TEXT, webhook_auto_registered INTEGER NOT NULL DEFAULT 0, webhook_active INTEGER, webhook_last_checked_at INTEGER, webhook_last_error TEXT, webhook_configured_at INTEGER,
+			UNIQUE(space_id, owner, repo)
+		)`,
+  `CREATE TABLE space_github_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_id TEXT,
+			source TEXT NOT NULL CHECK(source IN ('webhook', 'polling')),
+			delivery_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			action TEXT NOT NULL,
+			repo_owner TEXT NOT NULL,
+			repo_name TEXT NOT NULL,
+			pr_number INTEGER NOT NULL,
+			pr_url TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			actor_type TEXT NOT NULL,
+			body TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			external_url TEXT NOT NULL DEFAULT '',
+			external_id TEXT NOT NULL DEFAULT '',
+			occurred_at INTEGER NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			raw_payload TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'received' CHECK(state IN ('received', 'processed', 'ignored', 'ambiguous', 'routed', 'delivered', 'failed')),
+			matched_by TEXT,
+			confidence TEXT,
+			route_note TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, dedupe_key)
+		)`,
+];
+
 interface SchemaObject {
   type: string;
   name: string;
@@ -207,33 +255,35 @@ describe('database schema equivalence', () => {
     }
   });
 
-  test('fresh space github creation keeps the column order stored on existing databases', () => {
+  test('fresh space github creation keeps the base branch fresh column order', () => {
     const fresh = new Database(':memory:');
-    const booted = new Database(':memory:');
+    const baseFresh = new Database(':memory:');
     const stored = new Database(':memory:');
     try {
+      for (const sql of BASE_V041_GITHUB_FRESH_DDL) baseFresh.exec(sql);
       stored.exec(
         readFileSync(new URL('./fixtures/schema-baseline/v0.41.0.sql', import.meta.url), 'utf8')
       );
       createSpaceGitHubTables(fresh);
-      migrate(booted);
       const columns = (db: Database, table: string) =>
         (db.prepare('SELECT name FROM pragma_table_info(?)').all(table) as { name: string }[]).map(
           (row) => row.name
         );
       expect(columns(fresh, 'space_github_watched_repos')).toEqual(
+        columns(baseFresh, 'space_github_watched_repos')
+      );
+      expect(columns(fresh, 'space_github_events')).toEqual(
+        columns(baseFresh, 'space_github_events')
+      );
+      expect(columns(baseFresh, 'space_github_watched_repos')).toEqual(
         columns(stored, 'space_github_watched_repos')
       );
-      expect(columns(fresh, 'space_github_events')).toEqual(columns(stored, 'space_github_events'));
-      expect(columns(booted, 'space_github_watched_repos')).toEqual(
-        columns(stored, 'space_github_watched_repos')
-      );
-      expect(columns(booted, 'space_github_events')).toEqual(
+      expect(columns(baseFresh, 'space_github_events')).toEqual(
         columns(stored, 'space_github_events')
       );
     } finally {
       fresh.close();
-      booted.close();
+      baseFresh.close();
       stored.close();
     }
   });
