@@ -77,7 +77,7 @@ reach loopback too.
 - "Re-pair" issues a new credential and revokes the old one.
 - Credentials don't expire on a timer, but a device unseen for 90 days is flagged for review.
 - `hyperneo devices` lists them and `hyperneo devices revoke <id>` revokes one from the terminal, for a lost phone when no paired UI is at hand.
-- Pairing without Allow reopens once the last active human phone is revoked: a new pairing request or human code issued while no active human phone exists is a first-device request (confirmed v2 decision e4f04dea). Requests and codes issued earlier keep the status they were created with. Ordinary revocation still does not reopen the CLI's no-Allow path, which counts every device ever paired, revoked or not. The explicit lost-phone reset below remains the one-step way to revoke every human device and expire outstanding codes with a durable notice.
+- A new pairing request or human code is a first-device request only while no human phone has ever been paired (confirmed v2 decision ed207965). The count includes revoked phones, so ordinary revocation never reopens the no-Allow path. Requests and codes issued earlier keep the status they were created with. The explicit lost-phone reset below is the one-step way to revoke every human device and expire outstanding codes with a durable notice.
 
 **Lost-phone recovery (human decision 95c60b17, 2026-10-21).** Run
 `hyperneo devices reset-human` on the daemon machine (or through SSH). This local

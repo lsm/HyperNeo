@@ -298,6 +298,22 @@ export class DevicePairingRepository {
     );
   }
 
+  firstDeviceOpen(): boolean {
+    if (this.everPairedHumanCount() === 0) return true;
+    return this.humanRecoveryOpen();
+  }
+
+  everPairedHumanCount(): number {
+    return (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS humans FROM paired_devices WHERE kind = 'human' " +
+            "AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
+        )
+        .get() as { humans: number }
+    ).humans;
+  }
+
   countDevices(): { all: number; humans: number } {
     return this.db
       .prepare(
@@ -335,7 +351,7 @@ export class DevicePairingRepository {
         expiresAt,
         approved ? now : null,
         twoWay ? 1 : 0,
-        kind === 'human' && this.countDevices().humans === 0 ? 1 : 0
+        kind === 'human' && this.firstDeviceOpen() ? 1 : 0
       );
     return { id, code, expiresAt };
   }
@@ -524,8 +540,11 @@ export class DevicePairingRepository {
           `UPDATE pairing_codes SET used_at = ? WHERE code_hash = ? AND approved_at IS NOT NULL
              AND used_at IS NULL AND expires_at > ?
              AND (first_device = 0 OR NOT EXISTS (
-               SELECT 1 FROM paired_devices WHERE kind = 'human' AND revoked_at IS NULL
-                 AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'))
+               SELECT 1 FROM paired_devices WHERE kind = 'human'
+                 AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%')
+               OR EXISTS (SELECT 1 FROM (
+                 SELECT recovered_at FROM human_device_resets ORDER BY rowid DESC LIMIT 1
+               ) WHERE recovered_at IS NULL))
              RETURNING kind, first_device`
         )
         .get(now, hash(normalizePairingCode(code)), now) as {

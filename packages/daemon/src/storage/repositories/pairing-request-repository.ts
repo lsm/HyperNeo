@@ -100,6 +100,27 @@ export class PairingRequestRepository {
     ).humans;
   }
 
+  grantedFirstDevice(): boolean {
+    if (!this.everPairedPhoneCount()) return false;
+    return !new DevicePairingRepository(this.db).humanRecoveryOpen();
+  }
+
+  firstDeviceOpen(): boolean {
+    if (this.everPairedPhoneCount() === 0) return true;
+    return new DevicePairingRepository(this.db).humanRecoveryOpen();
+  }
+
+  everPairedPhoneCount(): number {
+    return (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS humans FROM paired_devices WHERE kind = 'human' " +
+            "AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%'"
+        )
+        .get() as { humans: number }
+    ).humans;
+  }
+
   createRequest(now: number): { requestId: string; ticket: string; expiresAt: number } {
     const id = randomUUID();
     const ticket = newTicket();
@@ -109,7 +130,7 @@ export class PairingRequestRepository {
         `INSERT INTO pairing_requests (id, ticket_hash, created_at, expires_at, first_device)
          VALUES (?, ?, ?, ?, ?)`
       )
-      .run(id, ticketHash(ticket), now, expiresAt, this.activePhoneCount() === 0 ? 1 : 0);
+      .run(id, ticketHash(ticket), now, expiresAt, this.firstDeviceOpen() ? 1 : 0);
     return { requestId: id, ticket, expiresAt };
   }
 
@@ -215,7 +236,7 @@ export class PairingRequestRepository {
       const row = this.rowById(requestId);
       if (!row) return { ok: false as const, reason: 'not_found' as const };
       if (row.grantedAt !== null) return { ok: false as const, reason: 'used' as const };
-      const step = decidePairingComplete(row, phoneKey, this.activePhoneCount() > 0, now);
+      const step = decidePairingComplete(row, phoneKey, this.grantedFirstDevice(), now);
       if (step.action === 'refuse') return { ok: false as const, reason: step.reason };
       if (step.action === 'supersede') {
         this.db
@@ -229,7 +250,7 @@ export class PairingRequestRepository {
       if (!verifyPhoneProof(phoneKey, requestId, row.bindNonce as string, signature)) {
         return { ok: false as const, reason: 'bad_proof' as const };
       }
-      if (step.owner && this.activePhoneCount() > 0)
+      if (step.owner && this.grantedFirstDevice())
         return { ok: false as const, reason: 'superseded' as const };
       const claimed = this.db
         .prepare(
@@ -262,7 +283,7 @@ export const pairingRequestReads = defineRepositoryOp(
   'pairing.request.read',
   'read',
   PairingRequestRepository,
-  ['requestStatus', 'ownerCount'] as const
+  ['requestStatus', 'ownerCount', 'activePhoneCount', 'firstDeviceOpen'] as const
 );
 
 export const pairingRequestWrites = defineRepositoryOp(

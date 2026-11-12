@@ -472,6 +472,63 @@ describe('pairing v2 one-time request repository', () => {
     expect(devices.countDevices().humans).toBe(2);
   });
 
+  test('revoking the only phone does not reopen first-device pairing', async () => {
+    const bootstrap = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(bootstrap.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+    const granted = await completeRequest(
+      bootstrap.requestId,
+      phone.publicKeyB64,
+      proof(phone, bootstrap.requestId, bound.bindNonce)
+    );
+    expect(granted.ok).toBe(true);
+    if (!granted.ok) return;
+    expect(devices.revokeDevice(granted.deviceId, now)).toBe(true);
+    expect(await requestStatus(bootstrap.requestId)).toMatchObject({ state: 'granted' });
+
+    const next = await createRequest();
+    const nextPhone = phoneKeypair();
+    const nextBound = await bindTicket(next.ticket, nextPhone.publicKeyB64);
+    if (!nextBound.ok) throw new Error('bind failed');
+    const selfPair = await completeRequest(
+      next.requestId,
+      nextPhone.publicKeyB64,
+      proof(nextPhone, next.requestId, nextBound.bindNonce)
+    );
+    expect(selfPair.ok).toBe(false);
+    if (!selfPair.ok) expect(selfPair.reason).toBe('not_approved');
+    expect(devices.countDevices().humans).toBe(0);
+  });
+
+  test('the lost-phone reset reopens first-device pairing', async () => {
+    const bootstrap = await createRequest();
+    const phone = phoneKeypair();
+    const bound = await bindTicket(bootstrap.ticket, phone.publicKeyB64);
+    if (!bound.ok) throw new Error('bind failed');
+    const granted = await completeRequest(
+      bootstrap.requestId,
+      phone.publicKeyB64,
+      proof(phone, bootstrap.requestId, bound.bindNonce)
+    );
+    expect(granted.ok).toBe(true);
+    writer
+      .prepare('INSERT INTO human_device_resets (id, reset_at, devices_json) VALUES (?, ?, ?)')
+      .run('reset', now, '[]');
+
+    const next = await createRequest();
+    const nextPhone = phoneKeypair();
+    const nextBound = await bindTicket(next.ticket, nextPhone.publicKeyB64);
+    if (!nextBound.ok) throw new Error('bind failed');
+    const reopened = await completeRequest(
+      next.requestId,
+      nextPhone.publicKeyB64,
+      proof(nextPhone, next.requestId, nextBound.bindNonce)
+    );
+    expect(reopened.ok).toBe(true);
+    if (reopened.ok) expect(reopened.owner).toBe(true);
+  });
+
   test('a first legacy typed code grants the owner bit', async () => {
     const made = devices.createCode('human', 'First typed phone', true, now);
     expect(devices.redeem(made.code, 'First typed phone', now)).not.toBeNull();

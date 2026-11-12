@@ -77,11 +77,11 @@ try {
     .prepare('INSERT INTO human_device_resets(id, reset_at, devices_json) VALUES (?, ?, ?)')
     .run('second', now, '[]');
   const rollbackPeer = devices.createCode('human', 'Rollback peer', true, now);
-  const rejected = await pending('Rejected phone', granted.deviceId);
+  const rejected = await pending('Rejected phone');
   fixture.exec("CREATE TRIGGER reject_device BEFORE INSERT ON paired_devices WHEN NEW.name = 'Rejected phone' BEGIN SELECT RAISE(ABORT, 'synthetic insertion failure'); END");
   await assert.rejects(() => complete(rejected), /synthetic insertion failure/);
   assert.equal(devices.humanRecoveryOpen(), true);
-  assert.equal((await measured(() => app.db.gateway.call(pairingRequestReads, 'requestStatus', rejected.requestId, now)))?.state, 'approved');
+  assert.equal((await measured(() => app.db.gateway.call(pairingRequestReads, 'requestStatus', rejected.requestId, now)))?.state, 'bound');
   assert.equal(devices.countDevices().humans, 1);
   assert(devices.redeem(rollbackPeer.code, 'Rollback peer', now));
   evidence.failedGrantRolledBack = true;
