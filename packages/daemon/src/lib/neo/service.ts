@@ -271,8 +271,7 @@ export class NeoService {
         const dual = this.db.getGlobalSettings().neo?.front?.enabled === true;
         return conversation &&
           (id === this.defaultSessionId() || (dual && id === frontSessionId(conversation)))
-          ? frontModeNote(conversation, dual, id === frontSessionId(conversation), listening) +
-              `\n[listening: ${listening ? 'yes' : 'no'}]`
+          ? `${id === frontSessionId(conversation) ? `${frontModeNote(listening)}\n` : ''}[listening: ${listening ? 'yes' : 'no'}]`
           : undefined;
       },
       (id) => {
@@ -1085,17 +1084,6 @@ export class NeoService {
 
   async frontModeChanged(): Promise<void> {
     await this.prepareFront();
-    const conversation = this.repo.readConversationId();
-    const root = this.defaultSessionId();
-    if (!conversation || !root) return;
-    const dual = this.db.getGlobalSettings().neo?.front?.enabled === true;
-    await this.deliverForward(
-      root,
-      crypto.randomUUID(),
-      frontModeNote(conversation, dual, false),
-      root,
-      'event'
-    );
   }
 
   async recover(): Promise<void> {

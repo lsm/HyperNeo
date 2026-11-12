@@ -23,7 +23,7 @@ afterEach(cleanup);
 test('one default-off switch covers text and voice', async () => {
   render(<NeoFrontSettings />);
   const toggle = screen.getByRole('checkbox', {
-    name: 'Dual-model mode',
+    name: 'Fast replies',
   }) as HTMLInputElement;
   expect(toggle.checked).toBe(false);
   toggle.checked = !toggle.checked;
@@ -76,7 +76,7 @@ test('the switch follows saved settings updates', async () => {
 
 test('dual-model switch is a plain on/off control', () => {
   const { container } = render(<NeoFrontSettings />);
-  expect(screen.getByRole('checkbox', { name: 'Dual-model mode' })).toBeTruthy();
+  expect(screen.getByRole('checkbox', { name: 'Fast replies' })).toBeTruthy();
   expect(container.querySelector('p')).toBeNull();
 });
 
@@ -87,7 +87,7 @@ test('a missing Front model refusal explains how to enable dual mode', async () 
   toggle.checked = true;
   fireEvent.change(toggle);
   expect((await screen.findByRole('alert')).textContent).toBe(
-    'Choose a front model before enabling dual-model mode.'
+    'Choose a fast reply model before turning on fast replies.'
   );
   expect(toggle.checked).toBe(false);
   expect(toggle.disabled).toBe(false);

@@ -1,7 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { publishTextHandoff } from '../../../../src/lib/handoffs/publish-text.ts';
 import { NEO_FRONT, NEO_ROOT_TURN_END } from '@hyperneo/prompts';
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'node:crypto';
@@ -92,14 +89,12 @@ test('Front and Neo share speech rules with their own tool names', () => {
 });
 
 test('Front mode note asks for spoken only while listening', () => {
-  expect(frontModeNote(conversationId, true, true, true)).toContain('progress:true, spoken');
-  expect(frontModeNote(conversationId, true, true, true)).toContain(
+  expect(frontModeNote(true)).toContain('progress:true, spoken');
+  expect(frontModeNote(true)).toContain(
     'every reply_short and reply_detailed call includes spoken'
   );
-  expect(frontModeNote(conversationId, true, true, false)).not.toContain('spoken');
-  expect(frontModeNote(conversationId, true, true)).not.toMatch(/\b(Neo|Convo|Back)\b/);
-  for (const dual of [true, false])
-    expect(frontModeNote(conversationId, dual, false)).not.toContain('Convo');
+  expect(frontModeNote(false)).not.toContain('spoken');
+  expect(frontModeNote()).not.toMatch(/\b(Neo|Convo|Back|background|front)\b/i);
 });
 
 test('Front uses the ordinary immediate session with its role and tools', async () => {
@@ -113,8 +108,8 @@ test('Front uses the ordinary immediate session with its role and tools', async 
   expect(session.config.toolSelection).toEqual({ version: 1, choices: {} });
   expect(session.config.disallowedTools).toContain('mcp__exa');
   expect(session.config.allowedTools).toContain('mcp__front__speech_say');
-  expect(session.config.systemPrompt).toContain('You are the assistant');
-  expect(session.config.systemPrompt).not.toMatch(/\b(Convo|Back)\b/);
+  expect(session.config.systemPrompt).toContain('You are Neo, talking with the human.');
+  expect(session.config.systemPrompt).not.toMatch(/\b(Convo|Back|background|handoff)\b/);
   expect(session.config.systemPrompt).toContain('Your first tool call');
   expect(attach).toHaveBeenCalled();
 });
@@ -267,7 +262,7 @@ test('human input reaches Front once without waking Back or auto-publishing', as
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
 });
 
-test('switching modes notifies only Neo and preserves the Front SDK identity', async () => {
+test('switching modes sends no note and preserves the Front SDK identity', async () => {
   await frontSession(
     service,
     { conversationId, askOrigin: { sessionId: root, messageId: root } },
@@ -279,14 +274,9 @@ test('switching modes notifies only Neo and preserves the Front SDK identity', a
   await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
   await service.frontModeChanged();
   expect(db.getSession(front)?.sdkSessionId).toBe(sdkSessionId);
-  const jobs = db.getJobQueueRepo().listJobs({ queue: 'mailbox' });
-  const text = JSON.stringify(jobs);
-  expect(text).toContain('Dual-model mode');
-  expect(text).toContain('Single-model mode');
-  expect(text).not.toContain(front);
-  expect(text).toContain(root);
-  const result = { content: 'A late background result', sendStatus: 'enqueued' };
-  expect(service.speech.prepareInput(front, result).content).toBe('A late background result');
+  expect(db.getJobQueueRepo().listJobs({ queue: 'mailbox' })).toHaveLength(0);
+  const result = { content: 'A late reply', sendStatus: 'enqueued' };
+  expect(service.speech.prepareInput(front, result).content).toBe('A late reply');
 });
 
 test('Back results use the ordinary Front mailbox with a separate delivery identity', async () => {
@@ -331,7 +321,7 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
   const { id } = await accept();
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
-  const send = definitions.find((tool) => tool.name === 'run_in_background')!;
+  const send = definitions.find((tool) => tool.name === 'work_on')!;
   await frontSession(
     service,
     { conversationId, askOrigin: { sessionId: root, messageId: id } },
@@ -363,7 +353,7 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
     },
     {} as never
   );
-  expect(JSON.parse((handed.content[0] as { text: string }).text)).toEqual({ delivered: true });
+  expect(JSON.parse((handed.content[0] as { text: string }).text)).toEqual({ started: true });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(
     db
@@ -377,7 +367,7 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
     {} as never
   );
   expect(JSON.parse((again.content[0] as { text: string }).text)).toEqual({
-    delivered: false,
+    started: false,
     reason: 'input_handed_off',
   });
 });
@@ -437,29 +427,22 @@ test('Front keeps ordinary model settings and preserves a usable conversation', 
     autoCompactPercent: 80,
     queryMode: 'immediate',
   });
-  expect(next.config.allowedTools).toContain('mcp__front__run_in_background');
+  expect(next.config.allowedTools).toContain('mcp__front__work_on');
   expect(next.config.allowedTools).toContain('mcp__front__reply_short');
 });
 
-test('Back can use message.send to reach its ordinary Front session', async () => {
+test('Neo cannot use message.send to reach the front session', async () => {
   await frontSession(
     service,
     { conversationId, askOrigin: { sessionId: root, messageId: root } },
     model
   );
   const registry = createDatabaseOperationCatalog(db);
-  const send = (input: unknown, caller: Parameters<typeof invokeOperation>[3]) =>
-    invokeOperation(registry, 'message.send', input, caller);
-  const receipt = await send(
-    { to: front, text: 'Result for original human input.', idempotencyKey: 'back-result' },
-    { source: 'mcp', role: 'neo', sessionId: root }
-  );
-  expect(receipt).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
-  const unrelated = crypto.randomUUID();
-  await db.createSession(createTestSession(unrelated));
   expect(
-    await send(
-      { to: unrelated, text: 'Unrelated' },
+    await invokeOperation(
+      registry,
+      'message.send',
+      { to: front, text: 'Result for original human input.', idempotencyKey: 'back-result' },
       { source: 'mcp', role: 'neo', sessionId: root }
     )
   ).toMatchObject({ kind: 'completed', value: { kind: 'rejected' } });
@@ -489,7 +472,7 @@ test('Front receives the quoted card and forwards the original human input only 
   const send = vi
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'run_in_background')!;
+    .tools!.find((tool) => tool.name === 'work_on')!;
   await db.saveUserMessage(
     front,
     {
@@ -527,7 +510,7 @@ test('an unknown Front handoff creates no Back delivery', async () => {
   const send = vi
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'run_in_background')!;
+    .tools!.find((tool) => tool.name === 'work_on')!;
   const id = crypto.randomUUID();
   const response = await send.handler(
     { requestId: 'unknown', messageIds: [id], text: 'Do this.' },
@@ -536,56 +519,6 @@ test('an unknown Front handoff creates no Back delivery', async () => {
   expect(JSON.stringify(response)).toContain('unknown_reply_target');
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
   expect(db.getJobQueueRepo().listJobs({ queue: 'mailbox' })).toHaveLength(0);
-});
-
-test('Front has a dedicated reader for the existing handoff operation', async () => {
-  createFrontTools(service, conversationId);
-  const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
-  expect(definitions.find((tool) => tool.name === 'handoff_read')).toBeTruthy();
-  const session = await frontSession(
-    service,
-    { conversationId, askOrigin: { sessionId: root, messageId: root } },
-    model
-  );
-  expect(session.config.allowedTools).toContain('mcp__front__handoff_read');
-  expect(session.config.operationTools).toBe(false);
-});
-
-test('Front reads Back report text through the verified handoff reader', async () => {
-  const folder = await mkdtemp(join(tmpdir(), 'front-handoff-'));
-  const previous = process.env.HYPERNEO_DATA_DIR;
-  process.env.HYPERNEO_DATA_DIR = folder;
-  try {
-    const text = 'Verified report. 完整结果。'.repeat(200);
-    const reference = await publishTextHandoff(folder, root, text);
-    createFrontTools(service, conversationId);
-    const reader = vi
-      .mocked(createSdkMcpServer)
-      .mock.calls.at(-1)![0]
-      .tools!.find((tool) => tool.name === 'handoff_read')!;
-    const response = await reader.handler(
-      { reference, offset: 0, length: 256 * 1024 },
-      {} as never
-    );
-    expect(JSON.parse((response.content[0] as { text: string }).text)).toMatchObject({
-      kind: 'read',
-      text,
-      complete: true,
-    });
-    const invalid = await reader.handler(
-      {
-        reference: { ...reference, path: reference.path + '.other' },
-        offset: 0,
-        length: 256 * 1024,
-      },
-      {} as never
-    );
-    expect(JSON.stringify(invalid)).toContain('invalid_reference');
-  } finally {
-    if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;
-    else process.env.HYPERNEO_DATA_DIR = previous;
-    await rm(folder, { recursive: true, force: true });
-  }
 });
 
 test('Front gets the complete quoted question with its options and references', async () => {
@@ -668,19 +601,18 @@ test('Front publishes an unrequested background result without borrowing a human
   ).toHaveLength(0);
 });
 
-test('Front exposes reads, handoff and one publication path', () => {
+test('Front exposes reads, work_on and one publication path', () => {
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   expect(definitions.map((entry) => entry.name).sort()).toEqual([
     'asks_read',
     'cards_read',
-    'handoff_read',
     'projects_read',
     'reply_detailed',
     'reply_short',
-    'run_in_background',
     'speech_say',
     'todos_read',
+    'work_on',
   ]);
 });
 
@@ -1212,11 +1144,11 @@ test('after a visible progress reply, a hand-off leaves the answers to Neo', asy
   const send = vi
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'run_in_background')!;
+    .tools!.find((tool) => tool.name === 'work_on')!;
   const input = { requestId: 'work', messageIds: [id], text: 'Handle this request.' };
   const early = await send.handler(input, {} as never);
   expect(JSON.parse((early.content[0] as { text: string }).text)).toMatchObject({
-    delivered: false,
+    started: false,
   });
   expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBeNull();
   const progress = {
@@ -1634,7 +1566,7 @@ test('a handed-off input settles as handed off with no extra message', async () 
   const send = vi
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'run_in_background')!;
+    .tools!.find((tool) => tool.name === 'work_on')!;
   await convoPublish({
     requestId: 'ack',
     replyTo: [id],

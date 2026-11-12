@@ -111,12 +111,12 @@ try {
   );
   const ack = await call('reply_short', { requestId: 'ack', replyTo: [id], progress: true, text: 'I will check the build.' });
   assert.equal(ack.accepted, true, JSON.stringify(ack));
-  const handoff = await call('run_in_background', { requestId: 'work', messageIds: [id], text: 'Check the build.' });
-  assert.deepEqual(handoff, { delivered: true });
+  const handoff = await call('work_on', { requestId: 'work', messageIds: [id] });
+  assert.deepEqual(handoff, { started: true });
   assert.equal(owner(id), 'neo');
   assert.equal(app.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id]).length, 1);
-  const again = await call('run_in_background', { requestId: 'work-2', messageIds: [id], text: 'Again.' });
-  assert.deepEqual(again, { delivered: false, reason: 'input_handed_off' });
+  const again = await call('work_on', { requestId: 'work-2', messageIds: [id] });
+  assert.deepEqual(again, { started: false, reason: 'input_handed_off' });
   const frontFinal = await call('reply_short', { requestId: 'final', replyTo: [id], text: 'The build passed.' });
   assert.deepEqual(frontFinal, { accepted: false, reason: 'input_handed_off' });
   assert(app.db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id));

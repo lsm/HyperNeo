@@ -7,7 +7,6 @@ import {
   type SessionStatusRead,
   type SessionTitleRead,
   type SessionReportHandler,
-  type BackgroundResultRead,
 } from '../messaging/message-send.ts';
 import { createAttachDaemonOperation } from '../remote-daemons/attach-operation.ts';
 import {
@@ -32,7 +31,6 @@ export interface MessagingOperationDependencies {
   isNeo?: (sessionId: string) => boolean;
   inNeoProject?: (sessionId: string) => boolean;
   workerReport?: SessionReportHandler;
-  backgroundResult?: BackgroundResultRead;
 }
 
 export function createDaemonOperationCatalog(
@@ -51,8 +49,7 @@ export function createDaemonOperationCatalog(
       messaging.sessionSent,
       messaging.isNeo,
       messaging.workerReport,
-      messaging.inNeoProject,
-      messaging.backgroundResult
+      messaging.inNeoProject
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),

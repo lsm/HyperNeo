@@ -1,4 +1,3 @@
-import { frontSessionId } from '../neo/front-mode.ts';
 import { createLiveFileRead } from '../artifacts/live-file-read.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { createConnectionList } from '../connections/list-operation.ts';
@@ -68,23 +67,8 @@ export function createDatabaseOperationCatalog(
       sessionStatus: (sessionId) => readSessionField(db, 'status', sessionId),
       isNeo: (sessionId) =>
         new NeoRepository(db.getDatabase()).getBindingBySession(sessionId)?.kind === 'neo',
-      inNeoProject: (sessionId) => {
-        const conversation = new NeoRepository(db.getDatabase()).readConversationId();
-        return (
-          readSessionField(db, 'workspace_path', sessionId) === neoFolderPath() ||
-          (!!conversation && sessionId === frontSessionId(conversation))
-        );
-      },
-      backgroundResult: (from, to) => {
-        const neo = new NeoRepository(db.getDatabase());
-        const conversation = neo.readConversationId();
-        return (
-          !!conversation &&
-          to === frontSessionId(conversation) &&
-          from === neo.defaultBinding()?.sessionId &&
-          db.getGlobalSettings().neo?.front?.enabled === true
-        );
-      },
+      inNeoProject: (sessionId) =>
+        readSessionField(db, 'workspace_path', sessionId) === neoFolderPath(),
       sessionTitle: async (id) => {
         const title = readSessionField(db, 'title', id);
         return title !== null

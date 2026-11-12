@@ -16,9 +16,7 @@ import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/r
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { neoIntakeMessage } from '../../../packages/daemon/src/lib/neo/intake.ts';
 import { NeoFrontInputRepository } from '../../../packages/daemon/src/storage/repositories/neo-front-input-worker.ts';
-import { NeoConversationReader } from '../../../packages/daemon/src/storage/repositories/neo-conversation-reader.ts';
-import { NeoSessionMessageRepository } from '../../../packages/daemon/src/storage/repositories/neo-session-message-repository.ts';
-import { frontProgressId, frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
+import { frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -57,47 +55,33 @@ const fixture = createServer(async (request, response) => {
   const last = body.messages?.at(-1);
   const content = JSON.stringify(last?.content ?? '');
   const front = body.tools?.some(
-    (tool: { name: string }) => tool.name === 'mcp__front__run_in_background'
+    (tool: { name: string }) => tool.name === 'mcp__front__work_on'
   );
   if (!front && app?.db.getGlobalSettings().neo?.front?.enabled === true) {
     const names = body.tools?.map((tool: { name: string }) => tool.name) ?? [];
-    assert(!names.some((name: string) => name.endsWith('__neo_publish') || name.endsWith('__neo_speech')));
-    evidence.backToolsHidden = true;
+    assert(names.some((name: string) => name.endsWith('__neo_publish')));
+    assert(names.some((name: string) => name.endsWith('__neo_speech')));
+    evidence.neoToolsPresent = true;
   }
   const history = JSON.stringify(body.messages);
   const active = [failedDeliveryId, handoffId, humanId].find(id => history.includes(id)) ?? humanId;
-  let stage = stages.get(active) ?? 0;
-  if (front && content.includes('RESULT_FOR_HANDOFF')) stage = 3;
-  if (front && content.includes('UPDATE_FOR_HANDOFF')) stage = 5;
+  const stage = stages.get(active) ?? 0;
   let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
   if (front && stage === 0) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply_short',
       input: { requestId: `ack-${active}`, replyTo: [active], progress: true, text: 'I will handle that.' } };
     stages.set(active, 1);
   } else if (front && active === handoffId && stage === 1) {
-    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__run_in_background',
-      input: { requestId: 'handoff-proof', messageIds: [handoffId], text: 'Complete the requested action and send the result back to the front session.' } };
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__work_on',
+      input: { requestId: 'work-proof', messageIds: [handoffId] } };
     stages.set(active, 2);
-  } else if (front && ((active === humanId && stage === 1) || (active === handoffId && stage === 3))) {
-    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: active === humanId ? 'mcp__front__reply_short' : 'mcp__front__reply_detailed',
-      input: active === humanId
-        ? {
-            requestId: `final-${active}`,
-            publicationId: frontProgressId(
-              new NeoRepository(app!.db.getDatabase()).readConversationId()!, [active]
-            ),
-            replyTo: [active],
-            text: 'Hello from Neo.',
-          }
-        : { requestId: `final-${active}`, replyTo: [active], summary: 'The requested work is complete.', details: 'The job is complete. All files were copied and their checksums match.' } };
-    stages.set(active, 4);
-  } else if (front && stage === 5) {
+  } else if (front && active === humanId && stage === 1) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply_short',
-      input: { requestId: `later-${active}`, replyTo: [active], text: 'The review is complete. Here is the later result.' } };
-    stages.set(active, 6);
+      input: { requestId: `final-${active}`, replyTo: [active], text: 'Hello from Neo.' } };
+    stages.set(active, 4);
   }
   const publish = block.type === 'tool_use';
-  requests.push(front ? String(block.name ?? 'convo-terminal') : 'neo-turn');
+  requests.push(front ? String(block.name ?? 'front-terminal') : 'neo-turn');
   const message = {
     id: `msg_${crypto.randomUUID()}`,
     type: 'message',
@@ -232,7 +216,6 @@ try {
       .list(conversationId)
       ?.filter((row) =>
         row.replyTo?.includes(humanId) ||
-        (row.producerInput?.messageId === humanId && !!row.revisionId) ||
         row.replyTo?.includes(handoffId) ||
         row.fullText === 'Single-mode reply.'
       ) ??
@@ -295,33 +278,14 @@ try {
     });
     return JSON.parse((result.content[0] as { text: string }).text);
   };
-  assert.equal((await publish('back-direct', [handoffId], 'Back must not publish.')).accepted, false);
-  const relayed = await back({ name: 'message.send', input: { to: front, text: `RESULT_FOR_HANDOFF ${handoffId}: The job is complete.`, idempotencyKey: 'native-back-result' } });
-  assert(!relayed.isError, JSON.stringify(relayed));
-  const sessionRows = new NeoSessionMessageRepository(app.db.getDatabase());
-  const reader = new NeoConversationReader(app.db.getDatabase());
-  const humanPage = await reader.read({ conversationId, limit: 20 }, true);
-  const humanSessionTexts = humanPage.items.flatMap((item) =>
-    item.role === 'session' ? [item.message.text] : []
-  );
-  assert.equal(humanSessionTexts.some((text) => text.startsWith('RESULT_FOR_HANDOFF')), false);
-  assert.equal(
-    sessionRows.latest(conversationId, 20).some((row) => row.text.startsWith('RESULT_FOR_HANDOFF')),
-    false
-  );
-  evidence.backConvoSendHiddenFromHuman = true;
-  await waitFor(() => replies().length === 2);
-  const duplicate = await publish('fresh-request', [handoffId], 'Duplicate answer');
-  assert.equal(duplicate.accepted, false);
-  assert.match(duplicate.reason, /^dual_model_front_required(?::|$)/);
-  const batch = await publish('duplicate-batch', [humanId, handoffId], 'Duplicate batch');
-  assert.equal(batch.accepted, false);
-  assert.match(batch.reason, /^dual_model_front_required(?::|$)/);
-  await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
-  const update = await back({ name: 'message.send', input: { to: front, text: `UPDATE_FOR_HANDOFF ${handoffId}: Send the later review result.`, idempotencyKey: 'native-back-update' } });
-  assert(!update.isError, JSON.stringify(update));
-  await waitFor(() => replies().length === 3);
+  assert.equal(new NeoFrontInputRepository(app.db.getDatabase()).get(conversationId, handoffId)?.owner, 'neo');
+  const answer = await publish('neo-answer', [handoffId], 'The job is complete. All files were copied and their checksums match.');
+  assert.equal(answer.accepted, true, JSON.stringify(answer));
+  const later = await publish('neo-later', [handoffId], 'The review is complete. Here is the later result.');
+  assert.equal(later.accepted, true, JSON.stringify(later));
   assert.equal(replies().filter(row => row.replyTo?.includes(handoffId)).length, 2);
+  assert(replies().filter(row => row.replyTo?.includes(handoffId)).every(row => row.publishedBy === 'neo'));
+  evidence.neoPublishedDirectly = true;
   evidence.multipleRepliesAccepted = true;
   await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
   await app.db.saveUserMessage(
@@ -342,11 +306,10 @@ try {
   assert.equal(publications.list(conversationId)?.some((row) => row.replyTo?.includes(failedDeliveryId)), false);
   assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(root, failedDeliveryId), 'deferred');
   assert(app.db.getSDKMessageRepo().markDeliveryFailedByUuid(root, failedDeliveryId));
-  await waitFor(() => !!publications.list(conversationId)?.some((row) => row.replyTo?.includes(failedDeliveryId)));
-  const failedReplies = publications.list(conversationId)!.filter((row) => row.replyTo?.includes(failedDeliveryId));
-  assert.equal(failedReplies.length, 1);
-  assert.equal(failedReplies[0].fullText, 'Hello from Neo.');
-  evidence.queuedThenFailedReply = { text: failedReplies[0].fullText, replyTo: failedReplies[0].replyTo };
+  await waitFor(() => failedJob()?.status === 'completed');
+  assert.deepEqual(failedJob()?.result, { delivered: true, outcome: 'answered' });
+  assert.equal(publications.list(conversationId)!.some((row) => row.replyTo?.includes(failedDeliveryId)), false);
+  evidence.queuedThenFailedSettled = failedJob()?.result;
   assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
   assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
   const rows = replies();
@@ -354,25 +317,20 @@ try {
     'Hello from Neo.', 'The job is complete. All files were copied and their checksums match.',
     'The review is complete. Here is the later result.', 'Single-mode reply.',
   ]);
-  assert.equal(rows.filter((row) =>
-    row.replyTo?.includes(humanId) || row.producerInput?.messageId === humanId
-  ).length, 1);
+  assert.equal(rows.filter((row) => row.replyTo?.includes(humanId)).length, 1);
   assert.equal(rows.filter((row) => row.replyTo?.includes(handoffId)).length, 2);
-  assert.equal(rows[0].producerInput?.messageId, humanId);
+  assert.deepEqual(rows[0].replyTo, [humanId]);
+  assert.equal(rows[0].verbatim, true);
   assert(new NeoFrontInputRepository(app.db.getDatabase()).get(conversationId, humanId)?.owner);
-  evidence.editedAcknowledgmentAnswered = true;
+  evidence.humanAnswered = true;
   assert.deepEqual(rows[1].replyTo, [handoffId]);
-  assert.equal(rows[1].shortText, 'The requested work is complete.');
-  const acknowledgment = publications.list(conversationId)!.find(row => row.producerInput?.messageId === humanId)!;
-  assert.equal(acknowledgment.verbatim, true);
-  assert.equal(acknowledgment.shortText, undefined);
   assert.equal(app.db.getSession(front)?.sdkSessionId, nativeId);
   assert(childSessions.has(front));
   assert(app.db.getSDKMessageRepo().getSDKMessages(front).messages.length > 0);
   assert.equal(exaRequests, 0);
   evidence.configuredExaExcluded = true;
   evidence.exaRequests = exaRequests;
-  assert.equal(evidence.backToolsHidden, true);
+  assert.equal(evidence.neoToolsPresent, true);
   evidence.passed = true;
   evidence.nativeFrontSession = nativeId;
   evidence.replies = rows.map((row) => ({ text: row.fullText, replyTo: row.replyTo, producerInput: row.producerInput }));
@@ -391,5 +349,5 @@ try {
   writeFileSync(join(run, 'evidence/neo-front-execution.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(
-  'PASS ordinary Front session, terminal reply, Back handoff and multiple updates per human input'
+  'PASS ordinary front session, terminal reply, work_on hand-off and direct Neo updates per human input'
 );

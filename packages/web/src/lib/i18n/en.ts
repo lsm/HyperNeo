@@ -397,9 +397,8 @@ export const en = {
   'artifact.htmlPreviewUnavailable': 'This HTML document cannot be previewed.',
   'artifact.htmlSourceOnly': 'HTML preview unavailable. View the original source.',
   'artifact.loadingSource': 'Loading source…',
-  'dual.label': 'Dual-model mode',
-  'dual.description':
-    'Front receives your messages and replies; Neo handles delegated work. Turn off to use Neo directly.',
-  'dual.reconnect': 'Reconnect before changing dual-model mode.',
-  'dual.saveError': 'Could not save dual-model settings.',
+  'dual.label': 'Fast replies',
+  'dual.description': 'A quick model answers first and Neo does the work.',
+  'dual.reconnect': 'Reconnect before changing fast replies.',
+  'dual.saveError': 'Could not save fast replies.',
 } as const;
