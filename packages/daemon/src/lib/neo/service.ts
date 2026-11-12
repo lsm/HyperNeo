@@ -263,14 +263,11 @@ export class NeoService {
       (id) => {
         const conversation = this.repo.readConversationId();
         const listening = this.speech.isListening(this.defaultSessionId() ?? id);
+        const dual = this.db.getGlobalSettings().neo?.front?.enabled === true;
         return conversation &&
-          (id === this.defaultSessionId() || id === frontSessionId(conversation))
-          ? frontModeNote(
-              conversation,
-              this.db.getGlobalSettings().neo?.front?.enabled === true,
-              id === frontSessionId(conversation),
-              listening
-            ) + `\n[listening: ${listening ? 'yes' : 'no'}]`
+          (id === this.defaultSessionId() || (dual && id === frontSessionId(conversation)))
+          ? frontModeNote(conversation, dual, id === frontSessionId(conversation), listening) +
+              `\n[listening: ${listening ? 'yes' : 'no'}]`
           : undefined;
       },
       (id) => {
@@ -1078,15 +1075,13 @@ export class NeoService {
     const root = this.defaultSessionId();
     if (!conversation || !root) return;
     const dual = this.db.getGlobalSettings().neo?.front?.enabled === true;
-    for (const id of [root, frontSessionId(conversation)])
-      if (this.db.getSession(id))
-        await this.deliverForward(
-          id,
-          crypto.randomUUID(),
-          frontModeNote(conversation, dual, id !== root),
-          root,
-          'event'
-        );
+    await this.deliverForward(
+      root,
+      crypto.randomUUID(),
+      frontModeNote(conversation, dual, false),
+      root,
+      'event'
+    );
   }
 
   async recover(): Promise<void> {

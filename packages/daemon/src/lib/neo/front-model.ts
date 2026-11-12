@@ -126,7 +126,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply_detailed',
-        'Use for more than five sentences or any structured report, multi-topic update, list, table or long Back report. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the human replyTo IDs it answers. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result. While [listening: yes], include spoken.',
+        'Use for more than five sentences or any structured report, multi-topic update, list, table or long background result. Provide a standalone summary and additional details. Details must add information beyond the summary. Give the human replyTo IDs it answers. Use publicationId to update an existing answer. Start the conversation with reply_short, then use this for the full result. While [listening: yes], include spoken.',
         {
           ...replyFields,
           summary: z.string().trim().min(1).max(2000),

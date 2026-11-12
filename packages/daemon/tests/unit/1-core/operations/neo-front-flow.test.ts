@@ -90,6 +90,7 @@ test('Front mode note asks for spoken only while listening', () => {
     'every reply_short and reply_detailed call includes spoken'
   );
   expect(frontModeNote(conversationId, true, true, false)).not.toContain('spoken');
+  expect(frontModeNote(conversationId, true, true)).not.toMatch(/\b(Neo|Convo|Back)\b/);
 });
 
 test('Front uses the ordinary immediate session with its role and tools', async () => {
@@ -103,7 +104,8 @@ test('Front uses the ordinary immediate session with its role and tools', async 
   expect(session.config.toolSelection).toEqual({ version: 1, choices: {} });
   expect(session.config.disallowedTools).toContain('mcp__exa');
   expect(session.config.allowedTools).toContain('mcp__front__speech_say');
-  expect(session.config.systemPrompt).toContain('You are Convo');
+  expect(session.config.systemPrompt).toContain('You are the assistant');
+  expect(session.config.systemPrompt).not.toMatch(/\b(Convo|Back)\b/);
   expect(session.config.systemPrompt).toContain('Your first tool call');
   expect(attach).toHaveBeenCalled();
 });
@@ -256,7 +258,7 @@ test('human input reaches Front once without waking Back or auto-publishing', as
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
 });
 
-test('switching modes notifies the same two sessions and preserves the Front SDK identity', async () => {
+test('switching modes notifies only Neo and preserves the Front SDK identity', async () => {
   await frontSession(
     service,
     { conversationId, askOrigin: { sessionId: root, messageId: root } },
@@ -272,8 +274,10 @@ test('switching modes notifies the same two sessions and preserves the Front SDK
   const text = JSON.stringify(jobs);
   expect(text).toContain('Dual-model mode');
   expect(text).toContain('Single-model mode');
-  expect(text).toContain(front);
+  expect(text).not.toContain(front);
   expect(text).toContain(root);
+  const result = { content: 'A late background result', sendStatus: 'enqueued' };
+  expect(service.speech.prepareInput(front, result).content).toBe('A late background result');
 });
 
 test('Back results use the ordinary Front mailbox with a separate delivery identity', async () => {
