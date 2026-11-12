@@ -121,6 +121,77 @@ describe('planNeoBlockCards', () => {
   });
 });
 
+describe('NeoTodoSessionRepository.claimNudge', () => {
+  test('a started todo under an open stalled card waits in the list and is not nudged', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const sessions = new NeoTodoSessionRepository(db);
+    store.openAsk({
+      id: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'ask',
+      request: 'Synthetic request',
+      createdAt: 1,
+    });
+    store.addTodo(
+      'step',
+      'ask',
+      {
+        title: 'step',
+        doneWhen: 'Observed',
+        check: null,
+        instruction: 'Continue',
+        named: null,
+        approvedAt: 1,
+      },
+      1
+    );
+    const ref = { adapter: 'hyperneo', id: 'worker' };
+    sessions.create('step', { verb: 'send', ref });
+    sessions.recordRef('step', ref, 1);
+    db.prepare("UPDATE neo_todos SET state = 'doing', started_at = 1 WHERE id = 'step'").run();
+    store.askQuestion(
+      'stalled',
+      'ask',
+      {
+        text: `"step"${NEO_TODO_STALLED_CARD_TAIL}`,
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todoId: 'step',
+      },
+      2
+    );
+    const read = () => {
+      const step = store.getTodo('step')!;
+      const snapshot = store.snapshot(undefined, 10, true);
+      return {
+        place: neoTodoPlace(step, store.todoCards(step)),
+        section: projectNeoAskEntries(snapshot.asks, snapshot.facts, [])[0]?.state,
+        nudged: !!sessions.claimNudge(
+          'step',
+          ref,
+          { status: 'stopped', lastActivityAt: 0 },
+          21 * 60_000,
+          step.updatedAt,
+          true
+        ),
+      };
+    };
+    expect(read()).toEqual({ place: 'waiting', section: 'waiting', nudged: false });
+    store.answerQuestion(store.getQuestion('stalled')!, 'Carry on', 'button', 3);
+    expect(read()).toEqual({ place: 'running', section: 'doing', nudged: true });
+    db.close();
+  });
+});
+
 describe('projectNeoAskEntries', () => {
   test('the sections, the counts and the runner agree on a child todo that a parent card covers', () => {
     const db = new Database(':memory:');

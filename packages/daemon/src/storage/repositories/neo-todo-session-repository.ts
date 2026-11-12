@@ -5,7 +5,7 @@ import { JobQueueRepository } from './job-queue-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
 import { sdkMailboxFailure } from './sdk-message-transactions.ts';
 import { neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
-import { neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
+import { neoTodoCovered } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
   advanceFollowThrough,
@@ -349,7 +349,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       context.todo.updatedAt !== updatedAt ||
       JSON.stringify(context.ref) !== JSON.stringify(ref) ||
       live.status === 'queued' ||
-      neoTodoAwaitsHuman(context.todo, new NeoAskTodoRepository(this.db).todoCards(context.todo))
+      neoTodoCovered(context.todo, new NeoAskTodoRepository(this.db).todoCards(context.todo))
     )
       return null;
     const since = Math.max(

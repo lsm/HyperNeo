@@ -27,6 +27,11 @@ export const neoQuestionCoversTodo = (
   todo: Pick<NeoTodo, 'id'>
 ) => question.state === 'open' && question.todos.includes(todo.id);
 
+export const neoTodoCovered = (
+  todo: Pick<NeoTodo, 'id'>,
+  cards: readonly Pick<NeoQuestion, 'state' | 'todos'>[]
+) => cards.some((card) => neoQuestionCoversTodo(card, todo));
+
 export type NeoTodoPlace = 'waiting' | 'queued' | 'running';
 
 export function neoTodoPlace(
@@ -34,7 +39,7 @@ export function neoTodoPlace(
   cards: readonly Pick<NeoQuestion, 'state' | 'todos'>[]
 ): NeoTodoPlace | null {
   if (!['todo', 'doing', 'blocked', 'failed'].includes(todo.state)) return null;
-  if (cards.some((card) => neoQuestionCoversTodo(card, todo))) return 'waiting';
+  if (neoTodoCovered(todo, cards)) return 'waiting';
   const unheld = todo.state === 'blocked' && todo.blockedBy === 'question';
   if (todo.state === 'todo' || (unheld && todo.startedAt === null)) return 'queued';
   return todo.state === 'doing' || unheld ? 'running' : null;
