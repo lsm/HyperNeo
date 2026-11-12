@@ -10,7 +10,9 @@ operation. Require the daemon to present the front's tool-free terminal answer w
 the original replyTo. Send a second input that the front hands to Neo through work_on. Require Neo's
 turn to offer its publish and speech tools, then require two direct Neo
 publications for that input to succeed with publishedBy neo. An acknowledgment
-leaves the answer outcome pending.
+leaves the answer outcome pending. A third input that the front only
+acknowledges, whose Neo delivery then fails, must get the fixed "could not be
+completed" notice.
 Switch to single-model mode and preserve the same front SDK session identity.
 
 Retain neo-front-execution.json with passed and resourcesClosed true and wrapper

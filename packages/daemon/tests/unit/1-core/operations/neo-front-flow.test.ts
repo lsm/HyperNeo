@@ -814,13 +814,12 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
         progress: true,
       })
     ).toMatchObject({ accepted: true });
-    const published = service.publications.list(conversationId)!.length;
     await db.saveSDKMessage(front, {
       type: 'result',
       subtype: 'success',
       uuid: crypto.randomUUID(),
       session_id: front,
-      result: 'I will check that.',
+      result: 'The answer to the current input.',
       num_turns: 2,
       is_error: false,
       ...(attribution === 'user_message_uuid'
@@ -828,7 +827,12 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
         : { user_message_uuids: [current.id] }),
     } as import('@hyperneo/shared/sdk').SDKMessage);
     expect(await handler(current.job)).toMatchObject({ delivered: true, outcome: 'answered' });
-    expect(service.publications.list(conversationId)).toHaveLength(published);
+    expect(
+      service.publications
+        .list(conversationId)!
+        .filter((row) => row.replyTo?.includes(current.id))
+        .map((row) => row.fullText)
+    ).toEqual(['This reply could not be completed. Please try again.']);
   }
 );
 

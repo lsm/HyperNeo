@@ -308,8 +308,10 @@ try {
   assert(app.db.getSDKMessageRepo().markDeliveryFailedByUuid(root, failedDeliveryId));
   await waitFor(() => failedJob()?.status === 'completed');
   assert.deepEqual(failedJob()?.result, { delivered: true, outcome: 'answered' });
-  assert.equal(publications.list(conversationId)!.some((row) => row.replyTo?.includes(failedDeliveryId)), false);
+  const failedReplies = publications.list(conversationId)!.filter((row) => row.replyTo?.includes(failedDeliveryId));
+  assert.deepEqual(failedReplies.map((row) => row.fullText), ['This reply could not be completed. Please try again.']);
   evidence.queuedThenFailedSettled = failedJob()?.result;
+  evidence.failedDeliveryNotice = failedReplies[0].fullText;
   assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
   assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
   const rows = replies();
