@@ -22,6 +22,7 @@ import {
 } from '../../../storage/repositories/github-space-settings-read.ts';
 import { persistGitHubSpaceEnabled } from '../../../storage/repositories/github-space-enabled-persist.ts';
 import {
+  GITHUB_SESSION_SCOPE,
   GITHUB_SESSION_WATCHED_TABLE,
   GITHUB_SPACE_WATCHED_TABLE,
   gitHubWatchedSource,
@@ -229,7 +230,8 @@ export class GitHubEventExtensionRepository {
       tables.push(GITHUB_SPACE_WATCHED_TABLE);
     this.db.transaction(() => {
       for (const table of tables) {
-        const excluded = table === GITHUB_SPACE_WATCHED_TABLE ? ` AND space_id != 'sessions'` : '';
+        const excluded =
+          table === GITHUB_SPACE_WATCHED_TABLE ? ` AND space_id != '${GITHUB_SESSION_SCOPE}'` : '';
         this.db
           .prepare(
             `UPDATE ${table}
