@@ -161,8 +161,10 @@ describe('durable worker follow-ups', () => {
       kind: 'completed',
       value: { ok: true, value: { delivered: false, inputId: expect.any(String) } },
     });
+    h.db.prepare('UPDATE work_delivery_inputs SET accepted_at = ?').run(Date.now() - 60_001);
     await h.tick();
     expect(h.sent).toEqual([]);
+    expect(h.reports).toEqual([]);
     expect(h.db.prepare('SELECT message, outcome FROM work_delivery_inputs').get()).toEqual({
       message: 'Keep this exact follow-up',
       outcome: null,
@@ -319,7 +321,7 @@ describe('durable worker follow-ups', () => {
   );
 
   test.each(['todo', 'failed', 'blocked'] as const)(
-    'an unbound %s follow-up reports its reason after a bounded wait',
+    'a pre-start %s follow-up waiting for a busy worker sends no blocked report',
     async (state) => {
       const h = fixture();
       const { todo, store, runner } = h.seedTodo();
@@ -330,7 +332,7 @@ describe('durable worker follow-ups', () => {
       h.db.prepare('UPDATE work_delivery_inputs SET accepted_at = ?').run(Date.now() - 60_001);
       await h.tick();
       await h.tick();
-      expect(h.reports).toEqual(['Waiting for the worker to start or an earlier input to finish.']);
+      expect(h.reports).toEqual([]);
       expect(h.jobs.listJobs({ queue: 'worker_input' })[0]).toMatchObject({
         status: 'pending',
         retryCount: 0,
@@ -397,7 +399,9 @@ describe('durable worker follow-ups', () => {
       expect(store.getTodo(todo.id)?.instruction).toBe(
         existingInstruction ? 'Original instruction' : 'New pre-start message'
       );
+      h.db.prepare('UPDATE work_delivery_inputs SET accepted_at = ?').run(Date.now() - 60_001);
       await h.tick();
+      expect(h.reports).toEqual([]);
       await runner.start(todo.id);
       expect(store.getTodo(todo.id)?.state).toBe('todo');
       expect(h.sent).toEqual([]);
