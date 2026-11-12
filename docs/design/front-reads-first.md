@@ -1,6 +1,6 @@
 # Front answers status from its own reads
 
-In dual-model mode, the front prompt already tells Neo to answer from its reads and call `work_on` when those reads do not suffice. This design gives the front more facts to answer status questions directly.
+In dual-model mode, the front prompt already tells Neo to answer from its reads and call `work_on` when those reads do not suffice (`front.md`), but it never names the read tools. This design gives the front more facts to answer status questions directly.
 
 ## Problem
 
@@ -11,7 +11,7 @@ In dual-model mode, the front prompt already tells Neo to answer from its reads 
 
 1. **Name the read tools.** In `front.md`, name `projects_read`, `asks_read`, `todos_read` and `cards_read` in the existing reads-first instruction.
 2. **Todo detail carries core facts.** The `todos` detail adds `report` (cut to 4000 characters), `evidence` and `updatedAt`. The summary rows used by search and lists are unchanged, so lists stay small.
-3. **Packs add facts through the existing snapshot hook.** A pack already exposes `snapshotRows(repos, now, openTodoIds)`, which returns rows from its stored data, each pinned row tagged with `todoId` (the coding pack's rows are read from its PR ledger, not from GitHub). After `todos_read` returns a todo's detail, the tool in `front-model.ts` calls `snapshotRows(null, now, [todoId])` on each pack in `service.packs()` and adds the rows whose `todoId` matches as `packFacts: [{ pack, ...row }]`. The core passes them through without reading their fields. No new pack hook, no live network call, and a pack without `snapshotRows` adds nothing.
+3. **Packs add facts through the existing snapshot hook.** A pack already exposes `snapshotRows(repos, now, openTodoIds)`, which returns rows from its stored data, each pinned row tagged with `todoId` (the coding pack's rows are read from its PR ledger, not from GitHub). After `todos_read` returns a todo's detail, the tool in `front-model.ts` calls `snapshotRows([], now, [todoId])` on each pack in `service.packs()` and adds the rows whose `todoId` matches as `packFacts: [{ pack, ...row }]`. The core passes them through without reading their fields. The empty repository list returns only the pinned rows, as `session-goal-schedules.ts` already does; `null` would scan every open row. No new pack hook, no live network call, and a pack without `snapshotRows` adds nothing.
 
 ## Not changed
 
