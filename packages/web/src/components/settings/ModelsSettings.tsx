@@ -604,9 +604,9 @@ function FrontModelSettings({
   return (
     <div class="space-y-4 rounded-xl border border-line bg-surface p-4 sm:p-5">
       <div class="border-b border-line pb-4">
-        <h4 class="text-sm font-semibold text-fg">Fast replies</h4>
+        <h4 class="text-sm font-semibold text-fg">Fast reply model</h4>
         <p class="mt-1 text-xs leading-relaxed text-fg-muted">
-          A quick model answers first and Neo does the work.
+          Answers your messages first and hands work to Neo.
         </p>
       </div>
       {preference ? (
@@ -813,7 +813,7 @@ function NeoModelSettings({
       <div class="border-b border-line pb-4">
         <h4 class="text-sm font-semibold text-fg">Neo</h4>
         <p class="mt-1 text-xs leading-relaxed text-fg-muted">
-          Handles work and investigations. Publishes delegated results.
+          Handles work and investigations, and answers you directly.
         </p>
       </div>
       {draft ? (
@@ -1347,7 +1347,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
         )}
         <NeoFrontSettings />
         <div class="grid items-start gap-4 xl:grid-cols-2">
-          <section aria-label="Fast replies">
+          <section aria-label="Fast reply model">
             <FrontModelSettings
               groupedModels={groupedModels}
               providerAuthStatuses={providerAuthStatuses}

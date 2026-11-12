@@ -759,7 +759,7 @@ async function frontEditor() {
 
 test('chooses a separate provider/model through the targeted front operation', async () => {
   await frontEditor();
-  const convo = within(screen.getByRole('region', { name: 'Fast replies' }));
+  const convo = within(screen.getByRole('region', { name: 'Fast reply model' }));
   fireEvent.click(convo.getByRole('button', { name: 'Choose fast reply model' }));
   fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
   await waitFor(() =>
@@ -781,7 +781,7 @@ test.each(['refused', 'failed'])(
       return { ok: false, reason: 'Unavailable model' };
     });
     await frontEditor();
-    const convo = within(screen.getByRole('region', { name: 'Fast replies' }));
+    const convo = within(screen.getByRole('region', { name: 'Fast reply model' }));
     fireEvent.click(convo.getByRole('button', { name: 'Choose fast reply model' }));
     fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
     expect((await convo.findByRole('alert')).textContent).toBeTruthy();
@@ -792,7 +792,7 @@ test.each(['refused', 'failed'])(
 
 test('the Front compact percentage saves through the targeted front operation', async () => {
   await frontEditor();
-  const convo = within(screen.getByRole('region', { name: 'Fast replies' }));
+  const convo = within(screen.getByRole('region', { name: 'Fast reply model' }));
   const input = convo.getByLabelText(
     'fast reply model auto-compact percentage'
   ) as HTMLInputElement;
@@ -821,7 +821,7 @@ test('primary model groups visibly labeled thinking and compaction controls', as
 
 test('the mode switch sits above the separate Front and Neo sections', async () => {
   await frontEditor();
-  const convo = screen.getByRole('region', { name: 'Fast replies' });
+  const convo = screen.getByRole('region', { name: 'Fast reply model' });
   const neo = screen.getByRole('region', { name: 'Neo models' });
   expect(neo.contains(convo)).toBe(false);
   expect(convo.contains(neo)).toBe(false);
@@ -866,7 +866,7 @@ test.each(['percent', 'thinking'])(
       })),
     });
     await frontEditor();
-    const front = within(screen.getByRole('region', { name: 'Fast replies' }));
+    const front = within(screen.getByRole('region', { name: 'Fast reply model' }));
     if (control === 'percent') {
       const input = front.getByLabelText('fast reply model auto-compact percentage');
       fireEvent.input(input, { target: { value: '65' } });

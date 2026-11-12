@@ -445,7 +445,10 @@ test('Neo cannot use message.send to reach the front session', async () => {
       { to: front, text: 'Result for original human input.', idempotencyKey: 'back-result' },
       { source: 'mcp', role: 'neo', sessionId: root }
     )
-  ).toMatchObject({ kind: 'completed', value: { kind: 'rejected' } });
+  ).toMatchObject({
+    kind: 'completed',
+    value: { kind: 'rejected', reason: expect.stringMatching(/^work_send_required:/) },
+  });
 });
 
 test('Front receives the quoted card and forwards the original human input only on handoff', async () => {
