@@ -719,6 +719,54 @@ test.each([
   }
 );
 
+test('a Front turn that only acknowledged gets the fixed notice after Neo delivery failed', async () => {
+  const { id, job } = await accept();
+  const handler = createNeoFrontHandler(service);
+  await handler(job);
+  await db.saveUserMessage(
+    front,
+    {
+      type: 'user',
+      uuid: id as UUID,
+      session_id: front,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Check the build' },
+    },
+    'enqueued'
+  );
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  expect(
+    await convoPublish({
+      requestId: 'ack',
+      replyTo: [id],
+      fullText: 'I will check that.',
+      verbatim: true,
+      progress: true,
+    })
+  ).toMatchObject({ accepted: true });
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: id, content: 'Check the build' }),
+    'failed'
+  );
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No response requested.',
+    num_turns: 2,
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'answered' });
+  const replies = service.publications
+    .list(conversationId)!
+    .filter((row) => row.replyTo?.includes(id));
+  expect(replies.map((row) => row.fullText)).toEqual([
+    'This reply could not be completed. Please try again.',
+  ]);
+});
+
 test.each(['user_message_uuid', 'user_message_uuids'] as const)(
   'an overlapping terminal settles only the inputs named by %s without republishing closing text',
   async (attribution) => {
