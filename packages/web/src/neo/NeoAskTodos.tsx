@@ -439,7 +439,7 @@ function QuestionBox({
   onReply?: () => void;
   onOpen?: (link: string, title: string) => void;
 }) {
-  const listed = (question.startTodos ?? []).flatMap(
+  const listed = (question.kind === 'start' ? question.todos : []).flatMap(
     (id) => todos.find((todo) => todo.id === id) ?? []
   );
   const [picked, setPicked] = useState<string[]>(
@@ -724,7 +724,7 @@ export function NeoAskTodos({
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
   const inQuestion = new Set(
-    asked.flatMap((question) => (question.kind === 'start' ? (question.startTodos ?? []) : []))
+    asked.flatMap((question) => (question.kind === 'start' ? question.todos : []))
   );
   const knownIds = new Set(
     [...received.todos.filter((todo) => todo.state === 'done'), ...paged].map((todo) => todo.id)

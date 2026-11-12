@@ -29,7 +29,7 @@ const todo = (id: string, patch: Partial<NeoTodo> = {}) =>
 const question = {
   id: 'question',
   askId: 'ask-0',
-  todoId: 'second',
+  todos: ['second'],
   state: 'open',
   kind: 'reply',
 } as NeoQuestion;
@@ -43,8 +43,11 @@ describe('neoPlanLines', () => {
     ];
     const lines = neoPlanLines(asks, todos, [question]);
     expect(lines.find((line) => line.id === 'ask-0')?.text).toContain('questions=1');
-    expect(lines.find((line) => line.id === 'first')?.text).toContain('ready=true');
+    const first = lines.find((line) => line.id === 'first')!.text;
+    expect(first).toContain('ready=true');
+    expect(first).toMatch(/questions=0$/);
     const second = lines.find((line) => line.id === 'second')!.text;
+    expect(second).toMatch(/questions=1$/);
     expect(second).toContain('waits=first');
     expect(second).toContain('ready=false');
     expect(lines.some((line) => line.id === 'done')).toBe(false);

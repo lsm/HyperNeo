@@ -248,6 +248,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
                     noLabel: null,
                     yesLabel: null,
                     startTodos: null,
+                    todos: [],
                     state: 'open',
                     answer: null,
                     answeredBy: null,

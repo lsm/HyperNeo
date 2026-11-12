@@ -60,6 +60,7 @@ const question = (id: string, patch: Partial<NeoQuestionEntry>): NeoQuestionEntr
   noLabel: null,
   yesLabel: null,
   startTodos: null,
+  todos: [],
   state: 'open',
   answer: null,
   answeredBy: null,
@@ -158,7 +159,7 @@ describe('NeoAskTodos', () => {
       <NeoAskTodos
         entry={entry({
           todos: [todo('internal', { doneWhen: '' })],
-          questions: [question('start', { kind: 'start', startTodos: ['internal'] })],
+          questions: [question('start', { kind: 'start', todos: ['internal'] })],
         })}
         onAnswer={vi.fn()}
       />
@@ -456,7 +457,7 @@ describe('NeoAskTodos', () => {
             'prepared',
             state === 'retired'
               ? { state: 'retired', retiredReason: 'Discuss directly' }
-              : { kind: 'start', startTodos: ['prepared-todo'] }
+              : { kind: 'start', todos: ['prepared-todo'] }
           ),
         ],
         todos: state === 'start' ? [todo('prepared-todo', { link: focusedSession.link })] : [],
@@ -912,9 +913,7 @@ describe('NeoAskTodos', () => {
         entry={entry({
           state: 'waiting',
           todos: [todo('a'), todo('b'), todo('c', { state: 'doing', status: '在做' })],
-          questions: [
-            question('q', { kind: 'start', text: '开始这 2 件？', startTodos: ['a', 'b'] }),
-          ],
+          questions: [question('q', { kind: 'start', text: '开始这 2 件？', todos: ['a', 'b'] })],
         })}
         onAnswer={onAnswer}
       />
@@ -934,7 +933,7 @@ describe('NeoAskTodos', () => {
       entry({
         state: 'waiting',
         todos: [todo('a'), todo('b')],
-        questions: [question('q', { kind: 'start', text: '开始', startTodos })],
+        questions: [question('q', { kind: 'start', text: '开始', todos: startTodos })],
       });
     const app = render(<NeoAskTodos entry={start(['a'])} onAnswer={onAnswer} />);
     fireEvent.click(app.getByRole('checkbox', { name: '开始 Todo a' }));
@@ -949,7 +948,7 @@ describe('NeoAskTodos', () => {
       entry({
         state: 'waiting',
         todos: [todo('a'), todo('b')],
-        questions: [question('q', { kind: 'start', text: '开始', startTodos })],
+        questions: [question('q', { kind: 'start', text: '开始', todos: startTodos })],
       });
     const app = render(<NeoAskTodos entry={start(['a', 'b'])} onAnswer={onAnswer} />);
     app.rerender(<NeoAskTodos entry={start(['b'])} onAnswer={onAnswer} />);
@@ -1241,7 +1240,7 @@ describe('NeoAskTodos', () => {
       <NeoAskTodos
         entry={entry({
           todos: [todo('d', { state: 'removed', status: '不要了' })],
-          questions: [question('q', { kind: 'start', state: 'open', startTodos: ['d'] })],
+          questions: [question('q', { kind: 'start', state: 'open', todos: ['d'] })],
         })}
         onAnswer={() => {}}
       />
@@ -1301,7 +1300,7 @@ describe('NeoAskTodos', () => {
               kind: 'start',
               text: '开始这 1 件？',
               state: 'answered',
-              startTodos: ['a'],
+              todos: ['a'],
               answer: ['a'],
               answeredBy: 'button',
             }),
