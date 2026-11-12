@@ -13,10 +13,8 @@ import { createCodingPrFileOperation } from './pr-file-operation.ts';
 import { runCodingReview } from './review.ts';
 import { withCodingWorkGoal } from './work-goal.ts';
 import { withCodingWorkerProvenance } from './worker-provenance.ts';
-import { createCodingGithubReadOperation } from './github-read-operation.ts';
 import type { NeoRefStateReader } from './ask-prs.ts';
 import { createCodingRefReader } from './ref-reader.ts';
-import { listNeoGithub, type NeoGithubLister } from './github-query.ts';
 import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
 import type { NeoPack, NeoPackBrief } from '../../pack-contract.ts';
@@ -36,7 +34,7 @@ import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
 import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
-import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stage-preferences.ts';
+import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -49,7 +47,6 @@ export function createCodingPack(deps: {
   database: () => Database;
   readPrs: NeoWorkPrReader;
   readRefStates?: NeoRefStateReader;
-  listGithub?: NeoGithubLister;
   todoPrs: CodingTodoPrRepository;
   prLedger: CodingPrLedgerRepository;
   prSweep: CodingPrSweepRepository;
@@ -108,15 +105,7 @@ export function createCodingPack(deps: {
     operations: [
       createCodingHumanMergeOperation(),
       createCodingRetryMergeOperation(deps.database, deps.prLedger),
-      createCodingWritePlanOperation(deps.database),
       createCodingPrFileOperation(deps.database),
-      createCodingGithubReadOperation({
-        readPrs: deps.readPrs,
-        readRefStates: deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),
-        listGithub:
-          deps.listGithub ??
-          (async (args) => ({ data: await listNeoGithub(args), at: new Date().toISOString() })),
-      }),
     ],
     tracker: createCodingIssueTracker({
       repositories: (askId, todoId) => deps.todoPrs.trackerRepositories(askId, todoId),

@@ -2,13 +2,20 @@ import type { Session, SessionConfig } from '@hyperneo/shared';
 import type { NeoPackSetting } from '@hyperneo/shared/types/neo-snapshot';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import type { NeoPackBrief } from './pack-contract.ts';
+import { NEO_RESIDENT_FAMILIES } from '../operations/resident-tools.ts';
 import { neoPrompt } from './prompt.ts';
 
 export function neoReadTools() {
   const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash', 'Skill'];
   return {
     sdkToolsPreset: tools,
-    allowedTools: [...tools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`, 'mcp__fetch-mcp'],
+    allowedTools: [
+      ...tools,
+      `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`,
+      ...NEO_RESIDENT_FAMILIES.map(({ name }) => `mcp__${OPERATIONS_MCP_SERVER_NAME}__${name}`),
+      'mcp__fetch-mcp',
+      'mcp__exa',
+    ],
     permissionMode: 'dontAsk' as const,
     coordinatorMode: false,
     settingSources: [],

@@ -511,7 +511,11 @@ export class SessionLifecycle {
 
   async update(sessionId: string, updates: Partial<Session>): Promise<void> {
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
-    if (agentSession && updates.config && 'autoCompactPercent' in updates.config) {
+    if (
+      agentSession &&
+      updates.config &&
+      ('autoCompactPercent' in updates.config || 'autoCompactWindow' in updates.config)
+    ) {
       const { config, ...metadata } = updates;
       await agentSession.updateMetadata(metadata);
       await agentSession.updateConfig(config);

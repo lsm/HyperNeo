@@ -10,8 +10,9 @@ import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/ne
 import { createNeoOperations } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { createFindWorkOperation } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
-import { operationSignature } from '../../../packages/daemon/src/lib/operations/discovery.ts';
-import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { createDiscoveryOperations } from '../../../packages/daemon/src/lib/operations/discovery.ts';
+import { z } from '../../../packages/daemon/node_modules/zod/index.js';
+import { createOperationRegistry, type OperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
 import type { SessionManager } from '../../../packages/daemon/src/lib/session/session-manager.ts';
 import { MessageHub } from '../../../packages/shared/src/mod.ts';
@@ -28,7 +29,8 @@ const service = createNeoService(db,
   { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
   { event: () => {} } as unknown as MessageHub, new InternalEventBus());
 const remote = { list: () => [], invoke: async (): Promise<never> => { throw new Error('No remote calls'); } };
-const registry = createOperationRegistry([
+const registry: OperationRegistry = createOperationRegistry([
+  ...createDiscoveryOperations(() => registry),
   ...createNeoOperations(service),
   ...createWorkVerbOperations({ adapters: () => [], remote, daemonName: 'synthetic' }),
   createFindWorkOperation({ adapters: () => [], remote }),
@@ -69,14 +71,14 @@ try {
   session.setCallerScopeResolver(() => ({ role: 'neo' }));
   transitions.push(await observeRole());
   writeFileSync(join(run, 'evidence/role-transitions.json'), JSON.stringify(transitions, null, 2));
-  assert(transitions[1].tools[0].description!.includes('Core input shapes:'), 'Cached plain server must refresh after resolver replacement');
+  assert(transitions[1].tools.some(tool => tool.name === 'neo_todo'), 'Cached plain server must refresh after resolver replacement');
   let role: 'neo' | undefined;
   session.setCallerScopeResolver(() => ({ role }));
   transitions.push(await observeRole());
   assert.equal(transitions.at(-1)!.tools[0].description, base);
   role = 'neo';
   transitions.push(await observeRole());
-  assert(transitions.at(-1)!.tools[0].description!.includes('Core input shapes:'), 'Cached server must follow a changed scope from the same resolver');
+  assert(transitions.at(-1)!.tools.some(tool => tool.name === 'neo_todo'), 'Cached server must follow a changed scope from the same resolver');
   role = undefined;
   transitions.push(await observeRole());
   assert.equal(transitions.at(-1)!.tools[0].description, base);
@@ -86,34 +88,27 @@ try {
   await client.connect(a);
   const listed = await client.listTools();
   writeFileSync(join(run, 'evidence/tools.json'), JSON.stringify(listed, null, 2));
-  assert.deepEqual(listed.tools.map(tool => tool.name), ['invoke']);
+  assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['invoke', 'neo_work', 'neo_todo', 'neo_publish', 'neo_ask', 'neo_question', 'neo_session', 'neo_speech'].sort());
   const description = listed.tools[0].description!;
-  for (const name of ['work.send', 'neo.publication.publish', 'neo.todo.add', 'neo.todo.continue', 'neo.todo.edit', 'neo.github.read', 'neo.question.ask', 'neo.ask.settle', 'neo.snapshot', 'work.find', 'neo.ask.open', 'neo.todo.close', 'neo.question.get']) {
-    assert(description.includes(name), `Missing ${name}`);
+  const schemas: unknown[] = [];
+  for (const name of ['work.send', 'neo.publication.publish', 'neo.todo.add', 'neo.todo.continue', 'neo.todo.edit', 'neo.question.ask', 'neo.ask.settle', 'neo.snapshot', 'work.find', 'neo.ask.open', 'neo.todo.close', 'neo.question.get']) {
+    const reply = await client.callTool({ name: 'invoke', arguments: { name: 'operations.describe', input: { name } } });
+    assert(Array.isArray(reply.content));
+    const described = JSON.parse((reply.content[0] as { text: string }).text);
+    assert.equal(described.found, true, name);
+    assert.deepEqual(described.inputSchema, z.toJSONSchema(registry.get(name)!.inputSchema, { io: 'input' }), name);
+    schemas.push(described);
   }
-  assert(description.length < 3000, 'Description must remain compact');
-  const aliases = new Map(
-    description.split('\n').filter(line => /^T\d+=/.test(line)).map(line => {
-      const split = line.indexOf('=');
-      return [line.slice(0, split), line.slice(split + 1)];
-    })
-  );
-  for (const line of description.split('\n').filter(line => /^(work|neo)\./.test(line))) {
-    const name = line.slice(0, line.indexOf(' '));
-    const expanded = line.split(';')[0].replace(/\bT\d+\b/g, alias => aliases.get(alias)!);
-    assert.equal(expanded, operationSignature(registry.get(name)!, true));
-  }
-  assert(description.includes('"bind"'));
-  assert(description.includes('questionId'));
-  assert(description.includes('shortText'));
+  writeFileSync(join(run, 'evidence/schemas.json'), JSON.stringify(schemas, null, 2));
+  assert(description.includes('operations.describe'));
   await plainServer.instance.connect(plainB);
   await plainClient.connect(plainA);
   const plainListed = await plainClient.listTools();
   writeFileSync(join(run, 'evidence/plain-tools.json'), JSON.stringify(plainListed, null, 2));
   assert.deepEqual(plainListed.tools.map(tool => tool.name), ['invoke']);
-  assert.equal(plainListed.tools[0].description, description.split('\n\nCore input shapes:')[0]);
+  assert.equal(plainListed.tools[0].description, base);
   console.log('PASS: plain session MCP tools/list retains the unaugmented description.');
-  console.log(`PASS: one invoke tool advertises live core shapes through MCP tools/list (${description.length} characters).`);
+  console.log(`PASS: eight Neo tools expose compact routes and twelve full schemas through operations.describe.`);
 } finally {
   for (const [attached, reader] of roleClients) {
     await reader.close();

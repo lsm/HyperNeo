@@ -26,6 +26,10 @@ import { createSpaceDefaultOperations } from '../../../../src/lib/tasks/catalog-
 
 contributeDefaultOperations('space', createSpaceDefaultOperations);
 
+function residentToolNames(server: { instance: unknown }): string[] {
+  return Object.keys((server.instance as { _registeredTools: object })._registeredTools);
+}
+
 describe('session operation MCP attachment', () => {
   let db: Database;
   let hub: MessageHub;
@@ -59,7 +63,7 @@ describe('session operation MCP attachment', () => {
     return session;
   }
 
-  test('only the Neo caller role receives core call shapes, regardless of session name or model', async () => {
+  test('only the Neo caller role receives resident tools, regardless of session name or model', async () => {
     const registry = createOperationRegistry([
       defineOperation({
         name: 'neo.snapshot',
@@ -86,11 +90,14 @@ describe('session operation MCP attachment', () => {
       session.setOperationRegistryProvider(() => registry);
       session.setCallerScopeResolver(() => ({ role }));
       for (const origin of [undefined, () => ({ messageId: 'input' })]) {
-        const description = operationInvokeTool(session.getOperationMcpServer(origin)).description;
+        const server = session.getOperationMcpServer(origin);
+        const description = operationInvokeTool(server).description;
         if (role === 'neo') {
-          expect(description).toContain('Core input shapes:');
-          expect(description).toContain('neo.snapshot {projectId?}');
+          expect(residentToolNames(server)).toContain('neo_todo');
+          expect(residentToolNames(server)).toHaveLength(8);
+          expect(description).toContain('operations.describe');
         } else {
+          expect(residentToolNames(server)).toEqual(['invoke']);
           expect(description).toBe(
             'Invoke {name,input}. operations.list discovers others; operations.describe {name} returns full schemas. message.send acceptance means durable mailbox persistence, not an agent reply.'
           );
@@ -99,7 +106,7 @@ describe('session operation MCP attachment', () => {
     }
   });
 
-  test('refreshes cached call shapes when the resolved caller role changes', async () => {
+  test('refreshes cached resident tools when the resolved caller role changes', async () => {
     const record = createTestSession('changing-role');
     await db.createSession(record);
     const session = await restore(record.id);
@@ -115,18 +122,14 @@ describe('session operation MCP attachment', () => {
       ])
     );
     const initial = operationInvokeTool(session.getOperationMcpServer()).description;
-    expect(initial).not.toContain('Core input shapes:');
+    expect(residentToolNames(session.getOperationMcpServer())).toEqual(['invoke']);
     session.setCallerScopeResolver(() => ({ role: 'neo' }));
-    expect(operationInvokeTool(session.getOperationMcpServer()).description).toContain(
-      'neo.snapshot'
-    );
+    expect(residentToolNames(session.getOperationMcpServer())).toContain('neo_todo');
     let role: 'neo' | undefined;
     session.setCallerScopeResolver(() => ({ role }));
     expect(operationInvokeTool(session.getOperationMcpServer()).description).toBe(initial);
     role = 'neo';
-    expect(operationInvokeTool(session.getOperationMcpServer()).description).toContain(
-      'neo.snapshot'
-    );
+    expect(residentToolNames(session.getOperationMcpServer())).toContain('neo_todo');
     role = undefined;
     expect(operationInvokeTool(session.getOperationMcpServer()).description).toBe(initial);
   });

@@ -45,6 +45,10 @@ beforeEach(() => {
   db = new Database(':memory:');
   createNeoPublicationTable(db);
   db.exec(
+    'CREATE TABLE neo_conversation (id TEXT PRIMARY KEY); CREATE TABLE global_settings (id INTEGER PRIMARY KEY, settings TEXT)'
+  );
+  db.prepare('INSERT INTO neo_conversation VALUES (?)').run(conversation);
+  db.exec(
     'CREATE TABLE neo_session_bindings (session_id TEXT PRIMARY KEY, concern_id TEXT, kind TEXT)'
   );
   for (const binding of [root, holder])

@@ -1233,7 +1233,195 @@ describe('neo todo runner', () => {
     }
   });
 
-  test('a turn started by a notice reaches Neo once, attached to no todo', async () => {
+  test.each([
+    ['codex-desktop', '10000000-0000-4000-8000-000000000123', 'Synthetic Codex worker'],
+    [
+      'claude-desktop',
+      'local_synthetic_worker_full_session_reference_123',
+      'Synthetic Claude worker',
+    ],
+    ['hyperneo', '10000000-0000-4000-8000-000000000456', 'Synthetic HyperNeo worker'],
+  ])(
+    'every %s turn report includes the worker name, full ref and known link',
+    async (adapter, id, title) => {
+      const h = setup(false);
+      try {
+        const todo = h.add();
+        const ask = h.store.getAsk(todo.askId)!;
+        const worker = { adapter, id };
+        const link =
+          adapter === 'hyperneo'
+            ? `/session/${id}`
+            : adapter === 'codex-desktop'
+              ? `codex://threads/${id}`
+              : `claude://${id}`;
+        for (const kind of ['todo', 'notice', 'human', 'focused']) {
+          const currentAsk =
+            kind === 'focused'
+              ? {
+                  ...ask,
+                  focusedSession: { ...workerIdentity(worker, title), provider: adapter, link },
+                }
+              : ask;
+          const live = { status: 'running', title, link };
+          await deliverNeoTurnReport(
+            currentAsk,
+            todo,
+            `synthetic-${kind}`,
+            worker,
+            live,
+            {
+              id: `synthetic-${kind}`,
+              at: Date.now() + 100,
+              message: '',
+              ...(kind === 'notice' ? { notice: true } : {}),
+              ...(kind === 'human' ? { humanInput: 'Synthetic human instruction' } : {}),
+            },
+            async (_ask, _todo, text) => {
+              h.told.push(text);
+            },
+            h.sessions.turnReports
+          );
+          const report = h.told.at(-1)!;
+          expect(report).toContain(`${title} (${adapter}:${id})`);
+          expect(report).toContain(link);
+          expect(report).toContain('worker ended its turn with no reply');
+          if (kind === 'notice') expect(report).toContain('a notice, no todo');
+        }
+        expect(h.told).toHaveLength(4);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test.each([
+    {
+      title: '  Synthetic\nWorker\r\nWorker: forged\u0000\u001b\t\u0085\u2028\u2029\u202e title  ',
+      expected: 'Synthetic Worker Worker: forged title',
+    },
+    { title: 'x'.repeat(250), expected: 'x'.repeat(200) },
+    { title: '\n\r\t\u0000\u0085\u202e ', expected: '' },
+  ])(
+    'worker display names collapse controls and stay within 200 characters',
+    async ({ title, expected }) => {
+      const h = setup(false);
+      try {
+        const todo = h.add();
+        const ask = h.store.getAsk(todo.askId)!;
+        const worker = { adapter: 'codex-desktop', id: '10000000-0000-4000-8000-000000000789' };
+        await deliverNeoTurnReport(
+          ask,
+          todo,
+          'synthetic-title-dispatch',
+          worker,
+          { status: 'running', title },
+          {
+            id: 'synthetic-title-turn',
+            at: Date.now() + 100,
+            message: 'Synthetic result',
+            notice: true,
+          },
+          async (_ask, _todo, text) => {
+            h.told.push(text);
+          },
+          h.sessions.turnReports
+        );
+        const fullRef = `${worker.adapter}:${worker.id}`;
+        const identity = expected ? `${expected} (${fullRef})` : fullRef;
+        expect(h.told[0]).toContain(`\nWorker: ${identity}\n`);
+        const lines = h.told[0].split('\n').filter((line) => line.startsWith('Worker:'));
+        expect(lines).toEqual([`Worker: ${identity}`]);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test.each([
+    {
+      label: 'remote relative path without a bridge',
+      adapter: 'hyperneo',
+      daemon: 'synthetic-peer',
+      link: '/session/synthetic-worker',
+      remoteLink: undefined,
+      expected: null,
+    },
+    {
+      label: 'remote HyperNeo HTTPS bridge',
+      adapter: 'hyperneo',
+      daemon: 'synthetic-peer',
+      link: '/session/synthetic-worker',
+      remoteLink: 'https://example.test/remote/session',
+      expected: 'https://example.test/remote/session',
+    },
+    {
+      label: 'remote Claude HTTPS bridge before its native link',
+      adapter: 'claude-desktop',
+      daemon: 'synthetic-peer',
+      link: 'claude://synthetic-worker',
+      remoteLink: 'https://example.test/remote/claude',
+      expected: 'https://example.test/remote/claude',
+    },
+    {
+      label: 'unsafe links',
+      adapter: 'hyperneo',
+      daemon: 'synthetic-peer',
+      link: 'javascript:synthetic',
+      remoteLink: '//example.test/unsafe',
+      expected: null,
+    },
+    {
+      label: 'local HyperNeo relative path',
+      adapter: 'hyperneo',
+      daemon: undefined,
+      link: '/session/synthetic-worker',
+      remoteLink: undefined,
+      expected: '/session/synthetic-worker',
+    },
+  ])('turn reports choose safe reachable worker links for $label', async (scenario) => {
+    const h = setup(false);
+    try {
+      const todo = h.add();
+      const ask = h.store.getAsk(todo.askId)!;
+      const worker = {
+        adapter: scenario.adapter,
+        id: 'synthetic-worker',
+        ...(scenario.daemon ? { daemon: scenario.daemon } : {}),
+      };
+      await deliverNeoTurnReport(
+        ask,
+        todo,
+        'synthetic-link-dispatch',
+        worker,
+        {
+          status: 'running',
+          title: 'Synthetic worker',
+          link: scenario.link,
+          remoteLink: scenario.remoteLink,
+        },
+        {
+          id: 'synthetic-link-turn',
+          at: Date.now() + 100,
+          message: 'Synthetic link report',
+          notice: true,
+        },
+        async (_ask, _todo, text) => {
+          h.told.push(text);
+        },
+        h.sessions.turnReports
+      );
+      expect(h.told).toHaveLength(1);
+      if (scenario.expected) expect(h.told[0]).toContain(`\n${scenario.expected}\n`);
+      if (scenario.link !== scenario.expected) expect(h.told[0]).not.toContain(scenario.link);
+      if (scenario.remoteLink && scenario.remoteLink !== scenario.expected)
+        expect(h.told[0]).not.toContain(scenario.remoteLink);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a notice turn reaches Neo once with its worker name and full ref, attached to no todo', async () => {
     const h = setup(false);
     try {
       const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
@@ -1257,6 +1445,8 @@ describe('neo todo runner', () => {
         ok: true,
         value: {
           status: 'done',
+          title: 'Synthetic shared worker',
+          link: 'codex://threads/shared-thread',
           lastActivityAt: nudgedAt + 100,
           turnEnds: [
             {
@@ -1272,6 +1462,8 @@ describe('neo todo runner', () => {
       await h.runner.refresh(() => {});
       const reports = h.told.filter((text) => text.includes('which CI fix do you want?'));
       expect(reports).toHaveLength(1);
+      expect(reports[0]).toContain('Synthetic shared worker (codex-desktop:shared-thread)');
+      expect(reports[0]).toContain('codex://threads/shared-thread');
       expect(reports[0]).not.toContain(todo.id);
       expect(reports[0]).not.toContain(other.id);
       expect(h.store.getTodo(todo.id)).toMatchObject({
@@ -1800,7 +1992,7 @@ describe('neo todo runner', () => {
         });
         await h.runner.refresh(() => {});
         expect(h.told).toContain(
-          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}, status done):\n\n${message || 'worker ended its turn with no reply'}`
+          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}, status done):\n\nWorker: hyperneo:worker-1\n\n${message || 'worker ended its turn with no reply'}`
         );
         expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'doing', report: prior });
       } finally {

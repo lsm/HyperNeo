@@ -57,7 +57,8 @@ import mdneoSystemQuickAckListening from './neo/system/quick-ack-listening.md' w
 };
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdNeoFront from './neo/front.md' with { type: 'text' };
-export const NEO_FRONT = mdNeoFront;
+import mdNeoSpeech from './neo/system/speech.md' with { type: 'text' };
+
 import mdneoSystemPackPreferences from './neo/system/pack-preferences.md' with { type: 'text' };
 import mdneoSystemStandingRules from './neo/system/standing-rules.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
@@ -238,10 +239,8 @@ import mdToolCodingMergeRetry from './neo/tools/neo.coding.merge.retry.md' with 
 import mdToolCodingPrFile from './neo/tools/neo.coding.pr.file.md' with { type: 'text' };
 import mdToolCodingResult from './neo/tools/neo.coding.result.md' with { type: 'text' };
 import mdToolCodingSmoke from './neo/tools/neo.coding.smoke.md' with { type: 'text' };
-import mdToolCodingWritePlan from './neo/tools/neo.coding.write.plan.md' with { type: 'text' };
 import mdToolConversationRead from './neo/tools/neo.conversation.read.md' with { type: 'text' };
 import mdToolDraftRecover from './neo/tools/neo.draft.recover.md' with { type: 'text' };
-import mdToolGithubRead from './neo/tools/neo.github.read.md' with { type: 'text' };
 import mdToolHomeGithub from './neo/tools/neo.home.github.md' with { type: 'text' };
 import mdToolHomeInit from './neo/tools/neo.home.init.md' with { type: 'text' };
 import mdToolHomeRead from './neo/tools/neo.home.read.md' with { type: 'text' };
@@ -271,7 +270,7 @@ import mdToolQuestionRelayAnswer from './neo/tools/neo.question.relayAnswer.md' 
 };
 import mdToolRelaySendersSet from './neo/tools/neo.relaySenders.set.md' with { type: 'text' };
 import mdToolRelaySendersRecent from './neo/tools/neo.relaySenders.recent.md' with { type: 'text' };
-import { buildPromptRegistry } from './loader.ts';
+import { buildPromptRegistry, fillPrompt } from './loader.ts';
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
 };
@@ -399,6 +398,8 @@ const registry: Record<string, string> = {
   'neo/system/quick-ack-listening.md': mdneoSystemQuickAckListening,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
+  'neo/system/speech.md': mdNeoSpeech,
+  'neo/front.md': mdNeoFront,
   'neo/system/pack-preferences.md': mdneoSystemPackPreferences,
   'neo/system/standing-rules.md': mdneoSystemStandingRules,
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
@@ -549,7 +550,8 @@ export const {
   WORKER_PROVENANCE_TEAM_FIELD,
   WORKER_PROVENANCE_OPEN_PRS,
   NEO_ROOT_PROMPT,
-  NEO_ROOT_TURN_END,
+  NEO_ROOT_TURN_END: NEO_ROOT_TURN_END_TEMPLATE,
+  NEO_FRONT: NEO_FRONT_TEMPLATE,
   NEO_STANDING_RULES,
   NEO_PACK_PREFERENCES,
   NEO_WORK_GOAL_ASKED,
@@ -651,6 +653,20 @@ export const {
   REVIEW_ONLY_REVIEW_PROMPT,
 } = buildPromptRegistry(registry);
 
+export const NEO_ROOT_TURN_END = fillPrompt(NEO_ROOT_TURN_END_TEMPLATE, {
+  ACK_TOOL: 'neo.speech.say',
+  ACK_NOTE: 'A spoken acknowledgment needs no publication.',
+  PUBLISH_TOOL: 'neo.publication.publish',
+  SAY_TOOL: 'neo.speech.say',
+});
+
+export const NEO_FRONT = fillPrompt(NEO_FRONT_TEMPLATE, {
+  ACK_TOOL: 'reply_short with progress:true and spoken',
+  ACK_NOTE: 'The acknowledgment is a progress reply that includes spoken.',
+  PUBLISH_TOOL: 'reply_short or reply_detailed',
+  SAY_TOOL: 'speech_say',
+});
+
 const codingSkill = parseSkillMarkdown(mdneoPacksCodingSkill, 'neo/packs/coding/SKILL.md');
 
 export const NEO_PACK_CODING_INSTRUCTIONS = codingSkill.body;
@@ -711,10 +727,8 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.coding.pr.file.md': mdToolCodingPrFile,
     'neo/tools/neo.coding.result.md': mdToolCodingResult,
     'neo/tools/neo.coding.smoke.md': mdToolCodingSmoke,
-    'neo/tools/neo.coding.write.plan.md': mdToolCodingWritePlan,
     'neo/tools/neo.conversation.read.md': mdToolConversationRead,
     'neo/tools/neo.draft.recover.md': mdToolDraftRecover,
-    'neo/tools/neo.github.read.md': mdToolGithubRead,
     'neo/tools/neo.home.github.md': mdToolHomeGithub,
     'neo/tools/neo.home.init.md': mdToolHomeInit,
     'neo/tools/neo.home.read.md': mdToolHomeRead,

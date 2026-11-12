@@ -1,8 +1,6 @@
-import { mkdtempSync, rmSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { spyOn } from 'bun:test';
 import { describe, expect, test } from 'bun:test';
@@ -277,47 +275,3 @@ describe('work-view coverage', () => {
     }
   });
 });
-
-test('public work-detail reads coalesce and retain head, failure and reopen semantics', () => {
-  const run = realpathSync(mkdtempSync(join(tmpdir(), 'work-ledger-rpc-')));
-  mkdirSync(join(run, 'home'));
-  try {
-    execFileSync(
-      'bun',
-      [
-        fileURLToPath(
-          new URL('../../../../../../.claude/skills/verify/github-ledger-work.ts', import.meta.url)
-        ),
-        run,
-      ],
-      {
-        cwd: run,
-        env: {
-          HOME: join(run, 'home'),
-          PATH: process.env.PATH!,
-          NODE_ENV: 'test',
-          HYPERNEO_DATA_DIR: join(run, 'data'),
-          LOG_LEVEL: 'error',
-        },
-        timeout: 30000,
-        stdio: 'pipe',
-      }
-    );
-    const result = JSON.parse(readFileSync(join(run, 'evidence/work-ledger.json'), 'utf8'));
-    expect(result.verified).toBe(true);
-    expect(result.workLookups).toBe(1);
-    expect(result.referenceLookups).toBe(0);
-    expect(result.fanout).toHaveLength(5);
-    expect(result.changed).toMatchObject({
-      review: 'none',
-      blockers: ['1 unresolved review thread'],
-    });
-    expect(result.failed).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('unreadable'),
-    });
-    expect(result.counts).toEqual({ initial: 1, changed: 1, 'detail-failed': 1, reopen: 1 });
-  } finally {
-    rmSync(run, { recursive: true, force: true });
-  }
-}, 30000);

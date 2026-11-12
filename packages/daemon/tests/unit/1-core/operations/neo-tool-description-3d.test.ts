@@ -52,11 +52,7 @@ const moved = [
     name: 'neo.coding.assign',
     text: 'Assign Review or Verify on one existing coding todo/PR/head/acceptance contract. Configured bot means no reviewer session; otherwise select a provenance-qualified fresh reviewer or explicit human. Verify starts independently. Candidates are available configurations (default first); shared prefer settings return fallback explanations. Existing exact-head assignments are reused; no merge/completion decisions.\nFor independent review after bot approval, first use work.send for the same todo and reviewer. Then call this operation with handoff {state: "pending", ref, receipt} using its accepted delivery receipt and candidates: []. Bot assignment stays separate. When that review returns or is cancelled, call handoff {state: "returned" or "cancelled", ref}. Missing or uncertain delivery cannot cover a hold.',
   },
-  {
-    file: 'packs/coding/github-read-operation.ts',
-    name: 'neo.github.read',
-    text: 'Read GitHub as it is now. With {url}, one pull request or issue: a pull request returns its state (OPEN, MERGED or CLOSED), checks (passing, failing, pending or none), review verdict on its current head (approved, changes_requested or none), merge blockers and title; an issue returns its state, how it closed (completed, not_planned or duplicate), the merged pull request that closed it, and its parent issue. With {repo: "owner/name", kind: "pr" or "issue", state: "open", "merged", "closed" or "all", by: "created", "updated", "merged" or "closed", since, until (ISO times) or withinHours (the last N hours up to now), limit}, a list: every match in that window with number, title, url, state, createdAt, updatedAt, mergedAt and closedAt, newest first, truncated when more matched than limit, and window {by, since, until} saying what the read covered (until is the read time when you leave it out, so leave it out for "recently" or "last N hours"). by defaults to merged for state merged, closed for closed, otherwise created. Use the list for any question about what happened in a time range ("which PRs merged in the last 2 hours") instead of guessing numbers and reading them one by one. Read-only.',
-  },
+
   {
     file: 'packs/coding/human-merge-operation.ts',
     name: 'neo.coding.merge.human',
@@ -96,11 +92,6 @@ const moved = [
     file: 'packs/coding/smoke-operation.ts',
     name: 'neo.coding.smoke',
     text: 'Record the assigned independent QA actor’s post-deploy smoke or explicit inapplicability. Reads actual merged-head and running-build containment facts; a failure is recorded for follow-up without changing the todo’s declared completion check. Does not merge, deploy or restart anything.',
-  },
-  {
-    file: 'packs/coding/stage-preferences.ts',
-    name: 'neo.coding.write.plan',
-    text: 'Choose a Write target from available adapter/place/model/effort configurations (first candidate is the default). Applies the same repository prefer settings used by Review and Verify; reports unavailable preferences without saving defaults. Use the returned target with the existing coding todo start. This read does not start work or change assignments.',
   },
   {
     file: 'peer-operations.ts',

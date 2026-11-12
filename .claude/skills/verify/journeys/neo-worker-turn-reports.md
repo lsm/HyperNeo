@@ -32,3 +32,11 @@ Historical report relay remains replay-protected; exact final blocker lines are 
 the model, including when first observed after a service restart. Changed bytes
 under a reused turn ID remain deliverable; failed admission must remain retryable.
 Preserve the red-run and fixed-run observed.json and model request bodies.
+
+## Worker identification
+
+Use worker-report-identity.md to inspect notice report identity at the real Neo
+recipient input. Every report carries the existing worker name, complete
+adapter-prefixed session ref, and link when supplied by the driver. Identity
+metadata is taken from the current status while the report's first-observed
+status and replay receipts retain their existing semantics.

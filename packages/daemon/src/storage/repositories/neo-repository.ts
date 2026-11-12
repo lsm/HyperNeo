@@ -1,3 +1,4 @@
+import { frontSessionId } from '../../lib/neo/front-mode.ts';
 import type { NeoProjectSaveRequest } from '../../lib/neo/project-save.ts';
 import { neoProjectMoveWrites } from './neo-project-move-writes.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
@@ -345,6 +346,17 @@ export class NeoRepository {
     return this.db
       .prepare(`SELECT ${bindingColumns} FROM neo_session_bindings WHERE session_id = ?`)
       .get(sessionId) as NeoBinding | null;
+  }
+
+  getPublicationBinding(sessionId: string): NeoBinding | null {
+    const conversation = this.readConversationId();
+    if (
+      conversation &&
+      sessionId === frontSessionId(conversation) &&
+      this.db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId)
+    )
+      return { sessionId, kind: 'neo', projectId: null };
+    return this.getBindingBySession(sessionId);
   }
 
   defaultBinding(): NeoBinding | null {

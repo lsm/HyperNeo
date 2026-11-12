@@ -151,7 +151,19 @@ describe('describeResolvedOperations', () => {
 });
 
 describe('operationsCapabilityContribution with a resolved registry', () => {
-  test('Neo gets compact instructions and counts only admitted rare operations', () => {
+  test('Neo briefing does not enumerate an unused operation catalog', () => {
+    const registry = {
+      get: () => undefined,
+      get entries(): never {
+        throw new Error('Neo briefing must not enumerate operations');
+      },
+    };
+    expect(
+      operationsCapabilityContribution(ATTACHED, registry, { source: 'mcp', role: 'neo' }).briefing
+    ).toContain('neo_*');
+  });
+
+  test('Neo gets resident guidance and compact discovery instructions', () => {
     const registry = createOperationRegistry([
       stubOperation('goal.journal.list'),
       stubOperation('work.send'),
@@ -161,10 +173,10 @@ describe('operationsCapabilityContribution with a resolved registry', () => {
       source: 'mcp',
       role: 'neo',
     });
-    expect(briefing).toContain('namespace counts');
-    expect(briefing).toContain('{prefix,cursor?}');
-    expect(briefing).toContain('all:true stays compact');
-    expect(briefing).toContain('1 operation across 1 area: goal.');
+    expect(briefing).toContain('counts namespaces');
+    expect(briefing).toContain('invoke for rare calls');
+    expect(briefing).toContain('neo_*');
+    expect(briefing).toContain('neo.snapshot');
     expect(briefing).not.toContain('task.list');
     expect(briefing).not.toContain('work.send');
   });

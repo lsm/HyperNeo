@@ -6,8 +6,8 @@ job processor, and drives the real registry through the MCP adapter. GitHub is
 stubbed; no provider or live credentials are used.
 
 The helper checks a role-denied malformed call, disabled coding discovery,
-descriptions and typo suggestions, then enables coding and invokes its GitHub
-reader in the same session. Bare and all:true Neo lists must return namespace
+descriptions and typo suggestions, then enables coding and checks its PR-file
+input validation in the same session. Bare and all:true Neo lists must return namespace
 counts, prefix pages carry at most twenty names and a cursor, and the human
 RPC adapter must retain byte-identical full-catalog output. Retain `observed.json`, `proof.log` and
 `run-status.json`. A successful run prints registry and caller counts. The evidence also records

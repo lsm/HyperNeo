@@ -8,6 +8,12 @@ afterEach(() => {
 });
 
 describe('i18n', () => {
+  it('uses the Front name in both dual-mode descriptions', () => {
+    for (const language of [en, zhHans]) {
+      expect(language['dual.description']).toContain('Front');
+      expect(language['dual.description']).not.toContain('Convo');
+    }
+  });
   it('has a non-empty Simplified Chinese value for every English key', () => {
     expect(Object.keys(zhHans).sort()).toEqual(Object.keys(en).sort());
     for (const value of Object.values(zhHans)) expect(value.trim()).not.toBe('');

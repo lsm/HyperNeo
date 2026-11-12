@@ -1,54 +1,16 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
-import { createCodingQueryReader } from '../../../../src/lib/neo/packs/coding/query-reader.ts';
 import {
   NeoGithubQuery,
   planNeoGithubQuery,
-  queryNeoGithub,
   type NeoGithubCollection,
 } from '../../../../src/lib/neo/packs/coding/github-query.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-test('public bounded queries share acquisition without masking later changed, failed or empty reads', () => {
-  const run = realpathSync(mkdtempSync(join(tmpdir(), 'query-ledger-rpc-')));
-  mkdirSync(join(run, 'home'));
-  try {
-    execFileSync(
-      'bun',
-      [
-        fileURLToPath(
-          new URL('../../../../../../.claude/skills/verify/github-ledger-query.ts', import.meta.url)
-        ),
-        run,
-      ],
-      {
-        cwd: run,
-        env: {
-          HOME: join(run, 'home'),
-          PATH: process.env.PATH!,
-          NODE_ENV: 'test',
-          HYPERNEO_DATA_DIR: join(run, 'data'),
-          LOG_LEVEL: 'error',
-        },
-        timeout: 30000,
-        stdio: 'pipe',
-      }
-    );
-    const result = JSON.parse(readFileSync(join(run, 'evidence/query-ledger.json'), 'utf8'));
-    expect(result.verified).toBe(true);
-    expect(result.fanout).toHaveLength(5);
-    expect(result.counts).toEqual({ initial: 1, changed: 1, failed: 1, malformed: 1, empty: 1 });
-  } finally {
-    rmSync(run, { recursive: true, force: true });
-  }
-}, 30000);
 
 const input = NeoGithubQuery.parse({
   repo: 'synthetic/ledger',
@@ -106,7 +68,6 @@ function fixture(disk = false) {
     path,
     spawn,
     args,
-    read: createCodingQueryReader(() => db, spawn),
     facts: new CodingPrLedgerRepository(db).queryFacts,
     calls: () => calls,
     data: (next: unknown, exit = 0) => {
@@ -123,25 +84,29 @@ function fixture(disk = false) {
   };
 }
 
-test('identical demands across reader instances share acquisition while settled reads remain fresh', async () => {
+test('identical ledger demands coalesce while settled reads remain fresh', async () => {
   const f = fixture(),
     release = f.hold(),
-    other = createCodingQueryReader(() => f.db, f.spawn);
-  const held = Promise.all([queryNeoGithub(f.read, input), queryNeoGithub(other, input)]);
+    other = new CodingPrLedgerRepository(f.db).queryFacts;
+  const held = Promise.all([f.facts.refresh(coverage, f.spawn), other.refresh(coverage, f.spawn)]);
   release();
   const results = await held;
   expect(results[0]).toEqual(results[1]);
-  expect(results[0]).toMatchObject({ ok: true, items: [{ title: 'Current' }], truncated: false });
+  expect(results[0].view).toMatchObject({
+    status: 'known',
+    value: [{ title: 'Current' }],
+    truncated: false,
+  });
   expect(f.calls()).toBe(1);
   f.data(raw('Changed'));
-  expect(await queryNeoGithub(f.read, input)).toMatchObject({
-    ok: true,
-    items: [{ title: 'Changed' }],
+  expect((await f.facts.refresh(coverage, f.spawn)).view).toMatchObject({
+    status: 'known',
+    value: [{ title: 'Changed' }],
   });
   f.data(null, 1);
-  expect(await queryNeoGithub(f.read, input)).toMatchObject({
-    ok: false,
-    reason: expect.stringContaining('unreadable'),
+  expect((await f.facts.refresh(coverage, f.spawn)).view).toMatchObject({
+    status: 'unknown',
+    reason: 'failed',
   });
   expect(f.calls()).toBe(3);
 });
@@ -187,14 +152,16 @@ test('known aliases and case coalesce, and relative windows retain the resolved 
     'synthetic/ledger',
   ]);
   expect(f.calls()).toBe(1);
-  const relative = await queryNeoGithub(
-    f.read,
-    NeoGithubQuery.parse({ repo: input.repo, withinHours: 6 })
-  );
-  expect(relative.ok).toBe(true);
-  if (relative.ok) {
-    expect(f.args.at(-1)).toContain(`created:>=${relative.window.since}`);
-    expect(Date.parse(relative.window.since!)).toBeLessThan(Date.parse(relative.window.until));
+  const planned = planNeoGithubQuery(NeoGithubQuery.parse({ repo: input.repo, withinHours: 6 }));
+  expect('value' in planned).toBe(true);
+  if ('value' in planned) {
+    const relative = await f.facts.refresh(
+      { ...planned.value.query, by: planned.value.by },
+      f.spawn
+    );
+    expect(relative.view.status).toBe('known');
+    expect(f.args.at(-1)).toContain(`created:>=${relative.coverage.query.since}`);
+    expect(Date.parse(relative.coverage.query.since!)).toBeLessThan(relative.view.observedAt!);
     const rows = f.db.prepare('SELECT subject FROM pack_coding_query_facts').all() as {
       subject: string;
     }[];
@@ -285,11 +252,8 @@ test('reopened storage retains known facts but a new demand still refreshes', as
   });
   f.data(raw('After reopen'));
   expect(
-    await queryNeoGithub(
-      createCodingQueryReader(() => db, f.spawn),
-      input
-    )
-  ).toMatchObject({ ok: true, items: [{ title: 'After reopen' }] });
+    await new CodingPrLedgerRepository(db).queryFacts.refresh(coverage, f.spawn)
+  ).toMatchObject({ view: { status: 'known', value: [{ title: 'After reopen' }] } });
   expect(f.calls()).toBe(2);
 });
 
@@ -317,45 +281,6 @@ test('transient SQLite contention retries persistence without repeating shared a
     fault.mockRestore();
   }
 });
-
-for (const mode of ['relative', 'growth']) {
-  test(`public relative query ${mode} shares coverage without per-call row growth`, () => {
-    const run = realpathSync(mkdtempSync(join(tmpdir(), 'relative-query-rpc-')));
-    mkdirSync(join(run, 'home'));
-    try {
-      execFileSync(
-        'bun',
-        [
-          fileURLToPath(
-            new URL(
-              '../../../../../../.claude/skills/verify/github-ledger-query.ts',
-              import.meta.url
-            )
-          ),
-          run,
-          mode,
-        ],
-        {
-          cwd: run,
-          env: {
-            HOME: join(run, 'home'),
-            PATH: process.env.PATH!,
-            NODE_ENV: 'test',
-            HYPERNEO_DATA_DIR: join(run, 'data'),
-            LOG_LEVEL: 'error',
-          },
-          timeout: 30000,
-          stdio: 'pipe',
-        }
-      );
-      const result = JSON.parse(readFileSync(join(run, 'evidence/query-ledger.json'), 'utf8'));
-      expect(result.verified).toBe(true);
-      expect(result.rows).toHaveLength(1);
-    } finally {
-      rmSync(run, { recursive: true, force: true });
-    }
-  }, 30000);
-}
 
 test('rolling windows retain the actual winning interval and reject a late earlier interval', async () => {
   const f = fixture(true),

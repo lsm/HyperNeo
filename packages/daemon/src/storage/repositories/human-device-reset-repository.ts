@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoRepository } from './neo-repository.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
+import { PairingRequestRepository } from './pairing-request-repository.ts';
 import { reserveNeoConversation } from './neo-conversation-reservation.ts';
 
 export function resetHumanDevices(db: Database, now: number, requestId?: string) {
@@ -15,10 +16,7 @@ export function resetHumanDevices(db: Database, now: number, requestId?: string)
     db.prepare(
       'UPDATE pairing_codes SET expires_at = MIN(expires_at, ?) WHERE used_at IS NULL'
     ).run(now);
-    db.prepare(
-      `UPDATE pairing_requests SET cancelled_at = ?, expires_at = ?
-       WHERE granted_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL`
-    ).run(now, now);
+    new PairingRequestRepository(db).cancelOpenRequests(now);
     db.prepare('INSERT INTO human_device_resets (id, reset_at, devices_json) VALUES (?, ?, ?)').run(
       id,
       now,

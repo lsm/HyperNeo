@@ -45,6 +45,7 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   enableFileCheckpointing: 'carried',
   queryMode: 'carried',
   chatDisplayMode: 'carried',
+  operationTools: 'carried',
   workerOperations: 'carried',
 
   harness: 'creation-only',
@@ -71,6 +72,14 @@ export function hasExplicitAutoCompactWindow(
 ): config is { autoCompactWindow: number } {
   const window = config.autoCompactWindow;
   return typeof window === 'number' && Number.isSafeInteger(window) && window > 0;
+}
+
+export function hasExplicitAutoCompactChoice(
+  config: Pick<SessionConfig, 'autoCompactWindow' | 'autoCompactPercent'>
+): boolean {
+  if (hasExplicitAutoCompactWindow(config)) return true;
+  const percent = config.autoCompactPercent;
+  return typeof percent === 'number' && Number.isFinite(percent) && percent > 0;
 }
 
 function fieldsWithPolicy(policy: CreateSessionConfigFieldPolicy): (keyof SessionConfig)[] {

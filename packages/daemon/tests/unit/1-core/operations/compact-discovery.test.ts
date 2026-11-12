@@ -53,7 +53,11 @@ function fixture() {
     entry('goal.journal.list'),
     entry('goal.journal.append'),
     entry('neo.snapshot'),
-    entry('neo.github.read', { safetyClass: 'read' }, { id: 'coding', enabledIds: () => enabled }),
+    entry(
+      'neo.coding.pr.file',
+      { safetyClass: 'read' },
+      { id: 'coding', enabledIds: () => enabled }
+    ),
     entry('neo.rule.ask', { safetyClass: 'human_only' }),
     entry('work.send'),
     entry('task.list'),
@@ -136,19 +140,19 @@ describe('Neo compact prefix discovery', () => {
   });
   test('the same session discovers a pack only while it is enabled', async () => {
     const { registry, enable, disable } = fixture();
-    expect(await list(registry, { prefix: 'neo.github' })).toEqual({
+    expect(await list(registry, { prefix: 'neo.coding.pr' })).toEqual({
       total: 0,
       names: [],
       next: null,
     });
     enable();
-    expect(await list(registry, { prefix: 'neo.github' })).toEqual({
+    expect(await list(registry, { prefix: 'neo.coding.pr' })).toEqual({
       total: 1,
-      names: ['neo.github.read'],
+      names: ['neo.coding.pr.file'],
       next: null,
     });
     disable();
-    expect(await list(registry, { prefix: 'neo.github' })).toEqual({
+    expect(await list(registry, { prefix: 'neo.coding.pr' })).toEqual({
       total: 0,
       names: [],
       next: null,
@@ -165,11 +169,9 @@ describe('Neo compact prefix discovery', () => {
       'neo.coding.pr.file',
       'neo.coding.result',
       'neo.coding.smoke',
-      'neo.coding.write.plan',
       'neo.conversation.asks.read',
       'neo.conversation.image.read',
       'neo.conversation.read',
-      'neo.github.read',
       'neo.home.github',
       'neo.home.init',
       'neo.home.read',
@@ -186,14 +188,14 @@ describe('Neo compact prefix discovery', () => {
       next: string;
       total: number;
     };
-    expect(first).toEqual({ total: 23, names: names.slice(0, 20), next: 'neo.peer.accept' });
+    expect(first).toEqual({ total: 21, names: names.slice(0, 20), next: 'neo.peer.list' });
     expect(await list(registry, { prefix: 'neo', cursor: first.next })).toEqual({
-      total: 23,
+      total: 21,
       names: names.slice(20),
       next: null,
     });
     expect(await list(registry, { prefix: 'neo', cursor: names.at(-1) })).toEqual({
-      total: 23,
+      total: 21,
       names: [],
       next: null,
     });

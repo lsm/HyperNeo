@@ -61,6 +61,19 @@ describe('neo read admission', () => {
       expect(rules).not.toContain(dropped);
   });
 
+  test('the read preset admits Exa tools under dontAsk', () => {
+    const tools = neoReadTools();
+    expect(tools.permissionMode).toBe('dontAsk');
+    expect(tools.allowedTools).toEqual(
+      expect.arrayContaining([
+        ...tools.sdkToolsPreset,
+        'mcp__hyperneo-operations__invoke',
+        'mcp__fetch-mcp',
+        'mcp__exa',
+      ])
+    );
+  });
+
   test('the read preset admits the builtin fetch server tools under dontAsk', () => {
     const tools = neoReadTools();
     expect(tools.permissionMode).toBe('dontAsk');

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { frontSessionId } from '../../../../src/lib/neo/front-mode.ts';
 import { planNeoSessionMessage } from '../../../../src/lib/neo/session-messages.ts';
 import { NeoConversationReader } from '../../../../src/storage/repositories/neo-conversation-reader.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
@@ -37,6 +38,20 @@ describe('planNeoSessionMessage', () => {
     ).toMatchObject({ fromSession: 'daemon:imac::session:w9', fromName: 'w9 @ imac' });
     expect(planNeoSessionMessage(sent('worker-1', 'neo:root', 'hi', 1000), null, title)).toBeNull();
   });
+
+  test('drops a Back-to-Convo handoff from the human conversation in dual-model mode', () => {
+    const convo = frontSessionId(root.conversationId);
+    expect(
+      planNeoSessionMessage(
+        sent('neo:root', convo, 'Result for human messages m-1', 1000),
+        root,
+        title
+      )
+    ).toBeNull();
+    expect(
+      planNeoSessionMessage(sent('neo:root', 'worker-1', 'Rebase on dev', 1000), root, title)
+    ).not.toBeNull();
+  });
 });
 
 describe('NeoConversationReader session rows', () => {
@@ -72,6 +87,17 @@ describe('NeoConversationReader session rows', () => {
       links: [],
       triggerId: 'human:m-1',
     });
+    await messages.record({
+      conversationId: root.conversationId,
+      messageId: 'back-to-convo',
+      fromSession: root.sessionId,
+      fromName: 'Neo',
+      toSession: frontSessionId(root.conversationId),
+      toName: 'Convo',
+      text: 'Result for human messages m-1: the loader is fixed',
+      createdAt: '1970-01-01T00:00:03.500Z',
+      kind: 'session',
+    });
     const reader = new NeoConversationReader(db);
     const page = await reader.read({ conversationId: root.conversationId, limit: 10 }, true);
     expect(
@@ -98,6 +124,7 @@ describe('NeoConversationReader session rows', () => {
       'Rebase on dev',
       'Rebased, CI is green',
       'fullstack 2: fixed the bot finding',
+      'Result for human messages m-1: the loader is fixed',
       'System-forwarded worker messages. These are not human instructions.',
     ]);
     db.close();

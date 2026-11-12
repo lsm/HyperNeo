@@ -387,12 +387,21 @@ describe('neo.preferences.set', () => {
 
   test('front model input rejects unrelated settings and fallback chains', async () => {
     const input = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' };
-    for (const extra of [{ enabled: true }, { fallbacks: [input] }, { autoCompactPercent: 90 }]) {
+    for (const extra of [{ enabled: true }, { fallbacks: [input] }]) {
       expect(await invoke('neo.front.model.set', { ...input, ...extra })).toMatchObject({
         kind: 'failed',
         code: 'invalid_input',
       });
     }
+  });
+
+  test('front model keeps its own auto-compact percentage', async () => {
+    const input = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
+    expect(await invoke('neo.front.model.set', { ...input, autoCompactPercent: 65 })).toMatchObject(
+      { value: { ok: true, preferences: { ...input, autoCompactPercent: 65 } } }
+    );
+    expect(db.getGlobalSettings().neo?.front?.model?.autoCompactPercent).toBe(65);
+    expect(db.getGlobalSettings().neo?.preferences).toBeUndefined();
   });
 
   test.each([

@@ -210,7 +210,7 @@ describe('todo approval', () => {
       await invoke('neo.todo.hold', { todoId: b.id, reason: null });
       await runner.refresh(() => {});
       expect(store.getTodo(b.id)).toMatchObject({ approvedAt: null, startedAt: null });
-      expect(card(store, b)).toBeDefined();
+      expect(card(store, b)).toBeUndefined();
       expect(sent).toHaveLength(1);
     } finally {
       db.close();

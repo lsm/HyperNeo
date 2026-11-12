@@ -1,5 +1,6 @@
 import { parseRemoteAddress } from '../mailbox/address.ts';
 import type { SessionSent } from '../messaging/message-send.ts';
+import { frontSessionId } from './front-mode.ts';
 import type { NeoSessionMessageDraft } from '../../storage/repositories/neo-session-message-repository.ts';
 
 export function planNeoSessionMessage(
@@ -9,6 +10,7 @@ export function planNeoSessionMessage(
 ): NeoSessionMessageDraft | null {
   if (!root || (sent.fromSession !== root.sessionId && sent.toSession !== root.sessionId))
     return null;
+  if (sent.toSession === frontSessionId(root.conversationId)) return null;
   const name = (sessionId: string) => {
     const remote = parseRemoteAddress(sessionId);
     return remote ? `${remote.sessionId} @ ${remote.daemonId}` : title(sessionId);

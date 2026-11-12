@@ -197,6 +197,15 @@ export class PairingRequestRepository {
     );
   }
 
+  cancelOpenRequests(now: number): void {
+    this.db
+      .prepare(
+        `UPDATE pairing_requests SET cancelled_at = ?, expires_at = ?
+         WHERE granted_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL`
+      )
+      .run(now, now);
+  }
+
   requestStatus(
     requestId: string,
     now: number

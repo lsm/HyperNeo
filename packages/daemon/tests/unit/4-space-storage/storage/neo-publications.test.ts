@@ -154,6 +154,40 @@ describe('Neo publication ledger', () => {
     });
   });
 
+  test('a complete edit converts a verbatim reply to a detailed reply', () => {
+    runMigration387(db);
+    const created = repo.append({
+      ...next(93),
+      shortText: undefined,
+      verbatim: true,
+      fullText: 'I will check.',
+      links: [],
+    });
+    expect(created).toMatchObject({ accepted: true });
+    const id = (created as { publication: { publicationId: string } }).publication.publicationId;
+    expect(
+      repo.edit(
+        input.conversationId,
+        id,
+        { shortText: 'The check is complete.', fullText: 'The detailed result.' },
+        '2026-10-26T00:00:00.000Z',
+        'avatar',
+        undefined,
+        '40000000-0000-4000-8000-000000000003'
+      )
+    ).toMatchObject({
+      accepted: true,
+      publication: {
+        shortText: 'The check is complete.',
+        fullText: 'The detailed result.',
+      },
+    });
+    const updated = repo.get(input.conversationId, id)!;
+    expect(updated.verbatim).toBeUndefined();
+    expect(updated.revisions).toHaveLength(1);
+    expect(repo.list(input.conversationId)).toHaveLength(1);
+  });
+
   test.each([
     null,
     {},

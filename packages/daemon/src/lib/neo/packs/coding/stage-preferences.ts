@@ -1,10 +1,7 @@
-import { neoToolDescription } from '@hyperneo/prompts';
-import { CodingAssignmentsRepository } from './assignments.ts';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { StartWorkInputSchema } from '../../../drivers/work-operations.ts';
-import { defineOperation } from '../../../operations/registry.ts';
 import type { NeoPackPreferenceDeclaration } from '../../pack-contract.ts';
 import { getNeoPackPreference } from '../../preferences.ts';
 import { codingReviewerPolicy } from './stage-facts.ts';
@@ -137,22 +134,3 @@ export const planCodingStageTarget = (superpipe({})('coding.stage-target') as Pi
     'selection'
   )
   .end('selection') as (db: Database, input: Plan, provenance: boolean) => Result;
-
-export function createCodingWritePlanOperation(database: () => Database) {
-  return defineOperation({
-    name: 'neo.coding.write.plan',
-    description: neoToolDescription('neo.coding.write.plan'),
-    inputSchema: Plan.omit({ stage: true, body: true }),
-    resultSchema: z.union([
-      z.object({ ok: z.literal(true), target: CodingStageTarget, fallback: z.array(z.string()) }),
-      z.object({ ok: z.literal(false), reason: z.string() }),
-    ]),
-    policy: { safetyClass: 'read', roles: ['neo'] },
-    execute: async (input) =>
-      new CodingAssignmentsRepository(database()).planTargetCurrent({
-        ...input,
-        stage: 'write',
-        body: '',
-      }),
-  });
-}

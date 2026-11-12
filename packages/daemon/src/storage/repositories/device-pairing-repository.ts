@@ -237,14 +237,6 @@ export class DevicePairingRepository {
       .run(now, now, now);
   }
 
-  isOwnerDevice(id: string): boolean {
-    return !!this.db
-      .prepare(
-        "SELECT 1 FROM paired_devices WHERE id = ? AND kind = 'human' AND owner = 1 AND revoked_at IS NULL"
-      )
-      .get(id);
-  }
-
   listDevices(): {
     id: string;
     name: string;

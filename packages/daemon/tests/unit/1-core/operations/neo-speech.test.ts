@@ -181,6 +181,26 @@ describe('spoken replies separate from publications', () => {
     );
   });
 
+  test('a slash command reaches the session with nothing appended', async () => {
+    await listen();
+    const contents: Parameters<typeof speech.prepareInput>[1]['content'][] = [
+      '/clear',
+      '/autocompact 400k',
+      [{ type: 'text', text: '/compact' }],
+    ];
+    for (const content of contents) {
+      const loaded = { inputKind: 'human', content, sendStatus: 'enqueued' };
+      expect(speech.prepareInput(sessionId, loaded).content).toEqual(content);
+    }
+    expect(
+      speech.prepareInput(sessionId, {
+        inputKind: 'human',
+        content: '/Users/example/file.txt',
+        sendStatus: 'enqueued',
+      }).content
+    ).toContain('[listening: yes]');
+  });
+
   test('non-human inputs get no note', async () => {
     for (const listening of [false, true]) {
       await listen(listening);

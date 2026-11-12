@@ -44,10 +44,7 @@ try {
   evidence.push({ conflict });
   assert.equal(conflict.isError, true);
   assert.match(conflict.content[0].text, /Conflicting/);
-  const invalid = await handler({ name: 'neo.coding.write.plan', input: { repo: 'invalid', targets: [] } });
-  evidence.push({ invalid });
-  assert.equal(invalid.isError, true);
-  console.log('PASS: real isolated daemon MCP accepts observed aliases, rejects conflicts and invalid repo/empty candidates.');
+  console.log('PASS: real isolated daemon MCP accepts observed aliases, rejects conflicting aliases.');
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
   await app.cleanup();

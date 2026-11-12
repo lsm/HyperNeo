@@ -267,6 +267,7 @@ function parseDriverStatus(outcome: OperationOutcome): DriverStatus | null {
 
 export function readDriverLive(outcome: OperationOutcome): {
   status: WorkStatus;
+  title?: string;
   lastActivityAt: number;
   lastReplyAt?: number;
   link?: string;
@@ -276,8 +277,9 @@ export function readDriverLive(outcome: OperationOutcome): {
 } | null {
   const value = parseDriverStatus(outcome);
   if (!value) return null;
-  const { status, lastActivityAt, lastReplyAt, link, remoteLink, waitingFor } = value as {
+  const { status, title, lastActivityAt, lastReplyAt, link, remoteLink, waitingFor } = value as {
     status: WorkStatus;
+    title?: unknown;
     lastActivityAt: number;
     lastReplyAt?: number;
     link?: unknown;
@@ -286,6 +288,7 @@ export function readDriverLive(outcome: OperationOutcome): {
   };
   return {
     status,
+    ...(typeof title === 'string' ? { title } : {}),
     lastActivityAt,
     ...(lastReplyAt !== undefined ? { lastReplyAt } : {}),
     ...(typeof link === 'string' ? { link } : {}),

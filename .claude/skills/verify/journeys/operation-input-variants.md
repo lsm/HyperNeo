@@ -8,16 +8,15 @@ TMPDIR=/absolute/writable/temp bash .claude/skills/verify/proof-run.sh /absolute
 
 The helper owns an isolated daemon on an ephemeral port, with a synthetic database and
 no provider or model. Its real MCP invoke adapter replays sanitized refused
-inputs: question lookup with id instead of questionId, and coding write planning
-with targets instead of candidates. Both must match the canonical input reply.
+inputs including question lookup with id instead of questionId. Each must match
+the canonical input reply.
 Numeric question IDs and numeric-string work search limits must likewise match
 their canonical string ID and numeric limit calls.
-Conflicting aliases, malformed repository names and empty candidate arrays must
-still fail validation. observed.json retains the actual replies; the shared
+Conflicting aliases must still fail validation. observed.json retains the actual replies; the shared
 wrapper saves evidence and deletes disposable daemon data.
 
 The question alias fixture comes from failed operation tool results in the
-seven-day guard review; the coding alias was supplied by Neo from a real call.
+seven-day guard review.
 All identifiers, repository names and model values are synthetic replacements.
 The work.send text/message and neo.todo.close todo_id/todoId fixtures are
 reconstructed from refused operation names and invalid_input reasons, the current

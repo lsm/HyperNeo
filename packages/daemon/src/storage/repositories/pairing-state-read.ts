@@ -8,15 +8,11 @@ class PairingStateReader {
   isActiveDevice(id: string) {
     return new DevicePairingRepository(this.db).isActiveDevice(id);
   }
-
-  isOwnerDevice(id: string) {
-    return new DevicePairingRepository(this.db).isOwnerDevice(id);
-  }
 }
 
 export const pairingStateReads = defineRepositoryOp(
   'pairing.state.read',
   'read',
   PairingStateReader,
-  ['isActiveDevice', 'isOwnerDevice'] as const
+  ['isActiveDevice'] as const
 );

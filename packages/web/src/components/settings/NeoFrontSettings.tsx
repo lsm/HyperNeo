@@ -1,3 +1,5 @@
+import { t } from '../../lib/i18n/index.ts';
+import { NEO_REFUSALS } from '@hyperneo/shared/types/neo-refusals';
 import { useState } from 'preact/hooks';
 import { globalSettings } from '../../lib/state.ts';
 import { connectionManager } from '../../lib/connection-manager';
@@ -12,31 +14,51 @@ export function NeoFrontSettings() {
     setError('');
     try {
       const hub = connectionManager.getHubIfConnected();
-      if (!hub) throw new Error('Reconnect before changing fast replies.');
-      const result = await invokeOperation<{ ok: boolean }>(hub, 'neo.front.set', { enabled });
-      if (!result.ok) throw new Error('Could not save fast replies.');
-    } catch {
-      setError('Could not save fast reply settings.');
+      if (!hub) throw new Error(t('dual.reconnect'));
+      const result = await invokeOperation<{ ok: boolean; reason?: string }>(hub, 'neo.front.set', {
+        enabled,
+      });
+      if (!result.ok)
+        throw new Error(NEO_REFUSALS[result.reason ?? ''] ?? result.reason ?? t('dual.saveError'));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('dual.saveError'));
     } finally {
       setSaving(false);
     }
   }
   return (
-    <section class="mt-4 rounded-xl border border-line bg-surface p-4">
-      <label class="flex items-center gap-2 text-sm text-fg">
-        <input
-          type="checkbox"
-          checked={neo?.front?.enabled === true}
-          disabled={saving}
-          onChange={(event) => save(event.currentTarget.checked)}
-        />
-        Fast replies for text and voice
+    <>
+      <label class="flex cursor-pointer items-center justify-between gap-5 rounded-xl border border-line bg-surface px-4 py-4 sm:px-5">
+        <span class="min-w-0">
+          <span class="block text-sm font-medium text-fg">{t('dual.label')}</span>
+          <span class="mt-1 block text-xs leading-relaxed text-fg-muted">
+            {t('dual.description')}
+          </span>
+        </span>
+        <span class="relative inline-flex shrink-0">
+          <input
+            class="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+            aria-label={t('dual.label')}
+            type="checkbox"
+            checked={neo?.front?.enabled === true}
+            disabled={saving}
+            onChange={(event) => save(event.currentTarget.checked)}
+          />
+          <span
+            aria-hidden="true"
+            class="h-6 w-10 rounded-full bg-fill-strong transition-colors peer-checked:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-disabled:opacity-50"
+          />
+          <span
+            aria-hidden="true"
+            class="pointer-events-none absolute left-1 top-1 h-4 w-4 rounded-full bg-fg transition-transform peer-checked:translate-x-4 peer-checked:bg-surface"
+          />
+        </span>
       </label>
       {error ? (
         <p role="alert" class="mt-2 text-xs text-danger">
           {error}
         </p>
       ) : null}
-    </section>
+    </>
   );
 }

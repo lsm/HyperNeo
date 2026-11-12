@@ -75,87 +75,17 @@ describe('operation MCP server', () => {
     expect(calls).toEqual([]);
   });
 
-  test('derives advertised core call shapes from the current operation schemas', () => {
-    for (const verbs of [['start', 'send', 'bind'], ['future']] as const) {
-      const registry = createOperationRegistry([
-        defineOperation({
-          name: 'neo.todo.add',
-          description: 'Add a todo',
-          inputSchema: z.object({
-            askId: z.string(),
-            target: z.object({ verb: z.enum(verbs) }),
-            start: z.boolean().default(false),
-          }),
-          resultSchema: z.unknown(),
-          execute: async () => null,
-        }),
-      ]);
-      const advertised = operationInvokeTool(
-        createOperationMcpServer(
-          () => registry,
-          () => ({ role: 'neo' }),
-          undefined,
-          'neo'
-        )
-      ).description;
-      expect(advertised).toContain('neo.todo.add');
-      expect(advertised).toContain('askId');
-      expect(advertised).toContain('target');
-      expect(advertised).toContain(verbs.map((verb) => JSON.stringify(verb)).join('|'));
-      expect(advertised).toContain('start?');
-      expect(advertised).not.toContain('neo.todo.close');
-    }
-  });
-
-  test('omits disabled pack operations from the Neo door briefing', () => {
-    let enabled: string[] = [];
-    const registry = createOperationRegistry([
-      defineOperation({
-        name: 'neo.github.read',
-        description: 'Read a GitHub reference',
-        inputSchema: z.object({ url: z.string() }),
-        resultSchema: z.unknown(),
-        pack: { id: 'coding', enabledIds: () => enabled },
-        execute: async () => null,
-      }),
-      defineOperation({
-        name: 'neo.todo.add',
-        description: 'Add a todo',
-        inputSchema: z.object({ instruction: z.string() }),
-        resultSchema: z.unknown(),
-        execute: async () => null,
-      }),
-    ]);
-    const briefing = () =>
-      operationInvokeTool(
-        createOperationMcpServer(registry, () => ({ role: 'neo' }), undefined, 'neo')
-      ).description;
-    expect(briefing()).not.toContain('neo.github.read');
-    expect(briefing()).toContain('neo.todo.add');
-    enabled = ['coding'];
-    expect(briefing()).toContain('neo.github.read');
-    expect(briefing()).toContain('neo.todo.add');
-    enabled = [];
-    expect(briefing()).not.toContain('neo.github.read');
-  });
-
-  test('planned resident reads and archival remain visible before family tools land', () => {
-    const names = ['work.status', 'work.read', 'neo.session.archive'];
-    const registry = createOperationRegistry(
-      names.map((name) =>
-        defineOperation({
-          name,
-          description: name,
-          inputSchema: z.object({ ref: z.string() }),
-          resultSchema: z.unknown(),
-          execute: async () => null,
-        })
-      )
+  test('Neo invoke explains that mailbox acceptance is separate from an agent reply', () => {
+    const server = createOperationMcpServer(
+      createOperationRegistry([]),
+      () => ({ role: 'neo' }),
+      undefined,
+      'neo'
     );
-    const description = operationInvokeTool(
-      createOperationMcpServer(registry, () => ({ role: 'neo' }), undefined, 'neo')
-    ).description;
-    for (const name of names) expect(description).toContain(name);
+    const description = operationInvokeTool(server).description;
+    expect(description).toContain(
+      'message.send acceptance means durable mailbox persistence, not an agent reply'
+    );
   });
 
   test('invokes the canonical implementation with a server-bound caller', async () => {
