@@ -67,3 +67,9 @@ once after one minute while preserving the input for a later binding.
 Space tasks retain their direct continuation send while running. The regression
 uses a synthetic Space adapter and checks pre-start start/send targets preserve
 their existing not_started result.
+
+A raw send naming an unstarted todo first records its send target through queueOn.
+The initial-todo scheduler dispatches its instruction and binds the todo. If the
+new message supplies that instruction, its input retains the scheduler's native
+outcome. A separate follow-up waits behind an existing instruction. The daemon
+proof observes one initial message and the bound doing todo through this path.

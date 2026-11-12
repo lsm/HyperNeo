@@ -37,7 +37,14 @@ export function createWorkerInputDelivery(
   const gateway = gatewayFor(db);
   const read = async (job: Job) => {
     const stored = { ...(await gateway.call(workerInputReads, 'read', job)), now: Date.now() };
-    if (!stored.ref || stored.closed || !stored.head || stored.payload.dispatched || stored.outcome)
+    if (
+      !stored.ref ||
+      stored.closed ||
+      !stored.head ||
+      stored.payload.dispatched ||
+      stored.outcome ||
+      stored.initialOutcome
+    )
       return { ...stored, status: null };
     const route = routeStatus({ ref: stored.ref }, deps);
     const status =
@@ -59,7 +66,11 @@ export function createWorkerInputDelivery(
       : facts.payload.inputId;
   const decide = (
     facts: Facts
-  ): { action: 'wait' | 'fail' | 'send' | 'uncertain'; detail: string; report?: true } => {
+  ): {
+    action: 'wait' | 'fail' | 'send' | 'uncertain' | 'confirm';
+    detail: string;
+    report?: true;
+  } => {
     if (facts.failure !== null) return { action: 'fail', detail: facts.failure };
     if (facts.payload.dispatched)
       return {
@@ -68,11 +79,14 @@ export function createWorkerInputDelivery(
           'This input may not have reached the worker. Its dispatch was interrupted; inspect the worker before resending.',
       };
     if (facts.closed) return { action: 'fail', detail: 'The todo or its ask is no longer open.' };
-    if (!facts.ref || !facts.head)
+    if (facts.initialOutcome) return { action: 'confirm', detail: '' };
+    if (!facts.ref || !facts.head || facts.payload.initial)
       return {
         action: 'wait',
         detail: 'Waiting for the worker to start or an earlier input to finish.',
-        ...(!facts.ref && facts.now - facts.acceptedAt >= 60_000 ? { report: true as const } : {}),
+        ...((!facts.ref || facts.payload.initial) && facts.now - facts.acceptedAt >= 60_000
+          ? { report: true as const }
+          : {}),
       };
     if (facts.ref.daemon)
       return {
@@ -116,6 +130,10 @@ export function createWorkerInputDelivery(
     return { failure: outcome.failure };
   };
   const apply = async (job: Job, facts: Facts, plan: ReturnType<typeof decide>) => {
+    if (plan.action === 'confirm') {
+      await gateway.call(workerInputWrites, 'settle', job, facts.initialOutcome!);
+      return { inputId: facts.payload.inputId };
+    }
     if (plan.action === 'wait') {
       let reported = false;
       if (plan.report && !facts.payload.waitReported) {
@@ -132,7 +150,9 @@ export function createWorkerInputDelivery(
     if (plan.action === 'fail' || plan.action === 'uncertain')
       return reportFailure(job, facts, {
         failure: plan.detail,
-        ...(plan.action === 'fail' && !facts.payload.dispatched ? { notSent: true as const } : {}),
+        ...(plan.action === 'fail' && !facts.payload.dispatched && !facts.payload.initial
+          ? { notSent: true as const }
+          : {}),
       });
     const ref = facts.ref!;
     const route = pickRoute('send', ref, deps.adapters());

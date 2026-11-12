@@ -5,6 +5,7 @@ import type { Database } from '../sqlite-compat.ts';
 import { JobQueueRepository, type Job } from './job-queue-repository.ts';
 import {
   acceptWorkDeliveryInput,
+  WorkDeliveryInputRepository,
   recordWorkDeliveryOutcome,
 } from './work-delivery-input-repository.ts';
 import { NeoTodoSessionRepository, neoWorkerKey } from './neo-todo-session-repository.ts';
@@ -25,6 +26,7 @@ export type WorkerInputPayload = {
   sessionId: string;
   idempotencyKey?: string;
   continuation?: boolean;
+  initial?: boolean;
   dispatched?: boolean;
   waitReported?: boolean;
 };
@@ -35,15 +37,19 @@ export class WorkerInputJobs {
   accept(input: WorkerInput, from: string, caller: OperationCaller): string {
     const id = crypto.randomUUID();
     const now = Date.now();
+    const sessions = new NeoTodoSessionRepository(this.db);
+    const queued =
+      input.ref && input.todoId && !input.continuation && !sessions.readRef(input.todoId)
+        ? sessions.queueOn(input.todoId, input.ref, input.message)
+        : 'none';
+    const ref = queued === 'none' ? input.ref : undefined;
     acceptWorkDeliveryInput.run(
       this.db,
       {
         id,
         todoId: input.todoId ?? null,
         originSessionId: from,
-        target: input.ref
-          ? { verb: 'send', ref: input.ref }
-          : { verb: 'todo', todoId: input.todoId! },
+        target: ref ? { verb: 'send', ref } : { verb: 'todo', todoId: input.todoId! },
         message: input.message,
         now,
       },
@@ -58,9 +64,10 @@ export class WorkerInputJobs {
         inputId: id,
         from,
         caller,
-        sessionId: neoWorkerKey(input.ref) ?? `todo:${input.todoId}`,
+        sessionId: neoWorkerKey(ref) ?? `todo:${input.todoId}`,
         ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
-        ...(input.continuation ? { continuation: true } : {}),
+        ...(input.continuation || queued === 'instruction' ? { continuation: true } : {}),
+        ...(queued === 'message' ? { initial: true } : {}),
       },
     });
     return id;
@@ -113,8 +120,22 @@ export class WorkerInputJobs {
     const outcome = row.outcome
       ? (JSON.parse(row.outcome) as ReturnType<typeof readDriverOutcome>)
       : null;
+    const initialOutcome =
+      payload.initial && ref
+        ? (new WorkDeliveryInputRepository(this.db)
+            .list(row.todoId!)
+            .find(
+              (entry) =>
+                entry.id !== payload.inputId &&
+                entry.observedAt !== null &&
+                entry.observedAt >= row.acceptedAt &&
+                entry.outcome &&
+                'ref' in entry.outcome &&
+                neoWorkerKey(entry.outcome.ref) === neoWorkerKey(ref)
+            )?.outcome ?? null)
+        : null;
     const failure = outcome && 'failure' in outcome ? outcome.failure : null;
-    return { ...row, failure, payload, ref, closed, head, todo };
+    return { ...row, failure, payload, ref, closed, head, todo, initialOutcome };
   }
 
   wait(job: Job, detail: string | null, reported = false, delayMs = 60_000): void {
@@ -170,10 +191,13 @@ export class WorkerInputJobs {
         {
           id: current.payload.inputId as string,
           outcome: {
-            failure: current.payload.dispatched
-              ? `This input may not have reached the worker. ${detail}`
-              : detail,
-            ...(!current.payload.dispatched ? { notSent: true as const } : {}),
+            failure:
+              current.payload.dispatched || current.payload.initial
+                ? `This input may not have reached the worker. ${detail}`
+                : detail,
+            ...(!current.payload.dispatched && !current.payload.initial
+              ? { notSent: true as const }
+              : {}),
           },
           now: Date.now(),
         },
