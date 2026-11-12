@@ -1,3 +1,5 @@
+import { workerInputWrites } from '../../storage/repositories/worker-input-worker.ts';
+import { selectSendOrigin } from '../messaging/message-send.ts';
 import { frontSessionId, publicationSpeaker, frontModeNote } from './front-mode.ts';
 import { frontSession } from './front-session.ts';
 import { createWorkerNameSource } from '../drivers/worker-names.ts';
@@ -306,6 +308,14 @@ export class NeoService {
       write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
       store: this.todos,
       sessions: this.todoSessions,
+      queueFollowUp: (todoId, message, origin, ref) =>
+        gatewayFor(db.getDatabase()).call(
+          workerInputWrites,
+          'accept',
+          { todoId, message, ref, continuation: true },
+          selectSendOrigin({}, { source: 'internal', role: 'neo', sessionId: origin }),
+          { source: 'internal', role: 'neo', sessionId: origin }
+        ),
       workerNames: () => this.workerNames ?? fallbackWorkerNames,
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),

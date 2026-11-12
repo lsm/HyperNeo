@@ -58394,6 +58394,10 @@
                     ],
                     "type": "object"
                   },
+                  "inputId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "queuedSubmissionId": {
                     "minLength": 1,
                     "type": "string"
@@ -59131,6 +59135,10 @@
                       "detail"
                     ],
                     "type": "object"
+                  },
+                  "inputId": {
+                    "minLength": 1,
+                    "type": "string"
                   },
                   "queuedSubmissionId": {
                     "minLength": 1,

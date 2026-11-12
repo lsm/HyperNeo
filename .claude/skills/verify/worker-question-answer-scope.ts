@@ -43,10 +43,11 @@ try {
   new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId: 'synthetic-neo', projectId: null, kind: 'neo' });
   const store = new NeoAskTodoRepository(app.db.getDatabase());
   const sessions = new NeoTodoSessionRepository(app.db.getDatabase());
-  store.openAsk({ id: 'synthetic-ask', sessionId: 'synthetic-neo', projectId: null, originMessageId: null, title: 'Synthetic plan', request: 'Build', createdAt: 1 });
   const write = createNeoWorkerQuestionWriter(store, sessions, () => 'en', async (ref) => ({ ...ref, name: ref.id, label: ref.id, provider: 'Synthetic', link: null }));
   const seed = async (id: string, adapter: string, worker: string, daemon?: string) => {
-    const todo = store.addTodo(id, 'synthetic-ask', { title: id, doneWhen: 'Done', instruction: null, check: null, named: null }, Date.now());
+    const askId = `synthetic-ask:${id}`;
+    store.openAsk({ id: askId, sessionId: 'synthetic-neo', projectId: null, originMessageId: null, title: 'Synthetic plan', request: 'Build', createdAt: 1 });
+    const todo = store.addTodo(id, askId, { title: id, doneWhen: 'Done', instruction: null, check: null, named: null }, Date.now());
     const ref = { adapter, id: worker, ...(daemon ? { daemon } : {}) };
     sessions.bind(todo.id, ref, Date.now());
     store.updateTodo(todo, { state: 'doing', startedAt: Date.now() }, Date.now());
@@ -74,7 +75,8 @@ try {
   const observed = { first, target: await rpc('neo.question.get', { questionId: target.id }), unrelated: await rpc('neo.question.get', { questionId: unrelated.id }) };
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   assert.equal(first, 'answer-returned', 'an unrelated pending route must not delay this human answer RPC');
-  assert.equal(store.getTodo('target')?.state, 'doing');
+  assert.equal(observed.target.answerDelivery[0].state, 'pending');
+  assert.equal(store.getTodo('target')?.blockedBy, 'needs-human');
   assert.equal(store.getTodo('unrelated')?.blockedBy, 'needs-human');
   console.log('PASS: answer RPC returns without starting an unrelated unavailable worker');
 } finally {

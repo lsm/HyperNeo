@@ -8,9 +8,10 @@ model. It disables external registry MCP servers and the SDK sandbox for this
 transport fixture only; this does not prove OS sandbox enforcement.
 
 The bound worker's real session door sends a blocked report. Answer its card
-through `neo.question.answer` over WebSocket RPC. Before returning, the answer
-must have an accepted worker admission and the todo must be doing. Start the
-owned job processor and observe the actual worker SDK consume that receipt.
+through `neo.question.answer` over WebSocket RPC. A daemon-queued input keeps the answer route pending and the todo held. Start
+the owned job processor, then require native admission and a driver refresh to
+accept the answer and release the hold. Observe the actual worker SDK consume
+that receipt. The metadata worker-input-delivery journey covers this sequence.
 Neo's model input must contain the answer in its durable context.
 Identify those requests by the root Neo system prompt, so worker requests cannot
 satisfy the coordinator-context assertion.
@@ -35,16 +36,16 @@ Use the metadata-only companion with
 proof-run.sh wrapper. It needs no model or fixed port. It seeds another pending
 HyperNeo route on a synthetic remote daemon and holds only that transport's
 response behind a controlled barrier. The real target answer RPC must return
-without starting that unrelated transport; the target resumes while the other
+without starting that unrelated transport; the target remains pending until native admission while the other
 todo stays held. evidence/observed.json records which action happened first.
 
 Use the same metadata-only wrapper with
 `PROOF=.claude/skills/verify/worker-question-answer-concurrency.ts` to overlap
 the real answer RPC with a delivery sweep for the same card. A controlled
 sender-title read pauses the real message.send after limiter admission; the
-competing sweep receives its real duplicate rejection before the first send
-commits. The card must still show accepted and the todo doing when the RPC
-returns. Keep observed.json with both transport outcomes and the final card/todo,
+competing sweep observes the persisted pending input and submits no second
+native message. The card stays pending until native admission, then a delivery
+sweep must accept it and set the todo doing. Keep observed.json with both transport outcomes and the final card/todo,
 plus cleanup.json and run-status.json. This helper needs no model or fixed port.
 
 For external-worker answers, run worker-question-answer-external.md. It covers

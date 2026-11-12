@@ -15,6 +15,7 @@ const workers = new Set([
   'storage/repositories/neo-ask-input-worker.ts',
   'storage/repositories/neo-front-input-worker.ts',
   'storage/repositories/neo-front-read-worker.ts',
+  'storage/repositories/worker-input-worker.ts',
   'storage/repositories/neo-peer-repository.ts',
   'storage/repositories/pairing-request-repository.ts',
   'storage/repositories/neo-tracker-mirror.ts',

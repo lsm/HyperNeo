@@ -7,113 +7,133 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 
-const ref = { adapter: 'codex-desktop', id: '019f2a4e-worker' };
-const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'root' };
-const human: OperationCaller = { source: 'rpc' };
+const ref = { adapter: 'codex-desktop', id: 'synthetic-worker' };
+const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'synthetic-neo' };
 
-function fixture(
-  status: string,
-  on = false,
-  adapterId = 'codex-desktop',
-  queued: string = 'message'
-) {
+function fixture(status: string, adapterId = ref.adapter, ownsWorker = true) {
   const reached: string[] = [];
-  const waiting: unknown[] = [];
-  const steer = async (_ref: unknown, message: string) => {
+  const saved: string[] = [];
+  const send = async (_ref: unknown, message: string) => {
     reached.push(message);
-    return {
-      ok: true as const,
-      value: { delivered: true, steeredIntoTurnId: '019f2a51-running-turn' },
-    };
+    return { ok: true as const, value: { delivered: true } };
   };
   const adapter = {
     id: adapterId,
-    capabilities: ['find', 'send', 'steer', 'queue', 'status'],
+    capabilities: ['send', 'steer', 'queue', 'status'],
     find: () => [],
-    send: steer,
-    steer,
-    queue: steer,
+    send,
+    steer: send,
+    queue: send,
     status: async () => ({ ok: true, value: { ref, status, lastActivityAt: 1 } }),
   } as unknown as WorkAdapter;
   const registry = createOperationRegistry(
     createWorkVerbOperations({
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
-      daemonName: 'fixture',
+      daemonName: 'synthetic',
       todoWorker: {
-        on: () => on,
-        wait: async (...args: unknown[]) => {
-          waiting.push(args);
-          return queued;
+        on: () => ownsWorker,
+        wait: async (_todoId, _ref, message) => {
+          saved.push(message);
+          return 'message';
         },
       },
-    } as never)
+      queueInput: async (input) => {
+        saved.push(input.message);
+        return 'synthetic-input';
+      },
+    })
   );
-  return { registry, reached, waiting };
+  return { registry, reached, saved };
 }
 
-describe('a Neo send for another todo to a busy worker', () => {
+describe('local Neo follow-up admission', () => {
   test.each([
-    ['work.send', {}, 'running'],
-    ['work.send', { mode: 'steer' }, 'running'],
-    ['work.send', {}, 'queued'],
-    ['work.queue', {}, 'running'],
-  ] as const)('%s %j to a %s worker joins the queue, unsent', async (name, extra, status) => {
-    const { registry, reached, waiting } = fixture(status);
+    ['work.send', 'running'],
+    ['work.send', 'queued'],
+    ['work.queue', 'running'],
+  ])('%s retains the exact message for a %s worker', async (name, status) => {
+    const h = fixture(status);
     const reply = await invokeOperation(
-      registry,
+      h.registry,
       name,
-      { ref, message: 'Next task', todoId: 'todo-b', ...extra },
+      { ref, message: 'A distinct follow-up', todoId: 'synthetic-todo' },
       neo
     );
     expect(reply).toMatchObject({
       kind: 'completed',
-      value: { ok: false, reason: 'worker_busy', notSent: true },
+      value: { ok: true, value: { delivered: false, inputId: 'synthetic-input' } },
     });
-    expect(reached).toEqual([]);
-    expect(waiting).toEqual([['todo-b', ref, 'Next task']]);
+    expect(h.reached).toEqual([]);
+    expect(h.saved).toEqual(['A distinct follow-up']);
   });
 
-  test.each([
-    ['message', 'this message goes when the worker is free; do not send it again'],
-    [
-      'instruction',
-      'its existing instruction goes when the worker is free. Your message text was not kept',
-    ],
-    ['none', 'Nothing was queued or sent'],
-  ])('the reply says what happened to a %s send', async (queued, detail) => {
-    const { registry } = fixture('running', false, undefined, queued);
-    const reply = await invokeOperation(
-      registry,
-      'work.send',
-      { ref, message: 'Next task', todoId: 'todo-b' },
-      neo
-    );
-    expect(JSON.stringify(reply)).toContain(detail);
-    expect(reply).toMatchObject({ value: { reason: 'worker_busy', notSent: true } });
-  });
-
-  test.each([
-    ['an idle worker', { todoId: 'todo-b' }, neo, 'done', false],
-    ['a worker waiting for an answer', { todoId: 'todo-b' }, neo, 'needs_you', false],
-    ['the todo the worker is on', { todoId: 'todo-b' }, neo, 'running', true],
-    ['a notice', { notice: true }, neo, 'running', false],
-    ['a person', {}, human, 'running', false],
-  ] as const)('%s goes as before', async (_name, purpose, caller, status, on) => {
-    const { registry, reached, waiting } = fixture(status, on);
-    await invokeOperation(registry, 'work.send', { ref, message: 'Hi', ...purpose }, caller);
-    expect(reached).toHaveLength(1);
-    expect(waiting).toEqual([]);
-  });
-
-  test('a running Space task has no turns, so it takes the send', async () => {
-    const { registry, reached } = fixture('running', false, 'space');
+  test('a notice is retained while the worker is busy', async () => {
+    const h = fixture('running');
     await invokeOperation(
-      registry,
+      h.registry,
       'work.send',
-      { ref: { adapter: 'space', id: 'task-1' }, message: 'Hi', todoId: 'todo-b' },
+      { ref, message: 'Retain this notice', notice: true },
       neo
     );
-    expect(reached).toHaveLength(1);
+    expect(h.reached).toEqual([]);
+    expect(h.saved).toEqual(['Retain this notice']);
+  });
+
+  test('explicit steering reaches the current turn immediately', async () => {
+    const h = fixture('running');
+    await invokeOperation(
+      h.registry,
+      'work.send',
+      { ref, message: 'Correct now', todoId: 'synthetic-todo', mode: 'steer' },
+      neo
+    );
+    expect(h.reached).toHaveLength(1);
+    expect(h.saved).toEqual([]);
+  });
+
+  test.each(['running', 'queued'])(
+    'steering refuses a %s worker owned by another todo',
+    async (status) => {
+      const h = fixture(status, 'codex-desktop', false);
+      const reply = await invokeOperation(
+        h.registry,
+        'work.send',
+        {
+          ref,
+          message: 'Correct now',
+          todoId: 'synthetic-other-todo',
+          mode: 'steer',
+        },
+        neo
+      );
+      expect(reply).toMatchObject({ value: { ok: false, reason: 'worker_busy', notSent: true } });
+      expect(h.reached).toEqual([]);
+      expect(h.saved).toEqual(['Correct now']);
+    }
+  );
+
+  test('a human send reaches the existing adapter path', async () => {
+    const h = fixture('running');
+    await invokeOperation(
+      h.registry,
+      'work.send',
+      { ref, message: 'Human input' },
+      { source: 'rpc' }
+    );
+    expect(h.reached).toHaveLength(1);
+    expect(h.saved).toEqual([]);
+  });
+
+  test('a Space task uses its existing send path', async () => {
+    const h = fixture('running', 'space');
+    await invokeOperation(
+      h.registry,
+      'work.send',
+      { ref: { adapter: 'space', id: 'synthetic-task' }, message: 'Task input', notice: true },
+      neo
+    );
+    expect(h.reached).toHaveLength(1);
+    expect(h.saved).toEqual([]);
   });
 });

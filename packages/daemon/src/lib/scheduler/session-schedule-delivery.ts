@@ -21,7 +21,12 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
     const value = outcome.value as
       | {
           ok: true;
-          value: { status?: WorkStatus; unconfirmed?: boolean; turnQuestion?: WorkTurnQuestion };
+          value: {
+            status?: WorkStatus;
+            inputId?: string;
+            unconfirmed?: boolean;
+            turnQuestion?: WorkTurnQuestion;
+          };
         }
       | { ok: false; reason: string; detail: string };
     if (!value.ok && value.reason !== 'not_found' && value.reason !== 'not_open')

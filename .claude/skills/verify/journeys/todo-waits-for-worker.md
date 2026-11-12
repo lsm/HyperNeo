@@ -1,6 +1,6 @@
 # A todo for a busy worker waits in the queue
 
-Neo sends todos to a HyperNeo worker that is mid-turn. None reaches it: each stays
+The fixture seeds approved initial todos targeting a HyperNeo worker that is mid-turn. None reaches it: each stays
 todo, unstarted, with a reason that says what it waits on. A wait past the stall step
 tells Neo and the todo keeps waiting. When the worker frees up the higher priority
 todo goes first, and the next one goes only after that one is done.
@@ -18,3 +18,6 @@ env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/
 
 The worker's turn is simulated by setting its session's processing state, and the
 stall by backdating the wait. Evidence: `$RUN/evidence/observed.json`.
+
+Ordinary follow-up acceptance and post-turn delivery use the separate
+worker-input-delivery journey. This journey exercises the initial todo scheduler.

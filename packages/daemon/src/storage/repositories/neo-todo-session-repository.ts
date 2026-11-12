@@ -16,7 +16,7 @@ import { markWorkUnusable } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef, WorkStatus, WorkTurnQuestion } from '../../lib/drivers/types.ts';
-import type { DriverSent, NeoDriverTarget } from '../../lib/neo/driver-work.ts';
+import type { DriverSent, NeoDriverTarget, readDriverOutcome } from '../../lib/neo/driver-work.ts';
 import type { NeoDriverProgress } from '../../lib/neo/settle-driver-work.ts';
 import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
@@ -153,6 +153,31 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     super(db, 'neo_todo_sessions', 'todo_id');
     this.inputs = new WorkDeliveryInputRepository(db);
     this.turnReports = new NeoTurnReportReceipts(db);
+  }
+
+  completeFollowUp(
+    todoId: string,
+    delivered: Exclude<ReturnType<typeof readDriverOutcome>, { failure: string }>,
+    sent: DriverSent | null,
+    now: number
+  ): void {
+    const store = new NeoAskTodoRepository(this.db);
+    const todo = store.getTodo(todoId);
+    if (!todo || store.getAsk(todo.askId)?.status !== 'open') return;
+    this.recordStartedAt(todoId, 'queued' in delivered ? null : (delivered.startedAt ?? null));
+    this.recordSent(todoId, sent);
+    const prior = this.readNudge(todoId);
+    this.recordNudge(todoId, {
+      since: now,
+      nudges: 0,
+      ...(prior?.redispatched ? { redispatched: true } : {}),
+      ...(prior?.live ? { live: prior.live } : {}),
+    });
+    if (todo.blockedBy === 'needs-human')
+      for (const card of store.listQuestions(todo.askId))
+        if (card.state === 'open' && card.todoId === todoId)
+          store.retireQuestion(card, 'Neo sent the worker on.', null, now);
+    store.updateTodo(todo, { state: 'doing', report: null, evidence: null, finishedAt: null }, now);
   }
 
   cancelCheckOnlyReminder(todoId: string): void {
