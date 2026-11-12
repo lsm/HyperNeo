@@ -23,7 +23,7 @@ import {
 } from './status-codes.ts';
 import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
-import { neoQuestionCoversTodo } from './todo-state.ts';
+import { neoTodoPlace } from './todo-state.ts';
 import { todoEvidenceFile } from '../work-locations.ts';
 
 function internalCompletionEvidence(todo: NeoTodo): boolean {
@@ -86,11 +86,16 @@ export function neoTodoStatusLine(
 export function neoAskEntryState(
   ask: NeoAsk,
   todos: readonly NeoTodo[],
-  questions: readonly NeoQuestion[]
+  questions: readonly NeoQuestion[],
+  cards: readonly NeoQuestion[] = questions
 ): NeoAskEntryState {
   if (ask.status === 'dropped') return 'dropped';
   if (ask.status === 'done') return 'done';
-  if (questions.some((question) => question.state === 'open')) return 'waiting';
+  if (
+    questions.some((question) => question.state === 'open') ||
+    todos.some((todo) => neoTodoPlace(todo, cards) === 'waiting')
+  )
+    return 'waiting';
   if (todos.some((todo) => todo.state === 'doing' || todo.state === 'blocked')) return 'doing';
   const live = todos.filter((todo) => todo.state !== 'removed');
   return live.length && live.every((todo) => todo.state === 'done') ? 'done' : 'todo';
@@ -105,18 +110,15 @@ const neoHandlesBlocker = (todo: Pick<NeoTodo, 'state' | 'blockedBy'>) =>
   todo.state === 'blocked' && NEO_OWNED_BLOCKERS.includes(todo.blockedBy);
 
 export function neoWorkCounts(
-  openTodos: readonly Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy'>[],
+  openTodos: readonly Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy' | 'startedAt'>[],
   openQuestions: readonly Pick<NeoQuestion, 'askId' | 'state' | 'todos'>[],
   awaitingNeo: readonly Pick<NeoTodo, 'id'>[]
 ): { needsYou: number; neoUnhandled: number } {
   const cards = openQuestions.filter((question) => question.state === 'open');
-  const blocked = openTodos.filter(
-    (todo) =>
-      neoHandlesBlocker(todo) &&
-      !cards.some((card) => card.askId === todo.askId && neoQuestionCoversTodo(card, todo))
-  );
+  const waiting = openTodos.filter((todo) => neoTodoPlace(todo, cards) === 'waiting');
+  const blocked = openTodos.filter((todo) => neoHandlesBlocker(todo) && !waiting.includes(todo));
   return {
-    needsYou: new Set(cards.map((question) => question.askId)).size,
+    needsYou: new Set([...cards, ...waiting].map((held) => held.askId)).size,
     neoUnhandled: new Set([...blocked, ...awaitingNeo].map((todo) => todo.id)).size,
   };
 }
@@ -237,7 +239,7 @@ export function projectNeoAskEntries(
     const questions = allQuestions.filter((question) => question.askId === ask.id);
     return {
       ask,
-      state: neoAskEntryState(ask, todos, questions),
+      state: neoAskEntryState(ask, todos, questions, allQuestions),
       todos: projectNeoTodoEntries(neoTodoListOrder(todos), todos, links, packs),
       doneCount: todos.filter((todo) => todo.state === 'done').length,
       questions: questions.map((question) => {
