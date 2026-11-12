@@ -15,7 +15,7 @@ reset after an unknown outcome. Preserve the local-door policy and reply shape.
 Measure the full local graph including coordinator, authorization, notification
 listeners, socket closure, actual daemon binding and gateway lifetime contract.
 Record existing shared gateway binding plumbing separately. Neo authorized the
-146-line reset/receipt and 277-line core append subtrees as audited
+144-line reset/receipt and 277-line core append subtrees as audited
 dependencies; pin their source hashes/contracts and include them in the PR body.
 No app.ts, service/publication, WorkerLane or shared gateway edits are allowed.
 

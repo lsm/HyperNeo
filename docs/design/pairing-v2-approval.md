@@ -3,11 +3,12 @@
 `/pair2/approve` admits any active paired human phone: a `paired_devices` row
 with `kind = 'human'` and `revoked_at IS NULL`, excluding `local-rpc:*` and
 `agent-read:` synthetic ids, regardless of pairing version or owner bit. The
-same set decides bootstrap eligibility and, once the pending list lands, its
-admission. Identities minted by the local transport (`local-rpc:*`) and
-read-only agent credentials (`agent-read:*`) are refused on every request. Deny
-and cancel only terminate a request; they keep the authenticated human-session
-admission, including the web session.
+same admission governs the pending list once it lands; bootstrap eligibility
+is a separate rule, defined below. Identities minted by the local transport
+(`local-rpc:*`) and read-only agent credentials (`agent-read:*`) are refused
+only on approve: request, deny and cancel admit any authenticated human
+identity, including the local web session. Deny and cancel only terminate a
+request.
 
 A ticket issued while no human phone has ever been paired, or while a lost-phone
 reset is open, is a first-device ticket. Its completion needs only the bound-key
