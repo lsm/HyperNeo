@@ -443,6 +443,26 @@ describe('startEmbeddedServer', () => {
     ]);
   });
 
+  it('forwards images when the model is not in the capabilities catalog', async () => {
+    const r = await postMessages(serverUrl, {
+      model: 'unlisted-model',
+      max_tokens: 100,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+          ],
+        },
+      ],
+    });
+
+    expect(r.status).toBe(200);
+    expect(session.capturedAttachments).toEqual([
+      { type: 'blob', data: 'QUJD', mimeType: 'image/png' },
+    ]);
+  });
+
   it('rejects image media types outside the model vision limits', async () => {
     const r = await postMessages(serverUrl, {
       model: 'claude-sonnet-4.6',

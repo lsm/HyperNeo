@@ -24,10 +24,8 @@ export function createVisionGate(client: CopilotClient, now: () => number = Date
     const info = await models()
       .then((m) => m.get(model))
       .catch(() => undefined);
-    if (!info) {
-      return `Model '${model}' cannot be verified for image input; only base64 images to vision-capable models are supported`;
-    }
-    if (!info.capabilities?.supports?.vision) {
+    if (!info?.capabilities) return null;
+    if (!info.capabilities.supports?.vision) {
       return `Model '${model}' does not support vision input; image content blocks cannot be sent`;
     }
     const vision = info.capabilities.limits?.vision;
