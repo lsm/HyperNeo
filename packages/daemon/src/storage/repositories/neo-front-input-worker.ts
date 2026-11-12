@@ -5,7 +5,7 @@ import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-pr
 import { JobQueueRepository } from './job-queue-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../lib/mailbox/enqueue.ts';
-import type { MailboxEntry } from '../../lib/mailbox/entry.ts';
+import { toMailboxMessage, type MailboxEntry } from '../../lib/mailbox/entry.ts';
 import {
   catchUpBlock,
   FRONT_FALLBACK_TEXT,
@@ -136,26 +136,24 @@ export class NeoFrontInputRepository {
       ).map((row) => JSON.parse(row.payload) as { replyTo?: string[]; fullText: string });
       const block = catchUpBlock(said);
       const content = entry.message.message.content;
-      const sent = enqueueMailboxEntry(
-        queue,
+      const message = toMailboxMessage(
         block
           ? {
-              ...entry,
+              ...entry.message,
               message: {
-                ...entry.message,
-                message: {
-                  ...entry.message.message,
-                  content: [
-                    { type: 'text', text: block },
-                    ...(typeof content === 'string'
-                      ? [{ type: 'text' as const, text: content }]
-                      : content),
-                  ],
-                },
+                ...entry.message.message,
+                content: [
+                  { type: 'text', text: block },
+                  ...(typeof content === 'string'
+                    ? [{ type: 'text' as const, text: content }]
+                    : content),
+                ],
               },
             }
-          : entry
+          : entry.message
       );
+      if ('reason' in message) throw new Error(message.reason);
+      const sent = enqueueMailboxEntry(queue, { ...entry, message: message.message });
       if (sent.kind === 'rejected') throw new Error(sent.reason);
       this.db
         .prepare(`UPDATE neo_front_inputs SET catch_up_from = ?, catch_up_through = ?

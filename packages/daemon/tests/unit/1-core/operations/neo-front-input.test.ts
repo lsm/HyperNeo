@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { NeoFrontInputRepository } from '../../../../src/storage/repositories/neo-front-input-worker.ts';
+import { createMailboxEntry } from '../../../../src/lib/mailbox/entry.ts';
 import { runMigration503 } from '../../../../src/storage/schema/m503-neo-front-input-catch-up.ts';
 
 let db: Database;
@@ -121,4 +122,26 @@ test('migration 503 adds the catch-up range to an existing front input table', (
     catch_up_through: null,
   });
   raw.close();
+});
+
+test('a front delivery with an invalid message records no range and no job', () => {
+  inputs.accept('conversation', 'input', true);
+  const entry = createMailboxEntry({
+    to: { kind: 'session', sessionId: 'front' },
+    origin: 'session:neo',
+    messageUuid: 'input',
+    message: { type: 'user', parent_tool_use_id: null, message: { content: 'Hello' } },
+  });
+  const invalid = {
+    ...entry,
+    message: { ...entry.message, message: { content: [{ type: 'text' as const, text: '' }] } },
+  };
+  expect(() => inputs.enqueueWithCatchUp('conversation', invalid)).toThrow();
+  expect(db.getJobQueueRepo().listJobs({ queue: 'mailbox' })).toHaveLength(0);
+  expect(
+    db
+      .getDatabase()
+      .prepare('SELECT catch_up_through AS through FROM neo_front_inputs WHERE message_id = ?')
+      .get('input')
+  ).toEqual({ through: null });
 });
