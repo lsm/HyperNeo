@@ -187,23 +187,6 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
-      (
-        scope: { sessionId: string; projectId: string | null; goalId: string | null },
-        input: z.infer<typeof Open>
-      ) => {
-        const reason = store.findAsk(scope.sessionId, null, input.title, scope.goalId)
-          ? null
-          : neoAskMatterRefusal(
-              input,
-              store.listOpenAsks().filter((ask) => ask.sessionId === scope.sessionId),
-              packs()
-            );
-        return reason ? { reason: { ok: false as const, reason } } : { value: scope };
-      },
-      ['outcome', 'input'],
-      'result:outcome'
-    )
-    .pipe(
       async (
         {
           sessionId,
@@ -306,6 +289,14 @@ export function createNeoAskRecordOperations(
           ? store.getAsk(priorAsk.id)
           : store.findAsk(sessionId, origin, input.title, goalId);
         if (priorAsk && !current) return { ok: false, reason: 'not_found: no such ask.' };
+        const taken = current
+          ? null
+          : neoAskMatterRefusal(
+              input,
+              store.listOpenAsks().filter((ask) => ask.sessionId === sessionId),
+              policies
+            );
+        if (taken) return { ok: false, reason: taken };
         const ask =
           current ??
           store.openAsk({

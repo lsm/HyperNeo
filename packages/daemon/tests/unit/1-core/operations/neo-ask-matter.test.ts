@@ -11,7 +11,11 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { createTodoCheckPacks, existingTodoTarget } from '../../helpers/todo-check-packs.ts';
+import {
+  createTodoCheckPacks,
+  existingTodoTarget,
+  pendingTodoCheck,
+} from '../../helpers/todo-check-packs.ts';
 
 type Receipt = { ok: true; ask: NeoAsk; todos: NeoTodo[] } | { ok: false; reason: string };
 
@@ -114,6 +118,29 @@ describe('neo.ask.open', () => {
       reason: `ask_open: "Review the fix" (${first.ask.id}) is already open for synthetic/proof#7. Add the todos to that ask with neo.todo.add; open another only after it is settled.`,
     });
     expect(store.listOpenAsks().map((ask) => ask.id)).toEqual([first.ask.id]);
+  });
+
+  test('two asks for the same pull request opened at once leave one open ask', async () => {
+    const { call, store } = setup();
+    const step = {
+      title: 'Review it',
+      doneWhen: 'Reviewed',
+      check: pendingTodoCheck,
+      instruction: 'Review the pull request.',
+      target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'dev-1' } },
+    };
+    const both = await Promise.all(
+      ['Review the fix', 'Deploy the fix'].map((title) =>
+        call('neo.ask.open', { title, request: `Handle ${pull}`, todos: [step] })
+      )
+    );
+    const [opened] = store.listOpenAsks();
+    expect(store.listOpenAsks()).toHaveLength(1);
+    expect(both.map((result) => result.ok).sort()).toEqual([false, true]);
+    expect(both.find((result) => !result.ok)).toEqual({
+      ok: false,
+      reason: expect.stringContaining(`(${opened.id}) is already open for synthetic/proof#7`),
+    });
   });
 
   test('a retry with the same title still returns the same ask', async () => {
