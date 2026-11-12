@@ -107,19 +107,28 @@ export function planNeoTodoRemoval<T extends Row>(
       writes.push({ todo: dependent, patch: { dependsOn } });
     else undecided.push(dependent);
   }
-  if (input.dependents === 'remove')
-    return {
-      writes: [
-        ...writes,
-        ...removeLine(
-          after,
-          undecided,
-          `Removed with its prerequisite "${todo.title}".`,
-          now
-        ).filter((write) => !writes.some((done) => done.todo.id === write.todo.id)),
-      ],
-      card: null,
-    };
+  if (input.dependents === 'remove') {
+    const eased = after.map((item) => {
+      const write = writes.find((done) => done.todo.id === item.id);
+      return write ? { ...item, ...write.patch } : item;
+    });
+    const line = removeLine(
+      eased,
+      undecided.map((item) => eased.find((other) => other.id === item.id) ?? item),
+      `Removed with its prerequisite "${todo.title}".`,
+      now
+    );
+    const last = new Map(
+      [...writes, ...line].map((write) => [
+        write.todo.id,
+        {
+          todo: family.find((item) => item.id === write.todo.id) ?? write.todo,
+          patch: write.patch,
+        },
+      ])
+    );
+    return { writes: [...last.values()], card: null };
+  }
   const listed = undecided.filter((dependent) => !asked(cards, dependent.id));
   return {
     writes,

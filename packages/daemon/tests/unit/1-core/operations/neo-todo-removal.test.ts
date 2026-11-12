@@ -58,6 +58,18 @@ describe('planNeoTodoRemoval', () => {
     expect(plan.card).toBeNull();
   });
 
+  test('remove leaves a started dependent waiting for nothing that was removed', () => {
+    const line = [
+      step('a', []),
+      step('b', ['a']),
+      step('s', ['a', 'b', 'x'], { state: 'doing', startedAt: 5 }),
+      step('x', []),
+    ];
+    const plan = planNeoTodoRemoval(line[0], line, [], { dependents: 'remove' }, 9);
+    expect(plan.writes.map(({ todo }) => todo.id).sort()).toEqual(['b', 's']);
+    expect(brief(plan).s).toEqual({ dependsOn: ['x'] });
+  });
+
   test('with no answer, one card covers the unstarted direct dependents and their edge stays', () => {
     const plan = planNeoTodoRemoval(family[0], family, [], {}, 9);
     expect(brief(plan)).toEqual({ running: { dependsOn: [] } });
