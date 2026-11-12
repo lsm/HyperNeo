@@ -160,9 +160,24 @@ try {
   const refusalReports = messages(root).filter((text) => text.includes(refusal));
   assert.equal(refusalReports.length, 1);
   evidence.refusedAnswers = { inputs: inputs().filter((input) => refusedIds.includes(input.id)), reports: refusalReports };
+  await app.jobProcessor.stop();
+  state('idle');
+  const exhaustedId = await app.db.gateway.call(workerInputWrites, 'accept', { ref, message: 'Exhaust the synthetic dispatch' }, `session:${root}`, caller);
+  db().exec("CREATE TRIGGER reject_synthetic_dispatch BEFORE UPDATE OF deadline_at ON work_delivery_inputs WHEN NEW.message = 'Exhaust the synthetic dispatch' BEGIN SELECT RAISE(ABORT, 'Synthetic dispatch storage failure'); END");
+  app.jobProcessor.start();
+  await until(() => app.jobQueue.listJobs({ queue: 'worker_input' }).some((job) => job.payload.inputId === exhaustedId && job.status === 'completed'), 'exhausted dispatch retries retain a failure and complete notification');
+  const exhausted = inputs().find((input) => input.id === exhaustedId)!;
+  assert.match(exhausted.outcome!, /Synthetic dispatch storage failure/);
+  assert.equal(JSON.parse(exhausted.outcome!).notSent, true);
+  await until(() => messages(root).some((text) => text.includes('Synthetic dispatch storage failure')), 'Neo receives the exhausted input failure');
+  const exhaustedReports = messages(root).filter((text) => text.includes('Synthetic dispatch storage failure'));
+  assert.equal(exhaustedReports.length, 1);
+  assert.equal(messages().filter((text) => text.includes('Exhaust the synthetic dispatch')).length, 0);
+  evidence.exhausted = { input: exhausted, reports: exhaustedReports };
+  db().exec('DROP TRIGGER reject_synthetic_dispatch');
   evidence.port = app.server.port;
   evidence.passed = true;
-  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length, refusalReports: refusalReports.length }));
+  console.log(JSON.stringify({ passed: true, accepted: inputs().length, received: received.length, uncertaintyReports: uncertaintyReports.length, notificationRecovered: true, questionAccepted: true, restartRecovered: true, waitingReports: waitingReports.length, refusalReports: refusalReports.length, exhaustedReports: exhaustedReports.length }));
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

@@ -82,10 +82,11 @@ export class WorkerInputJobs {
     const payload = job.payload as WorkerInputPayload;
     const row = this.db
       .prepare(
-        'SELECT message, target, todo_id AS todoId, outcome FROM work_delivery_inputs WHERE id = ?'
+        'SELECT message, target, todo_id AS todoId, outcome, accepted_at AS acceptedAt FROM work_delivery_inputs WHERE id = ?'
       )
       .get(payload.inputId) as {
       message: string;
+      acceptedAt: number;
       target: string;
       todoId: string | null;
       outcome: string | null;
@@ -159,6 +160,32 @@ export class WorkerInputJobs {
     return true;
   }
 
+  retireDead(job: Job): void {
+    const current = new JobQueueRepository(this.db).getJob(job.id);
+    if (current?.status !== 'dead') return;
+    if (!this.read(current).outcome) {
+      const detail = `Worker input delivery failed after infrastructure retries: ${current.error}`;
+      recordWorkDeliveryOutcome.run(
+        this.db,
+        {
+          id: current.payload.inputId as string,
+          outcome: {
+            failure: current.payload.dispatched
+              ? `This input may not have reached the worker. ${detail}`
+              : detail,
+            ...(!current.payload.dispatched ? { notSent: true as const } : {}),
+          },
+          now: Date.now(),
+        },
+        new ChangeRecorder()
+      );
+    }
+    this.db
+      .prepare(`UPDATE job_queue SET status = 'pending', retry_count = 0, run_at = ?,
+      started_at = NULL, heartbeat_at = NULL, completed_at = NULL WHERE id = ? AND status = 'dead'`)
+      .run(Date.now(), job.id);
+  }
+
   settle(job: Job, outcome: ReturnType<typeof readDriverOutcome>, sent?: DriverSent | null): void {
     const jobs = new JobQueueRepository(this.db);
     if (!jobs.complete(job.id, {}, job.claimToken!)) return;
@@ -183,7 +210,7 @@ export const workerInputWrites = defineRepositoryOp(
   'work.workerInput.write',
   'write',
   WorkerInputJobs,
-  ['accept', 'wait', 'dispatch', 'recordFailure', 'settle']
+  ['accept', 'wait', 'dispatch', 'recordFailure', 'retireDead', 'settle']
 );
 
 export const workerInputReads = defineRepositoryOp(

@@ -56,3 +56,10 @@ that a worker running or queued on another todo retains the existing busy refusa
 Dispatcher contention uses a one-second retry and preserves the stored worker
 wait reason. The concurrency regression blocks one worker's status read while
 a second worker is claimed, then checks its pending job deadline and reason.
+
+An exhausted worker-input job retains a failure outcome and re-enters the same
+lane to deliver its notice. The proof rejects dispatch writes in its disposable
+DB until real processor retries exhaust, then requires one Neo notice and zero
+native submissions. The unit fixtures also cover interrupted dispatch and a
+notification receiver that recovers later. Unbound follow-ups report their reason
+once after one minute while preserving the input for a later binding.

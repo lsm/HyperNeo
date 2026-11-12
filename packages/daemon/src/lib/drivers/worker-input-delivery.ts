@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { Logger } from '../logger.ts';
 import { neoDerivedId } from '../neo/derived-id.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -26,6 +27,8 @@ import {
   type WorkVerbDeps,
 } from './work-operations.ts';
 
+const log = new Logger('worker-input-delivery');
+
 export function createWorkerInputDelivery(
   db: Database,
   deps: WorkVerbDeps,
@@ -33,7 +36,7 @@ export function createWorkerInputDelivery(
 ) {
   const gateway = gatewayFor(db);
   const read = async (job: Job) => {
-    const stored = await gateway.call(workerInputReads, 'read', job);
+    const stored = { ...(await gateway.call(workerInputReads, 'read', job)), now: Date.now() };
     if (!stored.ref || stored.closed || !stored.head || stored.payload.dispatched || stored.outcome)
       return { ...stored, status: null };
     const route = routeStatus({ ref: stored.ref }, deps);
@@ -69,6 +72,7 @@ export function createWorkerInputDelivery(
       return {
         action: 'wait',
         detail: 'Waiting for the worker to start or an earlier input to finish.',
+        ...(!facts.ref && facts.now - facts.acceptedAt >= 60_000 ? { report: true as const } : {}),
       };
     if (facts.ref.daemon)
       return {
@@ -213,6 +217,7 @@ export function createWorkerInputDelivery(
     accept: (input: WorkerInput, from: string, caller: OperationCaller) =>
       gateway.call(workerInputWrites, 'accept', input, from, caller),
     run,
+    retireDead: (job: Job) => gateway.call(workerInputWrites, 'retireDead', job),
   };
 }
 
@@ -220,5 +225,12 @@ export function registerWorkerInputDelivery(
   processor: JobQueueProcessor,
   delivery: ReturnType<typeof createWorkerInputDelivery>
 ) {
-  processor.register('worker_input', delivery.run, { dequeueMode: { kind: 'session-fifo' } });
+  processor.register('worker_input', delivery.run, {
+    dequeueMode: { kind: 'session-fifo' },
+    onDead: (job) => {
+      void delivery
+        .retireDead(job)
+        .catch((error: unknown) => log.warn('Failed to retain an exhausted worker input:', error));
+    },
+  });
 }
