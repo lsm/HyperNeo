@@ -385,14 +385,13 @@ export class NeoService {
       getRootBinding: () => this.repo.defaultBinding(),
       isPublicationSpeaker: (id) => {
         const conversation = this.repo.readConversationId();
-        return (
-          !!conversation &&
-          isPublicationSpeaker(
-            conversation,
-            id,
-            this.db.getGlobalSettings().neo?.front?.enabled === true
-          )
-        );
+        return conversation
+          ? isPublicationSpeaker(
+              conversation,
+              id,
+              this.db.getGlobalSettings().neo?.front?.enabled === true
+            )
+          : id === this.defaultSessionId();
       },
       hasProject: (id) => !!this.repo.getProject(id),
       publication: (conversation, id) => this.publications.get(conversation, id),
