@@ -16,7 +16,7 @@ no separate approval. A later-device ticket cannot become a bootstrap ticket if
 the existing devices are removed.
 
 The approve route refuses first-device requests: they never appear as approvable
-and completing one after another phone has paired returns `superseded`. Legacy
+and completing one after another phone has paired returns `cancelled`. Legacy
 typed-code pairing remains available and shares the same atomic active-phone
 check inside its grant transaction: if either path grants the first device, the
 other path refuses its outstanding first-device attempt. A first-device grant

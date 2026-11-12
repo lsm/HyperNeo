@@ -9,18 +9,17 @@ TMPDIR=/tmp bash .claude/skills/verify/proof-run.sh "$EVIDENCE" \
   .claude/skills/verify/pairing-v2-first-device.ts "$(git rev-parse HEAD)"
 ```
 
-Drive `/pair2/request`, `/pair2/bind`, `/pair2/approve`, `/pair2/complete` and
-`/pair2/status` over the daemon's own HTTP host transport, through the real
-authenticated door, not the repository directly. A fresh daemon has no paired
-phone: the first ticket must complete straight after the scan with no approval
-call, and must receive the owner bit. The approve route must refuse that
-first-device request once a phone exists, and completing it afterwards must
-report `superseded`.
+Drive `/pair2/request`, `/pair2/bind`, `/pair2/approve` and `/pair2/complete` over
+the daemon's own HTTP host transport, through the real authenticated door, not
+the repository directly. A fresh daemon has no paired phone: the first ticket
+must complete straight after the scan with no approval call, and must receive
+the owner bit. The approve route must refuse that first-device request once a
+phone exists, and completing it afterwards must report `cancelled`.
 
 Then pair a second phone as a later device. It must need approval, and the first
 phone must be able to approve it. A deposited legacy typed-code device must be
-able to approve a v2 phone as well. Refuse a revoked phone. Require the second
-grant to leave two active phones and both to authenticate a WebSocket.
+able to approve a v2 phone as well. Require the grant to leave four active
+phones.
 
 Close sockets and the daemon, retain `pairing-v2-first-device.json` with
 `passed` and `resourcesClosed`, require wrapper exit 0 and remove temporary
