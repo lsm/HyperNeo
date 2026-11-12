@@ -2,7 +2,10 @@ import type { Database } from '../sqlite-compat.ts';
 
 export function backfillFirstDeviceCodes(db: Database): void {
   const firstDeviceWindow = !db
-    .prepare("SELECT 1 FROM paired_devices WHERE kind = 'human' LIMIT 1")
+    .prepare(
+      "SELECT 1 FROM paired_devices WHERE kind = 'human' " +
+        "AND id NOT LIKE 'local-rpc:%' AND id NOT LIKE 'agent-read:%' LIMIT 1"
+    )
     .get();
   const resetOpen = !!db
     .prepare(

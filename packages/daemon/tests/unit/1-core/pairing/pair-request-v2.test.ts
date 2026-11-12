@@ -583,6 +583,20 @@ describe('pairing v2 one-time request repository', () => {
     ).toEqual({ owner: 0 });
   });
 
+  test('the upgrade window ignores the synthetic local-rpc row', async () => {
+    writer
+      .prepare(
+        "INSERT INTO paired_devices (id, name, kind, secret_hash, created_at, owner) VALUES (?, ?, 'human', ?, ?, 0)"
+      )
+      .run('local-rpc:fixture', 'Local tools', 'hash-local', now);
+    const made = devices.createCode('human', 'Pre-upgrade phone', true, now);
+    writer.prepare('UPDATE pairing_codes SET first_device = 0 WHERE id = ?').run(made.id);
+    backfillFirstDeviceCodes(writer);
+    expect(
+      writer.prepare('SELECT first_device FROM pairing_codes WHERE id = ?').get(made.id)
+    ).toEqual({ first_device: 1 });
+  });
+
   test('the upgrade marks an outstanding code first-device while a reset is open', async () => {
     const revoked = seedPhone(1);
     writer.prepare('UPDATE paired_devices SET revoked_at = ? WHERE id = ?').run(now, revoked);
