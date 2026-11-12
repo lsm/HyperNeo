@@ -4,6 +4,31 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-11-11
+
+- Add opt-in dual-model conversations with a reusable front session, short and detailed replies, quoted context, spoken responses, and live model settings (#10419, #10425, #10430).
+- Keep internal model handoffs and scheduled work out of the human conversation, preserve slash commands, and identify workers in reports (#10431, #10449, #10459, #10464).
+- Mirror plans and todos to private GitHub Issues when enabled, with bounded calls, start holds, and closing-reference checks (#10325, #10333, #10336).
+- Reduce Neo's resident tool definitions and support operation discovery by prefix (#10414, #10436).
+- Apply explicit auto-compact windows and percentages to running sessions ahead of provider defaults (#10406, #10438, #10441).
+- Follow discovered DeepSeek and Kimi models and preserve explicit context metadata (#10385, #10393, #10397).
+- Play registered and live-file videos in web previews through bounded snapshot and range reads (#10347, #10353, #10359).
+- Reserve idle, voice-free daemon restarts and preserve voice-stream diagnostics (#10400, #10375).
+- Bundle the pinned desktop driver, isolate each worker's driver lifecycle, and proxy desktop tools through worker-owned sockets (#10317, #10365, #10373, #10401).
+- Show recorded card times and relay answer provenance, and accept human card answers from relays (#10335, #10352, #10369).
+- Confirm pairing with the code shown on the phone and expose terminal approval controls (#10281, #10252).
+- Preserve selected asks for follow-ups and dispatch dependency-ready todo steps after approval (#10307, #10434).
+
+### API compatibility
+
+Compared with v0.56.2, the pinned phone source inventory reports 7 breaking, 4 risky, and 2 safe methods. Across all schema changes, the report lists 42 breaking, 47 risky, and 47 safe changes.
+
+- Pairing removes `device.pair.approve.input.lastGroup` and `device.pair.pending.result.pending[].fingerprint`.
+- Neo ask/todo results remove legacy `repo` fields. `neo.open` and `neo.snapshot` also remove `trimmed`.
+- Artifact results add the `video` kind, classified as risky for older enum readers.
+
+The inventory describes source usage at `5a35d4d4bcabb7866ddfc95212a775ebc465979b`. Installed-client compatibility remains unverified. The [complete compatibility report](https://github.com/lsm/HyperNeo/releases/download/v0.57.0/api-diff.json) includes every classified change.
+
 ## [0.56.2] - 2026-11-09
 
 - Refresh Neo's prompt and notify it when a pack setting changes (#10295).
