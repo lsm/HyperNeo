@@ -7,9 +7,10 @@ same admission governs the pending list once it lands; bootstrap eligibility
 is a separate rule, defined below. Identities minted by the local transport
 (`local-rpc:*`) are refused only on approve: request, deny and cancel admit any
 authenticated human identity, including the local web session. Read-only agent
-credentials (`agent-read:*`) are refused on every `/pair2` request, because the
-pair2 authenticator never admits the agent kind. Deny and cancel only terminate
-a request.
+credentials (`agent-read:*`) are refused on every authenticated `/pair2` request
+(request, approve, deny, cancel), because the pair2 authenticator never admits
+the agent kind; status, bind and complete take no caller authentication. Deny
+and cancel only terminate a request.
 
 A ticket issued while no human phone has ever been paired, or while a lost-phone
 reset is open, is a first-device ticket. Its completion needs only the bound-key

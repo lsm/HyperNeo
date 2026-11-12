@@ -9,6 +9,7 @@ import { DevicePairingRepository } from '../../../../src/storage/repositories/de
 import { resetHumanDevices } from '../../../../src/storage/repositories/human-device-reset-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { backfillFirstDeviceCodes } from '../../../../src/storage/schema/m501-pairing-first-device';
 
 function phoneKeypair() {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -545,6 +546,34 @@ describe('pairing v2 one-time request repository', () => {
     );
     expect(reopened.ok).toBe(true);
     if (reopened.ok) expect(reopened.owner).toBe(true);
+  });
+
+  test('the upgrade marks an outstanding first phone code as first-device', async () => {
+    const made = devices.createCode('human', 'Pre-upgrade phone', true, now);
+    writer.prepare('UPDATE pairing_codes SET first_device = 0 WHERE id = ?').run(made.id);
+    backfillFirstDeviceCodes(writer);
+    expect(
+      writer.prepare('SELECT first_device FROM pairing_codes WHERE id = ?').get(made.id)
+    ).toEqual({ first_device: 1 });
+
+    seedPhone(1);
+    const later = devices.createCode('human', 'Later phone', true, now);
+    writer.prepare('UPDATE pairing_codes SET first_device = 0 WHERE id = ?').run(later.id);
+    backfillFirstDeviceCodes(writer);
+    expect(
+      writer.prepare('SELECT first_device FROM pairing_codes WHERE id = ?').get(later.id)
+    ).toEqual({ first_device: 0 });
+  });
+
+  test('a losing first-device legacy code is un-approved so it needs Allow', async () => {
+    const winner = devices.createCode('human', 'Winner phone', true, now);
+    const sibling = devices.createCode('human', 'Sibling phone', true, now);
+    expect(devices.redeem(winner.code, 'Winner phone', now)).not.toBeNull();
+    expect(devices.redeem(sibling.code, 'Sibling phone', now)).toBeNull();
+    const row = writer
+      .prepare('SELECT approved_at FROM pairing_codes WHERE id = ?')
+      .get(sibling.id) as { approved_at: number | null };
+    expect(row.approved_at).toBeNull();
   });
 
   test('a first legacy typed code grants the owner bit', async () => {
