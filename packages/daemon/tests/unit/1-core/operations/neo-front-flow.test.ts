@@ -13,11 +13,13 @@ import type { MessageHub, Session } from '@hyperneo/shared';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import { createNeoFrontHandler } from '../../../../src/lib/neo/front-job.ts';
+import { settleConvoInput } from '../../../../src/lib/neo/front-outcome.ts';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
 import { frontSession } from '../../../../src/lib/neo/front-session.ts';
 import { admitCreateSessionConfig } from '../../../../src/lib/session/create-session-config.ts';
 import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 import { frontModeNote } from '../../../../src/lib/neo/front-mode.ts';
+import { NeoFrontInputRepository } from '../../../../src/storage/repositories/neo-front-input-worker.ts';
 import {
   catchUpBlock,
   FRONT_FALLBACK_TEXT,
@@ -325,7 +327,7 @@ test('a queued Front delivery falls back to Back when dual mode is disabled', as
   expect(db.getSession(front)).toBeNull();
 });
 
-test('Front notes go to the existing Back session and carry their original input reference', async () => {
+test('a hand-off gives Neo the recorded human message once and restates nothing', async () => {
   const { id } = await accept();
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
@@ -353,7 +355,7 @@ test('Front notes go to the existing Back session and carry their original input
     verbatim: true,
     progress: true,
   });
-  await send.handler(
+  const handed = await send.handler(
     {
       requestId: 'clarification',
       messageIds: [id],
@@ -361,54 +363,33 @@ test('Front notes go to the existing Back session and carry their original input
     },
     {} as never
   );
-  await frontSession(
-    service,
-    { conversationId, askOrigin: { sessionId: root, messageId: id } },
-    model
-  );
-  await db.saveUserMessage(
-    front,
-    {
-      type: 'user',
-      uuid: id as UUID,
-      session_id: front,
-      parent_tool_use_id: null,
-      message: { role: 'user', content: 'Hello' },
-    },
-    'submitted'
-  );
-  await convoPublish({
-    requestId: 'ack',
-    replyTo: [id],
-    fullText: 'I will check.',
-    verbatim: true,
-    progress: true,
-  });
-  await send.handler(
-    {
-      requestId: 'clarification',
-      messageIds: [id],
-      text: 'Human message original-id needs clarification.',
-    },
-    {} as never
-  );
-  const jobs = db
-    .getJobQueueRepo()
-    .listJobs({ queue: 'mailbox' })
-    .filter((j) => JSON.stringify(j.payload).includes('original-id'));
-  expect(jobs).toHaveLength(1);
-  expect(JSON.stringify(jobs[0].payload)).toContain(root);
+  expect(JSON.parse((handed.content[0] as { text: string }).text)).toEqual({ delivered: true });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  expect(
+    db
+      .getJobQueueRepo()
+      .listJobs({ queue: 'mailbox' })
+      .filter((j) => JSON.stringify(j.payload).includes('original-id'))
+  ).toHaveLength(0);
+  expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, id)?.owner).toBe('neo');
+  const again = await send.handler(
+    { requestId: 'clarification', messageIds: [id], text: 'Again.' },
+    {} as never
+  );
+  expect(JSON.parse((again.content[0] as { text: string }).text)).toEqual({
+    delivered: false,
+    reason: 'input_handed_off',
+  });
 });
 
-test('canonical Neo speech retains its normal listener admission', async () => {
+test('in dual mode Neo speaks directly like the front', async () => {
   const say = service.speech.operations.find((op) => op.name === 'neo.speech.say')!;
   expect(
     await say.execute(
       { requestId: 'speech', text: 'Hello' },
       { source: 'mcp', role: 'neo', sessionId: root }
     )
-  ).toMatchObject({ ok: false, reason: 'neo_speech_not_available' });
+  ).toMatchObject({ ok: false, reason: 'voice_replies_off' });
 });
 
 test('Front speech uses the canonical listener while Back speech stays disabled', async () => {
@@ -703,13 +684,17 @@ test('Front exposes reads, handoff and one publication path', () => {
   ]);
 });
 
-test('the canonical Neo publication path refuses Back in dual mode', async () => {
+test('in dual mode Neo publishes to the human directly', async () => {
   expect(
     await service.publish(
       { requestId: 'canonical', fullText: 'Canonical answer', verbatim: true },
       { source: 'mcp', role: 'neo', sessionId: root }
     )
-  ).toMatchObject({ accepted: false, reason: 'dual_model_front_required' });
+  ).toMatchObject({ accepted: true });
+  expect(service.publications.list(conversationId)!.at(-1)).toMatchObject({
+    fullText: 'Canonical answer',
+    publishedBy: 'neo',
+  });
 });
 
 test('Front delivery remains pending only until the accepted input deadline', async () => {
@@ -1210,16 +1195,18 @@ test('Front rejects a new reply without spoken while the human is listening', as
   speech.mockRestore();
 });
 
-test('only Front can publish in dual mode and Neo can publish again in single mode', async () => {
+test('Neo publishes in both modes', async () => {
   const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
   const input = { requestId: 'back-answer', fullText: 'Back answer', verbatim: true };
-  expect(await service.publish(input, caller)).toMatchObject({ accepted: false });
-  expect(service.publications.list(conversationId)).toHaveLength(0);
-  await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
   expect(await service.publish(input, caller)).toMatchObject({ accepted: true });
+  await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
+  expect(await service.publish({ ...input, requestId: 'single' }, caller)).toMatchObject({
+    accepted: true,
+  });
+  expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
-test('Front must publish a visible progress reply before sending work to Neo', async () => {
+test('after a visible progress reply, a hand-off leaves the answers to Neo', async () => {
   const { id } = await deliveredConvoInput();
   createFrontTools(service, conversationId);
   const send = vi
@@ -1250,14 +1237,25 @@ test('Front must publish a visible progress reply before sending work to Neo', a
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(
     await convoPublish({ requestId: 'final', replyTo: [id], fullText: 'Done.', verbatim: true })
+  ).toMatchObject({ accepted: false, reason: 'input_handed_off' });
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id)).not.toBeNull();
+  const neo = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
+  expect(
+    await service.publish(
+      { requestId: 'neo-final', replyTo: [id], fullText: 'Done.', verbatim: true },
+      neo
+    )
   ).toMatchObject({ accepted: true });
   expect(
-    await convoPublish({
-      requestId: 'later-result',
-      replyTo: [id],
-      fullText: 'The review is complete. Here is the result.',
-      verbatim: true,
-    })
+    await service.publish(
+      {
+        requestId: 'later-result',
+        replyTo: [id],
+        fullText: 'The review is complete. Here is the result.',
+        verbatim: true,
+      },
+      neo
+    )
   ).toMatchObject({ accepted: true, created: true });
   expect(
     service.publications.list(conversationId)!.filter((row) => row.replyTo?.includes(id))
@@ -1601,4 +1599,107 @@ test('the front only sees its own replies in its transcript, not in the catch-up
   ).toMatchObject({ accepted: true, publication: { publishedBy: 'front' } });
   const { id } = await frontInput();
   expect(JSON.stringify(delivered(id))).not.toContain('Front reply.');
+});
+
+test('the listening note reaches Neo and the front', async () => {
+  await frontSession(
+    service,
+    { conversationId, askOrigin: { sessionId: root, messageId: root } },
+    model
+  );
+  Object.assign(service.sessions, {
+    getCachedSession: () => ({ getProcessingState: () => ({ status: 'processing' }) }),
+  });
+  const notes = (id: string) =>
+    (
+      db
+        .getDatabase()
+        .prepare(
+          "SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = ? AND message_type = 'user'"
+        )
+        .get(id) as { n: number }
+    ).n;
+  const before = [notes(root), notes(front)];
+  await (
+    service.speech as unknown as {
+      onListeningChanged: (id: string, listening: boolean) => Promise<void>;
+    }
+  ).onListeningChanged(root, true);
+  expect([notes(root), notes(front)]).toEqual([before[0] + 1, before[1] + 1]);
+});
+
+test('a handed-off input settles as handed off with no extra message', async () => {
+  const { id, job } = await deliveredConvoInput();
+  createFrontTools(service, conversationId);
+  const send = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'run_in_background')!;
+  await convoPublish({
+    requestId: 'ack',
+    replyTo: [id],
+    fullText: 'On it.',
+    verbatim: true,
+    progress: true,
+  });
+  await send.handler({ requestId: 'work', messageIds: [id], text: 'Do it.' }, {} as never);
+  const count = service.publications.list(conversationId)!.length;
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
+    delivered: true,
+    outcome: 'handed_off',
+  });
+  expect(service.publications.list(conversationId)).toHaveLength(count);
+});
+
+test('a hand-off that lands before the fallback append requeues and the fallback still reaches the rest', async () => {
+  const first = await accept();
+  db.getDatabase()
+    .prepare('UPDATE job_queue SET created_at = created_at - 1000 WHERE id = ?')
+    .run(first.job.id);
+  const second = await accept();
+  const handler = createNeoFrontHandler(service);
+  await handler(first.job);
+  await handler(second.job);
+  for (const { id } of [first, second]) {
+    await db.saveUserMessage(
+      front,
+      {
+        type: 'user',
+        uuid: id as UUID,
+        session_id: front,
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'Hello' },
+      },
+      'enqueued'
+    );
+    expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  }
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No reply',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let raced = false;
+  vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
+    if (
+      !raced &&
+      args[1] === 'append' &&
+      (args[2] as { fullText?: string }).fullText === FRONT_FALLBACK_TEXT
+    ) {
+      raced = true;
+      expect(
+        new NeoFrontInputRepository(db.getDatabase()).reserve(conversationId, [second.id], [])
+      ).toBe('reserved');
+    }
+    return (call as (...rest: unknown[]) => unknown)(...args);
+  }) as never);
+  expect(await handler(first.job)).toMatchObject({ delivered: false, pending: true });
+  expect(await handler(first.job)).toMatchObject({ delivered: true, outcome: 'answered' });
+  expect(await handler(second.job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+  const replies = service.publications.list(conversationId)!;
+  expect(replies.map((reply) => reply.replyTo)).toEqual([[first.id]]);
 });
