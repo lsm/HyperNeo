@@ -28,7 +28,7 @@ let consumedInputId: string | undefined;
 const evidence: unknown[] = [];
 const handler = () => createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo', consumedInputId }));
 const ask = async (input: Record<string, unknown>) => {
-  const result = await handler()({ name: 'neo.question.ask', input: { askId: 'sign-off-8442', kind: 'choice', text: 'How should we sign off?', options: ['Keep', 'Change'], ...input } });
+  const result = await handler()({ name: 'neo.question.ask', input: { askId: 'sign-off-8442', kind: 'choice', text: 'How should we sign off?', options: ['Keep', 'Change'], retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } }, ...input } });
   assert(!result.isError, JSON.stringify(result)); return JSON.parse(result.content[0].text);
 };
 const readPage = async () => {
