@@ -389,6 +389,7 @@ export const NeoQuestionSchema = z.object({
   noLabel: z.string().nullable(),
   yesLabel: z.string().nullable(),
   startTodos: z.array(z.string()).nullable(),
+  todos: z.array(z.string()),
   confirm: Confirmation.nullable().optional(),
   state: z.enum(['open', 'answered', 'retired']),
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
@@ -568,7 +569,7 @@ export function planNeoQuestion(
     ? {
         value: {
           ask,
-          draft: { ...draft, startTodos: open.startTodos },
+          draft: { ...draft, startTodos: open.todos },
           reworded: open,
           ...records,
         },
@@ -608,7 +609,7 @@ export function planNeoQuestionAnswer(
       : question.kind === 'reply'
         ? typeof answer === 'string' && answer.trim().length > 0
         : picked.every((value) =>
-            (question.kind === 'choice' ? question.options : question.startTodos)?.includes(value)
+            (question.kind === 'choice' ? question.options : question.todos)?.includes(value)
           ) &&
           (question.kind !== 'choice' || question.multiple || picked.length === 1);
   if (!allowed)
@@ -817,10 +818,10 @@ export function createNeoQuestionOperations(
             return null;
           }
           if (plan.reworded) {
-            const { id, startTodos } = plan.reworded;
+            const { id, todos } = plan.reworded;
             store.extendStartQuestion(
               id,
-              startTodos ?? [],
+              todos,
               plan.draft.text,
               Date.now(),
               plan.draft.replyTo,

@@ -4,4 +4,4 @@
     `pr_merged` on `verify-test/demo#8`, which reads as `MERGED`) and `todo-b`
     (no check), and one open start question `q-start` listing both. End state
     within ~3 min: `todo-a` is `done` with `started_at` empty, and `q-start`
-    is still `open` with `start_todos` `["todo-b"]`.
+    is still `open` with `todos` and `start_todos` both `["todo-b"]`.

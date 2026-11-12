@@ -15,6 +15,6 @@ sqlite3 "$DB" "INSERT INTO neo_asks (id, session_id, title, request, status, cre
 INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, state, blocked_by, created_at, updated_at)
   VALUES ('todo-a', 'ask-prune', 1, 'Merge #8', '#8 merged', '$CHECK', 'Merge it', 'blocked', 'question', $NOW_MS, $NOW_MS),
          ('todo-b', 'ask-prune', 2, 'Web', 'Merged', NULL, 'Build it', 'blocked', 'question', $NOW_MS, $NOW_MS);
-INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, created_at)
-  VALUES ('q-start', 'ask-prune', 'Start these 2?', 'start', '[\"todo-a\",\"todo-b\"]', $NOW_MS);"
+INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, todos, created_at)
+  VALUES ('q-start', 'ask-prune', 'Start these 2?', 'start', '[\"todo-a\",\"todo-b\"]', '[\"todo-a\",\"todo-b\"]', $NOW_MS);"
 echo "seeded ask-prune: todo-a (check met, not started), todo-b (no check), q-start lists both"
