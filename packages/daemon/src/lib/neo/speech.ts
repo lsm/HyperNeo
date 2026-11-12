@@ -106,6 +106,16 @@ const listeningInput = (superpipe({})('neo.input.listening') as PipelineAPI)
   )
   .end('result') as (loaded: DeliveryLoadResult, listening: boolean) => DeliveryLoadResult;
 
+const isSlashCommand = (content: DeliveryLoadResult['content']) => {
+  const text =
+    typeof content === 'string'
+      ? content
+      : content.length === 1 && content[0].type === 'text'
+        ? content[0].text
+        : '';
+  return /^\/[a-z][\w:-]*(\s|$)/.test(text.trimStart());
+};
+
 export class NeoSpeech {
   private readonly receipts = new Map<string, Entry>();
   private readonly listeners = new Map<string, Listener>();
@@ -258,6 +268,7 @@ export class NeoSpeech {
   }
 
   prepareInput(sessionId: string, loaded: DeliveryLoadResult): DeliveryLoadResult {
+    if (isSlashCommand(loaded.content)) return loaded;
     const input = this.isNeo(sessionId)
       ? listeningInput(loaded, this.listeners.has(sessionId))
       : loaded;
