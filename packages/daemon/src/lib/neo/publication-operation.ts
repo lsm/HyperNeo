@@ -31,6 +31,7 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
   languageMismatch: true,
   revisionId: true,
   revisions: true,
+  publishedBy: true,
 })
   .extend({
     requestId: z.string().min(1).max(160),

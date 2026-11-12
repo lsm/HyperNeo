@@ -2,6 +2,11 @@ import type { Database } from '../sqlite-compat.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { sdkMessageBodyAt } from './sdk-message-body-read.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
+import { JobQueueRepository } from './job-queue-repository.ts';
+import { SDKMessageRepository } from './sdk-message-repository.ts';
+import { enqueueMailboxEntry, MAILBOX_LANE } from '../../lib/mailbox/enqueue.ts';
+import type { MailboxEntry } from '../../lib/mailbox/entry.ts';
+import { catchUpBlock, FRONT_FALLBACK_TEXT } from '../../lib/neo/front-catch-up.ts';
 
 export class NeoFrontInputRepository {
   constructor(private readonly db: Database) {}
@@ -77,6 +82,77 @@ export class NeoFrontInputRepository {
     };
   }
 
+  enqueueWithCatchUp(conversationId: string, entry: MailboxEntry): 'duplicate' | 'enqueued' {
+    if (entry.to.kind !== 'session' || !entry.messageUuid)
+      throw new Error('Front delivery requires a session and message identity');
+    const sessionId = entry.to.sessionId;
+    const messageId = entry.messageUuid;
+    return this.db.transaction(() => {
+      const queue = new JobQueueRepository(this.db);
+      if (
+        new SDKMessageRepository(this.db).findMessageIdByUuid(sessionId, messageId) ||
+        queue.listActiveByPayload(MAILBOX_LANE, {
+          'to.sessionId': sessionId,
+          messageUuid: messageId,
+        }).length
+      )
+        return 'duplicate';
+      const { upper } = this.db
+        .prepare(
+          'SELECT COALESCE(MAX(sequence), 0) AS upper FROM neo_publications WHERE conversation_id = ?'
+        )
+        .get(conversationId) as { upper: number };
+      const prior = this.db
+        .prepare(`SELECT f.catch_up_through AS through FROM neo_front_inputs f
+        WHERE f.conversation_id = ?1 AND f.message_id <> ?2 AND f.catch_up_through IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM sdk_messages s WHERE s.session_id = ?3
+            AND s.sdk_uuid = f.message_id AND s.send_status = 'failed')
+          AND NOT EXISTS (SELECT 1 FROM neo_publications p WHERE p.conversation_id = f.conversation_id
+            AND json_extract(p.payload_json, '$.fullText') = ?4
+            AND f.message_id IN (SELECT value FROM json_each(p.payload_json, '$.replyTo')))
+        ORDER BY f.catch_up_through DESC LIMIT 1`)
+        .get(conversationId, messageId, sessionId, FRONT_FALLBACK_TEXT) as {
+        through: number;
+      } | null;
+      const from = prior?.through ?? upper;
+      const said = (
+        this.db
+          .prepare(`SELECT payload_json AS payload FROM neo_publications
+          WHERE conversation_id = ? AND sequence > ? AND sequence <= ?
+            AND json_extract(payload_json, '$.publishedBy') = 'neo' ORDER BY sequence`)
+          .all(conversationId, from, upper) as { payload: string }[]
+      ).map((row) => JSON.parse(row.payload) as { replyTo?: string[]; fullText: string });
+      const block = catchUpBlock(said);
+      const content = entry.message.message.content;
+      const sent = enqueueMailboxEntry(
+        queue,
+        block
+          ? {
+              ...entry,
+              message: {
+                ...entry.message,
+                message: {
+                  ...entry.message.message,
+                  content: [
+                    { type: 'text', text: block },
+                    ...(typeof content === 'string'
+                      ? [{ type: 'text' as const, text: content }]
+                      : content),
+                  ],
+                },
+              },
+            }
+          : entry
+      );
+      if (sent.kind === 'rejected') throw new Error(sent.reason);
+      this.db
+        .prepare(`UPDATE neo_front_inputs SET catch_up_from = ?, catch_up_through = ?
+        WHERE conversation_id = ? AND message_id = ?`)
+        .run(from, upper, conversationId, messageId);
+      return 'enqueued';
+    })();
+  }
+
   claim(conversationId: string, messageIds: readonly string[], owner: 'front' | 'neo'): boolean {
     const ids = [...new Set(messageIds)];
     if (!ids.length) return false;
@@ -98,6 +174,13 @@ export const neoFrontInputWrites = defineRepositoryOp(
   'write',
   NeoFrontInputRepository,
   ['claim']
+);
+
+export const neoFrontDeliveryWrites = defineRepositoryOp(
+  'neo.front.delivery',
+  'write',
+  NeoFrontInputRepository,
+  ['enqueueWithCatchUp']
 );
 
 export const neoFrontInputReads = defineRepositoryOp(

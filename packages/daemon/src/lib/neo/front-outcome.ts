@@ -4,6 +4,7 @@ import { jobQueueWrites } from '../../storage/repositories/job-queue-repository.
 import { neoFrontInputReads } from '../../storage/repositories/neo-front-input-worker.ts';
 import { neoPublicationWrites } from '../../storage/repositories/neo-publication-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
+import { FRONT_FALLBACK_TEXT } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
@@ -65,7 +66,7 @@ export async function settleConvoInput(
       conversationId,
       publicationId: neoDerivedId(`convo-reply:${conversationId}:${[...ids].sort().join(',')}`),
       verbatim: true,
-      fullText: 'This reply could not be completed. Please try again.',
+      fullText: FRONT_FALLBACK_TEXT,
       replyTo: ids,
       links: [],
     },
