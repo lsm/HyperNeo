@@ -288,7 +288,7 @@ describe('durable worker follow-ups', () => {
         } as JobQueueProcessor,
         h.delivery
       );
-      expect(onDead).toBeFunction();
+      expect(typeof onDead).toBe('function');
       h.setReportUnavailable(true);
       onDead!(dead);
       const deadline = Date.now() + 2000;
