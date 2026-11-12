@@ -271,6 +271,38 @@ describe('Writer-backed todo operation activation', () => {
     expect(order.slice(0, 2)).toEqual(['stop', 'commit']);
   });
 
+  test('a block on the human under an open ask-level card still holds the legacy close, and done clears it', async () => {
+    store.askQuestion(
+      'shared',
+      'ask',
+      {
+        kind: 'reply',
+        text: 'Which release?',
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        startTodos: null,
+      },
+      2
+    );
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 2 }, 2);
+    store.updateTodo(
+      store.getTodo('first')!,
+      { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Answer first' },
+      3
+    );
+    expect(await call('neo.todo.close', { todoId: 'first', reason: 'Finished' })).toMatchObject({
+      ok: true,
+      todo: { state: 'blocked', blockedBy: 'needs-human' },
+    });
+    expect(await call('neo.todo.done', { todoId: 'first' })).toMatchObject({
+      ok: true,
+      todo: { state: 'done', blockedBy: null },
+    });
+    expect(store.getQuestion('shared')?.state).toBe('open');
+  });
+
   test('done leaves a removed todo as it is', async () => {
     await call('neo.todo.remove', { todoId: 'first', reason: 'Cancelled' });
     order.length = 0;
