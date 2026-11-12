@@ -9,6 +9,7 @@ import {
 } from './pairing-approve-write.ts';
 import type { PairApprovalRequest } from './pairing-approve-write.ts';
 import { pairingRedeemWrite } from './pairing-redeem-write.ts';
+import { PairingRequestRepository } from './pairing-request-repository.ts';
 import type { PairRequest, PairRequestRecord } from '../../lib/pairing/pair-request.ts';
 import { pairingCodeCreateWrites, type PairingCodeDraft } from './pairing-code-create-write.ts';
 import type { PairingCodeCaller } from './pairing-code-create-write.ts';
@@ -225,16 +226,6 @@ export class DevicePairingRepository {
     return !!this.db
       .prepare('SELECT 1 FROM paired_devices WHERE id = ? AND revoked_at IS NULL')
       .get(id);
-  }
-
-  cancelFirstDeviceRequests(now: number): void {
-    this.db
-      .prepare(
-        `UPDATE pairing_requests SET cancelled_at = ?, expires_at = ?
-         WHERE first_device = 1 AND granted_at IS NULL AND denied_at IS NULL
-           AND cancelled_at IS NULL AND expires_at > ?`
-      )
-      .run(now, now, now);
   }
 
   listDevices(): {
@@ -534,7 +525,7 @@ export class DevicePairingRepository {
       } | null;
       if (!claimed) return null;
       const firstDevice = claimed.first_device === 1;
-      if (firstDevice) this.cancelFirstDeviceRequests(now);
+      if (firstDevice) new PairingRequestRepository(this.db).cancelFirstDeviceRequests(now);
       if (claimed.kind === 'human') this.closeHumanRecovery(now);
       insertDevice(this.db, { ...device, kind: claimed.kind, owner: firstDevice }, credential);
       return { device: { ...device, kind: claimed.kind }, credential };

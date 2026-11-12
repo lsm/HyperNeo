@@ -206,6 +206,16 @@ export class PairingRequestRepository {
       .run(now, now);
   }
 
+  cancelFirstDeviceRequests(now: number): void {
+    this.db
+      .prepare(
+        `UPDATE pairing_requests SET cancelled_at = ?, expires_at = ?
+         WHERE first_device = 1 AND granted_at IS NULL AND denied_at IS NULL
+           AND cancelled_at IS NULL AND expires_at > ?`
+      )
+      .run(now, now, now);
+  }
+
   requestStatus(
     requestId: string,
     now: number
@@ -264,7 +274,7 @@ export class PairingRequestRepository {
       if (claimed.changes === 0) return { ok: false as const, reason: 'used' as const };
       const devices = new DevicePairingRepository(this.db);
       if (step.owner) {
-        devices.cancelFirstDeviceRequests(now);
+        this.cancelFirstDeviceRequests(now);
         this.db
           .prepare('UPDATE pairing_codes SET approved_at = NULL WHERE kind = ? AND used_at IS NULL')
           .run('human');
