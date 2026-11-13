@@ -26,6 +26,6 @@ route a post-start exit without a result through the existing terminal finalizer
 Do not add a timeout or treat a live iterator as failed while a provider retry is
 still in progress.
 
-Failing unit reproduction commit: `2a58682330`. The focused fixture persists
+Failing unit reproduction commit: `21c6447164`. The focused fixture persists
 `processing` before the fix and `idle` after it; this RPC journey checks the same
 transition through the user-visible worker status.
