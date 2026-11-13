@@ -20893,6 +20893,12 @@
                           "askId": {
                             "type": "string"
                           },
+                          "cause": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "confirm": {
                             "anyOf": [
                               {
@@ -23341,6 +23347,12 @@
                         },
                         "askId": {
                           "type": "string"
+                        },
+                        "cause": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
                         },
                         "confirm": {
                           "anyOf": [
@@ -30078,6 +30090,12 @@
                           "askId": {
                             "type": "string"
                           },
+                          "cause": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "confirm": {
                             "anyOf": [
                               {
@@ -33581,6 +33599,12 @@
                   "askId": {
                     "type": "string"
                   },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "confirm": {
                     "anyOf": [
                       {
@@ -34917,6 +34941,12 @@
                   "askId": {
                     "type": "string"
                   },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "confirm": {
                     "anyOf": [
                       {
@@ -35912,6 +35942,12 @@
                   "askId": {
                     "type": "string"
                   },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "confirm": {
                     "anyOf": [
                       {
@@ -36485,6 +36521,12 @@
                   "askId": {
                     "type": "string"
                   },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "confirm": {
                     "anyOf": [
                       {
@@ -36948,6 +36990,12 @@
                   },
                   "askId": {
                     "type": "string"
+                  },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "confirm": {
                     "anyOf": [
@@ -39138,6 +39186,12 @@
                           },
                           "askId": {
                             "type": "string"
+                          },
+                          "cause": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
                           },
                           "confirm": {
                             "anyOf": [
@@ -46323,6 +46377,14 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "dependents": {
+            "description": "What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; the daemon then asks them.",
+            "enum": [
+              "continue",
+              "remove"
+            ],
+            "type": "string"
+          },
           "reason": {
             "minLength": 1,
             "type": "string"

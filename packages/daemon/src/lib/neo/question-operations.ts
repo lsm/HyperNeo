@@ -34,6 +34,7 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
+import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
 
 const ReportLine = z
   .string()
@@ -380,6 +381,7 @@ export const NeoQuestionSchema = z.object({
   todoId: z.string().nullable().optional(),
   document: z.string().nullable().optional(),
   replyTo: z.array(z.uuid()).optional(),
+  cause: z.string().nullable().optional(),
   id: z.string(),
   askId: z.string(),
   text: z.string(),
@@ -1008,11 +1010,39 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
-      (plan: { question: NeoQuestion; answer: NeoQuestionAnswer }) => ({
-        question: store.answerQuestion(plan.question, plan.answer, 'button', Date.now()),
-        ask: store.getAsk(plan.question.askId),
+      (plan: { question: NeoQuestion }) => ({
+        family: store.listFamilyTodos(plan.question.askId),
+        now: Date.now(),
       }),
       'outcome',
+      'facts'
+    )
+    .pipe(
+      (
+        plan: { question: NeoQuestion; answer: NeoQuestionAnswer },
+        facts: { family: NeoTodo[]; now: number }
+      ) => planNeoRemovedPrerequisiteAnswer(plan.question, facts.family, plan.answer, facts.now),
+      ['outcome', 'facts'],
+      'effects'
+    )
+    .pipe(
+      (
+        plan: { question: NeoQuestion; answer: NeoQuestionAnswer },
+        facts: { now: number },
+        effects: ReturnType<typeof planNeoRemovedPrerequisiteAnswer<NeoTodo>>
+      ) => ({
+        question: store.answerQuestion(
+          plan.question,
+          plan.answer,
+          'button',
+          facts.now,
+          undefined,
+          undefined,
+          effects
+        ),
+        ask: store.getAsk(plan.question.askId),
+      }),
+      ['outcome', 'facts', 'effects'],
       'written'
     )
     .pipe(requireNeoQuestionAnswered, 'written', 'result:outcome')

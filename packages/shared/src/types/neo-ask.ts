@@ -111,6 +111,7 @@ export interface NeoQuestion {
   todoId?: string | null;
   document?: string | null;
   replyTo?: string[];
+  cause?: string | null;
   id: string;
   askId: string;
   text: string;
