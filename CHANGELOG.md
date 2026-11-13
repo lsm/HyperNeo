@@ -6,7 +6,7 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [0.58.0] - 2026-11-13
 
-- Rework Neo around a minimal ask/todo/card model: cards confirm, choose or reply, a card covers a list of todos, todos complete without a gate, and waiting on the human is read from cards (#10477, #10490, #10494, #10503, #10537).
+- Rework Neo around a minimal ask/todo/card model: cards confirm, choose or reply, a card covers a list of todos, todos complete without a gate, and waiting on the human is read from cards (#10477, #10490, #10494, #10502, #10503, #10537).
 - Make the front and Neo one identity in dual mode, with one front reply per human message, richer front answers from its own reads, and Neo answering the human directly (#10499, #10521, #10524, #10522, #10496, #10493).
 - Rework todo lifecycle: todos start automatically, dependents decide their own step when a prerequisite is removed, every todo requires an explicit `after`, and changes return only the changed todo (#10529, #10511, #10510, #10548).
 - Settle asks once their stalled-ask wake turn ends, refuse a second open ask for the same matter, keep unanswered message ids through compaction, and make the ask auto-settle sweep cheap at live scale (#10550, #10500, #10552, #10560).
@@ -25,10 +25,11 @@ Compared with v0.57.1, the pinned phone source inventory reports 1 breaking, 1 r
 
 - Neo todo results remove the embedded `todos` list; `neo.todo.read` and `neo.todo.done` are added instead. `neo.todo.add` makes `after` required and removes `start`.
 - `neo.question.ask` removes an input union alternative and changes `options` minItems.
-- `neo.publication.read` lowers `shortText` maxLength, breaking for the pinned phone source.
+- `neo.publication.read` raises `shortText` maxLength from 2000 to 4000; flagged breaking by the schema diff, but the phone reads it without a length limit.
+- `neo.ask.read` adds a short todo-line result alternative returned only to MCP callers; RPC callers such as the phone keep receiving full todo entries.
 - New operations: `neo.todo.done`, `neo.todo.read`, `settings.provider.usage`.
 
-The inventory describes source usage at `5a35d4d4bcabb7866ddfc95212a775ebc465979b`. Installed-client compatibility remains unverified. The [complete compatibility report](https://github.com/lsm/HyperNeo/releases/download/v0.58.0/api-diff.json) includes every classified change.
+The inventory describes source usage at `5a35d4d4bcabb7866ddfc95212a775ebc465979b` (phone app 0.5.0 (6)), which predates the installed build; installed-client compatibility remains unverified. The [complete compatibility report](https://github.com/lsm/HyperNeo/releases/download/v0.58.0/api-diff.json) includes every classified change.
 
 ## [0.57.1] - 2026-11-11
 
