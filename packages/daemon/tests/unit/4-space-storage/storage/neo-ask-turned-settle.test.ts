@@ -333,7 +333,7 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
           JSON.stringify({
             to: { kind: 'session', sessionId: 'big' },
             origin: 'session:big',
-            messageUuid: `neo-stalled-ask:unrelated-${i}:1:0`,
+            messageUuid: `neo-stalled-ask:bulk-${i % asks.length}:1:0`,
             message: { type: 'user', message: { content: 'reminder' } },
             neoBatchUuid: `bulk-batch-${i}`,
           })
@@ -345,6 +345,10 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
         bulkSdk('result', `bulk-result-${id}`, 87_001);
       }
     })();
+    db.exec('DROP INDEX idx_sdk_messages_session_consumed');
+    db.exec('ANALYZE');
+    db.exec(`CREATE INDEX idx_sdk_messages_session_consumed
+      ON sdk_messages(session_id, consumed_seq)`);
     const started = performance.now();
     const settled = await sweep();
     const elapsed = performance.now() - started;

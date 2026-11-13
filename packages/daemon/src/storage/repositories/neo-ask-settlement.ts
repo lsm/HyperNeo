@@ -156,7 +156,8 @@ const wakeTurnSeqs = (
   batchUuids: Set<string> | undefined
 ): number[] => {
   const seqs: number[] = [];
-  const direct = db.prepare(`SELECT consumed_seq AS seq FROM sdk_messages
+  const direct =
+    db.prepare(`SELECT consumed_seq AS seq FROM sdk_messages INDEXED BY idx_sdk_messages_session_uuid
     WHERE session_id = ? AND message_type = 'user' AND consumed_seq IS NOT NULL
       AND sdk_uuid >= ? AND sdk_uuid < ?`);
   for (const row of direct.iterate(
@@ -169,7 +170,8 @@ const wakeTurnSeqs = (
   for (let at = 0; at < uuidList.length; at += MAX_IN_LIST) {
     const chunk = uuidList.slice(at, at + MAX_IN_LIST);
     const marks = chunk.map(() => '?').join(',');
-    const batch = db.prepare(`SELECT consumed_seq AS seq FROM sdk_messages
+    const batch =
+      db.prepare(`SELECT consumed_seq AS seq FROM sdk_messages INDEXED BY idx_sdk_messages_session_uuid
       WHERE session_id = ? AND message_type = 'user' AND consumed_seq IS NOT NULL
         AND sdk_uuid IN (${marks})`);
     for (const row of batch.iterate(sessionId, ...chunk) as Iterable<{ seq: number }>)
@@ -233,6 +235,20 @@ const wakeBatchesBySession = (db: Database): Map<string, Map<string, Set<string>
   return batches;
 };
 
+const askWakeEnded = (
+  db: Database,
+  ask: { id: string; session_id: string; updated_at: number },
+  fact: SessionFacts
+): boolean => {
+  if (
+    fact.maxConsumedInput !== null &&
+    (fact.lastTerminal === null || fact.lastTerminal.seq < fact.maxConsumedInput)
+  )
+    return false;
+  const wakeSeqs = wakeTurnSeqs(db, ask.session_id, ask.id, fact.batchUuidsByAsk.get(ask.id));
+  return wakeTurnEnded(db, ask.session_id, fact.lastTerminal, wakeSeqs, ask.updated_at);
+};
+
 const settleReadyAsks = (db: Database): string[] => {
   const candidates = db
     .prepare(`SELECT id, session_id, updated_at FROM neo_asks WHERE status = 'open'
@@ -250,14 +266,7 @@ const settleReadyAsks = (db: Database): string[] => {
   for (const ask of candidates) {
     let fact = facts.get(ask.session_id);
     if (!fact) facts.set(ask.session_id, (fact = sessionFacts(db, ask.session_id, batches)));
-    if (
-      fact.maxConsumedInput !== null &&
-      (fact.lastTerminal === null || fact.lastTerminal.seq < fact.maxConsumedInput)
-    )
-      continue;
-    const wakeSeqs = wakeTurnSeqs(db, ask.session_id, ask.id, fact.batchUuidsByAsk.get(ask.id));
-    if (wakeTurnEnded(db, ask.session_id, fact.lastTerminal, wakeSeqs, ask.updated_at))
-      ready.push(ask.id);
+    if (askWakeEnded(db, ask, fact)) ready.push(ask.id);
   }
   return ready;
 };
@@ -352,11 +361,24 @@ export const neoAskTurnedSettleWrites = defineDbOp<{ now: number; ids: string[] 
   name: 'neo.turnedAskSettles',
   mode: 'write',
   run(db, { now, ids }, changes) {
-    const ready = new Set(settleReadyAsks(db));
     const store = new NeoAskTodoRepository(db, undefined, undefined, undefined, changes);
+    if (!ids.length) return [];
+    const batches = wakeBatchesBySession(db);
+    const facts = new Map<string, SessionFacts>();
     const settled: string[] = [];
     for (const id of ids) {
-      if (!ready.has(id)) continue;
+      const ask = store.getAsk(id);
+      if (!ask) continue;
+      let fact = facts.get(ask.sessionId);
+      if (!fact) facts.set(ask.sessionId, (fact = sessionFacts(db, ask.sessionId, batches)));
+      if (
+        !askWakeEnded(
+          db,
+          { id: ask.id, session_id: ask.sessionId, updated_at: ask.updatedAt },
+          fact
+        )
+      )
+        continue;
       const outcome = turnedSettle(store, id, now, changes);
       if (typeof outcome === 'string') settled.push(outcome);
     }
