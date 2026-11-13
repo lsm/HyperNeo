@@ -75,6 +75,10 @@ test('Front and Neo share speech rules with their own tool names', () => {
   );
   expect(NEO_FRONT).toContain('published through reply.');
   expect(NEO_FRONT).toContain('follow its guidance to call speech_say once');
+  expect(NEO_FRONT).toContain('projects_read');
+  expect(NEO_FRONT).toContain('asks_read');
+  expect(NEO_FRONT).toContain('todos_read');
+  expect(NEO_FRONT).toContain('cards_read');
   expect(NEO_FRONT).not.toContain('neo.speech.say');
   expect(NEO_FRONT).not.toContain('{{');
   expect(NEO_ROOT_TURN_END).toContain(

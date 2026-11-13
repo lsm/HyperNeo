@@ -29,6 +29,9 @@ type RecordView = {
   state?: string;
   status?: string | null;
   blocker?: string | null;
+  report?: string | null;
+  evidence?: string | null;
+  updatedAt?: number;
   text?: string;
   options?: string[] | null;
 };
@@ -67,7 +70,8 @@ const sources = {
   todos: `SELECT id, created_at AS created, title AS searchable, 1 AS visible,
     state NOT IN ('done','removed') AS active,
     json_object('id',id,'title',substr(title,1,160),'state',state) AS summary,
-    json_object('id',id,'title',title,'state',state,'blocker',blocked_reason) AS detail FROM neo_todos`,
+    json_object('id',id,'title',title,'state',state,'blocker',blocked_reason,
+      'report',substr(report,1,4000),'evidence',evidence,'updatedAt',updated_at) AS detail FROM neo_todos`,
 };
 
 const searchSources = { asks: 'ask', cards: 'question', todos: 'todo' } as const;
