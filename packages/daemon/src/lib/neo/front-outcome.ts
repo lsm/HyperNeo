@@ -17,8 +17,14 @@ export async function settleConvoInput(
   failure?: 'delivery' | 'superseded'
 ) {
   const owner = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, messageId);
-  if (owner?.owner)
-    return { delivered: true, outcome: owner.owner === 'neo' ? 'handed_off' : 'answered' };
+  if (owner?.owner === 'neo') return { delivered: true, outcome: 'handed_off' };
+  if (owner?.owner === 'front') {
+    const notice = service.publications.get(
+      conversationId,
+      frontFallbackId(conversationId, [messageId])
+    );
+    if (notice) return { delivered: true, outcome: 'answered' };
+  }
   const ask = service.asks.find(conversationId, messageId);
   if (!ask) return { delivered: false };
   const sdk = service.db.getSDKMessageRepo();

@@ -1917,7 +1917,7 @@ test('the fallback append loses an owner race instead of duplicating a reply', a
   expect(raced).toBe(true);
   expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
     delivered: true,
-    outcome: 'answered',
+    outcome: 'handed_off',
   });
   const rows = db
     .getDatabase()
@@ -2007,15 +2007,43 @@ test('the full session prompt carries no dual-mode acknowledgment rule', () => {
   expect(NEO_FRONT).toContain('never promise what you cannot check');
 });
 
-test('the per-input note stays for single mode and carries no acknowledgment in dual mode', async () => {
+test('a dual-mode hand-off keeps the listening fact and carries no acknowledgment note', async () => {
   await deliveredConvoInput();
   const loaded = { content: 'Hello', sendStatus: 'submitted', inputKind: 'human' } as const;
-  expect(service.speech.prepareInput(root, { ...loaded }).content).not.toContain(
-    'Before time-consuming work'
-  );
+  const content = service.speech.prepareInput(root, { ...loaded }).content as string;
+
+  expect(content).toContain('[listening: no]');
+  expect(content).not.toContain('Before time-consuming work');
+  expect(content).not.toContain('neo.speech.say with one short natural acknowledgment');
+});
+
+test('single mode keeps the per-input acknowledgment note', async () => {
+  await deliveredConvoInput();
   await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
-  expect(service.speech.prepareInput(root, { ...loaded }).content).toContain(
-    'Before time-consuming work, publish one short reply first'
-  );
+  const loaded = { content: 'Hello', sendStatus: 'submitted', inputKind: 'human' } as const;
+  const content = service.speech.prepareInput(root, { ...loaded }).content as string;
+
+  expect(content).toContain('[listening: no]');
+  expect(content).toContain('Before time-consuming work, publish one short reply first');
   expect(frontModeNote()).not.toContain('work_on');
+});
+
+test('a reply that could not hand off yet settles as pending, not answered', async () => {
+  const { id, job } = await deliveredConvoInput();
+  await convoPublish({
+    requestId: 'reply',
+    replyTo: [id],
+    fullText: 'The answer.',
+    verbatim: true,
+  });
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id = ?"
+    )
+    .run(conversationId, id);
+
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
+    delivered: false,
+    pending: true,
+  });
 });

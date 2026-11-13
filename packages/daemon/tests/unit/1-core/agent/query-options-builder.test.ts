@@ -2884,7 +2884,7 @@ describe('QueryOptionsBuilder', () => {
       enableExaSettings();
       useNonNativeProvider();
       mockSession.config.operationTools = false;
-      mockSession.config.allowedTools = ['mcp__front__work_on'];
+      mockSession.config.allowedTools = ['mcp__front__reply'];
       mockSession.config.disallowedTools = ['mcp__exa'];
       const options = await builder.build();
       expect(options.mcpServers?.exa).toBeUndefined();
@@ -2896,7 +2896,7 @@ describe('QueryOptionsBuilder', () => {
       enableExaSettings();
       useNonNativeProvider();
       mockSession.config.operationTools = false;
-      mockSession.config.allowedTools = ['mcp__front__work_on'];
+      mockSession.config.allowedTools = ['mcp__front__reply'];
       mockSession.config.disallowedTools = ['mcp__exa'];
       const kept = { type: 'http' as const, url: 'https://example.com/retained' };
       mockSession.config.mcpServers = {
@@ -2924,7 +2924,7 @@ describe('QueryOptionsBuilder', () => {
       enableExaSettings();
       useNonNativeProvider();
       mockSession.config.operationTools = false;
-      mockSession.config.allowedTools = ['mcp__front__work_on'];
+      mockSession.config.allowedTools = ['mcp__front__reply'];
       const options = await builder.build();
       expect(options.mcpServers?.exa).toMatchObject({
         type: 'http',
