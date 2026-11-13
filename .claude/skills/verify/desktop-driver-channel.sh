@@ -63,8 +63,9 @@ report['sockets'] = sorted(os.path.relpath(os.path.join(d, f), root) for d, _, f
                            and __import__('stat').S_ISSOCK(os.lstat(os.path.join(d, f)).st_mode))
 attempts = {}
 host, inherited = socket.socketpair()
-substitute = subprocess.run([driver, '__private-worker', '--generation', 'proof', '--transport-fd=3'],
-    pass_fds=[3], preexec_fn=lambda: os.dup2(inherited.fileno(), 3),
+fd = inherited.fileno()
+substitute = subprocess.run([driver, '__private-worker', '--generation', 'proof', f'--transport-fd={fd}'],
+    pass_fds=[fd],
     env={'HOME': root}, capture_output=True, text=True, timeout=10)
 attempts['same_user_parent'] = [substitute.returncode, substitute.stderr.strip()]
 for name, args in {'serve': ['serve', '--embedded', '--socket', os.path.join(root, 'raw.sock')],
