@@ -1,5 +1,7 @@
 #[path = "desktop_driver_channel.rs"]
 mod channel;
+#[path = "desktop_grants.rs"]
+mod grants;
 #[path = "desktop_driver_record.rs"]
 mod record;
 #[path = "desktop_target.rs"]
@@ -260,10 +262,37 @@ impl Drivers {
                 json!({"count": slots.len(), "references": slots.get(&request.worker).map(Arc::strong_count).unwrap_or(0)}),
             );
         }
-        if request.action == "resolve" {
+        if matches!(
+            request.action.as_str(),
+            "resolve" | "fixture-target" | "fixture-grant" | "fixture-revoke"
+        ) {
             let tool = request.tool.as_deref().unwrap_or_default();
             let arguments = request.arguments.unwrap_or(Value::Null);
             let mut result = target::resolve(tool, &arguments, request.instance.as_ref());
+            let value = &result["value"];
+            let tuple =
+                [&value["bundle_id"], &value["requirement"], &value["class"]].map(Value::as_str);
+            if let [Some(bundle), Some(requirement), Some(class)] = tuple {
+                match request.action.as_str() {
+                    "resolve" => {
+                        if let Err(reason) = grants::check(bundle, requirement, class) {
+                            result = json!({"reason": reason, "class": class, "bundle_id": bundle});
+                        }
+                    }
+                    #[cfg(test)]
+                    "fixture-grant" | "fixture-revoke" => grants::record(
+                        bundle,
+                        requirement,
+                        class,
+                        request.action == "fixture-grant",
+                    )?,
+                    #[cfg(test)]
+                    "fixture-target" => {}
+                    _ => return Err("Unknown Desktop control action".into()),
+                }
+            } else if request.action != "resolve" && !cfg!(test) {
+                return Err("Unknown Desktop control action".into());
+            }
             result["call_id"] = json!(request.call_id);
             return Ok(result);
         }

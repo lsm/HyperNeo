@@ -28,5 +28,10 @@ done
 if [[ "${2:-}" == --driver-only ]]; then exit 0; fi
 
 verify_signature "$app"
+codesign --display --entitlements - --xml "$app" | grep -q '<string>P5R65T296V.io.hyperneo.app</string>' &&
+    security cms -D -i "$app/Contents/embedded.provisionprofile" >/dev/null || {
+    echo "app keychain access group or provisioning profile missing" >&2
+    exit 1
+}
 codesign --verify --deep --strict "$app"
 xcrun stapler validate "$app"

@@ -14,6 +14,8 @@ import time
 import unittest
 
 RUNNER = Path(sys.argv.pop(1)).resolve()
+SIGNED = 'P5R65T296V.io.hyperneo.app' in subprocess.run(
+    ['/usr/bin/codesign', '-d', '--entitlements', '-', '--xml', str(RUNNER)], capture_output=True, text=True).stdout
 FAKE = f'#!{sys.executable}\n' + '''import json, os, socket, sys, time
 assert sys.argv[1:3] == ['__private-worker', '--generation'] and sys.argv[4:] == ['--transport-fd=3']
 assert 'FIXTURE_PARENT_ONLY' not in os.environ
@@ -73,6 +75,31 @@ def alive(pid):
         return True
     except ProcessLookupError:
         return False
+
+
+def same_user_add(account, value):
+    security = ctypes.CDLL('/System/Library/Frameworks/Security.framework/Security')
+    cf = ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+    cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+    cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+    cf.CFDataCreate.restype = ctypes.c_void_p
+    cf.CFDataCreate.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long]
+    cf.CFDictionaryCreate.restype = ctypes.c_void_p
+    cf.CFDictionaryCreate.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_long] + [ctypes.c_void_p] * 2
+    security.SecItemAdd.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    text = lambda value: cf.CFStringCreateWithCString(None, value.encode(), 0x08000100)
+    constant = lambda library, name: ctypes.c_void_p.in_dll(library, name).value
+    pairs = [('kSecClass', constant(security, 'kSecClassGenericPassword')),
+             ('kSecUseDataProtectionKeychain', constant(cf, 'kCFBooleanTrue')),
+             ('kSecAttrAccessGroup', text('P5R65T296V.io.hyperneo.app')),
+             ('kSecAttrService', text('io.hyperneo.desktop.grant.fixture')),
+             ('kSecAttrAccount', text(account)),
+             ('kSecValueData', cf.CFDataCreate(None, value.encode(), len(value)))]
+    keys = (ctypes.c_void_p * len(pairs))(*[constant(security, key) for key, _ in pairs])
+    values = (ctypes.c_void_p * len(pairs))(*[value for _, value in pairs])
+    callbacks = [ctypes.addressof(ctypes.c_char.in_dll(cf, name))
+                 for name in ('kCFTypeDictionaryKeyCallBacks', 'kCFTypeDictionaryValueCallBacks')]
+    return security.SecItemAdd(cf.CFDictionaryCreate(None, keys, values, len(pairs), *callbacks), None)
 
 
 def finder():
@@ -583,11 +610,11 @@ class WorkerDrivers(unittest.TestCase):
         self.assertEqual(log.read_text(), 'initialize\neof\n')
         print('record_keys=pid,startedAt driver_endpoints=0 fixture_exchange=1 stop_closed_channel=1')
 
-    def resolve(self, tool, arguments, instance=None):
+    def resolve(self, tool, arguments, instance=None, action='fixture-target'):
         params = dict(tool=tool, arguments=arguments, callId='call-' + tool)
         if instance is not None:
             params['instance'] = instance
-        result = self.call('resolve', **params)
+        result = self.call(action, **params)
         self.assertTrue(result['ok'], result)
         self.assertEqual(result['result'].pop('call_id'), 'call-' + tool)
         return result['result']
@@ -648,6 +675,34 @@ class WorkerDrivers(unittest.TestCase):
 
     def test_resolve_refuses_tools_outside_the_allowlist(self):
         self.assertEqual(self.resolve('kill_app', {'pid': os.getpid()}), {'reason': 'tool_not_allowed'})
+
+    def test_same_user_process_cannot_add_a_grant(self):
+        pid = finder()
+        requirement = self.resolve('click', {'pid': pid})['value']['requirement']
+        self.assertEqual(same_user_add('pointer\n' + requirement, 'com.apple.finder'), -34018)
+        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve'),
+                         {'reason': denied, 'class': 'pointer', 'bundle_id': 'com.apple.finder'})
+        print(f'signed_host={SIGNED} same_user_add=-34018 resolve={denied}')
+
+    def test_fixture_grant_survives_restart_and_covers_only_its_app_signer_and_class(self):
+        pid = finder()
+        granted = self.call('fixture-grant', tool='click', arguments={'pid': pid})
+        if not SIGNED:
+            self.assertEqual(granted, {'ok': False, 'error': 'grant_store_refused: -34018'})
+            self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'guards_unavailable')
+            return
+        self.assertTrue(granted['ok'], granted)
+        self.cleanup()
+        self.setUp()
+        self.addCleanup(self.call, 'fixture-revoke', tool='click', arguments={'pid': pid})
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['value']['bundle_id'], 'com.apple.finder')
+        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve'),
+                         {'reason': 'app_action_not_authorized', 'class': 'keyboard', 'bundle_id': 'com.apple.finder'})
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.assertEqual(self.resolve('click', {'pid': dock}, action='resolve'),
+                         {'reason': 'app_action_not_authorized', 'class': 'pointer', 'bundle_id': 'com.apple.dock'})
+        print('grant_after_restart=finder/pointer keyboard=denied other_app=denied')
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])

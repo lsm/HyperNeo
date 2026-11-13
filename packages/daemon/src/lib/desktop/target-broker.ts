@@ -7,7 +7,13 @@ const Reply = z.object({
   result: z.union([
     z.object({
       call_id: z.string(),
-      reason: z.enum(['tool_not_allowed', 'target_unverified', 'target_mismatch']),
+      reason: z.enum([
+        'tool_not_allowed',
+        'target_unverified',
+        'target_mismatch',
+        'app_action_not_authorized',
+        'guards_unavailable',
+      ]),
       class: z.string().optional(),
       bundle_id: z.string().optional(),
     }),
