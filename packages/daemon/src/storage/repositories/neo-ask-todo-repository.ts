@@ -866,11 +866,6 @@ export class NeoAskTodoRepository {
           now,
           todo.id
         );
-      if (result.changes) {
-        const current = this.getTodo(todo.id)!;
-        if (current.state !== 'todo' || current.instruction?.trim() || !current.check)
-          new NeoTodoSessionRepository(this.db, this.changes).cancelCheckOnlyReminder(todo.id);
-      }
       if (result.changes && patch.state && prune) this.pruneQuestions(todo.askId, now);
       return result.changes;
     })();
@@ -1294,7 +1289,7 @@ export class NeoAskTodoRepository {
         'UPDATE neo_questions SET start_todos = ?, todos = ?, text = ?, state = ?, retired_reason = ? WHERE id = ?'
       )
       .run(
-        JSON.stringify(plan.kept),
+        question.startTodos && JSON.stringify(plan.kept),
         JSON.stringify(plan.kept),
         plan.text,
         plan.state,

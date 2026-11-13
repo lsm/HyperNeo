@@ -5,6 +5,7 @@ import {
   neoDaemonCardCodes,
   neoStartRetryDue,
   planNeoDaemonCardActions,
+  planNeoDaemonCardPrune,
   planNeoRetriesCard,
 } from '../../../../src/lib/neo/daemon-cards.ts';
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
@@ -68,6 +69,47 @@ describe('planNeoRetriesCard', () => {
       draft: { todos: ['other'] },
     });
     expect(planNeoRetriesCard(first, [first], [open])).toBeNull();
+  });
+});
+
+describe('planNeoDaemonCardPrune', () => {
+  const failed = (
+    id: string,
+    state: NeoTodo['state'] = 'blocked',
+    blockedBy: NeoTodo['blockedBy'] = 'failure',
+    check: NeoTodo['check'] = null
+  ) => ({ ...row(id), state, blockedBy, check });
+  const open = card({ cause: 'retries_exhausted', todos: ['first', 'second'], text: 'old' });
+
+  test('a todo that recovers leaves the card, and the card retires when none is left', () => {
+    const recovered = failed('second', 'doing', null);
+    expect(planNeoDaemonCardPrune(open, [failed('first'), recovered])).toMatchObject({
+      kept: ['first'],
+      state: 'open',
+      text: '"first" could not start after 2 automatic retries: host unreachable. Retry, mark done, or remove?',
+    });
+    expect(planNeoDaemonCardPrune(open, [failed('first', 'removed'), recovered])).toMatchObject({
+      kept: [],
+      state: 'retired',
+      text: 'old',
+    });
+  });
+
+  test('a card whose todos all still need it, or a non-daemon card, is left alone', () => {
+    expect(planNeoDaemonCardPrune(open, [failed('first'), failed('second')])).toBeNull();
+    expect(planNeoDaemonCardPrune({ ...open, cause: null }, [])).toBeNull();
+  });
+
+  test('an overdue-check card retires once its todo is no longer a queued check', () => {
+    const overdue = card({ cause: 'check_overdue', todos: ['check'] });
+    const check = { pack: 'core', kind: 'evidence', params: {} };
+    expect(planNeoDaemonCardPrune(overdue, [failed('check', 'todo', null, check)])).toBeNull();
+    expect(
+      planNeoDaemonCardPrune(overdue, [failed('check', 'blocked', 'question', check)])
+    ).toBeNull();
+    expect(planNeoDaemonCardPrune(overdue, [failed('check', 'done', null, check)])).toMatchObject({
+      state: 'retired',
+    });
   });
 });
 
@@ -220,6 +262,13 @@ describe('daemon cards in the store', () => {
     expect(open()).toEqual([]);
     await sweep(2 * DAY + 2);
     expect(open()).toHaveLength(1);
+  });
+
+  test('the overdue card retires when its check passes on its own', async () => {
+    await sweep(DAY);
+    const [overdue] = open();
+    store.updateTodo(store.getTodo('check')!, { state: 'done' }, DAY + 1);
+    expect(store.listQuestions('ask').find((q) => q.id === overdue.id)?.state).toBe('retired');
   });
 
   test('the daemon carries out the human answer on its card', async () => {

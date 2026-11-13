@@ -15,7 +15,6 @@ export type FollowThroughIncident = {
     pending?: string;
     sessionId?: string;
   };
-  checkOnlyReminder?: FollowThroughIncident['stallReminder'];
   turnQuestion?: string;
   workerQuestion?: StagedWorkerQuestion;
   blockerReport?: {

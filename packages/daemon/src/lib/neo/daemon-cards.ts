@@ -45,6 +45,7 @@ const TEXT_CODES: Record<Cause, keyof typeof DAEMON_EN> = {
 };
 
 type Row = Pick<NeoTodo, 'id' | 'title' | 'state' | 'blockedReason' | 'updatedAt'>;
+type Covered = Row & Pick<NeoTodo, 'blockedBy' | 'check'>;
 type Card = Pick<
   NeoQuestion,
   'id' | 'state' | 'cause' | 'todos' | 'text' | 'answer' | 'answeredAt' | 'options'
@@ -104,6 +105,35 @@ export function neoDaemonCardCodes(
           })),
         }
       : {}),
+  };
+}
+
+const blockedBy = (todo: Covered, ...by: NeoTodo['blockedBy'][]) =>
+  todo.state === 'blocked' && by.includes(todo.blockedBy);
+
+const covers: Record<Cause, (todo: Covered) => boolean> = {
+  [NEO_WORKER_BLOCKER]: (todo) => blockedBy(todo, 'needs-human', 'question'),
+  [NEO_RETRIES_EXHAUSTED]: (todo) => blockedBy(todo, 'failure'),
+  [NEO_CHECK_OVERDUE]: (todo) =>
+    !!todo.check && (todo.state === 'todo' || blockedBy(todo, 'question')),
+};
+
+export function planNeoDaemonCardPrune(
+  question: Pick<NeoQuestion, 'cause' | 'todos' | 'text'>,
+  family: readonly Covered[]
+) {
+  if (!isCause(question.cause)) return null;
+  const cause = question.cause;
+  const kept = question.todos.flatMap((id) =>
+    family.filter((todo) => todo.id === id && covers[cause](todo))
+  );
+  if (kept.length === question.todos.length) return null;
+  return {
+    kept: kept.map((todo) => todo.id),
+    text: kept.length ? neoDaemonCardDraft(cause, kept).text : question.text,
+    state: kept.length ? ('open' as const) : ('retired' as const),
+    retiredReason: kept.length ? null : 'nothing left to decide',
+    released: [],
   };
 }
 

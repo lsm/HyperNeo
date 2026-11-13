@@ -16,7 +16,8 @@ On a real daemon, driving its Neo refresh and answering on the human door
   Keep waiting holds the next card off for another 24 hours; Mark done finishes it.
 - A todo added through the agent door whose start the driver refuses is retried
   twice by the daemon, then waits on one Retry / Mark done / Remove card.
-  Remove removes it.
+  A retry from Neo retires that card; the new failures get two fresh automatic
+  retries and one new card. Remove removes it.
 - A worker blocker (seeded as the final-line blocker leaves it, with a stopped
   worker) that Neo leaves for an hour gets one card with the worker's words as
   its document. Mark done finishes it.
