@@ -115,17 +115,23 @@ export class PairingRequestRepository {
     return new DevicePairingRepository(this.db).countDevices().humansEver;
   }
 
-  createRequest(now: number): { requestId: string; ticket: string; expiresAt: number } {
+  createRequest(now: number): {
+    requestId: string;
+    ticket: string;
+    expiresAt: number;
+    firstDevice: boolean;
+  } {
     const id = randomUUID();
     const ticket = newTicket();
     const expiresAt = now + PAIRING_REQUEST_TTL_MS;
+    const firstDevice = this.firstDeviceOpen();
     this.db
       .prepare(
         `INSERT INTO pairing_requests (id, ticket_hash, created_at, expires_at, first_device)
          VALUES (?, ?, ?, ?, ?)`
       )
-      .run(id, ticketHash(ticket), now, expiresAt, this.firstDeviceOpen() ? 1 : 0);
-    return { requestId: id, ticket, expiresAt };
+      .run(id, ticketHash(ticket), now, expiresAt, firstDevice ? 1 : 0);
+    return { requestId: id, ticket, expiresAt, firstDevice };
   }
 
   bindTicket(

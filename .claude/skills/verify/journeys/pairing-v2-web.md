@@ -22,7 +22,10 @@ End state:
   carries an HTTPS origin the page itself was served from.
 - The QR decodes to `hyperneo://pair2?v=2&t=…&a=https://127.0.0.1:<port+1>`; the page
   shows the address and `Expires in 90 s`, also at 390 px wide.
-- After bind the QR is gone and the page says `Phone scanned. Waiting for confirmation.`;
+- After bind the QR is gone. The browser is already a paired device, so this is a later
+  phone and the page says `Phone scanned. Waiting for an owner device.` (a first phone
+  says `Waiting for confirmation.`; `pair2-route.test.ts` and `PairPhoneFlow.test.tsx`
+  cover that case);
   after complete it says `Paired with Kitchen iPhone.`
 - A Cancel sent after the phone completed answers 403 and the page still says
   `Paired with Late iPhone.`
