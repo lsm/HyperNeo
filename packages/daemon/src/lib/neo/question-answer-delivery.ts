@@ -174,14 +174,15 @@ export function createNeoQuestionAnswerDelivery(
       'outcome'
     )
     .endAsync('outcome') as (route: Route) => Promise<boolean>;
-  const apply = async (questionId: string) => {
+  const apply = async (questionId: string, recovering = false) => {
     const card = store.getQuestion(questionId);
-    if (!card) return;
+    if (!card) return false;
     const [picked] = [card.answer].flat();
+    let applied = true;
     for (const action of planNeoDaemonCardActions(card, store.listFamilyTodos(card.askId))) {
       const todo = store.getTodo(action.todoId);
       const ask = todo && store.getAsk(todo.askId);
-      if (!ask) continue;
+      if (!ask || (recovering && todo.updatedAt > (card.answeredAt ?? 0))) continue;
       const outcome = await invoke(
         driverWorkCaller({ originSessionId: ask.sessionId }),
         action.name,
@@ -193,25 +194,36 @@ export function createNeoQuestionAnswerDelivery(
         : outcome.kind === 'failed'
           ? outcome.message
           : null;
-      if (reason)
-        await tell(
-          ask.sessionId,
-          `neo-card-refused:${card.id}:${action.todoId}`,
-          `The human answered "${picked}" on the card for "${todo.title}", but ${action.name} was refused: ${reason}. Settle the todo or ask the human again.`,
-          ask.sessionId,
-          'event'
-        );
+      if (!reason) continue;
+      applied = false;
+      const note = `The human answered "${picked}" on the card for "${todo.title}", but ${action.name} was refused: ${reason}. Settle the todo or ask the human again.`;
+      store.updateTodo(store.getTodo(todo.id) ?? todo, { nextAction: note }, Date.now());
+      await tell(
+        ask.sessionId,
+        `neo-card-refused:${card.id}:${action.todoId}`,
+        note,
+        ask.sessionId,
+        'event'
+      );
     }
+    return applied;
   };
   return async (questionId?: string) => {
     if (questionId && !store.questionAnswers.list(questionId).length) await apply(questionId);
     const todos = questionId
       ? store.questionAnswers.list(questionId).map((route) => store.getTodo(route.todoId))
       : store.listCheckable();
+    if (!questionId)
+      for (const card of new Map(
+        todos.flatMap((todo) => (todo ? store.todoCards(todo) : [])).map((card) => [card.id, card])
+      ).values())
+        if (neoDaemonCardChoice(card) && !store.questionAnswers.list(card.id).length)
+          await apply(card.id, true).catch(warn);
     for (const route of store.questionAnswers.pending(questionId)) {
       const card = store.getQuestion(route.questionId);
       if (!card || !neoDaemonCardChoice(card)) await deliver(route).catch(warn);
-      else if (store.questionAnswers.claim(route.id, 'card-action')) await apply(card.id);
+      else if (store.questionAnswers.claim(route.id, 'card-action') && (await apply(card.id)))
+        store.questionAnswers.accept(route.id, 'card-action', Date.now(), 'card-action');
     }
     for (const todo of todos) if (todo?.blockedBy === 'needs-human') await resume(todo).catch(warn);
   };
