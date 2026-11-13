@@ -18,6 +18,7 @@ vi.mock('../../../lib/state.ts', async () => {
   };
 });
 
+import { locale } from '../../../lib/i18n/index.ts';
 import { PairPhoneFlow } from '../PairPhoneFlow.tsx';
 
 type Invocation = { name: string; input: Record<string, unknown> };
@@ -85,7 +86,7 @@ describe('PairPhoneFlow', () => {
       { name: 'device.pair.create', input: { kind: 'human' } },
     ]);
     devices.current = [desk, phone];
-    await screen.findByText('Paired: Kitchen iPhone', undefined, { timeout: 3000 });
+    await screen.findByText('Paired with Kitchen iPhone.', undefined, { timeout: 3000 });
     expect(onPaired).toHaveBeenCalledOnce();
   });
 
@@ -147,7 +148,7 @@ describe('PairPhoneFlow', () => {
     });
     render(<PairPhoneFlow pollMs={20} />);
     fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
-    await screen.findByText('Paired: Kitchen iPhone', undefined, { timeout: 3000 });
+    await screen.findByText('Paired with Kitchen iPhone.', undefined, { timeout: 3000 });
     expect(screen.queryByText(/expired before the phone paired/)).toBeNull();
   });
 
@@ -228,7 +229,7 @@ describe('PairPhoneFlow', () => {
     render(<PairPhoneFlow pollMs={20} />);
     fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
     await screen.findByText('NEWCODE234');
-    await screen.findByText('Paired: Kitchen iPhone', undefined, { timeout: 3000 });
+    await screen.findByText('Paired with Kitchen iPhone.', undefined, { timeout: 3000 });
   });
 
   it('reports an unreachable daemon when polls keep failing instead of waiting for expiry', async () => {
@@ -248,5 +249,133 @@ describe('PairPhoneFlow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
     await screen.findByText('NEWCODE234');
     await screen.findByText(/Could not reach the daemon/, undefined, { timeout: 3000 });
+  });
+});
+
+describe('PairPhoneFlow with pairing v2', () => {
+  let status: { state: string; expiresAt: number; name: string | null };
+  let cancelReply: Response;
+  const posted: string[] = [];
+
+  beforeEach(() => {
+    mockRequest.mockReset();
+    daemon([approved('LEGACY2345')], { current: [desk] });
+    posted.length = 0;
+    status = { state: 'pending', expiresAt: Date.now() + 90_000, name: null };
+    cancelReply = new Response(JSON.stringify({ ok: true }), { status: 200 });
+    vi.stubGlobal('location', new URL('https://mac.tailnet.ts.net:8443/settings?tab=devices'));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string, init?: RequestInit) => {
+        const path = String(input);
+        if (init?.method === 'POST') posted.push(path);
+        if (path === '/pair2/request')
+          return new Response(
+            JSON.stringify({
+              requestId: 'req-12345678',
+              ticket: 'ticket-abcdefghijklmnop',
+              expiresAt: status.expiresAt,
+            }),
+            { status: 200 }
+          );
+        if (path === '/pair2/cancel') return cancelReply;
+        if (path.startsWith('/pair2/status?requestId=req-12345678'))
+          return new Response(JSON.stringify({ ...status, phoneKey: null }), { status: 200 });
+        return new Response('{}', { status: 404 });
+      })
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('shows a QR with a countdown, then hides the spent QR once the phone scans', async () => {
+    render(<PairPhoneFlow pollMs={20} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByRole('img', { name: 'Pairing QR code' });
+    expect(screen.getByText('Add a phone. Scan this QR with Neo.')).toBeTruthy();
+    expect(screen.getByText('https://mac.tailnet.ts.net:8443')).toBeTruthy();
+    expect(screen.getByText(/Expires in \d+ s/)).toBeTruthy();
+    expect(invoked('device.pair.create')).toEqual([]);
+
+    status = { ...status, state: 'bound', name: 'Kitchen iPhone' };
+    await screen.findByText('Phone scanned. Waiting for confirmation.');
+    expect(screen.queryByRole('img', { name: 'Pairing QR code' })).toBeNull();
+
+    status = { ...status, state: 'granted' };
+    await screen.findByText('Paired with Kitchen iPhone.');
+  });
+
+  it('reports the final state when a cancel arrives after the phone already paired', async () => {
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByRole('img', { name: 'Pairing QR code' });
+
+    status = { ...status, state: 'granted', name: 'Kitchen iPhone' };
+    cancelReply = new Response(JSON.stringify({ error: 'not_pending' }), { status: 403 });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByText('Paired with Kitchen iPhone.');
+    expect(posted).toEqual(['/pair2/request', '/pair2/cancel']);
+    expect(screen.queryByRole('button', { name: 'Start pairing' })).toBeNull();
+  });
+
+  it('says the QR may still work when a cancel cannot be confirmed', async () => {
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByRole('img', { name: 'Pairing QR code' });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 503 }))
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByText('Could not cancel. The QR still works until it expires.');
+    expect(screen.queryByRole('button', { name: 'Start pairing' })).toBeNull();
+  });
+
+  it('offers a new QR after a cancel that wins', async () => {
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByRole('img', { name: 'Pairing QR code' });
+    status = { ...status, state: 'cancelled' };
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByText('Pairing cancelled.');
+    expect(screen.getByRole('button', { name: 'Show a new QR' })).toBeTruthy();
+  });
+
+  it('shows the QR steps in Simplified Chinese', async () => {
+    locale.value = 'zh-Hans';
+    try {
+      render(<PairPhoneFlow pollMs={20} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+      await screen.findByRole('img', { name: '配对二维码' });
+      expect(screen.getByText('添加手机。用 Neo 扫这个二维码。')).toBeTruthy();
+      expect(screen.getByText(/\d+ 秒后过期/)).toBeTruthy();
+      status = { ...status, state: 'granted', name: 'Kitchen iPhone' };
+      await screen.findByText('已和 Kitchen iPhone 配对。');
+    } finally {
+      locale.value = 'en';
+    }
+  });
+
+  it('keeps the code flow on a plain-http page instead of guessing an HTTPS address', async () => {
+    vi.stubGlobal('location', new URL('http://mac.tailnet.ts.net:8484/settings?tab=devices'));
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByText('LEGACY2345');
+    expect(screen.queryByRole('img', { name: 'Pairing QR code' })).toBeNull();
+    expect(posted).toEqual([]);
+  });
+
+  it('keeps the code flow when the daemon has pairing v2 off', async () => {
+    status = { ...status, state: 'none' };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 404 }))
+    );
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByText('LEGACY2345');
+    expect(screen.queryByRole('img', { name: 'Pairing QR code' })).toBeNull();
   });
 });
