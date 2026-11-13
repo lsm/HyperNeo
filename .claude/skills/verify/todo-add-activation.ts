@@ -37,7 +37,7 @@ const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new Ne
 const root='neo:todo-add-activation',registry=app.sessionManager.getOperationRegistry();
 const mcp=createOperationMcpHandler(registry,()=>({sessionId:root,role:'neo'}));
 type Receipt={ok:false;reason:string}|{ok:true;todo?:NeoTodo;todos:NeoTodo[];records?:string[]};
-const input=(title:string)=>({askId:'ask',title,check:{pack:'core',kind:'evidence',params:{path:'/synthetic/result'}},instruction:'Do the complete work',target:{verb:'start',adapter:'hyperneo'},start:false,priority:'high'});
+const input=(title:string)=>({askId:'ask',title,check:{pack:'core',kind:'evidence',params:{path:'/synthetic/result'}},after:[],instruction:'Do the complete work',target:{verb:'start',adapter:'hyperneo'},start:false,priority:'high'});
 const add=(args:ReturnType<typeof input>)=>hub.request<Receipt>('operation.invoke',{name:'neo.todo.add',input:args});
 const visible=()=>hub.request<{ok:boolean;entry:{ask:NeoAsk;todos:NeoTodo[];questions:{startTodos?:string[]}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'ask'}});
 const replay=app.db.gateway.onChanges,runCommand=app.db.gateway.run.bind(app.db.gateway);let held=false,notices=0,commands=0,lockNext=false,reached=()=>{},failNext=false;
@@ -70,10 +70,18 @@ try{
  record=true;const raced=await Promise.all([add(input('one')),add(input('two'))]);record=false;assert(raced.every(item=>item.ok));const after=await visible();assert.equal(after.entry.todos.length,3);assert.equal(after.entry.questions.length,1);assert.equal(after.entry.questions[0].startTodos?.length,3);result.concurrentMembership=true;
  const prior=await visible(),count=notices;failNext=true;record=true;await assert.rejects(add(input('failed writer')),/synthetic writer failure/);record=false;assert.deepEqual(await visible(),prior);assert.equal(notices,count);result.noMainFallback=true;
  const atCommands=commands;const opened=await mcp({name:'neo.ask.open',input:{title:'MCP creation',request:'Add through the same writer',todos:[{...input('MCP todo'),askId:undefined}]}});assert(!opened.isError,JSON.stringify(opened));const openedBody=JSON.parse(opened.content[0].text) as Receipt;assert(openedBody.ok,JSON.stringify(openedBody));assert(commands>atCommands,'Ask open must use the same add writer');assert.equal(openedBody.todos[0].state,'blocked');result.askOpenUsesWriter=true;
- const splitDraft=(title:string,repo:string)=>({...input(title),check:{pack:'coding',kind:'pr_merged',params:{urls:[`https://github.com/synthetic/${repo}/pull/1`]}}});
- const splitCall=async(todos:unknown[])=>{const reply=await mcp({name:'neo.ask.open',input:{title:'Split work',request:'Keep child cards open',todos}});assert(!reply.isError,JSON.stringify(reply));return JSON.parse(reply.content[0].text) as Receipt & {ask:NeoAsk};};
- const split=await splitCall([splitDraft('First repo','one'),splitDraft('Second repo','two')]);assert(split.ok && split.ask.status==='done');
- const extended=await splitCall([splitDraft('Additional child work','two')]);assert(extended.ok && extended.todos.length===2 && extended.records?.some((r:string)=>r.startsWith('ask_settled')),'A settled parent must refuse new todos; its open child still keeps them visible');result.settledParentRefused=true;
+ const codingDraft=(title:string,repo:string)=>({...input(title),check:{pack:'coding',kind:'pr_merged',params:{urls:[`https://github.com/synthetic/${repo}/pull/1`]}}});
+ const openCall=async(title:string,todos:unknown[])=>{const reply=await mcp({name:'neo.ask.open',input:{title,request:'Keep work',todos}});assert(!reply.isError,JSON.stringify(reply));return JSON.parse(reply.content[0].text) as Receipt & {ask:NeoAsk};};
+ const multi=await openCall('Multi-repo work',[codingDraft('First repo','one'),codingDraft('Second repo','two')]);assert(multi.ok && multi.ask.status==='open' && multi.todos.length===2);
+ store.openAsk({id:'quiet',parentId:null,projectId:null,sessionId:root,originMessageId:null,title:'Settled door',request:'Refuse new work',createdAt:1});
+ store.openAsk({id:'quiet-child',parentId:'quiet',projectId:null,sessionId:root,originMessageId:null,title:'Child',request:'Open child',createdAt:1});
+ store.settleAsk(store.getAsk('quiet')!,'done','Finished',2);
+ const refused=await add({...input('late work'),askId:'quiet'});
+ assert(refused.ok && refused.records?.some((r:string)=>r.startsWith('ask_settled')),'The public add must quietly refuse a settled ask');
+ const extended=await openCall('Settled door',[codingDraft('Additional work','one')]);
+ assert(extended.ok && extended.records?.some((r:string)=>r.startsWith('ask_settled')),'A settled parent must refuse new todos');
+ assert.equal(store.listTodos('quiet').length+store.listTodos('quiet-child').length,0);
+ result.settledParentRefused=true;
 
  assert.equal(mainSql,0);result.mainSql=mainSql;result.rssBytes=process.memoryUsage().rss;result.walBytes=statSync(`${path}-wal`).size;result.verified=true;
 }finally{
