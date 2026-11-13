@@ -6,10 +6,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
 
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
-  input_handed_off:
-    'You are already working on this message; its answer reaches the human by itself.',
-  input_answered:
-    "You already answered this message; anything new waits for the human's next message.",
   front_not_speaking:
     'reply with work_on is available only while fast replies are on for this conversation.',
   front_model_required: 'Choose a fast reply model before turning on fast replies.',

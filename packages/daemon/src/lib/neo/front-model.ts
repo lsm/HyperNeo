@@ -8,10 +8,7 @@ import { catchUpBlock } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
-import {
-  neoFrontInputReads,
-  neoFrontInputWrites,
-} from '../../storage/repositories/neo-front-input-worker.ts';
+import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
 import { foldPublicationDetails } from './publication.ts';
 
 const Read = {
@@ -109,7 +106,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ? { started: true }
       : {
           started: false,
-          reason: reserved === 'handed_off' ? 'input_handed_off' : 'delivery_failed',
+          reason: reserved === 'ineligible' ? 'unknown_reply_target' : 'delivery_failed',
         };
   };
   return createSdkMcpServer({
@@ -150,16 +147,6 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
-          const owned = (
-            await service.db.gateway.call(
-              neoFrontInputReads,
-              'get',
-              conversationId,
-              input.replyTo[0]
-            )
-          )?.owner;
-          if (owned === 'front') return result({ accepted: false, reason: 'input_answered' });
-          if (owned) return result({ accepted: false, reason: 'input_handed_off' });
           const receipt = await publish({ ...input, text, progress: true });
           if (!receipt.accepted) return result(receipt);
           const handed = await handOff(ask, input.replyTo[0]);

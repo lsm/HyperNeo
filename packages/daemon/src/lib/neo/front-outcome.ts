@@ -58,15 +58,32 @@ export async function settleConvoInput(
     return pending();
   const ids = deliveries.filter(({ status }) => status !== 'consumed').map(({ id }) => id);
   if (!ids.length) return { delivered: true, outcome: 'handed_off' };
+  const replies = (service.publications.list(conversationId) ?? []).flatMap(
+    (publication) => publication.replyTo ?? []
+  );
+  const open: string[] = [];
+  for (const id of ids) {
+    const input = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, id);
+    if (!input?.owner && !replies.includes(id)) open.push(id);
+  }
+  if (!open.includes(messageId)) {
+    const self = await service.db.gateway.call(
+      neoFrontInputReads,
+      'get',
+      conversationId,
+      messageId
+    );
+    return { delivered: true, outcome: self?.owner === 'neo' ? 'handed_off' : 'answered' };
+  }
   const receipt = await service.db.gateway.call(
     neoPublicationWrites,
     'append',
     {
       conversationId,
-      publicationId: frontFallbackId(conversationId, ids),
+      publicationId: frontFallbackId(conversationId, open),
       verbatim: true,
       fullText: FRONT_FALLBACK_TEXT,
-      replyTo: ids,
+      replyTo: open,
       links: [],
     },
     service.db.getGlobalSettings().neo?.front?.enabled === true
@@ -74,8 +91,7 @@ export async function settleConvoInput(
       : `neo:${conversationId}`
   );
   if (!receipt.accepted) {
-    if (receipt.reason === 'publication_superseded' || receipt.reason === 'input_handed_off')
-      return pending();
+    if (receipt.reason === 'publication_superseded') return pending();
     throw new Error(receipt.reason);
   }
   service.notifyPublicationsChanged(conversationId);

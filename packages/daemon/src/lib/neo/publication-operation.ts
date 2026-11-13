@@ -150,6 +150,16 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
   return (superpipe({})('neo-publication-publish') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
+    .pipe(
+      (draft: Draft) => {
+        const body = foldPublicationDetails({ text: draft.text, details: draft.details });
+        return body.details !== undefined && body.text.length > 2000
+          ? { reason: { accepted: false as const, reason: 'reply_summary_too_long' } }
+          : { value: draft };
+      },
+      'publication',
+      'result:publication'
+    )
     .pipe((draft: Draft) => draft, 'publication', 'submitted')
     .pipe(
       (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),

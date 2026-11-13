@@ -174,13 +174,12 @@ function appendImmutable(
       const claimed = inputs.claim(
         input.conversationId,
         ids,
-        speaker === frontSessionId(input.conversationId) ? 'front' : 'neo',
-        !speaker
+        speaker === frontSessionId(input.conversationId) ? 'front' : 'neo'
       );
       if (claimed !== 'claimed')
         return {
           accepted: false,
-          reason: claimed === 'handed_off' ? 'input_handed_off' : 'publication_superseded',
+          reason: 'publication_superseded',
         };
     }
     const inserted = db

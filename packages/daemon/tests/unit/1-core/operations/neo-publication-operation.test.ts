@@ -480,6 +480,33 @@ describe('Neo publication without runtime input attribution', () => {
     );
   });
 
+  test('refuses a text over 2000 when details stay separate, but folds shorter details', async () => {
+    const over = await publish(
+      { requestId: 'send-too-long', text: 'x'.repeat(2001), details: 'd'.repeat(2002) },
+      caller
+    );
+    expect(over).toMatchObject({ accepted: false, reason: 'reply_summary_too_long' });
+    const under = await publish(
+      { requestId: 'send-limit', text: 'x'.repeat(2000), details: 'd'.repeat(2001) },
+      caller
+    );
+    expect(under).toMatchObject({
+      accepted: true,
+      publication: { shortText: 'x'.repeat(2000), fullText: 'd'.repeat(2001) },
+    });
+    const folded = await publish(
+      { requestId: 'send-folded-long', text: 'x'.repeat(3000), details: 'short' },
+      caller
+    );
+    expect(folded).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, fullText: `${'x'.repeat(3000)}\n\nshort` },
+    });
+    const alone = await publish({ requestId: 'send-solo', text: 'x'.repeat(3000) }, caller);
+    expect(alone).toMatchObject({ accepted: true, publication: { verbatim: true } });
+    expect(ledger.list(conversationId)).toHaveLength(3);
+  });
+
   test('refuses the old shortText, fullText and verbatim fields', async () => {
     for (const old of [
       { requestId: 'old', shortText: 'Preview', fullText: 'Whole.' },
