@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 const [mode, directory] = process.argv.slice(2), run = resolve(directory);
 assert(['before', 'verify'].includes(mode));
@@ -24,7 +25,7 @@ const mainSql: string[] = [], commands: unknown[] = [];
 const evidence: Record<string, any> = { mode, verified: false, consumer: 'Real daemon public WebSocket neo.project.section and neo.snapshot', limitation: 'Synthetic fixtures; no GUI, model, live daemon or GitHub. No held-writer latency claim.' };
 async function open() {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
-  await app.spaceRuntimeService.ready(); await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399);
+  await app.spaceRuntimeService?.ready(); await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399);
   const db = app.db.getDatabase(), prepare = db.prepare.bind(db), send = app.db.gateway.run.bind(app.db.gateway);
   db.prepare = ((sql: string) => { if (measuring && /neo_concerns|neo_project_workspaces|neo_project_merges/.test(sql)) mainSql.push(sql); return prepare(sql); }) as typeof db.prepare;
   app.db.gateway.run = (async (op, args) => {
@@ -38,7 +39,7 @@ async function open() {
   }) as typeof app.db.gateway.run;
 }
 async function rpc(name: string, input: Record<string, unknown>) {
-  const ws = new WebSocket(`ws://127.0.0.1:${app!.server.port}/ws`);
+  const ws = new WebSocket(`ws://127.0.0.1:${app!.server.port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as unknown as string[]);
   try {
     await new Promise<void>((done, fail) => { ws.onopen = () => done(); ws.onerror = () => fail(new Error('RPC connect failed')); });
     return await new Promise<any>((done, fail) => {
