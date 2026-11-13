@@ -232,6 +232,8 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
   'glm',
 ];
 
+const ONE_MILLION_MODEL_SUFFIX = /\[1m\]$/i;
+
 export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
@@ -569,7 +571,9 @@ export class QueryOptionsBuilder {
     };
     const declaredWindow = this.routedContextWindow(providerId, modelInfo?.contextWindow);
     const windowEnv =
-      NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) || !declaredWindow
+      NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) ||
+      !declaredWindow ||
+      ONE_MILLION_MODEL_SUFFIX.test(sdkModelId)
         ? {}
         : {
             CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',

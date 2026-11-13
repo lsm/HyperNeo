@@ -65,6 +65,7 @@ type Case = {
   label: string;
   providerId: string;
   model: ModelInfo;
+  sdkModelId?: string;
   buildSdkConfig?: () => { envVars: Record<string, string>; isAnthropicCompatible: boolean };
 };
 
@@ -117,6 +118,7 @@ const sdkEnvFor = async (entry: Case): Promise<Record<string, string | undefined
     ownsModel: (id: string) => id === entry.model.id,
     getModelForTier: () => entry.model.id,
     getModelContextWindow: () => entry.model.contextWindow,
+    ...(entry.sdkModelId ? { translateModelIdForSdk: () => entry.sdkModelId! } : {}),
     buildSdkConfig:
       entry.buildSdkConfig ??
       (() => ({
@@ -199,17 +201,38 @@ const cases: Case[] = [
   { label: '262144 Kimi', providerId: 'kimi', model: model('k3-256k', 'kimi', 262_144) },
   { label: '200k model', providerId: 'custom:mid', model: model('mid-200k', 'custom:mid', 200_000) },
   { label: '1M model', providerId: 'custom:big', model: model('big-1m', 'custom:big', 1_000_000) },
+  {
+    label: '1M-suffixed id',
+    providerId: 'deepseek',
+    model: model('deepseek-v4-pro', 'deepseek', 1_000_000),
+    sdkModelId: 'claude-opus-4-6[1m]',
+  },
 ];
 const expected: Record<string, { window: number; oneMillionBeta: boolean }> = {
   '256k custom': { window: 256_000, oneMillionBeta: false },
   '262144 Kimi': { window: 262_144, oneMillionBeta: false },
   '200k model': { window: 200_000, oneMillionBeta: false },
   '1M model': { window: 1_000_000, oneMillionBeta: false },
+  '1M-suffixed id': { window: 1_000_000, oneMillionBeta: true },
 };
 const results: Record<string, unknown> = {};
 try {
   for (const entry of cases) {
     const env = await sdkEnvFor(entry);
+    if (entry.sdkModelId) {
+      assert.equal(env.CLAUDE_CODE_DISABLE_1M_CONTEXT, undefined, `${entry.label} env`);
+      assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, `${entry.label} env window`);
+      const nativeRun = await runCli({
+        ...env,
+        ANTHROPIC_MODEL: entry.sdkModelId,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: entry.sdkModelId,
+      });
+      results[entry.label] = { env: 'untouched', sdk: nativeRun };
+      assert.equal(nativeRun.model, entry.sdkModelId, `${entry.label} model`);
+      assert.equal(nativeRun.contextWindow, 1_000_000, `${entry.label} window`);
+      assert.equal(nativeRun.sentOneMillionBeta, true, `${entry.label} 1M beta`);
+      continue;
+    }
     assert.equal(env.CLAUDE_CODE_DISABLE_1M_CONTEXT, '1', `${entry.label} env`);
     assert.equal(
       env.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
@@ -251,7 +274,7 @@ try {
 
   evidence.verified = true;
   console.log(
-    'PASS: one rule declares each non-native model at its real window — 256k, 262144, 200k and 1M all arrive at the CLI with that window and no 1M beta, and native Anthropic sets neither variable.'
+    'PASS: one rule declares each non-native model at its real window — 256k, 262144, 200k and 1M all arrive at the CLI with that window and no 1M beta; an id that already carries [1m] and native Anthropic are left alone.'
   );
 } catch (error) {
   evidence.error = String(error);

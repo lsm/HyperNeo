@@ -14,6 +14,10 @@ window>`; native Anthropic gets neither.
   the CLI on it. Require the init model to be the bare name, `modelUsage.contextWindow`
   to equal the declared window, and no `context-1m` beta on the request:
   256000, 262144 (Kimi), 200000 and 1000000.
+- An id that already carries `[1m]` (DeepSeek maps to `claude-opus-4-6[1m]`, Kimi's
+  default is `kimi-k3[1m]`) must be left alone: neither variable set, the CLI keeps
+  the suffix, 1000000 and the `context-1m` beta. Turning 1M off under a `[1m]` name
+  would clamp it to 200000.
 - A native Anthropic session must carry neither variable.
 
 Retain `result.json` with `verified` and `resourcesClosed` true, and wrapper exit

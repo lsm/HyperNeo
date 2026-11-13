@@ -1714,6 +1714,51 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBeUndefined();
       expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
     });
+
+    it('leaves a session whose SDK model id carries [1m] on the 1M path', async () => {
+      const million = {
+        id: 'deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        provider: 'deepseek',
+        alias: 'deepseek-pro',
+        family: 'deepseek',
+        contextWindow: 1_000_000,
+        description: 'Synthetic 1M model',
+        releaseDate: '',
+        available: true,
+      };
+      resetProviderRegistry();
+      getProviderRegistry().register({
+        id: 'deepseek',
+        displayName: 'Synthetic DeepSeek',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'on',
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [million],
+        ownsModel: (id: string) => id === million.id,
+        getModelForTier: () => million.id,
+        translateModelIdForSdk: () => 'claude-opus-4-6[1m]',
+        buildSdkConfig: () => ({
+          envVars: { ANTHROPIC_BASE_URL: 'https://deepseek.invalid' },
+          isAnthropicCompatible: true,
+        }),
+      } as Provider);
+      setModelsCache(new Map([['global', [million]]]));
+      mockSession.config.provider = 'deepseek';
+      mockSession.config.model = million.id;
+
+      const options = await builder.build();
+
+      expect(options.model).toBe('claude-opus-4-6[1m]');
+      expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBeUndefined();
+      expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
+    });
   });
 
   describe('session auto-compact window', () => {
