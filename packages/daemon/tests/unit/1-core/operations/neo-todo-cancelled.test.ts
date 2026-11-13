@@ -321,7 +321,7 @@ describe('cancelled prerequisites', () => {
         expect(asked(store, dependent)).toMatchObject({
           kind: 'choice',
           options: ['Continue', 'Remove these'],
-          todos: [dependent.id],
+          todos: [dependent.id, cancelled.id],
         });
         expect(store.getTodo(dependent.id)).toMatchObject({
           state: 'blocked',
@@ -577,6 +577,65 @@ describe('cancelled prerequisites', () => {
       await runner.refresh(() => {});
       expect(store.getTodo(d.id)?.state).toBe('doing');
       expect(sent).toHaveLength(before + 1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('two removals before an answer leave one card, and Continue clears both', async () => {
+    const { db, store, invoke, step, runner, sent, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Two removals',
+        request: 'Finish A and B before D.',
+        todos: [step('A', []), step('B', []), { ...step('D', [0, 1]), ...work, start: true }],
+      });
+      const [a, b, d] = opened.todos;
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
+      await invoke('neo.todo.remove', { todoId: b.id, reason: 'Cancelled by the human.' });
+      const open = store
+        .listQuestions(d.askId)
+        .filter((q) => q.state === 'open' && q.cause === 'removed_prerequisite');
+      expect(open).toHaveLength(1);
+      expect(open[0].text).toBe(
+        '"A", "B" were removed. Continue "D" without them, or remove this step too?'
+      );
+      decide(store, d, 'Continue');
+      await runner.refresh(() => {});
+      expect(store.getTodo(d.id)).toMatchObject({ state: 'doing', dependsOn: [] });
+      expect(sent).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a dependent in a sibling ask sees the card, filed on the root ask', async () => {
+    const { db, store, invoke, step } = setup();
+    try {
+      const root = (await invoke('neo.ask.open', {
+        title: 'Root',
+        request: 'Plan the work.',
+      })) as unknown as {
+        ask: { id: string; sessionId: string };
+      };
+      const child = (id: string) =>
+        store.openAsk({
+          id,
+          parentId: root.ask.id,
+          projectId: null,
+          sessionId: root.ask.sessionId,
+          originMessageId: null,
+          title: id,
+          request: 'Filed work',
+          createdAt: Date.now(),
+        });
+      child('first');
+      const second = child('second');
+      const [a] = (await invoke('neo.todo.add', { askId: 'first', ...step('A', []) })).todos;
+      const [f] = (await invoke('neo.todo.add', { askId: 'second', ...step('F', [a.id]) })).todos;
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
+      const filed = store.gateQuestions(second).find((q) => q.cause === 'removed_prerequisite');
+      expect(filed).toMatchObject({ askId: root.ask.id, state: 'open', todos: [f.id, a.id] });
     } finally {
       db.close();
     }

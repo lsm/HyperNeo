@@ -95,7 +95,7 @@ try {
       assert.deepEqual(extra, []);
       assert.deepEqual(
         { ...card, id: null, options: JSON.parse(card.options), todos: JSON.parse(card.todos) },
-        { id: null, state: 'open', kind: 'choice', options: ['Continue', 'Remove these'], todos: [ids.b, ids.c], cause: 'removed_prerequisite', text: '"A" was removed. Continue "B", "C" without it, or remove these steps too?' }
+        { id: null, state: 'open', kind: 'choice', options: ['Continue', 'Remove these'], todos: [ids.b, ids.c, ids.a], cause: 'removed_prerequisite', text: '"A" was removed. Continue "B", "C" without it, or remove these steps too?' }
       );
       await human(`${name}: the human answers ${answer}`, card.id, [answer]);
       assert.deepEqual(rows(ids.askId), after(ids));

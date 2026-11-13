@@ -1,7 +1,7 @@
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { openHumanCard } from '../../lib/neo/human-card.ts';
+import { openHumanCard, replaceHumanCard } from '../../lib/neo/human-card.ts';
 import type { NeoTodoCheckResult } from '../../lib/neo/pack-contract.ts';
 import { requireNeoTodoMayFinish, sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
@@ -83,19 +83,28 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
         ? {
             family: store.listFamilyTodos(plan.todo.askId),
             cards: store.familyQuestions(plan.todo.askId),
+            root: store.getAsk(plan.todo.askId)?.parentId ?? plan.todo.askId,
           }
         : null,
     ['store', 'outcome', 'args'],
     'facts'
   )
   .pipe(
-    (plan: Plan, args: Input, facts: { family: NeoTodo[]; cards: NeoQuestion[] } | null) =>
+    (
+      plan: Plan,
+      args: Input,
+      facts: { family: NeoTodo[]; cards: NeoQuestion[]; root: string } | null
+    ) =>
       facts && args.input.kind === 'remove'
         ? planNeoTodoRemoval(
             plan.todo,
             facts.family,
             facts.cards,
-            { replacedBy: plan.patch.replacedBy, dependents: args.input.dependents },
+            {
+              root: facts.root,
+              replacedBy: plan.patch.replacedBy,
+              dependents: args.input.dependents,
+            },
             args.now
           )
         : null,
@@ -108,7 +117,7 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
       todos: NeoAskTodoRepository,
       plan: Plan,
       args: Input,
-      removal: ReturnType<typeof planNeoTodoRemoval<NeoTodo>> | null,
+      removal: ReturnType<typeof planNeoTodoRemoval<NeoTodo, NeoQuestion>> | null,
       changes: ChangeRecorder
     ): Outcome => {
       const committed = todos.commitState(
@@ -119,24 +128,22 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
         args.input.kind === 'done'
       );
       for (const { todo, patch } of removal?.writes ?? []) todos.updateTodo(todo, patch, args.now);
-      if (removal?.card)
-        openHumanCard(
-          todos,
-          crypto.randomUUID(),
-          removal.card.askId,
-          {
-            text: removal.card.text,
-            kind: 'choice',
-            options: NEO_REMOVED_PREREQUISITE_OPTIONS,
-            multiple: false,
-            noLabel: null,
-            yesLabel: null,
-            startTodos: null,
-            todos: removal.card.todos,
-            cause: NEO_REMOVED_PREREQUISITE,
-          },
-          args.now
-        );
+      if (removal?.card) {
+        const draft = {
+          text: removal.card.text,
+          kind: 'choice' as const,
+          options: NEO_REMOVED_PREREQUISITE_OPTIONS,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          todos: removal.card.todos,
+          cause: NEO_REMOVED_PREREQUISITE,
+        };
+        if (removal.card.replaces)
+          replaceHumanCard(todos, removal.card.replaces, crypto.randomUUID(), draft, args.now);
+        else openHumanCard(todos, crypto.randomUUID(), removal.card.askId, draft, args.now);
+      }
       if (args.input.kind === 'edit' && args.input.target)
         new NeoTodoSessionRepository(db, changes).create(plan.todo.id, args.input.target);
       return {

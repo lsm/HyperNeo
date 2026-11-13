@@ -13,7 +13,7 @@ export const NEO_REMOVED_PREREQUISITE_OPTIONS = ['Continue', 'Remove these'];
 type Card = Pick<NeoQuestion, 'state' | 'kind' | 'todos' | 'cause'>;
 type Row = NeoTodoEdge & Pick<NeoTodo, 'title'>;
 type Write<T> = { todo: T; patch: NeoTodoPatch };
-type CardPlan = { askId: string; todos: string[]; text: string };
+type CardPlan<C> = { askId: string; replaces: C | null; todos: string[]; text: string };
 
 const live = (todo: Row) => !['done', 'closed_unverified', 'removed'].includes(todo.state);
 
@@ -79,21 +79,18 @@ export const neoRemovedPrerequisiteText = (gone: readonly Row[], dependents: rea
     gone.length > 1 ? 'them' : 'it'
   }, or remove ${dependents.length > 1 ? 'these steps' : 'this step'} too?`;
 
-const asked = (cards: readonly Card[], id: string) =>
-  cards.some(
-    (card) =>
-      card.state === 'open' &&
-      (card.kind === 'start' || card.cause === NEO_REMOVED_PREREQUISITE) &&
-      card.todos.includes(id)
-  );
+const onCard = (card: Card, id: string, kind: 'start' | 'removal') =>
+  card.state === 'open' &&
+  (kind === 'start' ? card.kind === 'start' : card.cause === NEO_REMOVED_PREREQUISITE) &&
+  card.todos.includes(id);
 
-export function planNeoTodoRemoval<T extends Row>(
+export function planNeoTodoRemoval<T extends Row, C extends Card>(
   todo: T,
   family: readonly T[],
-  cards: readonly Card[],
-  input: { replacedBy?: string | null; dependents?: 'continue' | 'remove' },
+  cards: readonly C[],
+  input: { root: string; replacedBy?: string | null; dependents?: 'continue' | 'remove' },
   now: number
-): { writes: Write<T>[]; card: CardPlan | null } {
+): { writes: Write<T>[]; card: CardPlan<C> | null } {
   const gone = { ...todo, state: 'removed' as const, replacedBy: input.replacedBy ?? null };
   const after = family.map((item) => (item.id === todo.id ? gone : item));
   const writes: Write<T>[] = [];
@@ -129,16 +126,37 @@ export function planNeoTodoRemoval<T extends Row>(
     );
     return { writes: [...last.values()], card: null };
   }
-  const listed = undecided.filter((dependent) => !asked(cards, dependent.id));
+  const listed = undecided.filter(
+    (dependent) => !cards.some((card) => onCard(card, dependent.id, 'start'))
+  );
+  if (!listed.length) return { writes, card: null };
+  const replaces =
+    cards.find((card) => listed.some((dependent) => onCard(card, dependent.id, 'removal'))) ?? null;
+  const covered = new Set([
+    ...(replaces?.todos ?? []),
+    ...listed.map((dependent) => dependent.id),
+    todo.id,
+  ]);
+  const waiting = after.filter(
+    (item) => covered.has(item.id) && live(item) && item.startedAt === null
+  );
+  const prior = after.filter(
+    (item) =>
+      covered.has(item.id) &&
+      waiting.some((dependent) =>
+        neoTodoCancelledDependencies(after, dependent.id).some(
+          (cancelled) => cancelled.id === item.id
+        )
+      )
+  );
   return {
     writes,
-    card: listed.length
-      ? {
-          askId: todo.askId,
-          todos: listed.map((dependent) => dependent.id),
-          text: neoRemovedPrerequisiteText([todo], listed),
-        }
-      : null,
+    card: {
+      askId: input.root,
+      replaces,
+      todos: [...waiting, ...prior].map((item) => item.id),
+      text: neoRemovedPrerequisiteText(prior, waiting),
+    },
   };
 }
 
@@ -161,10 +179,11 @@ export function planNeoRemovedPrerequisiteAnswer<T extends Row>(
       now
     );
   if (picked !== NEO_REMOVED_PREREQUISITE_OPTIONS[0]) return [];
+  const decided = (todo: T) =>
+    neoTodoCancelledDependencies(family, todo.id).filter((gone) =>
+      question.todos.includes(gone.id)
+    );
   return held
-    .filter((todo) => neoTodoCancelledDependencies(family, todo.id).length > 0)
-    .map((todo) => ({
-      todo,
-      patch: { dependsOn: without(family, todo, neoTodoCancelledDependencies(family, todo.id)) },
-    }));
+    .filter((todo) => decided(todo).length > 0)
+    .map((todo) => ({ todo, patch: { dependsOn: without(family, todo, decided(todo)) } }));
 }

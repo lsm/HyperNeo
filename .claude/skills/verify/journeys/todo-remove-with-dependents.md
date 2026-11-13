@@ -15,8 +15,8 @@ and C after A, then D after B:
 - `neo.todo.add` without `after` is refused; with `after: []` the todo waits for nothing.
 - `neo.todo.remove` on A with `dependents: 'continue'`: B and C lose the edge, no card.
 - With `dependents: 'remove'`: B, C and D are removed, no card.
-- With neither: one choice card (`Continue`, `Remove these`) lists B and C, and
-  both keep their edge to A.
+- With neither: one choice card (`Continue`, `Remove these`) on the root ask lists
+  B and C and the removed A it decides; both keep their edge to A.
 - The human answers that card through `neo.question.answer` on the human door.
   `Continue` drops the edge of B and C; `Remove these` removes B, C and D.
 
