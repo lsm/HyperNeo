@@ -14,6 +14,7 @@ import type { NeoTodoRunner, NeoTodoRunnerDeps } from './todo-runner.ts';
 
 type Route = ReturnType<NeoAskTodoRepository['questionAnswers']['pending']>[number];
 const Sent = z.object({ ok: z.literal(true), value: WorkDeliverySchema });
+const Refused = z.object({ ok: z.literal(false), reason: z.string() });
 const NotSent = z.union([
   z.object({ ok: z.literal(false), notSent: z.literal(true) }),
   z.object({
@@ -173,27 +174,37 @@ export function createNeoQuestionAnswerDelivery(
       'outcome'
     )
     .endAsync('outcome') as (route: Route) => Promise<boolean>;
-  const apply = async (questionId?: string) => {
-    const cards = questionId
-      ? [store.getQuestion(questionId)]
-      : store.listCheckable().flatMap((todo) => store.todoCards(todo));
-    const seen = new Set<string>();
-    for (const card of cards) {
-      if (!card || seen.has(card.id)) continue;
-      seen.add(card.id);
-      for (const action of planNeoDaemonCardActions(card, store.listFamilyTodos(card.askId))) {
-        const ask = store.getAsk(store.getTodo(action.todoId)?.askId ?? '');
-        if (ask)
-          await invoke(
-            driverWorkCaller({ originSessionId: ask.sessionId }),
-            action.name,
-            action.input
-          ).catch(warn);
-      }
+  const apply = async (questionId: string) => {
+    const card = store.getQuestion(questionId);
+    if (!card) return;
+    const [picked] = [card.answer].flat();
+    for (const action of planNeoDaemonCardActions(card, store.listFamilyTodos(card.askId))) {
+      const todo = store.getTodo(action.todoId);
+      const ask = todo && store.getAsk(todo.askId);
+      if (!ask) continue;
+      const outcome = await invoke(
+        driverWorkCaller({ originSessionId: ask.sessionId }),
+        action.name,
+        action.input
+      ).catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) }));
+      const refused = Refused.safeParse(outcome.kind === 'completed' ? outcome.value : null);
+      const reason = refused.success
+        ? refused.data.reason
+        : outcome.kind === 'failed'
+          ? outcome.message
+          : null;
+      if (reason)
+        await tell(
+          ask.sessionId,
+          `neo-card-refused:${card.id}:${action.todoId}`,
+          `The human answered "${picked}" on the card for "${todo.title}", but ${action.name} was refused: ${reason}. Settle the todo or ask the human again.`,
+          ask.sessionId,
+          'event'
+        );
     }
   };
   return async (questionId?: string) => {
-    await apply(questionId);
+    if (questionId) await apply(questionId);
     const todos = questionId
       ? store.questionAnswers.list(questionId).map((route) => store.getTodo(route.todoId))
       : store.listCheckable();
