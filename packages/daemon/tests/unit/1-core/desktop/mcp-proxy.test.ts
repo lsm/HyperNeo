@@ -103,7 +103,7 @@ test('schemas and session binding refuse before dispatch', async () => {
     binding: async () => binding,
     dispatch,
     audit: () => {},
-    authorize: async () => ({ pid: 42, window_id: 7 }),
+    authorize: async () => ({ value: { app_id: 'com.apple.sleep', pid: 42, window_id: 7 } }),
   });
   for (const args of [{ private_field: true }, { pid: '42' }, { session: 'other-worker' }])
     expect(await proxy.call('list_windows', args)).toMatchObject({
@@ -111,4 +111,48 @@ test('schemas and session binding refuse before dispatch', async () => {
       content: [{ type: 'text', text: 'invalid_arguments' }],
     });
   expect(dispatch).not.toHaveBeenCalled();
+});
+
+test('typed target refusals reach the caller and the audit under one call id', async () => {
+  const audit = vi.fn();
+  const dispatch = vi.fn();
+  const ids: string[] = [];
+  const proxy = createDesktopProxy({
+    binding: async () => binding,
+    dispatch,
+    audit,
+    authorize: async (_binding, name, _args, callId) => {
+      ids.push(callId);
+      return name === 'click' ? { reason: 'target_mismatch' } : { reason: 'target_unverified' };
+    },
+  });
+  expect(await proxy.call('click', { pid: 42 })).toMatchObject({
+    content: [{ type: 'text', text: 'target_mismatch' }],
+  });
+  expect(await proxy.call('launch_app', { bundle_id: 'com.example.copy' })).toMatchObject({
+    content: [{ type: 'text', text: 'target_unverified' }],
+  });
+  expect(audit.mock.calls.map(([line]) => JSON.parse(line).call_id)).toEqual(ids);
+  expect(audit.mock.calls.map(([line]) => JSON.parse(line).reason_code)).toEqual([
+    'target_mismatch',
+    'target_unverified',
+  ]);
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
+test('a verified target is audited with its app and instance', async () => {
+  const audit = vi.fn();
+  const proxy = createDesktopProxy({
+    binding: async () => binding,
+    dispatch: async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }),
+    audit,
+    authorize: async () => ({ value: { app_id: 'com.apple.sleep', pid: 42, window_id: 7 } }),
+  });
+  await proxy.call('click', { pid: 42, window_id: 7 });
+  expect(JSON.parse(audit.mock.calls[0][0])).toMatchObject({
+    target_app_id: 'com.apple.sleep',
+    target_pid: 42,
+    target_window_id: 7,
+    decision: 'allowed',
+  });
 });

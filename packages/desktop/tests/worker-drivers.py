@@ -1,8 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
+import ctypes
 import json
 import os
 from pathlib import Path
 import select
+import shutil
 import signal
 import socket
 import subprocess
@@ -71,6 +73,19 @@ def alive(pid):
         return True
     except ProcessLookupError:
         return False
+
+
+def foreign_window():
+    graphics = ctypes.CDLL('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')
+    foundation = ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+    graphics.CGWindowListCreate.restype = ctypes.c_void_p
+    graphics.CGWindowListCreate.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+    foundation.CFArrayGetCount.argtypes = [ctypes.c_void_p]
+    foundation.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+    foundation.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
+    windows = graphics.CGWindowListCreate(0, 0)
+    assert windows and foundation.CFArrayGetCount(windows) > 0, 'no window to borrow'
+    return foundation.CFArrayGetValueAtIndex(windows, 0)
 
 
 class WorkerDrivers(unittest.TestCase):
@@ -563,6 +578,56 @@ class WorkerDrivers(unittest.TestCase):
         wait_until(lambda: not alive(driver['pid']))
         self.assertEqual(log.read_text(), 'initialize\neof\n')
         print('record_keys=pid,startedAt driver_endpoints=0 fixture_exchange=1 stop_closed_channel=1')
+
+    def resolve(self, tool, arguments, instance=None):
+        params = dict(tool=tool, arguments=arguments, callId='call-' + tool)
+        if instance is not None:
+            params['instance'] = instance
+        result = self.call('resolve', **params)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['result'].pop('call_id'), 'call-' + tool)
+        return result['result']
+
+    def spawn(self, binary):
+        child = subprocess.Popen([str(binary), '30'])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        return child.pid
+
+    def test_resolve_verified_process_returns_exact_app_and_class(self):
+        pid = self.spawn(Path('/bin/sleep'))
+        target = self.resolve('click', {'pid': pid})['value']
+        self.assertEqual((target['bundle_id'], target['class']), ('com.apple.sleep', 'pointer'))
+        self.assertEqual(target['requirement'], 'identifier "com.apple.sleep" and anchor apple')
+        self.assertEqual(target['instance']['pid'], pid)
+        again = self.resolve('type_text', {'pid': pid}, target['instance'])['value']
+        self.assertEqual((again['bundle_id'], again['class']), ('com.apple.sleep', 'keyboard'))
+        launch = self.resolve('launch_app', {'bundle_id': 'com.apple.calculator'})['value']
+        self.assertEqual((launch['path'], launch['class']), ('/System/Applications/Calculator.app', 'launch'))
+
+    def test_resolve_refuses_copied_bundle_id(self):
+        copy = self.root / 'sleep-copy'
+        shutil.copy('/bin/sleep', copy)
+        subprocess.run(['/usr/bin/codesign', '-f', '-s', '-', '-i', 'com.apple.sleep', str(copy)],
+                       check=True, capture_output=True)
+        pid = self.spawn(copy)
+        self.assertEqual(self.resolve('click', {'pid': pid}), {'reason': 'target_unverified'})
+        self.assertEqual(self.resolve('launch_app', {'bundle_id': 'io.hyperneo.missing'}),
+                         {'reason': 'target_unverified'})
+
+    def test_resolve_refuses_recycled_pid(self):
+        pid = self.spawn(Path('/bin/sleep'))
+        instance = self.resolve('click', {'pid': pid})['value']['instance']
+        recycled = dict(instance, startedAt=dict(instance['startedAt'], seconds=instance['startedAt']['seconds'] - 1))
+        self.assertEqual(self.resolve('click', {'pid': pid}, recycled), {'reason': 'target_mismatch'})
+
+    def test_resolve_refuses_window_owned_by_another_app(self):
+        pid = self.spawn(Path('/bin/sleep'))
+        self.assertEqual(self.resolve('click', {'pid': pid, 'window_id': foreign_window()}),
+                         {'reason': 'target_mismatch'})
+
+    def test_resolve_refuses_tools_outside_the_allowlist(self):
+        self.assertEqual(self.resolve('kill_app', {'pid': os.getpid()}), {'reason': 'tool_not_allowed'})
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
