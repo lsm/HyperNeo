@@ -1,3 +1,4 @@
+import { workerEngine, workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { NeoWorkerNameSource } from './worker-name.ts';
 import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
@@ -1092,7 +1093,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const ref = sessions.readRef(id);
     const incident = sessions.readNudge(id);
     if (!due || !ref || !incident?.blockerReport) return;
-    const source = (await deps.readSource?.(ref)) ?? null;
+    const source = (await deps.readSource?.(ref)) ?? {
+      ...workerIdentity(ref, null),
+      provider: workerEngine(ref.adapter),
+      link: null,
+    };
     await deps.write(neoDaemonCardWrite, { kind: 'blocker', todoId: id, source, now });
     sessions.recordNudge(id, {
       ...incident,

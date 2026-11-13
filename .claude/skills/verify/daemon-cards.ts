@@ -141,6 +141,9 @@ try {
   assert.deepEqual(others, []);
   assert.deepEqual(JSON.parse(blocker.options), ['Mark done', 'Remove']);
   assert.equal(blocker.document, words);
+  const routes = service!.todos.questionAnswers.list(blocker.id);
+  step('ignored blocker: its card carries a route to the worker even with its source unreadable', routes);
+  assert.deepEqual(routes.map((route) => [route.todoId, route.state, route.sourceSession.adapter, route.sourceSession.id]), [["blocker-todo", "waiting", "hyperneo", "synthetic-worker"]]);
   assert.equal(blocker.text, '"Deploy" is blocked: Needs the staging password. Reply to its worker, mark it done, or remove it?');
   clock += hour;
   await refresh();

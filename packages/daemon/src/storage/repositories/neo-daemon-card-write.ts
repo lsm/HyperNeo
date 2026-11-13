@@ -14,7 +14,7 @@ import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 
 type Input =
   | { kind: 'retries'; todoId: string; reason: string; now: number }
-  | { kind: 'blocker'; todoId: string; source: NeoQuestionSource | null; now: number };
+  | { kind: 'blocker'; todoId: string; source: NeoQuestionSource; now: number };
 
 const openRetriesCard = (
   store: NeoAskTodoRepository,
@@ -47,7 +47,7 @@ const openRetriesCard = (
 const openBlockerCard = (
   store: NeoAskTodoRepository,
   todo: NeoTodo,
-  source: NeoQuestionSource | null,
+  source: NeoQuestionSource,
   now: number
 ) => {
   if (neoTodoCovered(todo, store.todoCards(todo))) return null;
@@ -59,11 +59,11 @@ const openBlockerCard = (
       ...neoDaemonCardDraft(NEO_WORKER_BLOCKER, [todo]),
       todoId: todo.id,
       document: todo.report,
-      ...(source ? { sourceSession: source } : {}),
+      sourceSession: source,
     },
     now
   );
-  if (source) store.questionAnswers.bind(card.id, todo.id, source);
+  store.questionAnswers.bind(card.id, todo.id, source);
   return card;
 };
 
