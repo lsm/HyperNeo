@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -38,24 +40,27 @@ describe('NeoAskTodoRepository while the writer lane holds a write', () => {
   });
 
   const whileWriterHolds = async <T>(write: () => T) => {
-    const worker = new Worker(new URL('./sqlite-write-holder-fixture.ts', import.meta.url).href);
-    const released = new Promise<void>((resolve, reject) => {
-      worker.onerror = (event) => reject(new Error(event.message));
-      worker.onmessage = (event) => {
-        if (event.data === 'held') {
-          try {
-            outcome.value = write();
-          } catch (error) {
-            outcome.error = String(error);
-          }
-        }
-        if (event.data === 'released') resolve();
-      };
-    });
+    const holder = spawn(
+      'node',
+      [fileURLToPath(new URL('./sqlite-write-holder-fixture.mjs', import.meta.url)), path, '300'],
+      { stdio: ['ignore', 'pipe', 'inherit'] }
+    );
     const outcome: { value?: T; error?: string } = {};
-    worker.postMessage({ path, holdMs: 300 });
-    await released;
-    worker.terminate();
+    const exited = new Promise<number | null>((resolve) => holder.on('exit', resolve));
+    let seen = '';
+    await new Promise<void>((resolve, reject) => {
+      holder.on('error', reject);
+      holder.stdout.on('data', (chunk: Buffer) => {
+        seen += chunk.toString();
+        if (seen.includes('held')) resolve();
+      });
+    });
+    try {
+      outcome.value = write();
+    } catch (error) {
+      outcome.error = String(error);
+    }
+    expect(await exited).toBe(0);
     return outcome;
   };
 
