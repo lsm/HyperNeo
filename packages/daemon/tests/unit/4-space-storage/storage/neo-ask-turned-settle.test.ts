@@ -101,6 +101,8 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     gateway.run(DB_OPS.get('neo.turnedAskSettles') as DbOp<{ now: number }, string[]>, {
       now: 100,
     });
+  const touchAsk = (ms: number) =>
+    db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(ms, 'ask');
 
   test('settles done with Neo’s written outcome once the wake turn ends', async () => {
     add('first', 'done');
@@ -223,6 +225,44 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     consumedWake('other-ask');
     expect(await sweep()).toEqual([]);
     expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+  });
+
+  test('a change after the wake turn ended keeps the ask open', async () => {
+    add('finished', 'done');
+    consumedWake('ask');
+    touchAsk(new Date('2026-01-02').getTime());
+    expect(await sweep()).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+  });
+
+  test('a newer consumed input with no terminal result keeps the ask open', async () => {
+    add('finished', 'done');
+    consumedWake('ask');
+    sdk('user', 'new-turn', 30);
+    expect(await sweep()).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    sdk('result', 'new-turn-result', 31);
+    expect(await sweep()).toEqual(['ask']);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'done' });
+  });
+
+  test('an open child ask keeps the parent open', async () => {
+    add('finished', 'done');
+    consumedWake('ask');
+    store.openAsk({
+      id: 'child',
+      parentId: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Child',
+      request: 'Child work',
+      createdAt: 2,
+    });
+    expect(await sweep()).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    store.settleAsk(store.getAsk('child')!, 'done', 'Child done', 3);
+    expect(await sweep()).toEqual(['ask']);
   });
 
   test('a settled ask is left alone', async () => {

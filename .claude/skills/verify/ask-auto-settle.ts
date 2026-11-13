@@ -129,13 +129,14 @@ try {
       .prepare(`INSERT INTO sdk_messages
         (seq, id, session_id, message_type, sdk_message, timestamp, sdk_uuid, consumed_seq,
          is_terminal, send_status)
-        VALUES (?, ?, ?, ?, ?, '2026-01-01', ?, ?, ?, 'consumed')`)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'consumed')`)
       .run(
         ++seq,
         `m${seq}`,
         root,
         kind,
         JSON.stringify({ type: kind }),
+        new Date(at + 1000 + seq).toISOString(),
         uuid,
         consumedSeq,
         kind === 'result' ? 1 : 0
