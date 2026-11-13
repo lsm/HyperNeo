@@ -2339,7 +2339,7 @@ describe('neo todo runner', () => {
     expect(starts).toEqual(['work.start', 'work.start', 'work.start']);
     expect(result.ok && result.todo).toMatchObject({
       state: 'blocked',
-      blockedReason: 'Could not start: unavailable: login expired',
+      blockedReason: 'unavailable: login expired',
     });
     expect(
       store.listQuestions('ask').map(({ state, cause, todos, options, text }) => ({
@@ -2355,7 +2355,7 @@ describe('neo todo runner', () => {
         cause: 'retries_exhausted',
         todos: [todo.id],
         options: ['Retry', 'Mark done', 'Remove'],
-        text: '"Rows" could not start after 2 automatic retries: Could not start: unavailable: login expired. Retry, mark done, or remove?',
+        text: '"Rows" could not start after 2 automatic retries: unavailable: login expired. Retry, mark done, or remove?',
       },
     ]);
     expect(told).toHaveLength(1);
@@ -2999,6 +2999,49 @@ describe('blocked todos', () => {
       blockedBy: null,
       blockedReason: null,
     });
+  });
+
+  test('each failure streak gets its own two automatic retries', async () => {
+    const { db, store, add } = setup();
+    const todo = add();
+    const sessions = new NeoTodoSessionRepository(db);
+    const outcomes: boolean[] = [false, true, false, false, false, false, false, false];
+    let starts = 0;
+    const flaky = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
+      store,
+      sessions,
+      invoke: async (_caller, name) => {
+        if (name !== 'work.start') return completed({ ok: true, value: { status: 'failed' } });
+        return outcomes[starts++]
+          ? completed({ ok: true, value: { ref, receipt, lastActivityAt: 1_000 } })
+          : completed({ ok: false, reason: 'unavailable', detail: 'login expired' });
+      },
+      packs: () => [],
+      tell: async () => {},
+      changed: () => {},
+    });
+    await flaky.start(todo.id);
+    expect([starts, store.getTodo(todo.id)?.state]).toEqual([2, 'doing']);
+    store.updateTodo(
+      store.getTodo(todo.id)!,
+      { state: 'failed', reason: 'Worker died' },
+      Date.now()
+    );
+    db.prepare('UPDATE neo_todo_sessions SET ref = NULL WHERE todo_id = ?').run(todo.id);
+    await flaky.retry(todo.id);
+    expect(starts).toBe(5);
+    const [card] = store.listQuestions('ask');
+    expect(card).toMatchObject({ cause: 'retries_exhausted', state: 'open' });
+    store.answerQuestion(card, ['Retry'], 'button', Date.now());
+    await flaky.retry(todo.id);
+    expect(starts).toBe(8);
+    expect(
+      store
+        .listQuestions('ask')
+        .filter((q) => q.state === 'open' && q.cause === 'retries_exhausted')
+    ).toHaveLength(1);
   });
 
   test('a todo whose retries ran out starts again on retry once its card is answered', async () => {

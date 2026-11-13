@@ -22,7 +22,7 @@ const row = (id: string, patch: Partial<NeoTodo> = {}) => ({
   id,
   title: id,
   state: 'blocked' as NeoTodo['state'],
-  blockedReason: 'Could not start: host unreachable',
+  blockedReason: 'host unreachable',
   updatedAt: 5,
   ...patch,
 });
@@ -55,13 +55,13 @@ describe('planNeoRetriesCard', () => {
     expect(plan?.draft).toMatchObject({
       todos: ['first', 'second'],
       options: ['Retry', 'Mark done', 'Remove'],
-      text: '"first", "second" could not start after 2 automatic retries: Could not start: host unreachable. Retry, mark done, or remove?',
+      text: '"first", "second" could not start after 2 automatic retries: host unreachable. Retry, mark done, or remove?',
     });
   });
 
   test('a different failure gets its own card, and a covered todo gets none', () => {
     const first = row('first');
-    const other = row('other', { blockedReason: 'Could not start: login expired' });
+    const other = row('other', { blockedReason: 'login expired' });
     const open = card({ cause: 'retries_exhausted', todos: ['first'] });
     expect(planNeoRetriesCard(other, [first, other], [open])).toMatchObject({
       replaces: null,
