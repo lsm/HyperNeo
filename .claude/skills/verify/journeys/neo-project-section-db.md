@@ -16,7 +16,10 @@ the runner retains evidence and removes daemon data after shutdown.
 
 The regression must be run and committed before changing production code. Before
 mode restores the original operation and repository from origin/dev temporarily;
-never edit these files or run another proof concurrently. Fixed mode requires
+never edit these files or run another proof concurrently. Before overwriting, the
+runner copies the originals into the run directory and records a
+restore-in-progress marker; the next run heals the worktree from those copies or
+the recorded baseline if a hard kill skipped the finally restore. Fixed mode requires
 zero project/hierarchy/workspace SQL on main during section RPCs. Snapshot reads
 and fixture creation are outside measurement.
 

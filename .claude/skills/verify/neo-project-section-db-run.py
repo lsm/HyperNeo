@@ -37,6 +37,16 @@ while saved.exists():
     saved = base / f'{name}-{attempt}'
     attempt += 1
 saved.mkdir()
+marker = base / 'restore-in-progress.json'
+pending = None
+if marker.is_file():
+    pending = json.loads(marker.read_text())
+    for rel in pending['files']:
+        backup = Path(pending['originals']) / rel
+        content = backup.read_bytes() if backup.is_file() else subprocess.check_output(
+            ['git', 'show', f"{pending['baseline']}:{rel}"], cwd=repo)
+        (repo / rel).write_bytes(content)
+    marker.unlink()
 run = Path(tempfile.mkdtemp(prefix='neo-project-section-proof-'))
 originals = {}
 baseline = None
@@ -46,10 +56,17 @@ try:
         (run / folder).mkdir()
     if args.mode == 'before':
         baseline = subprocess.check_output(['git', 'rev-parse', 'origin/dev'], cwd=repo, text=True).strip()
+        backup = run / 'originals'
+        files = []
         for name in ['project-tree-operations.ts', 'neo-repository.ts']:
             rel = ('packages/daemon/src/storage/repositories/' if name == 'neo-repository.ts' else 'packages/daemon/src/lib/neo/packs/coding/') + name
             path = repo / rel
             originals[path] = path.read_bytes()
+            (backup / rel).parent.mkdir(parents=True, exist_ok=True)
+            (backup / rel).write_bytes(originals[path])
+            files.append(rel)
+        marker.write_text(json.dumps({'baseline': baseline, 'files': files, 'originals': str(backup)}))
+        for rel, path in ((rel, repo / rel) for rel in files):
             path.write_bytes(subprocess.check_output(['git', 'show', f'{baseline}:{rel}'], cwd=repo))
     env = {'PATH': os.environ['PATH'], 'HOME': str(run / 'home'),
            'TMPDIR': str(run / 'tmp'), 'NODE_ENV': 'test',
@@ -62,6 +79,7 @@ try:
 finally:
     for path, content in originals.items():
         path.write_bytes(content)
+    marker.unlink(missing_ok=True)
     if (run / 'evidence').is_dir():
         shutil.copytree(run / 'evidence', saved, dirs_exist_ok=True)
     if (run / 'proof.log').is_file():

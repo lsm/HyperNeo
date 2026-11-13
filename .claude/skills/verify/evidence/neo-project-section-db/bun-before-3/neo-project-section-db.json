@@ -19,7 +19,7 @@
   "race": [
     {
       "ok": true,
-      "projectId": "7b7a6161-a4cb-4624-9894-7c5ac1cdc644"
+      "projectId": "fb216bb9-051c-4cdf-a10c-88cbf35010a0"
     },
     {
       "ok": false,
@@ -28,11 +28,11 @@
   ],
   "retry": {
     "ok": true,
-    "projectId": "7b7a6161-a4cb-4624-9894-7c5ac1cdc644"
+    "projectId": "fb216bb9-051c-4cdf-a10c-88cbf35010a0"
   },
   "snapshot": [
     {
-      "id": "7b7a6161-a4cb-4624-9894-7c5ac1cdc644",
+      "id": "fb216bb9-051c-4cdf-a10c-88cbf35010a0",
       "title": "Synthetic epic",
       "summary": "Section for https://github.com/synthetic/project/issues/7",
       "context": "",
@@ -43,8 +43,8 @@
         "repo:synthetic/project\u0000a"
       ],
       "revision": 1,
-      "createdAt": 1794559551906,
-      "updatedAt": 1794559551906
+      "createdAt": 1794562574301,
+      "updatedAt": 1794562574301
     },
     {
       "id": "vanish",
@@ -56,20 +56,8 @@
       "homePath": null,
       "repository": "synthetic/project",
       "revision": 1,
-      "createdAt": 1794559551883,
-      "updatedAt": 1794559551883
-    },
-    {
-      "id": "other",
-      "title": "other",
-      "summary": "Retained summary.",
-      "context": "Retained context.",
-      "parentId": null,
-      "epicUrl": null,
-      "homePath": null,
-      "revision": 1,
-      "createdAt": 1794559551731,
-      "updatedAt": 1794559551731
+      "createdAt": 1794562574278,
+      "updatedAt": 1794562574278
     },
     {
       "id": "b",
@@ -81,8 +69,20 @@
       "homePath": null,
       "repository": "synthetic/project",
       "revision": 1,
-      "createdAt": 1794559551730,
-      "updatedAt": 1794559551730
+      "createdAt": 1794562572169,
+      "updatedAt": 1794562572169
+    },
+    {
+      "id": "other",
+      "title": "other",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": null,
+      "epicUrl": null,
+      "homePath": null,
+      "revision": 1,
+      "createdAt": 1794562572169,
+      "updatedAt": 1794562572169
     },
     {
       "id": "a",
@@ -94,13 +94,13 @@
       "homePath": null,
       "repository": "synthetic/project",
       "revision": 1,
-      "createdAt": 1794559551725,
-      "updatedAt": 1794559551725
+      "createdAt": 1794562572160,
+      "updatedAt": 1794562572160
     }
   ],
   "reopened": [
     {
-      "id": "7b7a6161-a4cb-4624-9894-7c5ac1cdc644",
+      "id": "fb216bb9-051c-4cdf-a10c-88cbf35010a0",
       "title": "Synthetic epic",
       "summary": "Section for https://github.com/synthetic/project/issues/7",
       "context": "",
@@ -111,8 +111,8 @@
         "repo:synthetic/project\u0000a"
       ],
       "revision": 1,
-      "createdAt": 1794559551906,
-      "updatedAt": 1794559551906
+      "createdAt": 1794562574301,
+      "updatedAt": 1794562574301
     },
     {
       "id": "vanish",
@@ -124,20 +124,8 @@
       "homePath": null,
       "repository": "synthetic/project",
       "revision": 1,
-      "createdAt": 1794559551883,
-      "updatedAt": 1794559551883
-    },
-    {
-      "id": "other",
-      "title": "other",
-      "summary": "Retained summary.",
-      "context": "Retained context.",
-      "parentId": null,
-      "epicUrl": null,
-      "homePath": null,
-      "revision": 1,
-      "createdAt": 1794559551731,
-      "updatedAt": 1794559551731
+      "createdAt": 1794562574278,
+      "updatedAt": 1794562574278
     },
     {
       "id": "b",
@@ -149,8 +137,20 @@
       "homePath": null,
       "repository": "synthetic/project",
       "revision": 1,
-      "createdAt": 1794559551730,
-      "updatedAt": 1794559551730
+      "createdAt": 1794562572169,
+      "updatedAt": 1794562572169
+    },
+    {
+      "id": "other",
+      "title": "other",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": null,
+      "epicUrl": null,
+      "homePath": null,
+      "revision": 1,
+      "createdAt": 1794562572169,
+      "updatedAt": 1794562572169
     },
     {
       "id": "a",
@@ -162,8 +162,8 @@
       "homePath": null,
       "repository": "synthetic/project",
       "revision": 1,
-      "createdAt": 1794559551725,
-      "updatedAt": 1794559551725
+      "createdAt": 1794562572160,
+      "updatedAt": 1794562572160
     }
   ],
   "mainSql": [
