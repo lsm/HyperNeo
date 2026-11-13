@@ -27,6 +27,6 @@ function stoppedBy(result: Message, error: string): boolean {
   try {
     return (JSON.parse(error) as { uuid?: unknown }).uuid === result.uuid;
   } catch {
-    return error.startsWith('{') && error.length >= STORED_ERROR_LIMIT && result.is_error === true;
+    return error.length === STORED_ERROR_LIMIT && JSON.stringify(result).startsWith(error);
   }
 }
