@@ -283,6 +283,37 @@ describe('daemon cards in the store', () => {
     expect(store.listQuestions('ask').find((q) => q.id === overdue.id)?.state).toBe('retired');
   });
 
+  test('a refused card action runs once and tells Neo once, not on every refresh', async () => {
+    await sweep(DAY);
+    const [overdue] = open();
+    store.answerQuestion(overdue, ['Remove'], 'button', DAY + 1);
+    const calls: string[] = [];
+    const told: { key: string; note: unknown }[] = [];
+    const deliver = createNeoQuestionAnswerDelivery(
+      store,
+      new NeoTodoSessionRepository(db),
+      async (_caller, name) => {
+        calls.push(name);
+        return { kind: 'completed', value: { ok: false, reason: 'stop_failed: synthetic' } };
+      },
+      async (_session, key, note) => {
+        told.push({ key, note });
+      },
+      async (todo) => todo,
+      () => {}
+    );
+    await deliver(overdue.id);
+    await deliver();
+    await deliver();
+    expect(calls).toEqual(['neo.todo.remove']);
+    expect(told).toEqual([
+      {
+        key: `neo-card-refused:${overdue.id}:check`,
+        note: 'The human answered "Remove" on the card for "Merged", but neo.todo.remove was refused: stop_failed: synthetic. Settle the todo or ask the human again.',
+      },
+    ]);
+  });
+
   test('the daemon carries out the human answer on its card', async () => {
     await sweep(DAY);
     const [overdue] = open();
