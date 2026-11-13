@@ -172,8 +172,7 @@ export function neoCheckOverdue(
       (card) =>
         card.cause === NEO_CHECK_OVERDUE &&
         card.state === 'answered' &&
-        card.todos.includes(todo.id) &&
-        [card.answer].flat().includes(KEEP_WAITING)
+        card.todos.includes(todo.id)
     )
     .reduce((at, card) => Math.max(at, card.answeredAt ?? 0), todo.createdAt);
   return now - waited >= NEO_CHECK_DEADLINE_MS;

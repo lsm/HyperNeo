@@ -2107,7 +2107,7 @@ describe('neo todo runner', () => {
       input: { adapter: 'hyperneo', title: 'HyperNeo repo 1' },
     });
     expect(String(calls[0].input.message)).toContain('Build the rows.');
-    expect(sessions.readRef(todo.id)).toBeNull();
+    expect(sessions.readRef(todo.id)).toEqual(ref);
     expect(await runner.start(todo.id)).toEqual({
       ok: false,
       reason: 'already_started: this todo is doing.',
@@ -2256,7 +2256,7 @@ describe('neo todo runner', () => {
       try {
         await runner.refresh(() => {});
         expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', reason: null });
-        expect(sessions.readRef(todo.id)).toBeNull();
+        expect(sessions.readRef(todo.id)).toEqual(ref);
         expect(told).toEqual([]);
       } finally {
         read.mockRestore();

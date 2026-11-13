@@ -110,10 +110,10 @@ try {
   assert.equal(openCards('retries_exhausted').length, 1);
   const manual = await neo('neo.todo.retry', { todoId: failing });
   const [second, ...extraSecond] = openCards('retries_exhausted');
-  const states = cards('retries_exhausted').map((card) => card.state);
+  const states = cards('retries_exhausted').map((card) => [card.id === exhausted.id ? 'first' : 'next', card.state]).sort();
   step('failed start: a Neo retry retires the card, and its new failures get two fresh retries and a new card', { manual, states, retries: (app!.db.getDatabase().prepare('SELECT retries FROM neo_todo_sessions WHERE todo_id = ?').get(failing) as { retries: number }).retries });
   assert.equal(manual.ok, true, JSON.stringify(manual));
-  assert.deepEqual(states, ['retired', 'open']);
+  assert.deepEqual(states, [['first', 'retired'], ['next', 'open']]);
   assert.deepEqual(extraSecond, []);
   await human(second.id, 'Remove');
   await settle(failing, 'removed');
