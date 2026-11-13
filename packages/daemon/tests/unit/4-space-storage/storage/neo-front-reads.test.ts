@@ -121,9 +121,8 @@ test('todo detail carries the worker report, evidence and updated time', async (
     evidence: '{"kind":"proof","ref":"synthetic"}',
     updatedAt: 99,
   });
-  const { report } = detail as unknown as { report: string };
-  expect(report).toHaveLength(4000);
-  expect(report.startsWith('Summary.')).toBe(true);
+  expect(detail.report).toHaveLength(4000);
+  expect(detail.report?.startsWith('Summary.')).toBe(true);
   expect(await read('todos', { id: 'item-02' })).toMatchObject({
     report: null,
     evidence: null,

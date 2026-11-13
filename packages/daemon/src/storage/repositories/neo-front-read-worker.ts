@@ -29,6 +29,9 @@ type RecordView = {
   state?: string;
   status?: string | null;
   blocker?: string | null;
+  report?: string | null;
+  evidence?: string | null;
+  updatedAt?: number;
   text?: string;
   options?: string[] | null;
 };
