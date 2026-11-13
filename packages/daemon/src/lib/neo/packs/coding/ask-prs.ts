@@ -94,17 +94,21 @@ export function codingAskMatter(
 ): string | null {
   const text = `${ask.title}\n${ask.request}`;
   const only = (matches: readonly string[]) => (matches.length === 1 ? matches : []);
+  const key = (repo: string, number: string) => {
+    const [owner, name] = repo.split('/');
+    return refKey({ owner, repo: name, number: Number(number) });
+  };
   const named = new Set([
     ...[...text.matchAll(REF_URL), ...text.matchAll(REF_NAME)].map(([, owner, repo, number]) =>
       refKey({ owner, repo, number: Number(number) })
     ),
     ...[...text.matchAll(REF_SHORT)].flatMap(([, name, number]) =>
       only(repos.filter((repo) => repo.split('/')[1]?.toLowerCase() === name.toLowerCase())).map(
-        (repo) => `${repo}#${number}`.toLowerCase()
+        (repo) => key(repo, number)
       )
     ),
     ...[...text.matchAll(REF_BARE)].flatMap(([, number]) =>
-      only(repos).map((repo) => `${repo}#${number}`.toLowerCase())
+      only(repos).map((repo) => key(repo, number))
     ),
   ]);
   return named.size === 1 ? [...named][0] : null;
