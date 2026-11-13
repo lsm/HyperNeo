@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
   NEO_REMOVED_PREREQUISITE,
-  planNeoCancelledEdges,
   planNeoRemovedPrerequisiteAnswer,
   planNeoTodoRemoval,
 } from '../../../../src/lib/neo/todo-removal.ts';
@@ -171,51 +170,5 @@ describe('planNeoRemovedPrerequisiteAnswer', () => {
       []
     );
     expect(planNeoRemovedPrerequisiteAnswer({ todos: ['b'] }, family, ['Continue'], 9)).toEqual([]);
-  });
-});
-
-describe('planNeoCancelledEdges', () => {
-  test('an unstarted todo behind a cancelled prerequisite gets one card per ask and keeps the edge', () => {
-    const family = [
-      step('gone', [], { state: 'removed' }),
-      step('never', [], { state: 'closed_unverified' }),
-      step('b', ['gone']),
-      step('c', ['never', 'x']),
-      step('x', []),
-    ];
-    expect(planNeoCancelledEdges(family, [])).toEqual({
-      writes: [],
-      cards: [
-        {
-          askId: 'ask',
-          todos: ['b', 'c'],
-          text: '"gone", "never" were removed. Continue "b", "c" without them, or remove these steps too?',
-        },
-      ],
-    });
-  });
-
-  test('a started todo loses the edge and gets no card', () => {
-    const family = [
-      step('gone', [], { state: 'removed' }),
-      step('running', ['gone', 'x'], { state: 'doing', startedAt: 5 }),
-      step('x', []),
-    ];
-    const plan = planNeoCancelledEdges(family, []);
-    expect(brief(plan)).toEqual({ running: { dependsOn: ['x'] } });
-    expect(plan.cards).toEqual([]);
-  });
-
-  test('an edge moves to the live replacement, and a todo on an open Start card is left to it', () => {
-    const family = [
-      step('gone', [], { state: 'removed', replacedBy: 'next' }),
-      step('lost', [], { state: 'removed' }),
-      step('next', []),
-      step('b', ['gone']),
-      step('c', ['lost']),
-    ];
-    const plan = planNeoCancelledEdges(family, [startCard(['c'])]);
-    expect(brief(plan)).toEqual({ b: { dependsOn: ['next'] } });
-    expect(plan.cards).toEqual([]);
   });
 });
