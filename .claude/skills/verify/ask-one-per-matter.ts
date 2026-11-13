@@ -59,12 +59,12 @@ try {
     db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run('repo:synthetic/proof', project.id);
     const full = await invoke('project ask for the full form', 'neo.ask.open', { projectId: project.id, title: 'Review nine', request: 'Review https://github.com/synthetic/proof/pull/9' });
     assert.equal(full.ok, true, JSON.stringify(full));
-    for (const request of ['Merge PR #9 once green', 'Deploy proof#9', 'Deploy Proof#9'])
+    for (const request of ['Merge PR #9 once green', 'Deploy proof#9', 'Deploy Proof#9', 'Merge #009', 'Deploy proof#009'])
       assert.match((await invoke(`project ask for "${request}"`, 'neo.ask.open', { projectId: project.id, title: `Short ${request}`, request })).reason, new RegExp(`^ask_open: .*\\(${full.ask.id}\\) is already open for synthetic/proof#9`));
     const unbound = await invoke('ask with no project for "#9"', 'neo.ask.open', { title: 'Loose nine', request: 'Merge #9' });
     assert.equal(unbound.ok, true, JSON.stringify(unbound));
     const next = await invoke('project ask for "#10"', 'neo.ask.open', { projectId: project.id, title: 'Ten', request: 'Merge #10' });
     assert.equal(next.ok, true, JSON.stringify(next));
   } finally { await app.cleanup(); }
-  console.log('PASS: the real daemon refuses a second open ask for the same pull request with the first ask’s id, also when it is written proof#N, #N or PR #N in a project bound to that repository, and opens it once the first is settled.');
+  console.log('PASS: the real daemon refuses a second open ask for the same pull request with the first ask’s id, also when it is written proof#N, #N, PR #N or with leading zeros in a project bound to that repository, and opens it once the first is settled.');
 } finally { globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
