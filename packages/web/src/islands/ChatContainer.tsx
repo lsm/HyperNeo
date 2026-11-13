@@ -75,7 +75,11 @@ import { type SearchMessageLoadTarget, searchHighlightMessageIdSignal } from '..
 import { connectionState, globalSettings } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import type { StructuredError } from '../types/error.ts';
-import { type StoppedEpisode, stoppedErrorCardUuid } from '../lib/stopped-error-card.ts';
+import {
+  type StoppedEpisode,
+  stopBannerHidden,
+  stoppedErrorCardUuid,
+} from '../lib/stopped-error-card.ts';
 import { ErrorCategory } from '../types/error.ts';
 
 export function shouldBlockForPendingQuestion(
@@ -1055,8 +1059,12 @@ export default function ChatContainer({
       )}
 
       {error &&
-        !stoppedCardUuid &&
-        !(stoppedEpisode?.failed && (!messagesLoaded || !messages.length)) && (
+        !stopBannerHidden(stoppedEpisode, stoppedCardUuid, {
+          loaded: messagesLoaded,
+          tooLarge: store.messagesTooLarge.value,
+          stored: store.sdkMessages.value.length,
+          shown: messages.length,
+        }) && (
           <ErrorBanner
             error={error}
             hasDetails={!!storeError?.details}

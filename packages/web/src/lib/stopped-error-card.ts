@@ -30,3 +30,13 @@ function stoppedBy(result: Message, error: string): boolean {
     return error.length === STORED_ERROR_LIMIT && JSON.stringify(result).startsWith(error);
   }
 }
+
+export function stopBannerHidden(
+  episode: StoppedEpisode | undefined,
+  cardUuid: string | undefined,
+  load: { loaded: boolean; tooLarge: boolean; stored: number; shown: number }
+): boolean {
+  if (cardUuid) return true;
+  if (!episode?.failed) return false;
+  return load.loaded ? load.stored > 0 && load.shown === 0 : !load.tooLarge;
+}
