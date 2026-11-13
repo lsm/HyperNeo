@@ -379,6 +379,38 @@ describe('daemon cards in the store', () => {
     expect(told).toEqual([]);
   });
 
+  test('the answer and a refresh that overlap carry out a card once', async () => {
+    await sweep(DAY);
+    const [overdue] = open();
+    store.answerQuestion(overdue, ['Remove'], 'button', DAY + 1);
+    let release!: () => void;
+    const held = new Promise<void>((done) => {
+      release = done;
+    });
+    const calls: string[] = [];
+    const deliver = () =>
+      createNeoQuestionAnswerDelivery(
+        store,
+        new NeoTodoSessionRepository(db),
+        async (_caller, name) => {
+          calls.push(name);
+          await held;
+          return { kind: 'completed', value: { ok: true } };
+        },
+        async () => {},
+        async (todo) => todo,
+        () => {}
+      );
+    const answering = deliver()(overdue.id);
+    await new Promise((done) => setTimeout(done, 0));
+    const refreshing = deliver()();
+    await new Promise((done) => setTimeout(done, 0));
+    release();
+    await Promise.all([answering, refreshing]);
+    await deliver()();
+    expect(calls).toEqual(['neo.todo.remove']);
+  });
+
   test('the daemon carries out the human answer on its card', async () => {
     await sweep(DAY);
     const [overdue] = open();
