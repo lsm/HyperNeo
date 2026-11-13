@@ -733,7 +733,7 @@
     transition: none;
   }
 }
-@media (min-width: 1440px) {
+@media (min-width: 2400px) {
   .neo-shell.neo-preview-focus {
     --artifact-preview-width: var(--neo-preview-width, 44%);
   }

@@ -863,8 +863,8 @@ describe('card reply notice navigation', () => {
   it.each([
     [900, false],
     [900, true],
-    [1500, false],
-    [1500, true],
+    [2600, false],
+    [2600, true],
   ] as const)(
     'opens a card without discarding preview at %s reference=%s',
     async (width, reference) => {
@@ -884,11 +884,11 @@ describe('card reply notice navigation', () => {
           )
         );
         const preview = screen.getByRole('dialog');
-        expect(work.hidden).toBe(width < 1440);
+        expect(work.hidden).toBe(width < 2400);
         fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
         await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
         expect(work.hidden).toBe(false);
-        if (reference || width >= 1440)
+        if (reference || width >= 2400)
           expect(artifactPreviewStack.value.at(-1)?.kind).toBe(
             reference ? 'reference' : 'artifact'
           );
