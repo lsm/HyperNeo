@@ -2118,18 +2118,21 @@ test('a hand-off landing after the open set is read leaves the input unfailed', 
     )
     .run(conversationId, id);
   const call = service.db.gateway.call.bind(service.db.gateway);
-  let reads = 0;
+  let raced = false;
   vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
-    if (args[1] === 'get' && args[3] === id && ++reads === 3)
+    if (!raced && args[1] === 'failSettled') {
+      raced = true;
       expect(new NeoFrontInputRepository(db.getDatabase()).reserve(conversationId, [id], [])).toBe(
         'reserved'
       );
+    }
     return (call as (...rest: unknown[]) => unknown)(...args);
   }) as never);
 
-  await settleConvoInput(service, job, conversationId, front, id, 'delivery');
+  const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
 
-  expect(reads).toBe(3);
+  expect(raced).toBe(true);
+  expect(settled).toEqual({ delivered: true, outcome: 'handed_off' });
   expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('consumed');
 });
 

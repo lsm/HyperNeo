@@ -1,5 +1,8 @@
 import type { Database } from '../sqlite-compat.ts';
-import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import { ChangeRecorder, defineRepositoryOp } from '../db-gateway/db-op.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { sdkMessageWrites } from './sdk-message-writes.ts';
 import { sdkMessageBodyAt } from './sdk-message-body-read.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
@@ -17,7 +20,10 @@ import {
 } from '../../lib/neo/front-catch-up.ts';
 
 export class NeoFrontInputRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
+  ) {}
 
   get(conversationId: string, messageId: string) {
     const row = this.db
@@ -201,6 +207,39 @@ export class NeoFrontInputRepository {
     return messageIds.reduce((count, id) => count + run.run(conversationId, id).changes, 0);
   }
 
+  failSettled(
+    conversationId: string,
+    sessionId: string,
+    messageId: string,
+    origin: { sessionId: string; message: SDKUserMessage }
+  ): 'failed' | 'delivered' | 'handed_off' {
+    const changes = new ChangeRecorder();
+    const outcome = this.db.transaction(() => {
+      if (this.get(conversationId, messageId)?.owner === 'neo') return 'handed_off' as const;
+      const sdk = new SDKMessageRepository(this.db);
+      const status = sdk.getUserSendStatus(origin.sessionId, messageId);
+      if (status !== null && status !== 'failed') return 'delivered' as const;
+      this.release(conversationId, [messageId]);
+      sdkMessageWrites.run(
+        this.db,
+        { method: 'markDeliveryFailedByUuidInclusive', args: [sessionId, messageId] },
+        changes
+      );
+      if (status === null)
+        sdkMessageWrites.run(
+          this.db,
+          {
+            method: 'saveUserMessage',
+            args: [origin.sessionId, origin.message, 'failed'],
+          },
+          changes
+        );
+      return 'failed' as const;
+    })();
+    for (const change of changes.changes) this.changes?.notifyChange(change.table, change.scope);
+    return outcome;
+  }
+
   reserve(
     conversationId: string,
     messageIds: readonly string[],
@@ -239,7 +278,7 @@ export const neoFrontInputWrites = defineRepositoryOp(
   'neo.front.inputs',
   'write',
   NeoFrontInputRepository,
-  ['claim', 'claimUnowned', 'release', 'reserve']
+  ['claim', 'claimUnowned', 'release', 'reserve', 'failSettled']
 );
 
 export const neoFrontDeliveryWrites = defineRepositoryOp(

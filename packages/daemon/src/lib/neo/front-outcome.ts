@@ -4,7 +4,6 @@ import {
   neoFrontInputReads,
   neoFrontInputWrites,
 } from '../../storage/repositories/neo-front-input-worker.ts';
-import { sdkMessageWrites } from '../../storage/repositories/sdk-message-writes.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import type { NeoService } from './service.ts';
 
@@ -66,47 +65,32 @@ export async function settleConvoInput(
     open.push(id);
   }
   const markFailed = async (id: string) => {
-    const input = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, id);
-    if (input?.owner === 'neo') return;
     const failedAsk = id === messageId ? ask : service.asks.find(conversationId, id);
-    if (!failedAsk) return;
+    if (!failedAsk) return 'settled' as const;
     const origin = failedAsk.askOrigin.sessionId;
-    const delivered = sdk.getUserSendStatus(origin, id);
-    if (delivered !== null && delivered !== 'failed') return;
-    await service.db.gateway.call(
-      sdkMessageWrites,
-      'markDeliveryFailedByUuidInclusive',
+    return service.db.gateway.call(
+      neoFrontInputWrites,
+      'failSettled',
+      conversationId,
       sessionId,
-      id
-    );
-    if (delivered !== null) return;
-    await service.db.gateway.call(
-      sdkMessageWrites,
-      'saveUserMessage',
-      origin,
-      neoIntakeMessage(
-        { ...failedAsk, sessionId: origin },
-        origin,
-        readNeoReply(failedAsk.replyTo, service.todos),
-        null,
-        undefined,
-        failedAsk.previewContext ?? null
-      ),
-      'failed'
+      id,
+      {
+        sessionId: origin,
+        message: neoIntakeMessage(
+          { ...failedAsk, sessionId: origin },
+          origin,
+          readNeoReply(failedAsk.replyTo, service.todos),
+          null,
+          undefined,
+          failedAsk.previewContext ?? null
+        ),
+      }
     );
   };
-  if (!open.includes(messageId)) {
-    const self = await service.db.gateway.call(
-      neoFrontInputReads,
-      'get',
-      conversationId,
-      messageId
-    );
-    if (self?.owner === 'neo') return { delivered: true, outcome: 'handed_off' };
-    await markFailed(messageId);
-    return { delivered: true, outcome: 'failed' };
+  let self = 'failed';
+  for (const id of open) {
+    const outcome = await markFailed(id);
+    if (id === messageId) self = outcome;
   }
-  await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, open);
-  for (const id of open) await markFailed(id);
-  return { delivered: true, outcome: 'failed' };
+  return { delivered: true, outcome: self === 'handed_off' ? 'handed_off' : 'failed' };
 }
