@@ -1287,7 +1287,11 @@ export class NeoAskTodoRepository {
           AND (gone.state = 'removed' OR (gone.state = 'closed_unverified' AND gone.started_at IS NULL)))`)
       .all() as { id: string }[];
     return candidates.flatMap(({ id }) =>
-      neoTodosAwaitingNeoDecision(this.listFamilyTodos(id), this.getAsk(id), this.listQuestions(id))
+      neoTodosAwaitingNeoDecision(
+        this.listFamilyTodos(id),
+        this.getAsk(id),
+        this.familyQuestions(id)
+      )
     );
   }
 

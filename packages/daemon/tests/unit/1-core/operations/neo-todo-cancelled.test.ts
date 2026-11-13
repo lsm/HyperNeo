@@ -636,6 +636,7 @@ describe('cancelled prerequisites', () => {
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
       const filed = store.gateQuestions(second).find((q) => q.cause === 'removed_prerequisite');
       expect(filed).toMatchObject({ askId: root.ask.id, state: 'open', todos: [f.id, a.id] });
+      expect(store.listAwaitingNeoDecision().map((todo) => todo.id)).not.toContain(f.id);
     } finally {
       db.close();
     }
