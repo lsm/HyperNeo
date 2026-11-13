@@ -8169,7 +8169,7 @@ describe('QueryRunner', () => {
       });
       (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
         (arg: { options?: Record<string, unknown> }) => {
-          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)({});
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)?.({});
           return {
             close: () => {},
             [Symbol.asyncIterator]: async function* () {
@@ -8179,18 +8179,17 @@ describe('QueryRunner', () => {
           } as unknown as QueryLike;
         }
       );
-      mockSession.workspacePath = undefined;
+      mockSession.workspacePath = null;
 
       let persisted = '';
       mockDb.updateSession = mock(async (_id: string, update: { processingState?: string }) => {
         if (update.processingState !== undefined) persisted = update.processingState;
         return mockSession;
       }) as unknown as Database['updateSession'];
-      const ctx = createContext();
-      const stateManager = new ProcessingStateManager(mockSession.id, ctx.internalEventBus, mockDb);
+      const stateManager = new ProcessingStateManager(mockSession.id, mockInternalEventBus, mockDb);
       stateManager.noteQueryOwnerGeneration(1);
       await stateManager.setProcessing('synthetic-turn', 'thinking');
-      ctx.stateManager = stateManager;
+      const ctx = createContext({ stateManager });
       ctx.onSDKMessage = mock(async () => {
         notifyFirstFrame();
       });

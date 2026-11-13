@@ -1304,10 +1304,10 @@ export class QueryRunner {
             ),
             abortPromise.then(() => ({ kind: 'abort' as const })),
           ];
+          if (!processExited) {
+            race.push(processExitPromise.then(() => ({ kind: 'exit' as const })));
+          }
           if (!firstMessageArrived) {
-            if (!processExited) {
-              race.push(processExitPromise.then(() => ({ kind: 'exit' as const })));
-            }
             if (!nudgeSent && !processExited) {
               race.push(nudgePromise.then(() => ({ kind: 'nudge' as const })));
             }
@@ -1429,6 +1429,11 @@ export class QueryRunner {
 
           if (winner.kind === 'exit') {
             processExited = true;
+            if (firstMessageArrived) {
+              throw new Error(
+                `SDK process exited before the turn result (code=${processExitInfo.code}, signal=${processExitInfo.signal})`
+              );
+            }
             if (drainTimer === null) {
               drainTimer = setTimeout(() => resolveDrain(), RETRY_EXIT_TIMEOUT_MS);
             }
