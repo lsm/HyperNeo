@@ -84,13 +84,13 @@ function neoHumanInputNote(listening: boolean): string {
 }
 
 const listeningInput = (superpipe({})('neo.input.listening') as PipelineAPI)
-  .input(['loaded', 'listening'])
+  .input(['loaded', 'listening', 'acknowledge'])
   .pipe(
-    (loaded: DeliveryLoadResult, listening: boolean) =>
+    (loaded: DeliveryLoadResult, listening: boolean, acknowledge: boolean) =>
       `[listening: ${listening ? 'yes' : 'no'}]${
-        loaded.inputKind === 'human' ? `\n${neoHumanInputNote(listening)}` : ''
+        acknowledge && loaded.inputKind === 'human' ? `\n${neoHumanInputNote(listening)}` : ''
       }`,
-    ['loaded', 'listening'],
+    ['loaded', 'listening', 'acknowledge'],
     'fact'
   )
   .pipe(
@@ -104,7 +104,11 @@ const listeningInput = (superpipe({})('neo.input.listening') as PipelineAPI)
     ['loaded', 'fact'],
     'result'
   )
-  .end('result') as (loaded: DeliveryLoadResult, listening: boolean) => DeliveryLoadResult;
+  .end('result') as (
+  loaded: DeliveryLoadResult,
+  listening: boolean,
+  acknowledge: boolean
+) => DeliveryLoadResult;
 
 const isSlashCommand = (content: DeliveryLoadResult['content']) => {
   const text =
@@ -146,7 +150,8 @@ export class NeoSpeech {
     private readonly canReadSession: (sessionId: string) => boolean = isNeo,
     private readonly modeNote?: (sessionId: string) => string | undefined,
     private readonly canSay: (sessionId: string) => boolean = isNeo,
-    private readonly speechSession: (sessionId: string) => string = (id) => id
+    private readonly speechSession: (sessionId: string) => string = (id) => id,
+    private readonly handOffMode?: (sessionId: string) => boolean
   ) {
     this.audio = new NeoSpeechAudio(
       (client, data) => this.send(client, data),
@@ -270,7 +275,7 @@ export class NeoSpeech {
   prepareInput(sessionId: string, loaded: DeliveryLoadResult): DeliveryLoadResult {
     if (isSlashCommand(loaded.content)) return loaded;
     const input = this.isNeo(sessionId)
-      ? listeningInput(loaded, this.listeners.has(sessionId))
+      ? listeningInput(loaded, this.listeners.has(sessionId), !this.handOffMode?.(sessionId))
       : loaded;
     const note = this.modeNote?.(sessionId);
     return note

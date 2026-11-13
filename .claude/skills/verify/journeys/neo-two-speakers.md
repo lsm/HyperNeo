@@ -15,8 +15,9 @@ again and still reports `started: true`, and the reserve enqueues the input only
 once. A reply that carries two `replyTo` IDs hands off both inputs. Neo then
 publishes its answer with the original `replyTo` through
 `neo.publication.publish`, and the stored row records `publishedBy: 'neo'`. The
-full session's prompt carries no instruction to acknowledge before working, and
-single mode still gets its per-input note. Neo speech must pass the speaker gate
+full session's prompt carries no instruction to acknowledge before working, no
+per-input acknowledgment note reaches it while dual mode is on, and single mode
+still gets that note. Neo speech must pass the speaker gate
 (it stops at `voice_replies_off` because no client listens). The input settles as
 handed off.
 

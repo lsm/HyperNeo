@@ -2010,6 +2010,10 @@ test('the full session prompt carries no dual-mode acknowledgment rule', () => {
 test('the per-input note stays for single mode and carries no acknowledgment in dual mode', async () => {
   await deliveredConvoInput();
   const loaded = { content: 'Hello', sendStatus: 'submitted', inputKind: 'human' } as const;
+  expect(service.speech.prepareInput(root, { ...loaded }).content).not.toContain(
+    'Before time-consuming work'
+  );
+  await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
   expect(service.speech.prepareInput(root, { ...loaded }).content).toContain(
     'Before time-consuming work, publish one short reply first'
   );
