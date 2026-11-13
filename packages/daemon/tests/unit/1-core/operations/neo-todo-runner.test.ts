@@ -2107,7 +2107,7 @@ describe('neo todo runner', () => {
       input: { adapter: 'hyperneo', title: 'HyperNeo repo 1' },
     });
     expect(String(calls[0].input.message)).toContain('Build the rows.');
-    expect(sessions.readRef(todo.id)).toEqual(ref);
+    expect(sessions.readRef(todo.id)).toBeNull();
     expect(await runner.start(todo.id)).toEqual({
       ok: false,
       reason: 'already_started: this todo is doing.',
@@ -2256,7 +2256,7 @@ describe('neo todo runner', () => {
       try {
         await runner.refresh(() => {});
         expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', reason: null });
-        expect(sessions.readRef(todo.id)).toEqual(ref);
+        expect(sessions.readRef(todo.id)).toBeNull();
         expect(told).toEqual([]);
       } finally {
         read.mockRestore();
@@ -3042,6 +3042,55 @@ describe('blocked todos', () => {
         .listQuestions('ask')
         .filter((q) => q.state === 'open' && q.cause === 'retries_exhausted')
     ).toHaveLength(1);
+  });
+
+  test('a send that keeps failing after its identity is read still ends on one retries card', async () => {
+    const { db, store } = setup();
+    const sessions = new NeoTodoSessionRepository(db);
+    const todo = store.addTodo(
+      'sent',
+      'ask',
+      {
+        approvedAt: 1,
+        dependsOn: [],
+        title: 'Sent',
+        doneWhen: 'Done',
+        check: null,
+        instruction: 'Do it',
+        named: null,
+      },
+      1
+    );
+    sessions.create(todo.id, { verb: 'send', ref });
+    const told: string[] = [];
+    let sends = 0;
+    const runner = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
+      store,
+      sessions,
+      invoke: async (_caller, name) => {
+        if (name !== 'work.send')
+          return completed({
+            ok: true,
+            value: { status: 'done', lastActivityAt: 1_000, model: 'opus', effort: 'high' },
+          });
+        sends++;
+        return completed({ ok: false, reason: 'unavailable', detail: 'login expired' });
+      },
+      packs: () => [],
+      tell: async (_ask, _todo, note) => {
+        told.push(note);
+      },
+      changed: () => {},
+    });
+    await runner.start(todo.id);
+    expect(sessions.readRef(todo.id)).toBeNull();
+    expect([sends, store.getTodo(todo.id)?.state]).toEqual([3, 'blocked']);
+    expect(store.listQuestions('ask').map((q) => [q.cause, q.state, q.todos])).toEqual([
+      ['retries_exhausted', 'open', [todo.id]],
+    ]);
+    expect(told).toHaveLength(1);
   });
 
   test('a todo whose retries ran out starts again on retry once its card is answered', async () => {

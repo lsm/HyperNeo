@@ -132,6 +132,18 @@ describe('neoCheckOverdue', () => {
     expect(neoCheckOverdue(todo, [waited], 2 * DAY - 1)).toBe(false);
     expect(neoCheckOverdue(todo, [waited], 2 * DAY)).toBe(true);
   });
+
+  test('a free reply to the overdue card also restarts the clock', () => {
+    const replied = card({
+      cause: 'check_overdue',
+      state: 'answered',
+      todos: ['check'],
+      answer: ['The CI is slow today, give it time'],
+      answeredAt: DAY,
+    });
+    expect(neoCheckOverdue(todo, [replied], 2 * DAY - 1)).toBe(false);
+    expect(neoCheckOverdue(todo, [replied], 2 * DAY)).toBe(true);
+  });
 });
 
 describe('planNeoDaemonCardActions', () => {
