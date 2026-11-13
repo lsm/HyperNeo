@@ -1,6 +1,7 @@
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { z } from 'zod';
+import { neoTodoStorage } from '../../lib/neo/packs/todo-storage.ts';
 import { neoEvidenceRefusal, withAssignedEvidence } from '../../lib/neo/core-todo-checks.ts';
 import { neoUserFolder } from '../../lib/neo/folder.ts';
 import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
@@ -50,7 +51,8 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
         },
         undefined,
         () => changes.notifyChange('neo_questions'),
-        changes
+        changes,
+        neoTodoStorage(db)
       ),
     ['db', 'changes'],
     'store'
