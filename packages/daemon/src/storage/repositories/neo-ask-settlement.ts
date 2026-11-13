@@ -1,5 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import { requireNeoOpenAsk } from '../../lib/neo/todo-operations.ts';
 import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -169,6 +169,62 @@ const settleOutcomeSentence = (todos: readonly NeoTodo[]): string => {
   return sentence ? `${sentence[0]!.toUpperCase()}${sentence.slice(1)}.` : 'No steps recorded.';
 };
 
+type TurnedSnapshot = Snapshot & { questions: NeoQuestion[] };
+
+export function requireNeoAskTurnedSettle(
+  current: TurnedSnapshot | Rejection
+): { value: TurnedSnapshot } | { reason: Rejection } {
+  if ('ok' in current) return { reason: current };
+  if (current.todos.some((todo) => ['todo', 'doing', 'blocked'].includes(todo.state)))
+    return { reason: { ok: false, reason: 'todos_live' } };
+  if (current.questions.some((card) => card.state === 'open'))
+    return { reason: { ok: false, reason: 'card_open' } };
+  return { value: current };
+}
+
+const turnedSettle = (superpipe({})('neo.ask.turned-settle') as PipelineAPI)
+  .input(['store', 'id', 'now', 'changes'])
+  .pipe(
+    (store: NeoAskTodoRepository, id: string) => {
+      const current = snapshot(store, id);
+      return 'ok' in current
+        ? current
+        : requireNeoAskTurnedSettle({ ...current, questions: store.listQuestions(id) });
+    },
+    ['store', 'id'],
+    'result:outcome'
+  )
+  .pipe(
+    (
+      store: NeoAskTodoRepository,
+      current: TurnedSnapshot,
+      now: number,
+      changes: Changes
+    ): string => {
+      const status = current.todos.some((todo) =>
+        ['done', 'closed_unverified'].includes(todo.state)
+      )
+        ? 'done'
+        : 'dropped';
+      const ask = store.settleAsk(
+        current.ask,
+        status,
+        current.ask.outcome ?? settleOutcomeSentence(current.todos),
+        now
+      );
+      changes?.notifyChange('neo_asks');
+      return ask.id;
+    },
+    ['store', 'outcome', 'now', 'changes'],
+    'outcome'
+  )
+  .end('outcome') as (
+  store: NeoAskTodoRepository,
+  id: string,
+  now: number,
+  changes: Changes
+) => string | Rejection;
+
 export const neoAskTurnedSettleWrites = defineDbOp<{ now: number }, string[]>({
   name: 'neo.turnedAskSettles',
   mode: 'write',
@@ -176,17 +232,8 @@ export const neoAskTurnedSettleWrites = defineDbOp<{ now: number }, string[]>({
     const store = new NeoAskTodoRepository(db, undefined, undefined, undefined, changes);
     const settled: string[] = [];
     for (const id of settleReadyAsks(db)) {
-      const ask = store.getAsk(id);
-      if (!ask || ask.status !== 'open') continue;
-      const todos = store.listTodos(id);
-      if (todos.some((todo) => ['todo', 'doing', 'blocked'].includes(todo.state))) continue;
-      if (store.listQuestions(id).some((card) => card.state === 'open')) continue;
-      const status = todos.some((todo) => ['done', 'closed_unverified'].includes(todo.state))
-        ? 'done'
-        : 'dropped';
-      store.settleAsk(ask, status, ask.outcome ?? settleOutcomeSentence(todos), now);
-      changes.notifyChange('neo_asks');
-      settled.push(id);
+      const outcome = turnedSettle(store, id, now, changes);
+      if (typeof outcome === 'string') settled.push(outcome);
     }
     return settled;
   },
