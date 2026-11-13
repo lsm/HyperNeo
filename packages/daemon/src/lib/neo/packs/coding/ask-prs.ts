@@ -32,6 +32,7 @@ export type NeoRefStateReader = (refs: readonly NeoRef[]) => Promise<NeoRefState
 const REF_URL = new RegExp(`https://${GITHUB_REF_PATH.source}`, 'g');
 const REF_NAME = /(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d+)\b/g;
 const REF_BARE = /(?<![\w./#-])#(\d+)\b/g;
+const REF_SHORT = /(?<![\w./-])([\w.-]+)#(\d+)\b/g;
 const NEO_ASK_REF_MAX = 10;
 const NOT_A_REF = /could not resolve to (an issue or pull request|a repository)/i;
 const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:10,includeClosedPrs:true){nodes{url merged mergedAt baseRefName}}}}}}`;
@@ -87,13 +88,25 @@ function neoRefFromUrl(url: string): NeoRef | null {
   return parseGitHubRefUrl(url);
 }
 
-export function codingAskMatter(ask: { title: string; request: string }): string | null {
+export function codingAskMatter(
+  ask: { title: string; request: string },
+  repos: readonly string[] = []
+): string | null {
   const text = `${ask.title}\n${ask.request}`;
-  const named = new Set(
-    [...text.matchAll(REF_URL), ...text.matchAll(REF_NAME)].map(([, owner, repo, number]) =>
+  const only = (matches: readonly string[]) => (matches.length === 1 ? matches : []);
+  const named = new Set([
+    ...[...text.matchAll(REF_URL), ...text.matchAll(REF_NAME)].map(([, owner, repo, number]) =>
       refKey({ owner, repo, number: Number(number) })
-    )
-  );
+    ),
+    ...[...text.matchAll(REF_SHORT)].flatMap(([, name, number]) =>
+      only(repos.filter((repo) => repo.split('/')[1]?.toLowerCase() === name.toLowerCase())).map(
+        (repo) => `${repo}#${number}`.toLowerCase()
+      )
+    ),
+    ...[...text.matchAll(REF_BARE)].flatMap(([, number]) =>
+      only(repos).map((repo) => `${repo}#${number}`.toLowerCase())
+    ),
+  ]);
   return named.size === 1 ? [...named][0] : null;
 }
 

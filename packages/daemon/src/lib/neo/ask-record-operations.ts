@@ -121,11 +121,11 @@ export function requireNeoAskProject(
 }
 
 export function neoAskMatterRefusal(
-  draft: Pick<NeoAsk, 'title' | 'request'>,
-  open: readonly Pick<NeoAsk, 'id' | 'title' | 'request' | 'createdAt'>[],
+  draft: Pick<NeoAsk, 'title' | 'request' | 'projectId'>,
+  open: readonly Pick<NeoAsk, 'id' | 'title' | 'request' | 'projectId' | 'createdAt'>[],
   packs: readonly Pick<NeoPack, 'matter'>[]
 ): string | null {
-  const matter = (ask: Pick<NeoAsk, 'title' | 'request'>) =>
+  const matter = (ask: Pick<NeoAsk, 'title' | 'request' | 'projectId'>) =>
     packs.map((pack) => pack.matter?.(ask)).find(Boolean) ?? null;
   const key = matter(draft);
   const first = key
@@ -292,7 +292,7 @@ export function createNeoAskRecordOperations(
         const taken = current
           ? null
           : neoAskMatterRefusal(
-              input,
+              { ...input, projectId },
               store.listOpenAsks().filter((ask) => ask.sessionId === sessionId),
               policies
             );

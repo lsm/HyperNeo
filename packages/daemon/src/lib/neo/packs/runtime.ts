@@ -117,7 +117,7 @@ export function createNeoService(...args: NeoServiceArgs) {
             },
           },
         },
-        projectRepos: () => configured.repo.allRepositories(),
+        projectRepos: (projectId) => configured.repo.allRepositories(projectId),
       });
       coding.operations = [
         ...(coding.operations ?? []),
