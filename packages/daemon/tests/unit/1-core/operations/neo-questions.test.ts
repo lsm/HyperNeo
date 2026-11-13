@@ -640,6 +640,40 @@ describe('neo.question operations', () => {
     ]);
   });
 
+  test('choice labels map letters to options and persist; invalid labels are refused', async () => {
+    const { call, asked, store, told } = setup();
+    const card = await asked({
+      kind: 'choice',
+      text: 'A keeps the list, B switches to cards. Which approach?',
+      options: ['Switch to cards', 'Keep the list'],
+      labels: ['B', 'A'],
+    });
+    expect(store.getQuestion(card.id)?.labels).toEqual(['B', 'A']);
+    await call('neo.question.answer', { questionId: card.id, answer: 'Switch to cards' }, human);
+    expect(told).toEqual([
+      'The human answered "A keeps the list, B switches to cards. Which approach?": B (Switch to cards).',
+    ]);
+    await expect(
+      call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'choice',
+        text: 'Duplicate?',
+        options: ['One', 'Two'],
+        labels: ['A', 'A'],
+      })
+    ).rejects.toThrow('labels must be distinct uppercase letters.');
+    expect(
+      await call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'choice',
+        text: 'Wrong count?',
+        options: ['One', 'Two', 'Three'],
+        labels: ['A', 'B'],
+      })
+    ).toMatchObject({ ok: false, reason: 'labels_count: supply exactly one label per option.' });
+    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(0);
+  });
+
   test('only the human answers', async () => {
     const { call, asked } = setup();
     const reply = await asked({ kind: 'reply', text: 'Which?' });
