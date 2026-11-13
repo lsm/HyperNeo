@@ -61,11 +61,10 @@ export function wireNeoTodoMutations(
     )
     .pipe(
       async (receipt: Receipt) => {
-        const [todo, ...todos] = await deps.project([receipt.todo, ...receipt.todos]);
+        const [todo] = await deps.project([receipt.todo]);
         return {
           ok: true as const,
           todo,
-          todos,
           ...(receipt.records ? { records: receipt.records } : {}),
         };
       },
@@ -197,9 +196,8 @@ export function wireNeoTodoMutations(
             await deps.advance();
             receipt = {
               ...receipt,
-              todos: await deps.gateway.call(neoTodoReads, 'listTodosForAsks', [
-                receipt.todo.askId,
-              ]),
+              todo:
+                (await deps.gateway.call(neoTodoReads, 'getTodo', receipt.todo.id)) ?? receipt.todo,
             };
           }
         }

@@ -76,6 +76,7 @@ import { SessionGoalRepository } from '../../storage/repositories/session-goal-r
 import {
   createNeoDoneTodosOperation,
   createNeoAskReadOperation,
+  createNeoTodoReadOperation,
   NeoAskEntrySchema,
   neoSnapshotAskEntries,
   neoWorkCounts,
@@ -822,6 +823,11 @@ export function createNeoOperations(
       service.todos,
       () => service.installedPacks(),
       (caller) => admitNeoCaller(service, caller, 'neo.ask.read'),
+      (todos) => service.todoWorkers(todos)
+    ),
+    createNeoTodoReadOperation(
+      service.todos,
+      (caller) => admitNeoCaller(service, caller, 'neo.todo.read'),
       (todos) => service.todoWorkers(todos)
     ),
     createNeoDoneTodosOperation(
