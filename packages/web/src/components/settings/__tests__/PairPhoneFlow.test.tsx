@@ -255,6 +255,7 @@ describe('PairPhoneFlow', () => {
 describe('PairPhoneFlow with pairing v2', () => {
   let status: { state: string; expiresAt: number; name: string | null };
   let cancelReply: Response;
+  let firstDevice: boolean;
   const posted: string[] = [];
 
   beforeEach(() => {
@@ -263,6 +264,7 @@ describe('PairPhoneFlow with pairing v2', () => {
     posted.length = 0;
     status = { state: 'pending', expiresAt: Date.now() + 90_000, name: null };
     cancelReply = new Response(JSON.stringify({ ok: true }), { status: 200 });
+    firstDevice = true;
     vi.stubGlobal('location', new URL('https://mac.tailnet.ts.net:8443/settings?tab=devices'));
     vi.stubGlobal(
       'fetch',
@@ -275,6 +277,7 @@ describe('PairPhoneFlow with pairing v2', () => {
               requestId: 'req-12345678',
               ticket: 'ticket-abcdefghijklmnop',
               expiresAt: status.expiresAt,
+              firstDevice,
             }),
             { status: 200 }
           );
@@ -305,6 +308,16 @@ describe('PairPhoneFlow with pairing v2', () => {
 
     status = { ...status, state: 'granted' };
     await screen.findByText('Paired with Kitchen iPhone.');
+  });
+
+  it('says a later phone waits for an owner device after it scans', async () => {
+    firstDevice = false;
+    render(<PairPhoneFlow pollMs={20} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByRole('img', { name: 'Pairing QR code' });
+    status = { ...status, state: 'bound', name: 'Kitchen iPhone' };
+    await screen.findByText('Phone scanned. Waiting for an owner device.');
+    expect(screen.queryByText('Phone scanned. Waiting for confirmation.')).toBeNull();
   });
 
   it('reports the final state when a cancel arrives after the phone already paired', async () => {
