@@ -1,0 +1,40 @@
+{
+  "dark": {
+    "banners": 0,
+    "bannerText": [],
+    "apiErrorCards": 3,
+    "stopNote": true,
+    "details": 1,
+    "detailsOpen": false,
+    "rawVisible": false,
+    "pageOverflow": false
+  },
+  "light": {
+    "banners": 0,
+    "bannerText": [],
+    "apiErrorCards": 3,
+    "stopNote": true,
+    "details": 1,
+    "detailsOpen": false,
+    "rawVisible": false,
+    "pageOverflow": false
+  },
+  "expanded": {
+    "banners": 0,
+    "bannerText": [],
+    "apiErrorCards": 3,
+    "stopNote": true,
+    "details": 1,
+    "detailsOpen": true,
+    "rawVisible": true,
+    "pageOverflow": false
+  },
+  "reloaded": {
+    "bannerSeen": false,
+    "stopNote": true
+  },
+  "recovered": {
+    "apiErrorCards": 4,
+    "stopNotes": 0
+  }
+}

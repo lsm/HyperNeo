@@ -1,9 +1,12 @@
 import type { Session } from '@hyperneo/shared';
 
 export type StoppedEpisode = NonNullable<Session['metadata']['queryFailureEpisode']>;
+type Message = { type: string; uuid?: string; error?: unknown; is_error?: unknown };
+
+const STORED_ERROR_LIMIT = 4096;
 
 export function stoppedErrorCardUuid(
-  messages: readonly { type: string; uuid?: string; error?: unknown }[],
+  messages: readonly Message[],
   episode: StoppedEpisode | undefined
 ): string | undefined {
   if (!episode?.failed) return undefined;
@@ -13,17 +16,17 @@ export function stoppedErrorCardUuid(
   );
   const last = messages[turn];
   return result > turn &&
-    messages[result].uuid === stoppedResultUuid(episode.error) &&
+    stoppedBy(messages[result], episode.error) &&
     last?.type === 'assistant' &&
     last.error !== undefined
     ? last.uuid
     : undefined;
 }
 
-function stoppedResultUuid(error: string): unknown {
+function stoppedBy(result: Message, error: string): boolean {
   try {
-    return (JSON.parse(error) as { uuid?: unknown }).uuid;
+    return (JSON.parse(error) as { uuid?: unknown }).uuid === result.uuid;
   } catch {
-    return undefined;
+    return error.startsWith('{') && error.length >= STORED_ERROR_LIMIT && result.is_error === true;
   }
 }
