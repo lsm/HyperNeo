@@ -170,8 +170,9 @@ export function SDKAssistantMessage({
           </div>
         )}
         {hasError && stopped && (
-          <p class="text-sm font-medium text-danger">
-            Stopped after {stopped.failures} failures. Send a message to recover.
+          <p class="border-l-2 border-danger/50 pl-2.5 text-[13px] leading-normal text-fg-soft">
+            <strong class="font-semibold">Stopped after {stopped.failures} failures.</strong> <br />
+            Send a message to recover.
           </p>
         )}
         {textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
