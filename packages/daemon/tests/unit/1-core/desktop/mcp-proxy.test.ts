@@ -116,27 +116,47 @@ test('schemas and session binding refuse before dispatch', async () => {
 test('typed target refusals reach the caller and the audit under one call id', async () => {
   const audit = vi.fn();
   const dispatch = vi.fn();
-  const ids: string[] = [];
   const proxy = createDesktopProxy({
     binding: async () => binding,
     dispatch,
     audit,
-    authorize: async (_binding, name, _args, callId) => {
-      ids.push(callId);
-      return name === 'click' ? { reason: 'target_mismatch' } : { reason: 'target_unverified' };
-    },
+    authorize: async (_binding, name) =>
+      name === 'click'
+        ? { reason: 'target_mismatch', class: 'pointer', app_id: 'com.apple.finder' }
+        : { reason: 'target_unverified', class: 'launch' },
   });
-  expect(await proxy.call('click', { pid: 42 })).toMatchObject({
-    content: [{ type: 'text', text: 'target_mismatch' }],
-  });
-  expect(await proxy.call('launch_app', { bundle_id: 'com.example.copy' })).toMatchObject({
-    content: [{ type: 'text', text: 'target_unverified' }],
-  });
-  expect(audit.mock.calls.map(([line]) => JSON.parse(line).call_id)).toEqual(ids);
-  expect(audit.mock.calls.map(([line]) => JSON.parse(line).reason_code)).toEqual([
-    'target_mismatch',
-    'target_unverified',
+  const results = [
+    await proxy.call('click', { pid: 42, window_id: 9 }),
+    await proxy.call('launch_app', { bundle_id: 'com.example.copy' }),
+  ];
+  const lines = audit.mock.calls.map(([line]) => JSON.parse(line));
+  expect(results.map((result) => result.content)).toEqual([
+    [{ type: 'text', text: 'target_mismatch' }],
+    [{ type: 'text', text: 'target_unverified' }],
   ]);
+  expect(results.map((result) => result.structuredContent)).toEqual([
+    {
+      reason: 'target_mismatch',
+      class: 'pointer',
+      bundle_id: 'com.apple.finder',
+      explanation: expect.any(String),
+      call_id: lines[0].call_id,
+      input_issued: 'none',
+    },
+    {
+      reason: 'target_unverified',
+      class: 'launch',
+      bundle_id: null,
+      explanation: expect.any(String),
+      call_id: lines[1].call_id,
+      input_issued: 'none',
+    },
+  ]);
+  expect(lines.map((line) => [line.reason_code, line.target_app_id])).toEqual([
+    ['target_mismatch', 'com.apple.finder'],
+    ['target_unverified', null],
+  ]);
+  expect(JSON.stringify(results)).not.toContain('com.example.copy');
   expect(dispatch).not.toHaveBeenCalled();
 });
 

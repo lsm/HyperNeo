@@ -179,6 +179,10 @@ test.each(['open', 'query'])('database %s faults audit an infrastructure error',
   expect(await proxy.call('list_windows', { pid: 42 })).toEqual({
     isError: true,
     content: [{ type: 'text', text: 'driver_unavailable' }],
+    structuredContent: expect.objectContaining({
+      reason: 'driver_unavailable',
+      input_issued: 'none',
+    }),
   });
   expect(audit).toHaveBeenCalledTimes(1);
   expect(JSON.parse(audit.mock.calls[0][0])).toMatchObject({
@@ -198,6 +202,10 @@ test('a genuine absent opt-in remains a domain refusal', async () => {
   expect(await proxy.call('list_windows', { pid: 42 })).toEqual({
     isError: true,
     content: [{ type: 'text', text: 'desktop_not_opted_in' }],
+    structuredContent: expect.objectContaining({
+      reason: 'desktop_not_opted_in',
+      input_issued: 'none',
+    }),
   });
   expect(JSON.parse(audit.mock.calls[0][0])).toMatchObject({
     decision: 'refused',

@@ -75,7 +75,11 @@ def alive(pid):
         return False
 
 
-def foreign_window():
+def finder():
+    return int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Finder']).split()[0])
+
+
+def window_ids():
     graphics = ctypes.CDLL('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')
     foundation = ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
     graphics.CGWindowListCreate.restype = ctypes.c_void_p
@@ -85,7 +89,7 @@ def foreign_window():
     foundation.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
     windows = graphics.CGWindowListCreate(0, 0)
     assert windows and foundation.CFArrayGetCount(windows) > 0, 'no window to borrow'
-    return foundation.CFArrayGetValueAtIndex(windows, 0)
+    return [foundation.CFArrayGetValueAtIndex(windows, index) for index in range(min(20, foundation.CFArrayGetCount(windows)))]
 
 
 class WorkerDrivers(unittest.TestCase):
@@ -589,45 +593,58 @@ class WorkerDrivers(unittest.TestCase):
         return result['result']
 
     def spawn(self, binary):
-        child = subprocess.Popen([str(binary), '30'])
+        child = subprocess.Popen([str(binary), '30'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(child.wait)
         self.addCleanup(child.kill)
         return child.pid
 
+    def bundle(self, bundle_id, signing_id):
+        app = self.root / f'{signing_id}.app'
+        (app / 'Contents/MacOS').mkdir(parents=True)
+        shutil.copy('/bin/sleep', app / 'Contents/MacOS/Fixture')
+        (app / 'Contents/Info.plist').write_text(
+            '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string>'
+            f'<key>CFBundleIdentifier</key><string>{bundle_id}</string></dict></plist>')
+        subprocess.run(['/usr/bin/codesign', '-f', '-s', '-', '-i', signing_id, str(app)],
+                       check=True, capture_output=True)
+        return self.spawn(app / 'Contents/MacOS/Fixture')
+
     def test_resolve_verified_process_returns_exact_app_and_class(self):
-        pid = self.spawn(Path('/bin/sleep'))
+        pid = finder()
         target = self.resolve('click', {'pid': pid})['value']
-        self.assertEqual((target['bundle_id'], target['class']), ('com.apple.sleep', 'pointer'))
-        self.assertEqual(target['requirement'], 'identifier "com.apple.sleep" and anchor apple')
+        self.assertEqual((target['bundle_id'], target['class']), ('com.apple.finder', 'pointer'))
+        self.assertEqual(target['requirement'], 'identifier "com.apple.finder" and anchor apple')
         self.assertEqual(target['instance']['pid'], pid)
         again = self.resolve('type_text', {'pid': pid}, target['instance'])['value']
-        self.assertEqual((again['bundle_id'], again['class']), ('com.apple.sleep', 'keyboard'))
+        self.assertEqual((again['bundle_id'], again['class']), ('com.apple.finder', 'keyboard'))
         launch = self.resolve('launch_app', {'bundle_id': 'com.apple.calculator'})['value']
         self.assertEqual((launch['path'], launch['class']), ('/System/Applications/Calculator.app', 'launch'))
 
     def test_resolve_refuses_copied_bundle_id(self):
-        copy = self.root / 'sleep-copy'
-        shutil.copy('/bin/sleep', copy)
-        subprocess.run(['/usr/bin/codesign', '-f', '-s', '-', '-i', 'com.apple.sleep', str(copy)],
-                       check=True, capture_output=True)
-        pid = self.spawn(copy)
-        self.assertEqual(self.resolve('click', {'pid': pid}), {'reason': 'target_unverified'})
+        pid = self.bundle('com.apple.calculator', 'com.apple.calculator')
+        self.assertEqual(self.resolve('click', {'pid': pid}), {'reason': 'target_unverified', 'class': 'pointer'})
         self.assertEqual(self.resolve('launch_app', {'bundle_id': 'io.hyperneo.missing'}),
-                         {'reason': 'target_unverified'})
+                         {'reason': 'target_unverified', 'class': 'launch'})
+
+    def test_resolve_refuses_missing_or_inconsistent_app_identity(self):
+        self.assertEqual(self.resolve('click', {'pid': self.spawn(Path('/bin/sleep'))}),
+                         {'reason': 'target_unverified', 'class': 'pointer'})
+        pid = self.bundle('io.example.bundle', 'io.example.signer')
+        self.assertEqual(self.resolve('click', {'pid': pid}), {'reason': 'target_mismatch', 'class': 'pointer'})
 
     def test_resolve_refuses_recycled_pid(self):
-        pid = self.spawn(Path('/bin/sleep'))
+        pid = finder()
         instance = self.resolve('click', {'pid': pid})['value']['instance']
         recycled = dict(instance, startedAt=dict(instance['startedAt'], seconds=instance['startedAt']['seconds'] - 1))
-        self.assertEqual(self.resolve('click', {'pid': pid}, recycled), {'reason': 'target_mismatch'})
+        self.assertEqual(self.resolve('click', {'pid': pid}, recycled), {'reason': 'target_mismatch', 'class': 'pointer'})
 
     def test_resolve_refuses_window_owned_by_another_app(self):
-        pid = self.spawn(Path('/bin/sleep'))
-        self.assertEqual(self.resolve('click', {'pid': pid, 'window_id': foreign_window()}),
-                         {'reason': 'target_mismatch'})
+        pid = finder()
+        refusals = [self.resolve('click', {'pid': pid, 'window_id': window}) for window in window_ids()]
+        self.assertIn({'reason': 'target_mismatch', 'class': 'pointer', 'bundle_id': 'com.apple.finder'}, refusals)
         for window in (-1, 2 ** 32 + 1, '7'):
             self.assertEqual(self.resolve('zoom', {'pid': pid, 'window_id': window}),
-                             {'reason': 'target_unverified'})
+                             {'reason': 'target_unverified', 'class': 'observe', 'bundle_id': 'com.apple.finder'})
 
     def test_resolve_refuses_tools_outside_the_allowlist(self):
         self.assertEqual(self.resolve('kill_app', {'pid': os.getpid()}), {'reason': 'tool_not_allowed'})

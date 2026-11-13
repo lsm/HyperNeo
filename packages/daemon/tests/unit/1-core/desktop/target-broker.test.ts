@@ -58,10 +58,17 @@ test('createDesktopTargetBroker maps a verified target and sends the call id', a
 test('createDesktopTargetBroker passes typed refusals through', async () => {
   const { broker } = await desktop((request) => ({
     ok: true,
-    result: { call_id: request.callId, reason: 'target_mismatch' },
+    result: {
+      call_id: request.callId,
+      reason: 'target_mismatch',
+      class: 'pointer',
+      bundle_id: 'com.apple.finder',
+    },
   }));
   expect(await broker({ worker_id: 'worker-a' }, 'click', { pid: 42 }, 'call-2')).toEqual({
     reason: 'target_mismatch',
+    class: 'pointer',
+    app_id: 'com.apple.finder',
   });
 });
 
