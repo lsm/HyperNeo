@@ -107,14 +107,14 @@ const CONTRACT: ContractRow[] = [
   {
     label: 'Kimi K2.8 Preview (kimi alias)',
     provider: 'kimi',
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     preferMetadata: true,
     resolveInput: 'kimi',
     sdkModelId: 'kimi-for-coding',
-    sdkSettings: { kind: 'compact', autoCompactWindow: 1_000_000 },
-    compactionThreshold: 955_000,
+    sdkSettings: { kind: 'compact', autoCompactWindow: 1_048_576 },
+    compactionThreshold: 1_003_576,
     catalog: { kind: 'kimi', id: 'kimi-for-coding' },
-    bridgeAutoCompactWindow: 1_000_000,
+    bridgeAutoCompactWindow: 1_048_576,
   },
   {
     label: 'Ollama (provider-level capability)',

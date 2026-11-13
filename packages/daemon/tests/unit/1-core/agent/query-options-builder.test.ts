@@ -40,6 +40,7 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt';
 import { neoSecretReadRules } from '../../../../src/lib/neo/secret-read-rules';
 
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
 import type { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
@@ -2238,6 +2239,27 @@ describe('QueryOptionsBuilder', () => {
 
       mockSession.config.thinkingLevel = 'think8k';
       expect(builder.addSessionStateOptions({}).effort).toBe('low');
+    });
+
+    it('keeps K2.7 thinking for kimi-for-coding when the global region routes it to K2.7', () => {
+      const globalKimi = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'global' });
+      const registry = getProviderRegistry();
+      const saved = registry.get('kimi');
+      registry.unregister('kimi');
+      registry.register(globalKimi);
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-for-coding';
+        mockSession.config.thinkingLevel = 'off';
+        const result = builder.addSessionStateOptions({});
+
+        expect(globalKimi.getRoutedModelId('kimi-for-coding')).toBe('kimi-k2.7-code');
+        expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+        expect(result.effort).toBeUndefined();
+      } finally {
+        registry.unregister('kimi');
+        if (saved) registry.register(saved);
+      }
     });
 
     it('maps DeepSeek levels onto its effort scale', () => {

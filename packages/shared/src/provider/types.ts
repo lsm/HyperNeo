@@ -143,6 +143,7 @@ export interface Provider {
     modelId: string
   ): Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'> | undefined;
   getModelDefaultEffort?(modelId: string): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined;
+  getRoutedModelId?(modelId: string, sessionConfig?: ProviderSessionConfig): string;
 }
 
 export interface ProviderContext {

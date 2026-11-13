@@ -135,7 +135,7 @@ try {
   });
   const coding = listed.models.find((model) => model.id === 'kimi-for-coding');
   assert(coding, 'kimi-for-coding is missing from the catalogue');
-  assert.equal(coding.contextWindow, 1_000_000);
+  assert.equal(coding.contextWindow, 1_048_576);
   assert.deepEqual(coding.effortLevels, ['low', 'high', 'max']);
   assert.equal(coding.thinkingModes, 'granular');
   assert.match(String(coding.display_name), /K2\.8/);

@@ -126,13 +126,13 @@ describe('KimiProvider', () => {
 
       expect(coding).toMatchObject({
         name: 'Kimi K2.8 Preview',
-        contextWindow: 1_000_000,
+        contextWindow: 1_048_576,
         effortLevels: ['low', 'high', 'max'],
       });
       expect(coding?.description).toContain('K2.8 Preview');
       expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('granular');
       expect(provider.getModelEffortLevels('kimi-for-coding')).toEqual(['low', 'high', 'max']);
-      expect(KimiProvider.resolveContextWindow('kimi-for-coding')).toBe(1_000_000);
+      expect(KimiProvider.resolveContextWindow('kimi-for-coding')).toBe(1_048_576);
     });
 
     it('keeps the K3 and K3.1 entries unchanged beside the K2.8 preview', async () => {
@@ -539,7 +539,7 @@ describe('KimiProvider', () => {
       expect(models[0]).toMatchObject({
         id: 'kimi-for-coding',
         provider: 'kimi',
-        contextWindow: 1_000_000,
+        contextWindow: 1_048_576,
         thinkingModes: 'granular',
         available: true,
       });
@@ -1113,7 +1113,7 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.ENABLE_TOOL_SEARCH).toBe('false');
-      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
       expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
       expect(config.isAnthropicCompatible).toBe(true);
       expect(config.apiVersion).toBe('v1');
@@ -1656,7 +1656,7 @@ describe('KimiProvider', () => {
         KimiProvider.MODELS.find((m) => m.id === 'kimi-k2.7-code-highspeed')?.contextWindow
       ).toBe(262_144);
       expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')?.contextWindow).toBe(
-        1_000_000
+        1_048_576
       );
     });
 
@@ -1781,6 +1781,32 @@ describe('KimiProvider', () => {
     it('falls back to undefined for non-Kimi or unknown models', () => {
       expect(provider.getModelThinkingMode('claude-sonnet-4-5')).toBeUndefined();
       expect(provider.getModelThinkingMode('glm-5')).toBeUndefined();
+    });
+  });
+
+  describe('global region routing', () => {
+    it('keeps K2.7 thinking for kimi-for-coding when the Moonshot platform serves it', () => {
+      provider = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'global' });
+
+      expect(
+        provider.buildSdkConfig('kimi-for-coding', { region: 'global' }).envVars.ANTHROPIC_MODEL
+      ).toBe('kimi-k2.7-code');
+      expect(provider.getRoutedModelId?.('kimi-for-coding')).toBe('kimi-k2.7-code');
+      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('on');
+      expect(provider.getModelDefaultEffort('kimi-for-coding')).toBeUndefined();
+      expect(provider.getModelThinkingMode('kimi')).toBe('on');
+    });
+
+    it('keeps the K2.8 profile on the Kimi Code endpoint', () => {
+      provider = new KimiProvider({
+        KIMI_API_KEY: 'test-key',
+        KIMI_BASE_URL: 'https://api.kimi.com/coding',
+      });
+
+      expect(provider.getRoutedModelId?.('kimi-for-coding')).toBe('kimi-for-coding');
+      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('granular');
+      expect(provider.getModelEffortLevels('kimi-for-coding')).toEqual(['low', 'high', 'max']);
+      expect(provider.getModelDefaultEffort('kimi-for-coding')).toBe('high');
     });
   });
 

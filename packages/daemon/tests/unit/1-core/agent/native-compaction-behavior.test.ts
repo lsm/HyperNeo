@@ -178,7 +178,7 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
       provider.buildSdkConfig('kimi-k2.7-code-highspeed').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
     ).toBe('262144');
     expect(provider.buildSdkConfig('kimi-for-coding').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
-      '1000000'
+      '1048576'
     );
     expect(provider.buildSdkConfig('kimi-k3').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
       '1048576'

@@ -66,6 +66,7 @@ import {
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
 import { KimiProvider } from '../providers/kimi-provider.js';
+import { providerSessionConfigForSession } from '../providers/session-config.js';
 import {
   hasExplicitAutoCompactWindow,
   stripRejectedSessionConfig,
@@ -740,6 +741,7 @@ export class QueryOptionsBuilder {
       PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
     let effortLevels: ThinkingEffort[] | undefined;
     let defaultEffort: ThinkingEffort | undefined;
+    let kimiRoutedModel: string | undefined;
     try {
       if (providerId) {
         const provider = getProviderRegistry().get(providerId);
@@ -751,6 +753,13 @@ export class QueryOptionsBuilder {
           : undefined;
         if (perModelMode) thinkingModes = perModelMode;
         effortLevels = selectedModel ? provider?.getModelEffortLevels?.(selectedModel) : undefined;
+        kimiRoutedModel =
+          providerId === 'kimi' && selectedModel
+            ? provider?.getRoutedModelId?.(
+                selectedModel,
+                providerSessionConfigForSession(this.ctx.session)
+              )
+            : undefined;
         defaultEffort =
           selectedModel && !this.hasChosenThinkingLevel()
             ? provider?.getModelDefaultEffort?.(selectedModel)
@@ -771,7 +780,8 @@ export class QueryOptionsBuilder {
 
     const selectedModel = this.ctx.session.config.model;
     if (providerId === 'kimi' && selectedModel) {
-      if (KimiProvider.isKimiK2Point7Model(selectedModel)) {
+      const routed = kimiRoutedModel ?? selectedModel;
+      if (KimiProvider.isKimiK2Point7Model(routed)) {
         if (!thinkingConfig || thinkingConfig.type === 'disabled') {
           thinkingConfig = {
             type: 'enabled',
@@ -784,9 +794,9 @@ export class QueryOptionsBuilder {
         ? this.effectiveFallbackModel
         : this.ctx.session.config.fallbackModel;
       if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
-        const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
+        const primaryIsK3 = KimiProvider.isKimiK3Model(routed);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
-        const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);
+        const primaryIsK2 = KimiProvider.isKimiK2Point7Model(routed);
         const fallbackIsK2 = KimiProvider.isKimiK2Point7Model(fallbackModel);
         const mixedChain = (primaryIsK3 && fallbackIsK2) || (primaryIsK2 && fallbackIsK3);
         if (mixedChain && (!thinkingConfig || thinkingConfig.type === 'disabled')) {
