@@ -1,4 +1,4 @@
-# Codex through OAP as a provider
+# Codex (local) as a provider
 
 Status: proposal. Design only; no code in this PR.
 
@@ -19,15 +19,19 @@ three conditions hold:
 No web code sets `harness`. So OAP works, but only through raw RPC on a daemon
 started with five environment variables.
 
-Naming: the protocol is being renamed OXAP in a separate plan. This doc uses
-the names the code uses today (`oap`, the `oapx` binary). The rename does not
-change this design.
+## Naming
+
+OAP is being renamed OXAP in a separate plan. Nothing this design stores or
+shows names the protocol. The provider id, model id and label are about Codex
+running locally. The protocol name stays only in code that speaks the protocol
+(`lib/oap/`, the `oapx` binary), which the rename plan covers. So the rename
+needs no data migration and no UI string change here.
 
 ## Design
 
-Add one built-in provider, `oap-codex`, shown as **Codex (OAP)**. Choosing it
-is the only way to pick the OAP engine. `harness` stays a stored fact but is
-derived from the provider, not set by callers.
+Add one built-in provider, `codex-local`, shown as **Codex (local)**. Choosing
+it is the only way to pick the Codex engine. `harness` stays a stored fact but
+is derived from the provider, not set by callers.
 
 ### Settings › Add provider
 
@@ -35,9 +39,9 @@ derived from the provider, not set by callers.
 
 | Field | Value |
 | --- | --- |
-| providerId | `oap-codex` |
-| displayName | Codex (OAP) |
-| description | Codex app-server through an OAP hub |
+| providerId | `codex-local` |
+| displayName | Codex (local) |
+| description | The Codex app on this machine |
 | authType | `none` |
 
 `none` is right: the Codex CLI owns its own login in its `CODEX_HOME`, and the
@@ -49,10 +53,16 @@ Adding the provider opens a small form with the three settings the hub needs:
 the `oapx` binary, the Codex executable and the Codex home. The form stores
 them in the provider record's `configJson`, as `kimi` stores its region. The
 binary's version and SHA-256 are read once when the form is saved and stored
-beside the path. They are not typed by hand. The existing
-`prepareOapBinary` check then pins exactly that file on every hub start. The
-environment variables keep working and win when set, so the current test and
-dev setups do not change.
+beside the path. They are not typed by hand. The existing `prepareOapBinary`
+check then pins exactly that file on every hub start.
+
+The provider record is the only source. The five `HYPERNEO_OAP_*` variables and
+the `oap` block in `config.ts` are removed. Their only users are the config
+unit test and the verify skill's OAP wire script, and both write a provider
+record instead. What the form shows is what the daemon runs.
+
+The pin is trust on first use. It catches a binary that changes after save. It
+does not prove the file is a genuine release; the human picks the file.
 
 The provider card shows the usual status line. `getAuthStatus()` reports
 "ready" when the three paths are set and the pinned binary still matches. It
@@ -61,26 +71,27 @@ reports the existing refusal text otherwise (`sha256_mismatch`,
 
 ### Session model picker
 
-`oap-codex` lists one model, **Codex default**, with id `oap-codex:default`.
-Codex runs whatever model its own config names. HyperNeo does not pass a model
-today: the submit request carries only the text (`oap-query-hub.ts`).
+`codex-local` lists one model, **Codex default**, with id
+`codex-local:default`. Codex runs whatever model its own config names.
+HyperNeo does not pass a model today: the submit request carries only the text
+(`oap-query-hub.ts`).
 
 The picker follows the session's engine, because `harness` cannot change
 after creation:
 
-- When a new chat is created with a `oap-codex` model, `session.create`
+- When a new chat is created with a `codex-local` model, `session.create`
   derives `harness: 'codex'`.
-- In a Codex session, the picker shows only `oap-codex` models.
-- In an SDK session, `oap-codex` models are hidden.
+- In a Codex session, the picker shows only `codex-local` models.
+- In an SDK session, `codex-local` models are hidden.
 - Space and Neo sessions never list them, since admission would refuse them.
 
 Hiding is only the UI side. The daemon also needs a new refusal, since no
 check exists today. `session.model.switch` runs through
 `AgentSession.requestModelSwitch` and `ModelSwitchHandler`, and neither reads
-`harness`. Without a check, a switch to `oap-codex` in an SDK session would
-leave it on the SDK. A switch away from `oap-codex` in a Codex session would
-"succeed" while OAP keeps running Codex. `ModelSwitchHandler.invalidModel` gains
-one pure decision: the target provider's engine (`codex` for `oap-codex`,
+`harness`. Without a check, a switch to `codex-local` in an SDK session would
+leave it on the SDK. A switch away from `codex-local` in a Codex session would
+"succeed" while Codex keeps running. `ModelSwitchHandler.invalidModel` gains
+one pure decision: the target provider's engine (`codex` for `codex-local`,
 `sdk` for every other provider) must equal the session's `harness`. Otherwise
 the switch returns `success: false` with "Model switch cannot change the
 session engine; start a new chat". The user sees why instead of getting a
@@ -97,7 +108,7 @@ events, translated to SDK messages by `oap-sdk-translator.ts`.
 
 Two runtime changes:
 
-- `createOapRuntime` reads `OapEngineOptions` from the `oap-codex` provider
+- `createOapRuntime` reads `OapEngineOptions` from the `codex-local` provider
   record at each open, not once from startup config.
 - `OapEngine` holds one hub. `getHub` throws "OAP hub configuration differs
   from the running hub" when the options change while a hub is live, and a new
@@ -109,9 +120,20 @@ Two runtime changes:
   `oap-reopen.ts`). A run in flight at save time ends as if the hub had been
   lost. The Settings form says so when Codex sessions are running.
 
-The `oap-codex` provider never builds an SDK config. Its `buildSdkConfig`
-throws, and the engine selector routes the session to the OAP path before any
-SDK call.
+`codex-local` has no SDK config, so its `buildSdkConfig` throws. On the run
+path the engine selector picks Codex first (`query-runner.ts`), so the run
+never asks. Other callers reach the session's provider, and each already
+catches the throw:
+
+- `provider-service.ts` (provider listing) leaves the base URL unset.
+- `agent-session.ts` (`providerUpstreamUrl`) returns no URL.
+- `model-switch-handler.ts` (wire model) falls back to the plain model id, and
+  the new engine check refuses those switches anyway.
+- Title generation reaches it through `title-model-selection.ts` and
+  `ProviderService.getEnvVarsForModel`. The throw lands in
+  `SessionLifecycle.generateTitleFromMessage`, which uses its fallback title:
+  the first 50 characters of the first message. A Codex chat is titled that
+  way and never calls an SDK model.
 
 ## Ready today vs. waiting
 
@@ -134,10 +156,10 @@ Limits users will see, from code that already exists:
 Waiting on OAP work, none of it blocking this design:
 
 - The Rust port. The Rust Codex adapter can already open, submit, stream and
-  settle a run, and its approval-request slice is in review. Runtime parity (OAP #1438) waits on the
-  adapters lane reaching C8 (OAP #1439). HyperNeo uses the Go binary and
-  switches only when Rust ships a released `oapx` with the same stdio hub. That
-  is a pin change in the form, not a design change.
+  settle a run, and its approval-request slice is in review. Runtime parity
+  (OAP #1438) waits on the adapters lane reaching C8 (OAP #1439). HyperNeo uses
+  the Go binary and switches only when Rust ships a released `oapx` with the
+  same stdio hub. That is a new pin in the form, not a design change.
 - Per-run model choice. OAP defines `run.model_selection` (`model_id` per run,
   Decision 0005) and `models.list`. Using them is a later HyperNeo change: list
   Codex's models in the picker and send `model_id` on submit.
@@ -146,9 +168,9 @@ Waiting on OAP work, none of it blocking this design:
 
 ## Choices for the human
 
-1. **Where the hub settings live.** (a) The Add provider form stores them in
-   the provider record, and the environment variables still override. (b) Keep
-   the environment variables only, and show the provider when they are set.
+1. **Where the hub settings live.** (a) Only in the provider record, set from
+   the Add provider form; the environment variables are removed. (b) Only in
+   the environment variables, and the provider appears when they are set.
    **Recommend (a).** With (b), a launchd-run daemon needs a plist edit and a
    restart to turn Codex on, which is the gap the human asked to close.
 2. **Ship with one model, or wait for model choice.** (a) Ship now with
