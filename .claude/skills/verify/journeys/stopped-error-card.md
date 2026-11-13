@@ -20,9 +20,9 @@ says "Stopped after 3 failures. Send a message to recover."; its raw error sits
 behind a closed "Technical details" toggle that opens on click; the page does
 not scroll sideways. A reload must never show the banner, not even
 for one render before the transcript arrives. A fourth, recovery send then fails again, and no card may
-still carry the stop line. Repeat with `VERIFY_MOCK=mock-api-overloaded-long.ts`: its long 529 body pushes
-the stored stop error past the daemon's 4096-character cut, and the same checks
-must pass. `before` against an older build expects the duplicate
+still carry the stop line. Repeat with `VERIFY_MOCK=mock-api-overloaded-long.ts` in `before` mode: its
+long 529 body pushes the stored stop error past the daemon's 4096-character cut,
+so no card can be tied to it and the banner must show as it did before. `before` against an older build expects the duplicate
 banner instead. Screenshots and `stopped-error-<mode>.json` land in
 `$RUN/evidence`. Other banners (local send errors, retry status, re-auth or
 switch-provider actions) are not driven here; the unit tests cover that choice.
