@@ -70,7 +70,7 @@ import {
   type ArtifactPreviewTarget,
 } from '../lib/artifact-preview-store.ts';
 import { artifactTabIds, artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
-import { sessionTabKey } from '../lib/artifact-preview-workspace.ts';
+import { previewFileKey, sessionTabKey } from '../lib/artifact-preview-workspace.ts';
 import { NeoPreviewResize } from './NeoPreviewResize.tsx';
 import { neoQuestionText } from './todo-status.ts';
 
@@ -395,7 +395,13 @@ export function NeoLive() {
       setPreviewSize(null);
     }
   }, [previewOpen, previewDesktop]);
-  const previewWork = focusPreview && artifactPreviewStack.value.length === 0;
+  const previewWork =
+    focusPreview && artifactPreviewStack.value.length === 0 && (!roomy || expanded);
+  const firstTab = artifactPreviewWorkspace.state.value.files[0];
+  useLayoutEffect(() => {
+    if (focusPreview && roomy && !expanded && !artifactPreviewStack.value.length && firstTab)
+      artifactPreviewWorkspace.select(previewFileKey(firstTab));
+  }, [focusPreview, roomy, expanded, firstTab]);
   const workHidden = focusPreview && (!roomy || expanded) && !previewWork;
   useLayoutEffect(() => {
     if (!workHidden && sceneSheet.current) sceneSheet.current.scrollTop = workScrollTop.current;
@@ -1276,7 +1282,8 @@ export function NeoLive() {
         }
         suspended={!!chat || referenceWork}
         work={
-          columns && !(focusPreview && !workHidden && !previewWork)
+          columns &&
+          !(focusPreview && !workHidden && !previewWork && artifactPreviewStack.value.length)
             ? { id: 'neo-preview-work-panel', count: workCount }
             : undefined
         }

@@ -20,6 +20,31 @@
       "HyperNeo · Synthetic"
     ]
   },
+  "work-selected-widened": {
+    "columnVisible": true,
+    "columnIsTabPanel": false,
+    "workTabs": 0,
+    "panelOpen": true,
+    "tabs": [
+      "HyperNeo · Synthetic"
+    ],
+    "selected": [
+      "HyperNeo · Synthetic"
+    ]
+  },
+  "work-selected-narrowed": {
+    "columnVisible": false,
+    "columnIsTabPanel": false,
+    "workTabs": 1,
+    "panelOpen": true,
+    "tabs": [
+      "Your work · 1",
+      "HyperNeo · Synthetic"
+    ],
+    "selected": [
+      "HyperNeo · Synthetic"
+    ]
+  },
   "2600-closed": {
     "columnVisible": true,
     "columnIsTabPanel": false,
