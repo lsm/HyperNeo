@@ -1,21 +1,19 @@
 {
-  "verified": false,
+  "verified": true,
   "bunVerified": true,
-  "denoVerified": false,
   "productionLines": 34,
-  "redRegressionCommit": "f417349428",
-  "testedCodeCommit": "d30f3617af468193648fd901bfc621b45f737ff7",
-  "testedGitTree": "29d50a756676c3b97c3d57c51b27f80fb84ccd18",
+  "redRegressionCommit": "491f02b993",
+  "testedCodeCommit": "924acad9b9125dbf9b64c38882e8cb92d7dbe3f7",
+  "testedGitTree": "6aac451ad490c531cb652d122054aaf5019e5fc6",
   "applicationTrees": {
-    "packages": "9f8311d81fbc9150de7a1ddb0543980dc276dc16",
-    "scripts": "487cc507bd2f08d51501069513ee20d79fdbac9a"
+    "packages": "0135ea419352b016c1ae842c7f8a307cbc704d8b",
+    "scripts": "fb9783bbe8354484932da4d80d50fdc0023d2640"
   },
-  "baselineMainSql": 22,
+  "baselineMainSql": 28,
   "fixedBunMainSql": 0,
   "fixedBunCommands": 13,
-  "bunRun": "bun-verify-2",
-  "denoFailedRun": "deno-verify",
-  "checks": "Full bun run check passed; 8 existing project hierarchy/authorization tests passed.",
-  "blocker": "Deno 2.9.4 node:sqlite truncates text results at NUL, refusing valid workspace identities before section insertion. Stored bytes remain intact. Adapter repair is outside lane A ownership.",
-  "limitations": "No successful Deno section admission, GUI, real GitHub, whole-daemon SQL absence or held-writer latency proof. No merge is authorized without exact-head approval and required CI."
+  "bunRun": "bun-verify-3",
+  "redRun": "bun-before-2",
+  "checks": "Full bun run check passed; 20 project tree and neo operation tests passed.",
+  "limitations": "No GUI, real GitHub, whole-daemon SQL absence or held-writer latency proof. No merge is authorized without exact-head approval and required CI."
 }
