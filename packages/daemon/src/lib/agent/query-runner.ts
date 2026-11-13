@@ -1304,15 +1304,15 @@ export class QueryRunner {
             ),
             abortPromise.then(() => ({ kind: 'abort' as const })),
           ];
+          if (!processExited) {
+            race.push(processExitPromise.then(() => ({ kind: 'exit' as const })));
+          }
+          if (processExited) {
+            race.push(drainPromise.then(() => ({ kind: 'drain' as const })));
+          }
           if (!firstMessageArrived) {
-            if (!processExited) {
-              race.push(processExitPromise.then(() => ({ kind: 'exit' as const })));
-            }
             if (!nudgeSent && !processExited) {
               race.push(nudgePromise.then(() => ({ kind: 'nudge' as const })));
-            }
-            if (processExited) {
-              race.push(drainPromise.then(() => ({ kind: 'drain' as const })));
             }
             race.push(backstopPromise.then(() => ({ kind: 'backstop' as const })));
           }
@@ -1436,6 +1436,13 @@ export class QueryRunner {
           }
 
           if (winner.kind === 'drain') {
+            if (firstMessageArrived) {
+              throw new Error(
+                processExitInfo.signal
+                  ? `Claude Code process terminated by signal ${processExitInfo.signal} before the turn result`
+                  : `Claude Code process exited with code ${processExitInfo.code} before the turn result`
+              );
+            }
             const outcome = await runStartupWatch(
               {
                 nudgeThresholdMs: nudgeSent ? Number.POSITIVE_INFINITY : nudgeThresholdMs,

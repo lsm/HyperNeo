@@ -41,7 +41,8 @@ import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/o
 import * as oapQueryModule from '../../../../src/lib/oap/oap-query';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import { hyperneoWorkStatus } from '../../../../src/lib/drivers/hyperneo-adapter';
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
@@ -8081,7 +8082,7 @@ describe('QueryRunner', () => {
         }
         expect(exitListeners.length).toBeGreaterThan(0);
         exitListeners[0]?.(1, null);
-        await flushMicrotasks(30);
+        for (let i = 0; i < 50; i++) await Promise.resolve();
         jest.advanceTimersByTime(5000);
         await ctx.queryPromise?.catch(() => {});
       } finally {
@@ -8144,6 +8145,250 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('mid-turn SDK process exit', () => {
+    let savedApiKey: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+    });
+
+    it('clears processing when the upstream abort ends the SDK without a result', async () => {
+      const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+      const fakeProc = {
+        pid: 4242,
+        exitCode: null,
+        once: (event: string, listener: (code: number | null, signal: string | null) => void) => {
+          if (event === 'exit') exitListeners.push(listener);
+        },
+      };
+      buildSpy.mockResolvedValue({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+        spawnClaudeCodeProcess: () => fakeProc,
+      });
+      let notifyFirstFrame: () => void = () => {};
+      const firstFrame = new Promise<void>((resolve) => {
+        notifyFirstFrame = resolve;
+      });
+      (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
+        (arg: { options?: Record<string, unknown> }) => {
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)?.({});
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              yield { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+              await new Promise<void>(() => {});
+            },
+          } as unknown as QueryLike;
+        }
+      );
+      mockSession.workspacePath = null;
+
+      let persisted = '';
+      mockDb.updateSession = mock(async (_id: string, update: { processingState?: string }) => {
+        if (update.processingState !== undefined) persisted = update.processingState;
+        return mockSession;
+      }) as unknown as Database['updateSession'];
+      const stateManager = new ProcessingStateManager(mockSession.id, mockInternalEventBus, mockDb);
+      stateManager.noteQueryOwnerGeneration(1);
+      await stateManager.setProcessing('synthetic-turn', 'thinking');
+      const ctx = createContext({ stateManager });
+      ctx.onSDKMessage = mock(async () => {
+        notifyFirstFrame();
+      });
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      await firstFrame;
+      expect(exitListeners).toHaveLength(1);
+      expect(stateManager.getState().status).toBe('processing');
+
+      exitListeners[0]?.(1, null);
+      await ctx.queryPromise;
+
+      const persistedStatus = JSON.parse(persisted).status as string;
+      expect(persistedStatus).toBe('idle');
+      expect(hyperneoWorkStatus('active', persistedStatus)).not.toBe('running');
+    }, 30000);
+
+    it('attributes a watched exit to in-flight rate-limit recovery', async () => {
+      const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+      const fakeProc = {
+        pid: 4242,
+        exitCode: null,
+        once: (event: string, listener: (code: number | null, signal: string | null) => void) => {
+          if (event === 'exit') exitListeners.push(listener);
+        },
+      };
+      buildSpy.mockResolvedValue({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+        spawnClaudeCodeProcess: () => fakeProc,
+      });
+      (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
+        (arg: { options?: Record<string, unknown> }) => {
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)?.({});
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              yield { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+              await new Promise<void>(() => {});
+            },
+          } as unknown as QueryLike;
+        }
+      );
+      mockSession.workspacePath = null;
+      let notifyFirstFrame: () => void = () => {};
+      const firstFrame = new Promise<void>((resolve) => {
+        notifyFirstFrame = resolve;
+      });
+      onSDKMessageSpy.mockImplementation(async () => {
+        notifyFirstFrame();
+      });
+      const ctx = createContext({ isLimitRecoveryPending: () => true });
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      await firstFrame;
+      expect(exitListeners).toHaveLength(1);
+      exitListeners[0]?.(1, null);
+      await ctx.queryPromise;
+
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('rate-limit recovery'));
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+    }, 30000);
+
+    it('does not retry a completed turn when the watched process exits', async () => {
+      const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+      const fakeProc = {
+        pid: 4242,
+        exitCode: null,
+        once: (event: string, listener: (code: number | null, signal: string | null) => void) => {
+          if (event === 'exit') exitListeners.push(listener);
+        },
+      };
+      buildSpy.mockResolvedValue({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+        spawnClaudeCodeProcess: () => fakeProc,
+      });
+      (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
+        (arg: { options?: Record<string, unknown> }) => {
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)?.({});
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              yield { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+              yield {
+                type: 'result',
+                subtype: 'success',
+                uuid: 'turn-result',
+                is_error: false,
+              } as unknown as SDKMessage;
+              await new Promise<void>(() => {});
+            },
+          } as unknown as QueryLike;
+        }
+      );
+      mockSession.workspacePath = null;
+      let notifyResult: () => void = () => {};
+      const resultFrame = new Promise<void>((resolve) => {
+        notifyResult = resolve;
+      });
+      onSDKMessageSpy.mockImplementation(async (message: SDKMessage) => {
+        if (message.type === 'result') notifyResult();
+      });
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      await resultFrame;
+      expect(exitListeners).toHaveLength(1);
+      exitListeners[0]?.(1, null);
+      await ctx.queryPromise;
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('after its turn ended with a result')
+      );
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    }, 30000);
+
+    it('drains a result that arrives after the process exit event', async () => {
+      const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+      const fakeProc = {
+        pid: 4242,
+        exitCode: null,
+        once: (event: string, listener: (code: number | null, signal: string | null) => void) => {
+          if (event === 'exit') exitListeners.push(listener);
+        },
+      };
+      buildSpy.mockResolvedValue({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+        spawnClaudeCodeProcess: () => fakeProc,
+      });
+      let releaseResult: () => void = () => {};
+      const resultGate = new Promise<void>((resolve) => {
+        releaseResult = resolve;
+      });
+      (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
+        (arg: { options?: Record<string, unknown> }) => {
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)?.({});
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              yield { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+              await resultGate;
+              yield {
+                type: 'result',
+                subtype: 'success',
+                uuid: 'buffered-turn-result',
+                is_error: false,
+              } as unknown as SDKMessage;
+            },
+          } as unknown as QueryLike;
+        }
+      );
+      mockSession.workspacePath = null;
+      let notifyFirstFrame: () => void = () => {};
+      const firstFrame = new Promise<void>((resolve) => {
+        notifyFirstFrame = resolve;
+      });
+      onSDKMessageSpy.mockImplementation(async () => {
+        notifyFirstFrame();
+      });
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      await firstFrame;
+      expect(exitListeners).toHaveLength(1);
+      exitListeners[0]?.(0, null);
+      setTimeout(releaseResult, 0);
+      await ctx.queryPromise;
+
+      expect(
+        onSDKMessageSpy.mock.calls.some((call) => (call[0] as SDKMessage).type === 'result')
+      ).toBe(true);
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
     });
   });
 });
