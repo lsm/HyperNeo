@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
-import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 
 type Receipt =
   | { ok: false; reason: string }
@@ -53,7 +53,13 @@ describe('Whole todo-add writer', () => {
     const op = DB_OPS.get('neo.todoAddWrites') as DbOp<object, Receipt> | undefined;
     expect(op).toBeDefined();
     if (!op) throw new Error('Whole todo-add command unavailable');
-    return gateway.run(op, { askId: 'ask', todoId: id, draft: input, now: 10 });
+    return gateway.run(op, {
+      askId: 'ask',
+      todoId: id,
+      draft: input,
+      now: 10,
+      userFolder: '/synthetic/user',
+    });
   };
   test('commits target, complete instruction and start intent with no Start card', async () => {
     const input = { ...draft(), instruction: '完整工作 🦊\n'.repeat(20000) };
@@ -69,8 +75,16 @@ describe('Whole todo-add writer', () => {
     expect(changes).not.toContain('neo_questions');
   });
   test('different repositories commit to the same ask without creating children', async () => {
-    const first = await add('one', { ...draft(), named: { repository: 'synthetic/first' } });
-    const second = await add('two', { ...draft(), named: { repository: 'synthetic/second' } });
+    const placed = {
+      ...draft(),
+      target: {
+        verb: 'start',
+        adapter: 'hyperneo',
+        place: { machine: 'synthetic', name: 'repo' },
+      },
+    };
+    const first = await add('one', { ...placed, named: { repository: 'synthetic/first' } });
+    const second = await add('two', { ...placed, named: { repository: 'synthetic/second' } });
     expect(first).toMatchObject({
       ok: true,
       todo: { askId: 'ask' },
@@ -125,6 +139,44 @@ describe('Whole todo-add writer', () => {
     expect(store.listTodos('ask')).toEqual([]);
     expect(changes).toEqual([]);
   });
+  test('an empty core evidence check gets an assigned path', async () => {
+    const receipt = await add('one', {
+      ...draft(),
+      check: { pack: 'core', kind: 'evidence', params: {} },
+    });
+    expect(receipt).toMatchObject({ ok: true });
+    const todo = store.getTodo('one');
+    expect(todo?.check?.params.path).toMatch(/result\.md$/);
+    expect(todo?.check?.params.path).toContain('one');
+  });
+  test('evidence inside the human folder is refused before writing', async () => {
+    const coding = {
+      ...draft(),
+      named: { repository: 'synthetic/repo' },
+      target: {
+        verb: 'start',
+        adapter: 'hyperneo',
+        place: { machine: 'synthetic', name: 'repo' },
+      },
+      check: {
+        pack: 'core',
+        kind: 'evidence',
+        params: { path: '/synthetic/user/notes/result.md' },
+      },
+    };
+    const receipt = await add('one', coding);
+    expect(receipt).toMatchObject({ ok: false });
+    expect((receipt as { reason?: string }).reason).toContain('evidence_in_user_folder');
+    expect(store.listTodos('ask')).toEqual([]);
+    expect(changes).toEqual([]);
+  });
+  test('an unknown after reference is refused before writing', async () => {
+    const receipt = await add('one', { ...draft(), after: ['ghost'] });
+    expect(receipt).toMatchObject({ ok: false });
+    expect((receipt as { reason?: string }).reason).toContain('dependency_not_found');
+    expect(store.listTodos('ask')).toEqual([]);
+    expect(changes).toEqual([]);
+  });
   test('records current PR peers while concurrent additions stay nonblocking', async () => {
     const coding = {
       ...draft(),
@@ -151,6 +203,11 @@ describe('Whole todo-add writer', () => {
     );
     const coding = {
       ...draft(),
+      target: {
+        verb: 'start',
+        adapter: 'hyperneo',
+        place: { machine: 'synthetic', name: 'original' },
+      },
       check: {
         pack: 'coding',
         kind: 'pr_merged',

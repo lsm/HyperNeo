@@ -1,0 +1,28 @@
+{
+  "surface": "Real todo-add WebSocket RPC plus ask-open agent MCP and public Work-card RPC",
+  "autoApproved": true,
+  "publicRollbackAtomic": true,
+  "cachedSqlGuardVerified": true,
+  "fullInstruction": {
+    "bytes": 359999,
+    "sha256": "ec55633d79f5fc7407523c09e16cc6dde612b330d6a71ad06a0e9960bd260d94"
+  },
+  "commitBeforeReply": true,
+  "clientNotified": true,
+  "contention": {
+    "affectedMs": 1397.7405840000001,
+    "targetMs": 250,
+    "targetMet": false,
+    "healthMs": 0.4242080000003625,
+    "maxLagMs": 8.358041000000071
+  },
+  "concurrentAddsNoCard": true,
+  "noMainFallback": true,
+  "askOpenUsesWriter": true,
+  "settledParentRefused": true,
+  "mainSql": 0,
+  "rssBytes": 231802056,
+  "walBytes": 3473192,
+  "verified": true,
+  "resourcesStopped": true
+}

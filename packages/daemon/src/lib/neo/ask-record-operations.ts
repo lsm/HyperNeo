@@ -15,13 +15,13 @@ import {
 } from '../operations/registry.ts';
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
-  recordNeoTodo,
   resolveNeoTodoDraft,
   type NeoTodoControls,
   NeoTodoDraftSchema,
   planNeoTodoDraft,
   requireNeoOpenAsk,
 } from './todo-operations.ts';
+import { recordNeoTodoAdmission } from './todo-add-operation.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
@@ -319,7 +319,7 @@ export function createNeoAskRecordOperations(
             typeof ref === 'number' ? (ref < index ? (ids[ref] ?? `#${ref}`) : `#${ref}`) : ref
           );
           const added = !row
-            ? await recordNeoTodo(
+            ? await recordNeoTodoAdmission(
                 store,
                 sessions,
                 controls,
