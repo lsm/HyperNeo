@@ -31,7 +31,12 @@ test('createDesktopTargetBroker maps a verified target and sends the call id', a
     ok: true,
     result: {
       call_id: request.callId,
-      value: { bundle_id: 'com.apple.sleep', instance: { pid: 42 }, window_id: 7 },
+      value: {
+        bundle_id: 'com.apple.sleep',
+        class: 'pointer',
+        instance: { pid: 42 },
+        window_id: 7,
+      },
     },
   }));
   expect(
@@ -42,7 +47,7 @@ test('createDesktopTargetBroker maps a verified target and sends the call id', a
       'call-1'
     )
   ).toEqual({
-    value: { app_id: 'com.apple.sleep', pid: 42, window_id: 7 },
+    value: { app_id: 'com.apple.sleep', class: 'pointer', pid: 42, window_id: 7 },
   });
   expect(requests).toEqual([
     {

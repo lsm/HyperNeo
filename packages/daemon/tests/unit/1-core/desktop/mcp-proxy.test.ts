@@ -103,7 +103,9 @@ test('schemas and session binding refuse before dispatch', async () => {
     binding: async () => binding,
     dispatch,
     audit: () => {},
-    authorize: async () => ({ value: { app_id: 'com.apple.sleep', pid: 42, window_id: 7 } }),
+    authorize: async () => ({
+      value: { app_id: 'com.apple.sleep', class: 'pointer', pid: 42, window_id: 7 },
+    }),
   });
   for (const args of [{ private_field: true }, { pid: '42' }, { session: 'other-worker' }])
     expect(await proxy.call('list_windows', args)).toMatchObject({
@@ -166,7 +168,9 @@ test('a verified target is audited with its app and instance', async () => {
     binding: async () => binding,
     dispatch: async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }),
     audit,
-    authorize: async () => ({ value: { app_id: 'com.apple.sleep', pid: 42, window_id: 7 } }),
+    authorize: async () => ({
+      value: { app_id: 'com.apple.sleep', class: 'pointer', pid: 42, window_id: 7 },
+    }),
   });
   await proxy.call('click', { pid: 42, window_id: 7 });
   expect(JSON.parse(audit.mock.calls[0][0])).toMatchObject({
@@ -174,5 +178,32 @@ test('a verified target is audited with its app and instance', async () => {
     target_pid: 42,
     target_window_id: 7,
     decision: 'allowed',
+  });
+});
+
+test('a verified target keeps its app and class when dispatch throws', async () => {
+  const audit = vi.fn();
+  const proxy = createDesktopProxy({
+    binding: async () => binding,
+    dispatch: async () => {
+      throw new Error('driver_unavailable');
+    },
+    audit,
+    authorize: async () => ({
+      value: { app_id: 'com.apple.finder', class: 'pointer', pid: 42, window_id: 7 },
+    }),
+  });
+  const result = await proxy.call('click', { pid: 42, window_id: 7 });
+  const line = JSON.parse(audit.mock.calls[0][0]);
+  expect(result.structuredContent).toMatchObject({
+    reason: 'driver_unavailable',
+    class: 'pointer',
+    bundle_id: 'com.apple.finder',
+    call_id: line.call_id,
+    input_issued: 'none',
+  });
+  expect(line).toMatchObject({
+    target_app_id: 'com.apple.finder',
+    reason_code: 'driver_unavailable',
   });
 });
