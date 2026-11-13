@@ -13,7 +13,8 @@ its reply. Require Neo's turn to offer its publish and speech tools and
 to carry that reply in `<already-said>`,
 then require two direct Neo publications for that input to succeed with
 publishedBy neo. A third input that the front ends without a reply, whose Neo
-delivery then fails, must get the fixed "could not be completed" notice.
+delivery then fails, must publish no notice and leave that input's row at
+`send_status = 'failed'`, so a client can offer Retry on it.
 Switch to single-model mode and preserve the same front SDK session identity.
 
 Retain neo-front-execution.json with passed and resourcesClosed true and wrapper
