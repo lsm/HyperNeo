@@ -1648,6 +1648,22 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     });
 
+    it('a Kimi session percentage still reaches the SDK, since its window does not carry it', async () => {
+      builder = new QueryOptionsBuilder({ ...mockContext, db: undefined });
+      mockSession.config.autoCompactPercent = 60;
+      const options = await builder.build();
+      const settings = typeof options.settings === 'object' ? options.settings : undefined;
+      const effective =
+        Number(options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? settings?.autoCompactWindow) -
+        20_000;
+      const percent = Number(options.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE);
+      const threshold =
+        percent > 0 && percent <= 100
+          ? Math.min(Math.floor((effective * percent) / 100), effective - 13_000)
+          : effective - 13_000;
+      expect(threshold).toBe(588_000);
+    });
+
     it('the same session without an explicit value still gets the provider window', async () => {
       const options = await builder.build();
       const settings = typeof options.settings === 'object' ? options.settings : undefined;
