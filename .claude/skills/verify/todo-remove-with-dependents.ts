@@ -101,6 +101,23 @@ try {
       assert.deepEqual(rows(ids.askId), after(ids));
       assert.equal(cards(ids.askId)[0].state, 'answered');
     }
+
+    const overlap = await invoke('overlap: open the ask', 'neo.ask.open', { title: 'Synthetic overlap', request: 'Synthetic request for overlap' });
+    assert.equal(overlap.ok, true, JSON.stringify(overlap));
+    const put = async (title: string, after: string[]) => (await invoke(`overlap: add ${title}`, 'neo.todo.add', { askId: overlap.ask.id, title, check, after })).todo.id as string;
+    const [oa, ob, oc] = [await put('A', []), await put('B', []), await put('C', [])];
+    await put('X', [oa, oc]);
+    await put('Y', [ob, oc]);
+    for (const [title, id] of [['A', oa], ['B', ob], ['C', oc]])
+      assert.equal((await invoke(`overlap: remove ${title} with no decision`, 'neo.todo.remove', { todoId: id, reason: 'Synthetic: not needed' })).ok, true);
+    const merged = cards(overlap.ask.id);
+    evidence.push({ step: 'overlap: the cards', merged });
+    assert.deepEqual(merged.map((card) => card.state).sort(), ['open', 'retired', 'retired']);
+    const open = merged.find((card) => card.state === 'open')!;
+    assert.equal(open.text, '"A", "B", "C" were removed. Continue "X", "Y" without them, or remove these steps too?');
+    await human('overlap: the human answers Continue', open.id, ['Continue']);
+    const after = rows(overlap.ask.id);
+    assert.deepEqual([after.X, after.Y], ['todo []', 'todo []']);
   } finally { await app.cleanup(); }
   console.log('PASS: on the real daemon a removed prerequisite ends in continued dependents, removed dependents, or one card whose answer the daemon applies; an add without after is refused.');
 } finally { globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }

@@ -31,7 +31,7 @@ const REMOVED_EN = {
 type Card = Pick<NeoQuestion, 'state' | 'kind' | 'todos' | 'cause'>;
 type Row = NeoTodoEdge & Pick<NeoTodo, 'title'>;
 type Write<T> = { todo: T; patch: NeoTodoPatch };
-type CardPlan<C> = { askId: string; replaces: C | null; todos: string[]; text: string };
+type CardPlan<C> = { askId: string; replaces: C[]; todos: string[]; text: string };
 
 const live = (todo: Row) => !['done', 'closed_unverified', 'removed'].includes(todo.state);
 
@@ -173,10 +173,11 @@ export function planNeoTodoRemoval<T extends Row, C extends Card>(
     (dependent) => !cards.some((card) => onCard(card, dependent.id, 'start'))
   );
   if (!listed.length) return { writes, card: null };
-  const replaces =
-    cards.find((card) => listed.some((dependent) => onCard(card, dependent.id, 'removal'))) ?? null;
+  const replaces = cards.filter((card) =>
+    listed.some((dependent) => onCard(card, dependent.id, 'removal'))
+  );
   const covered = new Set([
-    ...(replaces?.todos ?? []),
+    ...replaces.flatMap((card) => card.todos),
     ...listed.map((dependent) => dependent.id),
     todo.id,
   ]);
