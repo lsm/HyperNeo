@@ -3,7 +3,7 @@ import { testDirectories } from '../../helpers/temporary-directory';
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,13 +12,14 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 const createTestDirectory = testDirectories();
 
-test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
+test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45'] as const)(
   '%s SDK compacts mid-turn without cancelling tools or losing queued inputs',
   async (kind) => {
-    const oneM = kind.startsWith('opus');
+    const neo = kind === 'neo' || kind === 'neo45';
+    const oneM = kind.startsWith('opus') || kind === 'neo45';
     const native = kind === 'opus-native';
     const model = oneM ? 'claude-opus-5-5' : 'claude-haiku-4-5-20251001';
-    const percent = oneM ? 90 : 60;
+    const percent = kind === 'neo45' ? 45 : oneM ? 90 : 60;
     const capacity = oneM ? 1_000_000 : 200000;
     const run = createTestDirectory(join(tmpdir(), 'sdk-auto-compact-'));
     await mkdir(join(run, 'workspace'));
@@ -82,7 +83,18 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
           held = true;
           await gate;
         }
-        usage = turn === 2 ? (native ? 975000 : oneM ? 905000 : 125000) : 1000;
+        usage =
+          turn === 2
+            ? native
+              ? 975000
+              : kind === 'neo45'
+                ? 460000
+                : oneM
+                  ? 905000
+                  : 125000
+            : turn === 1 && kind === 'neo45'
+              ? 300000
+              : 1000;
         content =
           turn <= 2
             ? [
@@ -262,7 +274,7 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
       setModelsCache(new Map([['global', catalog]]));
       const call = (name: string, input: unknown = {}) =>
         hub.request<Record<string, unknown>>('operation.invoke', { name, input });
-      if (kind === 'neo')
+      if (neo)
         expect(
           await call('neo.preferences.set', {
             model: model,
@@ -271,25 +283,23 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
             thinkingLevel: 'off',
           })
         ).toMatchObject({ ok: true });
-      const sessionId =
-        kind === 'neo'
-          ? String((await call('neo.open')).sessionId)
-          : (
-              await hub.request<{ sessionId: string }>('session.create', {
-                workspacePath: join(run, 'workspace'),
-                title: 'SDK compaction proof',
-                config: {
-                  model: model,
-                  provider: 'anthropic',
-                  autoCompactPercent: native ? undefined : percent,
-                  sdkToolsPreset: ['Read'],
-                  permissionMode: 'bypassPermissions',
-                },
-              })
-            ).sessionId;
+      const sessionId = neo
+        ? String((await call('neo.open')).sessionId)
+        : (
+            await hub.request<{ sessionId: string }>('session.create', {
+              workspacePath: join(run, 'workspace'),
+              title: 'SDK compaction proof',
+              config: {
+                model: model,
+                provider: 'anthropic',
+                autoCompactPercent: native ? undefined : percent,
+                sdkToolsPreset: ['Read'],
+                permissionMode: 'bypassPermissions',
+              },
+            })
+          ).sessionId;
       const send = async (content: string) => {
-        if (kind !== 'neo')
-          return hub.request<{ messageId: string }>('message.send', { sessionId, content });
+        if (!neo) return hub.request<{ messageId: string }>('message.send', { sessionId, content });
         const requestId = randomUUID();
         expect(await call('neo.message.send', { sessionId, requestId, content })).toMatchObject({
           ok: true,
@@ -381,6 +391,12 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
       );
       expect(continued).toBeGreaterThan(compacted);
       expect(built).toHaveLength(1);
+      if (kind === 'neo45') {
+        const debug = await readFile(join(run, 'sdk-debug.log'), 'utf8');
+        const thresholds = [...debug.matchAll(/> threshold (\d+)/g)].map((m) => Number(m[1]));
+        expect(thresholds.length).toBeGreaterThan(0);
+        expect(new Set(thresholds)).toEqual(new Set([450000]));
+      }
       expect(summaryCalls).toBeGreaterThan(0);
       expect(receipts.size).toBe(2);
       for (const receipt of receipts.values())
@@ -413,6 +429,9 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
       const output = process.env.VERIFY_EVIDENCE_DIR;
       if (output) {
         await mkdir(output, { recursive: true });
+        await copyFile(join(run, 'sdk-debug.log'), join(output, `sdk-debug-${kind}.log`)).catch(
+          () => {}
+        );
         await writeFile(
           join(output, `sdk-auto-compaction-${kind}.json`),
           JSON.stringify(
