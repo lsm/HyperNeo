@@ -19,7 +19,8 @@ tabs panel with the card's Open button.
 
 It must see, at both widths with the panel closed, the chat and the Your work
 column and no Your work tab. At 1600px with the panel open, the column is
-hidden and Your work is the first tab. At 2600px with the panel open, three
+hidden and Your work is the first tab, while the item just opened stays the
+selected tab. At 2600px with the panel open, three
 columns: chat, the Your work column, and the panel with no Your work tab.
 
 Screenshots and `your-work-placement.json` land in `$RUN/evidence/`. Unit tests:

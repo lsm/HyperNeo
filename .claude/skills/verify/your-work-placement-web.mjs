@@ -41,6 +41,8 @@ try {
       columnIsTabPanel: (await column.count()) > 0 && (await column.getAttribute('role')) === 'tabpanel',
       workTabs: await workTab.count(),
       panelOpen: (await page.getByRole('dialog').count()) > 0,
+      tabs: await page.getByRole('tab').allInnerTexts(),
+      selected: await page.locator('[role="tab"][aria-selected="true"]').allInnerTexts(),
     });
     await page.goto(`${base}/pair#${pairCode()}`);
     await page.getByRole('button', { name: 'Pair this browser' }).click();
@@ -65,12 +67,16 @@ assert.deepEqual(observed['1600-closed'], {
   columnIsTabPanel: false,
   workTabs: 0,
   panelOpen: false,
+  tabs: [],
+  selected: [],
 });
 assert.deepEqual(observed['1600-open'], {
   columnVisible: false,
   columnIsTabPanel: false,
   workTabs: 1,
   panelOpen: true,
+  tabs: ['Your work · 1', 'HyperNeo · Synthetic'],
+  selected: ['HyperNeo · Synthetic'],
 });
 assert.deepEqual(observed['2600-closed'], observed['1600-closed']);
 assert.deepEqual(observed['2600-open'], {
@@ -78,5 +84,7 @@ assert.deepEqual(observed['2600-open'], {
   columnIsTabPanel: false,
   workTabs: 0,
   panelOpen: true,
+  tabs: ['HyperNeo · Synthetic'],
+  selected: ['HyperNeo · Synthetic'],
 });
-console.log('PASS: Your work shows once at 1600px and 2600px, panel open and closed');
+console.log('PASS: Your work shows once, first and unselected in the panel below 2400px');
