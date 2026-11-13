@@ -27,7 +27,7 @@ describe('root Neo system prompt', () => {
   );
   test('tells Neo to check provider quota before assigning work', () => {
     expect(neoPrompt([])).toContain(
-      "Before assigning work to a model, call invoke settings.provider.usage with that model's provider. If any window has used at or above limit, choose a worker on another provider or wait until its resetAt, and say which. not_supported or an error means unknown: assign as usual."
+      "Before assigning work to a model, call invoke settings.provider.usage with that model's provider. If any window has used at or above limit, choose a worker on another provider or wait until its resetAt, and say which; if resetAt is null, say the reset time is unknown. not_supported or an error means unknown: assign as usual."
     );
   });
   test('tells Neo to answer a worker question itself before asking the human', () => {
