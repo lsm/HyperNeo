@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest';
+import { stopBannerHidden, stoppedErrorCardUuid } from '../stopped-error-card.ts';
+
+const episode = {
+  id: 'e',
+  failures: 3,
+  retryAt: 0,
+  error: '{"type":"result","uuid":"r1","is_error":true}',
+  failed: true,
+};
+const user = { type: 'user', uuid: 'u1' };
+const card = { type: 'assistant', uuid: 'a1', error: 'server_error' };
+const result = { type: 'result', uuid: 'r1' };
+
+describe('stoppedErrorCardUuid', () => {
+  it('picks the API Error card that ended the stopped turn', () => {
+    expect(stoppedErrorCardUuid([user, card, result], episode)).toBe('a1');
+  });
+
+  it('keeps the banner when the turn ended without an API Error card', () => {
+    expect(
+      stoppedErrorCardUuid([user, { type: 'assistant', uuid: 'a2' }, result], episode)
+    ).toBeUndefined();
+    expect(stoppedErrorCardUuid([card, user, { ...result, uuid: 'r2' }], episode)).toBeUndefined();
+  });
+
+  it('does not move a stale stop onto a later failure card', () => {
+    const later = [
+      user,
+      card,
+      result,
+      { type: 'user', uuid: 'u2' },
+      { type: 'assistant', uuid: 'a2', error: 'server_error' },
+      { type: 'result', uuid: 'r2' },
+    ];
+    expect(stoppedErrorCardUuid(later, episode)).toBeUndefined();
+    expect(stoppedErrorCardUuid(later.slice(0, 4), episode)).toBeUndefined();
+  });
+
+  it('keeps the banner for errors that are not a stopped failure episode', () => {
+    expect(stoppedErrorCardUuid([user, card, result], undefined)).toBeUndefined();
+    expect(
+      stoppedErrorCardUuid([user, card, result], { ...episode, failed: false })
+    ).toBeUndefined();
+    expect(
+      stoppedErrorCardUuid([user, card, result], { ...episode, error: 'Query timed out' })
+    ).toBeUndefined();
+  });
+
+  it('stamps no card when the stored result JSON was cut before its uuid', () => {
+    const failed = {
+      duration_api_ms: 0,
+      session_id: 's1',
+      is_error: true,
+      result: 'x'.repeat(5000),
+      type: 'result',
+      uuid: 'r1',
+    };
+    const cut = JSON.stringify(failed).slice(0, 4096);
+    expect(stoppedErrorCardUuid([user, card, failed], { ...episode, error: cut })).toBeUndefined();
+    const later = [
+      user,
+      card,
+      failed,
+      { type: 'user', uuid: 'u2' },
+      { type: 'assistant', uuid: 'a2', error: 'server_error' },
+      { ...failed, uuid: 'r2' },
+    ];
+    expect(stoppedErrorCardUuid(later, { ...episode, error: cut })).toBeUndefined();
+  });
+});
+
+describe('stopBannerHidden', () => {
+  const loading = { loaded: false, tooLarge: false, stored: 0, shown: 0 };
+
+  it('hides the banner once the stopped card shows the stop', () => {
+    expect(stopBannerHidden(episode, 'a1', { ...loading, loaded: true, stored: 3, shown: 3 })).toBe(
+      true
+    );
+  });
+
+  it('hides it while the transcript is still on its way', () => {
+    expect(stopBannerHidden(episode, undefined, loading)).toBe(true);
+    expect(stopBannerHidden(episode, undefined, { ...loading, loaded: true, stored: 3 })).toBe(
+      true
+    );
+  });
+
+  it('shows it when the transcript failed or has nothing to show', () => {
+    expect(stopBannerHidden(episode, undefined, { ...loading, tooLarge: true })).toBe(false);
+    expect(stopBannerHidden(episode, undefined, { ...loading, loaded: true })).toBe(false);
+  });
+
+  it('shows other errors while loading', () => {
+    expect(stopBannerHidden(undefined, undefined, loading)).toBe(false);
+  });
+});

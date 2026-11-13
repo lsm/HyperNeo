@@ -46,6 +46,7 @@ import { AuthStatusCard, ToolProgressCard } from './tools/index.ts';
 import { SDKResumeChoiceMessage } from './SDKResumeChoiceMessage.tsx';
 import { useChatDisplayMode } from './chat-display-mode.ts';
 import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement';
+import type { StoppedEpisode } from '../../lib/stopped-error-card.ts';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
@@ -77,6 +78,7 @@ interface Props {
   runningToolUseIds?: Set<string>;
   replacementStatus?: MessageReplacementStatus;
   isLiveTail?: boolean;
+  stopped?: StoppedEpisode;
 }
 
 function ReplacementStatusFrame({
@@ -239,6 +241,7 @@ function SDKMessageRendererImpl({
   runningToolUseIds,
   replacementStatus,
   isLiveTail = false,
+  stopped,
 }: Props) {
   const minimal = useChatDisplayMode() === 'minimal';
   if (isHyperNeoActionMessage(message)) {
@@ -332,6 +335,7 @@ function SDKMessageRendererImpl({
         flattenSubagentTools={flattenSubagentTools}
         isRunning={isRunning}
         runningToolUseIds={runningToolUseIds}
+        stopped={stopped}
       />
     );
   } else if (isSDKResultMessage(sdkMessage)) {
@@ -417,7 +421,8 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.isRunning === next.isRunning &&
     prev.runningToolUseIds === next.runningToolUseIds &&
     prev.replacementStatus === next.replacementStatus &&
-    prev.isLiveTail === next.isLiveTail
+    prev.isLiveTail === next.isLiveTail &&
+    prev.stopped === next.stopped
   );
 }
 
