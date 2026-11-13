@@ -2245,3 +2245,60 @@ test('a stranded input gets its notice without touching an input the full sessio
     'neo'
   );
 });
+
+test('a stranded first input and an unanswered second settle with one group fallback', async () => {
+  const first = await accept();
+  db.getDatabase()
+    .prepare('UPDATE job_queue SET created_at = created_at - 1000 WHERE id = ?')
+    .run(first.job.id);
+  const second = await accept();
+  const handler = createNeoFrontHandler(service);
+  await handler(first.job);
+  await handler(second.job);
+  for (const { id } of [first, second]) {
+    await db.saveUserMessage(
+      front,
+      {
+        type: 'user',
+        uuid: id as UUID,
+        session_id: front,
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'Hello' },
+      },
+      'enqueued'
+    );
+    expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  }
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No reply',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id = ?"
+    )
+    .run(conversationId, first.id);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [first.id])).toHaveLength(0);
+  expect(service.publications.hasFallbackFor(conversationId, first.id)).toBe(false);
+
+  const settledFirst = await handler(first.job);
+  const notices = () =>
+    service.publications
+      .list(conversationId)!
+      .filter((row) => row.fullText === FRONT_FALLBACK_TEXT);
+
+  expect(settledFirst).toMatchObject({ delivered: true });
+  expect(notices()).toHaveLength(1);
+  expect(notices()[0].replyTo).toEqual([first.id, second.id]);
+  expect(notices()[0].publicationId).toBe(frontFallbackId(conversationId, [first.id, second.id]));
+
+  await handler(second.job);
+
+  expect(notices()).toHaveLength(1);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [first.id])).toHaveLength(0);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [second.id])).toHaveLength(0);
+});
