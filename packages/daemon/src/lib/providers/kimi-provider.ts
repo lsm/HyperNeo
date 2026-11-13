@@ -455,9 +455,11 @@ export class KimiProvider implements Provider {
     let models: ModelInfo[];
     try {
       const discovered = await this.listRemoteModels({ discoveryOnly: true });
-      models = discovered.length ? discovered : this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
+      models = discovered.length
+        ? this.forServingRegion(discovered)
+        : this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
     } catch {
-      models = this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
+      models = this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
     }
     return models;
   }
@@ -475,7 +477,26 @@ export class KimiProvider implements Provider {
     const discovered = this.discoveryCache.get(this.discoveryFingerprint());
     if (discovered?.length) return discovered;
     if (!this.curatedModels?.length) return null;
-    return this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
+    return this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
+  }
+
+  private static k2Point7Profile<T extends ModelInfo>(model: T): T {
+    return {
+      ...model,
+      name: 'Kimi K2.7',
+      contextWindow: KimiProvider.resolveContextWindow('kimi-k2.7-code'),
+      thinkingModes: 'on',
+      effortLevels: undefined,
+    };
+  }
+
+  private forServingRegion(models: ModelInfo[]): ModelInfo[] {
+    return models.map((model) =>
+      !KimiProvider.isKimiK2Point7Model(model.id) &&
+      KimiProvider.isKimiK2Point7Model(this.getRoutedModelId(model.id))
+        ? KimiProvider.k2Point7Profile(model)
+        : model
+    );
   }
 
   private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
@@ -580,9 +601,6 @@ export class KimiProvider implements Provider {
     const baseUrl = normalizeBaseUrl(
       sessionConfig?.baseUrl || this.env.KIMI_BASE_URL || KimiProvider.getBaseUrlForRegion(region)
     );
-    if (KimiProvider.isLegacyKimiCodeEndpoint(baseUrl)) {
-      return KimiProvider.canonicalizeModelId(modelId);
-    }
     return KimiProvider.resolveUpstreamModelId(modelId, baseUrl, region);
   }
 
@@ -838,7 +856,11 @@ export class KimiProvider implements Provider {
       exactMatch !== undefined &&
       KimiProvider.hasOneMContextSuffix(model.id) &&
       !KimiProvider.hasOneMContextSuffix(exactMatch.id);
-    if (exactMatch && !exactMatchLosesSuffix) return exactMatch;
+    if (exactMatch && !exactMatchLosesSuffix)
+      return !KimiProvider.isKimiK2Point7Model(exactMatch.id) &&
+        KimiProvider.isKimiK2Point7Model(model.id)
+        ? KimiProvider.k2Point7Profile(exactMatch)
+        : exactMatch;
     let prefixMatch: { model: ModelInfo; length: number } | undefined;
     for (const candidate of KimiProvider.KNOWN_MODELS) {
       for (const rawPrefix of candidate.providerAliasPrefixes ?? []) {

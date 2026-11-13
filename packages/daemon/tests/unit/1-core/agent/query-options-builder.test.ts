@@ -1962,9 +1962,9 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
-    it('forces thinking enabled for regular kimi K2.7 models when level is off', async () => {
+    it('forces thinking enabled for the K2.7 Code Highspeed entry when level is off', async () => {
       mockSession.config.provider = 'kimi';
-      mockSession.config.model = 'kimi-k2.7-code';
+      mockSession.config.model = 'kimi-k2.7-code-highspeed';
       mockSession.config.thinkingLevel = 'off';
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
@@ -2192,7 +2192,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('allows mixed Kimi K2.7 primary and K3 fallback when K2.7 forces enabled thinking', () => {
       mockSession.config.provider = 'kimi';
-      mockSession.config.model = 'kimi-k2.7-code';
+      mockSession.config.model = 'kimi-k2.7-code-highspeed';
       mockSession.config.fallbackModel = 'k3';
       mockSession.config.thinkingLevel = 'off';
 
@@ -2273,7 +2273,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('allows Kimi K2.7 primary and K2.7 fallback with enabled thinking', () => {
       mockSession.config.provider = 'kimi';
-      mockSession.config.model = 'kimi-k2.7-code';
+      mockSession.config.model = 'kimi-k2.7-code-highspeed';
       mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
       mockSession.config.thinkingLevel = 'off';
 
