@@ -76,7 +76,7 @@ export function createPackPreferenceQuestions(
           db.prepare(`INSERT INTO neo_pack_preference_proposals (question_id, request_id, values_json, question_text)
         VALUES (?, ?, ?, ?)`).run(questionId, input.requestId, json, text);
           return { ok: true as const, questionId };
-        })(),
+        }, 'immediate')(),
       'proposal',
       'proposal'
     )

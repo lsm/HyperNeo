@@ -68,7 +68,7 @@ export function createNeoRuleQuestions(service: NeoService) {
           db.prepare(`INSERT INTO neo_rule_proposals (question_id, request_id, edit_json, question_text)
         VALUES (?, ?, ?, ?)`).run(questionId, input.requestId, json, text);
           return { ok: true as const, questionId };
-        })(),
+        }, 'immediate')(),
       'proposal',
       'proposal'
     )
