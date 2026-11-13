@@ -73,7 +73,7 @@ try {
   await app.cleanup();
   app = await createDaemonApp({ config: config(), verbose: false }); await app.jobProcessor.stop();
   assert.equal((await ask(replacement)).question.id, next.question.id); assert.equal(rows().length, 1);
-  const manual = await handler()({ name: 'neo.publication.publish', input: { requestId: 'same-card-manual', shortText: 'I replied · View card · Revised sign-off', fullText: 'I replied · View card · Revised sign-off', cardReply: rows()[0].cardReply } });
+  const manual = await handler()({ name: 'neo.publication.publish', input: { requestId: 'same-card-manual', text: 'I replied · View card · Revised sign-off', cardReply: rows()[0].cardReply } });
   assert(JSON.parse(manual.content[0].text).accepted); assert.equal(rows().length, 1);
   consumedInputId = human2;
   assert((await ask({ text: 'A distinct later reply' })).ok); assert.equal(rows().length, 2);

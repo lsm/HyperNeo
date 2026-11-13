@@ -507,6 +507,23 @@ describe('Neo publication without runtime input attribution', () => {
     expect(ledger.list(conversationId)).toHaveLength(3);
   });
 
+  test('refuses folded details whose combined length passes the stored cap', async () => {
+    const over = await publish(
+      { requestId: 'send-folded-over', text: 'x'.repeat(16000), details: 'd'.repeat(15000) },
+      caller
+    );
+    expect(over).toMatchObject({ accepted: false, reason: 'invalid_publication' });
+    const exact = await publish(
+      { requestId: 'send-folded-exact', text: 'x'.repeat(15990), details: 'dddddddd' },
+      caller
+    );
+    expect(exact).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, fullText: `${'x'.repeat(15990)}\n\ndddddddd` },
+    });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+  });
+
   test('refuses the old shortText, fullText and verbatim fields', async () => {
     for (const old of [
       { requestId: 'old', shortText: 'Preview', fullText: 'Whole.' },

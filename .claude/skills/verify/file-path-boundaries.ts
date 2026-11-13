@@ -60,7 +60,7 @@ try {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, content);
     }
-    const response = JSON.parse((await publish({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), shortText: text, fullText: text } })).content[0].text);
+    const response = JSON.parse((await publish({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), text } })).content[0].text);
     assert(response.accepted, JSON.stringify(response));
     const source = response.publication.publicationId;
     const cards = previewLinkedReferenceCandidates(text).flatMap(item => item.kind === 'local' ? [item.path] : []);
@@ -84,7 +84,7 @@ try {
     const path = join(workspace, '可读报告.md');
     writeFileSync(path, '# Chinese boundary report\n\nCurrent bytes from the source owner.');
     const text = `报告：${path}。 Saved to ${path}.`;
-    const result = JSON.parse((await publish({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), shortText: text, fullText: text } })).content[0].text);
+    const result = JSON.parse((await publish({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), text } })).content[0].text);
     assert(result.accepted);
     const dist = resolve('packages/web/dist');
     front = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request, server) {

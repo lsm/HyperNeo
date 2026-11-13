@@ -57,6 +57,16 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
         message:
           'Progress requires one replyTo ID and a brief acknowledgment of at most 150 characters.',
       });
+    if (
+      value.details !== undefined &&
+      value.details.length < value.text.length &&
+      value.text.length + value.details.length + 2 > 16000
+    )
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Details shorter than the text fold into it; their combined length must fit 16000 characters.',
+      });
   });
 const Draft = NeoPublicationDraft;
 type Draft = z.infer<typeof Draft>;

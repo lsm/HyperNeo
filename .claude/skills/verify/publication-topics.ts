@@ -17,17 +17,17 @@ import { createDiscoveryOperations } from '../../../packages/daemon/src/lib/oper
 const DESKTOP = '**Claude Desktop 环境**：查清楚了，环境只能由你在 Desktop 里新建，我这边建不了。';
 const QLARK = '**qlark 长听写开关**：按你说的做了，长听写现在默认关闭，设置里可以打开。';
 const STEPS = [
-  { requestId: 'bundled', shortText: 'environments can only be created by you in Desktop', fullText: `${DESKTOP}\n\n${QLARK}`, links: [] },
-  { requestId: 'desktop', shortText: 'Claude Desktop 环境: only you can create environments', fullText: DESKTOP, links: [] },
-  { requestId: 'qlark', shortText: 'qlark 长听写开关 is now off by default', fullText: QLARK, links: [] },
-  { requestId: 'references', shortText: 'Delivery preserves valid project references', fullText: 'The report is ready.',
+  { requestId: 'bundled', text: 'environments can only be created by you in Desktop', details: `${DESKTOP}\n\n${QLARK}`, links: [] },
+  { requestId: 'desktop', text: 'Claude Desktop 环境: only you can create environments', details: DESKTOP, links: [] },
+  { requestId: 'qlark', text: 'qlark 长听写开关 is now off by default', details: QLARK, links: [] },
+  { requestId: 'references', text: 'The report is ready.',
     links: [{ kind: 'project', id: 'garden', label: 'Garden' }],
     replyTo: ['10000000-0000-4000-8000-000000000088'],
   },
 ];
 const COMMANDS = [
-  { name: 'neo.publication.publish', input: { requestId: 'references', shortText: 'Invalid work', fullText: 'Must not be saved.', links: [{ kind: 'work', id: 'old', label: 'Old' }] } },
-  { name: 'neo.publication.publish', input: { requestId: 'references', shortText: 'Invalid project', fullText: 'Must not be saved.', links: [{ kind: 'project', id: 'missing', label: 'Missing' }] } },
+  { name: 'neo.publication.publish', input: { requestId: 'references', text: 'Must not be saved.', links: [{ kind: 'work', id: 'old', label: 'Old' }] } },
+  { name: 'neo.publication.publish', input: { requestId: 'references', text: 'Must not be saved.', links: [{ kind: 'project', id: 'missing', label: 'Missing' }] } },
   { name: 'neo.publication.publish', input: { ...STEPS[3], artifacts: [{ daemonId: '30000000-0000-4000-8000-000000000001', artifactId: 'missing', title: 'Missing', kind: 'html', byteLength: 100 }] } },
   ...STEPS.map((input) => ({ name: 'neo.publication.publish', input })),
   { name: 'operations.describe', input: { name: 'neo.publication.publish' } },
