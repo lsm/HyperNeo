@@ -42,13 +42,15 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     kind: 'user' | 'result',
     uuid: string,
     consumedSeq: number | null,
-    sendStatus = 'consumed'
+    sendStatus = 'consumed',
+    recoveryIntercepted = 0,
+    recoveryBillingTerminal = 0
   ) => {
     seq += 1;
     db.prepare(`INSERT INTO sdk_messages
       (seq, id, session_id, message_type, sdk_message, timestamp, sdk_uuid, consumed_seq,
-       is_terminal, send_status)
-      VALUES (?, ?, 'neo', ?, ?, '2026-01-01', ?, ?, ?, ?)`).run(
+       is_terminal, send_status, recovery_intercepted, recovery_billing_terminal)
+      VALUES (?, ?, 'neo', ?, ?, '2026-01-01', ?, ?, ?, ?, ?, ?)`).run(
       seq,
       `m${seq}`,
       kind,
@@ -56,7 +58,9 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
       uuid,
       consumedSeq,
       kind === 'result' ? 1 : 0,
-      sendStatus
+      sendStatus,
+      recoveryIntercepted,
+      recoveryBillingTerminal
     );
   };
   const wakeNote = (askId: string, options: { batch?: string; status?: string } = {}) => {
@@ -195,6 +199,16 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     sdk('result', 'result-ask', 11);
     expect(await sweep()).toEqual(['ask']);
     expect(store.getAsk('ask')).toMatchObject({ status: 'done' });
+  });
+
+  test('a limit result intercepted for recovery does not end the turn', async () => {
+    add('finished', 'done');
+    consumedWake('ask', false);
+    sdk('result', 'limited', 11, 'consumed', 1, 0);
+    expect(await sweep()).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    sdk('result', 'recovered', 12);
+    expect(await sweep()).toEqual(['ask']);
   });
 
   test('a directly delivered wake also counts once its turn ends', async () => {

@@ -7,6 +7,7 @@ import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
+import { SESSION_BILLING_TERMINAL } from './sdk-message-input-predicates.ts';
 
 type Input = { askId: string; status: 'done' | 'dropped'; outcome: string };
 type Snapshot = { ask: NeoAsk; todos: NeoTodo[] };
@@ -148,8 +149,7 @@ const settleReadyAsks = (db: Database): string[] =>
             AND json_extract(j.payload, '$.to.sessionId') = neo_asks.session_id
             AND json_extract(j.payload, '$.messageUuid') LIKE ? || neo_asks.id || ':%'))
         AND EXISTS (SELECT 1 FROM sdk_messages r WHERE r.session_id = m.session_id
-          AND r.message_type = 'result' AND r.is_terminal = 1
-          AND r.parent_tool_use_id IS NULL AND COALESCE(r.internal_compaction_turn, 0) = 0
+          AND ${SESSION_BILLING_TERMINAL}
           AND r.consumed_seq >= m.consumed_seq))`)
       .all(WAKE_NOTE_PREFIX, WAKE_NOTE_PREFIX) as { id: string }[]
   ).map((row) => row.id);
