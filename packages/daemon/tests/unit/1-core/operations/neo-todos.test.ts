@@ -527,6 +527,20 @@ describe('a pack owns its check', () => {
     expect(edited.ok && edited.todo.doneWhen).toBe('Half full');
   });
 
+  test('a writer-flagged pack the writer does not cover falls back to the generic add', async () => {
+    const { call } = setup([{ ...gauge, todos: { ...gauge.todos, writerAdd: true } } as NeoPack]);
+    const added = await call('neo.todo.add', {
+      after: [],
+      askId: 'ask',
+      title: 'Fill it',
+      doneWhen: 'Full enough',
+      check,
+      instruction: 'Fill the tank.',
+      target,
+    });
+    expect(added.ok && added.todo.doneWhen).toBe('gauge level reads 5');
+  });
+
   test('refuses a check its pack refuses, and adds nothing', async () => {
     const { repo, call } = setup([gauge]);
     expect(
