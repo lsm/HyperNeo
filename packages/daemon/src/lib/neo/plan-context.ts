@@ -94,6 +94,7 @@ export function fitNeoPlanLines(lines: readonly NeoPlanLine[], budget: number): 
 }
 
 const UNANSWERED_TEXT_LIMIT = 2_048;
+const UNANSWERED_SECTION_BUDGET = 8_192;
 
 function unansweredText(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -101,6 +102,22 @@ function unansweredText(text: string): string {
   if (bytes.length <= UNANSWERED_TEXT_LIMIT) return flat;
   const cut = new TextDecoder().decode(bytes.slice(0, UNANSWERED_TEXT_LIMIT));
   return `${cut.replace(/�+$/, '')}… (truncated; read the full message with neo.conversation.read.)`;
+}
+
+function unansweredSection(unanswered: readonly NeoUnansweredInput[]): string {
+  const kept: string[] = [];
+  let used = 0;
+  for (const input of unanswered) {
+    const line = `Message ${input.id} (full id; reply with replyTo: ["${input.id}"]): ${unansweredText(input.text)}`;
+    const bytes = Buffer.byteLength(line, 'utf8') + 1;
+    if (used + bytes > UNANSWERED_SECTION_BUDGET) break;
+    kept.push(line);
+    used += bytes;
+  }
+  const more = unanswered.length - kept.length;
+  if (more > 0)
+    kept.push(`${more} more pending; older messages first. Read them with neo.conversation.read.`);
+  return `Unanswered messages\n${kept.join('\n')}`;
 }
 
 export function planNeoPlanContext(
@@ -112,15 +129,7 @@ export function planNeoPlanContext(
   if (source !== 'prompt' || previous === null) {
     const plans = `Open plans\n${lines.map((line) => line.text).join('\n') || '(none)'}`;
     if (!unanswered.length) return plans;
-    return [
-      plans,
-      `Unanswered messages\n${unanswered
-        .map(
-          (input) =>
-            `Message ${input.id} (full id; reply with replyTo: ["${input.id}"]): ${unansweredText(input.text)}`
-        )
-        .join('\n')}`,
-    ].join('\n');
+    return [plans, unansweredSection(unanswered)].join('\n');
   }
   const changed = lines.filter(
     (line) =>

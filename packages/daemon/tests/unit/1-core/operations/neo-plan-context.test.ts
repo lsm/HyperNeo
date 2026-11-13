@@ -141,4 +141,21 @@ describe('unanswered messages', () => {
     expect(context).toContain('(truncated');
     expect(Buffer.byteLength(context, 'utf8')).toBeLessThan(5_000);
   });
+
+  test('bounds the whole unanswered section and points at the read for the rest', () => {
+    const lines = neoPlanLines([], [], []);
+    const pending = Array.from({ length: 40 }, (_, i) => ({
+      id: `pending-${i}`,
+      text: 'y'.repeat(20_000),
+    }));
+
+    const context = planNeoPlanContext(null, lines, 'compact', pending);
+    const section = context.slice(context.indexOf('Unanswered messages'));
+
+    expect(Buffer.byteLength(section, 'utf8')).toBeLessThan(9_000);
+    expect(section).toContain('pending-0');
+    expect(section).toContain('neo.conversation.read');
+    expect(section).toContain('more pending');
+    expect(section).not.toContain('pending-39 (full id');
+  });
 });

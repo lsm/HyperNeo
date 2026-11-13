@@ -30,7 +30,9 @@ with its full message id and text. The compact-source context and the real
 `SessionStart` hook in compact mode must contain that id and text and omit both
 answered ones; a startup-source context must omit all three. A plan read without
 the compact flag must not carry the unanswered list at all, so per-prompt reads
-skip that scan.
+skip that scan. The section itself is bounded: entries are capped at 2 kB, the
+section at 8 kB oldest-first, and anything left over is announced with a pointer
+to `neo.conversation.read`.
 
 Before the fix, run the identical helper in before mode on the baseline. It must
 fail the real MCP open-owner assertion, retaining observed.json with the smaller
