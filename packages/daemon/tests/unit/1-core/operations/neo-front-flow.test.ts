@@ -2099,3 +2099,27 @@ test('settlement reports answered, not handed off, for an input Neo never receiv
 
   expect(settled).toEqual({ delivered: true, outcome: 'failed' });
 });
+
+test('settlement marks the original row when the front never stored one', async () => {
+  const { id, job } = await deliveredConvoInput();
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+    'consumed'
+  );
+  db.getDatabase()
+    .prepare(
+      "DELETE FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'"
+    )
+    .run(front, id);
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id = ?"
+    )
+    .run(conversationId, id);
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('consumed');
+
+  await settleConvoInput(service, job, conversationId, front, id, 'delivery');
+
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('failed');
+});

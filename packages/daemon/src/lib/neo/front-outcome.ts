@@ -22,7 +22,18 @@ export async function settleConvoInput(
   if (!ask) return { delivered: false };
   const sdk = service.db.getSDKMessageRepo();
   const status = sdk.getUserSendStatus(ask.askOrigin.sessionId, messageId);
-  if (status === 'consumed') return { delivered: true, outcome: 'handed_off' };
+  if (status === 'consumed') {
+    const claimed = await service.db.gateway.call(
+      neoFrontInputReads,
+      'get',
+      conversationId,
+      messageId
+    );
+    if (claimed?.owner !== 'front') return { delivered: true, outcome: 'handed_off' };
+    await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, [messageId]);
+    sdk.markDeliveryFailedByUuidInclusive(ask.askOrigin.sessionId, messageId);
+    return { delivered: true, outcome: 'failed' };
+  }
   const deadline = Date.parse(ask.createdAt) + SETTLEMENT_TIMEOUT_MS;
   const pending = async () => {
     const now = Date.now();
@@ -73,6 +84,9 @@ export async function settleConvoInput(
     return { delivered: true, outcome: self?.owner === 'neo' ? 'handed_off' : 'answered' };
   }
   await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, open);
-  for (const id of open) sdk.markDeliveryFailedByUuidInclusive(sessionId, id);
+  for (const id of open) {
+    const marked = sdk.markDeliveryFailedByUuidInclusive(sessionId, id);
+    if (!marked) sdk.markDeliveryFailedByUuidInclusive(ask.askOrigin.sessionId, id);
+  }
   return { delivered: true, outcome: 'failed' };
 }
