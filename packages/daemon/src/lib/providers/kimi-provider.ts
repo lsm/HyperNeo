@@ -221,19 +221,28 @@ export class KimiProvider implements Provider {
     },
     {
       id: 'kimi-for-coding',
-      name: 'Kimi K2.7',
+      name: 'Kimi K2.8 Preview',
       alias: 'kimi',
       family: 'kimi',
       provider: 'kimi',
-      contextWindow: 262_144,
+      contextWindow: 1_048_576,
       providerAliases: ['KIMI', 'Kimi', 'kimi-k2.7-code', 'Kimi-K2.7-Code'],
       preferContextWindowMetadata: true,
-      thinkingModes: 'on',
-      description: 'Kimi Code model from Moonshot Claude Code integration docs.',
+      thinkingModes: 'granular',
+      effortLevels: ['low', 'high', 'max'],
+      description: 'Kimi K2.8 Preview · 1M context coding model with reasoning effort',
       releaseDate: '',
       available: true,
     },
   ];
+
+  static readonly MODEL_EFFORT_LEVELS: Record<string, ThinkingEffort[]> = {
+    'kimi-for-coding': ['low', 'high', 'max'],
+  };
+
+  static readonly MODEL_DEFAULT_EFFORT: Record<string, ThinkingEffort> = {
+    'kimi-for-coding': 'high',
+  };
 
   static readonly K31_MODELS: ModelInfo[] = [
     {
@@ -379,12 +388,15 @@ export class KimiProvider implements Provider {
     );
   }
 
+  static isKimiK2Point8PreviewModel(modelId: string): boolean {
+    const id = KimiProvider.normalizeKimiModelId(modelId);
+    return id === 'kimi' || id === 'kimi-for-coding';
+  }
+
   static isKimiK2Point7Model(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
     if (KimiProvider.isKimiK3Model(modelId)) return false;
     return (
-      id === 'kimi' ||
-      id === 'kimi-for-coding' ||
       id === 'kimi-k2.7-code' ||
       id === 'kimi-k2.7-code-highspeed' ||
       id === 'kimi-for-coding-highspeed'
@@ -410,6 +422,7 @@ export class KimiProvider implements Provider {
 
   private static discoveredThinkingModesFor(modelId: string): 'granular' | 'on' | 'off' {
     if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
+    if (KimiProvider.isKimiK2Point8PreviewModel(modelId)) return 'granular';
     if (KimiProvider.resolveContextWindow(modelId) < 65_536) return 'off';
     return 'on';
   }
@@ -418,6 +431,9 @@ export class KimiProvider implements Provider {
     modelId: string
   ): { type: 'enabled'; budgetTokens: 16000 } | { type: 'disabled' } | undefined {
     if (KimiProvider.isKimiK3Model(modelId)) return undefined;
+    if (KimiProvider.isKimiK2Point8PreviewModel(modelId)) {
+      return { type: 'enabled', budgetTokens: 16_000 };
+    }
     if (KimiProvider.isKimiK2Point7Model(modelId)) {
       return { type: 'enabled', budgetTokens: 16_000 };
     }
@@ -545,9 +561,11 @@ export class KimiProvider implements Provider {
     let models: ModelInfo[];
     try {
       const discovered = await this.listRemoteModels({ discoveryOnly: true });
-      models = discovered.length ? discovered : this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
+      models = discovered.length
+        ? this.forServingRegion(discovered)
+        : this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
     } catch {
-      models = this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
+      models = this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
     }
     return models;
   }
@@ -592,11 +610,35 @@ export class KimiProvider implements Provider {
     return !discovered?.length || discovered.some((model) => model.id === modelId);
   }
 
+  getServedModels(): ModelInfo[] {
+    return this.forServingRegion(KimiProvider.MODELS);
+  }
+
   getCachedModels(): ModelInfo[] | null {
     const discovered = this.discoveryCache.get(this.discoveryFingerprint());
-    if (discovered?.length) return discovered;
+    if (discovered?.length) return this.forServingRegion(discovered);
     if (!this.curatedModels?.length) return null;
-    return this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
+    return this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
+  }
+
+  private static k2Point7Profile<T extends ModelInfo>(model: T): T {
+    return {
+      ...model,
+      name: 'Kimi K2.7',
+      contextWindow: KimiProvider.resolveContextWindow('kimi-k2.7-code'),
+      thinkingModes: 'on',
+      effortLevels: undefined,
+      description: 'Kimi K2.7 · 256K context, fixed thinking',
+    };
+  }
+
+  private forServingRegion(models: ModelInfo[]): ModelInfo[] {
+    return models.map((model) =>
+      !KimiProvider.isKimiK2Point7Model(model.id) &&
+      KimiProvider.isKimiK2Point7Model(this.getRoutedModelId(model.id))
+        ? KimiProvider.k2Point7Profile(model)
+        : model
+    );
   }
 
   private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
@@ -694,17 +736,51 @@ export class KimiProvider implements Provider {
     return KimiProvider.DEFAULT_MODEL;
   }
 
-  getModelEffortLevels(): ThinkingEffort[] {
-    return [...THINKING_EFFORTS];
+  getRoutedModelId(modelId: string, sessionConfig?: ProviderSessionConfig): string {
+    if (!this.ownsModel(modelId)) return modelId;
+    const explicitRegion = sessionConfig?.region ?? this.env.KIMI_REGION;
+    const region = explicitRegion ? resolveKimiRegion(explicitRegion) : this.defaultRegion;
+    const baseUrl = normalizeBaseUrl(
+      sessionConfig?.baseUrl || this.env.KIMI_BASE_URL || KimiProvider.getBaseUrlForRegion(region)
+    );
+    return KimiProvider.resolveUpstreamModelId(modelId, baseUrl, region);
   }
 
-  getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
-    if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
-    if (KimiProvider.isKimiK2Point7Model(modelId)) return 'on';
+  getModelContextWindow(modelId: string, sessionConfig?: ProviderSessionConfig): number {
+    return KimiProvider.resolveContextWindow(this.getRoutedModelId(modelId, sessionConfig));
+  }
+
+  getModelEffortLevels(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): ThinkingEffort[] | undefined {
+    if (!this.ownsModel(modelId)) return undefined;
+    const routed = this.getRoutedModelId(modelId, sessionConfig);
+    const levels = KimiProvider.MODEL_EFFORT_LEVELS[routed];
+    if (levels) return [...levels];
+    return KimiProvider.isKimiK2Point7Model(routed) ? undefined : [...THINKING_EFFORTS];
+  }
+
+  getModelDefaultEffort(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): ThinkingEffort | undefined {
+    if (!this.ownsModel(modelId)) return undefined;
+    return KimiProvider.MODEL_DEFAULT_EFFORT[this.getRoutedModelId(modelId, sessionConfig)];
+  }
+
+  getModelThinkingMode(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): 'off' | 'on' | 'granular' | undefined {
+    const routed = this.getRoutedModelId(modelId, sessionConfig);
+    if (KimiProvider.isKimiK3Model(routed)) return 'granular';
+    if (KimiProvider.isKimiK2Point8PreviewModel(routed)) return 'granular';
+    if (KimiProvider.isKimiK2Point7Model(routed)) return 'on';
     if (
       this.ownsModel(modelId) &&
       !KimiProvider.hasOneMContextSuffix(modelId) &&
-      KimiProvider.resolveContextWindow(modelId) < 65_536
+      KimiProvider.resolveContextWindow(routed) < 65_536
     ) {
       return 'off';
     }
@@ -827,6 +903,7 @@ export class KimiProvider implements Provider {
     const canonical = KimiProvider.canonicalizeModelId(modelId);
     const normalized = KimiProvider.normalizeKimiModelId(canonical);
     if (normalized === 'k3-256k' || normalized === 'kimi-k3-256k') return 262_144;
+    if (normalized === 'kimi-for-coding') return 1_048_576;
     if (
       normalized === 'kimi-k3' ||
       normalized === 'kimi-k3.1-pro' ||
@@ -865,8 +942,10 @@ export class KimiProvider implements Provider {
       ? resolveKimiRegion(explicitRegion)
       : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
 
-    const contextWindow = KimiProvider.resolveContextWindow(_modelId);
     const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, baseUrl, effectiveRegion);
+    const contextWindow = KimiProvider.resolveContextWindow(
+      this.ownsModel(_modelId) ? routingModelId : _modelId
+    );
 
     return {
       envVars: {
@@ -933,7 +1012,11 @@ export class KimiProvider implements Provider {
       exactMatch !== undefined &&
       KimiProvider.hasOneMContextSuffix(model.id) &&
       !KimiProvider.hasOneMContextSuffix(exactMatch.id);
-    if (exactMatch && !exactMatchLosesSuffix) return exactMatch;
+    if (exactMatch && !exactMatchLosesSuffix)
+      return !KimiProvider.isKimiK2Point7Model(exactMatch.id) &&
+        KimiProvider.isKimiK2Point7Model(model.id)
+        ? KimiProvider.k2Point7Profile(exactMatch)
+        : exactMatch;
     let prefixMatch: { model: ModelInfo; length: number } | undefined;
     for (const candidate of KimiProvider.KNOWN_MODELS) {
       for (const rawPrefix of candidate.providerAliasPrefixes ?? []) {

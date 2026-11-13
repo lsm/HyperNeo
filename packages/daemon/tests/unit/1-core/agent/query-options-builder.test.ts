@@ -40,6 +40,7 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt';
 import { neoSecretReadRules } from '../../../../src/lib/neo/secret-read-rules';
 
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
 import type { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
@@ -1961,9 +1962,9 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
-    it('forces thinking enabled for regular kimi K2.7 models when level is off', async () => {
+    it('forces thinking enabled for the K2.7 Code Highspeed entry when level is off', async () => {
       mockSession.config.provider = 'kimi';
-      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.model = 'kimi-k2.7-code-highspeed';
       mockSession.config.thinkingLevel = 'off';
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
@@ -2191,7 +2192,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('allows mixed Kimi K2.7 primary and K3 fallback when K2.7 forces enabled thinking', () => {
       mockSession.config.provider = 'kimi';
-      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.model = 'kimi-k2.7-code-highspeed';
       mockSession.config.fallbackModel = 'k3';
       mockSession.config.thinkingLevel = 'off';
 
@@ -2199,6 +2200,76 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+    });
+
+    it('forces the 16k budget when the fallback routes to K2.7 in a scoped region', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.fallbackModel = 'kimi-for-coding';
+      mockSession.config.thinkingLevel = 'think8k';
+      expect(
+        builder.addSessionStateOptions({} as import('@anthropic-ai/claude-agent-sdk').Options)
+          .thinking
+      ).toEqual({ type: 'adaptive' });
+
+      mockSession.config.providerConfig = { region: 'global' };
+      const scoped = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(scoped.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+      expect(scoped.effort).toBeUndefined();
+    });
+
+    it('keeps adaptive thinking on a K3 primary when only the fallback is K2.7', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
+      mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
+      mockSession.config.thinkingLevel = 'think24k';
+
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('high');
+    });
+
+    it('forces the 16k budget when a K2.8 primary pairs with a K2.7 fallback', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
+      mockSession.config.thinkingLevel = 'off';
+
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+      expect(result.effort).toBeUndefined();
+    });
+
+    it('does not force the 16k budget on a primary that cannot think', () => {
+      const kimi = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'china' });
+      const registry = getProviderRegistry();
+      const saved = registry.get('kimi');
+      registry.unregister('kimi');
+      registry.register(kimi);
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'moonshot-v1-8k';
+        mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
+        mockSession.config.thinkingLevel = 'off';
+
+        expect(kimi.getModelThinkingMode('moonshot-v1-8k')).toBe('off');
+        expect(kimi.getModelContextWindow('moonshot-v1-8k')).toBe(8192);
+
+        const result = builder.addSessionStateOptions(
+          {} as import('@anthropic-ai/claude-agent-sdk').Options
+        );
+        expect(result.thinking).toBeUndefined();
+        expect(result.effort).toBeUndefined();
+      } finally {
+        registry.unregister('kimi');
+        if (saved) registry.register(saved);
+      }
     });
 
     it('allows Kimi K3 primary and K3 fallback with granular thinking', () => {
@@ -2224,6 +2295,91 @@ describe('QueryOptionsBuilder', () => {
       expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
     });
 
+    it('asks Kimi K2.8 Preview for high effort by default and keeps only its three levels', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      expect(builder.addSessionStateOptions({}).effort).toBe('high');
+      expect(builder.addSessionStateOptions({}).thinking).toEqual({ type: 'adaptive' });
+
+      mockSession.config.thinkingLevel = 'think24k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('high');
+
+      mockSession.config.thinkingLevel = 'think48k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('max');
+
+      mockSession.config.thinkingLevel = 'think8k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('low');
+    });
+
+    it('keeps K2.7 thinking for kimi-for-coding when the global region routes it to K2.7', () => {
+      const globalKimi = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'global' });
+      const registry = getProviderRegistry();
+      const saved = registry.get('kimi');
+      registry.unregister('kimi');
+      registry.register(globalKimi);
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-for-coding';
+        mockSession.config.thinkingLevel = 'off';
+        const result = builder.addSessionStateOptions({});
+
+        expect(globalKimi.getRoutedModelId('kimi-for-coding')).toBe('kimi-k2.7-code');
+        expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+        expect(result.effort).toBeUndefined();
+      } finally {
+        registry.unregister('kimi');
+        if (saved) registry.register(saved);
+      }
+    });
+
+    it('keeps K2.7 thinking when only the session is scoped to the global region', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.providerConfig = { region: 'global' };
+      const result = builder.addSessionStateOptions({});
+
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+      expect(result.effort).toBeUndefined();
+    });
+
+    it('arms the routed window when the session is scoped to the global region', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.providerConfig = { region: 'global', apiKey: 'sk-synthetic-scope' };
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'kimi-for-coding',
+                name: 'Kimi K2.8 Preview',
+                alias: 'kimi',
+                family: 'kimi',
+                provider: 'kimi',
+                contextWindow: 1_048_576,
+                description: '',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+      try {
+        const options = await builder.build();
+        const settings = typeof options.settings === 'string' ? undefined : options.settings;
+        expect(settings?.autoCompactWindow).toBe(262_144);
+        const provider = getProviderRegistry().get('kimi')!;
+        expect(
+          provider.buildSdkConfig('kimi-for-coding', mockSession.config.providerConfig).envVars
+            .CLAUDE_CODE_AUTO_COMPACT_WINDOW
+        ).toBe('262144');
+      } finally {
+        setModelsCache(new Map());
+      }
+    });
+
     it('maps DeepSeek levels onto its effort scale', () => {
       mockSession.config.provider = 'deepseek';
       mockSession.config.model = 'deepseek-v4-pro';
@@ -2235,7 +2391,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('allows Kimi K2.7 primary and K2.7 fallback with enabled thinking', () => {
       mockSession.config.provider = 'kimi';
-      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.model = 'kimi-k2.7-code-highspeed';
       mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
       mockSession.config.thinkingLevel = 'off';
 
