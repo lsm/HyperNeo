@@ -1,7 +1,7 @@
 {
   "resetReceipt": {
     "lines": 144,
-    "sha256": "61602fa22c8b5a1e0779bc9b54347b85195e2bcfb538a8deca24beb2823d8bcb",
+    "sha256": "4f69412dec0ce45e2c4431bfa309e4da7c32a9ca0f20c965d867e32e89c637e6",
     "units": [
       {
         "file": "packages/daemon/src/storage/repositories/human-device-reset-read.ts",
@@ -46,16 +46,16 @@
       {
         "file": "packages/daemon/src/storage/repositories/neo-repository.ts",
         "name": "NeoRepository.defaultBinding",
-        "start": 362,
-        "end": 366,
+        "start": 378,
+        "end": 382,
         "lines": 5,
         "sha256": "5ed7cd5b1b8055feb081c09953e1d1abedb9b2afc01d0a6db42fafeb1b66dadb"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-repository.ts",
         "name": "NeoRepository.conversationId",
-        "start": 368,
-        "end": 377,
+        "start": 384,
+        "end": 393,
         "lines": 10,
         "sha256": "fcd3352ccbbccc24a5ebb4478fb8f16ce8c344638f266838aa394934ae9e4435"
       },
