@@ -1875,6 +1875,9 @@ test('the fallback checks the input owner and never scans publications', async (
   expect(list).not.toHaveBeenCalled();
   expect(raced).toBe(true);
   expect(service.publications.get(conversationId, replyId)?.fullText).toBe('A real reply landed.');
+  expect(
+    service.publications.get(conversationId, frontFallbackId(conversationId, [id]))?.fullText
+  ).toBe(FRONT_FALLBACK_TEXT);
 });
 
 test('the fallback append loses an owner race instead of duplicating a reply', async () => {
@@ -1917,14 +1920,14 @@ test('the fallback append loses an owner race instead of duplicating a reply', a
   expect(raced).toBe(true);
   expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
     delivered: true,
-    outcome: 'handed_off',
+    outcome: 'answered',
   });
   const rows = db
     .getDatabase()
     .prepare('SELECT payload_json AS payload FROM neo_publications WHERE conversation_id = ?')
     .all(conversationId)
     .map((row) => JSON.parse((row as { payload: string }).payload) as { fullText: string });
-  expect(rows.map((row) => row.fullText)).toEqual(['A real reply landed.']);
+  expect(rows.map((row) => row.fullText)).toEqual(['A real reply landed.', FRONT_FALLBACK_TEXT]);
 });
 
 test('the daemon fallback is skipped once the input is answered', async () => {
@@ -1966,8 +1969,10 @@ test('the daemon fallback is skipped once the input is answered', async () => {
   });
   expect(raced).toBe(true);
   const replies = service.publications.list(conversationId)!;
-  expect(replies).toHaveLength(1);
-  expect(replies[0].fullText).toBe('A real reply landed.');
+  expect(replies.map((reply) => reply.fullText)).toEqual([
+    'A real reply landed.',
+    FRONT_FALLBACK_TEXT,
+  ]);
 });
 
 test('a reply that answers hands the input to the full session with that answer in already-said', async () => {
@@ -2046,4 +2051,31 @@ test('a reply that could not hand off yet settles as pending, not answered', asy
     delivered: false,
     pending: true,
   });
+});
+
+test('a front-owned input whose turn ended without a hand-off gets the fallback', async () => {
+  const { id, job } = await deliveredConvoInput();
+  const published = await service.publish(
+    { requestId: 'reply', replyTo: [id], text: 'The answer.' },
+    { source: 'mcp', sessionId: front }
+  );
+  expect(published, JSON.stringify(published)).toMatchObject({ accepted: true });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'Done',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
+
+  expect(settled, `front=${db.getSDKMessageRepo().getUserSendStatus(front, id)}`).toEqual({
+    delivered: true,
+    outcome: 'answered',
+  });
+  const fallback = service.publications.get(conversationId, frontFallbackId(conversationId, [id]));
+  expect(fallback?.fullText).toBe(FRONT_FALLBACK_TEXT);
 });

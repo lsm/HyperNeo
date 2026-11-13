@@ -74,7 +74,7 @@ export class NeoFrontInputRepository {
     const ids = JSON.parse(row.messageIds ?? '[]') as string[];
     return {
       messageIds: (ids.length ? ids : [messageId]).filter(
-        (id) => !this.get(conversationId, id)?.owner
+        (id) => this.get(conversationId, id)?.owner !== 'neo'
       ),
     };
   }
@@ -194,6 +194,12 @@ export class NeoFrontInputRepository {
     })();
   }
 
+  release(conversationId: string, messageIds: readonly string[]): number {
+    const run = this.db.prepare(`UPDATE neo_front_inputs SET owner = NULL
+      WHERE conversation_id = ? AND message_id = ? AND owner = 'front'`);
+    return messageIds.reduce((count, id) => count + run.run(conversationId, id).changes, 0);
+  }
+
   reserve(
     conversationId: string,
     messageIds: readonly string[],
@@ -232,7 +238,7 @@ export const neoFrontInputWrites = defineRepositoryOp(
   'neo.front.inputs',
   'write',
   NeoFrontInputRepository,
-  ['claim', 'claimUnowned', 'reserve']
+  ['claim', 'claimUnowned', 'release', 'reserve']
 );
 
 export const neoFrontDeliveryWrites = defineRepositoryOp(
