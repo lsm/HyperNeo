@@ -23,7 +23,14 @@ type Seen = { state: string; name: string | null };
 type Flow =
   | { kind: 'idle' | 'starting' }
   | { kind: 'waiting'; code: string; expiresAt: number; pending: boolean }
-  | { kind: 'qr'; requestId: string; image: string; address: string; expiresAt: number }
+  | {
+      kind: 'qr';
+      requestId: string;
+      image: string;
+      address: string;
+      expiresAt: number;
+      firstDevice: boolean;
+    }
   | { kind: 'scanned'; requestId: string; firstDevice: boolean }
   | { kind: 'paired'; text: string }
   | { kind: 'ended'; message: string }
@@ -97,7 +104,7 @@ export function PairPhoneFlow({
   const current = useRef<AbortController | null>(null);
   useEffect(() => () => current.current?.abort(), []);
 
-  const settle = (requestId: string, status: Seen | null, firstDevice = true): boolean => {
+  const settle = (requestId: string, status: Seen | null, firstDevice: boolean): boolean => {
     if (status?.state === 'granted') {
       setFlow({
         kind: 'paired',
@@ -118,8 +125,9 @@ export function PairPhoneFlow({
     const qr = qrcode(0, 'M');
     qr.addData(link);
     qr.make();
-    const { requestId, expiresAt } = made;
-    setFlow({ kind: 'qr', requestId, image: qr.createDataURL(5, 4), address, expiresAt });
+    const { requestId, expiresAt, firstDevice } = made;
+    const image = qr.createDataURL(5, 4);
+    setFlow({ kind: 'qr', requestId, image, address, expiresAt, firstDevice });
     let missed = 0;
     while (!signal.aborted) {
       await pause(pollMs, signal);
@@ -131,10 +139,10 @@ export function PairPhoneFlow({
     }
   };
 
-  const cancelQr = async (requestId: string) => {
+  const cancelQr = async (requestId: string, firstDevice: boolean) => {
     current.current?.abort();
     await pair2('/pair2/cancel', { requestId });
-    if (!settle(requestId, await seen(requestId)))
+    if (!settle(requestId, await seen(requestId), firstDevice))
       setFlow({ kind: 'failed', message: t('pair.cancelUnconfirmed') });
   };
 
@@ -264,7 +272,10 @@ export function PairPhoneFlow({
           </p>
         )}
         {(flow.kind === 'qr' || flow.kind === 'scanned') && (
-          <Button variant="secondary" onClick={() => void cancelQr(flow.requestId)}>
+          <Button
+            variant="secondary"
+            onClick={() => void cancelQr(flow.requestId, flow.firstDevice)}
+          >
             Cancel
           </Button>
         )}
