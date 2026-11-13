@@ -1,3 +1,4 @@
+import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -7,7 +8,11 @@ import { driverWorkCaller } from './driver-work.ts';
 import { WorkStatusResultSchema } from '../drivers/work-operations.ts';
 import { ReadWorkInputSchema, ReadWorkResultSchema } from '../drivers/read-operation.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { neoDaemonCardChoice, planNeoDaemonCardActions } from './daemon-cards.ts';
+import {
+  NEO_DAEMON_CAUSES,
+  neoDaemonCardChoice,
+  planNeoDaemonCardActions,
+} from './daemon-cards.ts';
 import { neoQuestionAnsweredNote } from './question-operations.ts';
 import type { NeoService } from './service.ts';
 import type { NeoTodoRunner, NeoTodoRunnerDeps } from './todo-runner.ts';
@@ -174,15 +179,12 @@ export function createNeoQuestionAnswerDelivery(
       'outcome'
     )
     .endAsync('outcome') as (route: Route) => Promise<boolean>;
-  const apply = async (questionId: string, recovering = false) => {
-    const card = store.getQuestion(questionId);
-    if (!card) return false;
+  const apply = async (card: NeoQuestion) => {
     const [picked] = [card.answer].flat();
-    let applied = true;
     for (const action of planNeoDaemonCardActions(card, store.listFamilyTodos(card.askId))) {
       const todo = store.getTodo(action.todoId);
       const ask = todo && store.getAsk(todo.askId);
-      if (!ask || (recovering && todo.updatedAt > (card.answeredAt ?? 0))) continue;
+      if (!ask) continue;
       const outcome = await invoke(
         driverWorkCaller({ originSessionId: ask.sessionId }),
         action.name,
@@ -194,36 +196,39 @@ export function createNeoQuestionAnswerDelivery(
         : outcome.kind === 'failed'
           ? outcome.message
           : null;
-      if (!reason) continue;
-      applied = false;
-      const note = `The human answered "${picked}" on the card for "${todo.title}", but ${action.name} was refused: ${reason}. Settle the todo or ask the human again.`;
-      store.updateTodo(store.getTodo(todo.id) ?? todo, { nextAction: note }, Date.now());
-      await tell(
-        ask.sessionId,
-        `neo-card-refused:${card.id}:${action.todoId}`,
-        note,
-        ask.sessionId,
-        'event'
-      );
+      if (reason)
+        await tell(
+          ask.sessionId,
+          `neo-card-refused:${card.id}:${action.todoId}`,
+          `The human answered "${picked}" on the card for "${todo.title}", but ${action.name} was refused: ${reason}. Settle the todo or ask the human again.`,
+          ask.sessionId,
+          'event'
+        );
     }
-    return applied;
+    store.markCardActionsApplied(card.id, Date.now());
   };
   return async (questionId?: string) => {
-    if (questionId && !store.questionAnswers.list(questionId).length) await apply(questionId);
     const todos = questionId
       ? store.questionAnswers.list(questionId).map((route) => store.getTodo(route.todoId))
       : store.listCheckable();
-    if (!questionId)
-      for (const card of new Map(
-        todos.flatMap((todo) => (todo ? store.todoCards(todo) : [])).map((card) => [card.id, card])
-      ).values())
-        if (neoDaemonCardChoice(card) && !store.questionAnswers.list(card.id).length)
-          await apply(card.id, true).catch(warn);
+    const cards = questionId
+      ? [store.getQuestion(questionId)]
+      : todos.flatMap((todo) => (todo ? store.todoCards(todo) : []));
+    const unapplied = new Map(
+      cards.flatMap((card) =>
+        card?.state === 'answered' &&
+        !card.actionsAppliedAt &&
+        NEO_DAEMON_CAUSES.includes(card.cause ?? '')
+          ? [[card.id, card] as const]
+          : []
+      )
+    );
+    for (const card of unapplied.values()) await apply(card).catch(warn);
     for (const route of store.questionAnswers.pending(questionId)) {
       const card = store.getQuestion(route.questionId);
       if (!card || !neoDaemonCardChoice(card)) await deliver(route).catch(warn);
-      else if (store.questionAnswers.claim(route.id, 'card-action') && (await apply(card.id)))
-        store.questionAnswers.accept(route.id, 'card-action', Date.now(), 'card-action');
+      else if (store.getTodo(route.todoId)?.state !== 'blocked')
+        store.questionAnswers.accept(route.id, 'card-action', Date.now());
     }
     for (const todo of todos) if (todo?.blockedBy === 'needs-human') await resume(todo).catch(warn);
   };

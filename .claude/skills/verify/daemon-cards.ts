@@ -154,6 +154,7 @@ try {
   const claimed = service!.todos.questionAnswers.list(blocker.id).map((route) => [route.state, route.receipt]);
   step('ignored blocker: Mark done saved just before a restart finishes the todo after it, never sent to the worker', { todo: service!.todos.getTodo('blocker-todo'), routes: claimed });
   assert.deepEqual(claimed, [['accepted', 'card-action']]);
+  assert(service!.todos.getQuestion(blocker.id)?.actionsAppliedAt, 'the card records that its action was applied');
   evidence.passed = true;
   console.log('PASS: on the real daemon an overdue check, a twice-failed start and an ignored blocker each end in exactly one card, and the daemon carries out the human answer.');
 } catch (error) { evidence.error = String(error); throw error; }

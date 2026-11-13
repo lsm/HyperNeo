@@ -51,6 +51,8 @@ type Card = Pick<
   'id' | 'state' | 'cause' | 'todos' | 'text' | 'answer' | 'answeredAt' | 'options'
 >;
 
+export const NEO_DAEMON_CAUSES = Object.keys(OPTIONS);
+
 const isCause = (cause: string | null | undefined): cause is Cause => !!cause && cause in OPTIONS;
 
 const live = (todo: Pick<NeoTodo, 'state'>) =>

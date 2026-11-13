@@ -4017,11 +4017,9 @@ describe('worker blocker ownership', () => {
             h.sessions,
             async (_caller, name) => {
               calls.push(name);
-              h.store.updateTodo(
-                h.store.getTodo(todo.id)!,
-                { state: name === 'neo.todo.done' ? 'done' : 'removed' },
-                Date.now()
-              );
+              h.db
+                .prepare('UPDATE neo_todos SET state = ?, blocked_by = NULL WHERE id = ?')
+                .run(name === 'neo.todo.done' ? 'done' : 'removed', todo.id);
               return completed({ ok: true, value: { ok: true } });
             },
             async () => {},
