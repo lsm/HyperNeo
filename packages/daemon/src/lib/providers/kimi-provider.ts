@@ -327,7 +327,9 @@ export class KimiProvider implements Provider {
     modelId: string
   ): { type: 'enabled'; budgetTokens: 16000 } | { type: 'disabled' } | undefined {
     if (KimiProvider.isKimiK3Model(modelId)) return undefined;
-    if (KimiProvider.isKimiK2Point8PreviewModel(modelId)) return undefined;
+    if (KimiProvider.isKimiK2Point8PreviewModel(modelId)) {
+      return { type: 'enabled', budgetTokens: 16_000 };
+    }
     if (KimiProvider.isKimiK2Point7Model(modelId)) {
       return { type: 'enabled', budgetTokens: 16_000 };
     }
@@ -604,27 +606,41 @@ export class KimiProvider implements Provider {
     return KimiProvider.resolveUpstreamModelId(modelId, baseUrl, region);
   }
 
-  getModelEffortLevels(modelId: string): ThinkingEffort[] | undefined {
-    if (!this.ownsModel(modelId)) return undefined;
-    return (
-      KimiProvider.MODEL_EFFORT_LEVELS[this.getRoutedModelId(modelId)] ?? [...THINKING_EFFORTS]
-    );
+  getModelContextWindow(modelId: string, sessionConfig?: ProviderSessionConfig): number {
+    return KimiProvider.resolveContextWindow(this.getRoutedModelId(modelId, sessionConfig));
   }
 
-  getModelDefaultEffort(modelId: string): ThinkingEffort | undefined {
+  getModelEffortLevels(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): ThinkingEffort[] | undefined {
     if (!this.ownsModel(modelId)) return undefined;
-    return KimiProvider.MODEL_DEFAULT_EFFORT[this.getRoutedModelId(modelId)];
+    const routed = this.getRoutedModelId(modelId, sessionConfig);
+    const levels = KimiProvider.MODEL_EFFORT_LEVELS[routed];
+    if (levels) return [...levels];
+    return KimiProvider.isKimiK2Point7Model(routed) ? undefined : [...THINKING_EFFORTS];
   }
 
-  getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
-    const routed = this.getRoutedModelId(modelId);
+  getModelDefaultEffort(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): ThinkingEffort | undefined {
+    if (!this.ownsModel(modelId)) return undefined;
+    return KimiProvider.MODEL_DEFAULT_EFFORT[this.getRoutedModelId(modelId, sessionConfig)];
+  }
+
+  getModelThinkingMode(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): 'off' | 'on' | 'granular' | undefined {
+    const routed = this.getRoutedModelId(modelId, sessionConfig);
     if (KimiProvider.isKimiK3Model(routed)) return 'granular';
     if (KimiProvider.isKimiK2Point8PreviewModel(routed)) return 'granular';
     if (KimiProvider.isKimiK2Point7Model(routed)) return 'on';
     if (
       this.ownsModel(modelId) &&
       !KimiProvider.hasOneMContextSuffix(modelId) &&
-      KimiProvider.resolveContextWindow(modelId) < 65_536
+      KimiProvider.resolveContextWindow(routed) < 65_536
     ) {
       return 'off';
     }

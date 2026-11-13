@@ -543,7 +543,7 @@ export class QueryOptionsBuilder {
     const sessionHasAutoCompactWindow = hasExplicitAutoCompactWindow(config);
     const providerSettings = buildProviderSettings(
       providerId,
-      modelInfo?.contextWindow,
+      this.routedContextWindow(providerId, modelInfo?.contextWindow),
       this.ctx.session.config.model,
       modelInfo?.autoCompactPercent,
       modelInfo?.autoCompactPercentOverride
@@ -735,6 +735,23 @@ export class QueryOptionsBuilder {
     return { type: 'enabled', budgetTokens: tokens };
   }
 
+  private routedContextWindow(
+    providerId: string,
+    contextWindow?: number | null
+  ): number | null | undefined {
+    try {
+      const provider = getProviderRegistry().get(providerId);
+      const model = this.ctx.session.config.model;
+      if (!model || !provider?.getModelContextWindow) return contextWindow;
+      return provider.getModelContextWindow(
+        model,
+        providerSessionConfigForSession(this.ctx.session)
+      );
+    } catch {
+      return contextWindow;
+    }
+  }
+
   resolveThinkingOptions(): { thinking?: ThinkingConfig; effort?: ThinkingEffort } {
     const providerId = this.ctx.session.config.provider;
     let thinkingModes: 'off' | 'on' | 'granular' =
@@ -748,21 +765,21 @@ export class QueryOptionsBuilder {
         const liveMode = provider?.capabilities?.thinkingModes;
         if (liveMode) thinkingModes = liveMode;
         const selectedModel = this.ctx.session.config.model;
+        const scoped = providerSessionConfigForSession(this.ctx.session);
         const perModelMode = selectedModel
-          ? provider?.getModelThinkingMode?.(selectedModel)
+          ? provider?.getModelThinkingMode?.(selectedModel, scoped)
           : undefined;
         if (perModelMode) thinkingModes = perModelMode;
-        effortLevels = selectedModel ? provider?.getModelEffortLevels?.(selectedModel) : undefined;
+        effortLevels = selectedModel
+          ? provider?.getModelEffortLevels?.(selectedModel, scoped)
+          : undefined;
         kimiRoutedModel =
           providerId === 'kimi' && selectedModel
-            ? provider?.getRoutedModelId?.(
-                selectedModel,
-                providerSessionConfigForSession(this.ctx.session)
-              )
+            ? provider?.getRoutedModelId?.(selectedModel, scoped)
             : undefined;
         defaultEffort =
           selectedModel && !this.hasChosenThinkingLevel()
-            ? provider?.getModelDefaultEffort?.(selectedModel)
+            ? provider?.getModelDefaultEffort?.(selectedModel, scoped)
             : undefined;
       }
     } catch {}

@@ -138,11 +138,19 @@ export interface Provider {
 
   setCuratedModels?(models: CuratedModel[] | undefined): void;
 
-  getModelThinkingMode?(modelId: string): 'off' | 'on' | 'granular' | undefined;
+  getModelThinkingMode?(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): 'off' | 'on' | 'granular' | undefined;
   getModelEffortLevels?(
-    modelId: string
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
   ): Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'> | undefined;
-  getModelDefaultEffort?(modelId: string): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined;
+  getModelDefaultEffort?(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined;
+  getModelContextWindow?(modelId: string, sessionConfig?: ProviderSessionConfig): number;
   getRoutedModelId?(modelId: string, sessionConfig?: ProviderSessionConfig): string;
 }
 

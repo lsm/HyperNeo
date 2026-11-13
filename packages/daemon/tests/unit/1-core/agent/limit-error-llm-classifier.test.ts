@@ -364,7 +364,7 @@ describe('LimitErrorLlmClassifier', () => {
     }) as LimitErrorLlmClassifierDeps['queryForTesting'];
     const classifier = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'glm' });
     await classifier.classify('kimi thinking wall');
-    expect(seenThinking).toEqual([undefined]);
+    expect(seenThinking).toEqual([{ type: 'enabled', budgetTokens: 16000 }]);
   });
 
   it('passes the provider env to the SDK query without touching process.env', async () => {

@@ -2262,6 +2262,53 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
+    it('keeps K2.7 thinking when only the session is scoped to the global region', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.providerConfig = { region: 'global' };
+      const result = builder.addSessionStateOptions({});
+
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+      expect(result.effort).toBeUndefined();
+    });
+
+    it('arms the routed window when the session is scoped to the global region', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.providerConfig = { region: 'global', apiKey: 'sk-synthetic-scope' };
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'kimi-for-coding',
+                name: 'Kimi K2.8 Preview',
+                alias: 'kimi',
+                family: 'kimi',
+                provider: 'kimi',
+                contextWindow: 1_048_576,
+                description: '',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+      try {
+        const options = await builder.build();
+        expect(options.settings?.autoCompactWindow).toBe(262_144);
+        const provider = getProviderRegistry().get('kimi')!;
+        expect(
+          provider.buildSdkConfig('kimi-for-coding', mockSession.config.providerConfig).envVars
+            .CLAUDE_CODE_AUTO_COMPACT_WINDOW
+        ).toBe('262144');
+      } finally {
+        setModelsCache(new Map());
+      }
+    });
+
     it('maps DeepSeek levels onto its effort scale', () => {
       mockSession.config.provider = 'deepseek';
       mockSession.config.model = 'deepseek-v4-pro';

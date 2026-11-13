@@ -62,7 +62,7 @@ describe('buildOneShotQueryOptions', () => {
   test('resolves Kimi thinking from the thinking model id', () => {
     const thinking = (thinkingModelId: string) =>
       buildOneShotQueryOptions(request({ provider: 'kimi', thinkingModelId }), runtime).thinking;
-    expect(thinking('kimi-for-coding')).toBeUndefined();
+    expect(thinking('kimi-for-coding')).toEqual({ type: 'enabled', budgetTokens: 16_000 });
     expect(thinking('kimi-k2.7-code-highspeed')).toEqual({
       type: 'enabled',
       budgetTokens: 16_000,

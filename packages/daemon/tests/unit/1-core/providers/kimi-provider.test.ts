@@ -1750,7 +1750,10 @@ describe('KimiProvider', () => {
         type: 'enabled',
         budgetTokens: 16000,
       });
-      expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-for-coding')).toBeUndefined();
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-for-coding')).toEqual({
+        type: 'enabled',
+        budgetTokens: 16_000,
+      });
       expect(KimiProvider.resolveKimiTitleThinkingConfig('moonshot-v1-32k')).toEqual({
         type: 'disabled',
       });
@@ -1812,6 +1815,30 @@ describe('KimiProvider', () => {
       expect(provider.getModelThinkingMode('kimi')).toBe('on');
     });
 
+    it('honors a session-scoped region in every capability lookup', () => {
+      provider = new KimiProvider({ KIMI_API_KEY: 'test-key' });
+      const scoped = { sessionId: 'synthetic', region: 'global' };
+
+      expect(provider.getRoutedModelId?.('kimi-for-coding', scoped)).toBe('kimi-k2.7-code');
+      expect(provider.getModelThinkingMode('kimi-for-coding', scoped)).toBe('on');
+      expect(provider.getModelEffortLevels('kimi-for-coding', scoped)).toBeUndefined();
+      expect(provider.getModelDefaultEffort('kimi-for-coding', scoped)).toBeUndefined();
+    });
+
+    it('honors a session-scoped Kimi Code base URL in every capability lookup', () => {
+      provider = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'global' });
+      const scoped = { sessionId: 'synthetic', baseUrl: 'https://api.kimi.com/coding' };
+
+      expect(provider.getRoutedModelId?.('kimi-for-coding', scoped)).toBe('kimi-for-coding');
+      expect(provider.getModelThinkingMode('kimi-for-coding', scoped)).toBe('granular');
+      expect(provider.getModelEffortLevels('kimi-for-coding', scoped)).toEqual([
+        'low',
+        'high',
+        'max',
+      ]);
+      expect(provider.getModelDefaultEffort('kimi-for-coding', scoped)).toBe('high');
+    });
+
     it('keeps the K2.8 profile on the Kimi Code endpoint', () => {
       provider = new KimiProvider({
         KIMI_API_KEY: 'test-key',
@@ -1822,6 +1849,17 @@ describe('KimiProvider', () => {
       expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('granular');
       expect(provider.getModelEffortLevels('kimi-for-coding')).toEqual(['low', 'high', 'max']);
       expect(provider.getModelDefaultEffort('kimi-for-coding')).toBe('high');
+    });
+  });
+
+  describe('session-scoped context window', () => {
+    it('reports the routed window for a session scoped to the global region', () => {
+      provider = new KimiProvider({ KIMI_API_KEY: 'test-key' });
+
+      expect(provider.getModelContextWindow?.('kimi-for-coding')).toBe(1_048_576);
+      expect(
+        provider.getModelContextWindow?.('kimi-for-coding', { sessionId: 's', region: 'global' })
+      ).toBe(262_144);
     });
   });
 
