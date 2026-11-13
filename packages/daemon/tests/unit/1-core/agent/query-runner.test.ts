@@ -8195,25 +8195,18 @@ describe('QueryRunner', () => {
       });
       runner = new QueryRunner(ctx);
 
-      jest.useFakeTimers();
-      try {
-        runner.start();
-        await firstFrame;
-        expect(exitListeners).toHaveLength(1);
-        expect(stateManager.getState().status).toBe('processing');
+      runner.start();
+      await firstFrame;
+      expect(exitListeners).toHaveLength(1);
+      expect(stateManager.getState().status).toBe('processing');
 
-        exitListeners[0]?.(1, null);
-        for (let i = 0; i < 50; i++) await Promise.resolve();
-        jest.advanceTimersByTime(5000);
-        await ctx.queryPromise;
+      exitListeners[0]?.(1, null);
+      await ctx.queryPromise;
 
-        const persistedStatus = JSON.parse(persisted).status as string;
-        expect(persistedStatus).toBe('idle');
-        expect(hyperneoWorkStatus('active', persistedStatus)).not.toBe('running');
-      } finally {
-        jest.useRealTimers();
-      }
-    });
+      const persistedStatus = JSON.parse(persisted).status as string;
+      expect(persistedStatus).toBe('idle');
+      expect(hyperneoWorkStatus('active', persistedStatus)).not.toBe('running');
+    }, 15000);
 
     it('attributes a watched exit to in-flight rate-limit recovery', async () => {
       const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
@@ -8245,28 +8238,19 @@ describe('QueryRunner', () => {
       const ctx = createContext({ isLimitRecoveryPending: () => true });
       runner = new QueryRunner(ctx);
 
-      jest.useFakeTimers();
-      try {
-        runner.start();
-        for (let i = 0; i < 100 && onSDKMessageSpy.mock.calls.length === 0; i++) {
-          await Promise.resolve();
-        }
-        expect(exitListeners).toHaveLength(1);
-        exitListeners[0]?.(1, null);
-        for (let i = 0; i < 50; i++) await Promise.resolve();
-        jest.advanceTimersByTime(5000);
-        await ctx.queryPromise;
-
-        expect(mockLogger.info).toHaveBeenCalledWith(
-          expect.stringContaining('rate-limit recovery')
-        );
-        expect(handleErrorSpy).not.toHaveBeenCalled();
-        expect(clearSpy).not.toHaveBeenCalled();
-        expect(setIdleSpy).not.toHaveBeenCalled();
-      } finally {
-        jest.useRealTimers();
+      runner.start();
+      for (let i = 0; i < 100 && onSDKMessageSpy.mock.calls.length === 0; i++) {
+        await Promise.resolve();
       }
-    });
+      expect(exitListeners).toHaveLength(1);
+      exitListeners[0]?.(1, null);
+      await ctx.queryPromise;
+
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('rate-limit recovery'));
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+    }, 15000);
 
     it('does not retry a completed turn when the watched process exits', async () => {
       const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
@@ -8304,33 +8288,26 @@ describe('QueryRunner', () => {
       const ctx = createContext();
       runner = new QueryRunner(ctx);
 
-      jest.useFakeTimers();
-      try {
-        runner.start();
-        for (
-          let i = 0;
-          i < 100 &&
-          !onSDKMessageSpy.mock.calls.some((call) => (call[0] as SDKMessage).type === 'result');
-          i++
-        ) {
-          await Promise.resolve();
-        }
-        expect(exitListeners).toHaveLength(1);
-        exitListeners[0]?.(1, null);
-        for (let i = 0; i < 50; i++) await Promise.resolve();
-        jest.advanceTimersByTime(5000);
-        await ctx.queryPromise;
-
-        expect(mockLogger.info).toHaveBeenCalledWith(
-          expect.stringContaining('after its turn ended with a result')
-        );
-        expect(handleErrorSpy).not.toHaveBeenCalled();
-        expect(enqueueWithIdSpy).not.toHaveBeenCalled();
-        expect(buildSpy).toHaveBeenCalledTimes(1);
-      } finally {
-        jest.useRealTimers();
+      runner.start();
+      for (
+        let i = 0;
+        i < 100 &&
+        !onSDKMessageSpy.mock.calls.some((call) => (call[0] as SDKMessage).type === 'result');
+        i++
+      ) {
+        await Promise.resolve();
       }
-    });
+      expect(exitListeners).toHaveLength(1);
+      exitListeners[0]?.(1, null);
+      await ctx.queryPromise;
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('after its turn ended with a result')
+      );
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    }, 15000);
 
     it('drains a result that arrives after the process exit event', async () => {
       const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
