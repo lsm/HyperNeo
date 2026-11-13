@@ -411,14 +411,18 @@ describe('queued todos start themselves', () => {
     expect(w.started).toEqual([first, next]);
   });
 
-  test('a refused place tells Neo once without a start card', async () => {
+  test('a refused place tells Neo once and waits on one retries card', async () => {
     const w = (current = world({ running: 6, perGroup: 3 }, false, true));
     const todo = w.add(w.approved());
     await w.tick();
     expect(w.started).toEqual([]);
     expect(w.told.filter((note) => note.id === todo)).toHaveLength(1);
     expect(w.told.find((note) => note.id === todo)?.note).toContain('Could not start');
-    expect(w.store.listQuestions(w.store.getTodo(todo)!.askId)).toEqual([]);
+    expect(
+      w.store
+        .listQuestions(w.store.getTodo(todo)!.askId)
+        .map(({ cause, todos }) => ({ cause, todos }))
+    ).toEqual([{ cause: 'retries_exhausted', todos: [todo] }]);
     await w.tick();
     expect(w.told.filter((note) => note.id === todo)).toHaveLength(1);
   });

@@ -337,6 +337,7 @@ export class NeoService {
       },
       changed: this.notifyChanged,
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      readSource: (ref) => this.readQuestionSource(ref),
     });
     const runtime = composePacks(this);
     this.builtinPacks = runtime.packs;

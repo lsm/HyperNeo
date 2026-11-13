@@ -16,6 +16,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { NeoPack } from './pack-contract.ts';
 import { neoStartQuestionLine } from './start-question.ts';
 import { neoRemovedPrerequisiteCodes } from './todo-removal.ts';
+import { neoDaemonCardCodes } from './daemon-cards.ts';
 import {
   NeoStatusCodesSchema,
   neoStatusLine,
@@ -249,6 +250,7 @@ export function projectNeoAskEntries(
             ...question,
             optionLabels: neoOptionLabels(question.options, question.labels),
             ...neoRemovedPrerequisiteCodes(question, allTodos),
+            ...neoDaemonCardCodes(question, allTodos),
           };
         if (question.kind !== 'start' || !question.todos.length) return question;
         const line = neoStartQuestionLine(

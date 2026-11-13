@@ -299,6 +299,15 @@ export const zhHans: Record<keyof typeof en, string> = {
   'question.removedManyMany': '{removed} 已移除。不等它们，继续 {steps}？还是把这些步骤也移除？',
   'question.removedContinue': '继续',
   'question.removedRemove': '一起移除',
+  'question.workerBlocker': '{steps} 卡住了：{reason}。回复它的工人、标记完成，还是移除？',
+  'question.retriesExhausted':
+    '{steps} 自动重试 {retries} 次后仍无法开始：{reason}。重试、标记完成，还是移除？',
+  'question.checkOverdue':
+    '{steps} 已等了 {hours} 小时，检查还没通过。继续等、标记完成，还是移除？',
+  'question.daemonMarkDone': '标记完成',
+  'question.daemonRemove': '移除',
+  'question.daemonRetry': '重试',
+  'question.daemonKeepWaiting': '继续等',
   'session.back': '回到 Neo',
   'session.chat': '{title} 会话',
   'session.opening': '正在打开会话…',

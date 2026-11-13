@@ -7,6 +7,7 @@ import { driverWorkCaller } from './driver-work.ts';
 import { WorkStatusResultSchema } from '../drivers/work-operations.ts';
 import { ReadWorkInputSchema, ReadWorkResultSchema } from '../drivers/read-operation.ts';
 import { neoDerivedId } from './derived-id.ts';
+import { planNeoDaemonCardActions } from './daemon-cards.ts';
 import { neoQuestionAnsweredNote } from './question-operations.ts';
 import type { NeoService } from './service.ts';
 import type { NeoTodoRunner, NeoTodoRunnerDeps } from './todo-runner.ts';
@@ -172,7 +173,27 @@ export function createNeoQuestionAnswerDelivery(
       'outcome'
     )
     .endAsync('outcome') as (route: Route) => Promise<boolean>;
+  const apply = async (questionId?: string) => {
+    const cards = questionId
+      ? [store.getQuestion(questionId)]
+      : store.listCheckable().flatMap((todo) => store.todoCards(todo));
+    const seen = new Set<string>();
+    for (const card of cards) {
+      if (!card || seen.has(card.id)) continue;
+      seen.add(card.id);
+      for (const action of planNeoDaemonCardActions(card, store.listFamilyTodos(card.askId))) {
+        const ask = store.getAsk(store.getTodo(action.todoId)?.askId ?? '');
+        if (ask)
+          await invoke(
+            driverWorkCaller({ originSessionId: ask.sessionId }),
+            action.name,
+            action.input
+          ).catch(warn);
+      }
+    }
+  };
   return async (questionId?: string) => {
+    await apply(questionId);
     const todos = questionId
       ? store.questionAnswers.list(questionId).map((route) => store.getTodo(route.todoId))
       : store.listCheckable();

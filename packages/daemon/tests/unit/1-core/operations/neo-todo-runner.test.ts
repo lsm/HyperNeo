@@ -2316,15 +2316,19 @@ describe('neo todo runner', () => {
     });
   });
 
-  test('a start the driver refuses fails the todo with its reason', async () => {
+  test('a start the driver keeps refusing is retried twice, then waits on one card', async () => {
     const { db, store, add, told } = setup();
     const todo = add();
+    const starts: string[] = [];
     const failing = createNeoTodoRunner({
       limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
-      invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'login expired' }),
+      invoke: async (_caller, name) => {
+        starts.push(name);
+        return completed({ ok: false, reason: 'unavailable', detail: 'login expired' });
+      },
       packs: () => [],
       tell: async (_ask, _todo, note) => {
         told.push(note);
@@ -2332,11 +2336,29 @@ describe('neo todo runner', () => {
       changed: () => {},
     });
     const result = await failing.start(todo.id);
+    expect(starts).toEqual(['work.start', 'work.start', 'work.start']);
     expect(result.ok && result.todo).toMatchObject({
-      state: 'failed',
-      reason: 'Could not start: unavailable: login expired',
+      state: 'blocked',
+      blockedReason: 'Could not start: unavailable: login expired',
     });
-    expect(told).toEqual(['Todo "Rows" failed: Could not start: unavailable: login expired']);
+    expect(
+      store.listQuestions('ask').map(({ state, cause, todos, options, text }) => ({
+        state,
+        cause,
+        todos,
+        options,
+        text,
+      }))
+    ).toEqual([
+      {
+        state: 'open',
+        cause: 'retries_exhausted',
+        todos: [todo.id],
+        options: ['Retry', 'Mark done', 'Remove'],
+        text: '"Rows" could not start after 2 automatic retries: Could not start: unavailable: login expired. Retry, mark done, or remove?',
+      },
+    ]);
+    expect(told).toHaveLength(1);
   });
 
   test('a refused dispatch records failure after a concurrent report write', async () => {
@@ -2359,7 +2381,7 @@ describe('neo todo runner', () => {
       });
       expect(await runner.start(todo.id)).toMatchObject({
         ok: true,
-        todo: { state: 'failed', report: 'Concurrent start report' },
+        todo: { state: 'blocked', blockedBy: 'failure', report: 'Concurrent start report' },
       });
     } finally {
       h.db.close();
@@ -2979,7 +3001,7 @@ describe('blocked todos', () => {
     });
   });
 
-  test('a start that fails the same way twice is blocked, and retry starts it again', async () => {
+  test('a todo whose retries ran out starts again on retry once its card is answered', async () => {
     const { db, store, runner, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
@@ -2995,12 +3017,9 @@ describe('blocked todos', () => {
       changed: () => {},
     });
     await failing.start(todo.id);
-    await failing.retry(todo.id);
-    expect(store.getTodo(todo.id)).toMatchObject({
-      state: 'blocked',
-      blockedBy: 'failure',
-      blockedReason: 'Failed twice: Could not start: unavailable: login expired',
-    });
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'failure' });
+    const [card] = store.listQuestions('ask');
+    store.answerQuestion(card, ['Retry'], 'button', Date.now());
     expect(await runner.retry(todo.id)).toMatchObject({ ok: true });
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
@@ -3559,7 +3578,7 @@ describe('worker final-line blockers', () => {
     }
   );
   test.each(['unchanged', 'edited', 'question', 'closed', 'new-input'] as const)(
-    'reminds Neo once after an untouched hour and never opens a card: %s',
+    'opens one card after an untouched hour, with no reminder to Neo: %s',
     async (action) => {
       const h = setup(false);
       const clock = vi.spyOn(Date, 'now');
@@ -3626,16 +3645,19 @@ describe('worker final-line blockers', () => {
         const open = h.store
           .listQuestions('ask')
           .filter((q) => q.todoId === todo.id && q.state === 'open');
-        expect(open).toHaveLength(action === 'question' ? 1 : 0);
+        expect(open).toHaveLength(['question', 'unchanged'].includes(action) ? 1 : 0);
         if (action === 'edited') expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
-        const reminders = () => h.told.filter((note) => note.includes('still waits on'));
-        expect(reminders()).toHaveLength(action === 'unchanged' ? 1 : 0);
+        expect(h.told.filter((note) => note.includes('still waits on'))).toHaveLength(0);
         if (action === 'unchanged') {
-          expect(reminders()[0]).toContain('Awaiting Neo confirmation');
-          expect(reminders()[0]).toContain('neo.question.relay');
+          expect(open[0]).toMatchObject({
+            cause: 'worker_blocker',
+            todos: [todo.id],
+            options: ['Mark done', 'Remove'],
+            document: 'Blocked (needs_human): Awaiting Neo confirmation',
+            text: '"Rows" is blocked: Awaiting Neo confirmation. Reply to its worker, mark it done, or remove it?',
+          });
           await h.runner.refresh(() => {});
-          expect(reminders()).toHaveLength(1);
-          expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
+          expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(1);
         }
         expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
       } finally {
