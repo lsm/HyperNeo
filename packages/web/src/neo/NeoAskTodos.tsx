@@ -64,14 +64,6 @@ const marks = {
 const choiceClass =
   'flex min-w-0 max-w-full items-start gap-2 rounded-lg border border-line px-2.5 py-1.5 text-left text-xs font-semibold text-fg [overflow-wrap:anywhere] hover:border-accent/40 hover:text-accent focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50';
 
-function choiceLetter(question: NeoQuestionEntry, option: string) {
-  return question.optionLabels?.[question.options?.indexOf(option) ?? -1] ?? '';
-}
-
-function ChoiceLetter({ label }: { label: string }) {
-  return label ? <span class="shrink-0 text-accent">{label}</span> : null;
-}
-
 export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readonly NeoTodoEntry[]) {
   const answer = question.answer;
   if (answer === null) return '';
@@ -85,14 +77,7 @@ export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readon
             .join(t('list.separator')),
         })
       : t('question.notNow');
-  return Array.isArray(answer)
-    ? answer
-        .map((option) => {
-          const label = question.kind === 'choice' ? choiceLetter(question, option) : '';
-          return label ? `${label}. ${option}` : option;
-        })
-        .join(t('list.separator')) || t('question.none')
-    : answer;
+  return Array.isArray(answer) ? answer.join(t('list.separator')) || t('question.none') : answer;
 }
 
 function readExpanded(key: string): string[] {
@@ -521,11 +506,9 @@ function QuestionBox({
               <input
                 type="checkbox"
                 class="mt-1 shrink-0"
-                aria-label={`${choiceLetter(question, option)} ${neoQuestionOption(question, option)}`.trim()}
                 checked={picked.includes(option)}
                 onChange={(event) => toggle(option, (event.target as HTMLInputElement).checked)}
               />
-              <ChoiceLetter label={choiceLetter(question, option)} />
               <span class="min-w-0">{neoQuestionOption(question, option)}</span>
             </label>
           ))}
@@ -539,11 +522,9 @@ function QuestionBox({
               type="button"
               data-choice-option
               class={choiceClass}
-              aria-label={`${choiceLetter(question, option)} ${neoQuestionOption(question, option)}`.trim()}
               disabled={disabled}
               onClick={() => onAnswer([option])}
             >
-              <ChoiceLetter label={choiceLetter(question, option)} />
               <span class="min-w-0">{neoQuestionOption(question, option)}</span>
             </button>
           ))}

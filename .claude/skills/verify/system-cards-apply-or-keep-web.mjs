@@ -43,7 +43,7 @@ try {
   result.yesNoButtons = await body.getByRole('button', { name: /^(Yes|No)$/ }).count();
   await page.waitForFunction(() => Math.abs(document.querySelector('.neo-scene-sheet').getBoundingClientRect().x) < 0.1);
   await page.screenshot({ path: `${run}/evidence/system-cards-apply-or-keep-web.png`, fullPage: true });
-  await body.getByRole('button', { name: 'A Apply these settings', exact: true }).click();
+  await body.getByRole('button', { name: 'Apply these settings', exact: true }).click();
   await page.waitForFunction(() => true);
   for (let i = 0; i < 50 && !result.saved; i++) {
     result.saved = rpc('pack.preferences.get', setting).preference?.value ?? null;
@@ -53,7 +53,7 @@ try {
   await browser.close();
   writeFileSync(`${run}/evidence/system-cards-apply-or-keep-web.json`, JSON.stringify(result, null, 2));
 }
-assert.deepEqual(result.options, ['AApply these settings', 'BKeep current settings']);
+assert.deepEqual(result.options, ['Apply these settings', 'Keep current settings']);
 assert.equal(result.yesNoButtons, 0);
 assert.equal(result.saved, 'ci_only');
-console.log(`PASS: the web card shows A Apply these settings and B Keep current settings with no yes/no buttons, and tapping A saves the setting. ${run}/evidence/system-cards-apply-or-keep-web.json`);
+console.log(`PASS: the web card shows Apply these settings and Keep current settings with no yes/no buttons, and tapping Apply saves the setting. ${run}/evidence/system-cards-apply-or-keep-web.json`);
