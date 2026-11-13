@@ -1,12 +1,4 @@
 import { neoToolDescription } from '@hyperneo/prompts';
-import {
-  NEO_TODO_CANCELLED_DEPENDENCY,
-  neoTodoAfterRefusal,
-  neoTodoCancelledDependencies,
-  neoTodoDependencyRefusal,
-  planNeoTodoDependencies,
-} from './todo-dependencies.ts';
-import { wireNeoTodoAdd } from './todo-add-operation.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -25,25 +17,33 @@ import { todoEvidenceFile } from '../work-locations.ts';
 import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import { neoUserFolder } from './folder.ts';
-import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
+import { type NeoInputReads, noNeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import {
-  neoTodoRepository,
   type NeoPack,
   type NeoTodoPolicyScope,
   type NeoTodoRepositoryDraft,
+  neoTodoRepository,
 } from './pack-contract.ts';
+import { wireNeoTodoAdd } from './todo-add-operation.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoCloseStarted,
   requireNeoTodoMayFinish,
   sameNeoTodoCheck,
 } from './todo-completion.ts';
+import {
+  NEO_TODO_CANCELLED_DEPENDENCY,
+  neoTodoAfterRefusal,
+  neoTodoCancelledDependencies,
+  neoTodoDependencyRefusal,
+  planNeoTodoDependencies,
+} from './todo-dependencies.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
 import {
   NEO_TODO_NOT_APPROVED,
   neoTodoCancellationPending,
-  neoTodoProceedPatch,
   neoTodoPrerequisiteRefusal,
+  neoTodoProceedPatch,
   neoTodoStartRefusal,
 } from './todo-start-gate.ts';
 
@@ -986,5 +986,5 @@ export function createNeoTodoOperations(
       execute: async (input, caller) => present(await close(input, caller)),
     }),
   ];
-  return wireNeoTodoAdd(definitions, todos, sessions, controls, packs, project);
+  return wireNeoTodoAdd(definitions, todos, sessions, controls, packs, project, inputs);
 }
