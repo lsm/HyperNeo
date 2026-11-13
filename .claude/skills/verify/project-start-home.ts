@@ -67,7 +67,7 @@ try {
   };
   const open = (id: string, request: string, projectId: string | null = 'project:synthetic-life') => store.openAsk({ id, projectId, sessionId: sender, originMessageId: null, title: 'Synthetic task', request, createdAt: Date.now() });
   const target = { verb: 'start', adapter: 'hyperneo' };
-  const add = (askId: string, extra: Record<string, unknown> = {}, check = { pack: 'core', kind: 'evidence', params: {} }) => invoke('neo.todo.add', { askId, title: askId, check, instruction: 'Synthetic work only', start: true, target: { ...target, ...extra } });
+  const add = (askId: string, extra: Record<string, unknown> = {}, check = { pack: 'core', kind: 'evidence', params: {} }) => invoke('neo.todo.add', { after: [], askId, title: askId, check, instruction: 'Synthetic work only', start: true, target: { ...target, ...extra } });
   open('default', 'Organize my life admin');
   const defaultReply = await add('default');
   const homePath = projects.getProject('project:synthetic-life')?.homePath;

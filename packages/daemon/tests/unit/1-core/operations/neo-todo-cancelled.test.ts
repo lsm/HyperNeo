@@ -104,11 +104,11 @@ function setup() {
       todos: NeoTodo[];
     };
   };
-  const step = (title: string, after?: (string | number)[]) => ({
+  const step = (title: string, after: (string | number)[] = []) => ({
     check: pendingTodoCheck,
     title,
     doneWhen: 'Result verified',
-    ...(after ? { after } : {}),
+    after,
   });
   const target = { verb: 'send' as const, ref: { adapter: 'hyperneo', id: 'w' } };
   const work = { target, instruction: 'Perform the approved step.' };
@@ -189,13 +189,9 @@ describe('cancelled prerequisites', () => {
 
   test.each([
     'explicit',
-    'implicit',
     'approved',
-    'approved-implicit',
     'middle',
-    'middle-implicit',
     'replacement',
-    'replacement-implicit',
     'cycle-replacement',
     'legacy-close',
     'decline',
@@ -210,8 +206,8 @@ describe('cancelled prerequisites', () => {
         request: 'Complete A, B, then C.',
         todos: [
           { ...step('A', []), ...work, start: mode.startsWith('approved') },
-          { ...step('B', mode.endsWith('implicit') ? undefined : [0]), ...work, start: true },
-          { ...step('C', mode.endsWith('implicit') ? undefined : [1]), ...work, start: true },
+          { ...step('B', [0]), ...work, start: true },
+          { ...step('C', [1]), ...work, start: true },
           { ...step('Replacement', []), ...work, start: mode.startsWith('replacement') },
         ],
       });
@@ -391,40 +387,13 @@ describe('cancelled prerequisites', () => {
     }
   });
 
-  test('a started step added after a removed one goes to Neo', async () => {
-    const { db, store, invoke, step, runner, sent, told, work } = setup();
-    try {
-      const opened = await invoke('neo.ask.open', {
-        title: 'Late step',
-        request: 'A, then a late step.',
-        todos: [step('A', [])],
-      });
-      const [a] = opened.todos;
-      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
-      const added = await invoke('neo.todo.add', {
-        askId: a.askId,
-        ...step('Late'),
-        ...work,
-        start: true,
-      });
-      expect(added).toMatchObject({ ok: true });
-      await runner.refresh(() => {});
-      expect(card(store, added.todo)).toBeUndefined();
-      expect(store.getTodo(added.todo.id)?.state).toBe('todo');
-      expect(told.map((item) => item.todo)).toContain(added.todo.id);
-      expect(sent).toHaveLength(0);
-    } finally {
-      db.close();
-    }
-  });
-
   test('a removed step cannot make an edit look like a cycle', async () => {
     const { db, invoke, step } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'No false cycle',
         request: 'T, R, then X.',
-        todos: [step('T', []), step('R'), step('X', [1])],
+        todos: [step('T', []), step('R', [0]), step('X', [1])],
       });
       const [t, r, x] = opened.todos;
       await invoke('neo.todo.remove', { todoId: r.id, reason: 'Cancelled by the human.' });

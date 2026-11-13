@@ -4,6 +4,10 @@ import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { type NeoTodoDraftSchema, planNeoTodoDraft } from '../../lib/neo/todo-operations.ts';
 import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
+import {
+  neoTodoDependencyRefusal,
+  planNeoTodoDependencies,
+} from '../../lib/neo/todo-dependencies.ts';
 import { planNeoTodoAwaitingStart } from '../../lib/neo/todo-runner.ts';
 import { ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -23,6 +27,7 @@ type Plan = {
   ask: NeoAsk;
   repo: string | null;
   draft: Input['draft'] & { doneWhen: string; records?: string[] };
+  dependsOn: string[];
 };
 
 const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
@@ -63,9 +68,29 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       const peers = store.listTodos(ask.id);
       const repo = neoTodoRepository(input.draft, policies, { ask });
       const accepted = planNeoTodoDraft(input.draft, policies, peers);
-      return 'reason' in accepted ? accepted : { value: { ask, repo, draft: accepted.value } };
+      return 'reason' in accepted
+        ? accepted
+        : { value: { ask, repo, draft: accepted.value, dependsOn: [] } };
     },
     ['db', 'store', 'input'],
+    'result:outcome'
+  )
+  .pipe(
+    (
+      store: NeoAskTodoRepository,
+      input: Input,
+      plan: Plan
+    ): { value: Plan } | { reason: Receipt } => {
+      const dependsOn = planNeoTodoDependencies(
+        store.listFamilyTodos(plan.ask.id),
+        input.todoId,
+        plan.draft.after.map(String)
+      );
+      return typeof dependsOn === 'string'
+        ? { reason: { ok: false, reason: neoTodoDependencyRefusal(dependsOn) } }
+        : { value: { ...plan, dependsOn } };
+    },
+    ['store', 'input', 'outcome'],
     'result:outcome'
   )
   .pipe(
@@ -77,7 +102,13 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       changes: ChangeRecorder
     ): Receipt => {
       const { draft } = plan;
-      let todo = store.addTodo(input.todoId, plan.ask.id, draft, input.now, plan.repo);
+      let todo = store.addTodo(
+        input.todoId,
+        plan.ask.id,
+        { ...draft, dependsOn: plan.dependsOn },
+        input.now,
+        plan.repo
+      );
       if (draft.target) new NeoTodoSessionRepository(db).create(todo.id, draft.target);
       if (!draft.start && todo.instruction) {
         store.joinStartQuestion(todo, input.now);

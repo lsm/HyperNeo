@@ -64,7 +64,7 @@ try {
   assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('synthetic-ask') as { repo: string }).repo, 'lsm/hyperneo');
   const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: owner, role: 'neo' }));
   async function add(title: string, params: Record<string, string>) {
-    const reply = JSON.parse((await invoke({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title, named: { repository: 'lsm/hyperneo' }, check: { pack: 'core', kind: 'evidence', params } } })).content[0].text);
+    const reply = JSON.parse((await invoke({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title, named: { repository: 'lsm/hyperneo' }, check: { pack: 'core', kind: 'evidence', params } } })).content[0].text);
     assert(reply.ok && reply.todo, JSON.stringify(reply));
     return reply.todo as NeoTodo;
   }
@@ -75,7 +75,7 @@ try {
   const report = join(workspace, 'Travel/report.md');
   mkdirSync(dirname(report), { recursive: true });
   writeFileSync(report, '# Travel report\n\nA report for the human.');
-  const misplaced = JSON.parse((await invoke({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Misplaced completion proof', named: { repository: 'lsm/hyperneo' }, check: { pack: 'core', kind: 'evidence', params: { path: report } } } })).content[0].text);
+  const misplaced = JSON.parse((await invoke({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title: 'Misplaced completion proof', named: { repository: 'lsm/hyperneo' }, check: { pack: 'core', kind: 'evidence', params: { path: report } } } })).content[0].text);
   assert.equal(misplaced.ok, false);
   assert.match(misplaced.reason, /evidence_in_user_folder/);
   store.updateTodo(store.getTodo(internal.id)!, { startedAt: Date.now() }, Date.now());

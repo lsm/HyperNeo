@@ -33,6 +33,7 @@ const policy = createCodingTodoPolicy({
   place: (scope) => ({ ask: null, peers: [], ...('todo' in scope ? { todo: null } : {}) }),
 });
 const draft = {
+  after: [],
   title: 'Synthetic coding work',
   check: { pack: 'coding', kind: 'pr_merged', params: {} },
   instruction: 'Implement the change',

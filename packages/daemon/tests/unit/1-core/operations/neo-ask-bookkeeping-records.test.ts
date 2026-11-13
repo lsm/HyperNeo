@@ -130,6 +130,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
           request: 'Track existing work',
           todos: [
             {
+              after: [],
               title: 'Worker task',
               check: pendingTodoCheck,
               instruction: 'Work',
@@ -192,6 +193,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
         request: 'Track work',
         todos: [
           {
+            after: [],
             title: 'New task',
             check: pendingTodoCheck,
             instruction: 'Work',
@@ -228,6 +230,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       try {
         const before = h.store.listAsks(null, 100);
         const todos = ['10000000', 'missing'].map((id, index) => ({
+          after: [],
           title: `Batch item ${index}`,
           check: pendingTodoCheck,
           instruction: 'Work',
@@ -268,6 +271,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
         title: 'Canonical target batch',
         request: 'Track batch',
         todos: ['short-a', 'short-b'].map((id) => ({
+          after: [],
           title: id,
           check: pendingTodoCheck,
           instruction: `Task ${id}`,
@@ -345,7 +349,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       const result = await h.call('neo.ask.open', {
         title: h.ask.title,
         request: 'Follow-up',
-        todos: [{ title: 'New task', check: pendingTodoCheck }],
+        todos: [{ after: [], title: 'New task', check: pendingTodoCheck }],
       });
       expect(result).toMatchObject({
         ok: true,

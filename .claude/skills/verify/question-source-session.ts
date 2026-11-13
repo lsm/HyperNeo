@@ -56,10 +56,10 @@ if (phase === 'seed') {
   const draft = { askId: 'source-ask', doneWhen: 'Synthetic work complete', instruction: 'Synthetic work; do not start', target: { verb: 'send', ref } };
   let start = saved?.start;
   if (!start) {
-    assert((await rpc('neo.todo.add', { ...draft, title: 'First review task' })).ok);
+    assert((await rpc('neo.todo.add', { after: [], ...draft, title: 'First review task' })).ok);
     start = await rpc('neo.question.ask', { askId: 'source-ask', kind: 'start', text: 'Start after the worker review?', sourceSession: ref });
     assert(start.ok);
-    assert((await rpc('neo.todo.add', { ...draft, title: 'Additional review task' })).ok);
+    assert((await rpc('neo.todo.add', { after: [], ...draft, title: 'Additional review task' })).ok);
   }
   const joined = await rpc('neo.question.get', { questionId: start.question.id });
   assert.equal(joined.question.state, 'open');

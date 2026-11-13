@@ -28,9 +28,9 @@ try {
   app.sessionManager.setOperationRegistryProvider(() => proofRegistry);
   await world.open();
   const ask = world.store.listOpenAsks()[0];
-  const author = await world.invoke('neo.todo.add', { askId: ask.id, ...world.draft('Author'), start: false });
+  const author = await world.invoke('neo.todo.add', { after: [], askId: ask.id, ...world.draft('Author'), start: false });
   world.bind(author.todo.id, 'author');
-  const prior = await world.invoke('neo.todo.add', { askId: ask.id, ...world.draft('Earlier actor'), start: false });
+  const prior = await world.invoke('neo.todo.add', { after: [], askId: ask.id, ...world.draft('Earlier actor'), start: false });
   world.bind(prior.todo.id, 'prior');
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });

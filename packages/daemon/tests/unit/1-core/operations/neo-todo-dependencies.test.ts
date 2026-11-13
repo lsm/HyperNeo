@@ -82,17 +82,17 @@ function setup() {
       todos: NeoTodo[];
     };
   };
-  const step = (title: string, after?: (string | number)[]) => ({
+  const step = (title: string, after: (string | number)[] = []) => ({
     check: pendingTodoCheck,
     title,
     doneWhen: 'Result verified',
-    ...(after ? { after } : {}),
+    after,
   });
   return { db, store, sessions, invoke, step };
 }
 
 describe('todo dependencies', () => {
-  test('a plan names which earlier steps each step waits for; unnamed steps keep the order', async () => {
+  test('a plan names which earlier steps each step waits for', async () => {
     const { db, invoke, step } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
@@ -102,7 +102,7 @@ describe('todo dependencies', () => {
       });
       expect(opened.ok).toBe(true);
       const [a, b, c] = opened.todos;
-      expect(a.dependsOn).toBeNull();
+      expect(a.dependsOn).toEqual([]);
       expect(b.dependsOn).toEqual([]);
       expect(c.dependsOn).toEqual([a.id, b.id]);
     } finally {
@@ -131,7 +131,7 @@ describe('todo dependencies', () => {
         ok: false,
         reason: expect.stringContaining('dependency_cycle'),
       });
-      expect(store.getTodo(a.id)?.dependsOn).toBeNull();
+      expect(store.getTodo(a.id)?.dependsOn).toEqual([]);
       expect(await invoke('neo.todo.edit', { todoId: b.id, after: [] })).toMatchObject({
         ok: true,
       });
@@ -182,7 +182,7 @@ describe('todo dependencies', () => {
     const { db, invoke, step } = setup();
     try {
       const plan = { title: 'Plan', request: 'Plan' };
-      await invoke('neo.ask.open', { ...plan, todos: [step('A'), step('B')] });
+      await invoke('neo.ask.open', { ...plan, todos: [step('A'), step('B', [0])] });
       const again = (await invoke('neo.ask.open', {
         ...plan,
         todos: [step('A'), step('B', [])],
@@ -273,14 +273,14 @@ describe('todo dependencies', () => {
         ...plan,
         todos: [
           { ...step('A'), ...work },
-          { ...step('B'), ...work },
+          { ...step('B', [0]), ...work },
         ],
       });
       const again = await invoke('neo.ask.open', {
         ...plan,
         todos: [
           { ...step('A'), ...work },
-          { ...step('B'), ...work, start: true },
+          { ...step('B', [0]), ...work, start: true },
         ],
       });
       expect(again).toMatchObject({ ok: true });

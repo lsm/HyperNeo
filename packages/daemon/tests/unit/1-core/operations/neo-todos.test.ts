@@ -77,6 +77,7 @@ describe('neo.todo operations', () => {
   test('adds todos in order and marks the ones added after work started', async () => {
     const { repo, call, changes } = setup();
     const first = await call('neo.todo.add', {
+      after: [],
       askId: 'ask',
       title: 'Fix login',
       doneWhen: 'PR merged',
@@ -93,6 +94,7 @@ describe('neo.todo operations', () => {
     });
     repo.updateTodo(first.todo, { state: 'doing', startedAt: 5 }, 5);
     const second = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Deploy',
@@ -126,6 +128,7 @@ describe('neo.todo operations', () => {
       () => null
     ).find((op) => op.name === 'neo.todo.add')!;
     const input = {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'T',
@@ -145,6 +148,7 @@ describe('neo.todo operations', () => {
     db.exec("UPDATE neo_asks SET status = 'done'");
     expect(
       await call('neo.todo.add', {
+        after: [],
         check: pendingTodoCheck,
         askId: 'ask',
         title: 'x',
@@ -157,6 +161,7 @@ describe('neo.todo operations', () => {
     });
     expect(
       await call('neo.todo.add', {
+        after: [],
         check: pendingTodoCheck,
         askId: 'none',
         title: 'x',
@@ -171,6 +176,7 @@ describe('neo.todo operations', () => {
   test('ticks a todo met or reported with evidence', async () => {
     const { call } = setup();
     const added = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
@@ -210,6 +216,7 @@ describe('neo.todo operations', () => {
   test('removes a todo with its reason and replacement', async () => {
     const { call, stopped } = setup();
     const old = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Old',
@@ -243,6 +250,7 @@ describe('neo.todo operations', () => {
   test('closes a todo done with the reason and stops its session', async () => {
     const { repo, call, stopped } = setup();
     const added = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
@@ -270,6 +278,7 @@ describe('neo.todo operations', () => {
   test('refuses to finish a todo while its card waits for the human, and keeps the card', async () => {
     const { call, repo, stopped } = setup();
     const added = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
@@ -310,6 +319,7 @@ describe('neo.todo operations', () => {
   test('a card asked while the close stops the session keeps the todo open', async () => {
     const { call, repo, duringStop } = setup();
     const added = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
@@ -345,6 +355,7 @@ describe('neo.todo operations', () => {
   test('finishes a todo once its card is answered', async () => {
     const { call, repo } = setup();
     const added = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
@@ -380,6 +391,7 @@ describe('neo.todo operations', () => {
   test('a close whose stop fails leaves the todo unchanged and says so', async () => {
     const { call, stopFails, repo } = setup();
     const added = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
@@ -399,6 +411,7 @@ describe('neo.todo operations', () => {
     const { call } = setup();
     expect(
       await call('neo.todo.add', {
+        after: [],
         check: pendingTodoCheck,
         askId: 'ask',
         title: 'Fix',
@@ -414,6 +427,7 @@ describe('neo.todo operations', () => {
     const { repo, call } = setup();
     const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
     const fix = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
@@ -426,6 +440,7 @@ describe('neo.todo operations', () => {
       { kind: 'start', state: 'open', text: 'Start "Fix"?', startTodos: [fix.todo.id] },
     ]);
     await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Note',
@@ -455,6 +470,7 @@ describe('neo.todo operations', () => {
     const { repo, call } = setup();
     const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
     const fix = await call('neo.todo.add', {
+      after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
@@ -497,6 +513,7 @@ describe('a pack owns its check', () => {
   test('rewords a check-derived done-when like any other wording', async () => {
     const { call } = setup([gauge]);
     const added = await call('neo.todo.add', {
+      after: [],
       askId: 'ask',
       title: 'Fill it',
       doneWhen: 'Full enough',
@@ -516,6 +533,7 @@ describe('a pack owns its check', () => {
   test("writes the todo's done-when from its check, and rewords it on request", async () => {
     const { call } = setup([gauge]);
     const added = await call('neo.todo.add', {
+      after: [],
       askId: 'ask',
       title: 'Fill it',
       doneWhen: 'Full enough',
@@ -546,7 +564,13 @@ describe('a pack owns its check', () => {
   test('refuses a check its pack refuses, and adds nothing', async () => {
     const { repo, call } = setup([gauge]);
     expect(
-      await call('neo.todo.add', { askId: 'ask', title: 'Fill it', doneWhen: 'Full', check })
+      await call('neo.todo.add', {
+        after: [],
+        askId: 'ask',
+        title: 'Fill it',
+        doneWhen: 'Full',
+        check,
+      })
     ).toEqual({ ok: false, reason: 'check_refused: gauge needs an instruction' });
     expect(repo.listTodos('ask')).toEqual([]);
   });

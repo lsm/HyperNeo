@@ -44,10 +44,10 @@ try {
       if (phase === 'initial') {
         for (const id of [sender, ref.id]) db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic worker', '/tmp', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(id);
         new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
-        const opened = await invoke('neo.ask.open', { title: 'Synthetic in-progress work', request: 'Track already running work without sending it again', todos: [{ title: 'Running task', check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } } }] });
+        const opened = await invoke('neo.ask.open', { title: 'Synthetic in-progress work', request: 'Track already running work without sending it again', todos: [{ after: [], title: 'Running task', check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } } }] });
         const todo = (await invoke('neo.todo.bind', { todoId: opened.todos[0].id, ref })).todo;
         assert.equal(todo.state, 'doing'); assert.equal(todo.worker.id, ref.id); assert.equal(todo.worker.adapter, ref.adapter);
-        const refused = await handler({ name: 'neo.todo.add', input: { askId: todo.askId, title: 'Bind target with an instruction', check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } }, instruction: 'Synthetic task', start: true, target: { verb: 'bind', ref } } });
+        const refused = await handler({ name: 'neo.todo.add', input: { after: [], askId: todo.askId, title: 'Bind target with an instruction', check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } }, instruction: 'Synthetic task', start: true, target: { verb: 'bind', ref } } });
         evidence.push({ phase, name: 'neo.todo.add', refused: refused.content[0].text });
         assert.equal(refused.isError, true); assert.match(refused.content[0].text, /bind is its own operation: use neo\.todo\.bind/);
         assert.equal(store.listTodos(todo.askId).length, 1);

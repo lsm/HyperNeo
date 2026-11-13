@@ -81,13 +81,13 @@ try {
   }) as typeof db.prepare;
   restorePrepare = () => { db.prepare = prepare; };
   const check = { pack: 'core', kind: 'evidence', params: { path: join(run, 'finished.md') } };
-  const first = await call('neo.todo.add', { input: await human('Make the query faster'), title: 'Index the query', check });
+  const first = await call('neo.todo.add', { after: [], input: await human('Make the query faster'), title: 'Index the query', check });
   assert(first.ok, JSON.stringify(first));
   const follow = await human('Also check the count query');
-  const bound = await call('neo.todo.add', { input: follow, askId: first.todo.askId, title: 'Index the count query', check });
+  const bound = await call('neo.todo.add', { after: [], input: follow, askId: first.todo.askId, title: 'Index the count query', check });
   evidence.bound = bound;
   assert(bound.ok, JSON.stringify(bound));
-  const reused = await call('neo.todo.add', { input: follow, title: 'Verify the count result', check });
+  const reused = await call('neo.todo.add', { after: [], input: follow, title: 'Verify the count result', check });
   assert(reused.ok, JSON.stringify(reused));
   assert.equal(bound.todo.askId, first.todo.askId);
   assert.equal(reused.todo.askId, first.todo.askId);
@@ -99,14 +99,14 @@ try {
   evidence.todoAskIds = [bound.todo.askId, reused.todo.askId];
   const settled = await call('neo.ask.settle', { askId: first.todo.askId, status: 'dropped', outcome: 'Synthetic matter ended' });
   assert(settled.ok, JSON.stringify(settled));
-  const afterSettlement = await call('neo.todo.add', { input: follow, title: 'Check the query again', check });
+  const afterSettlement = await call('neo.todo.add', { after: [], input: follow, title: 'Check the query again', check });
   assert(afterSettlement.ok && afterSettlement.todo, JSON.stringify(afterSettlement));
   assert.notEqual(afterSettlement.todo.askId, first.todo.askId);
   assert.equal(store.getAsk(first.todo.askId)?.status, 'dropped');
   const parallelInput = await human('Check another query');
   const parallel = await Promise.all([
-    call('neo.todo.add', { input: parallelInput, title: 'Index another query', check }),
-    call('neo.todo.add', { input: parallelInput, title: 'Verify another query', check }),
+    call('neo.todo.add', { after: [], input: parallelInput, title: 'Index another query', check }),
+    call('neo.todo.add', { after: [], input: parallelInput, title: 'Verify another query', check }),
   ]);
   for (const receipt of parallel) assert(receipt.ok && receipt.todo, JSON.stringify(receipt));
   assert.equal(parallel[0].todo.askId, parallel[1].todo.askId);
@@ -118,7 +118,7 @@ try {
   for (const firstClaim of ['open', 'bind']) {
     const input = await human(`Continue the query with ${firstClaim} submitted first`);
     const before = store.listOpenAsks().length;
-    const open = { input, title: 'Check the query', check };
+    const open = { after: [], input, title: 'Check the query', check };
     const bind = { ...open, askId: afterSettlement.todo.askId };
     const receipts = await Promise.all((firstClaim === 'open' ? [open, bind] : [bind, open])
       .map(request => call('neo.todo.add', request)));
@@ -129,7 +129,7 @@ try {
     for (const receipt of receipts.filter(receipt => !receipt.ok)) {
       assert.match(receipt.reason, new RegExp(`ask_mismatch:.*belongs to ask ${winner}`));
     }
-    const repeated = await call('neo.todo.add', { ...open, title: 'Verify the chosen owner' });
+    const repeated = await call('neo.todo.add', { after: [], ...open, title: 'Verify the chosen owner' });
     assert(repeated.ok && repeated.todo.askId === winner, JSON.stringify(repeated));
     assert.equal(store.listOpenAsks().length, before + Number(winner !== bind.askId));
     mixed.push({ firstSubmitted: firstClaim, winner, receipts, repeated });
@@ -138,7 +138,7 @@ try {
   console.log('PASS mixed bind/open MCP calls select one owner in both submission orders');
   const claimRefusals = [];
   for (const kind of ['settled', 'missing', 'foreign']) {
-    const target = await call('neo.todo.add', { input: await human(`Synthetic ${kind} target`), title: 'Check a target', check });
+    const target = await call('neo.todo.add', { after: [], input: await human(`Synthetic ${kind} target`), title: 'Check a target', check });
     assert(target.ok && target.todo, JSON.stringify(target));
     const askId = target.todo.askId;
     const input = await human(`Continue the ${kind} target`);
@@ -154,7 +154,7 @@ try {
     };
     let refused;
     try {
-      refused = await call('neo.todo.add', { input, askId, title: 'Continue the target', check });
+      refused = await call('neo.todo.add', { after: [], input, askId, title: 'Continue the target', check });
     } finally {
       NeoAskTodoRepository.prototype.claimNeoInputAsk = claim;
     }

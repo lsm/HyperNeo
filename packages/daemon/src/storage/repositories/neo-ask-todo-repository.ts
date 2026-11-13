@@ -703,7 +703,7 @@ export class NeoAskTodoRepository {
         draft.named ? JSON.stringify(draft.named) : null,
         askId,
         draft.priority ?? 'normal',
-        draft.dependsOn ? JSON.stringify(draft.dependsOn) : null,
+        JSON.stringify(draft.dependsOn ?? []),
         draft.approvedAt ?? null,
         now,
         now

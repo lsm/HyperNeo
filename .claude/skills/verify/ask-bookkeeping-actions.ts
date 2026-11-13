@@ -69,7 +69,7 @@ for (const phase of ['initial', 'reopen']) {
     if (phase === 'initial') {
       const mixed = await call('neo.ask.open', {
         title: 'One cross-repo request', request: 'Keep both repositories together',
-        todos: ['first', 'second'].map((repo) => ({
+        todos: ['first', 'second'].map((repo) => ({ after: [],
           title: `Work in ${repo}`, check: { pack: 'coding', kind: 'pr_merged', params: { urls: [`https://github.com/synthetic/${repo}/pull/1`] } },
         })),
       });
@@ -82,17 +82,17 @@ for (const phase of ['initial', 'reopen']) {
       const repoAsk = store.openAsk({ ...ask, id: 'repository', title: 'Repository work' });
       db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/root', repoAsk.id);
       const context = store.addTodo('repository-context', repoAsk.id, { title: 'Known repository', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1, 'github.com/synthetic/root');
-      const draft = {
+      const draft = { after: [],
         title: 'Local work',
         check: pendingTodoCheck,
         instruction: 'Work',
         start: false,
         target: { verb: 'start', adapter: 'hyperneo' },
       };
-      const refused = await call('neo.todo.add', { askId: repoAsk.id, ...draft }, false);
+      const refused = await call('neo.todo.add', { after: [], askId: repoAsk.id, ...draft }, false);
       assert(refused.reason.startsWith('place_required:'));
       assert.deepEqual(store.listTodos(repoAsk.id), [context]);
-      const placed = await call('neo.todo.add', {
+      const placed = await call('neo.todo.add', { after: [],
         askId: repoAsk.id, ...draft,
         target: {
           ...draft.target,
@@ -131,7 +131,7 @@ for (const phase of ['initial', 'reopen']) {
       store.openAsk({ id: 'child', parentId: ask.id, projectId: null, sessionId: ask.sessionId, originMessageId: null, title: 'Child card', request: 'Filed work', createdAt: 1 });
       db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/child', 'child');
       store.addTodo('legacy-child-todo', 'child', { title: 'Existing child work', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1, 'github.com/synthetic/child');
-      const retry = await call('neo.ask.open', { title: ask.title, request: 'Follow-up', todos: [{ title: 'New follow-up', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } }] });
+      const retry = await call('neo.ask.open', { title: ask.title, request: 'Follow-up', todos: [{ after: [], title: 'New follow-up', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } }] });
       assert.equal(retry.ask.id, ask.id); assert.equal(retry.todos.length, 4);
       assert(retry.records[0].includes('Open a new ask for it with a different title'));
 

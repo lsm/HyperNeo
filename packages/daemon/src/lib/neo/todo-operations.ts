@@ -96,9 +96,8 @@ const TodoDraft = z.object({
   after: z
     .array(z.union([Text, z.number().int().min(0)]))
     .max(20)
-    .optional()
     .describe(
-      'Earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts each step once everything it waits for is done.'
+      'Required. The earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] means it waits for nothing. The daemon starts each step once everything it waits for is done.'
     ),
 });
 
@@ -127,9 +126,8 @@ const Add = TodoDraft.extend({
   after: z
     .array(Text)
     .max(20)
-    .optional()
     .describe(
-      'Ids of todos in this ask this one waits for. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts it once everything it waits for is done.'
+      'Required. Ids of the todos in this ask this one waits for. [] means it waits for nothing. The daemon starts it once everything it waits for is done.'
     ),
 }).superRefine((input, context) => {
   refineNeoTodoDraft(input, context);
@@ -249,9 +247,11 @@ export async function recordNeoTodo(
   const records = accepted.value.records ? { records: accepted.value.records } : {};
   const refused = neoTodoAfterRefusal(todos.listFamilyTodos(ask.id), null, draft.after);
   if (refused) return { ok: false, reason: refused };
-  const dependsOn = draft.after
-    ? planNeoTodoDependencies(todos.listFamilyTodos(ask.id), id, draft.after.map(String))
-    : null;
+  const dependsOn = planNeoTodoDependencies(
+    todos.listFamilyTodos(ask.id),
+    id,
+    draft.after.map(String)
+  );
   if (typeof dependsOn === 'string')
     return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
   const now = Date.now();

@@ -138,11 +138,13 @@ function fixture(legacyCheck = false, legacyResult?: NeoTodoCheckResult) {
       return runner;
     },
     add(id: string, state: NeoTodo['state'] = 'todo') {
+      const before = store.listTodos('ask').at(-1);
       const todo = store.addTodo(
         id,
         'ask',
         {
           approvedAt: 1,
+          dependsOn: before ? [before.id] : [],
           title: id,
           doneWhen: 'Synthetic facts met',
           check: { pack: 'synthetic', kind: 'met', params: {} },

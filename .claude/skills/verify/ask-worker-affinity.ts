@@ -46,7 +46,7 @@ try {
   });
   const open = async () => { await world.open(); return world.store.listOpenAsks()[0].id; };
   const bind = async (askId: string, id: string, at: number) => {
-    const result = await world.invoke('neo.todo.add', { askId, ...world.draft(id), start: false });
+    const result = await world.invoke('neo.todo.add', { after: [], askId, ...world.draft(id), start: false });
     world.bind(result.todo.id, id);
     world.store.updateTodo(world.store.getTodo(result.todo.id)!, { state: 'done', startedAt: at }, at);
     assert.equal(world.store.getTodo(result.todo.id)?.state, 'done');
@@ -54,7 +54,7 @@ try {
   };
   const start = async (askId: string, title: string, expected: string, excluded: string[] = []) => {
     const before = sent.length;
-    const result = await world.invoke('neo.todo.add', { askId, ...world.draft(title, excluded) });
+    const result = await world.invoke('neo.todo.add', { after: [], askId, ...world.draft(title, excluded) });
     const ref = world.sessions.readRef(result.todo.id);
     const inputs = world.sessions.inputs.list(result.todo.id);
     assert.equal(ref?.id, expected, JSON.stringify(result));

@@ -97,6 +97,7 @@ function setup() {
       addOp.inputSchema.parse({
         title: 'Fix the two Open buttons',
         check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'q' } },
+        after: [],
         ...input,
       }),
       owner

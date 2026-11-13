@@ -83,6 +83,7 @@ const opening = {
   request: 'Fix the login bug and merge it',
   todos: [
     {
+      after: [],
       title: 'Fix it',
       doneWhen: 'PR merged',
       check: { pack: 'coding', kind: 'pr_merged' },
@@ -90,7 +91,7 @@ const opening = {
       target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'dev-1' } },
       start: true,
     },
-    { check: pendingTodoCheck, title: 'Deploy', doneWhen: 'Both daemons run it' },
+    { after: [], check: pendingTodoCheck, title: 'Deploy', doneWhen: 'Both daemons run it' },
   ],
 };
 
@@ -99,6 +100,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     const { db, call, store } = setup();
     const base = { title: 'Repository query budget', request: 'Reuse recorded work' };
     const draft = {
+      after: [],
       title: 'Recorded work',
       check: pendingTodoCheck,
       named: { repository: 'synthetic/one' },
@@ -145,6 +147,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
         ...base,
         todos: [
           {
+            after: [],
             title: 'Repeated',
             check: pendingTodoCheck,
             named: { repository: 'synthetic/one' },
@@ -160,8 +163,14 @@ describe('neo.ask.open and neo.ask.settle', () => {
       {
         ...base,
         todos: [
-          { title: 'New sibling', check: pendingTodoCheck, named: { repository: 'synthetic/two' } },
           {
+            after: [],
+            title: 'New sibling',
+            check: pendingTodoCheck,
+            named: { repository: 'synthetic/two' },
+          },
+          {
+            after: [],
             title: 'Repeated',
             check: pendingTodoCheck,
             instruction: 'Keep working',
@@ -201,7 +210,9 @@ describe('neo.ask.open and neo.ask.settle', () => {
       {
         title: 'Unverified delivery',
         request: 'Close without a verified outcome',
-        todos: [{ check: pendingTodoCheck, title: 'Delivery', doneWhen: 'Result checked' }],
+        todos: [
+          { after: [], check: pendingTodoCheck, title: 'Delivery', doneWhen: 'Result checked' },
+        ],
       },
       turn('m1')
     );
@@ -234,7 +245,12 @@ describe('neo.ask.open and neo.ask.settle', () => {
         title: 'Choose positioning',
         request: 'Discuss then implement',
         todos: [
-          { check: pendingTodoCheck, title: 'Implement the chosen option', doneWhen: 'PR merged' },
+          {
+            after: [],
+            check: pendingTodoCheck,
+            title: 'Implement the chosen option',
+            doneWhen: 'PR merged',
+          },
         ],
       },
       turn('m1')
@@ -272,6 +288,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
           request: 'Discuss then implement',
           todos: [
             {
+              after: [],
               check: pendingTodoCheck,
               title: 'Deploy after implementation',
               doneWhen: 'Build readback matches',

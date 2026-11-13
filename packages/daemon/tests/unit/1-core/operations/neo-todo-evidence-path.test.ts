@@ -108,6 +108,7 @@ function setup(repository: string | null, seedPeer = true) {
     add: async (params: Record<string, unknown>) =>
       (await add.execute(
         add.inputSchema.parse({
+          after: [],
           askId: 'ask',
           title: 'Prove it',
           check: { pack: 'core', kind: 'evidence', params },
@@ -177,8 +178,9 @@ describe('neo.todo.add evidence paths', () => {
       title: 'New work',
       request: 'New work',
       todos: [
-        { title: 'First', check: evidence({}) },
+        { after: [], title: 'First', check: evidence({}) },
         {
+          after: [],
           title: 'Second',
           check: evidence({ path: join(userFolder, 'proof.md') }),
           instruction: 'Prove it',

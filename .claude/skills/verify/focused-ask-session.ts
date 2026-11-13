@@ -160,7 +160,7 @@ try {
     assert.equal(recorded.ask.settledAt, null);
     assert.equal(recorded.ask.outcome, settledOutcome);
     assert.equal(store.getTodo(todo.id)?.state, 'doing');
-    const execution = await call('neo.todo.add', { askId: opened.ask.id, title: 'Implement the settled positioning', doneWhen: 'Implementation PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/example/project/pull/8'] } } });
+    const execution = await call('neo.todo.add', { after: [], askId: opened.ask.id, title: 'Implement the settled positioning', doneWhen: 'Implementation PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/example/project/pull/8'] } } });
     assert(execution.ok, JSON.stringify(execution));
     assert.equal(execution.todo.state, 'todo');
     Object.assign(outcomeEvidence, { explicitReport, sent, recorded, execution, ordinaryRelayDidNotRecord: true, reportDidNotRecordAutomatically: true });
