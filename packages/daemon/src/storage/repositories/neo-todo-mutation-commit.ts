@@ -25,7 +25,7 @@ type Input = {
 };
 type Outcome =
   | { ok: false; reason: string }
-  | { ok: true; todo: NeoTodo; todos: NeoTodo[]; records?: string[]; startNext?: string | null };
+  | { ok: true; todo: NeoTodo; records?: string[]; startNext?: string | null };
 
 const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
   .input(['db', 'args', 'changes'])
@@ -149,7 +149,6 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
       return {
         ok: true,
         todo: committed.todo!,
-        todos: todos.listTodos(plan.todo.askId),
         startNext: committed.startNext ?? removal?.writes[0]?.todo.id ?? null,
         ...(plan.records ? { records: plan.records } : {}),
       };

@@ -187,7 +187,6 @@ describe('one completion rule for Neo todos', () => {
         blockedBy: 'check',
         blockedReason: `check_failed: ${reason}`,
       }),
-      todos: expect.any(Array),
     });
     await runner.checkNow([todo.id], () => {});
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'failed', reason });

@@ -23663,357 +23663,390 @@
                   },
                   "todos": {
                     "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "addedAfterStart": {
-                          "type": "boolean"
-                        },
-                        "approvalQuestionId": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "approvedAt": {
-                          "type": [
-                            "number",
-                            "null"
-                          ]
-                        },
-                        "artifacts": {
-                          "items": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "artifactId": {
-                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                                "type": "string"
-                              },
-                              "byteLength": {
-                                "maximum": 9007199254740991,
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              "daemonId": {
-                                "format": "uuid",
-                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                                "type": "string"
-                              },
-                              "kind": {
-                                "enum": [
-                                  "markdown",
-                                  "html",
-                                  "image",
-                                  "json",
-                                  "log",
-                                  "text",
-                                  "video"
-                                ],
-                                "type": "string"
-                              },
-                              "title": {
-                                "maxLength": 200,
-                                "minLength": 1,
-                                "type": "string"
-                              }
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addedAfterStart": {
+                              "type": "boolean"
                             },
-                            "required": [
-                              "daemonId",
-                              "artifactId",
-                              "title",
-                              "kind",
-                              "byteLength"
-                            ],
-                            "type": "object"
-                          },
-                          "readOnly": true,
-                          "type": "array"
-                        },
-                        "askId": {
-                          "type": "string"
-                        },
-                        "blockedBy": {
-                          "anyOf": [
-                            {
-                              "enum": [
-                                "check",
-                                "worker",
-                                "failure",
-                                "question",
-                                "needs-human",
-                                "environment",
-                                "stalled",
-                                "held"
-                              ],
+                            "approvalQuestionId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "approvedAt": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "artifacts": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "artifactId": {
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                                    "type": "string"
+                                  },
+                                  "byteLength": {
+                                    "maximum": 9007199254740991,
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "daemonId": {
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "enum": [
+                                      "markdown",
+                                      "html",
+                                      "image",
+                                      "json",
+                                      "log",
+                                      "text",
+                                      "video"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "maxLength": 200,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "daemonId",
+                                  "artifactId",
+                                  "title",
+                                  "kind",
+                                  "byteLength"
+                                ],
+                                "type": "object"
+                              },
+                              "readOnly": true,
+                              "type": "array"
+                            },
+                            "askId": {
                               "type": "string"
                             },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "blockedReason": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "check": {
-                          "anyOf": [
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "kind": {
-                                  "minLength": 1,
+                            "blockedBy": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "check",
+                                    "worker",
+                                    "failure",
+                                    "question",
+                                    "needs-human",
+                                    "environment",
+                                    "stalled",
+                                    "held"
+                                  ],
                                   "type": "string"
                                 },
-                                "pack": {
-                                  "minLength": 1,
-                                  "type": "string"
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "blockedReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "check": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "pack": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "params": {
+                                      "additionalProperties": {},
+                                      "default": {},
+                                      "propertyNames": {
+                                        "type": "string"
+                                      },
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "pack",
+                                    "kind",
+                                    "params"
+                                  ],
+                                  "type": "object"
                                 },
-                                "params": {
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "createdAt": {
+                              "type": "number"
+                            },
+                            "dependsOn": {
+                              "anyOf": [
+                                {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "doneWhen": {
+                              "type": "string"
+                            },
+                            "evidence": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "finishedAt": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "instruction": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "link": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "named": {
+                              "anyOf": [
+                                {
                                   "additionalProperties": {},
-                                  "default": {},
                                   "propertyNames": {
                                     "type": "string"
                                   },
                                   "type": "object"
+                                },
+                                {
+                                  "type": "null"
                                 }
-                              },
-                              "required": [
-                                "pack",
-                                "kind",
-                                "params"
-                              ],
-                              "type": "object"
+                              ]
                             },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "createdAt": {
-                          "type": "number"
-                        },
-                        "dependsOn": {
-                          "anyOf": [
-                            {
+                            "nextAction": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "position": {
+                              "type": "number"
+                            },
+                            "priority": {
+                              "enum": [
+                                "low",
+                                "normal",
+                                "high",
+                                "urgent"
+                              ],
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "remoteLink": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "replacedBy": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "report": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "startedAt": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "state": {
+                              "enum": [
+                                "todo",
+                                "doing",
+                                "blocked",
+                                "done",
+                                "closed_unverified",
+                                "failed",
+                                "removed"
+                              ],
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "statusCodes": {
                               "items": {
-                                "type": "string"
+                                "additionalProperties": false,
+                                "properties": {
+                                  "code": {
+                                    "type": "string"
+                                  },
+                                  "params": {
+                                    "additionalProperties": {
+                                      "type": "string"
+                                    },
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "code",
+                                  "params"
+                                ],
+                                "type": "object"
                               },
                               "type": "array"
                             },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "doneWhen": {
-                          "type": "string"
-                        },
-                        "evidence": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "finishedAt": {
-                          "type": [
-                            "number",
-                            "null"
-                          ]
-                        },
-                        "id": {
-                          "type": "string"
-                        },
-                        "instruction": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "link": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "named": {
-                          "anyOf": [
-                            {
-                              "additionalProperties": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
+                            "title": {
+                              "type": "string"
                             },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "nextAction": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "position": {
-                          "type": "number"
-                        },
-                        "priority": {
-                          "enum": [
-                            "low",
-                            "normal",
-                            "high",
-                            "urgent"
-                          ],
-                          "type": "string"
-                        },
-                        "reason": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "remoteLink": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "replacedBy": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "report": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "startedAt": {
-                          "type": [
-                            "number",
-                            "null"
-                          ]
-                        },
-                        "state": {
-                          "enum": [
-                            "todo",
-                            "doing",
-                            "blocked",
-                            "done",
-                            "closed_unverified",
-                            "failed",
-                            "removed"
-                          ],
-                          "type": "string"
-                        },
-                        "status": {
-                          "type": "string"
-                        },
-                        "statusCodes": {
-                          "items": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "code": {
-                                "type": "string"
-                              },
-                              "params": {
-                                "additionalProperties": {
-                                  "type": "string"
-                                },
-                                "propertyNames": {
-                                  "type": "string"
-                                },
-                                "type": "object"
-                              }
+                            "updatedAt": {
+                              "type": "number"
                             },
-                            "required": [
-                              "code",
-                              "params"
-                            ],
-                            "type": "object"
-                          },
-                          "type": "array"
-                        },
-                        "title": {
-                          "type": "string"
-                        },
-                        "updatedAt": {
-                          "type": "number"
-                        },
-                        "worker": {
-                          "anyOf": [
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "adapter": {
-                                  "type": "string"
+                            "worker": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "adapter": {
+                                      "type": "string"
+                                    },
+                                    "daemon": {
+                                      "type": "string"
+                                    },
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "adapter",
+                                    "name",
+                                    "label"
+                                  ],
+                                  "type": "object"
                                 },
-                                "daemon": {
-                                  "type": "string"
-                                },
-                                "id": {
-                                  "type": "string"
-                                },
-                                "label": {
-                                  "type": "string"
-                                },
-                                "name": {
-                                  "type": [
-                                    "string",
-                                    "null"
-                                  ]
+                                {
+                                  "type": "null"
                                 }
-                              },
-                              "required": [
-                                "id",
-                                "adapter",
-                                "name",
-                                "label"
-                              ],
-                              "type": "object"
-                            },
-                            {
-                              "type": "null"
+                              ]
                             }
-                          ]
+                          },
+                          "required": [
+                            "id",
+                            "askId",
+                            "position",
+                            "title",
+                            "doneWhen",
+                            "check",
+                            "instruction",
+                            "named",
+                            "state",
+                            "reason",
+                            "blockedReason",
+                            "nextAction",
+                            "blockedBy",
+                            "priority",
+                            "dependsOn",
+                            "replacedBy",
+                            "addedAfterStart",
+                            "approvedAt",
+                            "approvalQuestionId",
+                            "report",
+                            "evidence",
+                            "createdAt",
+                            "updatedAt",
+                            "startedAt",
+                            "finishedAt",
+                            "status",
+                            "link",
+                            "remoteLink"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "enum": [
+                                "todo",
+                                "doing",
+                                "blocked",
+                                "done",
+                                "closed_unverified",
+                                "failed",
+                                "removed"
+                              ],
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "title",
+                            "state"
+                          ],
+                          "type": "object"
                         }
-                      },
-                      "required": [
-                        "id",
-                        "askId",
-                        "position",
-                        "title",
-                        "doneWhen",
-                        "check",
-                        "instruction",
-                        "named",
-                        "state",
-                        "reason",
-                        "blockedReason",
-                        "nextAction",
-                        "blockedBy",
-                        "priority",
-                        "dependsOn",
-                        "replacedBy",
-                        "addedAfterStart",
-                        "approvedAt",
-                        "approvalQuestionId",
-                        "report",
-                        "evidence",
-                        "createdAt",
-                        "updatedAt",
-                        "startedAt",
-                        "finishedAt",
-                        "status",
-                        "link",
-                        "remoteLink"
-                      ],
-                      "type": "object"
+                      ]
                     },
                     "type": "array"
                   }
@@ -40691,324 +40724,10 @@
                   "finishedAt"
                 ],
                 "type": "object"
-              },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               }
             },
             "required": [
-              "ok",
-              "todos"
+              "ok"
             ],
             "type": "object"
           }
@@ -41394,324 +41113,10 @@
                   "finishedAt"
                 ],
                 "type": "object"
-              },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               }
             },
             "required": [
-              "ok",
-              "todos"
+              "ok"
             ],
             "type": "object"
           }
@@ -42080,324 +41485,10 @@
                   "finishedAt"
                 ],
                 "type": "object"
-              },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               }
             },
             "required": [
-              "ok",
-              "todos"
+              "ok"
             ],
             "type": "object"
           }
@@ -42766,324 +41857,10 @@
                   "finishedAt"
                 ],
                 "type": "object"
-              },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               }
             },
             "required": [
-              "ok",
-              "todos"
+              "ok"
             ],
             "type": "object"
           }
@@ -43451,324 +42228,10 @@
                   "finishedAt"
                 ],
                 "type": "object"
-              },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               }
             },
             "required": [
-              "ok",
-              "todos"
+              "ok"
             ],
             "type": "object"
           }
@@ -44437,324 +42900,10 @@
                   "finishedAt"
                 ],
                 "type": "object"
-              },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               }
             },
             "required": [
-              "ok",
-              "todos"
+              "ok"
             ],
             "type": "object"
           }
@@ -45131,324 +43280,10 @@
                   "finishedAt"
                 ],
                 "type": "object"
-              },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               }
             },
             "required": [
-              "ok",
-              "todos"
+              "ok"
             ],
             "type": "object"
           }
@@ -45812,324 +43647,372 @@
                   "finishedAt"
                 ],
                 "type": "object"
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "todoId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "todoId"
+        ],
+        "type": "object"
+      },
+      "name": "neo.todo.read",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
               },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
+              "reason": {
+                "type": "string"
               }
             },
             "required": [
               "ok",
-              "todos"
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "todo": {
+                "additionalProperties": false,
+                "properties": {
+                  "addedAfterStart": {
+                    "type": "boolean"
+                  },
+                  "approvalQuestionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "approvedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "artifacts": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "artifactId": {
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                          "type": "string"
+                        },
+                        "byteLength": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "daemonId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "markdown",
+                            "html",
+                            "image",
+                            "json",
+                            "log",
+                            "text",
+                            "video"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "daemonId",
+                        "artifactId",
+                        "title",
+                        "kind",
+                        "byteLength"
+                      ],
+                      "type": "object"
+                    },
+                    "readOnly": true,
+                    "type": "array"
+                  },
+                  "askId": {
+                    "type": "string"
+                  },
+                  "blockedBy": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "check",
+                          "worker",
+                          "failure",
+                          "question",
+                          "needs-human",
+                          "environment",
+                          "stalled",
+                          "held"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "blockedReason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "check": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "pack": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "params": {
+                            "additionalProperties": {},
+                            "default": {},
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "pack",
+                          "kind",
+                          "params"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "createdAt": {
+                    "type": "number"
+                  },
+                  "dependsOn": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "doneWhen": {
+                    "type": "string"
+                  },
+                  "evidence": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "finishedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "instruction": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "named": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": {},
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "nextAction": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "position": {
+                    "type": "number"
+                  },
+                  "priority": {
+                    "enum": [
+                      "low",
+                      "normal",
+                      "high",
+                      "urgent"
+                    ],
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "replacedBy": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "report": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "startedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "state": {
+                    "enum": [
+                      "todo",
+                      "doing",
+                      "blocked",
+                      "done",
+                      "closed_unverified",
+                      "failed",
+                      "removed"
+                    ],
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "updatedAt": {
+                    "type": "number"
+                  },
+                  "worker": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "adapter": {
+                            "type": "string"
+                          },
+                          "daemon": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "adapter",
+                          "name",
+                          "label"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "askId",
+                  "position",
+                  "title",
+                  "doneWhen",
+                  "check",
+                  "instruction",
+                  "named",
+                  "state",
+                  "reason",
+                  "blockedReason",
+                  "nextAction",
+                  "blockedBy",
+                  "priority",
+                  "dependsOn",
+                  "replacedBy",
+                  "addedAfterStart",
+                  "approvedAt",
+                  "approvalQuestionId",
+                  "report",
+                  "evidence",
+                  "createdAt",
+                  "updatedAt",
+                  "startedAt",
+                  "finishedAt"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "ok",
+              "todo"
             ],
             "type": "object"
           }
@@ -46510,324 +44393,10 @@
                   "finishedAt"
                 ],
                 "type": "object"
-              },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               }
             },
             "required": [
-              "ok",
-              "todos"
+              "ok"
             ],
             "type": "object"
           }
@@ -47191,324 +44760,10 @@
                   "finishedAt"
                 ],
                 "type": "object"
-              },
-              "todos": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "addedAfterStart": {
-                      "type": "boolean"
-                    },
-                    "approvalQuestionId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "approvedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "artifacts": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "artifactId": {
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                            "type": "string"
-                          },
-                          "byteLength": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "daemonId": {
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                            "type": "string"
-                          },
-                          "kind": {
-                            "enum": [
-                              "markdown",
-                              "html",
-                              "image",
-                              "json",
-                              "log",
-                              "text",
-                              "video"
-                            ],
-                            "type": "string"
-                          },
-                          "title": {
-                            "maxLength": 200,
-                            "minLength": 1,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "daemonId",
-                          "artifactId",
-                          "title",
-                          "kind",
-                          "byteLength"
-                        ],
-                        "type": "object"
-                      },
-                      "readOnly": true,
-                      "type": "array"
-                    },
-                    "askId": {
-                      "type": "string"
-                    },
-                    "blockedBy": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "check",
-                            "worker",
-                            "failure",
-                            "question",
-                            "needs-human",
-                            "environment",
-                            "stalled",
-                            "held"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "blockedReason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "check": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "kind": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "pack": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "params": {
-                              "additionalProperties": {},
-                              "default": {},
-                              "propertyNames": {
-                                "type": "string"
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "pack",
-                            "kind",
-                            "params"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "dependsOn": {
-                      "anyOf": [
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "doneWhen": {
-                      "type": "string"
-                    },
-                    "evidence": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "finishedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "instruction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "named": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {},
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nextAction": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "position": {
-                      "type": "number"
-                    },
-                    "priority": {
-                      "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "replacedBy": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "report": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "startedAt": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "state": {
-                      "enum": [
-                        "todo",
-                        "doing",
-                        "blocked",
-                        "done",
-                        "closed_unverified",
-                        "failed",
-                        "removed"
-                      ],
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "worker": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "adapter": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": [
-                                "string",
-                                "null"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "adapter",
-                            "name",
-                            "label"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "askId",
-                    "position",
-                    "title",
-                    "doneWhen",
-                    "check",
-                    "instruction",
-                    "named",
-                    "state",
-                    "reason",
-                    "blockedReason",
-                    "nextAction",
-                    "blockedBy",
-                    "priority",
-                    "dependsOn",
-                    "replacedBy",
-                    "addedAfterStart",
-                    "approvedAt",
-                    "approvalQuestionId",
-                    "report",
-                    "evidence",
-                    "createdAt",
-                    "updatedAt",
-                    "startedAt",
-                    "finishedAt"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               }
             },
             "required": [
-              "ok",
-              "todos"
+              "ok"
             ],
             "type": "object"
           }

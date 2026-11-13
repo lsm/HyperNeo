@@ -631,8 +631,8 @@ describe('cancelled prerequisites', () => {
         });
       child('first');
       const second = child('second');
-      const [a] = (await invoke('neo.todo.add', { askId: 'first', ...step('A', []) })).todos;
-      const [f] = (await invoke('neo.todo.add', { askId: 'second', ...step('F', [a.id]) })).todos;
+      const a = (await invoke('neo.todo.add', { askId: 'first', ...step('A', []) })).todo;
+      const f = (await invoke('neo.todo.add', { askId: 'second', ...step('F', [a.id]) })).todo;
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
       const filed = store.gateQuestions(second).find((q) => q.cause === 'removed_prerequisite');
       expect(filed).toMatchObject({ askId: root.ask.id, state: 'open', todos: [f.id, a.id] });
