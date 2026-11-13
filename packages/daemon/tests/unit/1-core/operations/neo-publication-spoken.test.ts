@@ -223,7 +223,8 @@ describe('publication speech follows the committed version', () => {
     events = [];
     expect(await send({ ...draft, details: 'Conflicting result.' })).toMatchObject({
       accepted: false,
-      reason: 'publication_conflict',
+      reason:
+        'publication_conflict: This publication id already holds different content. Keep its stored fields, or use a different publicationId.',
     });
     expect(events).toEqual([]);
     failWrite = true;
@@ -328,7 +329,11 @@ describe('publication speech follows the committed version', () => {
           details: 'Another update.',
           artifacts: [],
         })
-      ).toMatchObject({ accepted: false, reason: 'publication_conflict' });
+      ).toMatchObject({
+        accepted: false,
+        reason:
+          'publication_conflict: This publication id already holds different content. Keep its stored fields, or use a different publicationId.',
+      });
       expect(ledger.list(conversationId)[0].artifacts).toEqual([reference]);
     } finally {
       if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;

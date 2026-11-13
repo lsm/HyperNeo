@@ -11,8 +11,9 @@ have the front call `reply` with `work_on: true` and a one-sentence
 acknowledgment. Require that one call to publish the acknowledgment, report
 `started: true`, store owner `neo` and give Neo the recorded human message with
 the acknowledgment in `<already-said>`. A second `work_on` reply for that input
-collides on the derived progress id and is refused with `publication_conflict`;
-a later ordinary front `reply` for the same input is still accepted, since
+still hands off and reports `started: true`: the progress publication dedupes on
+its derived id, and the reserve enqueues nothing the second time. A later
+ordinary front `reply` for the same input is still accepted, since
 publish no longer refuses on an existing owner. Neo then publishes its answer with
 the original `replyTo` through `neo.publication.publish`, and the stored row
 records `publishedBy: 'neo'`. Neo speech must pass the speaker gate (it stops at

@@ -160,6 +160,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   project_protected: 'The Inbox is a system project and cannot be forgotten. Pick another project.',
   proposal_is_immutable:
     'This requestId already binds a different proposal. Keep its stored values, or ask a new question with a new requestId.',
+  publication_conflict:
+    'This publication id already holds different content. Keep its stored fields, or use a different publicationId.',
   publication_superseded:
     "This input's session or conversation changed. Publish from the current live turn.",
   question_closed:

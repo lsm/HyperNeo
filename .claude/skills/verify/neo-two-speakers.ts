@@ -117,8 +117,8 @@ try {
   const delivered = JSON.stringify(app.db.getSDKMessageRepo().getMessageByUuid(root, id));
   assert(delivered.includes('<already-said>') && delivered.includes('I will check the build.'), delivered);
   const again = await call('reply', { requestId: 'work-2', replyTo: [id], work_on: true, text: 'Checking.' });
-  assert.equal(again.reason, 'publication_conflict', JSON.stringify(again));
-  assert.notEqual(again.started, true);
+  assert.equal(again.accepted, true, JSON.stringify(again));
+  assert.equal(again.started, true, JSON.stringify(again));
   const frontFinal = await call('reply', { requestId: 'final', replyTo: [id], text: 'The build passed.' });
   assert.equal(frontFinal.accepted, true, JSON.stringify(frontFinal));
   assert(app.db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id));

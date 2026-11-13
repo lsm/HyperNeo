@@ -363,11 +363,13 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
     { requestId: 'again', replyTo: [id], work_on: true, text: 'Again.' },
     {} as never
   );
-  expect(JSON.parse((again.content[0] as { text: string }).text)).toEqual({
-    accepted: false,
-    reason: 'publication_conflict',
+  expect(JSON.parse((again.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+    started: true,
   });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  const progress = service.publications.list(conversationId)!.map((row) => row.fullText);
+  expect(progress).toEqual(['I will check.']);
 });
 
 test('in dual mode Neo speaks directly like the front', async () => {

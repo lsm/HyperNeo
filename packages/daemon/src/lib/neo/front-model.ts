@@ -148,9 +148,14 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
           const receipt = await publish({ ...input, text, progress: true });
-          if (!receipt.accepted) return result(receipt);
+          const second = !receipt.accepted && receipt.reason === 'publication_conflict';
+          if (!receipt.accepted && !second) return result(receipt);
           const handed = await handOff(ask, input.replyTo[0]);
-          return result(handed.started ? { ...receipt, ...handed } : handed);
+          return result(
+            handed.started
+              ? { ...(receipt.accepted ? receipt : { accepted: true }), ...handed }
+              : handed
+          );
         }
       ),
     ],
