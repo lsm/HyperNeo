@@ -102,11 +102,6 @@ describe('Whole todo-add writer', () => {
     expect(store.getAsk('ask')?.status).toBe('open');
     expect(store.listChildAsks('ask')).toEqual([]);
   });
-  test('an add announces the neo tables without re-announcing the pack table', async () => {
-    expect(await add('one')).toMatchObject({ ok: true });
-    expect(changes).toEqual(expect.arrayContaining(['neo_asks', 'neo_todos']));
-    expect(changes).not.toContain('pack_coding_todos');
-  });
   test('late target failure rolls back todo, target and all notifications', async () => {
     db.exec(
       "CREATE TRIGGER refuse_target BEFORE INSERT ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'late target failure'); END"

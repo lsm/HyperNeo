@@ -269,7 +269,6 @@ export class NeoAskTodoRepository {
     const write = gateway.run.bind(gateway);
     const { neoTodoAddWrites: op } = await import('./neo-todo-add-write.ts');
     const receipt = await write(op, input);
-    if (receipt.ok && receipt.todo) this.changed();
     return receipt;
   }
 
