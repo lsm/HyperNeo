@@ -27,11 +27,13 @@ The same run seeds five Neo-owned inputs. One is answered by a Neo publication
 that replies to it, one by a card reply that records it in
 `cardReply.sourceMessageIds`, one only by the front desk's handoff
 acknowledgement (`publishedBy: "front"` carrying `producerInput.messageId`),
-and two are not answered at all: a short message and a 20,000-character one. The
+and three are not answered at all: a short message, a 20,000-character one, and
+one stored with `eligible = 0` and no owner, which is how a human input is
+recorded while fast replies are off. The
 front acknowledgement is not Neo's answer, so `planContext` must return the
-front-acknowledged id together with the two unanswered ones, newest first, with
-the short one's text intact. The compact-source context and the real
-`SessionStart` hook in compact mode must contain those three ids and omit the two
+front-acknowledged id together with the three unanswered ones, newest first,
+with the short one's text intact and the fast-replies-off input included. The compact-source context and the real
+`SessionStart` hook in compact mode must contain those four ids and omit the two
 Neo-answered ones; a startup-source context must omit every one. A plan read
 without the compact flag must not carry the unanswered list at all, so per-prompt
 reads skip that scan. The section itself is bounded: entries are capped at 2 kB,

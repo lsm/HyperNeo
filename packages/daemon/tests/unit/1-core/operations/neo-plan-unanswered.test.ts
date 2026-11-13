@@ -239,7 +239,7 @@ test('stays fast on a long-lived conversation', async () => {
   const elapsed = performance.now() - started;
 
   expect(facts.unanswered).toEqual([]);
-  expect(elapsed).toBeLessThan(250);
+  expect(elapsed, `elapsed ${elapsed.toFixed(1)} ms`).toBeLessThan(250);
 });
 
 test('sends unanswered messages to Neo after compaction and drops answered ones', async () => {
@@ -286,4 +286,27 @@ test('leaves a fresh startup without unanswered messages', async () => {
     (context as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput
       .additionalContext
   ).not.toContain(pending);
+});
+
+test('lists a human input when fast replies are off and nobody owned it', async () => {
+  db.prepare(
+    'INSERT INTO neo_conversation_asks(conversation_id, request_id, payload_json, created_at) VALUES (?,?,?,?)'
+  ).run(
+    conversation,
+    pending,
+    JSON.stringify({
+      conversationId: conversation,
+      requestId: pending,
+      askOrigin: { sessionId: 'neo:source', messageId: pending },
+      content: [{ type: 'text', text: pendingText }],
+    }),
+    new Date().toISOString()
+  );
+  db.prepare(
+    'INSERT INTO neo_front_inputs (conversation_id, message_id, eligible, owner) VALUES (?,?,0,NULL)'
+  ).run(conversation, pending);
+
+  const facts = await new NeoAskTodoRepository(db).read('planContext', true);
+
+  expect(facts.unanswered).toEqual([{ id: pending, text: pendingText }]);
 });

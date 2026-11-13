@@ -345,7 +345,7 @@ export class NeoAskTodoRepository {
         FROM neo_front_inputs f
         JOIN neo_conversation_asks a ON a.conversation_id = f.conversation_id
           AND a.request_id = f.message_id
-        WHERE f.owner = 'neo'
+        WHERE (f.owner = 'neo' OR (f.eligible = 0 AND f.owner IS NULL))
           AND NOT EXISTS (SELECT 1 FROM answered WHERE answered.id = f.message_id)
         ORDER BY a.sequence DESC`)
       .all() as { id: string; payload: string }[];

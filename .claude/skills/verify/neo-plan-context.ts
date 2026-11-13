@@ -68,6 +68,7 @@ try {
     cardAnsweredInput = '10000000-0000-4000-8000-00000000c003',
     plainAnsweredInput = '10000000-0000-4000-8000-00000000c005',
     longInput = '10000000-0000-4000-8000-00000000c004',
+    frontOffInput = '10000000-0000-4000-8000-00000000c006',
     pendingInput = '10000000-0000-4000-8000-00000000c002',
     pendingText = 'Ship the compact summary with the full message id';
   const seedInput = (id: string, owner: 'neo', text: string) => {
@@ -93,6 +94,22 @@ try {
   seedInput(cardAnsweredInput, 'neo', 'Already answered by a card');
   seedInput(pendingInput, 'neo', pendingText);
   seedInput(longInput, 'neo', 'P '.repeat(20_000));
+  prepare(
+    'INSERT INTO neo_conversation_asks(conversation_id,request_id,payload_json,created_at) VALUES(?,?,?,?)'
+  ).run(
+    conversation,
+    frontOffInput,
+    JSON.stringify({
+      conversationId: conversation,
+      requestId: frontOffInput,
+      askOrigin: { sessionId: root, messageId: frontOffInput },
+      content: [{ type: 'text', text: 'Handled with fast replies off' }],
+    }),
+    new Date().toISOString()
+  );
+  prepare(
+    'INSERT INTO neo_front_inputs(conversation_id,message_id,eligible,owner) VALUES(?,?,0,NULL)'
+  ).run(conversation, frontOffInput);
   prepare(
     'INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(?,?,?,?)'
   ).run(
@@ -193,7 +210,7 @@ try {
   const perTurnFacts = await store.read('planContext');
   assert(perTurnFacts.unanswered === undefined, 'A per-prompt read runs the unanswered scan');
   const compactFacts = await store.read('planContext', true);
-  assert(compactFacts.unanswered?.length === 3, 'The compact read skips the unanswered scan');
+  assert(compactFacts.unanswered?.length === 4, 'The compact read skips the unanswered scan');
   assert.equal(facts.asks.length, 12);
   assert.equal(facts.todos.length, 480);
   assert.equal(facts.questions.length, 12);
@@ -206,7 +223,7 @@ try {
     assert(lines.find((line) => line.id === id)?.text.includes(`neo.ask.read ${id}`));
   assert.deepEqual(
     facts.unanswered?.map((input) => input.id),
-    [longInput, pendingInput, plainAnsweredInput],
+    [frontOffInput, longInput, pendingInput, plainAnsweredInput],
     'Plan facts carry only the inputs Neo owns and has not answered'
   );
   assert.equal(
@@ -242,6 +259,10 @@ try {
   assert(
     compactContext.includes(plainAnsweredInput),
     'A front acknowledgement hides a message Neo never answered'
+  );
+  assert(
+    compactContext.includes(frontOffInput),
+    'An input from a space with fast replies off is never listed'
   );
   assert(
     !compactContext.includes(cardAnsweredInput),
