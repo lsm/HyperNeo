@@ -3982,6 +3982,60 @@ describe('worker blocker ownership', () => {
     }
   });
 
+  test.each([
+    ['Mark done', 'neo.todo.done'],
+    ['Remove', 'neo.todo.remove'],
+  ])(
+    'after a restart, a blocker card answered %s runs its action once and never reaches the worker',
+    async (answer, action) => {
+      const h = setup(false);
+      const clock = vi.spyOn(Date, 'now');
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const start = Date.now() + 100;
+        clock.mockReturnValue(start);
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: start,
+            turnEnds: [{ id: 'restart', at: start, message: 'Blocked (needs_human): Ship it?' }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        clock.mockReturnValue(start + 60 * 60_000);
+        await h.runner.refresh(() => {});
+        const [card] = h.store
+          .listQuestions('ask')
+          .filter((q) => q.cause === 'worker_blocker' && q.state === 'open');
+        h.store.answerQuestion(card, [answer], 'button', Date.now());
+        const calls: string[] = [];
+        const sweep = () =>
+          createNeoQuestionAnswerDelivery(
+            h.store,
+            h.sessions,
+            async (_caller, name) => {
+              calls.push(name);
+              return completed({ ok: true, value: { ok: true } });
+            },
+            async () => {},
+            h.runner.recompute,
+            (error) => {
+              throw error;
+            }
+          )();
+        await sweep();
+        await sweep();
+        expect(calls).toEqual([action]);
+        expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+      } finally {
+        clock.mockRestore();
+        h.db.close();
+      }
+    }
+  );
+
   test('does not re-ask while an answered card cannot reach the worker', async () => {
     const h = setup(false);
     const clock = vi.spyOn(Date, 'now');
