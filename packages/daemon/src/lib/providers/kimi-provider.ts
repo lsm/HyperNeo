@@ -489,6 +489,7 @@ export class KimiProvider implements Provider {
       contextWindow: KimiProvider.resolveContextWindow('kimi-k2.7-code'),
       thinkingModes: 'on',
       effortLevels: undefined,
+      description: 'Kimi K2.7 · 256K context, fixed thinking',
     };
   }
 

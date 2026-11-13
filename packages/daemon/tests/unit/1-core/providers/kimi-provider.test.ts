@@ -542,6 +542,7 @@ describe('KimiProvider', () => {
         provider: 'kimi',
         contextWindow: 262_144,
         thinkingModes: 'on',
+        description: 'Kimi K2.7 · 256K context, fixed thinking',
         available: true,
       });
       expect(models[0]?.effortLevels).toBeUndefined();

@@ -2202,6 +2202,24 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
+    it('forces the 16k budget when the fallback routes to K2.7 in a scoped region', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.fallbackModel = 'kimi-for-coding';
+      mockSession.config.thinkingLevel = 'think8k';
+      expect(
+        builder.addSessionStateOptions({} as import('@anthropic-ai/claude-agent-sdk').Options)
+          .thinking
+      ).toEqual({ type: 'adaptive' });
+
+      mockSession.config.providerConfig = { region: 'global' };
+      const scoped = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(scoped.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+      expect(scoped.effort).toBeUndefined();
+    });
+
     it('allows Kimi K3 primary and K3 fallback with granular thinking', () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';

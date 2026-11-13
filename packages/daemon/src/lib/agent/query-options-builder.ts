@@ -759,6 +759,7 @@ export class QueryOptionsBuilder {
     let effortLevels: ThinkingEffort[] | undefined;
     let defaultEffort: ThinkingEffort | undefined;
     let kimiRoutedModel: string | undefined;
+    let fallbackRoutedModel: string | undefined;
     try {
       if (providerId) {
         const provider = getProviderRegistry().get(providerId);
@@ -776,6 +777,14 @@ export class QueryOptionsBuilder {
         kimiRoutedModel =
           providerId === 'kimi' && selectedModel
             ? provider?.getRoutedModelId?.(selectedModel, scoped)
+            : undefined;
+        const routedFallback =
+          this.effectiveFallbackCaptured && this.effectiveFallbackModel
+            ? this.effectiveFallbackModel
+            : this.ctx.session.config.fallbackModel;
+        fallbackRoutedModel =
+          providerId === 'kimi' && routedFallback
+            ? provider?.getRoutedModelId?.(routedFallback, scoped)
             : undefined;
         defaultEffort =
           selectedModel && !this.hasChosenThinkingLevel()
@@ -811,12 +820,17 @@ export class QueryOptionsBuilder {
         ? this.effectiveFallbackModel
         : this.ctx.session.config.fallbackModel;
       if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
+        const fallbackRouted = fallbackRoutedModel ?? fallbackModel;
         const primaryIsK3 = KimiProvider.isKimiK3Model(routed);
-        const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
+        const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackRouted);
         const primaryIsK2 = KimiProvider.isKimiK2Point7Model(routed);
-        const fallbackIsK2 = KimiProvider.isKimiK2Point7Model(fallbackModel);
+        const fallbackIsK2 = KimiProvider.isKimiK2Point7Model(fallbackRouted);
         const mixedChain = (primaryIsK3 && fallbackIsK2) || (primaryIsK2 && fallbackIsK3);
-        if (mixedChain && (!thinkingConfig || thinkingConfig.type === 'disabled')) {
+        const k2Point7OnChain = primaryIsK2 || fallbackIsK2;
+        const fixedBudget =
+          thinkingConfig?.type === 'enabled' &&
+          thinkingConfig.budgetTokens === THINKING_LEVEL_TOKENS['think16k'];
+        if ((mixedChain || k2Point7OnChain) && !fixedBudget) {
           thinkingConfig = {
             type: 'enabled',
             budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
