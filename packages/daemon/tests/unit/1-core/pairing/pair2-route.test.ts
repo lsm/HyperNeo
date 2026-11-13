@@ -137,6 +137,14 @@ describe('pairing v2 one-time request route', () => {
     expect(await (await status(made.requestId)).json()).toMatchObject({ state: 'pending' });
   });
 
+  test('a created request says whether it pairs the first phone or waits for an owner', async () => {
+    const first = (await (await post('/pair2/request', {})).json()) as { firstDevice?: boolean };
+    expect(first.firstDevice).toBe(true);
+    seedDevice('Paired phone');
+    const later = (await (await post('/pair2/request', {})).json()) as { firstDevice?: boolean };
+    expect(later.firstDevice).toBe(false);
+  });
+
   test('a ticket binds once; a second scan cannot rebind it', async () => {
     const made = await createRequest();
     const phoneA = phoneKeypair();

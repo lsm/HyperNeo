@@ -423,4 +423,5 @@ export const en = {
   'pair.expired': 'The QR expired before a phone paired.',
   'pair.newQr': 'Show a new QR',
   'pair.cancelUnconfirmed': 'Could not cancel. The QR still works until it expires.',
+  'pair.waitingOwner': 'Phone scanned. Waiting for an owner device.',
 } as const;

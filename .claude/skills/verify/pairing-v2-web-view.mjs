@@ -92,7 +92,8 @@ try {
 
   const first = phone('Kitchen iPhone');
   const bound = await first.bind(ticket);
-  await page.getByText('Phone scanned. Waiting for confirmation.').waitFor({ timeout: 10000 });
+  await page.getByText('Phone scanned. Waiting for an owner device.').waitFor({ timeout: 10000 });
+  result.scannedText = 'Phone scanned. Waiting for an owner device.';
   result.qrHiddenAfterScan = (await page.getByRole('img', { name: 'Pairing QR code' }).count()) === 0;
   assert(result.qrHiddenAfterScan);
   await shot('2-scanned');
