@@ -134,7 +134,8 @@ export function PairPhoneFlow({
   const cancelQr = async (requestId: string) => {
     current.current?.abort();
     await pair2('/pair2/cancel', { requestId });
-    if (!settle(requestId, await seen(requestId))) setFlow({ kind: 'idle' });
+    if (!settle(requestId, await seen(requestId)))
+      setFlow({ kind: 'failed', message: t('pair.cancelUnconfirmed') });
   };
 
   const start = async () => {
@@ -175,7 +176,7 @@ export function PairPhoneFlow({
         ? listed.devices.find((device) => device.kind === 'human' && !known.has(device.id))
         : null;
       if (arrived) {
-        setFlow({ kind: 'paired', text: `Paired: ${arrived.name}` });
+        setFlow({ kind: 'paired', text: t('pair.pairedWith', { name: arrived.name }) });
         onPaired?.();
         return;
       }

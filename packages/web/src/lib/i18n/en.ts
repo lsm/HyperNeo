@@ -412,4 +412,5 @@ export const en = {
   'pair.denied': 'Pairing was denied.',
   'pair.expired': 'The QR expired before a phone paired.',
   'pair.newQr': 'Show a new QR',
+  'pair.cancelUnconfirmed': 'Could not cancel. The QR still works until it expires.',
 } as const;

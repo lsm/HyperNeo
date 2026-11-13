@@ -407,4 +407,5 @@ export const zhHans: Record<keyof typeof en, string> = {
   'pair.denied': '配对被拒绝。',
   'pair.expired': '二维码在手机配对前过期了。',
   'pair.newQr': '显示新的二维码',
+  'pair.cancelUnconfirmed': '没能取消。二维码在过期前仍然有效。',
 };
