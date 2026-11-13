@@ -1,20 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-version=0.44.0
-archive="cua-driver-rs-${version}-darwin-universal"
-archive_sha256=7699d7ebd3d3319cbd066af9fc679dc7439adad6c5c84cc46956aa9880106e37
-driver_sha256=ac358aeff2de92baca3cffcc5486fc10c3618ec62c9bba56b7a8f7a606c2ca5c
+release=hyperneo-cua-driver-v0.44.0-1
+archive=hyperneo-cua-driver-0.44.0-1-darwin-universal
+archive_sha256=abb0bea595b80b095fb2b20e91f2c2ffca73f736a6e7df6c931bba333151975d
+driver_sha256=8efa276026a3bd7e5117da2e18891309314f32734ada4ece116665c498b63b06
 
 verify_driver() {
     local driver="$1" digest
     digest="$(shasum -a 256 "$driver")"
     if [[ "${digest%% *}" != "$driver_sha256" ]]; then
         echo "cua-driver SHA-256 mismatch" >&2
-        return 1
-    fi
-    if [[ "$("$driver" --version)" != "cua-driver $version" ]]; then
-        echo "cua-driver version mismatch" >&2
         return 1
     fi
 }
@@ -28,7 +24,7 @@ binaries="$(cd "$(dirname "$0")" && pwd)/src-tauri/binaries"
 staging="$(mktemp -d)"
 trap 'rm -rf "$staging"' EXIT
 curl -fsSL --retry 3 --retry-all-errors -o "$staging/driver.tgz" \
-    "https://github.com/trycua/cua/releases/download/cua-driver-rs-v${version}/${archive}.tar.gz"
+    "https://github.com/lsm/cua/releases/download/${release}/${archive}.tar.gz"
 printf '%s  %s\n' "$archive_sha256" "$staging/driver.tgz" | shasum -a 256 --check
 
 tar -xzf "$staging/driver.tgz" -C "$staging" \

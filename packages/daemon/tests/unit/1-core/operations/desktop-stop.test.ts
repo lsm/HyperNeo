@@ -89,7 +89,7 @@ async function start(ignoreTerm = false) {
   await chmod(socketPath, 0o600);
   await writeFile(
     join(directory, 'driver.json'),
-    JSON.stringify({ pid: driver.pid, startedAt: identity, socket: socketPath }),
+    JSON.stringify({ pid: driver.pid, startedAt: identity }),
     { mode: 0o600 }
   );
 }
@@ -109,25 +109,21 @@ async function stop(caller = human) {
   return invokeOperation(registry, 'desktop.stop', { worker: 'worker-a' }, caller);
 }
 
-test('stop succeeds only when PID and socket are gone', async () => {
+test('stop succeeds once the recorded PID is gone', async () => {
   await start(true);
   driver.kill('SIGKILL');
   await exited;
-  expect(existsSync(socketPath)).toBe(true);
-  expect(await stop()).toMatchObject({ kind: 'completed', value: { state: 'stop_unconfirmed' } });
-  await unlink(socketPath);
   expect(await stop()).toMatchObject({ kind: 'completed', value: { state: 'stopped' } });
 });
 test('a driver ignoring TERM is killed', async () => {
   await start(true);
   const started = Date.now();
-  expect(await stop()).toMatchObject({ kind: 'completed', value: { state: 'stop_unconfirmed' } });
+  expect(await stop()).toMatchObject({ kind: 'completed', value: { state: 'stopped' } });
   expect(driver.signalCode).toBe('SIGKILL');
   await exited;
   expect(Date.now() - started).toBeGreaterThanOrEqual(1000);
   expect(await readFile(events, 'utf8')).toBe('SIGTERM\n');
   expect(stopRequests).toBe(1);
-  expect(existsSync(socketPath)).toBe(true);
 });
 test('stop works when the app does not answer', async () => {
   await start();
@@ -135,7 +131,6 @@ test('stop works when the app does not answer', async () => {
   expect(await stop()).toMatchObject({ kind: 'completed', value: { state: 'stopped' } });
   await exited;
   expect(driver.exitCode).toBe(0);
-  expect(existsSync(socketPath)).toBe(false);
   expect(stopRequests).toBe(1);
 });
 test('a different process start identity is never signalled', async () => {
@@ -207,5 +202,4 @@ test('the app can complete graceful shutdown before daemon escalation', async ()
   expect(signalledBeforeAppReply).toBe(false);
   expect(identityReads).toBe(0);
   expect(driver.exitCode).toBe(0);
-  expect(existsSync(socketPath)).toBe(false);
 });

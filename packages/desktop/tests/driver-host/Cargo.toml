@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cua-driver-sdk = { git = "https://github.com/trycua/cua.git", tag = "cua-driver-rs-v0.44.0" }
+cua-driver-sdk = { git = "https://github.com/lsm/cua.git", tag = "hyperneo-cua-driver-v0.44.0-1" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
