@@ -22,7 +22,7 @@ In dual-model mode the human often gets the same answer twice. The front acknowl
 
 ## Not changed
 
-Stored publications and their client rendering, input ownership and `input_handed_off`, the front's read tools and their added facts (`front-reads-first.md`), the front's catch-up from the full session, and single-model mode.
+Stored publications and their client rendering, input ownership and `input_handed_off`, the front's read tools and their added facts (`front-reads-first.md`), the front's catch-up from the full session, and how single-model mode is set up. Points 3 and 4 apply in both modes, since the full session uses the same publish operation and prompts either way.
 
 ## Change
 
