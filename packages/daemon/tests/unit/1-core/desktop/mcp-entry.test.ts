@@ -43,7 +43,6 @@ beforeEach(async () => {
     JSON.stringify({
       pid: 123,
       startedAt: { seconds: 456, microseconds: 789 },
-      socket: join(root, 'driver.sock'),
     }),
     { mode: 0o600 }
   );
@@ -54,14 +53,13 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-test('binding uses readonly named opt-in and the recorded worker socket', async () => {
+test('binding uses readonly named opt-in and the recorded worker driver', async () => {
   const before = await readFile(join(root, 'daemon.db'));
   expect(await readDesktopBinding(worker)).toEqual({
     todo_id: 'todo',
     worker_id: worker,
     driver_instance_id: '123-456-789',
     target_app_id: null,
-    socket: join(root, 'driver.sock'),
   });
   expect(await readFile(join(root, 'daemon.db'))).toEqual(before);
   db.prepare('UPDATE neo_todos SET named = ?').run('{}');
