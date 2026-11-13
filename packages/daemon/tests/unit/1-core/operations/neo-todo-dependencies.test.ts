@@ -247,9 +247,21 @@ describe('todo dependencies', () => {
         ],
       });
       const [work, check] = opened.todos;
-      const question = store
-        .listQuestions(work.askId)
-        .find((q) => q.kind === 'start' && q.state === 'open')!;
+      for (const todo of [work, check]) store.updateTodo(todo, { approvedAt: null }, 1);
+      const question = store.askQuestion(
+        'start-card',
+        work.askId,
+        {
+          text: 'Start the work?',
+          kind: 'start',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: [work.id],
+        },
+        2
+      );
       expect(store.getTodo(check.id)?.approvalQuestionId).toBeNull();
       store.answerQuestion(question, [work.id], 'button', 42);
       expect(store.getTodo(check.id)).toMatchObject({

@@ -42,7 +42,7 @@ describe('retired Write plan operation', () => {
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('default-first');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('pack.preferences.get');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('neo.todo.add');
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('start: true');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).not.toContain('start: true');
     expect(NEO_PACK_CODING_INSTRUCTIONS).not.toContain('neo.coding.write.plan');
   });
 });

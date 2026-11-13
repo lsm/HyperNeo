@@ -2,7 +2,7 @@
 
 Use shared isolation and cleanup in `../SKILL.md`. This construction proof boots
 one fresh synthetic daemon on an ephemeral loopback port and uses the real
-WebSocket `operation.invoke` door for `neo.todo.add {start:true}`. No model,
+WebSocket `operation.invoke` door for `neo.todo.add`. No model,
 provider, browser, external HTTP or reserved port is used.
 
 ```bash

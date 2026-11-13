@@ -27,9 +27,11 @@ try {
   const todos = new NeoAskTodoRepository(db), sessions = new NeoTodoSessionRepository(db);
   todos.openAsk({ id: 'synthetic-ask', sessionId: sender, projectId: null, originMessageId: null, title: 'Synthetic ask', request: 'Track work', createdAt: 1 });
   const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: sender, role: 'neo' }));
-  const add = async (verb: string, id: string, start = false) => {
-    const reply = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Synthetic todo', after: [], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb, ref: { adapter: 'hyperneo', id } }, start } });
-    evidence.push({ verb, id, start, reply });
+  const gateReply = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Unfinished gate', after: [], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } } } });
+  const gate = JSON.parse(gateReply.content[0].text).todo.id as string;
+  const add = async (verb: string, id: string) => {
+    const reply = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Synthetic todo', after: [gate], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb, ref: { adapter: 'hyperneo', id } } } });
+    evidence.push({ verb, id, reply });
     assert.notEqual(reply.isError, true);
     return JSON.parse(reply.content[0].text);
   };
@@ -49,10 +51,12 @@ try {
     assert.notEqual(reply.isError, true);
     return JSON.parse(reply.content[0].text);
   };
+  const legacy = db.prepare("UPDATE neo_todos SET approved_at = ?, depends_on = '[]' WHERE id = ?");
+  legacy.run(null, pending.todo.id);
   const unapproved = await bind(worker.slice(0, 8));
   assert.equal(unapproved.ok, false);
   assert.match(unapproved.reason, /^not_approved:/);
-  todos.approveTodo(todos.getTodo(pending.todo.id)!, Date.now());
+  legacy.run(Date.now(), pending.todo.id);
   const bound = await bind(worker.slice(0, 8));
   assert.equal(bound.ok, true, JSON.stringify(bound));
   const original = sessions.readRef(pending.todo.id);
@@ -62,7 +66,7 @@ try {
   assert.match(refused.reason, /^target_not_found:/);
   assert.deepEqual(sessions.readRef(pending.todo.id), original);
   const count = todos.listTodos('synthetic-ask').length;
-  const rejected = await add('send', 'deadbeef', true);
+  const rejected = await add('send', 'deadbeef');
   assert.equal(rejected.ok, false);
   assert.match(rejected.reason, /^target_not_found:/);
   assert.equal(todos.listTodos('synthetic-ask').length, count);
@@ -90,14 +94,14 @@ try {
     assert.deepEqual(result.places.flatMap((place: { work: { ref: unknown }[] }) => place.work.map(work => work.ref)), [{ adapter: 'space', id: taskId }]);
     assert.deepEqual(result.unreachable, []);
   }
-  const spaceTodo = await handler({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title: 'Space target', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'space', id: 'synthetic-full' } } } });
+  const spaceTodo = await handler({ name: 'neo.todo.add', input: { after: [gate], askId: 'synthetic-ask', title: 'Space target', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'space', id: 'synthetic-full' } } } });
   evidence.push({ operation: 'neo.todo.add', adapter: 'space', spaceTodo });
   assert.notEqual(spaceTodo.isError, true);
   const addedSpace = JSON.parse(spaceTodo.content[0].text);
   assert.equal(addedSpace.ok, true, JSON.stringify(addedSpace));
   assert.deepEqual(sessions.get(addedSpace.todo.id)?.ref, { adapter: 'space', id: taskId });
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
-  const reopenInput = { title: 'Idempotent worker ask', request: 'Keep tracking it', todos: [{ after: [], title: 'Recorded worker', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Work', target: { verb: 'send', ref: { adapter: 'hyperneo', id: worker } } }] };
+  const reopenInput = { title: 'Idempotent worker ask', request: 'Keep tracking it', todos: [{ after: [], title: 'Unfinished gate', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } } }, { after: [0], title: 'Recorded worker', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Work', target: { verb: 'send', ref: { adapter: 'hyperneo', id: worker } } }] };
   const opened = JSON.parse((await handler({ name: 'neo.ask.open', input: reopenInput })).content[0].text);
   assert.equal(opened.ok, true);
   db.prepare('DELETE FROM sessions WHERE id=?').run(worker);
@@ -113,7 +117,7 @@ try {
   db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/child', 'settled-parent-child');
   assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('settled-parent-child') as { repo: string }).repo, 'github.com/synthetic/child');
   todos.settleAsk(opened.ask, 'done', 'Synthetic result complete', Date.now());
-  const settled = await handler({ name: 'neo.ask.open', input: { ...reopenInput, todos: [{ ...reopenInput.todos[0], title: 'New worker task' }] } });
+  const settled = await handler({ name: 'neo.ask.open', input: { ...reopenInput, todos: [reopenInput.todos[0], { ...reopenInput.todos[1], title: 'New worker task' }] } });
   evidence.push({ operation: 'neo.ask.open', settledMissingWorker: true, settled });
   assert.notEqual(settled.isError, true);
   const receipt = JSON.parse(settled.content[0].text);

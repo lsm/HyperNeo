@@ -175,11 +175,7 @@ describe('cancelled prerequisites', () => {
         } = await invoke('neo.ask.open', {
           title: 'Claim cancellation',
           request: 'Finish A before B.',
-          todos: [
-            step('A', []),
-            { ...step('B', [0]), ...work, start: true },
-            step('Replacement', []),
-          ],
+          todos: [step('A', []), { ...step('B', [0]), ...work }, step('Replacement', [])],
         });
         store.updateTodo(a, { state: 'done' }, Date.now());
         const candidate = sessions.queueFacts().candidates.find((item) => item.id === b.id);
@@ -228,10 +224,10 @@ describe('cancelled prerequisites', () => {
         title: 'Cancelled prerequisite',
         request: 'Complete A, B, then C.',
         todos: [
-          { ...step('A', []), ...work, start: mode.startsWith('approved') },
-          { ...step('B', [0]), ...work, start: true },
-          { ...step('C', [1]), ...work, start: true },
-          { ...step('Replacement', []), ...work, start: mode.startsWith('replacement') },
+          { ...step('A', []), ...(mode.startsWith('approved') ? work : {}) },
+          { ...step('B', [0]), ...work },
+          { ...step('C', [1]), ...work },
+          { ...step('Replacement', []), ...(mode.startsWith('replacement') ? work : {}) },
         ],
       });
       const [a, b, c, replacement] = opened.todos;
@@ -383,7 +379,7 @@ describe('cancelled prerequisites', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Legacy card',
         request: 'A, then D.',
-        todos: [step('A', []), { ...step('D', [0]), ...work, start: true }],
+        todos: [step('A', []), { ...step('D', [0]), ...work }],
       });
       const [a, d] = opened.todos;
       store.updateTodo(a, { state: 'removed' }, Date.now());
@@ -405,7 +401,7 @@ describe('cancelled prerequisites', () => {
   });
 
   test('Neo cannot approve a step the human has not approved', async () => {
-    const { db, store, invoke, step, work } = setup();
+    const { db, store, invoke, step, work, seedLegacy } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Unapproved',
@@ -413,6 +409,7 @@ describe('cancelled prerequisites', () => {
         todos: [step('A', []), { ...step('D', [0]), ...work }],
       });
       const [a, d] = opened.todos;
+      seedLegacy(store.updateTodo(d, { approvedAt: null }, Date.now()));
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
       expect(await invoke('neo.todo.proceed', { todoId: d.id })).toMatchObject({
         ok: false,
@@ -431,7 +428,7 @@ describe('cancelled prerequisites', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Nothing cancelled',
         request: 'A, then D.',
-        todos: [step('A', []), { ...step('D', [0]), ...work, start: true }],
+        todos: [step('A', []), { ...step('D', [0]), ...work }],
       });
       expect(await invoke('neo.todo.proceed', { todoId: opened.todos[1].id })).toMatchObject({
         ok: false,
@@ -506,12 +503,7 @@ describe('cancelled prerequisites', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Replacement chain',
         request: 'A, then D; B and then C replace A.',
-        todos: [
-          step('A', []),
-          { ...step('D', [0]), ...work, start: true },
-          step('B', []),
-          step('C', []),
-        ],
+        todos: [step('A', []), { ...step('D', [0]), ...work }, step('B', []), step('C', [])],
       });
       const [a, d, b, c] = opened.todos;
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Replaced.', replacedBy: b.id });
@@ -532,11 +524,7 @@ describe('cancelled prerequisites', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Replacement cycle',
         request: 'A, then D; B replaces A.',
-        todos: [
-          step('A', []),
-          { ...step('D', [0]), ...work, start: true },
-          { ...step('B', []), ...work },
-        ],
+        todos: [step('A', []), { ...step('D', [0]), ...work }, step('B', [])],
       });
       const [a, d, b] = opened.todos;
       expect(await invoke('neo.todo.edit', { todoId: b.id, after: [d.id] })).toMatchObject({
@@ -558,11 +546,7 @@ describe('cancelled prerequisites', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Two prerequisites',
         request: 'Finish A and B before D.',
-        todos: [
-          step('A', []),
-          { ...step('B', []), ...work, start: true },
-          { ...step('D', [0, 1]), ...work, start: true },
-        ],
+        todos: [step('A', []), { ...step('B', []), ...work }, { ...step('D', [0, 1]), ...work }],
       });
       const [a, b, d] = opened.todos;
       await runner.advance();
@@ -691,7 +675,7 @@ describe('cancelled prerequisites', () => {
         step('A', []),
         step('B', []),
         step('X', []),
-        { ...step('D', [0, 1]), ...work, start: true, ...extra },
+        { ...step('D', [0, 1]), ...work, ...extra },
       ];
       const opened = await invoke('neo.ask.open', { ...plan, todos: steps({}) });
       const [a, b, x, d] = opened.todos;
@@ -716,7 +700,7 @@ describe('cancelled prerequisites', () => {
       if (mode === 'plan-repeat')
         await invoke('neo.ask.open', {
           ...plan,
-          todos: [...steps({}).slice(0, 3), { ...step('D', [2]), ...work, start: true }],
+          todos: [...steps({}).slice(0, 3), { ...step('D', [2]), ...work }],
         });
       if (mode === 'plan-repeat-start') await invoke('neo.ask.open', { ...plan, todos: steps({}) });
       if (mode === 'bind')
@@ -749,7 +733,7 @@ describe('cancelled prerequisites', () => {
         request: 'Finish A before D.',
         todos: [
           step('A', []),
-          { ...step('D', [0]), ...work, named: { repository: 'synthetic/elsewhere' }, start: true },
+          { ...step('D', [0]), ...work, named: { repository: 'synthetic/elsewhere' } },
         ],
       });
       const [a, d] = opened.todos;
@@ -769,8 +753,8 @@ describe('unfinished prerequisites of a started step', () => {
       title: 'Reopened prerequisite',
       request: 'Finish A before J.',
       todos: [
-        { ...step('A', []), ...work, start: true },
-        { ...step('J', [0]), ...work, start: true },
+        { ...step('A', []), ...work },
+        { ...step('J', [0]), ...work },
       ],
     });
     const [a, j] = opened.todos;
@@ -824,7 +808,7 @@ describe('unfinished prerequisites of a started step', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Bind waits',
         request: 'Finish X before Y.',
-        todos: [{ ...step('X', []), ...work, start: true }, step('Y', [0])],
+        todos: [{ ...step('X', []), ...work }, step('Y', [0])],
       });
       const [x, y] = opened.todos;
       await runner.advance();

@@ -24,7 +24,7 @@ import {
 import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 
-function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'start'>> = {}) {
+function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'advance'>> = {}) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -72,14 +72,20 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'start
     ...createNeoTodoOperations(
       store,
       sessions,
-      { ...runner, resolveTarget: existingTodoTarget },
+      { ...runner, resolveTarget: existingTodoTarget, advance: async () => {} },
       () => [],
       () => null
     ),
     ...createNeoAskRecordOperations(
       store,
       sessions,
-      { ...runner, resolveTarget: existingTodoTarget, stop: async () => null, ...overrides },
+      {
+        ...runner,
+        resolveTarget: existingTodoTarget,
+        stop: async () => null,
+        advance: async () => {},
+        ...overrides,
+      },
       () => null,
       () => true,
       () => [],
@@ -222,9 +228,8 @@ describe('todo and ask bookkeeping records through MCP', () => {
           ref.id === 'missing'
             ? { reason: { ok: false as const, reason: 'target_not_found: missing' } }
             : { value: { ...ref, id: '10000000-0000-4000-8000-000000000001' } },
-        start: async (id) => {
-          starts.push(id);
-          return { ok: true as const, todo: h.store.getTodo(id)! };
+        advance: async () => {
+          starts.push('advance');
         },
       });
       try {
@@ -235,7 +240,6 @@ describe('todo and ask bookkeeping records through MCP', () => {
           check: pendingTodoCheck,
           instruction: 'Work',
           target: { verb: 'send', ref: { adapter: 'hyperneo', id } },
-          start: true,
         }));
         if (position === 0) todos.reverse();
         const result = await h.call('neo.ask.open', {

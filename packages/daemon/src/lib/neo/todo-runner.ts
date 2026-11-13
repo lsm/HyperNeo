@@ -243,15 +243,6 @@ function planNeoTodoBlocked(
     : { state: 'blocked', blockedBy, blockedReason, nextAction };
 }
 
-export function planNeoTodoAwaitingStart(todo: NeoTodo): NeoTodoPatch | null {
-  return planNeoTodoBlocked(
-    todo,
-    'question',
-    'Waiting for the human to start it.',
-    'The human answers the start question.'
-  );
-}
-
 const NEO_TODO_STALL_NEXT = 'Continue it with new direction, reassign it, or close it.';
 
 const idleMinutes = (incident: { since: number }, now: number) =>

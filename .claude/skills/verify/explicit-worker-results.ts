@@ -147,7 +147,7 @@ try {
   } else {
     assert.equal(store.getTodo('legacy')?.report, prior);
     store.openAsk({ id: 'silent', title: 'Silent worker', request: 'Observe an empty worker turn', sessionId: root, projectId: null, originMessageId: null, createdAt: Date.now() });
-    evidence.silentStart = await rpc('neo.todo.add', { after: [], askId: 'silent', title: 'Silent worker', doneWhen: 'Synthetic PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: [pr] } }, instruction: 'Finish an empty synthetic turn', target: { verb: 'send', ref: { adapter: 'codex-desktop', id: 'silent' } }, start: true });
+    evidence.silentStart = await rpc('neo.todo.add', { after: [], askId: 'silent', title: 'Silent worker', doneWhen: 'Synthetic PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: [pr] } }, instruction: 'Finish an empty synthetic turn', target: { verb: 'send', ref: { adapter: 'codex-desktop', id: 'silent' } } });
     const silentTodo = (evidence.silentStart as any).todo;
     assert(silentTodo?.id);
     const dispatch = sessions.inputs.list(silentTodo.id).at(-1)!;

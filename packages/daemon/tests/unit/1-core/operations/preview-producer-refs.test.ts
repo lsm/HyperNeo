@@ -29,7 +29,7 @@ describe('producer artifact references on todo evidence', () => {
             resolveTarget: existingTodoTarget,
             recompute: async (todo, patch) =>
               new NeoAskTodoRepository(db).updateTodo(todo, patch, Date.now()),
-            start: async () => ({ ok: false as const, reason: 'not started' }),
+            advance: async () => {},
             proceed: async () => ({ ok: false as const, reason: 'no session' }),
             retry: async () => ({ ok: false as const, reason: 'not failed' }),
             stop: async () => null,
