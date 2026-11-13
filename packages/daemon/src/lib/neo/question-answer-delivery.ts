@@ -36,6 +36,8 @@ const NotSent = z.union([
   }),
 ]);
 
+const applyingCards = new Set<string>();
+
 export function createNeoQuestionAnswerDelivery(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -224,7 +226,16 @@ export function createNeoQuestionAnswerDelivery(
           : []
       )
     );
-    for (const card of unapplied.values()) await apply(card).catch(warn);
+    for (const { id } of unapplied.values()) {
+      if (applyingCards.has(id)) continue;
+      applyingCards.add(id);
+      try {
+        const card = store.getQuestion(id);
+        if (card && !card.actionsAppliedAt) await apply(card).catch(warn);
+      } finally {
+        applyingCards.delete(id);
+      }
+    }
     for (const route of store.questionAnswers.pending(questionId)) {
       const card = store.getQuestion(route.questionId);
       if (!card || !neoDaemonCardChoice(card)) await deliver(route).catch(warn);
