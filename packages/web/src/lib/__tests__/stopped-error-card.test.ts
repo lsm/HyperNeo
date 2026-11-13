@@ -48,9 +48,23 @@ describe('stoppedErrorCardUuid', () => {
   });
 
   it('still picks the card when the stored result JSON was cut before its uuid', () => {
-    const cut = `{"type":"result","result":"${'x'.repeat(5000)}","uuid":"r1"}`.slice(0, 4096);
-    const failed = { ...result, is_error: true };
+    const failed = {
+      type: 'result',
+      duration_api_ms: 1200,
+      is_error: true,
+      result: 'x'.repeat(5000),
+      uuid: 'r1',
+    };
+    const cut = JSON.stringify(failed).slice(0, 4096);
     expect(stoppedErrorCardUuid([user, card, failed], { ...episode, error: cut })).toBe('a1');
-    expect(stoppedErrorCardUuid([user, card, result], { ...episode, error: cut })).toBeUndefined();
+    const later = [
+      user,
+      card,
+      failed,
+      { type: 'user', uuid: 'u2' },
+      { type: 'assistant', uuid: 'a2', error: 'server_error' },
+      { ...failed, duration_api_ms: 900, uuid: 'r2' },
+    ];
+    expect(stoppedErrorCardUuid(later, { ...episode, error: cut })).toBeUndefined();
   });
 });
