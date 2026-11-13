@@ -137,6 +137,7 @@ const settleReadyAsks = (db: Database): string[] =>
   (
     db
       .prepare(`SELECT id FROM neo_asks WHERE status = 'open'
+    AND EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id)
     AND NOT EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id
       AND t.state IN ('todo', 'doing', 'blocked'))
     AND NOT EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open')
@@ -185,6 +186,7 @@ export function requireNeoAskTurnedSettle(
   current: TurnedSnapshot | Rejection
 ): { value: TurnedSnapshot } | { reason: Rejection } {
   if ('ok' in current) return { reason: current };
+  if (!current.todos.length) return { reason: { ok: false, reason: 'todos_empty' } };
   if (current.todos.some((todo) => ['todo', 'doing', 'blocked'].includes(todo.state)))
     return { reason: { ok: false, reason: 'todos_live' } };
   if (current.questions.some((card) => card.state === 'open'))

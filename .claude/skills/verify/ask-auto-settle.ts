@@ -162,8 +162,7 @@ try {
   const rows = asks() as Record<string, { status: string; outcome: string | null }>;
   assert.equal(rows['finished-ask']!.status, 'done');
   assert(rows['finished-ask']!.outcome?.includes('Ship the slice'), 'outcome names the step');
-  assert.equal(rows['empty-ask']!.status, 'dropped');
-  assert.equal(rows['empty-ask']!.outcome, 'No steps recorded.');
+  assert.equal(rows['empty-ask']!.status, 'open', 'an ask that never had a todo stays open');
   assert.equal(rows['live-ask']!.status, 'open', 'a live todo keeps the ask open');
   assert.equal(rows['card-ask']!.status, 'open', 'an open card keeps the ask open');
   evidence.passed = true;

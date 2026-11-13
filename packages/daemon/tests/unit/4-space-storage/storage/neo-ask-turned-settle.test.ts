@@ -139,10 +139,10 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(store.getAsk('ask')!.outcome).toContain('Step broken');
   });
 
-  test('drops an ask that never had steps', async () => {
+  test('leaves an ask that never had a todo open', async () => {
     consumedWake('ask');
-    await sweep();
-    expect(store.getAsk('ask')).toMatchObject({ status: 'dropped', outcome: 'No steps recorded.' });
+    expect(await sweep()).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
   });
 
   test.each(['todo', 'doing', 'blocked'] as const)(

@@ -13,8 +13,9 @@ result row that together prove Neo's reminder was consumed in a turn that has
 ended, then invokes the production one-minute refresh handler once.
 
 After the refresh the finished ask is `done` with the generated sentence
-"Finished Ship the slice.", the empty ask is `dropped` with "No steps
-recorded.", and the asks with a live todo or an open card remain `open`. Had
+"Finished Ship the slice.", and the ask that never had a todo stays `open` —
+asks that only hold a card or discussion are never auto-settled — as are the
+asks with a live todo or an open card. Had
 Neo written an outcome the row would carry that instead, and a wake whose
 turn has not ended — or was never delivered — settles nothing; the unit tests
 in `neo-ask-turned-settle.test.ts` cover those cases, the direct-mailbox wake
