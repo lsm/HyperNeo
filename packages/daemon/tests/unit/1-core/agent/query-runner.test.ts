@@ -8082,7 +8082,7 @@ describe('QueryRunner', () => {
         }
         expect(exitListeners.length).toBeGreaterThan(0);
         exitListeners[0]?.(1, null);
-        await flushMicrotasks(30);
+        for (let i = 0; i < 50; i++) await Promise.resolve();
         jest.advanceTimersByTime(5000);
         await ctx.queryPromise?.catch(() => {});
       } finally {
@@ -8195,18 +8195,26 @@ describe('QueryRunner', () => {
       });
       runner = new QueryRunner(ctx);
 
-      runner.start();
-      await firstFrame;
-      expect(exitListeners).toHaveLength(1);
-      expect(stateManager.getState().status).toBe('processing');
+      jest.useFakeTimers();
+      try {
+        runner.start();
+        await firstFrame;
+        expect(exitListeners).toHaveLength(1);
+        expect(stateManager.getState().status).toBe('processing');
 
-      exitListeners[0]?.(1, null);
-      await ctx.queryPromise;
+        exitListeners[0]?.(1, null);
+        for (let i = 0; i < 50; i++) await Promise.resolve();
+        jest.advanceTimersByTime(5000);
+        await ctx.queryPromise;
 
-      const persistedStatus = JSON.parse(persisted).status as string;
-      expect(persistedStatus).toBe('idle');
-      expect(hyperneoWorkStatus('active', persistedStatus)).not.toBe('running');
+        const persistedStatus = JSON.parse(persisted).status as string;
+        expect(persistedStatus).toBe('idle');
+        expect(hyperneoWorkStatus('active', persistedStatus)).not.toBe('running');
+      } finally {
+        jest.useRealTimers();
+      }
     });
+
     it('attributes a watched exit to in-flight rate-limit recovery', async () => {
       const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
       const fakeProc = {
@@ -8237,18 +8245,27 @@ describe('QueryRunner', () => {
       const ctx = createContext({ isLimitRecoveryPending: () => true });
       runner = new QueryRunner(ctx);
 
-      runner.start();
-      for (let i = 0; i < 100 && onSDKMessageSpy.mock.calls.length === 0; i++) {
-        await Promise.resolve();
-      }
-      expect(exitListeners).toHaveLength(1);
-      exitListeners[0]?.(1, null);
-      await ctx.queryPromise;
+      jest.useFakeTimers();
+      try {
+        runner.start();
+        for (let i = 0; i < 100 && onSDKMessageSpy.mock.calls.length === 0; i++) {
+          await Promise.resolve();
+        }
+        expect(exitListeners).toHaveLength(1);
+        exitListeners[0]?.(1, null);
+        for (let i = 0; i < 50; i++) await Promise.resolve();
+        jest.advanceTimersByTime(5000);
+        await ctx.queryPromise;
 
-      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('rate-limit recovery'));
-      expect(handleErrorSpy).not.toHaveBeenCalled();
-      expect(clearSpy).not.toHaveBeenCalled();
-      expect(setIdleSpy).not.toHaveBeenCalled();
+        expect(mockLogger.info).toHaveBeenCalledWith(
+          expect.stringContaining('rate-limit recovery')
+        );
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+        expect(clearSpy).not.toHaveBeenCalled();
+        expect(setIdleSpy).not.toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('does not retry a completed turn when the watched process exits', async () => {
@@ -8287,22 +8304,86 @@ describe('QueryRunner', () => {
       const ctx = createContext();
       runner = new QueryRunner(ctx);
 
+      jest.useFakeTimers();
+      try {
+        runner.start();
+        for (
+          let i = 0;
+          i < 100 &&
+          !onSDKMessageSpy.mock.calls.some((call) => (call[0] as SDKMessage).type === 'result');
+          i++
+        ) {
+          await Promise.resolve();
+        }
+        expect(exitListeners).toHaveLength(1);
+        exitListeners[0]?.(1, null);
+        for (let i = 0; i < 50; i++) await Promise.resolve();
+        jest.advanceTimersByTime(5000);
+        await ctx.queryPromise;
+
+        expect(mockLogger.info).toHaveBeenCalledWith(
+          expect.stringContaining('after its turn ended with a result')
+        );
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+        expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+        expect(buildSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('drains a result that arrives after the process exit event', async () => {
+      const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+      const fakeProc = {
+        pid: 4242,
+        exitCode: null,
+        once: (event: string, listener: (code: number | null, signal: string | null) => void) => {
+          if (event === 'exit') exitListeners.push(listener);
+        },
+      };
+      buildSpy.mockResolvedValue({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+        spawnClaudeCodeProcess: () => fakeProc,
+      });
+      let releaseResult: () => void = () => {};
+      const resultGate = new Promise<void>((resolve) => {
+        releaseResult = resolve;
+      });
+      (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
+        (arg: { options?: Record<string, unknown> }) => {
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)?.({});
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              yield { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+              await resultGate;
+              yield {
+                type: 'result',
+                subtype: 'success',
+                uuid: 'buffered-turn-result',
+                is_error: false,
+              } as unknown as SDKMessage;
+            },
+          } as unknown as QueryLike;
+        }
+      );
+      mockSession.workspacePath = null;
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
       runner.start();
-      for (
-        let i = 0;
-        i < 100 &&
-        !onSDKMessageSpy.mock.calls.some((call) => (call[0] as SDKMessage).type === 'result');
-        i++
-      ) {
+      for (let i = 0; i < 100 && onSDKMessageSpy.mock.calls.length === 0; i++) {
         await Promise.resolve();
       }
       expect(exitListeners).toHaveLength(1);
-      exitListeners[0]?.(1, null);
+      exitListeners[0]?.(0, null);
+      setTimeout(releaseResult, 0);
       await ctx.queryPromise;
 
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('after its turn ended with a result')
-      );
+      expect(
+        onSDKMessageSpy.mock.calls.some((call) => (call[0] as SDKMessage).type === 'result')
+      ).toBe(true);
       expect(handleErrorSpy).not.toHaveBeenCalled();
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(buildSpy).toHaveBeenCalledTimes(1);
