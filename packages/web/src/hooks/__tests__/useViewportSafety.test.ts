@@ -92,7 +92,6 @@ afterEach(() => {
   restoreNavigator();
   restoreVisualViewport();
   document.documentElement.style.removeProperty('--safe-height');
-  document.documentElement.style.removeProperty('--bottom-bar-height');
   document.documentElement.classList.remove('keyboard-open');
 });
 
@@ -261,7 +260,6 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
       `${WINDOW_INNER_HEIGHT - 300}px`
     );
-    expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
   });
 
   it('detects the keyboard when iOS shrinks window.innerHeight along with the visual viewport', () => {
@@ -385,21 +383,17 @@ describe('useViewportSafety — keyboard detection', () => {
     const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
     setVisualViewport(mockVV);
 
-    document.documentElement.style.setProperty('--bottom-bar-height', '56px');
-
     renderHook(() => useViewportSafety());
 
     mockVV.height = WINDOW_INNER_HEIGHT - 300;
     mockVV._trigger('resize');
 
     expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
-    expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
 
     mockVV.height = WINDOW_INNER_HEIGHT;
     mockVV._trigger('resize');
 
     expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
-    expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('56px');
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
   });
 
@@ -547,7 +541,6 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
       `${WINDOW_INNER_HEIGHT - 300}px`
     );
-    expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
 
     mockVV.height = WINDOW_INNER_HEIGHT;
     mockVV._trigger('resize');
@@ -569,10 +562,9 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
       `${WINDOW_INNER_HEIGHT - 300}px`
     );
-    expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
   });
 
-  it('dispatches window resize when keyboard closes (for BottomTabBar re-measurement)', () => {
+  it('dispatches window resize when keyboard closes', () => {
     setNavigator(0, DESKTOP_SAFARI_UA);
     const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
     setVisualViewport(mockVV);
@@ -604,26 +596,5 @@ describe('useViewportSafety — keyboard detection', () => {
 
     expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
-  });
-
-  it('restores --bottom-bar-height even when it was empty string (desktop)', () => {
-    setNavigator(0, DESKTOP_SAFARI_UA);
-    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
-    setVisualViewport(mockVV);
-
-    expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('');
-
-    renderHook(() => useViewportSafety());
-
-    mockVV.height = WINDOW_INNER_HEIGHT - 300;
-    mockVV._trigger('resize');
-
-    expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
-
-    mockVV.height = WINDOW_INNER_HEIGHT;
-    mockVV._trigger('resize');
-
-    expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
-    expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('');
   });
 });

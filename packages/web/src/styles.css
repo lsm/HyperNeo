@@ -396,12 +396,10 @@
   --duration-smooth: 250ms;
   --duration-deliberate: 400ms;
 
-  /* Viewport safety custom properties.
+  /* Viewport safety custom property.
 	   --safe-height: set by useViewportSafety hook on iPad Safari to
 	   window.visualViewport.height (px). On other browsers the CSS fallback
-	   (100svh) applies via the .h-safe-screen utility class.
-	   --bottom-bar-height: overridden by JS when BottomTabBar is visible. */
-  --bottom-bar-height: 0px;
+	   (100svh) applies via the .h-safe-screen utility class. */
 }
 
 /*
@@ -1265,31 +1263,13 @@ a:focus-visible {
   }
 }
 
-/* Bottom bar padding utility.
-   Uses --bottom-bar-height custom property (default 0px).
-   Downstream components that need bottom padding matching the BottomTabBar
-   height should use this class instead of hardcoded pb-16. */
-.pb-bottom-bar {
-  padding-bottom: var(--bottom-bar-height, 0px);
-}
-
 /*
  * Virtual keyboard open state.
  *
  * The `keyboard-open` class is toggled on `<html>` by the useViewportSafety hook
  * when it detects a virtual keyboard (via window.innerHeight - visualViewport.height
  * exceeding a 50px threshold).
- *
- * When the keyboard is open, the BottomTabBar (position: fixed; bottom: 0) is
- * hidden behind the keyboard on mobile — translate it offscreen with a smooth
- * transition for clean visual behavior.
- *
- * The transition is declared on the base element so it applies bidirectionally:
- * smooth slide-off when keyboard opens, smooth slide-back when keyboard closes.
  */
-[data-testid="bottom-tab-bar"] {
-  transition: transform 0.2s ease;
-}
 
 /* While the keyboard is open the document is only as tall as the visual
    viewport, so Safari has nothing to pan when it scrolls the focused composer
@@ -1299,13 +1279,8 @@ html.keyboard-open body {
   height: var(--safe-height, 100dvh);
 }
 
-html.keyboard-open [data-testid="bottom-tab-bar"] {
-  transform: translateY(100%);
-}
-
-/* Safe area bottom padding is handled at the app level via pb-safe + pb-bottom-bar
-   on the main content wrapper. The chat footer does not need its own safe area
-   padding — the wrapper already accounts for both the tab bar and home indicator. */
+/* Safe area bottom padding is handled at the app level via pb-safe on the main
+   content wrapper, so the composer clears the home indicator. */
 
 /* ── Space task thread — compact running-block indicator ─────────────────────
    A faint white left→right gradient sweep across a running block's surface.

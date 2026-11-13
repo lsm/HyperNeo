@@ -3,7 +3,6 @@ import indexHtml from '../../index.html?raw';
 import neoIndexHtml from '../../neo/index.html?raw';
 import appTsx from '../../App.tsx?raw';
 import useViewportSafetyTs from '../../hooks/useViewportSafety.ts?raw';
-import bottomTabBarTsx from '../../islands/BottomTabBar.tsx?raw';
 
 describe('iOS iPad Safari safe area support', () => {
   it('opts the Neo entry into safe-area layout for its phone preview', () => {
@@ -34,15 +33,7 @@ describe('iOS iPad Safari safe area support', () => {
     expect(appTsx).not.toContain('pb-16');
   });
 
-  it('BottomTabBar sets --bottom-bar-height CSS custom property', () => {
-    expect(bottomTabBarTsx).toContain('--bottom-bar-height');
-  });
-
-  it('BottomTabBar uses a fixed height constant instead of dynamic measurement', () => {
-    expect(bottomTabBarTsx).toContain('BOTTOM_BAR_HEIGHT');
-  });
-
-  it('BottomTabBar resets --bottom-bar-height on unmount', () => {
-    expect(bottomTabBarTsx).toContain("'--bottom-bar-height', '0px'");
+  it('App.tsx applies pb-safe so the composer clears the home indicator', () => {
+    expect(appTsx).toContain('pb-safe');
   });
 });

@@ -64,8 +64,6 @@ export function useViewportSafety(): void {
         fullHeight - viewport.height > RESIZING_KEYBOARD_THRESHOLD
       );
     };
-    let savedBottomBarHeight: string | null = null;
-
     const handleResize = () => {
       if (isZoomed(vv)) return;
 
@@ -81,9 +79,6 @@ export function useViewportSafety(): void {
 
         document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 
-        savedBottomBarHeight =
-          document.documentElement.style.getPropertyValue('--bottom-bar-height');
-        document.documentElement.style.setProperty('--bottom-bar-height', '0px');
         resetDocumentPan(vv);
       } else if (kbVisible && keyboardOpen) {
         document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
@@ -94,11 +89,6 @@ export function useViewportSafety(): void {
 
         if (!ipadSafari) {
           document.documentElement.style.removeProperty('--safe-height');
-        }
-
-        if (savedBottomBarHeight !== null) {
-          document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
-          savedBottomBarHeight = null;
         }
 
         resetDocumentScroll();
@@ -115,8 +105,6 @@ export function useViewportSafety(): void {
       keyboardOpen = true;
       document.documentElement.classList.add('keyboard-open');
       document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
-      savedBottomBarHeight = document.documentElement.style.getPropertyValue('--bottom-bar-height');
-      document.documentElement.style.setProperty('--bottom-bar-height', '0px');
     }
 
     const handleScroll = () => {
@@ -143,9 +131,6 @@ export function useViewportSafety(): void {
 
       document.documentElement.classList.remove('keyboard-open');
       document.documentElement.style.removeProperty('--safe-height');
-      if (savedBottomBarHeight !== null) {
-        document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
-      }
     };
   }, []);
 }

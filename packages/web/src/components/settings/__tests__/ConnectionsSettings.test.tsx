@@ -13,7 +13,6 @@ vi.mock('../../../lib/connection-manager', () => ({
   connectionManager: { getHub: async () => ({ request }) },
 }));
 vi.mock('../../space/SpaceCreateDialog.tsx', () => ({ SpaceCreateDialog: () => null }));
-vi.mock('../../../islands/BottomTabBar.tsx', () => ({ BottomTabBar: () => null }));
 vi.mock('../../voice/VoiceRecordingIndicator.tsx', () => ({ VoiceRecordingIndicator: () => null }));
 vi.mock('../../ui/MobileMenuButton.tsx', () => ({ MobileMenuButton: () => null }));
 
