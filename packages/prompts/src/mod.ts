@@ -221,6 +221,7 @@ import mdToolTodoDone from './neo/tools/neo.todo.done.md' with { type: 'text' };
 import mdToolTodoEdit from './neo/tools/neo.todo.edit.md' with { type: 'text' };
 import mdToolTodoHold from './neo/tools/neo.todo.hold.md' with { type: 'text' };
 import mdToolTodoProceed from './neo/tools/neo.todo.proceed.md' with { type: 'text' };
+import mdToolTodoRead from './neo/tools/neo.todo.read.md' with { type: 'text' };
 import mdToolTodoRemove from './neo/tools/neo.todo.remove.md' with { type: 'text' };
 import mdToolTodoRetry from './neo/tools/neo.todo.retry.md' with { type: 'text' };
 import mdToolPackPreferencesApplyAnswer from './neo/tools/pack.preferences.applyAnswer.md' with {
@@ -713,6 +714,7 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.todo.edit.md': mdToolTodoEdit,
     'neo/tools/neo.todo.hold.md': mdToolTodoHold,
     'neo/tools/neo.todo.proceed.md': mdToolTodoProceed,
+    'neo/tools/neo.todo.read.md': mdToolTodoRead,
     'neo/tools/neo.todo.remove.md': mdToolTodoRemove,
     'neo/tools/neo.todo.retry.md': mdToolTodoRetry,
     'neo/tools/pack.preferences.applyAnswer.md': mdToolPackPreferencesApplyAnswer,

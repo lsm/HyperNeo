@@ -71,6 +71,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.todo.edit',
   'neo.todo.hold',
   'neo.todo.proceed',
+  'neo.todo.read',
   'neo.todo.remove',
   'neo.todo.retry',
   'pack.preferences.applyAnswer',

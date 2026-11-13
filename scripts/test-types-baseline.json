@@ -201,7 +201,6 @@
     "packages/daemon/tests/unit/1-core/operations/neo-startup-config.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/neo-todo-approval.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/neo-todo-cancelled.test.ts": 1,
-    "packages/daemon/tests/unit/1-core/operations/neo-todo-completion.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/neo-todo-dependencies.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/neo-todo-edit-work.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/neo-todo-mutation-operation.test.ts": 2,

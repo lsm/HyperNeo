@@ -22,6 +22,7 @@ export const NEO_RESIDENT_FAMILIES = [
       'bind',
       'retry',
       'proceed',
+      'read',
     ],
   },
   {

@@ -468,15 +468,16 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     const project = async <T extends NeoTodo>(todos: readonly T[]) => [...todos];
     const mcp = { source: 'mcp' as const, sessionId: 'neo', role: 'neo' as const };
     const askRead = createNeoAskReadOperation(store, () => [], admit, project);
-    const agent = await askRead.execute(askRead.inputSchema.parse({ askId: 'ask' }), mcp);
+    type Read = { ok: true; entry: { todos: object[] } } | { ok: false; reason: string };
+    const agent = (await askRead.execute(askRead.inputSchema.parse({ askId: 'ask' }), mcp)) as Read;
     expect(agent).toMatchObject({ ok: true, entry: { ask: { id: 'ask' } } });
     expect(agent.ok && agent.entry.todos).toEqual([
       { id: 't0', title: 'T0', state: 'doing' },
       { id: 't1', title: 'T1', state: 'todo' },
     ]);
-    const human = await askRead.execute(askRead.inputSchema.parse({ askId: 'ask' }), {
+    const human = (await askRead.execute(askRead.inputSchema.parse({ askId: 'ask' }), {
       source: 'rpc',
-    });
+    })) as Read;
     expect(human.ok && human.entry.todos[0]).toMatchObject({ instruction: 'Build the parser' });
     const todoRead = createNeoTodoReadOperation(store, admit, project);
     expect(await todoRead.execute(todoRead.inputSchema.parse({ todoId: 't0' }), mcp)).toMatchObject(
