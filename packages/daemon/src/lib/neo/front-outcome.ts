@@ -67,22 +67,24 @@ export async function settleConvoInput(
   }
   const markFailed = async (id: string) => {
     const failedAsk = id === messageId ? ask : service.asks.find(conversationId, id);
-    if (!failedAsk || sdk.getUserSendStatus(failedAsk.askOrigin.sessionId, id) === 'consumed')
-      return;
+    if (!failedAsk) return;
+    const origin = failedAsk.askOrigin.sessionId;
+    const delivered = sdk.getUserSendStatus(origin, id);
+    if (delivered !== null && delivered !== 'failed') return;
     await service.db.gateway.call(
       sdkMessageWrites,
       'markDeliveryFailedByUuidInclusive',
       sessionId,
       id
     );
-    if (sdk.getUserSendStatus(failedAsk.askOrigin.sessionId, id) !== null) return;
+    if (delivered !== null) return;
     await service.db.gateway.call(
       sdkMessageWrites,
       'saveUserMessage',
-      failedAsk.askOrigin.sessionId,
+      origin,
       neoIntakeMessage(
-        { ...failedAsk, sessionId: failedAsk.askOrigin.sessionId },
-        failedAsk.askOrigin.sessionId,
+        { ...failedAsk, sessionId: origin },
+        origin,
         readNeoReply(failedAsk.replyTo, service.todos),
         null,
         undefined,
