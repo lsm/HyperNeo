@@ -603,8 +603,8 @@ describe('cancelled prerequisites', () => {
           step('A', []),
           step('B', []),
           step('C', []),
-          { ...step('X', [0, 2]), ...work, start: true },
-          { ...step('Y', [1, 2]), ...work, start: true },
+          { ...step('X', [0, 2]), ...work },
+          { ...step('Y', [1, 2]), ...work },
         ],
       });
       const [a, b, c, x, y] = opened.todos;
