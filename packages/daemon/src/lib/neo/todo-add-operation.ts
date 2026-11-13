@@ -7,12 +7,10 @@ import type { OperationCaller, OperationDefinition } from '../operations/registr
 import { neoUserFolder } from './folder.ts';
 import { type NeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
-import {
-  type NeoTodoControls,
-  type NeoTodoDraftSchema,
-  type ResolvedNeoTodoDraft,
-  recordNeoTodo,
-  resolveNeoTodoDraft,
+import type {
+  NeoTodoControls,
+  NeoTodoDraftSchema,
+  ResolvedNeoTodoDraft,
 } from './todo-operations.ts';
 
 type AddInput = z.infer<typeof NeoTodoDraftSchema> & {
@@ -29,8 +27,10 @@ export async function recordNeoTodoAdmission(
   draft: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
 ): Promise<Result> {
-  if (!packs.find((pack) => pack.id === draft.check.pack)?.todos?.writerAdd)
+  if (!packs.find((pack) => pack.id === draft.check.pack)?.todos?.writerAdd) {
+    const { recordNeoTodo } = await import('./todo-operations.ts');
     return recordNeoTodo(store, sessions, controls, ask, draft, packs);
+  }
   const receipt = await store.commitAdd({
     askId: ask.id,
     todoId: crypto.randomUUID(),
@@ -83,7 +83,10 @@ export function wireNeoTodoAdd(
     )
     .pipe((ask: NeoAsk) => ask, 'outcome', 'ask')
     .pipe(
-      (_ask: NeoAsk, input: AddInput) => resolveNeoTodoDraft(input, controls.resolveTarget),
+      async (_ask: NeoAsk, input: AddInput) => {
+        const { resolveNeoTodoDraft } = await import('./todo-operations.ts');
+        return resolveNeoTodoDraft(input, controls.resolveTarget);
+      },
       ['outcome', 'input'],
       'result:outcome'
     )

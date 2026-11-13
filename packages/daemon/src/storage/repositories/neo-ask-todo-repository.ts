@@ -1,23 +1,28 @@
-import {
-  neoAskInputReads,
-  neoAskInputWrites,
-  type NeoAskInputClaim,
-} from './neo-ask-input-worker.ts';
+import type {
+  NeoAnswerProvenance,
+  NeoAsk,
+  NeoQuestion,
+  NeoQuestionAnswer,
+  NeoTodo,
+  NeoTodoCheck,
+} from '@hyperneo/shared/types/neo-ask';
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { neoTodoStorage } from '../../lib/neo/packs/todo-storage.ts';
-import type { ReactiveDatabase } from '../reactive-database.ts';
+import { renderAddress } from '../../lib/mailbox/address.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
-import { renderAddress } from '../../lib/mailbox/address.ts';
-import { JobQueueRepository } from './job-queue-repository.ts';
-import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { neoTodoAddWrites } from './neo-todo-add-write.ts';
-import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
-import { defineRepositoryOp } from '../db-gateway/db-op.ts';
-import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
-import type { LanguageSetting } from '@hyperneo/shared/types/settings';
-import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { neoDerivedId } from '../../lib/neo/derived-id.ts';
+import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
+import { neoTodoStorage } from '../../lib/neo/packs/todo-storage.ts';
+import {
+  type NeoQuestionPrune,
+  neoStartCardText,
+  neoTodoAwaitsApproval,
+  neoTodoOnStartCard,
+  neoTodosAwaitingNeoDecision,
+  planNeoQuestionPrune,
+  planNeoStartRelease,
+} from '../../lib/neo/todo-start-gate.ts';
 import {
   neoAskQuestionHolds,
   neoQuestionCoversTodo,
@@ -26,27 +31,22 @@ import {
   recomputeTodoStateAsync,
   type TodoStateFacts,
 } from '../../lib/neo/todo-state.ts';
-import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
-import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
-import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
-import type {
-  NeoAsk,
-  NeoQuestion,
-  NeoQuestionAnswer,
-  NeoAnswerProvenance,
-  NeoTodo,
-  NeoTodoCheck,
-} from '@hyperneo/shared/types/neo-ask';
-import {
-  neoStartCardText,
-  neoTodoAwaitsApproval,
-  neoTodoOnStartCard,
-  neoTodosAwaitingNeoDecision,
-  planNeoQuestionPrune,
-  planNeoStartRelease,
-  type NeoQuestionPrune,
-} from '../../lib/neo/todo-start-gate.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
+import { JobQueueRepository } from './job-queue-repository.ts';
+import {
+  type NeoAskInputClaim,
+  neoAskInputReads,
+  neoAskInputWrites,
+} from './neo-ask-input-worker.ts';
+import { NeoPublicationRepository } from './neo-publication-repository.ts';
+import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
+import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
+import type { neoTodoAddWrites } from './neo-todo-add-write.ts';
+import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
+import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
   Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>>;
@@ -260,7 +260,8 @@ export class NeoAskTodoRepository {
   async commitAdd(input: Parameters<typeof neoTodoAddWrites.run>[1]) {
     const gateway = gatewayFor(this.db);
     const write = gateway.run.bind(gateway);
-    const receipt = await write(neoTodoAddWrites, input);
+    const { neoTodoAddWrites: op } = await import('./neo-todo-add-write.ts');
+    const receipt = await write(op, input);
     if (receipt.ok && receipt.todo) this.changed();
     return receipt;
   }
