@@ -65,7 +65,15 @@ describe('NeoAskTodoRepository while the writer lane holds a write', () => {
         store.askQuestion(
           'card',
           'ask',
-          { text: 'Which way?', kind: 'choice', options: ['Server', 'Both'] },
+          {
+            text: 'Which way?',
+            kind: 'choice',
+            options: ['Server', 'Both'],
+            multiple: false,
+            noLabel: null,
+            yesLabel: null,
+            startTodos: null,
+          },
           20
         )
       )

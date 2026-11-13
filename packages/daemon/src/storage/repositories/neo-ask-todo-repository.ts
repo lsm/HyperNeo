@@ -443,7 +443,7 @@ export class NeoAskTodoRepository {
   }
 
   inTransaction<T>(work: () => T): T {
-    return this.db.transaction(work)();
+    return this.db.transaction(work, 'immediate')();
   }
 
   writeCardReply(
@@ -477,7 +477,7 @@ export class NeoAskTodoRepository {
         if (!result.accepted) throw new Error('Card reply publication rejected');
       }
       return question;
-    })();
+    }, 'immediate')();
   }
 
   openAsk(
