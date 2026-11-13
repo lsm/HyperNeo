@@ -75,6 +75,10 @@ test('Front and Neo share speech rules with their own tool names', () => {
   );
   expect(NEO_FRONT).toContain('published through reply_short or reply_detailed.');
   expect(NEO_FRONT).toContain('follow its guidance to call speech_say once');
+  expect(NEO_FRONT).toContain('projects_read');
+  expect(NEO_FRONT).toContain('asks_read');
+  expect(NEO_FRONT).toContain('todos_read');
+  expect(NEO_FRONT).toContain('cards_read');
   expect(NEO_FRONT).not.toContain('neo.speech.say');
   expect(NEO_FRONT).not.toContain('{{');
   expect(NEO_ROOT_TURN_END).toContain(
@@ -617,6 +621,50 @@ test('Front exposes reads, work_on and one publication path', () => {
     'todos_read',
     'work_on',
   ]);
+});
+
+test('a todo detail carries the pack rows pinned to it as packFacts', async () => {
+  const sql = db.getDatabase();
+  sql
+    .prepare(
+      `INSERT INTO neo_asks (id,session_id,title,request,status,outcome,created_at,updated_at)
+       VALUES ('ask-1','synthetic','Ask','Private request','open','',0,10)`
+    )
+    .run();
+  sql
+    .prepare(
+      `INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at)
+       VALUES ('todo-1','ask-1',0,'Todo one','Done','doing',0,10),
+              ('todo-2','ask-1',1,'Todo two','Done','doing',0,10)`
+    )
+    .run();
+  const snapshotRows = vi.fn(() => [
+    { todoId: 'todo-1', url: 'https://example.invalid/pr/1', state: 'open' },
+    { todoId: 'todo-2', url: 'https://example.invalid/pr/2', state: 'open' },
+    { note: 'unpinned' },
+  ]);
+  vi.spyOn(service, 'packs').mockReturnValue([
+    { id: 'synthetic-pack', snapshotRows },
+    { id: 'plain-pack' },
+  ] as never);
+  createFrontTools(service, conversationId);
+  const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
+  const readTool = definitions.find((entry) => entry.name === 'todos_read')!;
+  const text = (response: unknown) =>
+    JSON.parse((response as { content: { text: string }[] }).content[0].text) as Record<
+      string,
+      unknown
+    >;
+  expect(text(await readTool.handler({ id: 'todo-1' }, {} as never))).toMatchObject({
+    id: 'todo-1',
+    packFacts: [{ pack: 'synthetic-pack', todoId: 'todo-1', url: 'https://example.invalid/pr/1' }],
+  });
+  expect(snapshotRows).toHaveBeenCalledWith([], expect.any(Number), ['todo-1']);
+  const page = text(await readTool.handler({ text: 'Todo' }, {} as never)) as {
+    items: Record<string, unknown>[];
+  };
+  expect(page.items.every((item) => !('packFacts' in item))).toBe(true);
+  expect(text(await readTool.handler({ id: 'missing' }, {} as never))).toBeNull();
 });
 
 test('in dual mode Neo publishes to the human directly', async () => {

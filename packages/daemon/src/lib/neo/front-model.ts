@@ -19,15 +19,24 @@ const result = (value: unknown) => ({
 export function createFrontTools(service: NeoService, conversationId: string) {
   const sessionId = frontSessionId(conversationId);
   const lookups = (['projects', 'asks', 'cards', 'todos'] as const).map((kind) =>
-    tool(`${kind}_read`, `Read current ${kind} for this conversation.`, Read, async (input) =>
-      result(
-        await service.db.gateway.run(neoFrontReads, {
-          conversationId,
-          kind,
-          input: input.id ? { id: input.id } : input.text ? { text: input.text } : {},
-        })
-      )
-    )
+    tool(`${kind}_read`, `Read current ${kind} for this conversation.`, Read, async (input) => {
+      const value = await service.db.gateway.run(neoFrontReads, {
+        conversationId,
+        kind,
+        input: input.id ? { id: input.id } : input.text ? { text: input.text } : {},
+      });
+      if (kind === 'todos' && value !== null && !('items' in value)) {
+        const packFacts = service.packs().flatMap(
+          (pack) =>
+            pack
+              .snapshotRows?.([], Date.now(), [input.id ?? ''])
+              .filter((row) => row.todoId === input.id)
+              .map((row) => ({ pack: pack.id, ...row })) ?? []
+        );
+        return result({ ...value, packFacts });
+      }
+      return result(value);
+    })
   );
   const replyFields = {
     requestId: NeoPublicationDraft.shape.requestId,
