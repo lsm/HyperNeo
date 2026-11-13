@@ -59,7 +59,10 @@ check then pins exactly that file on every hub start.
 The provider record is the only source. The five `HYPERNEO_OAP_*` variables and
 the `oap` block in `config.ts` are removed. Their only users are the config
 unit test and the verify skill's OAP wire script, and both write a provider
-record instead. What the form shows is what the daemon runs.
+record instead. What the form shows is what the daemon runs. The hub's state
+directory is not a setting. `createOapRuntime` still derives it as
+`join(getDataDir(), 'oap')`, as `config.ts` does today, and adds it to the
+record's values to build `OapEngineOptions`.
 
 The pin is trust on first use. It catches a binary that changes after save. It
 does not prove the file is a genuine release; the human picks the file.
