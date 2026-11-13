@@ -250,3 +250,90 @@ describe('PairPhoneFlow', () => {
     await screen.findByText(/Could not reach the daemon/, undefined, { timeout: 3000 });
   });
 });
+
+describe('PairPhoneFlow with pairing v2', () => {
+  let status: { state: string; expiresAt: number; name: string | null };
+  let cancelReply: Response;
+  const posted: string[] = [];
+
+  beforeEach(() => {
+    mockRequest.mockReset();
+    daemon([approved('LEGACY2345')], { current: [desk] });
+    posted.length = 0;
+    status = { state: 'pending', expiresAt: Date.now() + 90_000, name: null };
+    cancelReply = new Response(JSON.stringify({ ok: true }), { status: 200 });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string, init?: RequestInit) => {
+        const path = String(input);
+        if (init?.method === 'POST') posted.push(path);
+        if (path === '/pair2/request')
+          return new Response(
+            JSON.stringify({
+              requestId: 'req-12345678',
+              ticket: 'ticket-abcdefghijklmnop',
+              expiresAt: status.expiresAt,
+            }),
+            { status: 200 }
+          );
+        if (path === '/pair2/cancel') return cancelReply;
+        if (path.startsWith('/pair2/status?requestId=req-12345678'))
+          return new Response(JSON.stringify({ ...status, phoneKey: null }), { status: 200 });
+        return new Response('{}', { status: 404 });
+      })
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('shows a QR with a countdown, then hides the spent QR once the phone scans', async () => {
+    render(<PairPhoneFlow pollMs={20} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByRole('img', { name: 'Pairing QR code' });
+    expect(screen.getByText('Add a phone. Scan this QR with Neo.')).toBeTruthy();
+    expect(screen.getByText('https://mac.tailnet.ts.net')).toBeTruthy();
+    expect(screen.getByText(/Expires in \d+ s/)).toBeTruthy();
+    expect(invoked('device.pair.create')).toEqual([]);
+
+    status = { ...status, state: 'bound', name: 'Kitchen iPhone' };
+    await screen.findByText('Phone scanned. Waiting for confirmation.');
+    expect(screen.queryByRole('img', { name: 'Pairing QR code' })).toBeNull();
+
+    status = { ...status, state: 'granted' };
+    await screen.findByText('Paired with Kitchen iPhone.');
+  });
+
+  it('reports the final state when a cancel arrives after the phone already paired', async () => {
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByRole('img', { name: 'Pairing QR code' });
+
+    status = { ...status, state: 'granted', name: 'Kitchen iPhone' };
+    cancelReply = new Response(JSON.stringify({ error: 'not_pending' }), { status: 403 });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByText('Paired with Kitchen iPhone.');
+    expect(posted).toEqual(['/pair2/request', '/pair2/cancel']);
+    expect(screen.queryByRole('button', { name: 'Start pairing' })).toBeNull();
+  });
+
+  it('offers a new QR after a cancel that wins', async () => {
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByRole('img', { name: 'Pairing QR code' });
+    status = { ...status, state: 'cancelled' };
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByText('Pairing cancelled.');
+    expect(screen.getByRole('button', { name: 'Show a new QR' })).toBeTruthy();
+  });
+
+  it('keeps the code flow when the daemon has pairing v2 off', async () => {
+    status = { ...status, state: 'none' };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByText('LEGACY2345');
+    expect(screen.queryByRole('img', { name: 'Pairing QR code' })).toBeNull();
+  });
+});
