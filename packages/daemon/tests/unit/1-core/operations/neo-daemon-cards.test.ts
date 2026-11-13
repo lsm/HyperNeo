@@ -358,6 +358,27 @@ describe('daemon cards in the store', () => {
     expect(calls).toEqual(['neo.todo.remove']);
   });
 
+  test('a refusal because another run already settled the todo is not reported to Neo', async () => {
+    await sweep(DAY);
+    const [overdue] = open();
+    store.answerQuestion(overdue, ['Mark done'], 'button', DAY + 1);
+    const told: string[] = [];
+    await createNeoQuestionAnswerDelivery(
+      store,
+      new NeoTodoSessionRepository(db),
+      async () => {
+        db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = 'check'").run();
+        return { kind: 'completed', value: { ok: false, reason: 'todo_not_live: it is done.' } };
+      },
+      async (_session, key) => {
+        told.push(key);
+      },
+      async (todo) => todo,
+      () => {}
+    )(overdue.id);
+    expect(told).toEqual([]);
+  });
+
   test('the daemon carries out the human answer on its card', async () => {
     await sweep(DAY);
     const [overdue] = open();
