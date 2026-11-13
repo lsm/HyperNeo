@@ -2298,7 +2298,8 @@ describe('QueryOptionsBuilder', () => {
       );
       try {
         const options = await builder.build();
-        expect(options.settings?.autoCompactWindow).toBe(262_144);
+        const settings = typeof options.settings === 'string' ? undefined : options.settings;
+        expect(settings?.autoCompactWindow).toBe(262_144);
         const provider = getProviderRegistry().get('kimi')!;
         expect(
           provider.buildSdkConfig('kimi-for-coding', mockSession.config.providerConfig).envVars
