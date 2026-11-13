@@ -1054,18 +1054,20 @@ export default function ChatContainer({
         </div>
       )}
 
-      {error && !stoppedCardUuid && (
-        <ErrorBanner
-          error={error}
-          hasDetails={!!storeError?.details}
-          onViewDetails={errorDialog.open}
-          onDismiss={() => {
-            setLocalError(null);
-            store.clearError();
-          }}
-          actions={errorActions.length > 0 ? errorActions : undefined}
-        />
-      )}
+      {error &&
+        !stoppedCardUuid &&
+        !(stoppedEpisode?.failed && (!messagesLoaded || !messages.length)) && (
+          <ErrorBanner
+            error={error}
+            hasDetails={!!storeError?.details}
+            onViewDetails={errorDialog.open}
+            onDismiss={() => {
+              setLocalError(null);
+              store.clearError();
+            }}
+            actions={errorActions.length > 0 ? errorActions : undefined}
+          />
+        )}
 
       {showRecovering && (
         <div

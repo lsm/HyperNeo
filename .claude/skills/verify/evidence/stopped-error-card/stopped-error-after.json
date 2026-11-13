@@ -29,6 +29,10 @@
     "rawVisible": true,
     "pageOverflow": false
   },
+  "reloaded": {
+    "bannerSeen": false,
+    "stopNote": true
+  },
   "recovered": {
     "apiErrorCards": 4,
     "stopNotes": 0

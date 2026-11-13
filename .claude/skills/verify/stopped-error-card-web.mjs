@@ -87,14 +87,15 @@ try {
     await page.screenshot({ path: join(run, 'evidence', 'stopped-error-after-expanded.png') });
     await page.addInitScript(() => {
       new MutationObserver(() => {
-        if (document.querySelector('[data-testid="error-banner"]')) window.bannerSeen = true;
+        const banner = document.querySelector('[data-testid="error-banner"]');
+        if (banner && !window.bannerSeen) window.bannerSeen = `${performance.now() | 0}ms ${document.querySelectorAll('[data-message-id]').length} messages: ${banner.textContent.slice(0, 120)}`;
       }).observe(document, { childList: true, subtree: true });
     });
     await page.reload();
     await cards.nth(2).waitFor({ timeout: 30000 });
     await settled();
     observed.reloaded = {
-      bannerSeen: await page.evaluate(() => window.bannerSeen === true),
+      bannerSeen: await page.evaluate(() => window.bannerSeen ?? false),
       stopNote: (await card.getByText('Stopped after 3 failures. Send a message to recover.').count()) > 0,
     };
     await composer.fill('Try again.');
