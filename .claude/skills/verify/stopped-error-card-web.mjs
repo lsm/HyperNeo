@@ -85,6 +85,14 @@ try {
     await card.getByText('Technical details').click();
     observed.expanded = await state();
     await page.screenshot({ path: join(run, 'evidence', 'stopped-error-after-expanded.png') });
+    await composer.fill('Try again.');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await cards.nth(3).waitFor({ timeout: 60000 });
+    await settled();
+    observed.recovered = {
+      apiErrorCards: await cards.count(),
+      stopNotes: await page.getByText('Stopped after 3 failures. Send a message to recover.').count(),
+    };
   }
   await context.close();
 } finally {
@@ -114,5 +122,8 @@ for (const scheme of ['dark', 'light']) {
     );
   }
 }
-if (mode === 'after') assert.equal(observed.expanded.rawVisible, true);
+if (mode === 'after') {
+  assert.equal(observed.expanded.rawVisible, true);
+  assert.deepEqual(observed.recovered, { apiErrorCards: 4, stopNotes: 0 });
+}
 console.log(`PASS (${mode}): stopped query error shown ${mode === 'after' ? 'once, inside its API Error card' : 'as banner plus card'}`);

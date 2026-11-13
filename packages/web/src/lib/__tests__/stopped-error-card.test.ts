@@ -21,9 +21,7 @@ describe('stoppedErrorCardUuid', () => {
     expect(
       stoppedErrorCardUuid([user, { type: 'assistant', uuid: 'a2' }, result], episode)
     ).toBeUndefined();
-    expect(
-      stoppedErrorCardUuid([card, user, { ...result, uuid: 'r2' }], episode)
-    ).toBeUndefined();
+    expect(stoppedErrorCardUuid([card, user, { ...result, uuid: 'r2' }], episode)).toBeUndefined();
   });
 
   it('does not move a stale stop onto a later failure card', () => {

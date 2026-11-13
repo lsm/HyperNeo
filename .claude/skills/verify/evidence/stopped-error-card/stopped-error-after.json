@@ -28,5 +28,9 @@
     "detailsOpen": true,
     "rawVisible": true,
     "pageOverflow": false
+  },
+  "recovered": {
+    "apiErrorCards": 4,
+    "stopNotes": 0
   }
 }
