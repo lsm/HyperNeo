@@ -103,7 +103,8 @@ try {
   assert.deepEqual(more, []);
   assert.deepEqual(JSON.parse(exhausted.todos), [failing]);
   assert.deepEqual(JSON.parse(exhausted.options), ['Retry', 'Mark done', 'Remove']);
-  assert.match(exhausted.text, /^"Remote step" could not start after 2 automatic retries: Could not start: .+\. Retry, mark done, or remove\?$/);
+  assert.match(exhausted.text, /^"Remote step" could not start after 2 automatic retries: invalid_place: .+\. Retry, mark done, or remove\?$/);
+  assert(!/could not start/i.test(exhausted.text.split('retries:')[1]));
   assert.equal(state(failing), 'blocked');
   await refresh();
   assert.equal(openCards('retries_exhausted').length, 1);

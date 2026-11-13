@@ -417,7 +417,7 @@ describe('queued todos start themselves', () => {
     await w.tick();
     expect(w.started).toEqual([]);
     expect(w.told.filter((note) => note.id === todo)).toHaveLength(1);
-    expect(w.told.find((note) => note.id === todo)?.note).toContain('Could not start');
+    expect(w.told.find((note) => note.id === todo)?.note).toContain('place_refused');
     expect(
       w.store
         .listQuestions(w.store.getTodo(todo)!.askId)

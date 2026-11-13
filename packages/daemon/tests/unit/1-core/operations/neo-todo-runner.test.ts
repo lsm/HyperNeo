@@ -3565,7 +3565,7 @@ describe('failed todo retry in place', () => {
       expect(inputs).toHaveLength(2);
       expect(inputs[0]).toEqual(original);
       expect(inputs[1].id).not.toBe(original.id);
-      expect(h.sessions.readRetries(todo.id)).toBe(1);
+      expect(h.sessions.readRetries(todo.id)).toBe(0);
     } finally {
       h.db.close();
     }

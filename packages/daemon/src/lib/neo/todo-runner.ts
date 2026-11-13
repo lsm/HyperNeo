@@ -426,8 +426,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return next;
   };
 
-  const startFailed = async (todo: NeoTodo, ask: NeoAsk, reason: string) => {
+  const startFailed = async (todo: NeoTodo, ask: NeoAsk, failure: string) => {
     const now = Date.now();
+    const reason = `Could not start: ${failure}`;
     if (sessions.readStartInterrupted(todo.id))
       return {
         ok: true as const,
@@ -435,9 +436,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       };
     if (neoStartRetryDue(sessions.readRetries(todo.id))) {
       await recompute(todo, { state: 'failed', reason, finishedAt: now }, now);
-      return retry(todo.id);
+      return retry(todo.id, true);
     }
-    await deps.write(neoDaemonCardWrite, { kind: 'retries', todoId: todo.id, reason, now });
+    await deps.write(neoDaemonCardWrite, {
+      kind: 'retries',
+      todoId: todo.id,
+      reason: failure,
+      now,
+    });
     deps.changed();
     const blocked = store.getTodo(todo.id) ?? todo;
     await deps.tell(ask, blocked, neoTodoNote(blocked));
@@ -449,8 +455,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const exclusions =
       target.verb === 'start' ? await prepare?.workerStartExclusions?.(todo) : undefined;
-    if (exclusions && 'reason' in exclusions)
-      return startFailed(todo, ask, `Could not start: ${exclusions.reason}`);
+    if (exclusions && 'reason' in exclusions) return startFailed(todo, ask, exclusions.reason);
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
     card.instruction = workerBrief(
       todo,
@@ -513,7 +518,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const result = readDriverOutcome(target, outcome);
     if (!('ref' in result) && !result.reason) sessions.recordStartInterrupted(todo.id);
     if (!('ref' in result) && result.reason !== 'needs_you')
-      return startFailed(todo, ask, `Could not start: ${result.failure}`);
+      return startFailed(todo, ask, result.failure);
     if (!('ref' in result))
       return {
         ok: true as const,
@@ -545,6 +550,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ? { inputBefore: 0, opening, ...(result.receipt ? { receipt: result.receipt } : {}) }
           : null,
     });
+    sessions.clearRetries(todo.id);
     if (!committed.askOpen)
       await deps.invoke(caller(ask), 'work.stop', { ref: result.ref }).catch(() => null);
     deps.changed();
@@ -1618,15 +1624,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: store.getTodo(todo.id)! };
   };
 
-  const retry = async (todoId: string) => {
+  const retry = async (todoId: string, automatic = false) => {
     const gate = requireNeoTodoRetryable(read(todoId));
     if ('reason' in gate) return gate.reason;
-    if (sessions.readRef(todoId)) {
-      const result = await proceed(todoId, gate.value.instruction ?? 'Retry this todo.');
-      if (result.ok) sessions.recordRetry(todoId);
-      return result;
-    }
-    sessions.recordRetry(todoId);
+    if (automatic) sessions.recordRetry(todoId);
+    else sessions.clearRetries(todoId);
+    if (sessions.readRef(todoId))
+      return proceed(todoId, gate.value.instruction ?? 'Retry this todo.');
     store.updateTodo(gate.value, { state: 'todo', startedAt: null, finishedAt: null }, Date.now());
     return start(todoId);
   };
@@ -1682,7 +1686,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     recompute,
     proceed,
     stop,
-    retry,
+    retry: (todoId: string) => retry(todoId),
     async checkNow(
       selection: readonly string[] | { questionId: string },
       warn: (message: string, error: unknown) => void

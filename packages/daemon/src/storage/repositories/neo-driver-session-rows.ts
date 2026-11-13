@@ -187,8 +187,16 @@ export class NeoDriverSessionRows {
     this.db.prepare(`UPDATE ${this.table} SET start_interrupted = 1 WHERE ${this.key} = ?`).run(id);
   }
 
-  recordRetry(id: string): number {
-    this.db.prepare(`UPDATE ${this.table} SET retries = retries + 1 WHERE ${this.key} = ?`).run(id);
+  clearRetries(id: string): void {
+    this.recordRetry(id, true);
+  }
+
+  recordRetry(id: string, clear = false): number {
+    this.db
+      .prepare(
+        `UPDATE ${this.table} SET retries = CASE WHEN ?2 THEN 0 ELSE retries + 1 END WHERE ${this.key} = ?1`
+      )
+      .run(id, Number(clear));
     return this.readRetries(id);
   }
 
