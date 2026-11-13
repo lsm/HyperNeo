@@ -27,7 +27,9 @@ export async function recordNeoTodoAdmission(
   draft: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
 ): Promise<Result> {
-  if (!packs.find((pack) => pack.id === draft.check.pack)?.todos?.writerAdd) {
+  const pack = packs.find((entry) => entry.id === draft.check.pack);
+  const covered = pack?.todos?.writerAdd && (await store.writerAddPacks()).includes(pack.id);
+  if (!covered) {
     const { recordNeoTodo } = await import('./todo-operations.ts');
     return recordNeoTodo(store, sessions, controls, ask, draft, packs);
   }

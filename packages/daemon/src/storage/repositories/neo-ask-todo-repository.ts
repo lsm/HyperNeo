@@ -273,6 +273,11 @@ export class NeoAskTodoRepository {
     return receipt;
   }
 
+  async writerAddPacks(): Promise<readonly string[]> {
+    const { neoTodoPolicies } = await import('../../lib/neo/packs/todo-policies.ts');
+    return neoTodoPolicies(this.db).map((policy) => policy.id);
+  }
+
   get questionAnswers() {
     return new NeoQuestionAnswerRepository(
       this.db,
