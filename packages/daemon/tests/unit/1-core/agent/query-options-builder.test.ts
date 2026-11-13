@@ -2246,6 +2246,32 @@ describe('QueryOptionsBuilder', () => {
       expect(result.effort).toBeUndefined();
     });
 
+    it('does not force the 16k budget on a primary that cannot think', () => {
+      const kimi = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'china' });
+      const registry = getProviderRegistry();
+      const saved = registry.get('kimi');
+      registry.unregister('kimi');
+      registry.register(kimi);
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'moonshot-v1-8k';
+        mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
+        mockSession.config.thinkingLevel = 'off';
+
+        expect(kimi.getModelThinkingMode('moonshot-v1-8k')).toBe('off');
+        expect(kimi.getModelContextWindow('moonshot-v1-8k')).toBe(8192);
+
+        const result = builder.addSessionStateOptions(
+          {} as import('@anthropic-ai/claude-agent-sdk').Options
+        );
+        expect(result.thinking).toBeUndefined();
+        expect(result.effort).toBeUndefined();
+      } finally {
+        registry.unregister('kimi');
+        if (saved) registry.register(saved);
+      }
+    });
+
     it('allows Kimi K3 primary and K3 fallback with granular thinking', () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';

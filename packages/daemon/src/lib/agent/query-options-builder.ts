@@ -816,6 +816,7 @@ export class QueryOptionsBuilder {
         ? KimiProvider.isKimiK2Point7Model(fallbackRouted)
         : false;
       const mixedChain =
+        thinkingModes !== 'off' &&
         Boolean(fallbackRouted) &&
         !isCuratedOutModel(fallbackModel!, providerId) &&
         fallbackIsK2 &&
