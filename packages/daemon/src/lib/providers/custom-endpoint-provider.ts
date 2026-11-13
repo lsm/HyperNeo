@@ -40,8 +40,6 @@ import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 export const CUSTOM_ENDPOINT_PROVIDER_PREFIX = 'custom:';
 
-const ONE_MILLION_CONTEXT_WINDOW = 1_000_000;
-
 export function customProviderIdFor(endpointId: string): string {
   return `${CUSTOM_ENDPOINT_PROVIDER_PREFIX}${endpointId}`;
 }
@@ -94,12 +92,6 @@ function modelDisplayName(model: CustomEndpointModel): string {
 
 function providerModelStringFor(model: CustomEndpointModel): string {
   return model.providerModelId ?? model.id;
-}
-
-function belowOneMillionWindow(caps: CustomEndpointModelCapabilities): boolean {
-  return Number.isFinite(caps.maxContextTokens) && caps.maxContextTokens > 0
-    ? caps.maxContextTokens < ONE_MILLION_CONTEXT_WINDOW
-    : false;
 }
 
 function autoCompactWindowForModel(
@@ -274,12 +266,6 @@ export class CustomEndpointProvider implements Provider {
         ANTHROPIC_DEFAULT_OPUS_MODEL: upstreamModel,
         ...(autoCompactWindow !== undefined
           ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(autoCompactWindow) }
-          : {}),
-        ...(belowOneMillionWindow(caps)
-          ? {
-              CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
-              CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(caps.maxContextTokens),
-            }
           : {}),
       },
       isAnthropicCompatible: true,

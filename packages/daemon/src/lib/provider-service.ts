@@ -33,8 +33,6 @@ function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
 export const NON_ANTHROPIC_PREFIX_PROVIDER_VARS = [
   'CLAUDE_CODE_SUBAGENT_MODEL',
   'ENABLE_TOOL_SEARCH',
-  'CLAUDE_CODE_DISABLE_1M_CONTEXT',
-  'CLAUDE_CODE_MAX_CONTEXT_TOKENS',
 ] as const;
 
 export interface ProviderEnvVars {
@@ -50,8 +48,6 @@ export interface ProviderEnvVars {
   API_TIMEOUT_MS?: string;
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
   CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string;
-  CLAUDE_CODE_DISABLE_1M_CONTEXT?: string;
-  CLAUDE_CODE_MAX_CONTEXT_TOKENS?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
   ANTHROPIC_CUSTOM_HEADERS?: string;
   [key: string]: string | undefined;
@@ -500,8 +496,6 @@ const userConfiguredApiTimeout = process.env.API_TIMEOUT_MS;
 const userConfiguredDisableNonEssentialTraffic =
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
 const userConfiguredAutoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-const userConfiguredDisable1mContext = process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT;
-const userConfiguredMaxContextTokens = process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
 const userConfiguredAnthropicModel = process.env.ANTHROPIC_MODEL;
 const userConfiguredSubagentModel = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
 const userConfiguredToolSearch = process.env.ENABLE_TOOL_SEARCH;
@@ -525,8 +519,6 @@ const PROVIDER_ROUTING_ENV: ReadonlyArray<readonly [ProviderEnvKey, boolean]> = 
   ['API_TIMEOUT_MS', false],
   ['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', false],
   ['CLAUDE_CODE_AUTO_COMPACT_WINDOW', true],
-  ['CLAUDE_CODE_DISABLE_1M_CONTEXT', true],
-  ['CLAUDE_CODE_MAX_CONTEXT_TOKENS', true],
   ['ANTHROPIC_CUSTOM_HEADERS', true],
   ['ANTHROPIC_DEFAULT_SONNET_MODEL', false],
   ['ANTHROPIC_DEFAULT_HAIKU_MODEL', false],
@@ -582,8 +574,6 @@ function userPreservableRoutingEnv(): ReadonlyArray<readonly [ProviderEnvKey, st
     ['API_TIMEOUT_MS', userConfiguredApiTimeout],
     ['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', userConfiguredDisableNonEssentialTraffic],
     ['CLAUDE_CODE_AUTO_COMPACT_WINDOW', userConfiguredAutoCompactWindow],
-    ['CLAUDE_CODE_DISABLE_1M_CONTEXT', userConfiguredDisable1mContext],
-    ['CLAUDE_CODE_MAX_CONTEXT_TOKENS', userConfiguredMaxContextTokens],
     ['ANTHROPIC_CUSTOM_HEADERS', userConfiguredCustomHeaders],
     ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
     ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],

@@ -1633,8 +1633,6 @@ describe('QueryOptionsBuilder', () => {
             ANTHROPIC_DEFAULT_HAIKU_MODEL: model.id,
             ANTHROPIC_DEFAULT_SONNET_MODEL: model.id,
             ANTHROPIC_DEFAULT_OPUS_MODEL: model.id,
-            CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
-            CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(model.contextWindow),
           },
           isAnthropicCompatible: true,
         }),
@@ -1653,6 +1651,68 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
       expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBe('1');
       expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('256000');
+    });
+  });
+
+  describe('one window rule for every non-native provider', () => {
+    const kimi256 = {
+      id: 'k3-256k',
+      name: 'Kimi K3 (256K)',
+      provider: 'kimi',
+      alias: 'k3-256k',
+      family: 'kimi',
+      contextWindow: 262_144,
+      description: 'Synthetic 256k model',
+      releaseDate: '',
+      available: true,
+    };
+
+    afterEach(() => {
+      resetProviderRegistry();
+      setModelsCache(new Map());
+    });
+
+    it('a 262144-token Kimi model is declared at its real window, not 200000', async () => {
+      resetProviderRegistry();
+      getProviderRegistry().register({
+        id: 'kimi',
+        displayName: 'Synthetic Kimi',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'on',
+          maxContextWindow: 262_144,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [kimi256],
+        ownsModel: (id: string) => id === kimi256.id,
+        getModelForTier: () => kimi256.id,
+        buildSdkConfig: () => ({
+          envVars: { ANTHROPIC_BASE_URL: 'https://kimi.invalid' },
+          isAnthropicCompatible: true,
+        }),
+      } as Provider);
+      setModelsCache(new Map([['global', [kimi256]]]));
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = kimi256.id;
+
+      const options = await builder.build();
+
+      expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBe('1');
+      expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('262144');
+    });
+
+    it('a native Anthropic session sets neither variable', async () => {
+      setModelsCache(new Map());
+      mockSession.config.provider = 'anthropic';
+      mockSession.config.model = 'claude-opus-5-5';
+
+      const options = await builder.build();
+
+      expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBeUndefined();
+      expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
     });
   });
 

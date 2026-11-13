@@ -347,7 +347,7 @@ describe('CustomEndpointProvider', () => {
     expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(String(settings?.autoCompactWindow));
   });
 
-  it('gives a model below 1M its real window instead of the 1M the SDK would assume', async () => {
+  it('reports the declared context window, which the shared env builder turns into the SDK window', async () => {
     const fake = makeFakeBridge();
     const p = new CustomEndpointProvider(
       {
@@ -359,24 +359,10 @@ describe('CustomEndpointProvider', () => {
     );
     await p.ensureBridgeStarted('swe-2-high');
     const cfg = p.buildSdkConfig('swe-2-high');
-    expect(cfg.envVars.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBe('1');
-    expect(cfg.envVars.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('256000');
-  });
-
-  it('leaves a model with a 1M window able to use it', async () => {
-    const fake = makeFakeBridge();
-    const p = new CustomEndpointProvider(
-      {
-        ...baseConfig,
-        models: [{ id: 'long-context', capabilities: { maxContextTokens: 1_000_000 } }],
-        defaultModelId: 'long-context',
-      },
-      { bridgeFactory: fake.factory }
+    expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('263400');
+    expect(p.getCachedModels()?.find((model) => model.id === 'swe-2-high')?.contextWindow).toBe(
+      256_000
     );
-    await p.ensureBridgeStarted('long-context');
-    const cfg = p.buildSdkConfig('long-context');
-    expect(cfg.envVars.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBeUndefined();
-    expect(cfg.envVars.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
   });
 
   it('scales CLAUDE_CODE_AUTO_COMPACT_WINDOW with explicit per-model autoCompactPercent', async () => {

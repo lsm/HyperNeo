@@ -567,6 +567,14 @@ export class QueryOptionsBuilder {
         ? { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(resolveAutoCompactPercent(compactPercent)) }
         : {}),
     };
+    const declaredWindow = this.routedContextWindow(providerId, modelInfo?.contextWindow);
+    const windowEnv =
+      NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) || !declaredWindow
+        ? {}
+        : {
+            CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
+            CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(declaredWindow),
+          };
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = await this.getSDKCliPath();
 
@@ -614,6 +622,7 @@ export class QueryOptionsBuilder {
       env: {
         ...mergedEnv,
         ...compactEnv,
+        ...windowEnv,
         HYPERNEO_HANDOFF_DIR: handoffDirectory,
         ...(!neo && this.getCwd() ? workerWorkEnvironment(this.getCwd()!) : {}),
         ...workerSandbox?.env,
