@@ -9,7 +9,6 @@ type Binding = {
   worker_id: string;
   driver_instance_id: string;
   target_app_id: string | null;
-  socket: string;
 };
 type Target = { pid: number; window_id: number };
 type Planned = Target & { args: Record<string, unknown> };

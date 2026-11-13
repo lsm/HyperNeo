@@ -7,7 +7,6 @@ const binding = {
   worker_id: '10000000-0000-4000-8000-000000000002',
   driver_instance_id: '123-456-789',
   target_app_id: null,
-  socket: '/synthetic/driver.sock',
 };
 function fixture(enabled = true) {
   const audit = vi.fn();

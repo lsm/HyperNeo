@@ -914,7 +914,7 @@ dependencies = [
 [[package]]
 name = "cua-cursor-motion"
 version = "0.44.0"
-source = "git+https://github.com/trycua/cua.git?tag=cua-driver-rs-v0.44.0#ef1e84d6c880ab8aee7587c3d0057a288e764b69"
+source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
 dependencies = [
  "serde",
 ]
@@ -922,7 +922,7 @@ dependencies = [
 [[package]]
 name = "cua-driver-contract"
 version = "0.44.0"
-source = "git+https://github.com/trycua/cua.git?tag=cua-driver-rs-v0.44.0#ef1e84d6c880ab8aee7587c3d0057a288e764b69"
+source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
 dependencies = [
  "schemars",
  "serde",
@@ -933,7 +933,7 @@ dependencies = [
 [[package]]
 name = "cua-driver-core"
 version = "0.44.0"
-source = "git+https://github.com/trycua/cua.git?tag=cua-driver-rs-v0.44.0#ef1e84d6c880ab8aee7587c3d0057a288e764b69"
+source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -976,7 +976,7 @@ dependencies = [
 [[package]]
 name = "cua-driver-sdk"
 version = "0.44.0"
-source = "git+https://github.com/trycua/cua.git?tag=cua-driver-rs-v0.44.0#ef1e84d6c880ab8aee7587c3d0057a288e764b69"
+source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
 dependencies = [
  "async-trait",
  "core-foundation",
@@ -999,7 +999,7 @@ dependencies = [
 [[package]]
 name = "cursor-overlay"
 version = "0.44.0"
-source = "git+https://github.com/trycua/cua.git?tag=cua-driver-rs-v0.44.0#ef1e84d6c880ab8aee7587c3d0057a288e764b69"
+source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -2695,7 +2695,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "pip-preview"
 version = "0.44.0"
-source = "git+https://github.com/trycua/cua.git?tag=cua-driver-rs-v0.44.0#ef1e84d6c880ab8aee7587c3d0057a288e764b69"
+source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
 dependencies = [
  "serde_json",
 ]
@@ -2726,7 +2726,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 [[package]]
 name = "platform-linux"
 version = "0.44.0"
-source = "git+https://github.com/trycua/cua.git?tag=cua-driver-rs-v0.44.0#ef1e84d6c880ab8aee7587c3d0057a288e764b69"
+source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -2772,7 +2772,7 @@ dependencies = [
 [[package]]
 name = "platform-macos"
 version = "0.44.0"
-source = "git+https://github.com/trycua/cua.git?tag=cua-driver-rs-v0.44.0#ef1e84d6c880ab8aee7587c3d0057a288e764b69"
+source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2811,7 +2811,7 @@ dependencies = [
 [[package]]
 name = "platform-windows"
 version = "0.44.0"
-source = "git+https://github.com/trycua/cua.git?tag=cua-driver-rs-v0.44.0#ef1e84d6c880ab8aee7587c3d0057a288e764b69"
+source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
 dependencies = [
  "anyhow",
  "async-trait",

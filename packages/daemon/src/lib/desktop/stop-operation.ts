@@ -9,7 +9,7 @@ import {
   readFileSync,
 } from 'node:fs';
 import { createConnection } from 'node:net';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { getDataDir } from '../data-dir.ts';
@@ -27,7 +27,6 @@ const Record = z
         microseconds: z.number().int().min(0).max(999999),
       })
       .strict(),
-    socket: z.string().min(1).refine(isAbsolute),
   })
   .strict();
 type Driver = z.infer<typeof Record>;
@@ -153,15 +152,10 @@ async function stopDriver(worker: string, options: Options) {
     }
     for (let attempt = 0; attempt < 50; attempt++) {
       const current = recorded(directory);
-      if (
-        current.pid !== driver.pid ||
-        current.socket !== driver.socket ||
-        !same(current.startedAt, driver.startedAt)
-      )
+      if (current.pid !== driver.pid || !same(current.startedAt, driver.startedAt))
         return UNCONFIRMED;
       if (
         pidGone(driver.pid) &&
-        missing(driver.socket) &&
         missing(join(directory, 'starting')) &&
         !missing(join(directory, 'stopped'))
       )

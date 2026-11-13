@@ -18,7 +18,6 @@ pub(super) struct Identity {
 pub(super) struct Record {
     pid: u32,
     started_at: Identity,
-    socket: PathBuf,
 }
 
 pub(super) fn directory(base: &Path, worker: &str, create: bool) -> Result<PathBuf> {
@@ -148,11 +147,10 @@ fn identity(pid: u32) -> Result<Identity> {
     })
 }
 
-pub(super) fn publish(directory: &Path, pid: u32, socket: PathBuf) -> Result<()> {
+pub(super) fn publish(directory: &Path, pid: u32) -> Result<()> {
     let record = Record {
         pid,
         started_at: identity(pid)?,
-        socket,
     };
     let mut file = tempfile::NamedTempFile::new_in(directory)?;
     file.write_all(&serde_json::to_vec(&record)?)?;
@@ -162,23 +160,22 @@ pub(super) fn publish(directory: &Path, pid: u32, socket: PathBuf) -> Result<()>
     Ok(())
 }
 
-pub(super) fn verify(directory: &Path, pid: u32, socket: &Path) -> Result<()> {
+pub(super) fn verify(directory: &Path, pid: u32) -> Result<()> {
     let mut bytes = Vec::new();
     protected_file(&directory.join("driver.json"))?
         .take(16384)
         .read_to_end(&mut bytes)?;
     let record: Record = serde_json::from_slice(&bytes)?;
-    if record.pid != pid || record.socket != socket || record.started_at != identity(pid)? {
+    if record.pid != pid || record.started_at != identity(pid)? {
         return Err("driver process identity changed".into());
     }
     Ok(())
 }
 
-pub(super) fn verify_gone(pid: u32, socket: &Path) -> Result<()> {
+pub(super) fn verify_gone(pid: u32) -> Result<()> {
     let gone = unsafe { libc::kill(pid as i32, 0) } == -1
         && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
-    let socket_gone = matches!(socket.symlink_metadata(), Err(error) if error.kind() == std::io::ErrorKind::NotFound);
-    if !gone || !socket_gone {
+    if !gone {
         return Err("stop_unconfirmed: driver cleanup incomplete".into());
     }
     Ok(())
