@@ -1,4 +1,6 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
+  reply_summary_too_long:
+    'With details, keep text to a standalone summary of at most 2000 characters and put the rest in details.',
   work_on_brief:
     'With work_on:true, reply with one acknowledgment of at most 150 characters, one replyTo ID and no details.',
 

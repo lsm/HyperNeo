@@ -108,7 +108,7 @@ test('Front uses the ordinary immediate session with its role and tools', async 
   expect(session.config.allowedTools).toContain('mcp__front__speech_say');
   expect(session.config.systemPrompt).toContain('You are Neo, talking with the human.');
   expect(session.config.systemPrompt).not.toMatch(/\b(Convo|Back|background|handoff)\b/);
-  expect(session.config.systemPrompt).toContain('Your first tool call');
+  expect(session.config.systemPrompt).toContain('Call reply once for each human input');
   expect(attach).toHaveBeenCalled();
 });
 
@@ -1343,6 +1343,19 @@ test.each(['creation', 'delivery'])(
   }
 );
 
+test('a reply with details refuses a summary over 2000 characters by name', async () => {
+  const { id } = await deliveredConvoInput();
+  expect(
+    await convoPublish({
+      requestId: 'long-summary',
+      replyTo: [id],
+      shortText: 'x'.repeat(2001),
+      fullText: 'Details.',
+    })
+  ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
+  expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
+});
+
 test('a reply without work_on is the final answer with no acknowledgment before it', async () => {
   const { id } = await deliveredConvoInput();
   createFrontTools(service, conversationId);
@@ -1557,7 +1570,7 @@ test('a front input queued before the upgrade keeps its bytes and its old tool n
     .listJobs({ queue: 'mailbox' })
     .find((item) => item.payload.messageUuid === id && item.payload.to)!;
   const stored = JSON.parse(
-    JSON.stringify(mailbox.payload).replace('call work_on', 'call run_in_background')
+    JSON.stringify(mailbox.payload).replace('with work_on:true', 'call run_in_background')
   );
   db.getDatabase()
     .prepare('UPDATE job_queue SET payload = ? WHERE id = ?')

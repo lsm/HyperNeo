@@ -127,6 +127,8 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           work_on: z.literal(true).optional(),
         },
         async ({ text, details, work_on, ...input }) => {
+          if (!work_on && details && text.length > 2000)
+            return result({ accepted: false, reason: 'reply_summary_too_long' });
           if (!work_on)
             return result(
               await publish(
@@ -162,7 +164,8 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             progress: true,
           });
           if (!receipt.accepted) return result(receipt);
-          return result({ ...receipt, ...(await handOff(ask, input.replyTo[0])) });
+          const handed = await handOff(ask, input.replyTo[0]);
+          return result(handed.started ? { ...receipt, ...handed } : handed);
         }
       ),
     ],
