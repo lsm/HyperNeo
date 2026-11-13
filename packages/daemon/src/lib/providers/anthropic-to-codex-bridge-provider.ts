@@ -10,7 +10,10 @@ import type {
   ProviderAuthStatusInfo,
   ProviderOAuthFlowData,
   ListRemoteModelsOptions,
+  ProviderUsageResult,
+  UsageWindow,
 } from '@hyperneo/shared/provider';
+import { type CodexAppServer, startCodexBootstrapServer } from '../drivers/codex-app-server.ts';
 import type { ModelInfo } from '@hyperneo/shared';
 import {
   type OpenAIResponsesBridgeAuth,
@@ -39,6 +42,52 @@ import * as crypto from 'crypto';
 const logger = new Logger('anthropic-to-codex-bridge-provider');
 
 const ANTHROPIC_CODEX_MODELS = getCodexBridgeModelInfos();
+
+type CodexUsageWindow = {
+  usedPercent?: unknown;
+  windowDurationMins?: unknown;
+  resetsAt?: unknown;
+};
+type CodexUsageSnapshot = {
+  limitId?: unknown;
+  limitName?: unknown;
+  primary?: CodexUsageWindow | null;
+  secondary?: CodexUsageWindow | null;
+};
+type CodexRateLimitsResponse = {
+  rateLimits?: CodexUsageSnapshot | null;
+  rateLimitsByLimitId?: Record<string, CodexUsageSnapshot | null> | null;
+  accountId?: unknown;
+};
+
+const codexUsageWindowLabel = (durationMins: number | null): string =>
+  durationMins === 300
+    ? '5 hours'
+    : durationMins === 10080
+      ? '7 days'
+      : `${durationMins ?? '?'} minutes`;
+
+function codexUsageWindows(
+  snapshot: CodexUsageSnapshot | null | undefined,
+  prefix?: string
+): UsageWindow[] {
+  if (!snapshot) return [];
+  return [snapshot.primary, snapshot.secondary]
+    .filter(
+      (window): window is CodexUsageWindow => !!window && typeof window.usedPercent === 'number'
+    )
+    .map((window) => {
+      const duration =
+        typeof window.windowDurationMins === 'number' ? window.windowDurationMins : null;
+      const resetsAt = typeof window.resetsAt === 'number' ? window.resetsAt : null;
+      return {
+        label: `${prefix ?? ''}${codexUsageWindowLabel(duration)}`,
+        used: window.usedPercent as number,
+        limit: 100,
+        resetAt: resetsAt === null ? null : new Date(resetsAt * 1000).toISOString(),
+      };
+    });
+}
 
 const OAUTH_CONFIG = {
   clientId: 'app_EMoamEEZ73f0CkXaXp7hrann',
@@ -188,7 +237,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     private readonly env: Record<string, string | undefined> = process.env,
     authDir?: string,
     codexAuthDir?: string,
-    private readonly fetchImpl: typeof fetch = fetch
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly codexAppServer: () => Promise<
+      Pick<CodexAppServer, 'call' | 'close'>
+    > = startCodexBootstrapServer
   ) {
     this.authPath = path.join(authDir ?? getDataDir(), 'auth.json');
     this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
@@ -237,6 +289,43 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       return { type: 'api_key', apiKey: credentials.access };
     }
     return this.toProviderCredentials(credentials);
+  }
+
+  async getUsage(): Promise<ProviderUsageResult> {
+    const credentials = await this.loadCredentials();
+    const accountId =
+      credentials?.accountId ?? (credentials?.access && this.extractAccountId(credentials.access));
+    if (!accountId) {
+      return { supported: false, provider: this.id, reason: 'not_supported' };
+    }
+    let server: Pick<CodexAppServer, 'call' | 'close'> | undefined;
+    let response: CodexRateLimitsResponse;
+    try {
+      server = await this.codexAppServer();
+      response = (await server.call('account/rateLimits/read', {})) as CodexRateLimitsResponse;
+    } catch {
+      throw new Error('Codex usage request failed.');
+    } finally {
+      await server?.close();
+    }
+    if (typeof response.accountId === 'string' && response.accountId !== accountId) {
+      return { supported: false, provider: this.id, reason: 'not_supported' };
+    }
+    const defaultLimitId =
+      typeof response.rateLimits?.limitId === 'string' ? response.rateLimits.limitId : null;
+    const buckets = Object.entries(response.rateLimitsByLimitId ?? {});
+    const windows: UsageWindow[] = [];
+    if (!buckets.some(([limitId]) => limitId === defaultLimitId)) {
+      windows.push(...codexUsageWindows(response.rateLimits));
+    }
+    for (const [limitId, snapshot] of buckets) {
+      const prefix =
+        limitId !== defaultLimitId && typeof snapshot?.limitName === 'string'
+          ? `${snapshot.limitName} `
+          : '';
+      windows.push(...codexUsageWindows(snapshot, prefix));
+    }
+    return { supported: true, provider: this.id, windows };
   }
 
   onCredentialsChanged(
