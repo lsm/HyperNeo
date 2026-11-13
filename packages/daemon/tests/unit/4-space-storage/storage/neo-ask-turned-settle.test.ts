@@ -97,10 +97,16 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
       id
     );
   };
-  const sweep = () =>
-    gateway.run(DB_OPS.get('neo.turnedAskSettles') as DbOp<{ now: number }, string[]>, {
-      now: 100,
-    });
+  const sweep = async () => {
+    const ids = await gateway.run(
+      DB_OPS.get('neo.turnedAskSettleReads') as DbOp<Record<string, never>, string[]>,
+      {}
+    );
+    return gateway.run(
+      DB_OPS.get('neo.turnedAskSettles') as DbOp<{ now: number; ids: string[] }, string[]>,
+      { now: 100, ids }
+    );
+  };
   const touchAsk = (ms: number) =>
     db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(ms, 'ask');
 
@@ -272,4 +278,81 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(await sweep()).toEqual([]);
     expect(store.getAsk('ask')).toMatchObject({ status: 'dropped', outcome: 'Earlier' });
   });
+
+  test('the sweep stays under 250 ms at live scale', async () => {
+    db.prepare(`INSERT INTO sessions
+      (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata)
+      VALUES ('big','Big','general','/big','2026-01-01','2026-01-01','active','{}','{}')`).run();
+    const asks: string[] = [];
+    db.transaction(() => {
+      for (let i = 0; i < 32; i += 1) {
+        const id = `bulk-${i}`;
+        asks.push(id);
+        store.openAsk({
+          id,
+          projectId: null,
+          sessionId: 'big',
+          originMessageId: null,
+          title: id,
+          request: 'Bulk work',
+          createdAt: 1,
+        });
+        store.addTodo(
+          `done-${id}`,
+          id,
+          { title: `Step ${id}`, doneWhen: 'Done', check: null, instruction: null, named: null },
+          1
+        );
+        db.prepare(`UPDATE neo_todos SET state = 'done' WHERE id = ?`).run(`done-${id}`);
+      }
+    })();
+    const insert = db.prepare(`INSERT INTO sdk_messages
+      (seq, id, session_id, message_type, sdk_message, timestamp, sdk_uuid, consumed_seq,
+       is_terminal, send_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const bulkSdk = (kind: 'user' | 'result', uuid: string, consumedSeq: number | null) =>
+      insert.run(
+        (seq += 1),
+        `m${seq}`,
+        'big',
+        kind,
+        JSON.stringify({ type: kind }),
+        new Date(Date.UTC(2026, 0, 2) + seq).toISOString(),
+        uuid,
+        consumedSeq,
+        kind === 'result' ? 1 : 0,
+        'consumed'
+      );
+    const note = db.prepare(`INSERT INTO job_queue
+      (id, queue, status, payload, run_at, created_at, completed_at)
+      VALUES (?, 'neo_notes', 'completed', ?, 0, 0, 0)`);
+    db.transaction(() => {
+      for (let i = 0; i < 1946; i += 1)
+        note.run(
+          `bulk-note-${i}`,
+          JSON.stringify({
+            to: { kind: 'session', sessionId: 'big' },
+            origin: 'session:big',
+            messageUuid: `neo-stalled-ask:bulk-${i % asks.length}:1:0`,
+            message: { type: 'user', message: { content: 'reminder' } },
+            neoBatchUuid: `bulk-batch-${i}`,
+          })
+        );
+      for (let i = 0; i < 86_710; i += 1)
+        bulkSdk(i % 2 ? 'result' : 'user', `bulk-msg-${i}`, i + 1);
+      for (const id of asks) {
+        bulkSdk('user', `neo-stalled-ask:${id}:1:0`, 87_000);
+        bulkSdk('result', `bulk-result-${id}`, 87_001);
+      }
+    })();
+    db.exec('DROP INDEX idx_sdk_messages_session_consumed');
+    db.exec('ANALYZE');
+    db.exec(`CREATE INDEX idx_sdk_messages_session_consumed
+      ON sdk_messages(session_id, consumed_seq)`);
+    const started = performance.now();
+    const settled = await sweep();
+    const elapsed = performance.now() - started;
+    expect(settled).toEqual(asks);
+    expect(elapsed).toBeLessThan(250);
+  }, 30_000);
 });
