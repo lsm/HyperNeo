@@ -47,11 +47,11 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
   })
   .superRefine((value, ctx) => {
     publicationTextRule(value, ctx);
-    if (value.progress && (value.replyTo?.length !== 1 || value.fullText.length > 300))
+    if (value.progress && (value.replyTo?.length !== 1 || value.fullText.length > 150))
       ctx.addIssue({
         code: 'custom',
         message:
-          'Progress requires one replyTo ID and a brief acknowledgment of at most 300 characters.',
+          'Progress requires one replyTo ID and a brief acknowledgment of at most 150 characters.',
       });
   });
 const Draft = NeoPublicationDraft;
