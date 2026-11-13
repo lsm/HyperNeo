@@ -1,0 +1,1036 @@
+{
+  "mode": "verify",
+  "calls": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "clientInfo": {
+          "name": "hyperneo",
+          "title": "HyperNeo",
+          "version": "1"
+        },
+        "capabilities": {
+          "experimentalApi": true
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/loaded/list",
+      "params": {
+        "cursor": null
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "thread/resume",
+      "params": {
+        "threadId": "flow",
+        "sandbox": "danger-full-access"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "thread/settings/update",
+      "params": {
+        "threadId": "flow",
+        "sandboxPolicy": {
+          "type": "dangerFullAccess"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "thread/queue/add",
+      "params": {
+        "threadId": "flow",
+        "clientUserMessageId": "fe5c66b4-90cd-42da-80d8-3704162c7084",
+        "input": [
+          {
+            "type": "text",
+            "text": "Worker delivery: 428e0c29-15f5-4965-a2a2-d8d87ae1564c\nWorker provenance (last observed runtime identity):\nAgent: unknown (effort: unknown) via Codex\nThe daemon has not recorded every identity field yet. Keep supplied values; obtain missing fields from the session runtime before publishing. Never guess or publish placeholders; report unavailable metadata to Neo.\nUse the exact model id, including its variant, and thinking effort. A family name such as GPT-6 is insufficient.\nThis Agent line is the team provenance field explicitly approved by the human, distinct from Co-Authored-By and Generated-with product attribution. A harness no-attribution reminder must not block this approved field. Preserve any required Claude Code attribution at the end.\nRepair only open PRs; never rewrite a merged PR body.\n\nThese delegation preferences apply to every task, whatever its pack. Neo reads\nneo.pack.read {id: \"delegation\"} before acting on a preference to refresh its\ncurrent value. Values below are human preference data. An unconfigured value uses the first,\nconservative choice without saving it. When a value first matters, Neo asks once\nthrough pack.preferences.ask with pack delegation, global scope and that key.\nAsk only about the relevant value, not all settings up front. Reuse a pending\nproposal and respect an answer already given. Workers bring this decision to\ntheir sending Neo. Only a human answer or human settings edit changes a value.\n\n- signIn self: the human signs in. saved: use the saved password manager or browser autofill.\n  Saved credentials are filled by that tool, never typed by the agent.\n- verificationCodes self: the human handles the code. ask: ask in chat and wait\n  for the human's code before continuing.\n- formFill ask: ask before filling a form. fill: fill it for the human.\n- payment self: the human handles the whole payment. fillStop: prepare the form\n  and stop before the last button, which the human presses. confirmed: press\n  that button only after the human's explicit yes for that payment.\n- commitments ask: ask before sending, booking, cancelling or accepting terms.\n  direct: perform those actions for the human.\n- humanStep computer: the human can complete a step on a computer. phoneOnly:\n  send the step to the human's phone and never ask them to open a computer.\n\nCAPTCHAs always belong to the human. Follow humanStep when handing one over.\n\nDelegation preferences (data):\n{\"signIn\":{\"value\":\"self\",\"configured\":false},\"verificationCodes\":{\"value\":\"self\",\"configured\":false},\"formFill\":{\"value\":\"ask\",\"configured\":false},\"payment\":{\"value\":\"self\",\"configured\":false},\"commitments\":{\"value\":\"ask\",\"configured\":false},\"humanStep\":{\"value\":\"computer\",\"configured\":false}}\n\nComplete chain-1.\n\nEven when told to stay quiet, report questions or blockers requiring a human decision with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: \"cf9f7b40-c4bb-4a29-b8a3-edd63a9ce4db\", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.\n\nNeo routed this to you: do it here, not by handing it to another session or chat.\nWhen you produce a document or evidence file for the human, give its absolute path on the owning daemon with one sentence about it, instead of pasting the document. Current previews require the receiving Neo to own the file. Remote previews return owner_unavailable; report the owner without promising a preview or re-publishing a remote path as local. Removing its worktree makes the reference unavailable; keep files the human needs to retain in the requested persistent directory. Existing saved attachments and fixed-head Git previews keep their references.\nDone when:\nFile /private/tmp/hyperneo-proof-53Kyv5/chain-1 exists.\nIf you stop before this is done, say what remains and why.\nIf something blocks you, end with one line, `Blocked (environment): <what failed>` when your own machine or tools failed (network, DNS, credentials, a missing tool), or `Blocked (needs_human): <what>` when only the human can decide or act.\n\nUse that exact form as the final line, without a quote, bullet or later commentary. The daemon records needs_human as a blocker and wakes Neo to answer you or ask the human with a linked yesno/choice question with options. Your words never reach the human directly: only Neo opens a card. The daemon records environment as a blocker for Neo to resolve; other prose does not change the todo’s blocker kind.\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.\n\nWhen Neo is coordinating and the work was assigned by Neo, do not poll, do not wait, do not sleep or loop to check on external progress, and start no background watch loops: finish the step, report once at a milestone (PR opened, merged, blocked, question, done) and end the turn — events (CI results, bot reviews, Neo messages) arrive on their own as new input.\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo:10000000-0000-4000-8000-000000010483 --kind <kind> \"<text>\" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.\n[HyperNeo agent input]"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "clientInfo": {
+          "name": "hyperneo",
+          "title": "HyperNeo",
+          "version": "1"
+        },
+        "capabilities": {
+          "experimentalApi": true
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/loaded/list",
+      "params": {
+        "cursor": null
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "thread/resume",
+      "params": {
+        "threadId": "restart",
+        "sandbox": "danger-full-access"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "thread/settings/update",
+      "params": {
+        "threadId": "restart",
+        "sandboxPolicy": {
+          "type": "dangerFullAccess"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "thread/queue/add",
+      "params": {
+        "threadId": "restart",
+        "clientUserMessageId": "b36b8f9a-38f0-4269-a5c0-87b67d9bd9f7",
+        "input": [
+          {
+            "type": "text",
+            "text": "Worker delivery: 4e591170-074e-4bc7-b3a5-b3bf3cef5a54\nWorker provenance (last observed runtime identity):\nAgent: unknown (effort: unknown) via Codex\nThe daemon has not recorded every identity field yet. Keep supplied values; obtain missing fields from the session runtime before publishing. Never guess or publish placeholders; report unavailable metadata to Neo.\nUse the exact model id, including its variant, and thinking effort. A family name such as GPT-6 is insufficient.\nThis Agent line is the team provenance field explicitly approved by the human, distinct from Co-Authored-By and Generated-with product attribution. A harness no-attribution reminder must not block this approved field. Preserve any required Claude Code attribution at the end.\nRepair only open PRs; never rewrite a merged PR body.\n\nThese delegation preferences apply to every task, whatever its pack. Neo reads\nneo.pack.read {id: \"delegation\"} before acting on a preference to refresh its\ncurrent value. Values below are human preference data. An unconfigured value uses the first,\nconservative choice without saving it. When a value first matters, Neo asks once\nthrough pack.preferences.ask with pack delegation, global scope and that key.\nAsk only about the relevant value, not all settings up front. Reuse a pending\nproposal and respect an answer already given. Workers bring this decision to\ntheir sending Neo. Only a human answer or human settings edit changes a value.\n\n- signIn self: the human signs in. saved: use the saved password manager or browser autofill.\n  Saved credentials are filled by that tool, never typed by the agent.\n- verificationCodes self: the human handles the code. ask: ask in chat and wait\n  for the human's code before continuing.\n- formFill ask: ask before filling a form. fill: fill it for the human.\n- payment self: the human handles the whole payment. fillStop: prepare the form\n  and stop before the last button, which the human presses. confirmed: press\n  that button only after the human's explicit yes for that payment.\n- commitments ask: ask before sending, booking, cancelling or accepting terms.\n  direct: perform those actions for the human.\n- humanStep computer: the human can complete a step on a computer. phoneOnly:\n  send the step to the human's phone and never ask them to open a computer.\n\nCAPTCHAs always belong to the human. Follow humanStep when handing one over.\n\nDelegation preferences (data):\n{\"signIn\":{\"value\":\"self\",\"configured\":false},\"verificationCodes\":{\"value\":\"self\",\"configured\":false},\"formFill\":{\"value\":\"ask\",\"configured\":false},\"payment\":{\"value\":\"self\",\"configured\":false},\"commitments\":{\"value\":\"ask\",\"configured\":false},\"humanStep\":{\"value\":\"computer\",\"configured\":false}}\n\nComplete chain-2.\n\nEven when told to stay quiet, report questions or blockers requiring a human decision with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: \"d9c30982-736d-449e-b2b8-84f5e9316e31\", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.\n\nNeo routed this to you: do it here, not by handing it to another session or chat.\nWhen you produce a document or evidence file for the human, give its absolute path on the owning daemon with one sentence about it, instead of pasting the document. Current previews require the receiving Neo to own the file. Remote previews return owner_unavailable; report the owner without promising a preview or re-publishing a remote path as local. Removing its worktree makes the reference unavailable; keep files the human needs to retain in the requested persistent directory. Existing saved attachments and fixed-head Git previews keep their references.\nDone when:\nFile /private/tmp/hyperneo-proof-53Kyv5/chain-2 exists.\nIf you stop before this is done, say what remains and why.\nIf something blocks you, end with one line, `Blocked (environment): <what failed>` when your own machine or tools failed (network, DNS, credentials, a missing tool), or `Blocked (needs_human): <what>` when only the human can decide or act.\n\nUse that exact form as the final line, without a quote, bullet or later commentary. The daemon records needs_human as a blocker and wakes Neo to answer you or ask the human with a linked yesno/choice question with options. Your words never reach the human directly: only Neo opens a card. The daemon records environment as a blocker for Neo to resolve; other prose does not change the todo’s blocker kind.\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.\n\nWhen Neo is coordinating and the work was assigned by Neo, do not poll, do not wait, do not sleep or loop to check on external progress, and start no background watch loops: finish the step, report once at a milestone (PR opened, merged, blocked, question, done) and end the turn — events (CI results, bot reviews, Neo messages) arrive on their own as new input.\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo:10000000-0000-4000-8000-000000010483 --kind <kind> \"<text>\" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.\n[HyperNeo agent input]"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "clientInfo": {
+          "name": "hyperneo",
+          "title": "HyperNeo",
+          "version": "1"
+        },
+        "capabilities": {
+          "experimentalApi": true
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/loaded/list",
+      "params": {
+        "cursor": null
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "thread/resume",
+      "params": {
+        "threadId": "blocked",
+        "sandbox": "danger-full-access"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "thread/settings/update",
+      "params": {
+        "threadId": "blocked",
+        "sandboxPolicy": {
+          "type": "dangerFullAccess"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "thread/queue/add",
+      "params": {
+        "threadId": "blocked",
+        "clientUserMessageId": "6e7cb67f-0d24-4bf3-9b30-0a13eb40bf68",
+        "input": [
+          {
+            "type": "text",
+            "text": "Worker delivery: 5ed729a4-7d2c-48d3-9106-63cb560857d5\nWorker provenance (last observed runtime identity):\nAgent: unknown (effort: unknown) via Codex\nThe daemon has not recorded every identity field yet. Keep supplied values; obtain missing fields from the session runtime before publishing. Never guess or publish placeholders; report unavailable metadata to Neo.\nUse the exact model id, including its variant, and thinking effort. A family name such as GPT-6 is insufficient.\nThis Agent line is the team provenance field explicitly approved by the human, distinct from Co-Authored-By and Generated-with product attribution. A harness no-attribution reminder must not block this approved field. Preserve any required Claude Code attribution at the end.\nRepair only open PRs; never rewrite a merged PR body.\n\nThese delegation preferences apply to every task, whatever its pack. Neo reads\nneo.pack.read {id: \"delegation\"} before acting on a preference to refresh its\ncurrent value. Values below are human preference data. An unconfigured value uses the first,\nconservative choice without saving it. When a value first matters, Neo asks once\nthrough pack.preferences.ask with pack delegation, global scope and that key.\nAsk only about the relevant value, not all settings up front. Reuse a pending\nproposal and respect an answer already given. Workers bring this decision to\ntheir sending Neo. Only a human answer or human settings edit changes a value.\n\n- signIn self: the human signs in. saved: use the saved password manager or browser autofill.\n  Saved credentials are filled by that tool, never typed by the agent.\n- verificationCodes self: the human handles the code. ask: ask in chat and wait\n  for the human's code before continuing.\n- formFill ask: ask before filling a form. fill: fill it for the human.\n- payment self: the human handles the whole payment. fillStop: prepare the form\n  and stop before the last button, which the human presses. confirmed: press\n  that button only after the human's explicit yes for that payment.\n- commitments ask: ask before sending, booking, cancelling or accepting terms.\n  direct: perform those actions for the human.\n- humanStep computer: the human can complete a step on a computer. phoneOnly:\n  send the step to the human's phone and never ask them to open a computer.\n\nCAPTCHAs always belong to the human. Follow humanStep when handing one over.\n\nDelegation preferences (data):\n{\"signIn\":{\"value\":\"self\",\"configured\":false},\"verificationCodes\":{\"value\":\"self\",\"configured\":false},\"formFill\":{\"value\":\"ask\",\"configured\":false},\"payment\":{\"value\":\"self\",\"configured\":false},\"commitments\":{\"value\":\"ask\",\"configured\":false},\"humanStep\":{\"value\":\"computer\",\"configured\":false}}\n\nComplete chain-3.\n\nEven when told to stay quiet, report questions or blockers requiring a human decision with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: \"3f6d214b-d114-41fb-b7dc-3877f26fa6cc\", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.\n\nNeo routed this to you: do it here, not by handing it to another session or chat.\nWhen you produce a document or evidence file for the human, give its absolute path on the owning daemon with one sentence about it, instead of pasting the document. Current previews require the receiving Neo to own the file. Remote previews return owner_unavailable; report the owner without promising a preview or re-publishing a remote path as local. Removing its worktree makes the reference unavailable; keep files the human needs to retain in the requested persistent directory. Existing saved attachments and fixed-head Git previews keep their references.\nDone when:\nFile /private/tmp/hyperneo-proof-53Kyv5/chain-3 exists.\nIf you stop before this is done, say what remains and why.\nIf something blocks you, end with one line, `Blocked (environment): <what failed>` when your own machine or tools failed (network, DNS, credentials, a missing tool), or `Blocked (needs_human): <what>` when only the human can decide or act.\n\nUse that exact form as the final line, without a quote, bullet or later commentary. The daemon records needs_human as a blocker and wakes Neo to answer you or ask the human with a linked yesno/choice question with options. Your words never reach the human directly: only Neo opens a card. The daemon records environment as a blocker for Neo to resolve; other prose does not change the todo’s blocker kind.\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.\n\nWhen Neo is coordinating and the work was assigned by Neo, do not poll, do not wait, do not sleep or loop to check on external progress, and start no background watch loops: finish the step, report once at a milestone (PR opened, merged, blocked, question, done) and end the turn — events (CI results, bot reviews, Neo messages) arrive on their own as new input.\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo:10000000-0000-4000-8000-000000010483 --kind <kind> \"<text>\" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.\n[HyperNeo agent input]"
+          }
+        ]
+      }
+    }
+  ],
+  "afterOpen": {
+    "ask": {
+      "id": "b352b461-b2df-4207-84c6-2c714828ca56",
+      "goalId": null,
+      "projectId": null,
+      "parentId": null,
+      "sessionId": "neo:10000000-0000-4000-8000-000000010483",
+      "originMessageId": null,
+      "title": "Chain",
+      "topic": null,
+      "request": "Run the plan in order.",
+      "status": "open",
+      "outcome": null,
+      "createdAt": 1794547124141,
+      "updatedAt": 1794547124176,
+      "settledAt": null
+    },
+    "state": "doing",
+    "todos": [
+      {
+        "worker": {
+          "id": "flow",
+          "adapter": "codex-desktop",
+          "name": "flow",
+          "label": "Codex · flow"
+        },
+        "id": "cf9f7b40-c4bb-4a29-b8a3-edd63a9ce4db",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 0,
+        "title": "chain-1",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-1 exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-1"
+          }
+        },
+        "instruction": "Complete chain-1.",
+        "named": null,
+        "state": "doing",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [],
+        "replacedBy": null,
+        "addedAfterStart": false,
+        "approvedAt": 1794547124145,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124145,
+        "updatedAt": 1794547124158,
+        "startedAt": 1794547124158,
+        "finishedAt": null,
+        "status": "In progress",
+        "statusCodes": [
+          {
+            "code": "todo.doing",
+            "params": {}
+          }
+        ],
+        "link": "codex://threads/flow",
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "restart",
+          "adapter": "codex-desktop",
+          "name": "restart",
+          "label": "Codex · restart"
+        },
+        "id": "d9c30982-736d-449e-b2b8-84f5e9316e31",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 1,
+        "title": "chain-2",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-2 exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-2"
+          }
+        },
+        "instruction": "Complete chain-2.",
+        "named": null,
+        "state": "todo",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [
+          "cf9f7b40-c4bb-4a29-b8a3-edd63a9ce4db"
+        ],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": 1794547124172,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124172,
+        "updatedAt": 1794547124172,
+        "startedAt": null,
+        "finishedAt": null,
+        "status": "Not started",
+        "statusCodes": [
+          {
+            "code": "todo.notStarted",
+            "params": {}
+          }
+        ],
+        "link": null,
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "blocked",
+          "adapter": "codex-desktop",
+          "name": "blocked",
+          "label": "Codex · blocked"
+        },
+        "id": "3f6d214b-d114-41fb-b7dc-3877f26fa6cc",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 2,
+        "title": "chain-3",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-3 exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-3"
+          }
+        },
+        "instruction": "Complete chain-3.",
+        "named": null,
+        "state": "todo",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [
+          "d9c30982-736d-449e-b2b8-84f5e9316e31"
+        ],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": 1794547124174,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124174,
+        "updatedAt": 1794547124174,
+        "startedAt": null,
+        "finishedAt": null,
+        "status": "Not started",
+        "statusCodes": [
+          {
+            "code": "todo.notStarted",
+            "params": {}
+          }
+        ],
+        "link": null,
+        "remoteLink": null
+      },
+      {
+        "worker": null,
+        "id": "3908fc0e-989d-48a9-a7d7-6c492fa37680",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 3,
+        "title": "chain-held",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-held exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-held"
+          }
+        },
+        "instruction": null,
+        "named": null,
+        "state": "todo",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": 1794547124176,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124176,
+        "updatedAt": 1794547124176,
+        "startedAt": null,
+        "finishedAt": null,
+        "status": "Not started",
+        "statusCodes": [
+          {
+            "code": "todo.notStarted",
+            "params": {}
+          }
+        ],
+        "link": null,
+        "remoteLink": null
+      }
+    ],
+    "doneCount": 0,
+    "questions": []
+  },
+  "afterUnrelatedCard": {
+    "ask": {
+      "id": "b352b461-b2df-4207-84c6-2c714828ca56",
+      "goalId": null,
+      "projectId": null,
+      "parentId": null,
+      "sessionId": "neo:10000000-0000-4000-8000-000000010483",
+      "originMessageId": null,
+      "title": "Chain",
+      "topic": null,
+      "request": "Run the plan in order.",
+      "status": "open",
+      "outcome": null,
+      "createdAt": 1794547124141,
+      "updatedAt": 1794547126081,
+      "settledAt": null
+    },
+    "state": "waiting",
+    "todos": [
+      {
+        "worker": null,
+        "id": "3908fc0e-989d-48a9-a7d7-6c492fa37680",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 3,
+        "title": "chain-held",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-held exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-held"
+          }
+        },
+        "instruction": null,
+        "named": null,
+        "state": "blocked",
+        "reason": null,
+        "blockedReason": "Human paused this step.",
+        "nextAction": "The human releases it.",
+        "blockedBy": "held",
+        "priority": "normal",
+        "dependsOn": [],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": 1794547124176,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124176,
+        "updatedAt": 1794547125133,
+        "startedAt": null,
+        "finishedAt": null,
+        "status": "Blocked: Human paused this step.",
+        "statusCodes": [
+          {
+            "code": "todo.blocked",
+            "params": {
+              "reason": "Human paused this step."
+            }
+          }
+        ],
+        "link": null,
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "flow",
+          "adapter": "codex-desktop",
+          "name": "flow",
+          "label": "Codex · flow"
+        },
+        "id": "unapproved",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 4,
+        "title": "unapproved",
+        "doneWhen": "Synthetic result recorded",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/unapproved"
+          }
+        },
+        "instruction": "Perform unapproved",
+        "named": null,
+        "state": "blocked",
+        "reason": null,
+        "blockedReason": "Waiting for the human to answer.",
+        "nextAction": "Answer the question.",
+        "blockedBy": "question",
+        "priority": "normal",
+        "dependsOn": [],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": null,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547123346,
+        "updatedAt": 1794547126081,
+        "startedAt": null,
+        "finishedAt": null,
+        "status": "Blocked: Waiting for the human to answer.",
+        "statusCodes": [
+          {
+            "code": "todo.blocked",
+            "params": {
+              "reason": "Waiting for the human to answer."
+            }
+          }
+        ],
+        "link": null,
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "flow",
+          "adapter": "codex-desktop",
+          "name": "flow",
+          "label": "Codex · flow"
+        },
+        "id": "cf9f7b40-c4bb-4a29-b8a3-edd63a9ce4db",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 0,
+        "title": "chain-1",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-1 exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-1"
+          }
+        },
+        "instruction": "Complete chain-1.",
+        "named": null,
+        "state": "doing",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [],
+        "replacedBy": null,
+        "addedAfterStart": false,
+        "approvedAt": 1794547124145,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124145,
+        "updatedAt": 1794547124158,
+        "startedAt": 1794547124158,
+        "finishedAt": null,
+        "status": "In progress",
+        "statusCodes": [
+          {
+            "code": "todo.doing",
+            "params": {}
+          }
+        ],
+        "link": "codex://threads/flow",
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "restart",
+          "adapter": "codex-desktop",
+          "name": "restart",
+          "label": "Codex · restart"
+        },
+        "id": "d9c30982-736d-449e-b2b8-84f5e9316e31",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 1,
+        "title": "chain-2",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-2 exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-2"
+          }
+        },
+        "instruction": "Complete chain-2.",
+        "named": null,
+        "state": "todo",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [
+          "cf9f7b40-c4bb-4a29-b8a3-edd63a9ce4db"
+        ],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": 1794547124172,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124172,
+        "updatedAt": 1794547124172,
+        "startedAt": null,
+        "finishedAt": null,
+        "status": "Not started",
+        "statusCodes": [
+          {
+            "code": "todo.notStarted",
+            "params": {}
+          }
+        ],
+        "link": null,
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "blocked",
+          "adapter": "codex-desktop",
+          "name": "blocked",
+          "label": "Codex · blocked"
+        },
+        "id": "3f6d214b-d114-41fb-b7dc-3877f26fa6cc",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 2,
+        "title": "chain-3",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-3 exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-3"
+          }
+        },
+        "instruction": "Complete chain-3.",
+        "named": null,
+        "state": "todo",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [
+          "d9c30982-736d-449e-b2b8-84f5e9316e31"
+        ],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": 1794547124174,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124174,
+        "updatedAt": 1794547124174,
+        "startedAt": null,
+        "finishedAt": null,
+        "status": "Not started",
+        "statusCodes": [
+          {
+            "code": "todo.notStarted",
+            "params": {}
+          }
+        ],
+        "link": null,
+        "remoteLink": null
+      }
+    ],
+    "doneCount": 0,
+    "questions": [
+      {
+        "document": null,
+        "id": "8ef13695-48d3-4db1-9f34-eeceb4bab925",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "text": "Start \"unapproved\"?",
+        "kind": "start",
+        "options": null,
+        "multiple": false,
+        "noLabel": null,
+        "yesLabel": null,
+        "startTodos": [
+          "unapproved"
+        ],
+        "todos": [
+          "unapproved"
+        ],
+        "confirm": null,
+        "state": "open",
+        "answer": null,
+        "answeredBy": null,
+        "answeredAt": null,
+        "retiredReason": null,
+        "replacedBy": null,
+        "createdAt": 1794547125136,
+        "textCodes": [
+          {
+            "code": "question.startOne",
+            "params": {
+              "title": "unapproved"
+            }
+          }
+        ]
+      },
+      {
+        "document": null,
+        "id": "c2d7b973-6837-487e-b6db-2ffc0b38742d",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "text": "Which release?",
+        "kind": "reply",
+        "options": null,
+        "multiple": false,
+        "noLabel": null,
+        "yesLabel": null,
+        "startTodos": null,
+        "todos": [
+          "d9c30982-736d-449e-b2b8-84f5e9316e31",
+          "3f6d214b-d114-41fb-b7dc-3877f26fa6cc",
+          "3908fc0e-989d-48a9-a7d7-6c492fa37680",
+          "unapproved"
+        ],
+        "confirm": null,
+        "state": "answered",
+        "answer": "The next one",
+        "answeredBy": "button",
+        "answeredAt": 1794547125136,
+        "retiredReason": null,
+        "replacedBy": null,
+        "createdAt": 1794547125136
+      }
+    ]
+  },
+  "chainFinished": {
+    "ask": {
+      "id": "b352b461-b2df-4207-84c6-2c714828ca56",
+      "goalId": null,
+      "projectId": null,
+      "parentId": null,
+      "sessionId": "neo:10000000-0000-4000-8000-000000010483",
+      "originMessageId": null,
+      "title": "Chain",
+      "topic": null,
+      "request": "Run the plan in order.",
+      "status": "open",
+      "outcome": null,
+      "createdAt": 1794547124141,
+      "updatedAt": 1794547129088,
+      "settledAt": null
+    },
+    "state": "waiting",
+    "todos": [
+      {
+        "worker": null,
+        "id": "3908fc0e-989d-48a9-a7d7-6c492fa37680",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 3,
+        "title": "chain-held",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-held exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-held"
+          }
+        },
+        "instruction": null,
+        "named": null,
+        "state": "blocked",
+        "reason": null,
+        "blockedReason": "Human paused this step.",
+        "nextAction": "The human releases it.",
+        "blockedBy": "held",
+        "priority": "normal",
+        "dependsOn": [],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": 1794547124176,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124176,
+        "updatedAt": 1794547125133,
+        "startedAt": null,
+        "finishedAt": null,
+        "status": "Blocked: Human paused this step.",
+        "statusCodes": [
+          {
+            "code": "todo.blocked",
+            "params": {
+              "reason": "Human paused this step."
+            }
+          }
+        ],
+        "link": null,
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "flow",
+          "adapter": "codex-desktop",
+          "name": "flow",
+          "label": "Codex · flow"
+        },
+        "id": "unapproved",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 4,
+        "title": "unapproved",
+        "doneWhen": "Synthetic result recorded",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/unapproved"
+          }
+        },
+        "instruction": "Perform unapproved",
+        "named": null,
+        "state": "blocked",
+        "reason": null,
+        "blockedReason": "Waiting for the human to answer.",
+        "nextAction": "Answer the question.",
+        "blockedBy": "question",
+        "priority": "normal",
+        "dependsOn": [],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": null,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547123346,
+        "updatedAt": 1794547126081,
+        "startedAt": null,
+        "finishedAt": null,
+        "status": "Blocked: Waiting for the human to answer.",
+        "statusCodes": [
+          {
+            "code": "todo.blocked",
+            "params": {
+              "reason": "Waiting for the human to answer."
+            }
+          }
+        ],
+        "link": null,
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "blocked",
+          "adapter": "codex-desktop",
+          "name": "blocked",
+          "label": "Codex · blocked"
+        },
+        "id": "3f6d214b-d114-41fb-b7dc-3877f26fa6cc",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 2,
+        "title": "chain-3",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-3 exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-3"
+          }
+        },
+        "instruction": "Complete chain-3.",
+        "named": null,
+        "state": "doing",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [
+          "d9c30982-736d-449e-b2b8-84f5e9316e31"
+        ],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": 1794547124174,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": null,
+        "createdAt": 1794547124174,
+        "updatedAt": 1794547129088,
+        "startedAt": 1794547129088,
+        "finishedAt": null,
+        "status": "In progress",
+        "statusCodes": [
+          {
+            "code": "todo.doing",
+            "params": {}
+          }
+        ],
+        "link": "codex://threads/blocked",
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "flow",
+          "adapter": "codex-desktop",
+          "name": "flow",
+          "label": "Codex · flow"
+        },
+        "id": "cf9f7b40-c4bb-4a29-b8a3-edd63a9ce4db",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 0,
+        "title": "chain-1",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-1 exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-1"
+          }
+        },
+        "instruction": "Complete chain-1.",
+        "named": null,
+        "state": "done",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [],
+        "replacedBy": null,
+        "addedAfterStart": false,
+        "approvedAt": 1794547124145,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": "File /private/tmp/hyperneo-proof-53Kyv5/chain-1 exists.",
+        "createdAt": 1794547124145,
+        "updatedAt": 1794547127090,
+        "startedAt": 1794547124158,
+        "finishedAt": 1794547127090,
+        "status": "File /private/tmp/hyperneo-proof-53Kyv5/chain-1 exists.",
+        "statusCodes": [],
+        "link": "codex://threads/flow",
+        "remoteLink": null
+      },
+      {
+        "worker": {
+          "id": "restart",
+          "adapter": "codex-desktop",
+          "name": "restart",
+          "label": "Codex · restart"
+        },
+        "id": "d9c30982-736d-449e-b2b8-84f5e9316e31",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "position": 1,
+        "title": "chain-2",
+        "doneWhen": "File /private/tmp/hyperneo-proof-53Kyv5/chain-2 exists.",
+        "check": {
+          "pack": "core",
+          "kind": "evidence",
+          "params": {
+            "path": "/private/tmp/hyperneo-proof-53Kyv5/chain-2"
+          }
+        },
+        "instruction": "Complete chain-2.",
+        "named": null,
+        "state": "done",
+        "reason": null,
+        "blockedReason": null,
+        "nextAction": null,
+        "blockedBy": null,
+        "priority": "normal",
+        "dependsOn": [
+          "cf9f7b40-c4bb-4a29-b8a3-edd63a9ce4db"
+        ],
+        "replacedBy": null,
+        "addedAfterStart": true,
+        "approvedAt": 1794547124172,
+        "approvalQuestionId": null,
+        "report": null,
+        "evidence": "File /private/tmp/hyperneo-proof-53Kyv5/chain-2 exists.",
+        "createdAt": 1794547124172,
+        "updatedAt": 1794547129086,
+        "startedAt": 1794547127103,
+        "finishedAt": 1794547129086,
+        "status": "File /private/tmp/hyperneo-proof-53Kyv5/chain-2 exists.",
+        "statusCodes": [],
+        "link": "codex://threads/restart",
+        "remoteLink": null
+      }
+    ],
+    "doneCount": 2,
+    "questions": [
+      {
+        "document": null,
+        "id": "8ef13695-48d3-4db1-9f34-eeceb4bab925",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "text": "Start \"unapproved\"?",
+        "kind": "start",
+        "options": null,
+        "multiple": false,
+        "noLabel": null,
+        "yesLabel": null,
+        "startTodos": [
+          "unapproved"
+        ],
+        "todos": [
+          "unapproved"
+        ],
+        "confirm": null,
+        "state": "open",
+        "answer": null,
+        "answeredBy": null,
+        "answeredAt": null,
+        "retiredReason": null,
+        "replacedBy": null,
+        "createdAt": 1794547125136,
+        "textCodes": [
+          {
+            "code": "question.startOne",
+            "params": {
+              "title": "unapproved"
+            }
+          }
+        ]
+      },
+      {
+        "document": null,
+        "id": "c2d7b973-6837-487e-b6db-2ffc0b38742d",
+        "askId": "b352b461-b2df-4207-84c6-2c714828ca56",
+        "text": "Which release?",
+        "kind": "reply",
+        "options": null,
+        "multiple": false,
+        "noLabel": null,
+        "yesLabel": null,
+        "startTodos": null,
+        "todos": [
+          "d9c30982-736d-449e-b2b8-84f5e9316e31",
+          "3f6d214b-d114-41fb-b7dc-3877f26fa6cc",
+          "3908fc0e-989d-48a9-a7d7-6c492fa37680",
+          "unapproved"
+        ],
+        "confirm": null,
+        "state": "answered",
+        "answer": "The next one",
+        "answeredBy": "button",
+        "answeredAt": 1794547125136,
+        "retiredReason": null,
+        "replacedBy": null,
+        "createdAt": 1794547125136
+      }
+    ]
+  },
+  "verified": true
+}

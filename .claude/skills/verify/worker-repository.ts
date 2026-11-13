@@ -98,10 +98,10 @@ try {
   assert.equal((await add({ instruction: 'Implement change', target: { verb: 'send', ref: refs[0] } })).ok, true);
   assert.equal((await add({ instruction: 'Renamed repository', target: { verb: 'send', ref: refs[3] } })).ok, true);
   assert.equal((await add({ check: { ...check, params: { urls: ['https://github.com/example/old-name/pull/1'] } }, instruction: 'Existing repository name', target: { verb: 'send', ref: refs[3] } })).ok, true);
-  refusal(await add({ instruction: 'Unreadable repository', target: { verb: 'send', ref: refs[4] }, start: true }));
+  refusal(await add({ instruction: 'Unreadable repository', target: { verb: 'send', ref: refs[4] } }));
   for (const ref of refs.slice(1, 3)) {
     const before = todos.listTodos('ask').length;
-    refusal(await add({ instruction: 'Implement change', target: { verb: 'send', ref }, start: true }));
+    refusal(await add({ instruction: 'Implement change', target: { verb: 'send', ref } }));
     assert.equal(todos.listTodos('ask').length, before);
     const converted = await add({ check: { pack: 'core', kind: 'evidence', params: {} } });
     refusal(await call('neo.todo.edit', { todoId: converted.todo.id, check, instruction: 'Implement change', target: { verb: 'send', ref } }));
@@ -135,7 +135,7 @@ try {
   assert(remoteLookups > 0);
   for (const remotes of [['https://github.com/example/other.git'], []]) {
     remoteRemotes = remotes;
-    refusal(await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef }, start: true }));
+    refusal(await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } }));
   }
   assert.equal(sends, 0);
   const requests = readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n').sort();

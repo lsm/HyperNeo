@@ -695,7 +695,7 @@ describe("Neo's start question", () => {
     expect(await call('neo.question.ask', { askId: 'ask', kind: 'start', text: 'Go?' })).toEqual({
       ok: false,
       reason:
-        'no_start_question: no todo on this ask is waiting to start; add todos with an instruction and the daemon asks.',
+        'no_start_question: no old start question is open on this ask. New todos start by themselves; when the human must say yes first, ask with a yesno or choice card before adding the work.',
     });
     expect(store.listQuestions('ask')).toEqual([]);
   });

@@ -35,7 +35,7 @@ for (const phase of ['initial', 'reopen']) {
     const packs = createTodoCheckPacks(db);
     const controls: NeoTodoControls = {
       resolveTarget: existingTodoTarget,
-      start: unexpected,
+      advance: async () => {},
       proceed: unexpected,
       retry: unexpected,
       stop: async () => null,
@@ -86,7 +86,6 @@ for (const phase of ['initial', 'reopen']) {
         title: 'Local work',
         check: pendingTodoCheck,
         instruction: 'Work',
-        start: false,
         target: { verb: 'start', adapter: 'hyperneo' },
       };
       const refused = await call('neo.todo.add', { after: [], askId: repoAsk.id, ...draft }, false);
