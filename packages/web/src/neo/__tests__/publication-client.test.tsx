@@ -317,6 +317,7 @@ describe('authored publication client', () => {
     { sequence: 0 },
     { createdAt: 'bad-date' },
     { shortText: '' },
+    { shortText: 'x'.repeat(4001) },
     { fullText: 'x'.repeat(16001) },
     { askOrigin: { sessionId: 'holder', messageId: '' } },
     { producerInput: null },

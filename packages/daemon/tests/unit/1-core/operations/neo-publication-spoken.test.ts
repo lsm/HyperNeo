@@ -26,8 +26,8 @@ const sessionId = `neo:${conversationId}`;
 const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId };
 const draft = {
   requestId: 'result',
-  shortText: 'Ready',
-  fullText: 'The result is ready.',
+  text: 'Ready',
+  details: 'The result is ready.',
   spoken: 'Here is the result.',
 };
 
@@ -221,15 +221,49 @@ describe('publication speech follows the committed version', () => {
     await listen(true);
     await send();
     events = [];
-    expect(await send({ ...draft, fullText: 'Conflicting result.' })).toMatchObject({
+    expect(await send({ ...draft, details: 'Conflicting result.' })).toMatchObject({
       accepted: false,
-      reason: 'publication_conflict',
+      reason:
+        'publication_conflict: This publication id already holds different content. Keep its stored fields, or use a different publicationId.',
     });
     expect(events).toEqual([]);
     failWrite = true;
     const failed = await send({ ...draft, requestId: 'failed' });
     expect(failed.accepted).not.toBe(true);
     expect(events).toEqual([]);
+  });
+
+  test('a card reply with text alone stores a summary instead of verbatim', async () => {
+    mailbox.db
+      .prepare(
+        "INSERT INTO neo_questions(id,ask_id,text,kind,start_todos,created_at) VALUES ('question','ask','Review?','choice','[]',1)"
+      )
+      .run();
+    const cardReply = {
+      askId: 'ask',
+      questionId: 'question',
+      mutationId: '30000000-0000-4000-8000-000000000009',
+      sourceMessageIds: [conversationId],
+    };
+    const { details: _details, spoken: _spoken, ...textOnly } = draft;
+    expect(await send({ ...textOnly, requestId: 'card-text-only', cardReply })).toMatchObject({
+      accepted: true,
+    });
+    expect(ledger.list(conversationId)![0]).toMatchObject({
+      shortText: 'Ready',
+      fullText: 'Ready',
+      cardReply,
+    });
+    for (const [requestId, text, details] of [
+      ['card-text-over', 'x'.repeat(4001), undefined],
+      ['card-folded-over', 'x'.repeat(3900), 'd'.repeat(200)],
+    ] as const) {
+      const refused = await send({ ...textOnly, requestId, text, details, cardReply });
+      expect(refused).toMatchObject({ accepted: false });
+      expect(String(refused.reason)).toContain('reply_summary_too_long');
+      expect(String(refused.reason)).toContain('4000');
+    }
+    expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
   test('new card versions speak once; retries of older versions never speak the latest content', async () => {
@@ -250,7 +284,7 @@ describe('publication speech follows the committed version', () => {
       ...draft,
       requestId: 'revision',
       cardReply,
-      fullText: 'Updated result.',
+      details: 'Updated result.',
       spoken: 'The updated result.',
     });
     expect(first).toMatchObject({ accepted: true, spokenDelivered: true });
@@ -291,7 +325,7 @@ describe('publication speech follows the committed version', () => {
         ...draft,
         requestId: 'revision-attachment',
         cardReply,
-        fullText: 'Updated.',
+        details: 'Updated.',
         artifacts: [reference],
       });
       expect(updated).toMatchObject({ accepted: true, publication: { artifacts: [reference] } });
@@ -302,10 +336,14 @@ describe('publication speech follows the committed version', () => {
           ...draft,
           requestId: 'remove-attachment',
           cardReply,
-          fullText: 'Another update.',
+          details: 'Another update.',
           artifacts: [],
         })
-      ).toMatchObject({ accepted: false, reason: 'publication_conflict' });
+      ).toMatchObject({
+        accepted: false,
+        reason:
+          'publication_conflict: This publication id already holds different content. Keep its stored fields, or use a different publicationId.',
+      });
       expect(ledger.list(conversationId)[0].artifacts).toEqual([reference]);
     } finally {
       if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;

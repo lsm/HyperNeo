@@ -26,7 +26,7 @@ export const NeoPublicationObject = z
     publicationId: z.string().uuid(),
     askOrigin: origin.optional(),
     producerInput: origin.optional(),
-    shortText: text(2000)
+    shortText: text(4000)
       .describe('What the human reads first; it must stand alone and summarize the message.')
       .optional(),
     verbatim: z
@@ -70,7 +70,7 @@ export const NeoPublicationObject = z
         z
           .object({
             revisionId: z.uuid(),
-            shortText: text(2000).optional(),
+            shortText: text(4000).optional(),
             fullText: text(16000),
             session: text(500).optional(),
             createdAt: z.string().datetime(),
@@ -87,6 +87,11 @@ export const NeoPublicationObject = z
 export const workerSession = (session?: string | null) =>
   session && !session.startsWith('neo:') ? session : undefined;
 
+export const NeoPublicationReplyFields = {
+  text: text(16000),
+  details: text(16000).optional(),
+};
+
 export function publicationTextRule(
   value: { verbatim?: true; shortText?: string; cardReply?: unknown },
   ctx: z.RefinementCtx
@@ -100,6 +105,33 @@ export function publicationTextRule(
     });
   if (value.verbatim !== true && value.shortText === undefined)
     ctx.addIssue({ code: 'custom', message: 'shortText is required without verbatim' });
+}
+
+export function foldPublicationDetails(value: { text: string; details?: string }): {
+  text: string;
+  details?: string;
+} {
+  return value.details !== undefined && value.details.length < value.text.length
+    ? { text: `${value.text}\n\n${value.details}` }
+    : value;
+}
+
+const wordSegments = new Intl.Segmenter(undefined, { granularity: 'word' });
+
+export function wordCount(text: string): number {
+  let count = 0;
+  for (const segment of wordSegments.segment(text)) if (segment.isWordLike) count++;
+  return count;
+}
+
+export const SUMMARY_WORD_LIMIT = 300;
+export const SUMMARY_CHAR_LIMIT = 4000;
+
+export function replySummaryTooLong(body: { text: string; details?: string }): boolean {
+  return (
+    body.details !== undefined &&
+    (wordCount(body.text) > SUMMARY_WORD_LIMIT || body.text.length > SUMMARY_CHAR_LIMIT)
+  );
 }
 
 export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);

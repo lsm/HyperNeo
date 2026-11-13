@@ -18,7 +18,7 @@ const rpc = (name, input = {}) => {
   return reply.value ?? reply;
 };
 const prompt = execFileSync('bun', ['-e', "import {neoPrompt} from './packages/daemon/src/lib/neo/prompt.ts'; console.log(neoPrompt([]));"], { encoding: 'utf8' });
-assert(prompt.includes('For neo.question.ask text and publication shortText, use Markdown'));
+assert(prompt.includes('For neo.question.ask text and publication text, use Markdown'));
 const guidance = rpc('operations.describe', { name: 'neo.question.ask' });
 assert(JSON.stringify(guidance).includes('short title line, a few bullets or a small table, bold key choice'));
 const fixtures = JSON.parse(readFileSync('packages/web/src/neo/__tests__/fixtures/question-guidance.json', 'utf8'));

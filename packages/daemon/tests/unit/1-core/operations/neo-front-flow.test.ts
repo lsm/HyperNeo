@@ -363,10 +363,13 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
     { requestId: 'again', replyTo: [id], work_on: true, text: 'Again.' },
     {} as never
   );
-  expect(JSON.parse((again.content[0] as { text: string }).text)).toEqual({
-    accepted: false,
-    reason: 'input_handed_off',
+  expect(JSON.parse((again.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+    started: true,
   });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  const progress = service.publications.list(conversationId)!.map((row) => row.fullText);
+  expect(progress).toEqual(['I will check.']);
 });
 
 test('in dual mode Neo speaks directly like the front', async () => {
@@ -650,7 +653,7 @@ test('a todo detail carries the pack rows pinned to it as packFacts', async () =
 test('in dual mode Neo publishes to the human directly', async () => {
   expect(
     await service.publish(
-      { requestId: 'canonical', fullText: 'Canonical answer', verbatim: true },
+      { requestId: 'canonical', text: 'Canonical answer' },
       { source: 'mcp', role: 'neo', sessionId: root }
     )
   ).toMatchObject({ accepted: true });
@@ -1106,8 +1109,7 @@ test.each(['disabled', 'dual'])(
         await service.publish(
           {
             requestId: 'held-answer',
-            fullText: 'The requested answer',
-            verbatim: true,
+            text: 'The requested answer',
             replyTo: [id],
           },
           { source: 'mcp', role: 'neo', sessionId: root }
@@ -1195,7 +1197,7 @@ test('Front rejects a new reply without spoken while the human is listening', as
 
 test('Neo publishes in both modes', async () => {
   const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
-  const input = { requestId: 'back-answer', fullText: 'Back answer', verbatim: true };
+  const input = { requestId: 'back-answer', text: 'Back answer' };
   expect(await service.publish(input, caller)).toMatchObject({ accepted: true });
   await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
   expect(await service.publish({ ...input, requestId: 'single' }, caller)).toMatchObject({
@@ -1220,35 +1222,32 @@ test('a work_on reply publishes its acknowledgment and hands off in one call', a
   });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(await convoPublish({ ...work, requestId: 'ack-retry' })).toMatchObject({
-    reason: 'input_handed_off',
+    accepted: true,
+    started: true,
   });
   expect(service.publications.list(conversationId)).toHaveLength(1);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(
     await convoPublish({ requestId: 'final', replyTo: [id], fullText: 'Done.', verbatim: true })
-  ).toMatchObject({ accepted: false, reason: 'input_handed_off' });
+  ).toMatchObject({ accepted: true });
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id)).not.toBeNull();
   const neo = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
   expect(
-    await service.publish(
-      { requestId: 'neo-final', replyTo: [id], fullText: 'Done.', verbatim: true },
-      neo
-    )
+    await service.publish({ requestId: 'neo-final', replyTo: [id], text: 'Done.' }, neo)
   ).toMatchObject({ accepted: true });
   expect(
     await service.publish(
       {
         requestId: 'later-result',
         replyTo: [id],
-        fullText: 'The review is complete. Here is the result.',
-        verbatim: true,
+        text: 'The review is complete. Here is the result.',
       },
       neo
     )
   ).toMatchObject({ accepted: true, created: true });
   expect(
     service.publications.list(conversationId)!.filter((row) => row.replyTo?.includes(id))
-  ).toHaveLength(2);
+  ).toHaveLength(3);
 });
 
 test.each([
@@ -1391,17 +1390,41 @@ test.each(['creation', 'delivery'])(
   }
 );
 
-test('a reply with details refuses a summary over 2000 characters by name', async () => {
+test('a reply with details refuses a summary over 300 words by name', async () => {
   const { id } = await deliveredConvoInput();
+  const text = Array(301).fill('word').join(' ');
   expect(
     await convoPublish({
       requestId: 'long-summary',
       replyTo: [id],
-      shortText: 'x'.repeat(2001),
-      fullText: 'Details.',
+      shortText: text,
+      fullText: 'd'.repeat(text.length + 1),
     })
   ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
+});
+
+test('a reply with details accepts 300 words and refuses 301 Chinese words', async () => {
+  const { id } = await deliveredConvoInput();
+  const other = (await deliveredConvoInput()).id;
+  const text = Array(300).fill('word').join(' ');
+  expect(
+    await convoPublish({
+      requestId: 'at-limit',
+      replyTo: [id],
+      shortText: text,
+      fullText: 'd'.repeat(text.length + 1),
+    })
+  ).toMatchObject({ accepted: true });
+  const chinese = '中'.repeat(400);
+  expect(
+    await convoPublish({
+      requestId: 'chinese-long',
+      replyTo: [other],
+      shortText: chinese,
+      fullText: 'd'.repeat(chinese.length + 1),
+    })
+  ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
 });
 
 test('a reply without work_on is the final answer with no acknowledgment before it', async () => {
@@ -1441,6 +1464,98 @@ test('a reply without work_on is the final answer with no acknowledgment before 
   expect(final.verbatim).toBeUndefined();
   expect(service.publications.list(conversationId)).toHaveLength(2);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+});
+
+test('details shorter than the reply text fold into one verbatim reply', async () => {
+  const { id } = await deliveredConvoInput();
+  createFrontTools(service, conversationId);
+  const reply = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'reply')!;
+  const folded = await reply.handler(
+    {
+      requestId: 'folded-reply',
+      replyTo: [id],
+      text: 'The full answer with everything the human needs to know.',
+      details: 'a short addendum',
+    },
+    {} as never
+  );
+  expect(JSON.parse((folded.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+  });
+  const stored = service.publications.list(conversationId)![0];
+  expect(stored).toMatchObject({
+    verbatim: true,
+    fullText: 'The full answer with everything the human needs to know.\n\na short addendum',
+    replyTo: [id],
+  });
+  expect(stored.shortText).toBeUndefined();
+  const split = await reply.handler(
+    {
+      requestId: 'split-reply',
+      replyTo: [id],
+      text: 'The result',
+      details: 'Additional evidence and explanation.',
+    },
+    {} as never
+  );
+  expect(JSON.parse((split.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+  });
+  expect(service.publications.list(conversationId)![1]).toMatchObject({
+    shortText: 'The result',
+    fullText: 'Additional evidence and explanation.',
+  });
+});
+
+test('two replies to one human message both deliver', async () => {
+  const { id } = await deliveredConvoInput();
+  await convoPublish({ requestId: 'first', replyTo: [id], fullText: 'First.', verbatim: true });
+  const second = await convoPublish({
+    requestId: 'second',
+    replyTo: [id],
+    fullText: 'Second.',
+    verbatim: true,
+  });
+  expect(second).toMatchObject({ accepted: true, created: true });
+  expect(service.publications.list(conversationId)).toHaveLength(2);
+  expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, id)?.owner).toBe(
+    'front'
+  );
+});
+
+test('a front reply after work_on delivers', async () => {
+  const { id } = await deliveredConvoInput();
+  expect(
+    await convoPublish({
+      requestId: 'work',
+      replyTo: [id],
+      fullText: 'On it.',
+      verbatim: true,
+      progress: true,
+    })
+  ).toMatchObject({ accepted: true, started: true });
+  expect(
+    await convoPublish({
+      requestId: 'final',
+      replyTo: [id],
+      fullText: 'Done.',
+      verbatim: true,
+    })
+  ).toMatchObject({ accepted: true, created: true });
+  expect(service.publications.list(conversationId)).toHaveLength(2);
+});
+
+test('Neo answers a message the front already answered', async () => {
+  const { id } = await deliveredConvoInput();
+  await convoPublish({ requestId: 'front', replyTo: [id], fullText: 'Front.', verbatim: true });
+  const neo = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
+  expect(
+    await service.publish({ requestId: 'neo', replyTo: [id], text: 'Neo answer.' }, neo)
+  ).toMatchObject({ accepted: true, created: true });
+  expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
 test('Front prompt, tool descriptions and intake agree on the five-sentence boundary', async () => {
@@ -1694,7 +1809,7 @@ test('a handed-off input settles as handed off with no extra message', async () 
   expect(service.publications.list(conversationId)).toHaveLength(count);
 });
 
-test('a hand-off that lands before the fallback append requeues and the fallback still reaches the rest', async () => {
+test('a hand-off that lands before the fallback read is left out of the fallback', async () => {
   const first = await accept();
   db.getDatabase()
     .prepare('UPDATE job_queue SET created_at = created_at - 1000 WHERE id = ?')
@@ -1728,11 +1843,7 @@ test('a hand-off that lands before the fallback append requeues and the fallback
   const call = service.db.gateway.call.bind(service.db.gateway);
   let raced = false;
   vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
-    if (
-      !raced &&
-      args[1] === 'append' &&
-      (args[2] as { fullText?: string }).fullText === FRONT_FALLBACK_TEXT
-    ) {
+    if (!raced && args[1] === 'get' && args[3] === second.id) {
       raced = true;
       expect(
         new NeoFrontInputRepository(db.getDatabase()).reserve(conversationId, [second.id], [])
@@ -1740,9 +1851,159 @@ test('a hand-off that lands before the fallback append requeues and the fallback
     }
     return (call as (...rest: unknown[]) => unknown)(...args);
   }) as never);
-  expect(await handler(first.job)).toMatchObject({ delivered: false, pending: true });
+  expect(await handler(first.job)).toMatchObject({ delivered: true, outcome: 'answered' });
   expect(await handler(first.job)).toMatchObject({ delivered: true, outcome: 'answered' });
   expect(await handler(second.job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
   const replies = service.publications.list(conversationId)!;
   expect(replies.map((reply) => reply.replyTo)).toEqual([[first.id]]);
+});
+
+test('the fallback checks the input owner and never scans publications', async () => {
+  const { id, job } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No reply',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  for (let index = 0; index < 60; index++)
+    expect(
+      service.publications.append(
+        {
+          conversationId,
+          publicationId: crypto.randomUUID(),
+          verbatim: true,
+          fullText: `earlier note ${index}`,
+          links: [],
+        },
+        front
+      )
+    ).toMatchObject({ accepted: true });
+  const replyId = crypto.randomUUID();
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let raced = false;
+  let reads = 0;
+  vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
+    if (!raced && args[1] === 'get' && args[3] === id && ++reads === 2) {
+      raced = true;
+      expect(
+        service.publications.append(
+          {
+            conversationId,
+            publicationId: replyId,
+            verbatim: true,
+            fullText: 'A real reply landed.',
+            replyTo: [id],
+            links: [],
+          },
+          front
+        )
+      ).toMatchObject({ accepted: true });
+    }
+    return (call as (...rest: unknown[]) => unknown)(...args);
+  }) as never);
+  const list = vi.spyOn(service.publications, 'list');
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
+    delivered: true,
+    outcome: 'answered',
+  });
+  expect(list).not.toHaveBeenCalled();
+  expect(raced).toBe(true);
+  expect(service.publications.get(conversationId, replyId)?.fullText).toBe('A real reply landed.');
+});
+
+test('the fallback append loses an owner race instead of duplicating a reply', async () => {
+  const { id, job } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No reply',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const replyId = crypto.randomUUID();
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let raced = false;
+  vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
+    if (!raced && (args[0] as { name?: string }).name === 'neo.publications.write') {
+      raced = true;
+      expect(
+        service.publications.append(
+          {
+            conversationId,
+            publicationId: replyId,
+            verbatim: true,
+            fullText: 'A real reply landed.',
+            replyTo: [id],
+            links: [],
+          },
+          front
+        )
+      ).toMatchObject({ accepted: true });
+    }
+    return (call as (...rest: unknown[]) => unknown)(...args);
+  }) as never);
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
+    delivered: false,
+    pending: true,
+  });
+  expect(raced).toBe(true);
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
+    delivered: true,
+    outcome: 'answered',
+  });
+  const rows = db
+    .getDatabase()
+    .prepare('SELECT payload_json AS payload FROM neo_publications WHERE conversation_id = ?')
+    .all(conversationId)
+    .map((row) => JSON.parse((row as { payload: string }).payload) as { fullText: string });
+  expect(rows.map((row) => row.fullText)).toEqual(['A real reply landed.']);
+});
+
+test('the daemon fallback is skipped once the input is answered', async () => {
+  const { id, job } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No reply',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let raced = false;
+  let reads = 0;
+  vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
+    if (!raced && args[1] === 'get' && args[3] === id && ++reads === 2) {
+      raced = true;
+      expect(
+        service.publications.append(
+          {
+            conversationId,
+            publicationId: crypto.randomUUID(),
+            verbatim: true,
+            fullText: 'A real reply landed.',
+            replyTo: [id],
+            links: [],
+          },
+          front
+        )
+      ).toMatchObject({ accepted: true });
+    }
+    return (call as (...rest: unknown[]) => unknown)(...args);
+  }) as never);
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
+    delivered: true,
+    outcome: 'answered',
+  });
+  expect(raced).toBe(true);
+  const replies = service.publications.list(conversationId)!;
+  expect(replies).toHaveLength(1);
+  expect(replies[0].fullText).toBe('A real reply landed.');
 });

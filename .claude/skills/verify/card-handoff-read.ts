@@ -45,13 +45,13 @@ try {
   const foreign = { ...reference, daemonId: '00000000-0000-4000-8000-000000000000' };
   const badQuestion = JSON.parse((await neoCall({ name: 'neo.question.ask', input: { askId: 'ask', todoId: 'todo', kind: 'reply', text: 'Read the report?', artifacts: [foreign], retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } } })).content[0].text);
   assert.equal(badQuestion.ok, false); assert.match(badQuestion.reason, /invalid_artifact_reference/); assert.equal(store.listQuestions('ask').length, 0);
-  const badPublication = JSON.parse((await neoCall({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), shortText: 'Synthetic report', fullText: 'Synthetic report is ready.', artifacts: [foreign] } })).content[0].text);
+  const badPublication = JSON.parse((await neoCall({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), text: 'Synthetic report', details: 'Synthetic report is ready.', artifacts: [foreign] } })).content[0].text);
   assert.equal(badPublication.accepted, false); assert.equal(badPublication.reason, 'invalid_artifact_reference');
   const question = JSON.parse((await neoCall({ name: 'neo.question.ask', input: { askId: 'ask', todoId: 'todo', kind: 'reply', text: 'Read the report?', artifacts: references, retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } } })).content[0].text);
   assert(question.ok, JSON.stringify(question));
   assert.deepEqual(question.question.artifacts, references);
   const questionId = question.question.id;
-  const created = JSON.parse((await neoCall({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), shortText: 'Synthetic report', fullText: 'Synthetic report is ready.', artifacts: references } })).content[0].text);
+  const created = JSON.parse((await neoCall({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), text: 'Synthetic report', details: 'Synthetic report is ready.', artifacts: references } })).content[0].text);
   assert(created.accepted);
   assert.deepEqual(created.publication.artifacts, references);
   const id = created.publication.publicationId;

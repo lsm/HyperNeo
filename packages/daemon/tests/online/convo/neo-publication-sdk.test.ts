@@ -205,15 +205,14 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
                   ? round === 2
                     ? {
                         requestId: 'fictional-verbatim',
-                        verbatim: true,
-                        fullText: verbatimText,
+                        text: verbatimText,
                         links: [],
                         replyTo: [requestId],
                       }
                     : {
                         requestId: 'fictional-send',
-                        shortText,
-                        fullText,
+                        text: shortText,
+                        details: fullText,
                         links: [],
                         replyTo: [requestId],
                       }

@@ -159,15 +159,32 @@ export class NeoFrontInputRepository {
   claim(
     conversationId: string,
     messageIds: readonly string[],
-    owner: 'front' | 'neo',
-    exempt = false
-  ): 'claimed' | 'ineligible' | 'handed_off' {
+    owner: 'front' | 'neo'
+  ): 'claimed' | 'ineligible' {
     const ids = [...new Set(messageIds)];
     if (!ids.length) return 'ineligible';
     return this.db.transaction(() => {
       const rows = ids.map((id) => this.get(conversationId, id));
       if (rows.some((row) => !row?.eligible)) return 'ineligible';
-      if (!exempt && rows.some((row) => row?.owner && row.owner !== owner)) return 'handed_off';
+      for (const id of ids)
+        this.db
+          .prepare(`UPDATE neo_front_inputs SET owner = ?
+          WHERE conversation_id = ? AND message_id = ? AND owner IS NULL`)
+          .run(owner, conversationId, id);
+      return 'claimed' as const;
+    })();
+  }
+
+  claimUnowned(
+    conversationId: string,
+    messageIds: readonly string[],
+    owner: 'front' | 'neo'
+  ): 'claimed' | 'ineligible' {
+    const ids = [...new Set(messageIds)];
+    if (!ids.length) return 'ineligible';
+    return this.db.transaction(() => {
+      const rows = ids.map((id) => this.get(conversationId, id));
+      if (rows.some((row) => !row?.eligible || row.owner !== null)) return 'ineligible';
       for (const id of ids)
         this.db
           .prepare(`UPDATE neo_front_inputs SET owner = ?
@@ -181,10 +198,10 @@ export class NeoFrontInputRepository {
     conversationId: string,
     messageIds: readonly string[],
     prompts: readonly Pick<PersistPromptArgs, 'sessionId' | 'message'>[]
-  ): 'reserved' | 'handed_off' | 'undeliverable' {
+  ): 'reserved' | 'ineligible' | 'undeliverable' {
     return this.db.transaction(() => {
       const rows = messageIds.map((id) => this.get(conversationId, id));
-      if (rows.some((row) => !row?.eligible || row.owner)) return 'handed_off';
+      if (rows.some((row) => !row?.eligible)) return 'ineligible';
       const sdk = new SDKMessageRepository(this.db);
       const statuses = prompts.map((prompt) =>
         sdk.getUserSendStatus(prompt.sessionId, prompt.message.uuid!)
@@ -215,7 +232,7 @@ export const neoFrontInputWrites = defineRepositoryOp(
   'neo.front.inputs',
   'write',
   NeoFrontInputRepository,
-  ['claim', 'reserve']
+  ['claim', 'claimUnowned', 'reserve']
 );
 
 export const neoFrontDeliveryWrites = defineRepositoryOp(

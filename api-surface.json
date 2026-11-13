@@ -27708,7 +27708,7 @@
                                     ]
                                   },
                                   "shortText": {
-                                    "maxLength": 2000,
+                                    "maxLength": 4000,
                                     "type": "string"
                                   }
                                 },
@@ -27780,7 +27780,7 @@
                             },
                             "shortText": {
                               "description": "What the human reads first; it must stand alone and summarize the message.",
-                              "maxLength": 2000,
+                              "maxLength": 4000,
                               "type": "string"
                             },
                             "triggerId": {
@@ -32070,8 +32070,7 @@
             ],
             "type": "object"
           },
-          "fullText": {
-            "description": "The details of the topic(s) shortText names.",
+          "details": {
             "maxLength": 16000,
             "type": "string"
           },
@@ -32136,24 +32135,18 @@
               }
             ]
           },
-          "shortText": {
-            "description": "What the human reads first; it must stand alone and summarize the message.",
-            "maxLength": 2000,
-            "type": "string"
-          },
           "spoken": {
             "maxLength": 500,
             "minLength": 1,
             "type": "string"
           },
-          "verbatim": {
-            "const": true,
-            "description": "Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.",
-            "type": "boolean"
+          "text": {
+            "maxLength": 16000,
+            "type": "string"
           }
         },
         "required": [
-          "fullText",
+          "text",
           "requestId"
         ],
         "type": "object"
@@ -32632,7 +32625,7 @@
                           ]
                         },
                         "shortText": {
-                          "maxLength": 2000,
+                          "maxLength": 4000,
                           "type": "string"
                         }
                       },
@@ -32704,7 +32697,7 @@
                   },
                   "shortText": {
                     "description": "What the human reads first; it must stand alone and summarize the message.",
-                    "maxLength": 2000,
+                    "maxLength": 4000,
                     "type": "string"
                   },
                   "triggerId": {
@@ -33227,7 +33220,7 @@
                             ]
                           },
                           "shortText": {
-                            "maxLength": 2000,
+                            "maxLength": 4000,
                             "type": "string"
                           }
                         },
@@ -33299,7 +33292,7 @@
                     },
                     "shortText": {
                       "description": "What the human reads first; it must stand alone and summarize the message.",
-                      "maxLength": 2000,
+                      "maxLength": 4000,
                       "type": "string"
                     },
                     "triggerId": {
