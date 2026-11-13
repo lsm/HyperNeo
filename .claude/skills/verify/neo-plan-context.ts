@@ -89,7 +89,7 @@ try {
     ).run(conversation, id, owner);
   };
   seedInput(answeredInput, 'neo', 'Already answered by Neo');
-  seedInput(plainAnsweredInput, 'neo', 'Already answered by an ordinary reply');
+  seedInput(plainAnsweredInput, 'neo', 'Handed off and acknowledged by the front');
   seedInput(cardAnsweredInput, 'neo', 'Already answered by a card');
   seedInput(pendingInput, 'neo', pendingText);
   seedInput(longInput, 'neo', 'P '.repeat(20_000));
@@ -109,11 +109,11 @@ try {
     JSON.stringify({
       conversationId: conversation,
       publicationId: 'synthetic-plain-answer',
-      producerInput: { sessionId: root, messageId: plainAnsweredInput },
+      producerInput: { sessionId: `${root}-front`, messageId: plainAnsweredInput },
       verbatim: true,
-      fullText: 'Synthetic ordinary reply',
+      fullText: 'Synthetic front handoff acknowledgement',
       links: [],
-      publishedBy: 'neo',
+      publishedBy: 'front',
     }),
     new Date().toISOString()
   );
@@ -193,7 +193,7 @@ try {
   const perTurnFacts = await store.read('planContext');
   assert(perTurnFacts.unanswered === undefined, 'A per-prompt read runs the unanswered scan');
   const compactFacts = await store.read('planContext', true);
-  assert(compactFacts.unanswered?.length === 2, 'The compact read skips the unanswered scan');
+  assert(compactFacts.unanswered?.length === 3, 'The compact read skips the unanswered scan');
   assert.equal(facts.asks.length, 12);
   assert.equal(facts.todos.length, 480);
   assert.equal(facts.questions.length, 12);
@@ -206,7 +206,7 @@ try {
     assert(lines.find((line) => line.id === id)?.text.includes(`neo.ask.read ${id}`));
   assert.deepEqual(
     facts.unanswered?.map((input) => input.id),
-    [longInput, pendingInput],
+    [longInput, pendingInput, plainAnsweredInput],
     'Plan facts carry only the inputs Neo owns and has not answered'
   );
   assert.equal(
@@ -240,8 +240,8 @@ try {
   assert(compactContext.includes(pendingText), 'The session hook drops the unanswered text');
   assert(!compactContext.includes(answeredInput), 'The session hook repeats an answered message');
   assert(
-    !compactContext.includes(plainAnsweredInput),
-    'The session hook repeats a message an ordinary reply already answered'
+    compactContext.includes(plainAnsweredInput),
+    'A front acknowledgement hides a message Neo never answered'
   );
   assert(
     !compactContext.includes(cardAnsweredInput),

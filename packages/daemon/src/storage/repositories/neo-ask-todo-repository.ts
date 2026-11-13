@@ -337,12 +337,10 @@ export class NeoAskTodoRepository {
     const rows = this.db
       .prepare(`WITH answered(id) AS (
           SELECT value FROM neo_publications p, json_each(p.payload_json, '$.replyTo')
+            WHERE json_extract(p.payload_json, '$.publishedBy') IS NOT 'front'
           UNION SELECT value FROM neo_publications p,
             json_each(p.payload_json, '$.cardReply.sourceMessageIds')
-          UNION SELECT json_extract(p.payload_json, '$.producerInput.messageId')
-            FROM neo_publications p
-          UNION SELECT json_extract(r.value, '$.producerInput.messageId')
-            FROM neo_publications p, json_each(p.payload_json, '$.revisions') r)
+            WHERE json_extract(p.payload_json, '$.publishedBy') IS NOT 'front')
         SELECT a.request_id AS id, a.payload_json AS payload
         FROM neo_front_inputs f
         JOIN neo_conversation_asks a ON a.conversation_id = f.conversation_id

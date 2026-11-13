@@ -23,19 +23,21 @@ return 12 asks, 480 family steps and 12 questions. The fitted digest must keep a
 compact-source digest includes the last owner and an unchanged prompt emits no
 context. Any domain-client invocation fails the proof.
 
-The same run seeds five Neo-owned inputs. One is answered by a publication that
-replies to it, one by an ordinary Neo reply that carries only
-`producerInput.messageId` (the shape real replies use), one by a card reply that
-records it in `cardReply.sourceMessageIds`, and two are not answered: a short
-message and a 20,000-character one. `planContext` must return only the two
-unanswered ids, newest first, with the short one's text intact. The
-compact-source context and the real `SessionStart` hook in compact mode must
-contain those ids and omit all three answered ones; a startup-source context must
-omit every one. A plan read without the compact flag must not carry the
-unanswered list at all, so per-prompt reads skip that scan. The section itself is
-bounded: entries are capped at 2 kB, the section including its heading and
-overflow line at 8 kB, newest entries are kept, and anything left over is
-announced with a pointer to `neo.conversation.read`.
+The same run seeds five Neo-owned inputs. One is answered by a Neo publication
+that replies to it, one by a card reply that records it in
+`cardReply.sourceMessageIds`, one only by the front desk's handoff
+acknowledgement (`publishedBy: "front"` carrying `producerInput.messageId`),
+and two are not answered at all: a short message and a 20,000-character one. The
+front acknowledgement is not Neo's answer, so `planContext` must return the
+front-acknowledged id together with the two unanswered ones, newest first, with
+the short one's text intact. The compact-source context and the real
+`SessionStart` hook in compact mode must contain those three ids and omit the two
+Neo-answered ones; a startup-source context must omit every one. A plan read
+without the compact flag must not carry the unanswered list at all, so per-prompt
+reads skip that scan. The section itself is bounded: entries are capped at 2 kB,
+the section including its heading and overflow line at 8 kB, newest entries are
+kept, and anything left over is announced with a pointer to
+`neo.conversation.read`.
 
 Before the fix, run the identical helper in before mode on the baseline. It must
 fail the real MCP open-owner assertion, retaining observed.json with the smaller

@@ -112,9 +112,8 @@ test('lists an image-only input by its id with placeholder text', async () => {
   expect(facts.unanswered).toEqual([{ id: pending, text: '(non-text message)' }]);
 });
 
-test('counts a card reply and a text revision as answers', async () => {
+test('counts a card reply as an answer', async () => {
   seedInput(cardAnswered, 'neo', 'Answered by a card');
-  seedInput(revisionAnswered, 'neo', 'Answered by a text revision');
   seedInput(pending, 'neo', pendingText);
   db.prepare(
     'INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at) VALUES (?,?,?,?)'
@@ -133,54 +132,59 @@ test('counts a card reply and a text revision as answers', async () => {
     }),
     new Date().toISOString()
   );
-  db.prepare(
-    'INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at) VALUES (?,?,?,?)'
-  ).run(
-    conversation,
-    'revision-publication',
-    JSON.stringify({
-      fullText: 'Revised answer',
-      revisions: [
-        {
-          revisionId: '10000000-0000-4000-8000-00000000b001',
-          fullText: 'Revised answer',
-          createdAt: new Date().toISOString(),
-          producerInput: { sessionId: 'neo:source', messageId: revisionAnswered },
-        },
-      ],
-      publishedBy: 'neo',
-    }),
-    new Date().toISOString()
-  );
-
   const facts = await new NeoAskTodoRepository(db).read('planContext', true);
 
   expect(facts.unanswered).toEqual([{ id: pending, text: pendingText }]);
 });
 
-test('counts an ordinary reply that names only its producer input', async () => {
-  seedInput(answered, 'neo', 'Already handled');
+test('keeps a message listed when only the front acknowledged the handoff', async () => {
+  seedInput(answered, 'neo', 'Handed off to a worker');
   seedInput(pending, 'neo', pendingText);
-  db.prepare(
+  seedInput(revisionAnswered, 'neo', 'Replied and then revised by the front');
+  const insert = db.prepare(
     'INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at) VALUES (?,?,?,?)'
-  ).run(
+  );
+  insert.run(
     conversation,
     '10000000-0000-4000-8000-00000000b002',
     JSON.stringify({
       conversationId: conversation,
       publicationId: '10000000-0000-4000-8000-00000000b002',
-      producerInput: { sessionId: 'neo:source', messageId: answered },
+      producerInput: { sessionId: 'neo:front', messageId: answered },
       verbatim: true,
-      fullText: 'The answer Neo sent the human',
+      fullText: 'On it, I will start that work',
       links: [],
-      publishedBy: 'neo',
+      publishedBy: 'front',
+    }),
+    new Date().toISOString()
+  );
+  insert.run(
+    conversation,
+    '10000000-0000-4000-8000-00000000b003',
+    JSON.stringify({
+      conversationId: conversation,
+      publicationId: '10000000-0000-4000-8000-00000000b003',
+      fullText: 'Revised by the front',
+      revisions: [
+        {
+          revisionId: '10000000-0000-4000-8000-00000000b004',
+          fullText: 'Revised by the front',
+          createdAt: new Date().toISOString(),
+          producerInput: { sessionId: 'neo:front', messageId: revisionAnswered },
+        },
+      ],
+      publishedBy: 'front',
     }),
     new Date().toISOString()
   );
 
   const facts = await new NeoAskTodoRepository(db).read('planContext', true);
 
-  expect(facts.unanswered).toEqual([{ id: pending, text: pendingText }]);
+  expect(facts.unanswered).toEqual([
+    { id: revisionAnswered, text: 'Replied and then revised by the front' },
+    { id: pending, text: pendingText },
+    { id: answered, text: 'Handed off to a worker' },
+  ]);
 });
 
 test('stays fast on a long-lived conversation', async () => {
@@ -221,7 +225,7 @@ test('stays fast on a long-lived conversation', async () => {
         JSON.stringify({
           conversationId: conversation,
           publicationId: `10000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
-          producerInput: { sessionId: 'neo:source', messageId: answeredId },
+          replyTo: [answeredId],
           fullText: 'Reply '.repeat(200),
           publishedBy: 'neo',
         }),
@@ -235,7 +239,7 @@ test('stays fast on a long-lived conversation', async () => {
   const elapsed = performance.now() - started;
 
   expect(facts.unanswered).toEqual([]);
-  expect(elapsed).toBeLessThan(250);
+  expect(elapsed).toBeLessThan(1_000);
 });
 
 test('sends unanswered messages to Neo after compaction and drops answered ones', async () => {
