@@ -91,6 +91,15 @@ describe('codingAskMatter', () => {
     );
   });
 
+  test('a short form with leading zeros is the same pull request as the full form', () => {
+    const repos = ['synthetic/proof'];
+    for (const request of ['Review proof#007', 'Merge #007', 'Look at PR #007'])
+      expect(codingAskMatter({ title: 'Handle it', request }, repos)).toBe('synthetic/proof#7');
+    expect(
+      codingAskMatter({ title: 'Review synthetic/proof#7', request: 'Merge PR #007' }, repos)
+    ).toBe('synthetic/proof#7');
+  });
+
   test('a short form that fits no project repository, or more than one, has no key', () => {
     const ask = (request: string) => ({ title: 'Handle it', request });
     expect(codingAskMatter(ask('Merge #7'), [])).toBeNull();
