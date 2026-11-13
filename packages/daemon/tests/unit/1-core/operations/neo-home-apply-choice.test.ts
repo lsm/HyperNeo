@@ -87,22 +87,21 @@ async function conflict(path = 'notes.md') {
 async function approve(questionId: string, answer: string | string[] = ['Use remote']) {
   expect((await call('neo.question.answer', { questionId, answer })).ok).toBe(true);
 }
-async function confirmation(askId: string, path: string, content: string, answer = 'yes') {
+async function confirmation(askId: string, path: string, content: string) {
   const confirm = { path, sha256: createHash('sha256').update(content).digest('hex') };
   const result = await call(
     'neo.question.ask',
     {
       retireWhen: pendingTodoCheck,
       askId,
-      kind: 'yesno',
+      kind: 'choice',
       text: `Save ${path}\nSHA-256: ${confirm.sha256}`,
-      yesLabel: 'Use these exact bytes',
-      noLabel: 'Keep current',
+      options: ['Use these exact bytes'],
       confirm,
     },
     owner
   );
-  await approve(result.question.id, answer);
+  await approve(result.question.id, ['Use these exact bytes']);
   return result.question.id;
 }
 async function state() {

@@ -46,7 +46,7 @@ if (phase === 'seed') {
     return reply.reply.value ?? reply.reply;
   };
   const saved = phase === 'restart' ? JSON.parse(readFileSync(evidencePath, 'utf8')) : null;
-  const source = saved?.source ?? await rpc('neo.question.ask', { askId: 'source-ask', kind: 'yesno', text: 'Approve the worker recommendation?', noLabel: 'Wait', yesLabel: 'Approve', sourceSession: ref });
+  const source = saved?.source ?? await rpc('neo.question.ask', { askId: 'source-ask', kind: 'choice', text: 'Approve the worker recommendation?', options: ['Approve'], sourceSession: ref });
   assert(source.ok, JSON.stringify(source));
   const expected = { ...ref, name: 'Review worker', label: 'HyperNeo · Review worker', provider: 'glm', link: '/session/source-worker' };
   assert.deepEqual(source.question.sourceSession, expected);
@@ -77,7 +77,7 @@ if (phase === 'seed') {
   assert.equal(refused.ok, false);
   assert.match(refused.reason, /source_session_unavailable/);
   if (phase === 'capture') assert.equal(got.question.state, 'open');
-  else { assert.equal(got.question.state, 'answered'); assert.equal(got.question.answer, 'yes'); }
+  else { assert.equal(got.question.state, 'answered'); assert.deepEqual(got.question.answer, ['Approve']); }
   writeFileSync(phase === 'capture' ? evidencePath : join(run, 'evidence/source-session-restart.json'), JSON.stringify({ source, ordinary, start, joined, linkless, got, entry, refused }, null, 2));
   console.log(`PASS: ${phase} source-session identity/ref survives the operation and snapshot payloads`);
 }

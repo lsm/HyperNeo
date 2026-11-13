@@ -48,13 +48,13 @@ try {
       await sessionTitle(page, { name: 'HyperNeo · Review worker', exact: true }).waitFor();
       await page.screenshot({ path: `${run}/evidence/question-source-open-${width}.png`, fullPage: true });
       await leaveSession(page);
-      await question.getByRole('button', { name: 'Approve', exact: true }).waitFor();
+      await question.locator('[data-choice-option]', { hasText: 'Approve' }).waitFor();
       if (width === 390) {
-        await question.getByRole('button', { name: 'Approve', exact: true }).click();
+        await question.locator('[data-choice-option]', { hasText: 'Approve' }).click();
         const raw = execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'neo.question.get', JSON.stringify({ questionId: saved.source.question.id })], { env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8' });
         const result = JSON.parse(raw).reply;
         assert.equal(result.question.state, 'answered');
-        assert.equal(result.question.answer, 'yes');
+        assert.deepEqual(result.question.answer, ['Approve']);
         assert.deepEqual(result.question.sourceSession, saved.source.question.sourceSession);
       }
       observed.push({ width, header: 'Open', bounds, adapterOpener: '/session/source-worker', ordinaryHasNoOpener: true, answerControlsPreserved: true, joinedStartHasWorkingOpener: true, linklessHeaderAbsent: true });

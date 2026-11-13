@@ -300,11 +300,10 @@ const Asked = {
 };
 
 const AskKinds = z.discriminatedUnion('kind', [
-  z.object({ ...Asked, kind: z.literal('yesno'), noLabel: Text, yesLabel: Text }),
   z.object({
     ...Asked,
     kind: z.literal('choice'),
-    options: z.array(Text).min(2).max(6),
+    options: z.array(Text).min(1).max(6),
     multiple: z.boolean().default(false),
   }),
   z.object({ ...Asked, kind: z.literal('reply') }),
@@ -540,8 +539,8 @@ export function planNeoQuestion(
         : {};
   const confirm = input.confirm ?? null;
   if (confirm) {
-    if (input.kind !== 'yesno')
-      return fail('confirmation_kind: only yes/no questions bind a home proposal.');
+    if (input.kind !== 'choice' || input.multiple || input.options.length !== 1)
+      return fail('confirmation_kind: only a one-option choice binds a home proposal.');
     const path = requireHomePath(confirm);
     if (path.reason) return fail(path.reason.reason);
     if (!isVisibleHomeProposal(input.text, confirm))
@@ -558,8 +557,8 @@ export function planNeoQuestion(
     kind: input.kind,
     options: input.kind === 'choice' ? input.options : null,
     multiple: input.kind === 'choice' && input.multiple,
-    noLabel: input.kind === 'yesno' ? input.noLabel : null,
-    yesLabel: input.kind === 'yesno' ? input.yesLabel : null,
+    noLabel: null,
+    yesLabel: null,
     startTodos: null,
     confirm,
   };

@@ -12,7 +12,7 @@ GitHub stub. Synthetic SDK input/results go through the production writers.
 The real work.status adapter and Neo refresh must turn an exact final
 `Blocked (needs_human): reason` line into a needs-human todo and a wake for Neo containing the blocker and todo ID,
 without an immediate human card. If Neo can answer, it must reply to the worker;
-otherwise it must ask a linked yesno/choice question with options. After an untouched
+otherwise it must ask a linked confirm, choice or reply question. After an untouched
 60 minutes with no linked open question, Neo gets one reminder and the human gets no card. An exact environment line becomes an environment blocker without a
 human card. A marker before a different last line keeps ordinary behavior.
 Read the resulting public snapshot, advance the fixture clock past the hour, open a linked card as Neo would, answer it through the public RPC, and verify delivery to the assigned worker without reopening the card on report replay. Retain blocker-lines.json and proof.log.

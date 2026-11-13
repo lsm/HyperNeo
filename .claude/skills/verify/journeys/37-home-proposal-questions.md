@@ -4,14 +4,14 @@ On a fresh isolated daemon from Launch, run
 `bun .claude/skills/verify/neo-question-confirmation.ts <port> "$RUN" after`.
 The helper opens only a synthetic Neo session and seeds its own ask in its test
 DB, then uses real `neo.question.ask`, `get` and local-human `answer` RPCs.
-A yes/no proposal must retain `confirm:{path,sha256}` through creation and the
+A proposal (a choice with one option) must retain `confirm:{path,sha256}` through creation and the
 human answer. The visible body must include that exact path/hash; an incomplete
 body is refused. Ordinary questions remain unbound. A protected `neo.home.save` without a question remains `confirmation_required`;
 journey 38 exercises confirmed saves and the paired decision commit.
 
 Evidence: `evidence/neo-question-confirmation-after.json`. Stop the daemon/mock,
 restart only that same synthetic run, and run the helper with `restart`: its
-saved question must retain the exact binding, answered state and human yes.
+saved question must retain the exact binding, answered state and the chosen option.
 No provider/model, real credentials, GitHub requests or GUI are needed; a delivered
 answer note may queue a turn with no provider, which is not model-execution proof.
 
