@@ -1008,14 +1008,32 @@ describe('NeoAskTodos', () => {
         onAnswer={onAnswer}
       />
     );
-    fireEvent.click(app.getByRole('button', { name: 'B Cards' }));
+    fireEvent.click(app.getByRole('button', { name: 'Cards' }));
     expect(onAnswer).toHaveBeenCalledWith('one', ['Cards']);
-    fireEvent.click(app.getByRole('checkbox', { name: 'B iPad' }));
+    fireEvent.click(app.getByRole('checkbox', { name: 'iPad' }));
     fireEvent.click(app.getByRole('button', { name: '确定' }));
     expect(onAnswer).toHaveBeenLastCalledWith('many', ['iPad']);
   });
 
-  it('letters each choice in order and wraps long options inside the card', () => {
+  it('draws no letter before an option that already carries one', () => {
+    const options = ['A 先只改服务器', 'B 服务器和客户端一起改'];
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [question('one', { kind: 'choice', options, optionLabels: ['A', 'B'] })],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    expect(
+      [...app.container.querySelectorAll('[data-choice-option]')].map(
+        (button) => button.textContent
+      )
+    ).toEqual(options);
+    expect(app.getByRole('button', { name: 'A 先只改服务器' })).toBeTruthy();
+  });
+
+  it('shows each choice exactly as written and wraps long options inside the card', () => {
     const long = [
       '保留现在的列表布局，只把每一行的间距、字号和状态标签重新调整一遍，让长标题在手机上也能完整显示而不被截断',
       'Switch every card to the compact table layout with sortable columns, sticky headers, and a much longer description',
@@ -1039,9 +1057,7 @@ describe('NeoAskTodos', () => {
     );
     const one = app.container.querySelector('[data-ask-question="one"]')!;
     const buttons = [...one.querySelectorAll('[data-choice-option]')];
-    expect(buttons.map((button) => button.textContent)).toEqual(
-      long.map((option, index) => `${'ABC'[index]}${option}`)
-    );
+    expect(buttons.map((button) => button.textContent)).toEqual(long);
     for (const button of buttons) {
       expect(button.className).not.toMatch(/shrink-0|truncate|whitespace-nowrap|line-clamp/);
       expect(button.className).toContain('min-w-0');
@@ -1051,7 +1067,7 @@ describe('NeoAskTodos', () => {
     const many = app.container.querySelector('[data-ask-question="many"]')!;
     expect(
       [...many.querySelectorAll('[data-choice-option]')].map((label) => label.textContent)
-    ).toEqual(long.map((option, index) => `${'ABC'[index]}${option}`));
+    ).toEqual(long);
   });
 
   it('shows an unverified close with a warning instead of a done checkmark', () => {
@@ -1338,7 +1354,7 @@ describe('neoQuestionAnswerLabel', () => {
         }),
         []
       )
-    ).toBe('A. Keep、C. Table');
+    ).toBe('Keep、Table');
   });
 });
 
