@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stoppedErrorCardUuid } from '../stopped-error-card.ts';
+import { stopBannerHidden, stoppedErrorCardUuid } from '../stopped-error-card.ts';
 
 const episode = {
   id: 'e',
@@ -66,5 +66,31 @@ describe('stoppedErrorCardUuid', () => {
       { ...failed, duration_api_ms: 900, uuid: 'r2' },
     ];
     expect(stoppedErrorCardUuid(later, { ...episode, error: cut })).toBeUndefined();
+  });
+});
+
+describe('stopBannerHidden', () => {
+  const loading = { loaded: false, tooLarge: false, stored: 0, shown: 0 };
+
+  it('hides the banner once the stopped card shows the stop', () => {
+    expect(stopBannerHidden(episode, 'a1', { ...loading, loaded: true, stored: 3, shown: 3 })).toBe(
+      true
+    );
+  });
+
+  it('hides it while the transcript is still on its way', () => {
+    expect(stopBannerHidden(episode, undefined, loading)).toBe(true);
+    expect(stopBannerHidden(episode, undefined, { ...loading, loaded: true, stored: 3 })).toBe(
+      true
+    );
+  });
+
+  it('shows it when the transcript failed or has nothing to show', () => {
+    expect(stopBannerHidden(episode, undefined, { ...loading, tooLarge: true })).toBe(false);
+    expect(stopBannerHidden(episode, undefined, { ...loading, loaded: true })).toBe(false);
+  });
+
+  it('shows other errors while loading', () => {
+    expect(stopBannerHidden(undefined, undefined, loading)).toBe(false);
   });
 });
