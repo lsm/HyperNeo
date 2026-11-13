@@ -23,6 +23,12 @@ return 12 asks, 480 family steps and 12 questions. The fitted digest must keep a
 compact-source digest includes the last owner and an unchanged prompt emits no
 context. Any domain-client invocation fails the proof.
 
+The same run seeds two Neo-owned inputs. One is answered by a publication that
+replies to it; the other is not. `planContext` must return only the unanswered
+one, with its full message id and text. The compact-source context and the real
+`SessionStart` hook in compact mode must contain that id and text and omit the
+answered one; a startup-source context must omit both.
+
 Before the fix, run the identical helper in before mode on the baseline. It must
 fail the real MCP open-owner assertion, retaining observed.json with the smaller
 owner list. The wrapper saves evidence and removes the temporary daemon data

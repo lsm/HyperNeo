@@ -25,6 +25,7 @@ import {
   recomputeTodoStateAsync,
   type TodoStateFacts,
 } from '../../lib/neo/todo-state.ts';
+import { neoInputText, type NeoUnansweredInput } from '../../lib/neo/plan-context.ts';
 import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
 import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
@@ -328,7 +329,26 @@ export class NeoAskTodoRepository {
       asks,
       todos: [...new Map(todos.map((todo) => [todo.id, todo])).values()],
       questions: this.listQuestionsForAsks(asks.map((ask) => ask.id)),
+      unanswered: this.listUnansweredInputs(),
     };
+  }
+
+  listUnansweredInputs(): NeoUnansweredInput[] {
+    const rows = this.db
+      .prepare(`SELECT f.message_id AS id, a.payload_json AS payload
+        FROM neo_front_inputs f
+        JOIN neo_conversation c ON c.id = f.conversation_id
+        JOIN neo_conversation_asks a ON a.conversation_id = f.conversation_id
+          AND a.request_id = f.message_id
+        WHERE f.owner = 'neo' AND NOT EXISTS (
+          SELECT 1 FROM neo_publications p, json_each(p.payload_json, '$.replyTo') ref
+          WHERE p.conversation_id = f.conversation_id AND ref.value = f.message_id)
+        ORDER BY a.sequence`)
+      .all() as { id: string; payload: string }[];
+    return rows.flatMap((row) => {
+      const text = neoInputText(JSON.parse(row.payload) as { content?: unknown });
+      return text ? [{ id: row.id, text }] : [];
+    });
   }
 
   openWorkFacts() {

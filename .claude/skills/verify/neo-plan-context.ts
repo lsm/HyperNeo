@@ -63,6 +63,38 @@ try {
     },
   });
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  const conversation = new NeoRepository(db).conversationId(),
+    answeredInput = '10000000-0000-4000-8000-00000000c001',
+    pendingInput = '10000000-0000-4000-8000-00000000c002',
+    pendingText = 'Ship the compact summary with the full message id';
+  const seedInput = (id: string, owner: 'neo', text: string) => {
+    prepare(
+      'INSERT INTO neo_conversation_asks(conversation_id,request_id,payload_json,created_at) VALUES(?,?,?,?)'
+    ).run(
+      conversation,
+      id,
+      JSON.stringify({
+        conversationId: conversation,
+        requestId: id,
+        askOrigin: { sessionId: root, messageId: id },
+        content: [{ type: 'text', text }],
+      }),
+      new Date().toISOString()
+    );
+    prepare(
+      'INSERT INTO neo_front_inputs(conversation_id,message_id,eligible,owner) VALUES(?,?,1,?)'
+    ).run(conversation, id, owner);
+  };
+  seedInput(answeredInput, 'neo', 'Already answered by Neo');
+  seedInput(pendingInput, 'neo', pendingText);
+  prepare(
+    'INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(?,?,?,?)'
+  ).run(
+    conversation,
+    'synthetic-answer',
+    JSON.stringify({ fullText: 'Synthetic answer', replyTo: [answeredInput], publishedBy: 'neo' }),
+    new Date().toISOString()
+  );
   const ids = Array.from({ length: 12 }, (_, i) => `plan-${i}`),
     detail = 'Synthetic retained detail 亮 '.repeat(200);
   db.transaction(() => {
@@ -134,7 +166,41 @@ try {
   assert.equal(lines.filter((line) => line.kind === 'ask').length, 12);
   for (const id of ids)
     assert(lines.find((line) => line.id === id)?.text.includes(`neo.ask.read ${id}`));
+  assert.deepEqual(
+    facts.unanswered,
+    [{ id: pendingInput, text: pendingText }],
+    'Plan facts carry only the input Neo owns and has not answered'
+  );
   assert(planNeoPlanContext(null, lines, 'compact').includes('plan-11'));
+  const { neoPlanContextHooks } = await import(
+    '../../../packages/daemon/src/lib/agent/neo-plan-hook.ts'
+  );
+  const hooks = neoPlanContextHooks(() => store.read('planContext'));
+  const sessionStart = async (source: 'startup' | 'compact') =>
+    (
+      (await hooks.SessionStart![0].hooks[0](
+        {
+          session_id: root,
+          transcript_path: '',
+          cwd: join(run, 'workspace'),
+          hook_event_name: 'SessionStart',
+          source,
+        },
+        undefined,
+        { signal: new AbortController().signal }
+      )) as { hookSpecificOutput: { additionalContext: string } }
+    ).hookSpecificOutput.additionalContext;
+  const compactContext = await sessionStart('compact');
+  assert(compactContext.includes(pendingInput), 'The session hook never passes the compact source');
+  assert(compactContext.includes(pendingText), 'The session hook drops the unanswered text');
+  assert(!compactContext.includes(answeredInput), 'The session hook repeats an answered message');
+  const startupContext = await sessionStart('startup');
+  assert(!startupContext.includes(pendingInput), 'A startup session repeats the pending message');
+  Object.assign(result, {
+    unanswered: facts.unanswered,
+    hookIncludesPending: true,
+    compactContext,
+  });
   assert.equal(planNeoPlanContext(lines, lines, 'prompt'), '');
   Object.assign(result, {
     lines,

@@ -10,6 +10,25 @@ export type NeoPlanLine = {
   omitted?: boolean;
 };
 
+export type NeoUnansweredInput = {
+  id: string;
+  text: string;
+};
+
+export function neoInputText(ask: { content?: unknown }): string {
+  const content = ask.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .flatMap((block) =>
+      block && typeof block === 'object' && (block as { type?: unknown }).type === 'text'
+        ? [(block as { text?: unknown }).text]
+        : []
+    )
+    .filter((text): text is string => typeof text === 'string' && !!text)
+    .join(' ');
+}
+
 export function neoPlanLines(
   asks: readonly NeoAsk[],
   todos: readonly NeoTodo[],
@@ -77,10 +96,22 @@ export function fitNeoPlanLines(lines: readonly NeoPlanLine[], budget: number): 
 export function planNeoPlanContext(
   previous: readonly NeoPlanLine[] | null,
   lines: readonly NeoPlanLine[],
-  source: 'startup' | 'resume' | 'compact' | 'prompt'
+  source: 'startup' | 'resume' | 'compact' | 'prompt',
+  unanswered: readonly NeoUnansweredInput[] = []
 ): string {
-  if (source !== 'prompt' || previous === null)
-    return `Open plans\n${lines.map((line) => line.text).join('\n') || '(none)'}`;
+  if (source !== 'prompt' || previous === null) {
+    const plans = `Open plans\n${lines.map((line) => line.text).join('\n') || '(none)'}`;
+    if (!unanswered.length) return plans;
+    return [
+      plans,
+      `Unanswered messages\n${unanswered
+        .map(
+          (input) =>
+            `Message ${input.id} (full id; reply with replyTo: ["${input.id}"]): ${input.text.replace(/\s+/g, ' ').trim()}`
+        )
+        .join('\n')}`,
+    ].join('\n');
+  }
   const changed = lines.filter(
     (line) =>
       !previous.some(

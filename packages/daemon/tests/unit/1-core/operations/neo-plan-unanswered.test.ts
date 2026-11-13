@@ -1,0 +1,114 @@
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { neoPlanContextHooks } from '../../../../src/lib/agent/neo-plan-hook.ts';
+
+const conversation = '10000000-0000-4000-8000-00000000a001';
+const answered = '10000000-0000-4000-8000-00000000a011';
+const pending = '10000000-0000-4000-8000-00000000a012';
+const pendingSecond = '10000000-0000-4000-8000-00000000a013';
+const pendingText = 'Ship the compact summary with the full message id';
+const secondText = 'And keep the original wording';
+let db: Database;
+
+function seedInput(messageId: string, owner: 'neo' | 'front' | null, text: string) {
+  db.prepare(
+    'INSERT INTO neo_conversation_asks(conversation_id, request_id, payload_json, created_at) VALUES (?,?,?,?)'
+  ).run(
+    conversation,
+    messageId,
+    JSON.stringify({
+      conversationId: conversation,
+      requestId: messageId,
+      askOrigin: { sessionId: 'neo:source', messageId },
+      content: [{ type: 'text', text }],
+    }),
+    new Date().toISOString()
+  );
+  db.prepare(
+    'INSERT INTO neo_front_inputs (conversation_id, message_id, eligible, owner) VALUES (?,?,1,?)'
+  ).run(conversation, messageId, owner);
+}
+
+function seedAnswer(messageId: string) {
+  db.prepare(
+    'INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at) VALUES (?,?,?,?)'
+  ).run(
+    conversation,
+    `publication-${messageId}`,
+    JSON.stringify({ fullText: 'Answer', replyTo: [messageId], publishedBy: 'neo' }),
+    new Date().toISOString()
+  );
+}
+
+beforeEach(async () => {
+  db = new Database(':memory:');
+  runMigrations(db, () => {});
+  createTables(db);
+  db.prepare(
+    "INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata) VALUES ('neo:source','Synthetic','/synthetic',1,1,'active','{}','{}')"
+  ).run();
+  db.prepare('INSERT INTO neo_conversation (singleton, id, created_at) VALUES (1, ?, 1)').run(
+    conversation
+  );
+});
+
+afterEach(() => db.close());
+
+test('reads the inputs Neo owns and has not answered, with the full id and text', async () => {
+  seedInput(answered, 'neo', 'Already handled');
+  seedInput(pending, 'neo', pendingText);
+  seedInput(pendingSecond, 'front', secondText);
+  seedAnswer(answered);
+
+  const facts = await new NeoAskTodoRepository(db).read('planContext');
+
+  expect(facts.unanswered).toEqual([{ id: pending, text: pendingText }]);
+});
+
+test('sends unanswered messages to Neo after compaction and drops answered ones', async () => {
+  seedInput(answered, 'neo', 'Already handled');
+  seedInput(pending, 'neo', pendingText);
+  seedAnswer(answered);
+  const todos = new NeoAskTodoRepository(db);
+
+  const hooks = neoPlanContextHooks(() => todos.read('planContext'));
+  const input = { session_id: 'synthetic', transcript_path: '', cwd: '/synthetic' };
+  const context = await hooks.SessionStart![0].hooks[0](
+    { ...input, hook_event_name: 'SessionStart', source: 'compact' } as never,
+    undefined,
+    { signal: new AbortController().signal }
+  );
+  const additionalContext = (context as { hookSpecificOutput: { additionalContext: string } })
+    .hookSpecificOutput.additionalContext;
+
+  expect(additionalContext).toContain(pending);
+  expect(additionalContext).toContain(pendingText);
+  expect(additionalContext).toContain(`replyTo: ["${pending}"]`);
+  expect(additionalContext).not.toContain(answered);
+  expect(additionalContext).not.toContain('Already handled');
+});
+
+test('leaves a fresh startup without unanswered messages', async () => {
+  seedInput(pending, 'neo', pendingText);
+  const todos = new NeoAskTodoRepository(db);
+
+  const hooks = neoPlanContextHooks(() => todos.read('planContext'));
+  const context = await hooks.SessionStart![0].hooks[0](
+    {
+      session_id: 'synthetic',
+      transcript_path: '',
+      cwd: '/synthetic',
+      hook_event_name: 'SessionStart',
+      source: 'startup',
+    } as never,
+    undefined,
+    { signal: new AbortController().signal }
+  );
+
+  expect(
+    (context as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput
+      .additionalContext
+  ).not.toContain(pending);
+});
