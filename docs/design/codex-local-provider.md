@@ -1,4 +1,4 @@
-# Codex (local) as a provider
+# OXAP Codex as a provider
 
 Status: proposal. Design only; no code in this PR.
 
@@ -21,15 +21,17 @@ started with five environment variables.
 
 ## Naming
 
-OAP is being renamed OXAP in a separate plan. Nothing this design stores or
-shows names the protocol. The provider id, model id and label are about Codex
-running locally. The protocol name stays only in code that speaks the protocol
-(`lib/oap/`, the `oapx` binary), which the rename plan covers. So the rename
-needs no data migration and no UI string change here.
+Rule: every provider that runs through OXAP is shown with an **OXAP** prefix
+and stored with an `oxap-` id prefix. This one is **OXAP Codex** (`oxap-codex`).
+
+OAP is being renamed OXAP in a separate plan. The stored ids and the label
+already say OXAP, so the rename needs no data migration and no UI string change
+here. Code that speaks the protocol today (`lib/oap/`, the `oapx` binary) keeps
+its current names until that plan renames it.
 
 ## Design
 
-Add one built-in provider, `codex-local`, shown as **Codex (local)**. Choosing
+Add one built-in provider, `oxap-codex`, shown as **OXAP Codex**. Choosing
 it is the only way to pick the Codex engine. `harness` stays a stored fact but
 is derived from the provider, not set by callers.
 
@@ -39,8 +41,8 @@ is derived from the provider, not set by callers.
 
 | Field | Value |
 | --- | --- |
-| providerId | `codex-local` |
-| displayName | Codex (local) |
+| providerId | `oxap-codex` |
+| displayName | OXAP Codex |
 | description | The Codex app on this machine |
 | authType | `none` |
 
@@ -74,27 +76,27 @@ reports the existing refusal text otherwise (`sha256_mismatch`,
 
 ### Session model picker
 
-`codex-local` lists one model, **Codex default**, with id
-`codex-local:default`. Codex runs whatever model its own config names.
+`oxap-codex` lists one model, **Codex default**, with id
+`oxap-codex:default`. Codex runs whatever model its own config names.
 HyperNeo does not pass a model today: the submit request carries only the text
 (`oap-query-hub.ts`).
 
 The picker follows the session's engine, because `harness` cannot change
 after creation:
 
-- When a new chat is created with a `codex-local` model, `session.create`
+- When a new chat is created with a `oxap-codex` model, `session.create`
   derives `harness: 'codex'`.
-- In a Codex session, the picker shows only `codex-local` models.
-- In an SDK session, `codex-local` models are hidden.
+- In a Codex session, the picker shows only `oxap-codex` models.
+- In an SDK session, `oxap-codex` models are hidden.
 - Space and Neo sessions never list them, since admission would refuse them.
 
 Hiding is only the UI side. The daemon also needs a new refusal, since no
 check exists today. `session.model.switch` runs through
 `AgentSession.requestModelSwitch` and `ModelSwitchHandler`, and neither reads
-`harness`. Without a check, a switch to `codex-local` in an SDK session would
-leave it on the SDK. A switch away from `codex-local` in a Codex session would
+`harness`. Without a check, a switch to `oxap-codex` in an SDK session would
+leave it on the SDK. A switch away from `oxap-codex` in a Codex session would
 "succeed" while Codex keeps running. `ModelSwitchHandler.invalidModel` gains
-one pure decision: the target provider's engine (`codex` for `codex-local`,
+one pure decision: the target provider's engine (`codex` for `oxap-codex`,
 `sdk` for every other provider) must equal the session's `harness`. Otherwise
 the switch returns `success: false` with "Model switch cannot change the
 session engine; start a new chat". The user sees why instead of getting a
@@ -111,7 +113,7 @@ events, translated to SDK messages by `oap-sdk-translator.ts`.
 
 Two runtime changes:
 
-- `createOapRuntime` reads `OapEngineOptions` from the `codex-local` provider
+- `createOapRuntime` reads `OapEngineOptions` from the `oxap-codex` provider
   record at each open, not once from startup config.
 - `OapEngine` holds one hub. `getHub` throws "OAP hub configuration differs
   from the running hub" when the options change while a hub is live, and a new
@@ -123,7 +125,7 @@ Two runtime changes:
   `oap-reopen.ts`). A run in flight at save time ends as if the hub had been
   lost. The Settings form says so when Codex sessions are running.
 
-`codex-local` has no SDK config, so its `buildSdkConfig` throws. On the run
+`oxap-codex` has no SDK config, so its `buildSdkConfig` throws. On the run
 path the engine selector picks Codex first (`query-runner.ts`), so the run
 never asks. Other callers reach the session's provider, and each already
 catches the throw:
