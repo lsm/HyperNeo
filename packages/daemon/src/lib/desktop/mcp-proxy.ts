@@ -10,7 +10,7 @@ type Binding = {
   driver_instance_id: string;
   target_app_id: string | null;
 };
-type Target = { app_id: string; pid: number | null; window_id: number | null };
+type Target = { app_id: string; class: string; pid: number | null; window_id: number | null };
 type Planned = Target & { args: Record<string, unknown> };
 type Options = {
   binding: () => Promise<Binding | null>;
@@ -151,6 +151,7 @@ export function createDesktopProxy(options: Options) {
           return refusal();
         }
         target = outcome;
+        context = { class: outcome.class, app_id: outcome.app_id };
         const result = await options.dispatch(binding!, name, outcome.args, () => {
           dispatched = true;
         });

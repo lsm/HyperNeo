@@ -15,6 +15,7 @@ const Reply = z.object({
       call_id: z.string(),
       value: z.object({
         bundle_id: z.string(),
+        class: z.string(),
         instance: z.object({ pid: z.number() }).optional(),
         window_id: z.number().nullable().optional(),
       }),
@@ -71,6 +72,7 @@ export function createDesktopTargetBroker(dataDir: string) {
     return {
       value: {
         app_id: result.value.bundle_id,
+        class: result.value.class,
         pid: result.value.instance?.pid ?? null,
         window_id: result.value.window_id ?? null,
       },
