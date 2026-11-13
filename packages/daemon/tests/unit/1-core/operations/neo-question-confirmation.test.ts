@@ -48,10 +48,9 @@ const ask = (input: Record<string, unknown> = {}) =>
   call('neo.question.ask', {
     retireWhen: pendingTodoCheck,
     askId: 'ask-proof',
-    kind: 'yesno',
+    kind: 'choice',
     text,
-    noLabel: 'Keep the old mandate',
-    yesLabel: 'Replace the mandate',
+    options: ['Replace the mandate'],
     confirm,
     ...input,
   });
@@ -83,27 +82,26 @@ describe('Neo question confirmation binding', () => {
       question: { text, confirm, state: 'open', answer: null },
       answeredByHuman: false,
     });
+    const answer = ['Replace the mandate'];
     await expect(
-      call('neo.question.answer', { questionId: created.question.id, answer: 'yes' })
+      call('neo.question.answer', { questionId: created.question.id, answer })
     ).rejects.toThrow('Operation neo.question.answer is not available to this caller');
     expect(await call('neo.question.get', { questionId: created.question.id })).toMatchObject({
       answeredByHuman: false,
     });
     expect(
-      await call('neo.question.answer', { questionId: created.question.id, answer: 'yes' }, human)
-    ).toMatchObject({ ok: true, question: { confirm, state: 'answered', answer: 'yes' } });
+      await call('neo.question.answer', { questionId: created.question.id, answer }, human)
+    ).toMatchObject({ ok: true, question: { confirm, state: 'answered', answer } });
     expect(await call('neo.question.get', { questionId: created.question.id })).toMatchObject({
-      question: { confirm, state: 'answered', answer: 'yes' },
+      question: { confirm, state: 'answered', answer },
       answeredByHuman: true,
     });
   });
-  test('preserves a no answer without losing the proposed content identity', async () => {
-    const created = await ask();
-    await call('neo.question.answer', { questionId: created.question.id, answer: 'no' }, human);
-    expect(await call('neo.question.get', { questionId: created.question.id })).toMatchObject({
-      question: { confirm, state: 'answered', answer: 'no' },
-      answeredByHuman: true,
-    });
+  test('refuses a yes/no card from Neo', async () => {
+    await expect(
+      ask({ kind: 'yesno', options: undefined, noLabel: 'Keep', yesLabel: 'Replace' })
+    ).rejects.toThrow();
+    expect(store.listQuestions('ask-proof')).toHaveLength(0);
   });
   test.each(['Approve the mandate?', `Approve ${confirm.path}?`, `Approve ${confirm.sha256}?`])(
     'requires both path and hash in the visible body',
@@ -145,10 +143,15 @@ describe('Neo question confirmation binding', () => {
       ).toMatchObject({ ok: true, question: { confirm } });
     }
   );
-  test.each(['reply', 'choice', 'start'])(
-    'refuses confirmation binding on %s questions',
-    async (kind) => {
-      expect(await ask({ kind, options: ['A', 'B'] })).toMatchObject({
+  test.each([
+    { kind: 'reply' },
+    { kind: 'choice', options: ['Replace', 'Keep'] },
+    { kind: 'choice', multiple: true },
+    { kind: 'start' },
+  ])(
+    'refuses confirmation binding on %o',
+    async (card) => {
+      expect(await ask(card)).toMatchObject({
         ok: false,
         reason: expect.stringContaining('confirmation_kind'),
       });

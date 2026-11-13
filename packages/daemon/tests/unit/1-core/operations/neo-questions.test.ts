@@ -602,18 +602,17 @@ describe('neo.question operations', () => {
     ]);
   });
 
-  test('yesno, choice and reply questions take only their own answers', async () => {
+  test('confirm, choice and reply questions take only their own answers', async () => {
     const { asked, call, told } = setup();
-    const yesno = await asked({
-      kind: 'yesno',
+    const confirm = await asked({
+      kind: 'choice',
       text: 'Use HyperNeo dev-1 instead?',
-      noLabel: 'Keep iOS-2',
-      yesLabel: 'Use HyperNeo dev-1',
+      options: ['Use HyperNeo dev-1'],
     });
     expect(
-      (await call('neo.question.answer', { questionId: yesno.id, answer: 'maybe' }, human)).ok
+      (await call('neo.question.answer', { questionId: confirm.id, answer: 'yes' }, human)).ok
     ).toBe(false);
-    await call('neo.question.answer', { questionId: yesno.id, answer: 'yes' }, human);
+    await call('neo.question.answer', { questionId: confirm.id, answer: 'Use HyperNeo dev-1' }, human);
     const pick = await asked({ kind: 'choice', text: 'Which?', options: ['A', 'B'] });
     expect(
       (await call('neo.question.answer', { questionId: pick.id, answer: ['A', 'B'] }, human)).ok
@@ -631,7 +630,7 @@ describe('neo.question operations', () => {
     const reply = await asked({ kind: 'reply', text: 'What should it say?' });
     await call('neo.question.answer', { questionId: reply.id, answer: 'Say hi' }, human);
     expect(told).toEqual([
-      'The human answered "Use HyperNeo dev-1 instead?": yes (Use HyperNeo dev-1).',
+      'The human answered "Use HyperNeo dev-1 instead?": A (Use HyperNeo dev-1).',
       'The human answered "Which?": B (B).',
       'The human answered "Which ones?": none.',
       'The human answered "What should it say?": Say hi.',
