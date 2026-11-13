@@ -3930,6 +3930,58 @@ describe('worker blocker ownership', () => {
       h.db.close();
     }
   });
+  test('a free reply to a blocker card opened while its source was unreadable reaches the worker once it recovers', async () => {
+    const h = setup(false);
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const start = Date.now() + 100;
+      clock.mockReturnValue(start);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: start,
+          turnEnds: [{ id: 'no-source', at: start, message: 'Blocked (needs_human): Which host?' }],
+        },
+      });
+      await h.runner.refresh(() => {});
+      clock.mockReturnValue(start + 60 * 60_000);
+      await h.runner.refresh(() => {});
+      const [card] = h.store
+        .listQuestions('ask')
+        .filter((q) => q.cause === 'worker_blocker' && q.state === 'open');
+      h.store.answerQuestion(card, 'Use the staging host', 'chat', Date.now());
+      const sent: unknown[] = [];
+      const deliver = (up: boolean) =>
+        createNeoQuestionAnswerDelivery(
+          h.store,
+          h.sessions,
+          async (_caller, name, input) => {
+            if (name !== 'work.send') return completed({ ok: false, reason: 'unavailable' });
+            if (!up) return completed({ ok: false, reason: 'not_open' });
+            sent.push(input);
+            return completed({ ok: true, value: { delivered: true } });
+          },
+          async () => {},
+          h.runner.recompute,
+          (error) => {
+            throw error;
+          }
+        )(card.id);
+      await deliver(false);
+      expect(sent).toEqual([]);
+      expect(h.store.questionAnswers.pending(card.id)).toHaveLength(1);
+      await deliver(true);
+      expect(sent).toMatchObject([{ ref }]);
+      expect(h.store.questionAnswers.pending(card.id)).toEqual([]);
+    } finally {
+      clock.mockRestore();
+      h.db.close();
+    }
+  });
+
   test('does not re-ask while an answered card cannot reach the worker', async () => {
     const h = setup(false);
     const clock = vi.spyOn(Date, 'now');
