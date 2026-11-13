@@ -137,6 +137,9 @@ export function planNeoDaemonCardPrune(
   };
 }
 
+export const neoDaemonCardChoice = (card: Pick<Card, 'cause' | 'answer'>) =>
+  isCause(card.cause) && OPTIONS[card.cause].includes(String([card.answer].flat()[0]));
+
 export const neoStartRetryDue = (retries: number) => retries < NEO_AUTOMATIC_RETRIES;
 
 export function planNeoRetriesCard<C extends Card>(

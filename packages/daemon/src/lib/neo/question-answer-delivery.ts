@@ -7,7 +7,7 @@ import { driverWorkCaller } from './driver-work.ts';
 import { WorkStatusResultSchema } from '../drivers/work-operations.ts';
 import { ReadWorkInputSchema, ReadWorkResultSchema } from '../drivers/read-operation.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { planNeoDaemonCardActions } from './daemon-cards.ts';
+import { neoDaemonCardChoice, planNeoDaemonCardActions } from './daemon-cards.ts';
 import { neoQuestionAnsweredNote } from './question-operations.ts';
 import type { NeoService } from './service.ts';
 import type { NeoTodoRunner, NeoTodoRunnerDeps } from './todo-runner.ts';
@@ -204,11 +204,15 @@ export function createNeoQuestionAnswerDelivery(
     }
   };
   return async (questionId?: string) => {
-    if (questionId) await apply(questionId);
+    if (questionId && !store.questionAnswers.list(questionId).length) await apply(questionId);
     const todos = questionId
       ? store.questionAnswers.list(questionId).map((route) => store.getTodo(route.todoId))
       : store.listCheckable();
-    for (const route of store.questionAnswers.pending(questionId)) await deliver(route).catch(warn);
+    for (const route of store.questionAnswers.pending(questionId)) {
+      const card = store.getQuestion(route.questionId);
+      if (!card || !neoDaemonCardChoice(card)) await deliver(route).catch(warn);
+      else if (store.questionAnswers.claim(route.id, 'card-action')) await apply(card.id);
+    }
     for (const todo of todos) if (todo?.blockedBy === 'needs-human') await resume(todo).catch(warn);
   };
 }

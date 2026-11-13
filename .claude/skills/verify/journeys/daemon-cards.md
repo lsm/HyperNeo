@@ -21,7 +21,8 @@ On a real daemon, driving its Neo refresh and answering on the human door
 - A worker blocker (seeded as the final-line blocker leaves it, with a stopped
   worker) that Neo leaves for an hour gets one card with the worker's words as
   its document, and a reply route to that worker even though its source cannot
-  be read. Mark done finishes it.
+  be read. A Mark done answer saved just before a daemon restart is carried out
+  after it, and its route is claimed for the action instead of sent to the worker.
 
 Evidence is `result.json` and `proof.log`. This proves the stored cards and the
 daemon's handling of answers, not how the web renders them or how Neo words its turn.

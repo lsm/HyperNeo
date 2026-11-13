@@ -148,9 +148,12 @@ try {
   clock += hour;
   await refresh();
   assert.equal(cards('worker_blocker').length, 1);
-  await human(blocker.id, 'Mark done');
+  service!.todos.answerQuestion(service!.todos.getQuestion(blocker.id)!, ['Mark done'], 'button', clock);
+  await close(); await open();
   await settle('blocker-todo', 'done');
-  step('ignored blocker: Mark done finishes the todo', service!.todos.getTodo('blocker-todo'));
+  const claimed = service!.todos.questionAnswers.list(blocker.id).map((route) => [route.state, route.receipt]);
+  step('ignored blocker: Mark done saved just before a restart finishes the todo after it, never sent to the worker', { todo: service!.todos.getTodo('blocker-todo'), routes: claimed });
+  assert.deepEqual(claimed, [['pending', 'card-action']]);
   evidence.passed = true;
   console.log('PASS: on the real daemon an overdue check, a twice-failed start and an ignored blocker each end in exactly one card, and the daemon carries out the human answer.');
 } catch (error) { evidence.error = String(error); throw error; }
