@@ -1,7 +1,6 @@
 import { NeoFrontInputRepository } from './neo-front-input-worker.ts';
 import { SettingsRepository } from './settings-repository.ts';
 import { isPublicationSpeaker, frontSessionId } from '../../lib/neo/front-mode.ts';
-import { FRONT_FALLBACK_TEXT, frontFallbackId } from '../../lib/neo/front-catch-up.ts';
 import { neoPublicationPageWrites } from './neo-publication-page-db.ts';
 import type { readNeoPublicationPage } from '../../lib/neo/publication-read-operation.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -325,27 +324,6 @@ export class NeoPublicationRepository {
       )
       .get(conversationId, publicationId) as Row | null;
     return row ? decode(row) : null;
-  }
-
-  hasFallbackFor(conversationId: string, messageId: string): boolean {
-    return this.db
-      .prepare(
-        `SELECT p.publication_id AS id, p.payload_json AS payload FROM neo_publications p,
-          json_each(p.payload_json, '$.replyTo') ref
-        WHERE p.conversation_id = ? AND ref.value = ?
-          AND json_extract(p.payload_json, '$.fullText') = ?`
-      )
-      .all(conversationId, messageId, FRONT_FALLBACK_TEXT)
-      .some((row) => {
-        const { publicationId, replyTo } = JSON.parse((row as { payload: string }).payload) as {
-          publicationId: string;
-          replyTo?: string[];
-        };
-        return (
-          (row as { id: string }).id === publicationId &&
-          publicationId === frontFallbackId(conversationId, replyTo ?? [])
-        );
-      });
   }
 
   toldForAsk(

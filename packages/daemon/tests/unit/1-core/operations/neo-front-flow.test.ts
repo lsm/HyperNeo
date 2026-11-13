@@ -17,6 +17,7 @@ import { admitCreateSessionConfig } from '../../../../src/lib/session/create-ses
 import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 import { frontModeNote } from '../../../../src/lib/neo/front-mode.ts';
 import { NeoFrontInputRepository } from '../../../../src/storage/repositories/neo-front-input-worker.ts';
+import { hasFallbackFor } from '../../../../src/storage/repositories/neo-fallback-notice-read.ts';
 import {
   catchUpBlock,
   FRONT_FALLBACK_TEXT,
@@ -2240,7 +2241,7 @@ test('a stranded input gets its notice without touching an input the full sessio
   );
 
   expect(settled).toEqual({ delivered: true, outcome: 'answered' });
-  expect(service.publications.hasFallbackFor(conversationId, stranded.id)).toBe(true);
+  expect(hasFallbackFor(db.getDatabase(), conversationId, stranded.id)).toBe(true);
   expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, handed.id)?.owner).toBe(
     'neo'
   );
@@ -2283,7 +2284,7 @@ test('a stranded first input and an unanswered second settle with one group fall
     )
     .run(conversationId, first.id);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [first.id])).toHaveLength(0);
-  expect(service.publications.hasFallbackFor(conversationId, first.id)).toBe(false);
+  expect(hasFallbackFor(db.getDatabase(), conversationId, first.id)).toBe(false);
 
   const settledFirst = await handler(first.job);
   const notices = () =>

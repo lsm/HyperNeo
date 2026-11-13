@@ -6,6 +6,7 @@ import {
   neoFrontInputWrites,
 } from '../../storage/repositories/neo-front-input-worker.ts';
 import { neoPublicationWrites } from '../../storage/repositories/neo-publication-repository.ts';
+import { hasFallbackFor } from '../../storage/repositories/neo-fallback-notice-read.ts';
 import { FRONT_FALLBACK_TEXT, frontFallbackId } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
 
@@ -16,7 +17,7 @@ function hasFallbackNotice(
   conversationId: string,
   messageId: string
 ): boolean {
-  return service.publications.hasFallbackFor(conversationId, messageId);
+  return hasFallbackFor(service.db.getDatabase(), conversationId, messageId);
 }
 
 export async function settleConvoInput(
