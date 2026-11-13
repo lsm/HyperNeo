@@ -171,6 +171,8 @@ export const PROVIDER_MANAGED_ENV_VARS = new Set([
   'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
   'CLAUDE_CODE_OAUTH_TOKEN',
   'ANTHROPIC_CUSTOM_HEADERS',
+  'CLAUDE_CODE_DISABLE_1M_CONTEXT',
+  'CLAUDE_CODE_MAX_CONTEXT_TOKENS',
 ]);
 
 function isRealAnthropicAuthToken(token: string | undefined): boolean {
@@ -307,6 +309,8 @@ function applyProviderEnvToFlagSettings(queryOptions: Options, envVars: Provider
   providerManagedEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
   providerManagedEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
   providerManagedEnvVars.add('ENABLE_TOOL_SEARCH');
+  providerManagedEnvVars.add('CLAUDE_CODE_DISABLE_1M_CONTEXT');
+  providerManagedEnvVars.add('CLAUDE_CODE_MAX_CONTEXT_TOKENS');
 
   for (const key of providerManagedEnvVars) {
     if (envVars[key] !== undefined) {

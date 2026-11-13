@@ -41,6 +41,7 @@ import { neoSecretReadRules } from '../../../../src/lib/neo/secret-read-rules';
 
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
+import { customProviderIdFor } from '../../../../src/lib/providers/custom-endpoint-provider';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
 import type { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
@@ -1593,6 +1594,65 @@ describe('QueryOptionsBuilder', () => {
         precomputeCompactionEnabled: true,
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
+    });
+  });
+
+  describe('custom endpoint context window reaches the SDK env', () => {
+    const model = {
+      id: 'swe-2-high',
+      name: 'SWE-2 High',
+      provider: 'custom:devin',
+      alias: 'swe-2-high',
+      family: 'devin',
+      contextWindow: 256_000,
+      description: 'Synthetic custom model',
+      releaseDate: '',
+      available: true,
+    };
+
+    beforeEach(() => {
+      resetProviderRegistry();
+      getProviderRegistry().register({
+        id: 'custom:devin',
+        displayName: 'Synthetic Devin',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 256_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [model],
+        ownsModel: (id: string) => id === model.id,
+        getModelForTier: () => model.id,
+        buildSdkConfig: () => ({
+          envVars: {
+            ANTHROPIC_BASE_URL: 'http://127.0.0.1:40123',
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: model.id,
+            ANTHROPIC_DEFAULT_SONNET_MODEL: model.id,
+            ANTHROPIC_DEFAULT_OPUS_MODEL: model.id,
+            CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
+            CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(model.contextWindow),
+          },
+          isAnthropicCompatible: true,
+        }),
+      } as Provider);
+      setModelsCache(new Map([['global', [model]]]));
+      mockSession.config.provider = customProviderIdFor('devin') as Session['config']['provider'];
+      mockSession.config.model = model.id;
+    });
+
+    afterEach(() => {
+      resetProviderRegistry();
+      setModelsCache(new Map());
+    });
+
+    it('delivers the declared window and the 1M opt-out to the SDK child env', async () => {
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBe('1');
+      expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('256000');
     });
   });
 

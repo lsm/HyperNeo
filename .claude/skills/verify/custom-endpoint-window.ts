@@ -4,7 +4,8 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { CustomEndpointProvider } from '../../../packages/daemon/src/lib/providers/custom-endpoint-provider.ts';
-import { buildProviderSettings } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
+import { refreshQueryEnvFromProcess } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../../../packages/daemon/src/lib/provider-service.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -48,44 +49,62 @@ const upstream = createServer((req, res) => {
 await new Promise<void>((done) => upstream.listen(0, '127.0.0.1', done));
 const upstreamUrl = `http://127.0.0.1:${(upstream.address() as { port: number }).port}`;
 
-const endpoint = (id: string, maxContextTokens: number) =>
-  new CustomEndpointProvider(
+type SdkRun = { model: string; contextWindow: number; sentOneMillionBeta: boolean };
+
+const daemonEnvFor = async (maxContextTokens: number) => {
+  const provider = new CustomEndpointProvider(
     {
-      id,
+      id: 'devin',
       type: 'anthropic-messages',
-      name: id,
-      baseUrl: 'https://example.invalid/model',
+      name: 'devin',
+      baseUrl: 'https://example.invalid/devin',
       models: [{ id: 'swe-2-high', capabilities: { maxContextTokens } }],
       defaultModelId: 'swe-2-high',
     },
     { bridgeFactories: { 'anthropic-messages': () => ({ port: 40123, stop: () => {} }) } }
   );
+  await provider.ensureBridgeStarted('swe-2-high');
+  const providerEnvVars = provider.buildSdkConfig('swe-2-high', { sessionId: 'verify' }).envVars;
+  const extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
+    (key) => providerEnvVars[key] !== undefined
+  );
+  const childEnv = { ...process.env, ...providerEnvVars };
+  const env = refreshQueryEnvFromProcess(
+    { ...providerEnvVars },
+    childEnv,
+    {
+      refreshAutoCompactWindow: true,
+      clearProviderManaged: true,
+      skipAmbientAnthropicApiKey: true,
+      extraProviderManagedEnvVars,
+    }
+  ) as Record<string, string | undefined>;
+  return { providerEnvVars, env };
+};
 
-type SdkRun = { model: string; contextWindow: number; window: number | null };
-
-const runCli = async (envVars: Record<string, string>): Promise<SdkRun> => {
+const runCli = async (envVars: Record<string, string | undefined>): Promise<SdkRun> => {
+  const env: Record<string, string> = {
+    HOME: join(run, 'home'),
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    NODE_ENV: 'test',
+    ANTHROPIC_AUTH_TOKEN: 'verify-local-mock',
+    ANTHROPIC_API_KEY: '',
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  };
+  for (const [key, value] of Object.entries(envVars)) if (value !== undefined) env[key] = value;
+  env.ANTHROPIC_BASE_URL = upstreamUrl;
+  sentOneMillionBeta = false;
   const child = spawn(
     cli,
     ['-p', 'hello', '--model', 'default', '--output-format', 'stream-json', '--verbose'],
-    {
-      cwd: join(run, 'workspace'),
-      env: {
-        HOME: join(run, 'home'),
-        PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
-        NODE_ENV: 'test',
-        ANTHROPIC_AUTH_TOKEN: 'verify-local-mock',
-        ANTHROPIC_API_KEY: '',
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        ...envVars,
-        ANTHROPIC_BASE_URL: upstreamUrl,
-      },
-    }
+    { cwd: join(run, 'workspace'), env }
   );
   let out = '';
+  let err = '';
   child.stdout.on('data', (chunk) => (out += chunk));
-  child.stderr.on('data', () => {});
+  child.stderr.on('data', (chunk) => (err += chunk));
   const code = await new Promise<number>((done) => child.on('close', (value) => done(value ?? -1)));
-  assert.equal(code, 0, `SDK CLI exited ${code}`);
+  assert.equal(code, 0, `SDK CLI exited ${code}: ${err.slice(0, 400)}`);
   const lines = out
     .split('\n')
     .filter(Boolean)
@@ -93,44 +112,52 @@ const runCli = async (envVars: Record<string, string>): Promise<SdkRun> => {
   const init = lines.find((line) => line.subtype === 'init');
   const result = lines.at(-1) as { modelUsage?: Record<string, { contextWindow?: number }> };
   const usage = Object.entries(result.modelUsage ?? {})[0];
-  assert.ok(init && usage, 'SDK returned no init or modelUsage');
-  const envWindow = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  assert.ok(init && usage, `SDK returned no init or modelUsage: ${out.slice(0, 400)}`);
   return {
     model: String(init.model),
     contextWindow: Number(usage[1].contextWindow),
-    window: envWindow === undefined ? null : Number(envWindow),
+    sentOneMillionBeta,
   };
 };
 
 const evidence: Record<string, unknown> = {};
 try {
-  const small = endpoint('devin-like', 256_000);
-  await small.ensureBridgeStarted('swe-2-high');
-  const smallCfg = small.buildSdkConfig('swe-2-high', { sessionId: 'verify' });
-  assert.equal(smallCfg.envVars.CLAUDE_CODE_DISABLE_1M_CONTEXT, '1');
-  assert.equal(smallCfg.envVars.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '256000');
-  const plannedWindow = buildProviderSettings(small.id, 256_000, 'swe-2-high')?.autoCompactWindow;
-  evidence.belowLimit = { env: smallCfg.envVars, autoCompactWindow: plannedWindow };
-  evidence.belowLimitRun = await runCli(smallCfg.envVars);
+  const small = await daemonEnvFor(256_000);
+  assert.equal(small.env.CLAUDE_CODE_DISABLE_1M_CONTEXT, '1');
+  assert.equal(small.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '256000');
+  evidence.belowLimit = {
+    providerEnvVars: {
+      CLAUDE_CODE_DISABLE_1M_CONTEXT: small.providerEnvVars.CLAUDE_CODE_DISABLE_1M_CONTEXT,
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS: small.providerEnvVars.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+    },
+    daemonEnv: {
+      CLAUDE_CODE_DISABLE_1M_CONTEXT: small.env.CLAUDE_CODE_DISABLE_1M_CONTEXT,
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS: small.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: small.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    },
+  };
+  evidence.belowLimitRun = await runCli(small.env);
   assert.equal(evidence.belowLimitRun.model, 'swe-2-high');
   assert.equal(evidence.belowLimitRun.contextWindow, 256_000);
-  evidence.belowLimitRun = { ...evidence.belowLimitRun, sentOneMillionBeta };
-  assert.equal(sentOneMillionBeta, false);
+  assert.equal(evidence.belowLimitRun.sentOneMillionBeta, false);
 
-  const large = endpoint('million-like', 1_000_000);
-  await large.ensureBridgeStarted('swe-2-high');
-  const largeCfg = large.buildSdkConfig('swe-2-high', { sessionId: 'verify' });
-  assert.equal(largeCfg.envVars.CLAUDE_CODE_DISABLE_1M_CONTEXT, undefined);
-  assert.equal(largeCfg.envVars.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);
-  evidence.million = { env: largeCfg.envVars };
-  evidence.millionRun = await runCli(largeCfg.envVars);
+  const large = await daemonEnvFor(1_000_000);
+  assert.equal(large.env.CLAUDE_CODE_DISABLE_1M_CONTEXT, undefined);
+  assert.equal(large.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);
+  evidence.million = {
+    daemonEnv: {
+      CLAUDE_CODE_DISABLE_1M_CONTEXT: large.env.CLAUDE_CODE_DISABLE_1M_CONTEXT,
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS: large.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+    },
+  };
+  evidence.millionRun = await runCli(large.env);
   assert.equal(evidence.millionRun.model, 'swe-2-high[1m]');
   assert.equal(evidence.millionRun.contextWindow, 1_000_000);
-  evidence.millionRun = { ...evidence.millionRun, sentOneMillionBeta };
-  assert.equal(sentOneMillionBeta, true);
+  assert.equal(evidence.millionRun.sentOneMillionBeta, true);
+
   evidence.verified = true;
   console.log(
-    'PASS: a 256k custom model runs the real SDK as swe-2-high with a 256000 window, and a 1M model keeps swe-2-high[1m] at 1000000.'
+    'PASS: through the daemon env the CLI receives, a 256k custom model runs as swe-2-high with a 256000 window and no 1M beta; a 1M model still runs as swe-2-high[1m] at 1000000.'
   );
 } catch (error) {
   evidence.error = String(error);
