@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import qrcode from 'qrcode-generator';
 import { connectionManager } from '../../lib/connection-manager';
 import { invokeOperation } from '../../lib/operations.ts';
 import { globalSettings } from '../../lib/state.ts';
@@ -15,11 +16,16 @@ type Created =
   | { ok: true; code: string; expiresAt: number; approval: 'approved' | 'pending' }
   | Refused;
 type Listed = { ok: true; devices: Device[] } | Refused;
+type Made = { requestId: string; ticket: string; expiresAt: number };
+type Seen = { state: string; name: string | null };
 
 type Flow =
   | { kind: 'idle' | 'starting' }
   | { kind: 'waiting'; code: string; expiresAt: number; pending: boolean }
-  | { kind: 'paired'; name: string }
+  | { kind: 'qr'; requestId: string; image: string; address: string; expiresAt: number }
+  | { kind: 'scanned'; requestId: string }
+  | { kind: 'paired'; text: string }
+  | { kind: 'ended'; message: string }
   | { kind: 'failed'; message: string };
 
 async function call<T>(name: 'device.list' | 'device.pair.create', input: unknown = {}) {
@@ -32,6 +38,39 @@ function daemonAddresses(): string[] {
     .map((host) => `${location.protocol}//${host}${port}`)
     .filter((address) => address !== location.origin);
   return [location.origin, ...alternates];
+}
+
+async function pair2<T>(path: string, body?: object): Promise<T | null> {
+  const init: RequestInit = { credentials: 'same-origin', cache: 'no-store' };
+  if (body) Object.assign(init, { method: 'POST', body: JSON.stringify(body) });
+  const response = await fetch(path, init).catch(() => null);
+  return response?.ok ? ((await response.json().catch(() => null)) as T | null) : null;
+}
+
+const seen = (requestId: string) =>
+  pair2<Seen>(`/pair2/status?requestId=${encodeURIComponent(requestId)}`);
+
+function phoneOrigin(): string | null {
+  if (location.protocol === 'https:') return location.origin;
+  const host = globalSettings.value?.allowedHosts?.[0];
+  return host ? `https://${host}` : null;
+}
+
+const ENDED: Record<string, string> = {
+  cancelled: 'Pairing cancelled.',
+  denied: 'Pairing was denied.',
+  expired: 'The QR expired before a phone paired.',
+};
+
+function Countdown({ until }: { until: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <p class="text-xs text-fg-faint">Expires in {Math.max(0, Math.ceil((until - now) / 1000))} s</p>
+  );
 }
 
 const ON_LOOPBACK = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
@@ -61,11 +100,52 @@ export function PairPhoneFlow({
   const current = useRef<AbortController | null>(null);
   useEffect(() => () => current.current?.abort(), []);
 
+  const settle = (requestId: string, status: Seen | null): boolean => {
+    if (status?.state === 'granted') {
+      setFlow({ kind: 'paired', text: `Paired with ${status.name ?? 'the phone'}.` });
+      onPaired?.();
+      return true;
+    }
+    const ended = status && ENDED[status.state];
+    if (ended) setFlow({ kind: 'ended', message: ended });
+    else if (status?.state === 'bound' || status?.state === 'approved')
+      setFlow({ kind: 'scanned', requestId });
+    return Boolean(ended);
+  };
+
+  const watchQr = async (made: Made, address: string, signal: AbortSignal) => {
+    const link = `hyperneo://pair2?v=2&t=${encodeURIComponent(made.ticket)}&a=${encodeURIComponent(address)}`;
+    const qr = qrcode(0, 'M');
+    qr.addData(link);
+    qr.make();
+    const { requestId, expiresAt } = made;
+    setFlow({ kind: 'qr', requestId, image: qr.createDataURL(5, 4), address, expiresAt });
+    let missed = 0;
+    while (!signal.aborted) {
+      await pause(pollMs, signal);
+      const status = await seen(requestId);
+      if (signal.aborted) return;
+      missed = status ? 0 : missed + 1;
+      if (missed >= 3) return setFlow({ kind: 'failed', message: UNREACHABLE });
+      if (settle(requestId, status)) return;
+    }
+  };
+
+  const cancelQr = async (requestId: string) => {
+    current.current?.abort();
+    await pair2('/pair2/cancel', { requestId });
+    if (!settle(requestId, await seen(requestId))) setFlow({ kind: 'idle' });
+  };
+
   const start = async () => {
     current.current?.abort();
     const controller = new AbortController();
     current.current = controller;
     setFlow({ kind: 'starting' });
+    const address = phoneOrigin();
+    const made = address ? await pair2<Made>('/pair2/request', {}) : null;
+    if (controller.signal.aborted) return;
+    if (address && made?.ticket) return watchQr(made, address, controller.signal);
     const created = await call<Created>('device.pair.create', { kind: 'human' }).catch(() => null);
     if (!created) {
       if (!controller.signal.aborted) setFlow({ kind: 'failed', message: UNREACHABLE });
@@ -95,7 +175,7 @@ export function PairPhoneFlow({
         ? listed.devices.find((device) => device.kind === 'human' && !known.has(device.id))
         : null;
       if (arrived) {
-        setFlow({ kind: 'paired', name: arrived.name });
+        setFlow({ kind: 'paired', text: `Paired: ${arrived.name}` });
         onPaired?.();
         return;
       }
@@ -172,9 +252,33 @@ export function PairPhoneFlow({
             </Button>
           </>
         )}
+        {flow.kind === 'qr' && (
+          <>
+            <p class="text-fg">Add a phone. Scan this QR with Neo.</p>
+            <img src={flow.image} alt="Pairing QR code" class="h-48 w-48 rounded-lg" />
+            <div class="font-mono break-all text-fg">{flow.address}</div>
+            <Countdown until={flow.expiresAt} />
+          </>
+        )}
+        {flow.kind === 'scanned' && (
+          <p role="status" class="text-fg-muted">
+            Phone scanned. Waiting for confirmation.
+          </p>
+        )}
+        {(flow.kind === 'qr' || flow.kind === 'scanned') && (
+          <Button variant="secondary" onClick={() => void cancelQr(flow.requestId)}>
+            Cancel
+          </Button>
+        )}
+        {flow.kind === 'ended' && (
+          <>
+            <p class="text-fg-muted">{flow.message}</p>
+            <Button onClick={() => void start()}>Show a new QR</Button>
+          </>
+        )}
         {flow.kind === 'paired' && (
           <>
-            <p class="text-fg">Paired: {flow.name}</p>
+            <p class="text-fg">{flow.text}</p>
             <p class="text-xs text-fg-faint">It now appears under Devices below.</p>
             <Button variant="secondary" onClick={cancel}>
               Done

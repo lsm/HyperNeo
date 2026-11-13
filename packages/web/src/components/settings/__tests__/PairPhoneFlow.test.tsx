@@ -330,7 +330,10 @@ describe('PairPhoneFlow with pairing v2', () => {
 
   it('keeps the code flow when the daemon has pairing v2 off', async () => {
     status = { ...status, state: 'none' };
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 404 }))
+    );
     render(<PairPhoneFlow pollMs={5000} />);
     fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
     await screen.findByText('LEGACY2345');
