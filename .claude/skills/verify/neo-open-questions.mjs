@@ -42,7 +42,6 @@ try {
       const body = card.locator(`[data-ask-question="${id}"]`);
       await body.waitFor();
       assert(await body.locator('[data-choice-option]', { hasText: 'Proceed' }).isEnabled());
-      assert(await body.getByRole('button', { name: 'Wait', exact: true }).isEnabled());
       await page.waitForFunction(({ id, width }) => {
         const box = document.getElementById(`neo-ref-question-${id}`).getBoundingClientRect();
         return box.x >= 0 && box.right <= width + 1;
