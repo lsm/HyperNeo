@@ -247,7 +247,7 @@ export function projectNeoAskEntries(
         if (question.kind === 'choice' && question.options)
           return {
             ...question,
-            optionLabels: neoOptionLabels(question.options),
+            optionLabels: neoOptionLabels(question.options, question.labels),
             ...neoRemovedPrerequisiteCodes(question, allTodos),
           };
         if (question.kind !== 'start' || !question.todos.length) return question;

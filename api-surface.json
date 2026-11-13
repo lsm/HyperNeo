@@ -20947,6 +20947,19 @@
                             ],
                             "type": "string"
                           },
+                          "labels": {
+                            "anyOf": [
+                              {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "multiple": {
                             "type": "boolean"
                           },
@@ -23426,6 +23439,19 @@
                             "start"
                           ],
                           "type": "string"
+                        },
+                        "labels": {
+                          "anyOf": [
+                            {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "multiple": {
                           "type": "boolean"
@@ -30227,6 +30253,19 @@
                             ],
                             "type": "string"
                           },
+                          "labels": {
+                            "anyOf": [
+                              {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "multiple": {
                             "type": "boolean"
                           },
@@ -33754,6 +33793,19 @@
                     ],
                     "type": "string"
                   },
+                  "labels": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "multiple": {
                     "type": "boolean"
                   },
@@ -34091,6 +34143,15 @@
               "kind": {
                 "const": "choice",
                 "type": "string"
+              },
+              "labels": {
+                "description": "One distinct uppercase letter A–F per option, when the text names approaches by letter. Defaults to A, B, C… in order.",
+                "items": {
+                  "pattern": "^[A-F]$",
+                  "type": "string"
+                },
+                "maxItems": 6,
+                "type": "array"
               },
               "multiple": {
                 "default": false,
@@ -34865,6 +34926,19 @@
                       "start"
                     ],
                     "type": "string"
+                  },
+                  "labels": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "multiple": {
                     "type": "boolean"
@@ -35867,6 +35941,19 @@
                     ],
                     "type": "string"
                   },
+                  "labels": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "multiple": {
                     "type": "boolean"
                   },
@@ -36446,6 +36533,19 @@
                     ],
                     "type": "string"
                   },
+                  "labels": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "multiple": {
                     "type": "boolean"
                   },
@@ -36915,6 +37015,19 @@
                       "start"
                     ],
                     "type": "string"
+                  },
+                  "labels": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "multiple": {
                     "type": "boolean"
@@ -39111,6 +39224,19 @@
                               "start"
                             ],
                             "type": "string"
+                          },
+                          "labels": {
+                            "anyOf": [
+                              {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "multiple": {
                             "type": "boolean"

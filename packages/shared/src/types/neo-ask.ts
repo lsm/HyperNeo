@@ -117,6 +117,7 @@ export interface NeoQuestion {
   text: string;
   kind: NeoQuestionKind;
   options: string[] | null;
+  labels?: string[] | null;
   multiple: boolean;
   noLabel: string | null;
   yesLabel: string | null;
@@ -132,15 +133,22 @@ export interface NeoQuestion {
   createdAt: number;
 }
 
-export function neoOptionLabels(options: readonly string[]): string[] {
-  return options.map((_, index) => String.fromCharCode(65 + index));
+export function neoOptionLabels(
+  options: readonly string[],
+  labels?: readonly string[] | null
+): string[] {
+  return options.map((_, index) => labels?.[index] ?? String.fromCharCode(65 + index));
 }
 
-export function neoLabelledOptions(options: readonly string[], picked: readonly string[]): string {
+export function neoLabelledOptions(
+  options: readonly string[],
+  picked: readonly string[],
+  labels?: readonly string[] | null
+): string {
   return picked
     .map((option) => {
       const index = options.indexOf(option);
-      return index < 0 ? option : `${String.fromCharCode(65 + index)} (${option})`;
+      return index < 0 ? option : `${neoOptionLabels(options, labels)[index]} (${option})`;
     })
     .join(', ');
 }
@@ -150,16 +158,20 @@ const LETTER_REPLY =
 
 export function neoChoiceByLetter(
   words: string,
-  question: Pick<NeoQuestion, 'kind' | 'options' | 'multiple'> | null
+  question: Pick<NeoQuestion, 'kind' | 'options' | 'multiple' | 'labels'> | null
 ): string[] | null {
   const letters = words
     .trim()
     .match(LETTER_REPLY)?.[1]
     .split(/\s*[,，、&和与]\s*|\s+and\s+/i);
   if (question?.kind !== 'choice' || !question.options || !letters) return null;
+  const labels = neoOptionLabels(question.options, question.labels);
   const picked = [
     ...new Set(
-      letters.map((letter) => question.options?.[letter.toUpperCase().charCodeAt(0) - 65])
+      letters.map((letter) => {
+        const index = labels.indexOf(letter.toUpperCase());
+        return index < 0 ? undefined : question.options?.[index];
+      })
     ),
   ];
   return picked.every((option) => option !== undefined) &&
