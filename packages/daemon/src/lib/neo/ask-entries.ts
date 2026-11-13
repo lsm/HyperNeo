@@ -244,7 +244,7 @@ export function projectNeoAskEntries(
       doneCount: todos.filter((todo) => todo.state === 'done').length,
       questions: questions.map((question) => {
         if (question.kind === 'choice' && question.options)
-          return { ...question, optionLabels: neoOptionLabels(question.options) };
+          return { ...question, optionLabels: neoOptionLabels(question.options, question.labels) };
         if (question.kind !== 'start' || !question.todos.length) return question;
         const line = neoStartQuestionLine(
           question.todos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
