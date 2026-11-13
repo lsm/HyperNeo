@@ -11,7 +11,9 @@ describe('stoppedErrorCardUuid', () => {
   });
 
   it('keeps the banner when the turn ended without an API Error card', () => {
-    expect(stoppedErrorCardUuid([user, { type: 'assistant', uuid: 'a2' }], episode)).toBeUndefined();
+    expect(
+      stoppedErrorCardUuid([user, { type: 'assistant', uuid: 'a2' }], episode)
+    ).toBeUndefined();
     expect(stoppedErrorCardUuid([card, user], episode)).toBeUndefined();
   });
 

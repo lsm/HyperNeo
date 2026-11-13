@@ -29,6 +29,7 @@ import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { ToolResultCard } from './tools/index.ts';
 import { useChatDisplayMode, useHydrateMessages } from './chat-display-mode.ts';
 import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement.ts';
+import type { StoppedEpisode } from '../../lib/stopped-error-card.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 
@@ -49,6 +50,15 @@ interface Props {
   isRunning?: boolean;
   runningToolUseIds?: Set<string>;
   flattenSubagentTools?: boolean;
+  stopped?: StoppedEpisode;
+}
+
+function rawStoppedError(error: string): string {
+  try {
+    return JSON.stringify(JSON.parse(error), null, 2);
+  } catch {
+    return error;
+  }
 }
 
 export function SDKAssistantMessage({
@@ -65,6 +75,7 @@ export function SDKAssistantMessage({
   isRunning,
   runningToolUseIds,
   flattenSubagentTools = false,
+  stopped,
 }: Props) {
   const { message: apiMessage } = message;
   const contentBlocks = apiMessage.content as ContentBlock[];
@@ -158,6 +169,11 @@ export function SDKAssistantMessage({
             <span>API Error</span>
           </div>
         )}
+        {hasError && stopped && (
+          <p class="text-sm font-medium text-danger">
+            Stopped after {stopped.failures} failures. Send a message to recover.
+          </p>
+        )}
         {textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
           <div key={idx} class={hasError ? 'text-danger-soft' : 'text-accent-fg'}>
             <MarkdownRenderer
@@ -166,6 +182,14 @@ export function SDKAssistantMessage({
             />
           </div>
         ))}
+        {hasError && stopped && (
+          <details class="text-xs text-fg-muted">
+            <summary class="cursor-pointer">Technical details</summary>
+            <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono">
+              {rawStoppedError(stopped.error)}
+            </pre>
+          </details>
+        )}
 
         {message.parent_tool_use_id && (
           <div class="text-xs text-fg-muted italic">

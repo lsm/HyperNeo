@@ -75,6 +75,7 @@ import { type SearchMessageLoadTarget, searchHighlightMessageIdSignal } from '..
 import { connectionState, globalSettings } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import type { StructuredError } from '../types/error.ts';
+import { type StoppedEpisode, stoppedErrorCardUuid } from '../lib/stopped-error-card.ts';
 import { ErrorCategory } from '../types/error.ts';
 
 export function shouldBlockForPendingQuestion(
@@ -938,6 +939,11 @@ export default function ChatContainer({
     }
     return [];
   }, [errorDetails, errorCategory, errorProviderId, availableModels, switchModel]);
+  const stoppedEpisode =
+    localError || retryStatusMessage || errorActions.length
+      ? undefined
+      : (errorDetails?.metadata?.queryFailureEpisode as StoppedEpisode | undefined);
+  const stoppedCardUuid = stoppedErrorCardUuid(messages, stoppedEpisode);
 
   const sessionStateLoaded = store.sessionState.value !== null;
   const messagesLoaded = store.messagesLoaded.value;
@@ -1048,7 +1054,7 @@ export default function ChatContainer({
         </div>
       )}
 
-      {error && (
+      {error && !stoppedCardUuid && (
         <ErrorBanner
           error={error}
           hasDetails={!!storeError?.details}
@@ -1263,6 +1269,9 @@ export default function ChatContainer({
                             msg.uuid ? maps.replacementStatusMap.get(msg.uuid) : undefined
                           }
                           isLiveTail={idx === messages.length - 1}
+                          stopped={
+                            msg.uuid && msg.uuid === stoppedCardUuid ? stoppedEpisode : undefined
+                          }
                         />
                       </div>
                       {view && turnAt?.[idx + 1] !== turn && (
