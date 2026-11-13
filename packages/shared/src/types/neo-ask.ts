@@ -111,6 +111,7 @@ export interface NeoQuestion {
   todoId?: string | null;
   document?: string | null;
   replyTo?: string[];
+  cause?: string | null;
   id: string;
   askId: string;
   text: string;
@@ -208,6 +209,7 @@ export type NeoAskEntryState = 'waiting' | 'doing' | 'done' | 'dropped' | 'todo'
 export interface NeoQuestionEntry extends NeoQuestion {
   textCodes?: NeoStatusCode[];
   optionLabels?: string[];
+  optionCodes?: NeoStatusCode[];
 }
 
 export interface NeoAskEntry {

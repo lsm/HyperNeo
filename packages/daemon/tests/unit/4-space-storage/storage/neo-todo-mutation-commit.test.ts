@@ -220,4 +220,25 @@ describe('Atomic todo mutation commits', () => {
     expect(snapshot()).toEqual(before);
     expect(changes).toEqual([]);
   });
+
+  test('a removal names a live dependent to start next, never a removed one', async () => {
+    const draft = { doneWhen: 'Merged', check: null, instruction: null, named: null };
+    store.addTodo('next', 'ask', { ...draft, title: 'next', dependsOn: ['first'] }, 1);
+    store.addTodo('after', 'ask', { ...draft, title: 'after', dependsOn: ['peer'] }, 1);
+    const removed = await commit({
+      kind: 'remove',
+      todoId: 'first',
+      reason: 'Not needed',
+      dependents: 'remove',
+    });
+    expect(store.getTodo('next')!.state).toBe('removed');
+    expect(removed).toMatchObject({ ok: true, startNext: null });
+    const kept = await commit({
+      kind: 'remove',
+      todoId: 'peer',
+      reason: 'Not needed',
+      dependents: 'continue',
+    });
+    expect(kept).toMatchObject({ ok: true, startNext: 'after' });
+  });
 });

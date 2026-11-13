@@ -20893,6 +20893,12 @@
                           "askId": {
                             "type": "string"
                           },
+                          "cause": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "confirm": {
                             "anyOf": [
                               {
@@ -20962,6 +20968,31 @@
                               "string",
                               "null"
                             ]
+                          },
+                          "optionCodes": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "params": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "params"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
                           },
                           "optionLabels": {
                             "items": {
@@ -23355,6 +23386,12 @@
                         "askId": {
                           "type": "string"
                         },
+                        "cause": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "confirm": {
                           "anyOf": [
                             {
@@ -23424,6 +23461,31 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "optionCodes": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "params": {
+                                "additionalProperties": {
+                                  "type": "string"
+                                },
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "params"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
                         },
                         "optionLabels": {
                           "items": {
@@ -30137,6 +30199,12 @@
                           "askId": {
                             "type": "string"
                           },
+                          "cause": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "confirm": {
                             "anyOf": [
                               {
@@ -30206,6 +30274,31 @@
                               "string",
                               "null"
                             ]
+                          },
+                          "optionCodes": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "params": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "params"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
                           },
                           "optionLabels": {
                             "items": {
@@ -33646,6 +33739,12 @@
                   "askId": {
                     "type": "string"
                   },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "confirm": {
                     "anyOf": [
                       {
@@ -34774,6 +34873,12 @@
                   "askId": {
                     "type": "string"
                   },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "confirm": {
                     "anyOf": [
                       {
@@ -35782,6 +35887,12 @@
                   "askId": {
                     "type": "string"
                   },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "confirm": {
                     "anyOf": [
                       {
@@ -36368,6 +36479,12 @@
                   "askId": {
                     "type": "string"
                   },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "confirm": {
                     "anyOf": [
                       {
@@ -36844,6 +36961,12 @@
                   },
                   "askId": {
                     "type": "string"
+                  },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "confirm": {
                     "anyOf": [
@@ -39048,6 +39171,12 @@
                           "askId": {
                             "type": "string"
                           },
+                          "cause": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "confirm": {
                             "anyOf": [
                               {
@@ -39117,6 +39246,31 @@
                               "string",
                               "null"
                             ]
+                          },
+                          "optionCodes": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "params": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "params"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
                           },
                           "optionLabels": {
                             "items": {
@@ -44095,6 +44249,14 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "dependents": {
+            "description": "What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; the daemon then asks them.",
+            "enum": [
+              "continue",
+              "remove"
+            ],
+            "type": "string"
+          },
           "reason": {
             "minLength": 1,
             "type": "string"
