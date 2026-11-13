@@ -6,12 +6,13 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const [port, run] = process.argv.slice(2);
-assert(port && run && port !== '8399', 'usage: pairing-v2-web-view.mjs <port> <run-dir>');
+const [port, tlsPort, run] = process.argv.slice(2);
+assert(port && tlsPort && run && port !== '8399', 'usage: pairing-v2-web-view.mjs <port> <tls-port> <run-dir>');
 const code = process.env.PAIR_CODE;
 assert(code, 'PAIR_CODE is required');
 const { chromium } = createRequire(import.meta.url)('playwright');
 const base = `http://127.0.0.1:${port}`;
+const secure = `https://127.0.0.1:${tlsPort}`;
 const reader = join(dirname(fileURLToPath(import.meta.url)), 'qr-read.swift');
 const result = {};
 
@@ -40,15 +41,18 @@ const phone = (name) => {
 
 const browser = await chromium.launch({ headless: true });
 try {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, ignoreHTTPSErrors: true });
   const page = await context.newPage();
-  const shot = (name) => page.screenshot({ path: `${run}/evidence/${name}.png` });
+  const shot = async (name, mask = []) => {
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: `${run}/evidence/${name}.png`, mask });
+  };
   await page.goto(`${base}/pair#${code}`);
   await page.getByLabel('Name for this browser').fill('Verify browser');
   await page.getByRole('button', { name: 'Pair this browser' }).click();
   await page.getByText('This browser is paired.').waitFor({ timeout: 10000 });
   const approve = (requestId) =>
-    context.request.post(`${base}/pair2/approve`, { data: { requestId }, headers: { origin: base } });
+    context.request.post(`${secure}/pair2/approve`, { data: { requestId }, headers: { origin: secure } });
   const scanQr = async (name) => {
     const qr = page.getByRole('img', { name: 'Pairing QR code' });
     await qr.waitFor({ timeout: 15000 });
@@ -57,19 +61,34 @@ try {
     const url = new URL(link);
     assert.equal(`${url.protocol}//${url.host}`, 'hyperneo://pair2');
     assert.equal(url.searchParams.get('v'), '2');
-    assert.equal(url.searchParams.get('a'), 'https://neo-verify.example.ts.net');
+    assert.equal(url.searchParams.get('a'), secure);
     return url.searchParams.get('t');
   };
 
   await page.goto(`${base}/settings?tab=devices`);
   await page.getByRole('button', { name: 'Start pairing' }).click();
+  await page.getByText('Enter this pairing code:').waitFor({ timeout: 10000 });
+  result.httpPageQr = await page.getByRole('img', { name: 'Pairing QR code' }).count();
+  assert.equal(result.httpPageQr, 0);
+  await shot('0-http-typed-code', [page.getByText(/^[A-Z2-9]{10}$/)]);
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  const narrow = await context.newPage();
+  await narrow.setViewportSize({ width: 390, height: 844 });
+  await narrow.goto(`${secure}/settings?tab=devices`);
+  await narrow.getByRole('button', { name: 'Start pairing' }).click();
+  await narrow.getByRole('img', { name: 'Pairing QR code' }).scrollIntoViewIfNeeded();
+  await narrow.waitForTimeout(800);
+  await narrow.screenshot({ path: `${run}/evidence/1-qr-390.png` });
+  await narrow.getByRole('button', { name: 'Cancel' }).click();
+  await narrow.close();
+
+  await page.goto(`${secure}/settings?tab=devices`);
+  await page.getByRole('button', { name: 'Start pairing' }).click();
   const ticket = await scanQr('first');
   result.countdown = await page.getByText(/Expires in \d+ s/).innerText();
-  result.address = await page.getByText('https://neo-verify.example.ts.net').innerText();
+  result.address = await page.getByText(secure, { exact: true }).innerText();
   await shot('1-qr');
-  await page.setViewportSize({ width: 390, height: 844 });
-  await shot('1-qr-390');
-  await page.setViewportSize({ width: 1280, height: 900 });
 
   const first = phone('Kitchen iPhone');
   const bound = await first.bind(ticket);

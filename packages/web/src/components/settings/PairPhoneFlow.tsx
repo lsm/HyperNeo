@@ -50,12 +50,6 @@ async function pair2<T>(path: string, body?: object): Promise<T | null> {
 const seen = (requestId: string) =>
   pair2<Seen>(`/pair2/status?requestId=${encodeURIComponent(requestId)}`);
 
-function phoneOrigin(): string | null {
-  if (location.protocol === 'https:') return location.origin;
-  const host = globalSettings.value?.allowedHosts?.[0];
-  return host ? `https://${host}` : null;
-}
-
 const ENDED: Record<string, string> = {
   cancelled: 'Pairing cancelled.',
   denied: 'Pairing was denied.',
@@ -142,7 +136,7 @@ export function PairPhoneFlow({
     const controller = new AbortController();
     current.current = controller;
     setFlow({ kind: 'starting' });
-    const address = phoneOrigin();
+    const address = location.protocol === 'https:' ? location.origin : null;
     const made = address ? await pair2<Made>('/pair2/request', {}) : null;
     if (controller.signal.aborted) return;
     if (address && made?.ticket) return watchQr(made, address, controller.signal);
