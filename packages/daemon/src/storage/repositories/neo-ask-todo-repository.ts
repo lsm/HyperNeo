@@ -341,8 +341,12 @@ export class NeoAskTodoRepository {
         JOIN neo_conversation_asks a ON a.conversation_id = f.conversation_id
           AND a.request_id = f.message_id
         WHERE f.owner = 'neo' AND NOT EXISTS (
-          SELECT 1 FROM neo_publications p, json_each(p.payload_json, '$.replyTo') ref
-          WHERE p.conversation_id = f.conversation_id AND ref.value = f.message_id)
+          SELECT 1 FROM neo_publications p WHERE p.conversation_id = f.conversation_id AND (
+            f.message_id IN (SELECT value FROM json_each(p.payload_json, '$.replyTo'))
+            OR f.message_id IN (
+              SELECT value FROM json_each(p.payload_json, '$.cardReply.sourceMessageIds'))
+            OR (json_extract(p.payload_json, '$.producerInput.messageId') = f.message_id
+              AND json_type(p.payload_json, '$.revisionId') = 'text')))
         ORDER BY a.sequence`)
       .all() as { id: string; payload: string }[];
     return rows.flatMap((row) => {

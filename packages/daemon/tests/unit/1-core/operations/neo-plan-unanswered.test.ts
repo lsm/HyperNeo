@@ -8,6 +8,8 @@ const conversation = '10000000-0000-4000-8000-00000000a001';
 const answered = '10000000-0000-4000-8000-00000000a011';
 const pending = '10000000-0000-4000-8000-00000000a012';
 const pendingSecond = '10000000-0000-4000-8000-00000000a013';
+const cardAnswered = '10000000-0000-4000-8000-00000000a014';
+const revisionAnswered = '10000000-0000-4000-8000-00000000a015';
 const pendingText = 'Ship the compact summary with the full message id';
 const secondText = 'And keep the original wording';
 let db: Database;
@@ -61,6 +63,46 @@ test('reads the inputs Neo owns and has not answered, with the full id and text'
   seedInput(pending, 'neo', pendingText);
   seedInput(pendingSecond, 'front', secondText);
   seedAnswer(answered);
+
+  const facts = await new NeoAskTodoRepository(db).read('planContext');
+
+  expect(facts.unanswered).toEqual([{ id: pending, text: pendingText }]);
+});
+
+test('counts a card reply and a text revision as answers', async () => {
+  seedInput(cardAnswered, 'neo', 'Answered by a card');
+  seedInput(revisionAnswered, 'neo', 'Answered by a text revision');
+  seedInput(pending, 'neo', pendingText);
+  db.prepare(
+    'INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at) VALUES (?,?,?,?)'
+  ).run(
+    conversation,
+    'card-publication',
+    JSON.stringify({
+      fullText: 'Card answer',
+      cardReply: {
+        askId: 'ask-1',
+        questionId: 'question-1',
+        mutationId: 'mutation-1',
+        sourceMessageIds: [cardAnswered],
+      },
+      publishedBy: 'neo',
+    }),
+    new Date().toISOString()
+  );
+  db.prepare(
+    'INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at) VALUES (?,?,?,?)'
+  ).run(
+    conversation,
+    'revision-publication',
+    JSON.stringify({
+      fullText: 'Revised answer',
+      revisionId: 'text',
+      producerInput: { messageId: revisionAnswered },
+      publishedBy: 'neo',
+    }),
+    new Date().toISOString()
+  );
 
   const facts = await new NeoAskTodoRepository(db).read('planContext');
 

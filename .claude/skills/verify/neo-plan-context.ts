@@ -65,6 +65,7 @@ try {
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   const conversation = new NeoRepository(db).conversationId(),
     answeredInput = '10000000-0000-4000-8000-00000000c001',
+    cardAnsweredInput = '10000000-0000-4000-8000-00000000c003',
     pendingInput = '10000000-0000-4000-8000-00000000c002',
     pendingText = 'Ship the compact summary with the full message id';
   const seedInput = (id: string, owner: 'neo', text: string) => {
@@ -86,6 +87,7 @@ try {
     ).run(conversation, id, owner);
   };
   seedInput(answeredInput, 'neo', 'Already answered by Neo');
+  seedInput(cardAnsweredInput, 'neo', 'Already answered by a card');
   seedInput(pendingInput, 'neo', pendingText);
   prepare(
     'INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(?,?,?,?)'
@@ -93,6 +95,18 @@ try {
     conversation,
     'synthetic-answer',
     JSON.stringify({ fullText: 'Synthetic answer', replyTo: [answeredInput], publishedBy: 'neo' }),
+    new Date().toISOString()
+  );
+  prepare(
+    'INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(?,?,?,?)'
+  ).run(
+    conversation,
+    'synthetic-card-answer',
+    JSON.stringify({
+      fullText: 'Synthetic card answer',
+      cardReply: { sourceMessageIds: [cardAnsweredInput] },
+      publishedBy: 'neo',
+    }),
     new Date().toISOString()
   );
   const ids = Array.from({ length: 12 }, (_, i) => `plan-${i}`),
@@ -194,6 +208,10 @@ try {
   assert(compactContext.includes(pendingInput), 'The session hook never passes the compact source');
   assert(compactContext.includes(pendingText), 'The session hook drops the unanswered text');
   assert(!compactContext.includes(answeredInput), 'The session hook repeats an answered message');
+  assert(
+    !compactContext.includes(cardAnsweredInput),
+    'The session hook repeats a message a card already answered'
+  );
   const startupContext = await sessionStart('startup');
   assert(!startupContext.includes(pendingInput), 'A startup session repeats the pending message');
   Object.assign(result, {
