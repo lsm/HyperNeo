@@ -46,4 +46,11 @@ describe('stoppedErrorCardUuid', () => {
       stoppedErrorCardUuid([user, card, result], { ...episode, error: 'Query timed out' })
     ).toBeUndefined();
   });
+
+  it('still picks the card when the stored result JSON was cut before its uuid', () => {
+    const cut = `{"type":"result","result":"${'x'.repeat(5000)}","uuid":"r1"}`.slice(0, 4096);
+    const failed = { ...result, is_error: true };
+    expect(stoppedErrorCardUuid([user, card, failed], { ...episode, error: cut })).toBe('a1');
+    expect(stoppedErrorCardUuid([user, card, result], { ...episode, error: cut })).toBeUndefined();
+  });
 });
