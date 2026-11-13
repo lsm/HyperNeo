@@ -678,6 +678,7 @@ class WorkerDrivers(unittest.TestCase):
 
     def test_same_user_process_cannot_add_a_grant(self):
         pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
         requirement = self.resolve('click', {'pid': pid})['value']['requirement']
         self.assertEqual(same_user_add('pointer\n' + requirement, 'com.apple.finder'), -34018)
         denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
@@ -687,6 +688,7 @@ class WorkerDrivers(unittest.TestCase):
 
     def test_fixture_grant_survives_restart_and_covers_only_its_app_signer_and_class(self):
         pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
         granted = self.call('fixture-grant', tool='click', arguments={'pid': pid})
         if not SIGNED:
             self.assertEqual(granted, {'ok': False, 'error': 'grant_store_refused: -34018'})
