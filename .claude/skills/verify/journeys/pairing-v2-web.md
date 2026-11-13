@@ -4,7 +4,7 @@ Build the web bundle first (`cd packages/web && bun run build`), then run on a f
 (never 8399), on macOS (the script reads the QR with Vision through `swift`):
 
 ```bash
-TMPDIR=/tmp/claude-501 .claude/skills/verify/pairing-v2-web.sh 8611
+.claude/skills/verify/pairing-v2-web.sh 8611
 ```
 
 The script starts one isolated daemon through the CLI front door (`env -i`,
