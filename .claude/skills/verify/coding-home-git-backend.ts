@@ -130,7 +130,7 @@ try {
   const missingConsent = await rpc('neo.home.github', { questionId: 'missing' });
   assert(!openConsent.ok && !missingConsent.ok);
   assert.equal(creates().length, 0);
-  assert((await rpc('neo.question.answer', { questionId: proposed.questionId, answer: 'yes' })).ok);
+  assert((await rpc('neo.question.answer', { questionId: proposed.questionId, answer: 'Create private repo' })).ok);
   const consent = await rpc<{ answeredByHuman: boolean }>('neo.question.get', { questionId: proposed.questionId });
   assert.equal(consent.answeredByHuman, true);
   const creating = rpc('neo.home.github', { questionId: proposed.questionId });

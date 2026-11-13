@@ -3,11 +3,13 @@ import type { Database } from '../sqlite-compat.ts';
 import { neoStandingRules } from '@hyperneo/shared/types/settings';
 import { SettingsRepository } from './settings-repository.ts';
 import { planNeoRuleEdit, planNeoRuleSources } from '../../lib/neo/saved-rules.ts';
+import { humanPickedApply } from '../../lib/neo/human-card.ts';
+import { neoChoiceByLetter, type NeoQuestionKind } from '@hyperneo/shared/types/neo-ask';
 
 function readNeoRuleProposal(db: Database, questionId: string) {
   const row = db
     .prepare(`SELECT p.edit_json, p.question_text, p.applied_at,
-      q.state, q.kind, q.answer, q.answered_by, q.text, a.session_id FROM neo_rule_proposals p
+      q.state, q.kind, q.options, q.answer, q.answered_by, q.text, a.session_id FROM neo_rule_proposals p
       JOIN neo_questions q ON q.id=p.question_id JOIN neo_asks a ON a.id=q.ask_id WHERE p.question_id=?`)
     .get(questionId) as
     | {
@@ -17,13 +19,17 @@ function readNeoRuleProposal(db: Database, questionId: string) {
         applied_at: number | null;
         state: string;
         kind: string;
+        options: string | null;
         answer: string | null;
         answered_by: string | null;
         text: string;
       }
     | undefined;
-  return row;
+  return row && { ...row, options: JSON.parse(row.options ?? 'null') as string[] | null };
 }
+
+const applied = (row: { kind: string; options: string[] | null; answer: string | null }) =>
+  humanPickedApply({ ...row, answer: JSON.parse(row.answer ?? 'null') });
 
 export function applyNeoRuleAnswer(
   db: Database,
@@ -36,11 +42,10 @@ export function applyNeoRuleAnswer(
     if (row.applied_at !== null) return { ok: true as const, changed: false };
     if (
       row.state !== 'answered' ||
-      row.kind !== 'yesno' ||
-      row.answer !== JSON.stringify('yes') ||
+      !applied(row) ||
       !['button', 'chat'].includes(row.answered_by ?? '')
     )
-      return { ok: false as const, reason: 'human_yes_required' };
+      return { ok: false as const, reason: 'human_apply_required' };
     if (row.text !== row.question_text) throw new Error('proposal_question_changed');
     const settings = new SettingsRepository(db);
     const current = settings.getGlobalSettings();
@@ -82,15 +87,20 @@ export function readNeoRuleApproval(
             part.type === 'text' ? [part.text] : []
           )
           .join(' ');
-  if (words.trim() !== 'yes') return false;
   const proposal = readNeoRuleProposal(db, human.replyTo.id);
   if (
     !proposal ||
     proposal.session_id !== human.askOrigin.sessionId ||
     proposal.state !== 'answered' ||
-    proposal.kind !== 'yesno' ||
+    !applied(proposal) ||
     proposal.answered_by !== 'chat' ||
-    proposal.answer !== JSON.stringify('yes') ||
+    JSON.stringify(
+      neoChoiceByLetter(words, {
+        ...proposal,
+        kind: proposal.kind as NeoQuestionKind,
+        multiple: false,
+      }) ?? words.trim()
+    ) !== proposal.answer ||
     proposal.text !== proposal.question_text
   )
     return false;

@@ -42,7 +42,7 @@ for (const phase of ['initial', 'restart']) {
       new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-ask', projectId: null, sessionId: 'synthetic-root', originMessageId: null, title: 'Synthetic settings', request: 'Verify immutable proposal', createdAt: 1 });
       const declined = await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'declined-request', values });
       assert.equal(declined.ok, true);
-      assert.equal((await rpc('neo.question.answer', { questionId: declined.questionId, answer: 'no' })).ok, true);
+      assert.equal((await rpc('neo.question.answer', { questionId: declined.questionId, answer: 'Keep current settings' })).ok, true);
       const closed = await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'declined-request', values });
       assert.deepEqual(closed, { ok: false, reason: 'question_closed' });
       const proposed = await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'synthetic-request', values });
@@ -52,8 +52,8 @@ for (const phase of ['initial', 'restart']) {
       assert.equal(read.answeredByHuman, false); assert(read.question.text.includes('| --- | --- |')); for (const value of values) assert(!read.question.text.includes(JSON.stringify(value)));
       const snapshot = await rpc('neo.snapshot', {});
       assert(snapshot.todoAsks.some((entry: any) => entry.questions.some((q: any) => q.id === questionId)));
-      assert.equal((await mcp('neo.question.answer', { questionId, answer: 'yes' })).ok, false);
-      assert.equal((await rpc('neo.question.answer', { questionId, answer: 'yes' })).ok, true);
+      assert.equal((await mcp('neo.question.answer', { questionId, answer: 'Apply these settings' })).ok, false);
+      assert.equal((await rpc('neo.question.answer', { questionId, answer: 'Apply these settings' })).ok, true);
     }
     assert.equal((await rpc('neo.question.get', { questionId })).answeredByHuman, true);
     const saved = (await rpc('pack.preferences.list', {})).preferences.filter((row: { key: string }) => row.key !== 'watchedRepos');

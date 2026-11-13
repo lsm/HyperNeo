@@ -69,7 +69,7 @@ export function formatPreferenceProposal(
   });
   return {
     text: [zh ? '应用这些设置？' : 'Apply these settings?', ...tables].join('\n\n'),
-    noLabel: zh ? '保留当前设置' : 'Keep current settings',
-    yesLabel: zh ? '应用这些设置' : 'Apply these settings',
+    apply: zh ? '应用这些设置' : 'Apply these settings',
+    keep: zh ? '保留当前设置' : 'Keep current settings',
   };
 }

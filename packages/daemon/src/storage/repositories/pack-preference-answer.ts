@@ -1,11 +1,12 @@
 import type { Database } from '../sqlite-compat.ts';
 import type { NeoPackSetting } from '@hyperneo/shared/types/neo-snapshot';
+import { humanPickedApply } from '../../lib/neo/human-card.ts';
 
 export function applyPackPreferenceAnswer(db: Database, questionId: string) {
   return db.transaction(() => {
     const row = db
       .prepare(`SELECT p.values_json, p.question_text, p.applied_at,
-      q.state, q.kind, q.answer, q.answered_by, q.text FROM neo_pack_preference_proposals p
+      q.state, q.kind, q.options, q.answer, q.answered_by, q.text FROM neo_pack_preference_proposals p
       JOIN neo_questions q ON q.id=p.question_id WHERE p.question_id=?`)
       .get(questionId) as
       | {
@@ -14,6 +15,7 @@ export function applyPackPreferenceAnswer(db: Database, questionId: string) {
           applied_at: number | null;
           state: string;
           kind: string;
+          options: string | null;
           answer: string | null;
           answered_by: string | null;
           text: string;
@@ -23,11 +25,14 @@ export function applyPackPreferenceAnswer(db: Database, questionId: string) {
     if (row.applied_at !== null) return { ok: true as const, applied: false };
     if (
       row.state !== 'answered' ||
-      row.kind !== 'yesno' ||
-      row.answer !== JSON.stringify('yes') ||
+      !humanPickedApply({
+        kind: row.kind,
+        options: JSON.parse(row.options ?? 'null'),
+        answer: JSON.parse(row.answer ?? 'null'),
+      }) ||
       !['button', 'chat'].includes(row.answered_by ?? '')
     )
-      return { ok: false as const, reason: 'human_yes_required' };
+      return { ok: false as const, reason: 'human_apply_required' };
     if (row.text !== row.question_text) throw new Error('proposal_question_changed');
     const insert = db.prepare(`INSERT INTO neo_pack_preferences
       (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES (?, ?, ?, ?, ?, 'human', ?)

@@ -6,7 +6,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { applyPackPreferenceAnswer } from '../../storage/repositories/pack-preference-answer.ts';
 import { defineOperation } from '../operations/registry.ts';
-import { openHumanCard } from './human-card.ts';
+import { applyOrKeepCard, openHumanCard } from './human-card.ts';
 import { PackPreferenceInput, validatePackPreference } from './preference-operations.ts';
 import { formatPreferenceProposal } from './preference-proposal.ts';
 import type { NeoPack } from './pack-contract.ts';
@@ -65,24 +65,12 @@ export function createPackPreferenceQuestions(
               : { ok: false as const, reason: 'question_closed' };
           }
           const questionId = crypto.randomUUID();
-          const { text, noLabel, yesLabel } = formatPreferenceProposal(
-            input.values,
-            packs(),
-            language()
-          );
+          const { text, apply, keep } = formatPreferenceProposal(input.values, packs(), language());
           openHumanCard(
             store,
             questionId,
             input.askId,
-            {
-              text,
-              kind: 'yesno',
-              options: null,
-              multiple: false,
-              noLabel,
-              yesLabel,
-              startTodos: null,
-            },
+            applyOrKeepCard(text, apply, keep),
             Date.now()
           );
           db.prepare(`INSERT INTO neo_pack_preference_proposals (question_id, request_id, values_json, question_text)
