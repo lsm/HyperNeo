@@ -554,16 +554,14 @@ export class QueryOptionsBuilder {
       (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
         ? undefined
         : modelInfo?.autoCompactPercent);
-    const compactEnv = {
-      ...(!sessionHasAutoCompactWindow &&
+    const compactEnv =
+      !sessionHasAutoCompactWindow &&
       modelInfo?.autoCompactPercentOverride !== undefined &&
       providerSettings?.autoCompactWindow
         ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(providerSettings.autoCompactWindow) }
-        : {}),
-      ...(compactPercent !== undefined
-        ? { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(resolveAutoCompactPercent(compactPercent)) }
-        : {}),
-    };
+        : compactPercent !== undefined
+          ? { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(resolveAutoCompactPercent(compactPercent)) }
+          : {};
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = await this.getSDKCliPath();
 

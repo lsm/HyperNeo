@@ -1229,7 +1229,7 @@ describe('QueryOptionsBuilder', () => {
               },
             ],
           ],
-        ])
+        ]) as Parameters<typeof setModelsCache>[0]
       );
       try {
         builder = new QueryOptionsBuilder({ ...mockContext, db: undefined });
@@ -1238,7 +1238,8 @@ describe('QueryOptionsBuilder', () => {
         mockSession.config.autoCompactPercent = 45;
         const options = await builder.build();
         const window = Number(
-          options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? options.settings?.autoCompactWindow
+          options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW ??
+            (options.settings as { autoCompactWindow?: number } | undefined)?.autoCompactWindow
         );
         const effective = window - 20_000;
         const percent = Number(options.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE);

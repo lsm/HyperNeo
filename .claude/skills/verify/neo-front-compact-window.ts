@@ -148,10 +148,7 @@ try {
         (providerWindow * (config as { autoCompactPercent: number }).autoCompactPercent) / 100
       );
       assert.equal(observed.window, expected, `${label} window`);
-      assert.equal(
-        observed.percentEnv,
-        String((config as { autoCompactPercent: number }).autoCompactPercent)
-      );
+      assert.equal(observed.percentEnv, undefined, `${label} sends the window, not the percentage again`);
       assert(context, `${label} returned no context usage`);
       assert.equal(context.isAutoCompactEnabled, true);
       assert.equal(context.maxTokens, expected, `${label} effective window`);
