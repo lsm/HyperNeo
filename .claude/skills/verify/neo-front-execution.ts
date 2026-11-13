@@ -75,7 +75,7 @@ const fixture = createServer(async (request, response) => {
     stages.set(active, 4);
   } else if (front && stage === 0 && active === handoffId) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply',
-      input: { requestId: `work-${active}`, replyTo: [active], work_on: true, text: 'I will handle that.' } };
+      input: { requestId: `work-${active}`, replyTo: [active], text: 'I will handle that.' } };
     stages.set(active, 2);
   }
   const publish = block.type === 'tool_use';
@@ -350,5 +350,5 @@ try {
   writeFileSync(join(run, 'evidence/neo-front-execution.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(
-  'PASS ordinary front session, terminal reply, one-call work_on hand-off and direct Neo updates per human input'
+  'PASS ordinary front session, one-call reply hand-off and direct Neo updates per human input'
 );

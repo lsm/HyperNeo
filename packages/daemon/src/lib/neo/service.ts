@@ -291,7 +291,8 @@ export class NeoService {
       (id) => {
         const conversation = this.repo.readConversationId();
         return conversation && id === frontSessionId(conversation) ? `neo:${conversation}` : id;
-      }
+      },
+      () => this.db.getGlobalSettings().neo?.front?.enabled === true
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());

@@ -11,6 +11,10 @@ import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import type { NeoPublicationWriteResult } from '../../storage/repositories/neo-publication-repository.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { neoDerivedId } from './derived-id.ts';
+
+export function publicationIdFor(sessionId: string, requestId: string): string {
+  return neoDerivedId(JSON.stringify(['neo.publication.publish', sessionId, requestId]));
+}
 import {
   foldPublicationDetails,
   NeoPublicationObject,
@@ -257,13 +261,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           worker === undefined
             ? runtime.publication(
                 proof.root.sessionId.slice(4),
-                neoDerivedId(
-                  JSON.stringify([
-                    'neo.publication.publish',
-                    proof.binding.sessionId,
-                    draft.requestId,
-                  ])
-                )
+                publicationIdFor(proof.binding.sessionId, draft.requestId)
               )
             : null;
         if (prior) return { value: { ...proof, session: prior.session } };
@@ -351,12 +349,9 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
               : { shortText: text, fullText: details }),
             session: message.session ?? undefined,
             replyTo: progress ? undefined : message.replyTo,
-            publicationId: neoDerivedId(
-              JSON.stringify([
-                'neo.publication.publish',
-                proof.binding.sessionId,
-                progress ? frontProgressRequest(message.replyTo!) : requestId,
-              ])
+            publicationId: publicationIdFor(
+              proof.binding.sessionId,
+              progress ? frontProgressRequest(message.replyTo!) : requestId
             ),
             conversationId: proof.root.sessionId.slice(4),
           },

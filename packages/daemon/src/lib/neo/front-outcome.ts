@@ -1,12 +1,24 @@
 import { frontSessionId } from './front-mode.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { jobQueueWrites } from '../../storage/repositories/job-queue-repository.ts';
-import { neoFrontInputReads } from '../../storage/repositories/neo-front-input-worker.ts';
+import {
+  neoFrontInputReads,
+  neoFrontInputWrites,
+} from '../../storage/repositories/neo-front-input-worker.ts';
 import { neoPublicationWrites } from '../../storage/repositories/neo-publication-repository.ts';
+import { hasFallbackFor } from '../../storage/repositories/neo-fallback-notice-read.ts';
 import { FRONT_FALLBACK_TEXT, frontFallbackId } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
+
+function hasFallbackNotice(
+  service: NeoService,
+  conversationId: string,
+  messageId: string
+): boolean {
+  return hasFallbackFor(service.db.getDatabase(), conversationId, messageId);
+}
 
 export async function settleConvoInput(
   service: NeoService,
@@ -17,8 +29,9 @@ export async function settleConvoInput(
   failure?: 'delivery' | 'superseded'
 ) {
   const owner = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, messageId);
-  if (owner?.owner)
-    return { delivered: true, outcome: owner.owner === 'neo' ? 'handed_off' : 'answered' };
+  if (owner?.owner === 'neo') return { delivered: true, outcome: 'handed_off' };
+  if (owner?.owner === 'front' && hasFallbackNotice(service, conversationId, messageId))
+    return { delivered: true, outcome: 'answered' };
   const ask = service.asks.find(conversationId, messageId);
   if (!ask) return { delivered: false };
   const sdk = service.db.getSDKMessageRepo();
@@ -61,7 +74,9 @@ export async function settleConvoInput(
   const open: string[] = [];
   for (const id of ids) {
     const input = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, id);
-    if (!input?.owner) open.push(id);
+    if (input?.owner === 'neo') continue;
+    if (input?.owner === 'front' && hasFallbackNotice(service, conversationId, id)) continue;
+    open.push(id);
   }
   if (!open.includes(messageId)) {
     const self = await service.db.gateway.call(
@@ -72,6 +87,9 @@ export async function settleConvoInput(
     );
     return { delivered: true, outcome: self?.owner === 'neo' ? 'handed_off' : 'answered' };
   }
+  await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, open);
+  const answeredMeanwhile = open.some((id) => hasFallbackNotice(service, conversationId, id));
+  if (answeredMeanwhile) return { delivered: true, outcome: 'answered' };
   const receipt = await service.db.gateway.call(
     neoPublicationWrites,
     'append',
