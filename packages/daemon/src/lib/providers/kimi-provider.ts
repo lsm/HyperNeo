@@ -10,6 +10,8 @@ import type {
   ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
+  ProviderUsageResult,
+  UsageWindow,
 } from '@hyperneo/shared/provider';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
@@ -49,6 +51,108 @@ export function resolveKimiRegion(region: unknown): KimiRegion {
     }
   }
   return 'china';
+}
+
+type UsageRecord = Record<string, unknown>;
+
+function asUsageRecord(value: unknown): UsageRecord | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as UsageRecord)
+    : null;
+}
+
+function usageNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function usageLabel(
+  item: UsageRecord,
+  detail: UsageRecord,
+  window: UsageRecord,
+  index: number,
+  fallback: string
+): string {
+  for (const record of [item, detail]) {
+    for (const key of ['name', 'title', 'scope']) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) return value;
+    }
+  }
+  const duration = usageNumber(window.duration ?? item.duration ?? detail.duration);
+  const rawUnit = window.timeUnit ?? item.timeUnit ?? detail.timeUnit;
+  const timeUnit = typeof rawUnit === 'string' ? rawUnit.toUpperCase() : '';
+  if (duration) {
+    if (timeUnit.includes('MINUTE')) {
+      return duration >= 60 && duration % 60 === 0
+        ? `${duration / 60}h limit`
+        : `${duration}m limit`;
+    }
+    if (timeUnit.includes('HOUR')) return `${duration}h limit`;
+    if (timeUnit.includes('DAY')) return `${duration}d limit`;
+    return `${duration}s limit`;
+  }
+  return fallback || `Limit #${index + 1}`;
+}
+
+function usageResetAt(record: UsageRecord): string | null {
+  const value = record.reset_at ?? record.resetAt ?? record.reset_time ?? record.resetTime;
+  if (typeof value === 'number' || (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value))) {
+    const seconds = usageNumber(value);
+    if (seconds === null) return null;
+    try {
+      return new Date(seconds * 1000).toISOString();
+    } catch {
+      return null;
+    }
+  }
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+  ) {
+    return null;
+  }
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function toUsageWindow(item: UsageRecord, index: number, fallback = ''): UsageWindow | null {
+  const detail = asUsageRecord(item.detail) ?? item;
+  const limit = usageNumber(detail.limit);
+  if (limit === null) return null;
+  const remaining = usageNumber(detail.remaining);
+  const used = usageNumber(detail.used) ?? (remaining === null ? 0 : limit - remaining);
+  return {
+    label: usageLabel(item, detail, asUsageRecord(item.window) ?? {}, index, fallback),
+    used,
+    limit,
+    resetAt: usageResetAt(detail),
+  };
+}
+
+function parseKimiUsageWindows(payload: unknown): UsageWindow[] {
+  const record = asUsageRecord(payload);
+  if (
+    !record ||
+    (record.usage !== undefined && !asUsageRecord(record.usage)) ||
+    (record.limits !== undefined && !Array.isArray(record.limits))
+  ) {
+    throw new Error('Kimi usage response was malformed.');
+  }
+  const usage = asUsageRecord(record.usage);
+  const windows = usage ? [toUsageWindow(usage, 0, 'Weekly limit')] : [];
+  for (const [index, value] of (record.limits ?? []).entries()) {
+    const item = asUsageRecord(value);
+    if (item) windows.push(toUsageWindow(item, index));
+  }
+  return windows.filter((window): window is UsageWindow => window !== null);
 }
 
 export class KimiProvider implements Provider {
@@ -446,6 +550,37 @@ export class KimiProvider implements Provider {
       models = this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
     }
     return models;
+  }
+
+  async getUsage(): Promise<ProviderUsageResult> {
+    if (this.resolveEffectiveRegion() === 'global') {
+      return { supported: false, provider: this.id, reason: 'not_supported' };
+    }
+    const apiKey = this.getApiKey();
+    if (!apiKey) throw new Error('Kimi API key is not configured.');
+    const url = `${normalizeBaseUrl(this.resolveModelListBaseUrl())}/usages`;
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+    } catch {
+      throw new Error('Kimi usage request failed.');
+    }
+    if (!response.ok) {
+      throw new Error(`Kimi usage request failed with status ${response.status}.`);
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new Error('Kimi usage response was malformed.');
+    }
+    return {
+      supported: true,
+      provider: this.id,
+      windows: parseKimiUsageWindows(payload),
+    };
   }
 
   setCuratedModels(models: CuratedModel[] | undefined): void {
