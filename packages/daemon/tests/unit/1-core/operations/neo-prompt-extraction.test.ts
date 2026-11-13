@@ -16,7 +16,7 @@ const moved = [
   [
     'NEO_DRIVER_HEALTH',
     'src/lib/neo/prompt.ts',
-    'Driver health events report local worker clients as ok, degraded, or unavailable. Before assigning work, read work.adapters and avoid degraded or unavailable drivers; tell the human the concrete reason and next step, without repeating an unchanged warning. A recovery event makes that driver eligible again. An unverified client version is still usable when health is ok: schedule its driver verify journey, then call work.health action verified with the adapter, passed journey, and exact tested clientVersions. Never record verification before observing that journey pass. Do not start work or change authentication as part of a read-only health check.',
+    "Driver health events report local worker clients as ok, degraded, or unavailable. Before assigning work, read work.adapters and avoid degraded or unavailable drivers; tell the human the concrete reason and next step, without repeating an unchanged warning. Before assigning work to a model, call invoke settings.provider.usage with that model's provider. If any window has used at or above limit, choose a worker on another provider or wait until its resetAt, and say which; if resetAt is null, say the reset time is unknown. not_supported or an error means unknown: assign as usual. A recovery event makes that driver eligible again. An unverified client version is still usable when health is ok: schedule its driver verify journey, then call work.health action verified with the adapter, passed journey, and exact tested clientVersions. Never record verification before observing that journey pass. Do not start work or change authentication as part of a read-only health check.",
   ],
   [
     'WORKER_PROVENANCE_EXACT_ID',
