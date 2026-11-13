@@ -1856,6 +1856,63 @@ test('a hand-off that lands before the fallback read is left out of the fallback
   expect(replies.map((reply) => reply.replyTo)).toEqual([[first.id]]);
 });
 
+test('the fallback checks the input owner and never scans publications', async () => {
+  const { id, job } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No reply',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  for (let index = 0; index < 60; index++)
+    expect(
+      service.publications.append(
+        {
+          conversationId,
+          publicationId: crypto.randomUUID(),
+          verbatim: true,
+          fullText: `earlier note ${index}`,
+          links: [],
+        },
+        front
+      )
+    ).toMatchObject({ accepted: true });
+  const replyId = crypto.randomUUID();
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let raced = false;
+  let reads = 0;
+  vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
+    if (!raced && args[1] === 'get' && args[3] === id && ++reads === 2) {
+      raced = true;
+      expect(
+        service.publications.append(
+          {
+            conversationId,
+            publicationId: replyId,
+            verbatim: true,
+            fullText: 'A real reply landed.',
+            replyTo: [id],
+            links: [],
+          },
+          front
+        )
+      ).toMatchObject({ accepted: true });
+    }
+    return (call as (...rest: unknown[]) => unknown)(...args);
+  }) as never);
+  const list = vi.spyOn(service.publications, 'list');
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
+    delivered: true,
+    outcome: 'answered',
+  });
+  expect(list).not.toHaveBeenCalled();
+  expect(raced).toBe(true);
+  expect(service.publications.get(conversationId, replyId)?.fullText).toBe('A real reply landed.');
+});
+
 test('the daemon fallback is skipped once the input is answered', async () => {
   const { id, job } = await deliveredConvoInput();
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();

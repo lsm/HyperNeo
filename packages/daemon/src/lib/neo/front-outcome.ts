@@ -58,13 +58,10 @@ export async function settleConvoInput(
     return pending();
   const ids = deliveries.filter(({ status }) => status !== 'consumed').map(({ id }) => id);
   if (!ids.length) return { delivered: true, outcome: 'handed_off' };
-  const replies = (service.publications.list(conversationId) ?? []).flatMap(
-    (publication) => publication.replyTo ?? []
-  );
   const open: string[] = [];
   for (const id of ids) {
     const input = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, id);
-    if (!input?.owner && !replies.includes(id)) open.push(id);
+    if (!input?.owner) open.push(id);
   }
   if (!open.includes(messageId)) {
     const self = await service.db.gateway.call(
