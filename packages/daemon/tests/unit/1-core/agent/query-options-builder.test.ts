@@ -2220,6 +2220,19 @@ describe('QueryOptionsBuilder', () => {
       expect(scoped.effort).toBeUndefined();
     });
 
+    it('keeps adaptive thinking on a K3 primary when only the fallback is K2.7', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
+      mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
+      mockSession.config.thinkingLevel = 'think24k';
+
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('high');
+    });
+
     it('allows Kimi K3 primary and K3 fallback with granular thinking', () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';

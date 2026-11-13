@@ -793,7 +793,7 @@ export class QueryOptionsBuilder {
       }
     } catch {}
     const thinkingLevel = this.getEffectiveThinkingLevel();
-    const effort =
+    let effort =
       thinkingModes === 'granular' && effortLevels?.length
         ? thinkingLevel === 'off'
           ? (defaultEffort ?? offEffort(providerId, effortLevels))
@@ -807,35 +807,26 @@ export class QueryOptionsBuilder {
     const selectedModel = this.ctx.session.config.model;
     if (providerId === 'kimi' && selectedModel) {
       const routed = kimiRoutedModel ?? selectedModel;
-      if (KimiProvider.isKimiK2Point7Model(routed)) {
-        if (!thinkingConfig || thinkingConfig.type === 'disabled') {
-          thinkingConfig = {
-            type: 'enabled',
-            budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
-          };
-        }
-      }
-
+      const primaryIsK2 = KimiProvider.isKimiK2Point7Model(routed);
       const fallbackModel = this.effectiveFallbackCaptured
         ? this.effectiveFallbackModel
         : this.ctx.session.config.fallbackModel;
-      if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
-        const fallbackRouted = fallbackRoutedModel ?? fallbackModel;
-        const primaryIsK3 = KimiProvider.isKimiK3Model(routed);
-        const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackRouted);
-        const primaryIsK2 = KimiProvider.isKimiK2Point7Model(routed);
-        const fallbackIsK2 = KimiProvider.isKimiK2Point7Model(fallbackRouted);
-        const mixedChain = (primaryIsK3 && fallbackIsK2) || (primaryIsK2 && fallbackIsK3);
-        const k2Point7OnChain = primaryIsK2 || fallbackIsK2;
-        const fixedBudget =
-          thinkingConfig?.type === 'enabled' &&
-          thinkingConfig.budgetTokens === THINKING_LEVEL_TOKENS['think16k'];
-        if ((mixedChain || k2Point7OnChain) && !fixedBudget) {
-          thinkingConfig = {
-            type: 'enabled',
-            budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
-          };
-        }
+      const fallbackRouted = fallbackModel ? (fallbackRoutedModel ?? fallbackModel) : undefined;
+      const fallbackIsK2 = fallbackRouted
+        ? KimiProvider.isKimiK2Point7Model(fallbackRouted)
+        : false;
+      const mixedChain =
+        Boolean(fallbackRouted) &&
+        !isCuratedOutModel(fallbackModel!, providerId) &&
+        ((KimiProvider.isKimiK3Model(routed) && fallbackIsK2) ||
+          (primaryIsK2 && KimiProvider.isKimiK3Model(fallbackRouted!)));
+      const fixedBudgetNeeded = primaryIsK2
+        ? thinkingConfig?.type !== 'enabled' ||
+          thinkingConfig.budgetTokens !== THINKING_LEVEL_TOKENS['think16k']
+        : mixedChain && (!thinkingConfig || thinkingConfig.type === 'disabled');
+      if (fixedBudgetNeeded) {
+        thinkingConfig = { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS['think16k']! };
+        effort = undefined;
       }
     }
 
