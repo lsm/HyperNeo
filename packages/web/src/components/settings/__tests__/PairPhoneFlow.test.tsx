@@ -262,6 +262,7 @@ describe('PairPhoneFlow with pairing v2', () => {
     posted.length = 0;
     status = { state: 'pending', expiresAt: Date.now() + 90_000, name: null };
     cancelReply = new Response(JSON.stringify({ ok: true }), { status: 200 });
+    vi.stubGlobal('location', new URL('https://mac.tailnet.ts.net:8443/settings?tab=devices'));
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string, init?: RequestInit) => {
@@ -293,7 +294,7 @@ describe('PairPhoneFlow with pairing v2', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
     await screen.findByRole('img', { name: 'Pairing QR code' });
     expect(screen.getByText('Add a phone. Scan this QR with Neo.')).toBeTruthy();
-    expect(screen.getByText('https://mac.tailnet.ts.net')).toBeTruthy();
+    expect(screen.getByText('https://mac.tailnet.ts.net:8443')).toBeTruthy();
     expect(screen.getByText(/Expires in \d+ s/)).toBeTruthy();
     expect(invoked('device.pair.create')).toEqual([]);
 
@@ -326,6 +327,15 @@ describe('PairPhoneFlow with pairing v2', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await screen.findByText('Pairing cancelled.');
     expect(screen.getByRole('button', { name: 'Show a new QR' })).toBeTruthy();
+  });
+
+  it('keeps the code flow on a plain-http page instead of guessing an HTTPS address', async () => {
+    vi.stubGlobal('location', new URL('http://mac.tailnet.ts.net:8484/settings?tab=devices'));
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByText('LEGACY2345');
+    expect(screen.queryByRole('img', { name: 'Pairing QR code' })).toBeNull();
+    expect(posted).toEqual([]);
   });
 
   it('keeps the code flow when the daemon has pairing v2 off', async () => {
