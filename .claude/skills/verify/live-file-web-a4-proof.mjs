@@ -54,7 +54,16 @@ export async function verifyLiveFilePage(page, {run, base, width, bun, cards = f
     await close(markdown);
     await unlink(markdown);
     await tap(markdown);
-    await page.getByText('This file is no longer there.', {exact: true}).waitFor();
+    const missing = page.getByText("This file hasn't been created yet, or no longer exists.", {exact: true});
+    await missing.waitFor();
+    const offset = await missing.evaluate(node => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const text = range.getBoundingClientRect();
+      const area = node.parentElement.getBoundingClientRect();
+      return [text.x + text.width / 2 - (area.x + area.width / 2), text.y + text.height / 2 - (area.y + area.height / 2)];
+    });
+    assert(offset.every(delta => Math.abs(delta) <= 2), `missing-file message is off center by ${offset}`);
     await shot('missing');
     await close(markdown);
 
@@ -148,7 +157,13 @@ if (typeof process !== 'undefined' && process.argv[1] === fileURLToPath(import.m
       const context = await browser.newContext({viewport: {width,height:844}, locale:'en-US', ...(width === 390 ? {isMobile:true,deviceScaleFactor:1} : {})});
       try {
         await context.route('**/*', route => route.request().url().startsWith(base) ? route.continue() : (offOrigin.push(route.request().url()), route.abort()));
-        await verifyLiveFilePage(await context.newPage(), {run,base,width,bun:process.env.VERIFY_BUN ?? 'bun'});
+        const page = await context.newPage();
+        const code = execFileSync(process.env.VERIFY_BUN ?? 'bun', [fileURLToPath(new URL('./rpc.ts', import.meta.url)), 'device.pair.create', JSON.stringify({kind:'human',name:'Synthetic live file browser'})], {encoding:'utf8', env:{...process.env, VERIFY_PORT: port, HYPERNEO_DATA_DIR: join(run, 'data')}}).match(/"code":\s*"([^"]+)"/)?.[1];
+        assert(code, 'no pairing code');
+        await page.goto(`${base}/pair#${code}`);
+        await page.getByRole('button', {name: 'Pair this browser'}).click();
+        await page.getByText('This browser is paired.').waitFor({timeout: 10000});
+        await verifyLiveFilePage(page, {run,base,width,bun:process.env.VERIFY_BUN ?? 'bun'});
       } finally { await context.close(); }
     }
     assert.equal(offOrigin.length,0);

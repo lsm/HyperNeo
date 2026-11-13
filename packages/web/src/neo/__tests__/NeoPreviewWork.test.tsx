@@ -328,7 +328,7 @@ describe('Neo preview Work layout', () => {
         reference: '~/HyperNeo/引用配色/quote-colour-options.html',
       })
     );
-    await screen.findByText('This file is no longer there.');
+    await screen.findByText("This file hasn't been created yet, or no longer exists.");
     expect(document.querySelector('.neo-shell')?.classList.contains('neo-preview-focus')).toBe(
       true
     );
