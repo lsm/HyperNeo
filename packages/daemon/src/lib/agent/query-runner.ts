@@ -1431,7 +1431,9 @@ export class QueryRunner {
             processExited = true;
             if (firstMessageArrived) {
               throw new Error(
-                `SDK process exited before the turn result (code=${processExitInfo.code}, signal=${processExitInfo.signal})`
+                processExitInfo.signal
+                  ? `Claude Code process terminated by signal ${processExitInfo.signal} before the turn result`
+                  : `Claude Code process exited with code ${processExitInfo.code} before the turn result`
               );
             }
             if (drainTimer === null) {

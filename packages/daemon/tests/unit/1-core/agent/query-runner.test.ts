@@ -8212,6 +8212,106 @@ describe('QueryRunner', () => {
         await ctx.queryPromise?.catch(() => {});
       }
     });
+    it('attributes a watched exit to in-flight rate-limit recovery', async () => {
+      const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+      const fakeProc = {
+        pid: 4242,
+        exitCode: null,
+        once: (event: string, listener: (code: number | null, signal: string | null) => void) => {
+          if (event === 'exit') exitListeners.push(listener);
+        },
+      };
+      buildSpy.mockResolvedValue({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+        spawnClaudeCodeProcess: () => fakeProc,
+      });
+      (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
+        (arg: { options?: Record<string, unknown> }) => {
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)?.({});
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              yield { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+              await new Promise<void>(() => {});
+            },
+          } as unknown as QueryLike;
+        }
+      );
+      mockSession.workspacePath = null;
+      const ctx = createContext({ isLimitRecoveryPending: () => true });
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      for (let i = 0; i < 100 && onSDKMessageSpy.mock.calls.length === 0; i++) {
+        await Promise.resolve();
+      }
+      expect(exitListeners).toHaveLength(1);
+      exitListeners[0]?.(1, null);
+      await ctx.queryPromise;
+
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('rate-limit recovery'));
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not retry a completed turn when the watched process exits', async () => {
+      const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+      const fakeProc = {
+        pid: 4242,
+        exitCode: null,
+        once: (event: string, listener: (code: number | null, signal: string | null) => void) => {
+          if (event === 'exit') exitListeners.push(listener);
+        },
+      };
+      buildSpy.mockResolvedValue({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+        spawnClaudeCodeProcess: () => fakeProc,
+      });
+      (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
+        (arg: { options?: Record<string, unknown> }) => {
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)?.({});
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              yield { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+              yield {
+                type: 'result',
+                subtype: 'success',
+                uuid: 'turn-result',
+                is_error: false,
+              } as unknown as SDKMessage;
+              await new Promise<void>(() => {});
+            },
+          } as unknown as QueryLike;
+        }
+      );
+      mockSession.workspacePath = null;
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      for (
+        let i = 0;
+        i < 100 &&
+        !onSDKMessageSpy.mock.calls.some((call) => (call[0] as SDKMessage).type === 'result');
+        i++
+      ) {
+        await Promise.resolve();
+      }
+      expect(exitListeners).toHaveLength(1);
+      exitListeners[0]?.(1, null);
+      await ctx.queryPromise;
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('after its turn ended with a result')
+      );
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
