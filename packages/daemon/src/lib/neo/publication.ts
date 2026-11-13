@@ -125,9 +125,13 @@ export function wordCount(text: string): number {
 }
 
 export const SUMMARY_WORD_LIMIT = 300;
+export const SUMMARY_CHAR_LIMIT = 4000;
 
 export function replySummaryTooLong(body: { text: string; details?: string }): boolean {
-  return body.details !== undefined && wordCount(body.text) > SUMMARY_WORD_LIMIT;
+  return (
+    body.details !== undefined &&
+    (wordCount(body.text) > SUMMARY_WORD_LIMIT || body.text.length > SUMMARY_CHAR_LIMIT)
+  );
 }
 
 export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);

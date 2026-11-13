@@ -339,7 +339,9 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
               : {}),
             ...message,
             ...(details === undefined
-              ? { fullText: text, verbatim: true }
+              ? message.cardReply
+                ? { shortText: text, fullText: text }
+                : { fullText: text, verbatim: true }
               : { shortText: text, fullText: details }),
             session: message.session ?? undefined,
             replyTo: progress ? undefined : message.replyTo,

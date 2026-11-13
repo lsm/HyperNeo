@@ -504,6 +504,11 @@ describe('Neo publication without runtime input attribution', () => {
       caller
     );
     expect(chinese).toMatchObject({ accepted: false, reason: 'reply_summary_too_long' });
+    const longToken = await publish(
+      { requestId: 'send-token', text: 'x'.repeat(4001), details: 'd'.repeat(4002) },
+      caller
+    );
+    expect(longToken).toMatchObject({ accepted: false, reason: 'reply_summary_too_long' });
     const wordsOnly = await publish(
       { requestId: 'send-words', text: 'x'.repeat(3000), details: 'd'.repeat(3001) },
       caller

@@ -85,7 +85,8 @@ export async function settleConvoInput(
     },
     service.db.getGlobalSettings().neo?.front?.enabled === true
       ? frontSessionId(conversationId)
-      : `neo:${conversationId}`
+      : `neo:${conversationId}`,
+    { unownedReplyTo: true }
   );
   if (!receipt.accepted) {
     if (receipt.reason === 'publication_superseded') return pending();

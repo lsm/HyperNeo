@@ -1913,6 +1913,56 @@ test('the fallback checks the input owner and never scans publications', async (
   expect(service.publications.get(conversationId, replyId)?.fullText).toBe('A real reply landed.');
 });
 
+test('the fallback append loses an owner race instead of duplicating a reply', async () => {
+  const { id, job } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No reply',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const replyId = crypto.randomUUID();
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let raced = false;
+  vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
+    if (!raced && (args[0] as { name?: string }).name === 'neo.publications.write') {
+      raced = true;
+      expect(
+        service.publications.append(
+          {
+            conversationId,
+            publicationId: replyId,
+            verbatim: true,
+            fullText: 'A real reply landed.',
+            replyTo: [id],
+            links: [],
+          },
+          front
+        )
+      ).toMatchObject({ accepted: true });
+    }
+    return (call as (...rest: unknown[]) => unknown)(...args);
+  }) as never);
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
+    delivered: false,
+    pending: true,
+  });
+  expect(raced).toBe(true);
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
+    delivered: true,
+    outcome: 'answered',
+  });
+  const rows = db
+    .getDatabase()
+    .prepare('SELECT payload_json AS payload FROM neo_publications WHERE conversation_id = ?')
+    .all(conversationId)
+    .map((row) => JSON.parse((row as { payload: string }).payload) as { fullText: string });
+  expect(rows.map((row) => row.fullText)).toEqual(['A real reply landed.']);
+});
+
 test('the daemon fallback is skipped once the input is answered', async () => {
   const { id, job } = await deliveredConvoInput();
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();

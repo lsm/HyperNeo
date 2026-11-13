@@ -70,8 +70,8 @@
     ]
   },
   "coreAppend": {
-    "lines": 382,
-    "sha256": "fd80f06ae340b9d99ad06d23bf642df14bfafb10fddabf5ae6eadab36e624af2",
+    "lines": 387,
+    "sha256": "762d3c3a190639b5d2a26a915e224251e04f1f6ffb31e71116d5bc84fedac355",
     "units": [
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
@@ -95,37 +95,37 @@
         "start": 66,
         "end": 230,
         "lines": 165,
-        "sha256": "8ddaa14b4838d285da2a41855a277b7bc3290b656c77e3a13af472ad08bb08bc"
+        "sha256": "a071e7a06b772273f22d8fef18047c1ce850716d54e5e5389443da056e1ec762"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
         "name": "append",
         "start": 232,
-        "end": 267,
-        "lines": 36,
-        "sha256": "a5cac63a7979b3a79ae30fbcb9de6ceb1034431b8c707692ac9aa89078d45227"
+        "end": 268,
+        "lines": 37,
+        "sha256": "7417c45dd1e6b0c6d5a8a3c6671e125e659d408173636ee3228f7713bc007eb2"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
         "name": "NeoPublicationRepository.constructor",
-        "start": 298,
-        "end": 298,
+        "start": 299,
+        "end": 299,
         "lines": 1,
         "sha256": "f3497513bcf32938aa5f7db1373dbba49a8a21a482ff030c347fc6d96437a2db"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
         "name": "NeoPublicationRepository.append",
-        "start": 309,
-        "end": 313,
-        "lines": 5,
-        "sha256": "106c263e302861abb1fcc7d15e5897639136af7bb1b94e8ddb6d5f35df4d36dc"
+        "start": 310,
+        "end": 318,
+        "lines": 9,
+        "sha256": "b1ce847cf0342498f69a563006f27a7e3b9174d83c2b15162d49e42670d7acae"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
         "name": "neoPublicationWrites",
-        "start": 381,
-        "end": 386,
+        "start": 386,
+        "end": 391,
         "lines": 6,
         "sha256": "d3580e3b7fa17c98b43494e1e16b64bcf5ac78875ebf226c3c5b26e4499917f1"
       },
@@ -164,16 +164,16 @@
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "NeoPublicationSchema",
-        "start": 133,
-        "end": 133,
+        "start": 137,
+        "end": 137,
         "lines": 1,
         "sha256": "c33ea934eab18da87a93420af694b44801013f8935751b133b8c0a45ca7954e8"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "admitNeoPublication",
-        "start": 156,
-        "end": 161,
+        "start": 160,
+        "end": 165,
         "lines": 6,
         "sha256": "db3d6b7c83cd8196afdd2d5f7dab6c8d1edf84b2c84595b8ff79f12ff8862782"
       },

@@ -232,6 +232,29 @@ describe('publication speech follows the committed version', () => {
     expect(events).toEqual([]);
   });
 
+  test('a card reply with text alone stores a summary instead of verbatim', async () => {
+    mailbox.db
+      .prepare(
+        "INSERT INTO neo_questions(id,ask_id,text,kind,start_todos,created_at) VALUES ('question','ask','Review?','choice','[]',1)"
+      )
+      .run();
+    const cardReply = {
+      askId: 'ask',
+      questionId: 'question',
+      mutationId: '30000000-0000-4000-8000-000000000009',
+      sourceMessageIds: [conversationId],
+    };
+    const { details: _details, spoken: _spoken, ...textOnly } = draft;
+    expect(await send({ ...textOnly, requestId: 'card-text-only', cardReply })).toMatchObject({
+      accepted: true,
+    });
+    expect(ledger.list(conversationId)![0]).toMatchObject({
+      shortText: 'Ready',
+      fullText: 'Ready',
+      cardReply,
+    });
+  });
+
   test('new card versions speak once; retries of older versions never speak the latest content', async () => {
     mailbox.db
       .prepare(

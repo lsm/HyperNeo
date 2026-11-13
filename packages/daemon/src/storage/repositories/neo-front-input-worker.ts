@@ -175,6 +175,25 @@ export class NeoFrontInputRepository {
     })();
   }
 
+  claimUnowned(
+    conversationId: string,
+    messageIds: readonly string[],
+    owner: 'front' | 'neo'
+  ): 'claimed' | 'ineligible' {
+    const ids = [...new Set(messageIds)];
+    if (!ids.length) return 'ineligible';
+    return this.db.transaction(() => {
+      const rows = ids.map((id) => this.get(conversationId, id));
+      if (rows.some((row) => !row?.eligible || row.owner !== null)) return 'ineligible';
+      for (const id of ids)
+        this.db
+          .prepare(`UPDATE neo_front_inputs SET owner = ?
+          WHERE conversation_id = ? AND message_id = ? AND owner IS NULL`)
+          .run(owner, conversationId, id);
+      return 'claimed' as const;
+    })();
+  }
+
   reserve(
     conversationId: string,
     messageIds: readonly string[],
@@ -213,7 +232,7 @@ export const neoFrontInputWrites = defineRepositoryOp(
   'neo.front.inputs',
   'write',
   NeoFrontInputRepository,
-  ['claim', 'reserve']
+  ['claim', 'claimUnowned', 'reserve']
 );
 
 export const neoFrontDeliveryWrites = defineRepositoryOp(

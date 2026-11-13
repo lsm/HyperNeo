@@ -67,7 +67,8 @@ function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
   payload: string,
-  speaker?: string
+  speaker?: string,
+  options?: { unownedReplyTo?: boolean }
 ): NeoPublicationWriteResult {
   return db.transaction((): NeoPublicationWriteResult => {
     if (
@@ -171,11 +172,10 @@ function appendImmutable(
       ids.length &&
       !new NeoPublicationRepository(db).get(input.conversationId, input.publicationId)
     ) {
-      const claimed = inputs.claim(
-        input.conversationId,
-        ids,
-        speaker === frontSessionId(input.conversationId) ? 'front' : 'neo'
-      );
+      const owner = speaker === frontSessionId(input.conversationId) ? 'front' : 'neo';
+      const claimed = options?.unownedReplyTo
+        ? inputs.claimUnowned(input.conversationId, ids, owner)
+        : inputs.claim(input.conversationId, ids, owner);
       if (claimed !== 'claimed')
         return {
           accepted: false,
@@ -230,7 +230,7 @@ function appendImmutable(
 }
 
 const append = (superpipe({})('neo-publication-append') as PipelineAPI)
-  .input(['input', 'db', 'speaker'])
+  .input(['input', 'db', 'speaker', 'options'])
   .pipe(admitNeoPublication, 'input', 'result:append')
   .pipe(
     (input: NeoPublicationInput, speaker?: string) => {
@@ -259,11 +259,12 @@ const append = (superpipe({})('neo-publication-append') as PipelineAPI)
     'append'
   )
   .pipe(JSON.stringify, 'append', 'payload')
-  .pipe(appendImmutable, ['db', 'append', 'payload', 'speaker'], 'append')
+  .pipe(appendImmutable, ['db', 'append', 'payload', 'speaker', 'options'], 'append')
   .end('append') as (
   input: unknown,
   db: Database,
-  speaker?: string
+  speaker?: string,
+  options?: { unownedReplyTo?: boolean }
 ) => NeoPublicationWriteResult | 'invalid_publication';
 
 const readPage = (superpipe({})('neo-publication-page') as PipelineAPI)
@@ -306,8 +307,12 @@ export class NeoPublicationRepository {
     });
   }
 
-  append(input: unknown, speaker?: string): NeoPublicationWriteResult {
-    const result = append(input, this.db, speaker);
+  append(
+    input: unknown,
+    speaker?: string,
+    options?: { unownedReplyTo?: boolean }
+  ): NeoPublicationWriteResult {
+    const result = append(input, this.db, speaker, options);
     if (result === 'invalid_publication') return { accepted: false, reason: result };
     return result;
   }
