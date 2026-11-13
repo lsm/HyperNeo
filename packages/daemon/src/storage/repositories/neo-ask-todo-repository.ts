@@ -25,6 +25,7 @@ import {
   recomputeTodoStateAsync,
   type TodoStateFacts,
 } from '../../lib/neo/todo-state.ts';
+import { neoInputText, type NeoUnansweredInput } from '../../lib/neo/plan-context.ts';
 import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
 import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
@@ -326,7 +327,7 @@ export class NeoAskTodoRepository {
     };
   }
 
-  planContext() {
+  planContext(withUnanswered = false) {
     const asks = this.listOpenAsks();
     const families = [...new Set(asks.map((ask) => ask.parentId ?? ask.id))];
     const todos = families.flatMap((id) => this.listFamilyTodos(id));
@@ -334,7 +335,30 @@ export class NeoAskTodoRepository {
       asks,
       todos: [...new Map(todos.map((todo) => [todo.id, todo])).values()],
       questions: this.listQuestionsForAsks(asks.map((ask) => ask.id)),
+      ...(withUnanswered ? { unanswered: this.listUnansweredInputs() } : {}),
     };
+  }
+
+  listUnansweredInputs(): NeoUnansweredInput[] {
+    const rows = this.db
+      .prepare(`WITH answered(id) AS (
+          SELECT value FROM neo_publications p, json_each(p.payload_json, '$.replyTo')
+            WHERE json_extract(p.payload_json, '$.publishedBy') IS NOT 'front'
+          UNION SELECT value FROM neo_publications p,
+            json_each(p.payload_json, '$.cardReply.sourceMessageIds')
+            WHERE json_extract(p.payload_json, '$.publishedBy') IS NOT 'front')
+        SELECT a.request_id AS id, a.payload_json AS payload
+        FROM neo_front_inputs f
+        JOIN neo_conversation_asks a ON a.conversation_id = f.conversation_id
+          AND a.request_id = f.message_id
+        WHERE (f.owner = 'neo' OR (f.eligible = 0 AND f.owner IS NULL))
+          AND NOT EXISTS (SELECT 1 FROM answered WHERE answered.id = f.message_id)
+        ORDER BY a.sequence DESC`)
+      .all() as { id: string; payload: string }[];
+    return rows.map((row) => ({
+      id: row.id,
+      text: neoInputText(JSON.parse(row.payload) as { content?: unknown }) || '(non-text message)',
+    }));
   }
 
   openWorkFacts() {

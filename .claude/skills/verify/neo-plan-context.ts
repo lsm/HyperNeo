@@ -63,6 +63,89 @@ try {
     },
   });
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  const conversation = new NeoRepository(db).conversationId(),
+    answeredInput = '10000000-0000-4000-8000-00000000c001',
+    cardAnsweredInput = '10000000-0000-4000-8000-00000000c003',
+    plainAnsweredInput = '10000000-0000-4000-8000-00000000c005',
+    longInput = '10000000-0000-4000-8000-00000000c004',
+    frontOffInput = '10000000-0000-4000-8000-00000000c006',
+    pendingInput = '10000000-0000-4000-8000-00000000c002',
+    pendingText = 'Ship the compact summary with the full message id';
+  const seedInput = (id: string, owner: 'neo', text: string) => {
+    prepare(
+      'INSERT INTO neo_conversation_asks(conversation_id,request_id,payload_json,created_at) VALUES(?,?,?,?)'
+    ).run(
+      conversation,
+      id,
+      JSON.stringify({
+        conversationId: conversation,
+        requestId: id,
+        askOrigin: { sessionId: root, messageId: id },
+        content: [{ type: 'text', text }],
+      }),
+      new Date().toISOString()
+    );
+    prepare(
+      'INSERT INTO neo_front_inputs(conversation_id,message_id,eligible,owner) VALUES(?,?,1,?)'
+    ).run(conversation, id, owner);
+  };
+  seedInput(answeredInput, 'neo', 'Already answered by Neo');
+  seedInput(plainAnsweredInput, 'neo', 'Handed off and acknowledged by the front');
+  seedInput(cardAnsweredInput, 'neo', 'Already answered by a card');
+  seedInput(pendingInput, 'neo', pendingText);
+  seedInput(longInput, 'neo', 'P '.repeat(20_000));
+  prepare(
+    'INSERT INTO neo_conversation_asks(conversation_id,request_id,payload_json,created_at) VALUES(?,?,?,?)'
+  ).run(
+    conversation,
+    frontOffInput,
+    JSON.stringify({
+      conversationId: conversation,
+      requestId: frontOffInput,
+      askOrigin: { sessionId: root, messageId: frontOffInput },
+      content: [{ type: 'text', text: 'Handled with fast replies off' }],
+    }),
+    new Date().toISOString()
+  );
+  prepare(
+    'INSERT INTO neo_front_inputs(conversation_id,message_id,eligible,owner) VALUES(?,?,0,NULL)'
+  ).run(conversation, frontOffInput);
+  prepare(
+    'INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(?,?,?,?)'
+  ).run(
+    conversation,
+    'synthetic-answer',
+    JSON.stringify({ fullText: 'Synthetic answer', replyTo: [answeredInput], publishedBy: 'neo' }),
+    new Date().toISOString()
+  );
+  prepare(
+    'INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(?,?,?,?)'
+  ).run(
+    conversation,
+    'synthetic-plain-answer',
+    JSON.stringify({
+      conversationId: conversation,
+      publicationId: 'synthetic-plain-answer',
+      producerInput: { sessionId: `${root}-front`, messageId: plainAnsweredInput },
+      verbatim: true,
+      fullText: 'Synthetic front handoff acknowledgement',
+      links: [],
+      publishedBy: 'front',
+    }),
+    new Date().toISOString()
+  );
+  prepare(
+    'INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(?,?,?,?)'
+  ).run(
+    conversation,
+    'synthetic-card-answer',
+    JSON.stringify({
+      fullText: 'Synthetic card answer',
+      cardReply: { sourceMessageIds: [cardAnsweredInput] },
+      publishedBy: 'neo',
+    }),
+    new Date().toISOString()
+  );
   const ids = Array.from({ length: 12 }, (_, i) => `plan-${i}`),
     detail = 'Synthetic retained detail 亮 '.repeat(200);
   db.transaction(() => {
@@ -123,7 +206,11 @@ try {
     'Open asks are never dropped from the real MCP compact snapshot'
   );
   assert.equal(reads, 0, 'Snapshot read ran target SQL on main');
-  const facts = await store.read('planContext');
+  const facts = await store.read('planContext', true);
+  const perTurnFacts = await store.read('planContext');
+  assert(perTurnFacts.unanswered === undefined, 'A per-prompt read runs the unanswered scan');
+  const compactFacts = await store.read('planContext', true);
+  assert(compactFacts.unanswered?.length === 4, 'The compact read skips the unanswered scan');
   assert.equal(facts.asks.length, 12);
   assert.equal(facts.todos.length, 480);
   assert.equal(facts.questions.length, 12);
@@ -134,7 +221,66 @@ try {
   assert.equal(lines.filter((line) => line.kind === 'ask').length, 12);
   for (const id of ids)
     assert(lines.find((line) => line.id === id)?.text.includes(`neo.ask.read ${id}`));
+  assert.deepEqual(
+    facts.unanswered?.map((input) => input.id),
+    [frontOffInput, longInput, pendingInput, plainAnsweredInput],
+    'Plan facts carry only the inputs Neo owns and has not answered'
+  );
+  assert.equal(
+    facts.unanswered.find((input) => input.id === pendingInput)?.text,
+    pendingText,
+    'Plan facts drop the pending message text'
+  );
   assert(planNeoPlanContext(null, lines, 'compact').includes('plan-11'));
+  const { neoPlanContextHooks } = await import(
+    '../../../packages/daemon/src/lib/agent/neo-plan-hook.ts'
+  );
+  const hooks = neoPlanContextHooks((withUnanswered) =>
+    store.read('planContext', withUnanswered)
+  );
+  const sessionStart = async (source: 'startup' | 'compact') =>
+    (
+      (await hooks.SessionStart![0].hooks[0](
+        {
+          session_id: root,
+          transcript_path: '',
+          cwd: join(run, 'workspace'),
+          hook_event_name: 'SessionStart',
+          source,
+        },
+        undefined,
+        { signal: new AbortController().signal }
+      )) as { hookSpecificOutput: { additionalContext: string } }
+    ).hookSpecificOutput.additionalContext;
+  const compactContext = await sessionStart('compact');
+  assert(compactContext.includes(pendingInput), 'The session hook never passes the compact source');
+  assert(compactContext.includes(pendingText), 'The session hook drops the unanswered text');
+  assert(!compactContext.includes(answeredInput), 'The session hook repeats an answered message');
+  assert(
+    compactContext.includes(plainAnsweredInput),
+    'A front acknowledgement hides a message Neo never answered'
+  );
+  assert(
+    compactContext.includes(frontOffInput),
+    'An input from a space with fast replies off is never listed'
+  );
+  assert(
+    !compactContext.includes(cardAnsweredInput),
+    'The session hook repeats a message a card already answered'
+  );
+  const longEntry = compactContext.slice(compactContext.indexOf(longInput));
+  assert(longEntry.includes('(truncated'), 'A long unanswered message enters compaction uncapped');
+  assert(
+    Buffer.byteLength(longEntry.slice(0, longEntry.indexOf('\n')), 'utf8') < 3_000,
+    'The truncated unanswered entry still fills the context'
+  );
+  const startupContext = await sessionStart('startup');
+  assert(!startupContext.includes(pendingInput), 'A startup session repeats the pending message');
+  Object.assign(result, {
+    unanswered: facts.unanswered,
+    hookIncludesPending: true,
+    compactContext,
+  });
   assert.equal(planNeoPlanContext(lines, lines, 'prompt'), '');
   Object.assign(result, {
     lines,

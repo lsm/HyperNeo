@@ -1257,7 +1257,7 @@ export class QueryOptionsBuilder {
       const todos = new NeoAskTodoRepository(this.ctx.db!.getDatabase());
       Object.assign(
         hooks,
-        neoPlanContextHooks(() => todos.read('planContext'))
+        neoPlanContextHooks((withUnanswered) => todos.read('planContext', withUnanswered))
       );
       const timeoutHook = createNeoBashTimeoutHook();
       postHooks.push({ matcher: 'Bash', hooks: [timeoutHook] });
