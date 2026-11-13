@@ -10,7 +10,7 @@ assert.notEqual(port, '8399');
 const run = resolve(directory);
 const log = readFileSync(`${run}/daemon.log`, 'utf8');
 assert(log.includes('HyperNeo Test Server') && log.includes(`Database: ${run}/data/daemon.db`));
-const rpc = (name) => JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', name, '{}'], {
+const rpc = (name, input = {}) => JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', name, JSON.stringify(input)], {
   env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8',
 })).reply;
 const opened = rpc('neo.open');
@@ -21,24 +21,38 @@ const options = [
   'Switch every card to the compact table layout with sortable columns, sticky headers, and a much longer description that keeps going past one line',
   'https://example.test/a-very-long-unbroken-option-token-that-must-still-wrap-inside-the-card-at-phone-width',
 ];
+const lettered = ['A 先只改服务器', 'B 服务器和客户端一起改', 'C 先不改'];
 const ask = crypto.randomUUID();
-const ids = { single: crypto.randomUUID(), multiple: crypto.randomUUID() };
+const ids = { single: crypto.randomUUID(), multiple: crypto.randomUUID(), lettered: crypto.randomUUID() };
+const optionsOf = (kind) => (kind === 'lettered' ? lettered : options);
+const questionText = { single: 'Which layout?', multiple: 'Which layouts should stay?', lettered: '怎么改？' };
 const now = Date.now();
 let sql = `INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES(${quote(ask)},${quote(opened.sessionId)},'Synthetic choice layout','Synthetic verification only','open',${now},${now});`;
 for (const [kind, id] of Object.entries(ids))
-  sql += `INSERT INTO neo_questions(id,ask_id,text,kind,options,multiple,state,created_at) VALUES(${quote(id)},${quote(ask)},${quote(kind === 'single' ? 'Which layout?' : 'Which layouts should stay?')},'choice',${quote(JSON.stringify(options))},${kind === 'multiple' ? 1 : 0},'open',${now});`;
+  sql += `INSERT INTO neo_questions(id,ask_id,text,kind,options,multiple,state,created_at) VALUES(${quote(id)},${quote(ask)},${quote(questionText[kind])},'choice',${quote(JSON.stringify(optionsOf(kind)))},${kind === 'multiple' ? 1 : 0},'open',${now});`;
 execFileSync('sqlite3', [`${run}/data/daemon.db`, sql]);
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const results = [];
 try {
-  for (const width of [1280, 390]) {
-    const page = await browser.newPage({ viewport: { width, height: 1000 } });
+  const code = rpc('device.pair.create', { kind: 'human', name: 'Synthetic choice browser' }).code;
+  assert(code, 'no pairing code');
+  const context = await browser.newContext();
+  const pairing = await context.newPage();
+  await pairing.goto(`http://127.0.0.1:${port}/pair#${code}`);
+  await pairing.getByRole('button', { name: 'Pair this browser' }).click();
+  await pairing.getByText('This browser is paired.').waitFor({ timeout: 10000 });
+  await pairing.close();
+  for (const [width, scheme] of [[1280, 'light'], [1280, 'dark'], [390, 'light'], [390, 'dark']]) {
+    const page = await context.newPage();
+    await page.setViewportSize({ width, height: 1400 });
+    await page.emulateMedia({ colorScheme: scheme });
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width === 390) await page.getByRole('button', { name: /^Your work/ }).click();
     const card = page.locator(`[data-ask="${ask}"]:visible`);
     await card.waitFor();
-    await card.screenshot({ path: `${run}/evidence/neo-choice-wrap-${width}.png` });
+    for (const id of Object.values(ids)) await card.locator(`[id="neo-ref-question-${id}"]`).waitFor();
+    await card.screenshot({ path: `${run}/evidence/neo-choice-wrap-${width}-${scheme}.png` });
     const pageFits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
     const checked = {};
     for (const [kind, id] of Object.entries(ids)) {
@@ -51,19 +65,20 @@ try {
       for (let index = 0; index < 3; index++) {
         const row = rows.nth(index);
         const text = await row.innerText();
-        assert(text.replace(/\s+/g, '').startsWith(`${'ABC'[index]}${options[index]}`.replace(/\s+/g, '')), `${kind} ${index}: ${text}`);
+        assert.equal(text.trim(), optionsOf(kind)[index], `${kind} ${index} must show the option exactly as written`);
         const bounds = await row.boundingBox();
         assert(bounds.x >= outer.x - 1 && bounds.x + bounds.width <= outer.x + outer.width + 1, `${kind} ${index} leaves the card at ${width}`);
         const overflow = await row.evaluate((node) => node.scrollWidth - node.clientWidth);
         assert(overflow <= 1, `${kind} ${index} overflows by ${overflow}px at ${width}`);
-        seen.push({ letter: 'ABC'[index], height: Math.round(bounds.height), overflow });
+        seen.push({ text: text.trim(), height: Math.round(bounds.height), overflow });
       }
       checked[kind] = seen;
     }
     assert.equal(pageFits, true, `the page scrolls sideways at ${width}`);
-    results.push({ width, checked });
+    results.push({ width, scheme, checked });
     await page.close();
   }
+  await context.close();
   writeFileSync(`${run}/evidence/neo-choice-wrap.json`, JSON.stringify(results, null, 2));
   console.log(JSON.stringify(results));
 } finally {

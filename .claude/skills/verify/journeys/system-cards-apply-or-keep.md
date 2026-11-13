@@ -21,8 +21,9 @@ yes/no setting card saves on a button `yes`. Evidence:
 `evidence/system-cards-apply-or-keep.json`.
 
 The second helper pairs a headless browser, opens `/neo` at 390 wide and finds the
-setting card with `A Apply these settings` and `B Keep current settings` and no
-yes/no buttons. Tapping A saves the setting. Evidence:
+setting card with `Apply these settings` and `Keep current settings` exactly as
+written, with no drawn letters and no yes/no buttons. Tapping Apply saves the
+setting. Evidence:
 `evidence/system-cards-apply-or-keep-web.{json,png}`; look at the screenshot.
 
 The home-repository card is covered by `neo-home-github.ts` in
