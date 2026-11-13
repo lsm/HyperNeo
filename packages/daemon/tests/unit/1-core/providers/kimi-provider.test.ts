@@ -550,6 +550,27 @@ describe('KimiProvider', () => {
       expect(String(calls[0]?.[0])).not.toContain('/anthropic/');
     });
 
+    it('caches the K2.7 profile, not raw K2.8 facts, when the region routes there', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_REGION = 'global';
+      const { fetchMock } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+
+      await provider.listRemoteModels();
+      const cached = provider.getCachedModels();
+      const coding = cached?.find((model) => model.id === 'kimi-for-coding');
+
+      expect(coding).toMatchObject({
+        name: 'Kimi K2.7',
+        contextWindow: 262_144,
+        thinkingModes: 'on',
+      });
+      expect(coding?.effortLevels).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('preserves a custom environment base URL and uses the injected fetch', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       process.env.KIMI_BASE_URL = 'https://proxy.example.com/kimi';

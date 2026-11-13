@@ -477,7 +477,7 @@ export class KimiProvider implements Provider {
 
   getCachedModels(): ModelInfo[] | null {
     const discovered = this.discoveryCache.get(this.discoveryFingerprint());
-    if (discovered?.length) return discovered;
+    if (discovered?.length) return this.forServingRegion(discovered);
     if (!this.curatedModels?.length) return null;
     return this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
   }
