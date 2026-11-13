@@ -625,6 +625,9 @@ class WorkerDrivers(unittest.TestCase):
         pid = self.spawn(Path('/bin/sleep'))
         self.assertEqual(self.resolve('click', {'pid': pid, 'window_id': foreign_window()}),
                          {'reason': 'target_mismatch'})
+        for window in (-1, 2 ** 32 + 1, '7'):
+            self.assertEqual(self.resolve('zoom', {'pid': pid, 'window_id': window}),
+                             {'reason': 'target_unverified'})
 
     def test_resolve_refuses_tools_outside_the_allowlist(self):
         self.assertEqual(self.resolve('kill_app', {'pid': os.getpid()}), {'reason': 'tool_not_allowed'})

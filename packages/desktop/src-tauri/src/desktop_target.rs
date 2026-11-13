@@ -189,7 +189,13 @@ pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -
     let Some((id, team, requirement)) = signer else {
         return refuse("target_unverified");
     };
-    let window = arguments["window_id"].as_u64().map(|window| window as u32);
+    let window = match &arguments["window_id"] {
+        Value::Null => None,
+        value => match value.as_u64().and_then(|window| u32::try_from(window).ok()) {
+            Some(window) => Some(window),
+            None => return refuse("target_unverified"),
+        },
+    };
     if let Some(window) = window {
         match owner(window) {
             Some(owner) if owner == pid => {}
