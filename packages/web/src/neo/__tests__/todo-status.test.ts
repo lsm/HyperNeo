@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { locale } from '../../lib/i18n/index.ts';
-import { neoQuestionText, neoTodoStatus } from '../todo-status.ts';
+import { neoQuestionOption, neoQuestionText, neoTodoStatus } from '../todo-status.ts';
 
 afterEach(() => {
   locale.value = 'en';
@@ -51,6 +51,29 @@ describe('neoQuestionText', () => {
     locale.value = 'zh-Hans';
     expect(neoQuestionText(one)).toBe('开始「Ship W5」？');
     expect(neoQuestionText(many)).toBe('开始这 3 件？');
+  });
+
+  it('renders a removal card and its buttons in each language', () => {
+    const card = {
+      text: '"Build" was removed. Continue "Deploy" without it, or remove this step too?',
+      textCodes: [
+        { code: 'question.removedOneOne', params: { removed: '"Build"', steps: '"Deploy"' } },
+      ],
+      options: ['Continue', 'Remove these'],
+      optionCodes: [
+        { code: 'question.removedContinue', params: {} },
+        { code: 'question.removedRemove', params: {} },
+      ],
+    };
+    expect(neoQuestionText(card)).toBe(card.text);
+    expect(neoQuestionOption(card, 'Remove these')).toBe('Remove these');
+    locale.value = 'zh-Hans';
+    expect(neoQuestionText(card)).toBe(
+      '"Build" 已移除。不等它，继续 "Deploy"？还是把这一步也移除？'
+    );
+    expect(neoQuestionOption(card, 'Continue')).toBe('继续');
+    expect(neoQuestionOption(card, 'Remove these')).toBe('一起移除');
+    expect(neoQuestionOption({ options: ['Ship'] }, 'Ship')).toBe('Ship');
   });
 
   it('keeps questions Neo wrote itself verbatim', () => {

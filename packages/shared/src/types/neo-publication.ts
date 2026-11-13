@@ -65,9 +65,5 @@ export type NeoPublicationAppendResult =
   | { accepted: true; created: boolean; publication: NeoPublication }
   | {
       accepted: false;
-      reason:
-        | 'invalid_publication'
-        | 'publication_conflict'
-        | 'publication_superseded'
-        | 'input_handed_off';
+      reason: 'invalid_publication' | 'publication_conflict' | 'publication_superseded';
     };

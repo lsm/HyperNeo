@@ -272,7 +272,7 @@ try {
   const publish = async (requestId: string, replyTo: string[], fullText: string) => {
     const result = await back({
       name: 'neo.publication.publish',
-      input: { requestId, verbatim: true, fullText, replyTo },
+      input: { requestId, text: fullText, replyTo },
     });
     return JSON.parse((result.content[0] as { text: string }).text);
   };

@@ -99,7 +99,7 @@ try {
   assert(bounded.fullText.includes('Core: stalled asks: 1'));
   assert(bounded.fullText.includes('broken: unavailable'));
   assert(bounded.fullText.includes('healthy: waiting: 4'));
-  assert(bounded.fullText.length <= 16000 && bounded.shortText.length <= 2000);
+  assert(bounded.fullText.length <= 16000 && bounded.shortText.length <= 4000);
   await sweepNeoPacks(app!.jobQueue, service!);
   await read('a faulty hook does not repeat all day', 3);
   assert.equal(hookAttempts, 1);

@@ -295,6 +295,16 @@ export const en = {
   'composer.stopSendTitle': 'Stop recording and send it now',
   'question.startOne': 'Start "{title}"?',
   'question.startMany': 'Start these {count}?',
+  'question.removedOneOne':
+    '{removed} was removed. Continue {steps} without it, or remove this step too?',
+  'question.removedOneMany':
+    '{removed} was removed. Continue {steps} without it, or remove these steps too?',
+  'question.removedManyOne':
+    '{removed} were removed. Continue {steps} without them, or remove this step too?',
+  'question.removedManyMany':
+    '{removed} were removed. Continue {steps} without them, or remove these steps too?',
+  'question.removedContinue': 'Continue',
+  'question.removedRemove': 'Remove these',
   'session.back': 'Back to Neo',
   'session.chat': '{title} chat',
   'session.opening': 'Opening chat…',
@@ -348,7 +358,7 @@ export const en = {
   'artifact.loading': 'Loading preview…',
   'artifact.liveLimit': 'This file is too large to preview here.',
   'artifact.safeOpenUnavailable': 'This platform cannot safely open file references.',
-  'artifact.missing': 'This file is no longer there.',
+  'artifact.missing': "This file hasn't been created yet, or no longer exists.",
   'artifact.fileChanged': 'This file changed while loading. Reopen it to read the current version.',
   'artifact.downloadSafeHtml': 'Download safe HTML',
   'artifact.daemonUnavailable': 'The daemon that owns this file is not reachable.',
@@ -401,4 +411,16 @@ export const en = {
   'dual.description': 'A quick model answers first and Neo does the work.',
   'dual.reconnect': 'Reconnect before changing fast replies.',
   'dual.saveError': 'Could not save fast replies.',
+  'pair.intro': 'Start pairing to connect the Neo app on your phone to this daemon.',
+  'pair.scanPrompt': 'Add a phone. Scan this QR with Neo.',
+  'pair.qrLabel': 'Pairing QR code',
+  'pair.expiresIn': 'Expires in {seconds} s',
+  'pair.scanned': 'Phone scanned. Waiting for confirmation.',
+  'pair.pairedWith': 'Paired with {name}.',
+  'pair.thePhone': 'the phone',
+  'pair.cancelled': 'Pairing cancelled.',
+  'pair.denied': 'Pairing was denied.',
+  'pair.expired': 'The QR expired before a phone paired.',
+  'pair.newQr': 'Show a new QR',
+  'pair.cancelUnconfirmed': 'Could not cancel. The QR still works until it expires.',
 } as const;

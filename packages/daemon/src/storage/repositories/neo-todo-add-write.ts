@@ -15,8 +15,6 @@ import {
   neoTodoPlaceRefusal,
   planNeoTodoDraft,
 } from '../../lib/neo/todo-operations.ts';
-import { planNeoTodoAwaitingStart } from '../../lib/neo/todo-runner.ts';
-import { neoTodoStartRefusal } from '../../lib/neo/todo-start-gate.ts';
 import { todoEvidenceFile } from '../../lib/work-locations.ts';
 import { type ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -118,40 +116,19 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       changes: ChangeRecorder
     ): Receipt => {
       const { draft } = plan;
-      let todo = store.addTodo(
+      const todo = store.addTodo(
         input.todoId,
         plan.ask.id,
-        { ...draft, dependsOn: plan.dependsOn, approvedAt: draft.start ? input.now : null },
+        { ...draft, dependsOn: plan.dependsOn, approvedAt: input.now },
         input.now,
         plan.repo
       );
-      if (draft.target) {
-        new NeoTodoSessionRepository(db).create(todo.id, draft.target);
-        changes.notifyChange('neo_todo_sessions');
-      }
-      if (draft.start) {
-        const approved = store.approveTodo(todo, input.now);
-        const held = neoTodoStartRefusal(
-          approved,
-          store.listFamilyTodos(plan.ask.id),
-          store.gateQuestions(plan.ask)
-        );
-        return {
-          ok: true,
-          todo: approved,
-          ...(held ? {} : { start: approved.id }),
-          ...(draft.records ? { records: draft.records } : {}),
-        };
-      }
-      if (todo.instruction) {
-        store.joinStartQuestion(todo, input.now);
-        changes.notifyChange('neo_questions');
-        const blocked = planNeoTodoAwaitingStart(todo);
-        if (blocked) todo = store.updateTodo(todo, blocked, input.now);
-      }
+      if (draft.target) new NeoTodoSessionRepository(db).create(todo.id, draft.target);
+      if (draft.target) changes.notifyChange('neo_todo_sessions');
       return {
         ok: true,
         todo,
+        ...(todo.instruction ? { start: todo.id } : {}),
         ...(draft.records ? { records: draft.records } : {}),
       };
     },

@@ -63,7 +63,7 @@ try {
   const result = await rpc('neo.todo.add', { after: [],
     askId: 'synthetic-ask', title: 'Synthetic task', doneWhen: 'Evidence delivered',
     instruction: 'SYNTHETIC_WORKER_GUIDANCE', check: { pack: 'coding', kind: 'issue_closed', params: { issue: 'example/synthetic#1' } },
-    target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'synthetic-worker' } }, start: true,
+    target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'synthetic-worker' } },
   });
   evidence.todoResult = result;
   const messages = db.prepare("SELECT queue, payload FROM job_queue WHERE queue = 'mailbox'").all();

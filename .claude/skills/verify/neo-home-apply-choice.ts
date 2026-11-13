@@ -118,9 +118,9 @@ try {
   assert(String((evidence.withoutConfirmation as { reason: string }).reason).includes('confirmation_required'));
   assert.equal(await readFile(join(root, 'direction.md'), 'utf8'), local);
   const confirm = { path: 'direction.md', sha256: createHash('sha256').update(other).digest('hex') };
-  const asked = await rpc('neo.question.ask', { askId: protectedFile.askId, kind: 'yesno', text: `Save ${confirm.path}\nSHA-256: ${confirm.sha256}`, yesLabel: 'Save these exact bytes', noLabel: 'Keep current', confirm });
+  const asked = await rpc('neo.question.ask', { askId: protectedFile.askId, kind: 'choice', text: `Save ${confirm.path}\nSHA-256: ${confirm.sha256}`, options: ['Save these exact bytes'], confirm });
   const confirmationId = (asked.question as { id: string }).id;
-  assert.equal((await rpc('neo.question.answer', { questionId: confirmationId, answer: 'yes' })).ok, true);
+  assert.equal((await rpc('neo.question.answer', { questionId: confirmationId, answer: ['Save these exact bytes'] })).ok, true);
   evidence.confirmed = await rpc('neo.home.save', { ...protectedInput, questionId: confirmationId });
   assert.equal((evidence.confirmed as { ok: boolean }).ok, true);
   assert.equal(await readFile(join(root, 'direction.md'), 'utf8'), other);

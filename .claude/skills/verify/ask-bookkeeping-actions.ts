@@ -9,7 +9,7 @@ import { recordOperationRefusal } from '../../../packages/daemon/src/storage/rep
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { createNeoAskRecordOperations } from '../../../packages/daemon/src/lib/neo/ask-record-operations.ts';
 import { createNeoWorkerQuestionWriter, createNeoQuestionOperations } from '../../../packages/daemon/src/lib/neo/question-operations.ts';
-import { createNeoAskReadOperation, createNeoDoneTodosOperation } from '../../../packages/daemon/src/lib/neo/ask-entries.ts';
+import { createNeoAskReadOperation, createNeoDoneTodosOperation, createNeoTodoReadOperation } from '../../../packages/daemon/src/lib/neo/ask-entries.ts';
 import { createOperationRegistry, type OperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createDiscoveryOperations } from '../../../packages/daemon/src/lib/operations/discovery.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
@@ -35,7 +35,7 @@ for (const phase of ['initial', 'reopen']) {
     const packs = createTodoCheckPacks(db);
     const controls: NeoTodoControls = {
       resolveTarget: existingTodoTarget,
-      start: unexpected,
+      advance: async () => {},
       proceed: unexpected,
       retry: unexpected,
       stop: async () => null,
@@ -55,6 +55,7 @@ for (const phase of ['initial', 'reopen']) {
       ...createNeoTodoOperations(store, sessions, controls, () => packs, () => null),
       createNeoAskReadOperation(store, () => [], admit, project),
       createNeoDoneTodosOperation(store, sessions, () => [], admit, project),
+      createNeoTodoReadOperation(store, admit, project),
     ]);
     const handler = createOperationMcpHandler(registry, () => ({ sessionId: 'neo', role: 'neo' }), (refusal) => gatewayFor(db).run(recordOperationRefusal, { refusal, sessionId: 'neo', at: Date.now() }));
     const call = async (name: string, input: unknown, expected = true) => {
@@ -86,7 +87,6 @@ for (const phase of ['initial', 'reopen']) {
         title: 'Local work',
         check: pendingTodoCheck,
         instruction: 'Work',
-        start: false,
         target: { verb: 'start', adapter: 'hyperneo' },
       };
       const refused = await call('neo.todo.add', { after: [], askId: repoAsk.id, ...draft }, false);
@@ -139,7 +139,7 @@ for (const phase of ['initial', 'reopen']) {
     const mixed = await call('neo.ask.read', { askId: mixedAskId });
     assert.equal(mixed.entry.ask.status, 'open');
     assert.equal(mixed.entry.todos.length, 2);
-    assert(mixed.entry.todos.every((todo: { askId: string }) => todo.askId === mixedAskId));
+    assert(mixed.entry.todos.every((todo: object) => Object.keys(todo).sort().join() === 'id,state,title'));
     const read = await call('neo.ask.read', { askId: 'ask' });
     const child = await call('neo.ask.read', { askId: 'child' });
     assert.equal(child.entry.ask.parentId, 'ask');
@@ -156,7 +156,7 @@ for (const phase of ['initial', 'reopen']) {
     for (const [id, state] of [['unfinished', 'removed'], ['closed', 'closed_unverified'], ['failed', 'removed']])
       assert.equal(read.entry.todos.find((todo: { id: string }) => todo.id === id)?.state, state);
     assert.equal(read.entry.doneCount, 0);
-    assert(read.entry.todos.find((todo: { id: string }) => todo.id === 'failed').reason.includes('check_failed: build exited 7'));
+    assert((await call('neo.todo.read', { todoId: 'failed' })).todo.reason.includes('check_failed: build exited 7'));
     assert((await call('neo.ask.doneTodos', { askId: 'ask' })).todos.length === 0);
     assert(store.listQuestions('ask').every((question) => question.state === 'retired' && question.answer === null && question.answeredBy === null));
     const audits = db.prepare('SELECT operation,reason,accepted FROM operation_refusals ORDER BY id').all();

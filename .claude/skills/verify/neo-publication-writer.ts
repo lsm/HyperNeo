@@ -29,7 +29,7 @@ try {
   prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,type,config,metadata) VALUES (?,'Synthetic Neo',?,'2026-10-27','2026-10-27','active','worker','{}','{}')").run(root, run);
   new NeoRepository(raw).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
-  const input = { requestId: 'publication-proof', shortText: 'Complete report', fullText: 'Complete publication bytes 🦊\n'.repeat(512) };
+  const input = { requestId: 'publication-proof', text: 'Complete report', details: 'Complete publication bytes 🦊\n'.repeat(512) };
   const publish = async () => { const reply = await handler({ name: 'neo.publication.publish', input }); assert.notEqual(reply.isError, true, JSON.stringify(reply)); return JSON.parse(reply.content[0].text); };
   let mainWrites = 0;
   raw.prepare = ((query: string) => { if (/INSERT INTO neo_publications/i.test(query)) { mainWrites++; if (mode === 'verify') throw new Error('Publication SQL forbidden on daemon main'); } return prepare(query); }) as typeof raw.prepare;
@@ -46,7 +46,7 @@ try {
   evidence.publishMs = performance.now() - at;
   assert.equal(first.accepted, true, JSON.stringify(first));
   assert.equal(first.created, true);
-  assert.equal(first.publication.fullText, input.fullText);
+  assert.equal(first.publication.fullText, input.details);
   const again = await publish();
   assert.equal(again.accepted, true);
   assert.equal(again.created, false);
@@ -59,7 +59,7 @@ try {
   evidence.maxHealthMs = Math.max(...samples);
   evidence.mainWrites = mainWrites;
   evidence.workerSql = sql.filter(row => row.workerOperation === 'neo.publications.write');
-  evidence.completeBytes = Buffer.byteLength(input.fullText);
+  evidence.completeBytes = Buffer.byteLength(input.details);
   assert.equal(mainWrites, 0, 'Publication persistence ran on daemon main');
   assert(samples.length > 5 && Math.max(...samples) < 250, 'Health unavailable during native writer contention');
   evidence.passed = true;

@@ -490,6 +490,24 @@ describe('SDKAssistantMessage', () => {
 
       expect(container.textContent).toContain('API Error');
     });
+
+    it('shows a stopped failure episode inside the card with its raw error collapsed', () => {
+      const message = createErrorMessage();
+      const { container } = render(
+        <SDKAssistantMessage
+          message={message}
+          stopped={{ id: 'e', failures: 3, retryAt: 0, error: '{"status":529}', failed: true }}
+        />
+      );
+
+      expect(container.textContent).toContain(
+        'Stopped after 3 failures. Send a message to recover.'
+      );
+      const details = container.querySelector('details');
+      expect(details?.open).toBe(false);
+      expect(details?.querySelector('summary')?.textContent).toBe('Technical details');
+      expect(details?.querySelector('pre')?.textContent).toBe('{\n  "status": 529\n}');
+    });
   });
 
   describe('Parent Tool Use (Sub-agent)', () => {

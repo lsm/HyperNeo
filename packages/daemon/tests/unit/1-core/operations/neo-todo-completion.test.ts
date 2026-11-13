@@ -82,7 +82,7 @@ function setup(stop: () => Promise<string | null> = async () => null, judged = f
       {
         resolveTarget: existingTodoTarget,
         recompute: runner.recompute,
-        start: async () => ({ ok: false as const, reason: 'not started' }),
+        advance: async () => {},
         proceed: async () => ({ ok: false as const, reason: 'no session' }),
         retry: async () => ({ ok: false as const, reason: 'not failed' }),
         stop,
@@ -187,7 +187,6 @@ describe('one completion rule for Neo todos', () => {
         blockedBy: 'check',
         blockedReason: `check_failed: ${reason}`,
       }),
-      todos: expect.any(Array),
     });
     await runner.checkNow([todo.id], () => {});
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'failed', reason });

@@ -117,6 +117,44 @@ describe('KimiProvider', () => {
       expect(models).toEqual([]);
     });
 
+    it('labels kimi-for-coding as the K2.8 preview with 1M context and effort levels', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      provider = makeProbeOkProvider();
+
+      const models = await provider.getModels();
+      const coding = models.find((model) => model.id === 'kimi-for-coding');
+
+      expect(coding).toMatchObject({
+        name: 'Kimi K2.8 Preview',
+        contextWindow: 1_048_576,
+        effortLevels: ['low', 'high', 'max'],
+      });
+      expect(coding?.description).toContain('K2.8 Preview');
+      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('granular');
+      expect(provider.getModelEffortLevels('kimi-for-coding')).toEqual(['low', 'high', 'max']);
+      expect(KimiProvider.resolveContextWindow('kimi-for-coding')).toBe(1_048_576);
+    });
+
+    it('keeps the K3 and K3.1 entries unchanged beside the K2.8 preview', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      provider = makeProbeOkProvider();
+
+      const models = await provider.getModels();
+      const byId = (id: string) => models.find((model) => model.id === id);
+
+      expect(byId('kimi-k3[1m]')).toMatchObject({
+        name: 'Kimi K3',
+        contextWindow: 1_048_576,
+        thinkingModes: 'granular',
+      });
+      expect(byId('k3-256k')).toMatchObject({ name: 'Kimi K3 (256K)', contextWindow: 262_144 });
+      expect(byId('kimi-k3.1-pro')).toMatchObject({
+        name: 'Kimi K3.1 Pro',
+        contextWindow: 1_048_576,
+      });
+      expect(byId('kimi-k2.8-preview')).toBeUndefined();
+    });
+
     it('uses nonempty china discovery instead of static or curated K3.1 entries', async () => {
       const fetchImpl = mock(
         async (input: unknown) =>
@@ -488,7 +526,7 @@ describe('KimiProvider', () => {
       expect(init?.headers).toEqual({ Authorization: 'Bearer test-key' });
     });
 
-    it('uses the global OpenAI endpoint rather than appending models to the Anthropic base', async () => {
+    it('uses the global OpenAI endpoint and lists the K2.7 model it serves there', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       process.env.KIMI_REGION = 'global';
       const { calls } = installModelListFetch([
@@ -500,13 +538,37 @@ describe('KimiProvider', () => {
 
       expect(models[0]).toMatchObject({
         id: 'kimi-for-coding',
+        name: 'Kimi K2.7',
         provider: 'kimi',
         contextWindow: 262_144,
         thinkingModes: 'on',
+        description: 'Kimi K2.7 · 256K context, fixed thinking',
         available: true,
       });
+      expect(models[0]?.effortLevels).toBeUndefined();
       expect(calls[0]?.[0]).toBe('https://api.moonshot.ai/v1/models');
       expect(String(calls[0]?.[0])).not.toContain('/anthropic/');
+    });
+
+    it('caches the K2.7 profile, not raw K2.8 facts, when the region routes there', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_REGION = 'global';
+      const { fetchMock } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+
+      await provider.listRemoteModels();
+      const cached = provider.getCachedModels();
+      const coding = cached?.find((model) => model.id === 'kimi-for-coding');
+
+      expect(coding).toMatchObject({
+        name: 'Kimi K2.7',
+        contextWindow: 262_144,
+        thinkingModes: 'on',
+      });
+      expect(coding?.effortLevels).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('preserves a custom environment base URL and uses the injected fetch', async () => {
@@ -673,7 +735,7 @@ describe('KimiProvider', () => {
       expect(provider.getModelThinkingMode('moonshot-v1-8k')).toBe('off');
       expect(provider.getModelThinkingMode('moonshot-v1-32k')).toBe('off');
       expect(provider.getModelThinkingMode('moonshot-v1-128k')).toBeUndefined();
-      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('on');
+      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('granular');
     });
 
     it('caches successful discovery and force bypasses the cache', async () => {
@@ -768,7 +830,15 @@ describe('KimiProvider', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(calls[0]?.[0]).toBe('https://api.kimi.com/coding/v1/models');
       expect(calls[1]?.[0]).toBe('https://api.moonshot.ai/v1/models');
-      expect(models).toEqual([KimiProvider.MODELS[3]]);
+      expect(models).toMatchObject([
+        {
+          id: 'kimi-for-coding',
+          name: 'Kimi K2.7',
+          contextWindow: 262_144,
+          thinkingModes: 'on',
+        },
+      ]);
+      expect(models[0]?.effortLevels).toBeUndefined();
     });
 
     it('serves the cached list again when the region does not change', async () => {
@@ -1075,7 +1145,7 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.ENABLE_TOOL_SEARCH).toBe('false');
-      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
       expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
       expect(config.isAnthropicCompatible).toBe(true);
       expect(config.apiVersion).toBe('v1');
@@ -1618,11 +1688,11 @@ describe('KimiProvider', () => {
         KimiProvider.MODELS.find((m) => m.id === 'kimi-k2.7-code-highspeed')?.contextWindow
       ).toBe(262_144);
       expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')?.contextWindow).toBe(
-        262_144
+        1_048_576
       );
     });
 
-    it('exposes a granular thinking picker for K3 models and binary for K2.7', () => {
+    it('exposes a granular thinking picker for K3, the K2.8 preview and binary for K2.7 Code', () => {
       expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-k3[1m]')?.thinkingModes).toBe(
         'granular'
       );
@@ -1630,7 +1700,9 @@ describe('KimiProvider', () => {
       expect(
         KimiProvider.MODELS.find((m) => m.id === 'kimi-k2.7-code-highspeed')?.thinkingModes
       ).toBe('on');
-      expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')?.thinkingModes).toBe('on');
+      expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')?.thinkingModes).toBe(
+        'granular'
+      );
     });
 
     it('should mark every Kimi model with preferContextWindowMetadata', () => {
@@ -1691,7 +1763,7 @@ describe('KimiProvider', () => {
       expect(KimiProvider.resolveKimiTitleThinkingConfig('k3[1m]')).toBeUndefined();
     });
 
-    it('returns enabled thinking for all Kimi K2.7 model IDs', () => {
+    it('returns enabled thinking for Kimi K2.7 Code IDs', () => {
       expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-k2.7-code')).toEqual({
         type: 'enabled',
         budgetTokens: 16000,
@@ -1702,7 +1774,7 @@ describe('KimiProvider', () => {
       });
       expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-for-coding')).toEqual({
         type: 'enabled',
-        budgetTokens: 16000,
+        budgetTokens: 16_000,
       });
       expect(KimiProvider.resolveKimiTitleThinkingConfig('moonshot-v1-32k')).toEqual({
         type: 'disabled',
@@ -1731,16 +1803,112 @@ describe('KimiProvider', () => {
       expect(provider.getModelThinkingMode('moonshot-k3-preview')).toBe('granular');
     });
 
-    it('returns on for Kimi K2.7 models', () => {
-      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('on');
-      expect(provider.getModelThinkingMode('kimi-k2.7-code')).toBe('on');
+    it('returns on for the K2.7 entries that stay K2.7', () => {
       expect(provider.getModelThinkingMode('kimi-k2.7-code-highspeed')).toBe('on');
       expect(provider.getModelThinkingMode('kimi-for-coding-highspeed')).toBe('on');
+    });
+
+    it('treats the kimi-k2.7-code alias as the K2.8 model the endpoint actually serves', () => {
+      expect(provider.getRoutedModelId('kimi-k2.7-code')).toBe('kimi-for-coding');
+      expect(provider.getModelThinkingMode('kimi-k2.7-code')).toBe('granular');
+      expect(provider.getModelEffortLevels('kimi-k2.7-code')).toEqual(['low', 'high', 'max']);
+    });
+
+    it('returns granular for the K2.8 preview behind kimi-for-coding', () => {
+      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('granular');
     });
 
     it('falls back to undefined for non-Kimi or unknown models', () => {
       expect(provider.getModelThinkingMode('claude-sonnet-4-5')).toBeUndefined();
       expect(provider.getModelThinkingMode('glm-5')).toBeUndefined();
+    });
+  });
+
+  describe('global region routing', () => {
+    it('keeps K2.7 thinking for kimi-for-coding when the Moonshot platform serves it', () => {
+      provider = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'global' });
+
+      expect(
+        provider.buildSdkConfig('kimi-for-coding', { region: 'global' }).envVars.ANTHROPIC_MODEL
+      ).toBe('kimi-k2.7-code');
+      expect(provider.getRoutedModelId?.('kimi-for-coding')).toBe('kimi-k2.7-code');
+      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('on');
+      expect(provider.getModelDefaultEffort('kimi-for-coding')).toBeUndefined();
+      expect(provider.getModelThinkingMode('kimi')).toBe('on');
+    });
+
+    it('honors a session-scoped region in every capability lookup', () => {
+      provider = new KimiProvider({ KIMI_API_KEY: 'test-key' });
+      const scoped = { sessionId: 'synthetic', region: 'global' };
+
+      expect(provider.getRoutedModelId?.('kimi-for-coding', scoped)).toBe('kimi-k2.7-code');
+      expect(provider.getModelThinkingMode('kimi-for-coding', scoped)).toBe('on');
+      expect(provider.getModelEffortLevels('kimi-for-coding', scoped)).toBeUndefined();
+      expect(provider.getModelDefaultEffort('kimi-for-coding', scoped)).toBeUndefined();
+    });
+
+    it('honors a session-scoped Kimi Code base URL in every capability lookup', () => {
+      provider = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'global' });
+      const scoped = { sessionId: 'synthetic', baseUrl: 'https://api.kimi.com/coding' };
+
+      expect(provider.getRoutedModelId?.('kimi-for-coding', scoped)).toBe('kimi-for-coding');
+      expect(provider.getModelThinkingMode('kimi-for-coding', scoped)).toBe('granular');
+      expect(provider.getModelEffortLevels('kimi-for-coding', scoped)).toEqual([
+        'low',
+        'high',
+        'max',
+      ]);
+      expect(provider.getModelDefaultEffort('kimi-for-coding', scoped)).toBe('high');
+    });
+
+    it('keeps the K2.8 profile on the Kimi Code endpoint', () => {
+      provider = new KimiProvider({
+        KIMI_API_KEY: 'test-key',
+        KIMI_BASE_URL: 'https://api.kimi.com/coding',
+      });
+
+      expect(provider.getRoutedModelId?.('kimi-for-coding')).toBe('kimi-for-coding');
+      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('granular');
+      expect(provider.getModelEffortLevels('kimi-for-coding')).toEqual(['low', 'high', 'max']);
+      expect(provider.getModelDefaultEffort('kimi-for-coding')).toBe('high');
+    });
+  });
+
+  describe('session-scoped context window', () => {
+    it('reports the routed window for a session scoped to the global region', () => {
+      provider = new KimiProvider({ KIMI_API_KEY: 'test-key' });
+
+      expect(provider.getModelContextWindow?.('kimi-for-coding')).toBe(1_048_576);
+      expect(
+        provider.getModelContextWindow?.('kimi-for-coding', { sessionId: 's', region: 'global' })
+      ).toBe(262_144);
+    });
+  });
+
+  describe('getModelEffortLevels', () => {
+    beforeEach(() => {
+      provider = new KimiProvider();
+    });
+
+    it('offers only low, high and max for the K2.8 preview', () => {
+      expect(provider.getModelEffortLevels('kimi-for-coding')).toEqual(['low', 'high', 'max']);
+      expect(provider.getModelEffortLevels('kimi')).toEqual(['low', 'high', 'max']);
+    });
+
+    it('asks the K2.8 preview for high effort when no level is chosen', () => {
+      expect(provider.getModelDefaultEffort('kimi-for-coding')).toBe('high');
+      expect(provider.getModelDefaultEffort('kimi-k3')).toBeUndefined();
+      expect(provider.getModelDefaultEffort('kimi-k2.7-code-highspeed')).toBeUndefined();
+    });
+
+    it('leaves the other Kimi models on the full effort scale', () => {
+      expect(provider.getModelEffortLevels('kimi-k3')).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+      ]);
     });
   });
 

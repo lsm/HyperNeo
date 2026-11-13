@@ -23,8 +23,11 @@ export function requireHomeConfirmation(
     !question ||
     !read.ok ||
     !read.answeredByHuman ||
-    read.question.kind !== 'yesno' ||
-    read.question.answer !== 'yes' ||
+    !(read.question.kind === 'yesno'
+      ? read.question.answer === 'yes'
+      : read.question.kind === 'choice' &&
+        question.options?.length === 1 &&
+        [read.question.answer].flat().join('\n') === question.options[0]) ||
     read.question.answeredAt === null ||
     !sessionId ||
     store.getAsk(question.askId)?.sessionId !== sessionId ||
@@ -37,7 +40,7 @@ export function requireHomeConfirmation(
       reason: {
         ok: false as const,
         reason:
-          'confirmation_required: provide a matching human yes on a root-Neo question bound to this exact path and content SHA-256.',
+          'confirmation_required: provide the human confirmation of a root-Neo question bound to this exact path and content SHA-256.',
       },
     };
   const entry = `\n## ${new Date(read.question.answeredAt).toISOString()}\n\n${input.message}\n\nPath: ${input.path}\nSHA-256: ${sha256}\nConfirmed by human: question ${question.id}\n\n${question.text}\n`;

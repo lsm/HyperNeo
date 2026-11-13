@@ -39,7 +39,7 @@ const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketCli
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 type Input=Parameters<typeof neoTodoAddWrites.run>[1];type Receipt=ReturnType<typeof neoTodoAddWrites.run>;
 const op={name:'neo.todoAddWrites',mode:'write',run:()=>{throw new Error('Todo add must execute in writer worker');}} as DbOp<Input,Receipt>;
-const input=(id:string):Input=>({askId:'ask',todoId:id,now:123,draft:{ after: [],title:id,check:{pack:'core',kind:'evidence',params:{path:'/synthetic/result'}},instruction:'Do the complete work',target:{verb:'start',adapter:'hyperneo'},named:null,start:false,priority:'high'}});
+const input=(id:string):Input=>({askId:'ask',todoId:id,now:123,draft:{ after: [],title:id,check:{pack:'core',kind:'evidence',params:{path:'/synthetic/result'}},instruction:'Do the complete work',target:{verb:'start',adapter:'hyperneo'},named:null,priority:'high'}});
 const call=(args:Input)=>app.db.gateway.run(op,args);
 const visible=()=>hub.request<{ok:boolean;entry:{ask:NeoAsk;todos:NeoTodo[];questions:unknown[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'ask'}});
 const replay=app.db.gateway.onChanges;let held=false;const tables:string[]=[];
@@ -54,7 +54,7 @@ try{
  store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Build whole todo add',request:'Preserve work',createdAt:1});
  const cached=db.prepare('SELECT COUNT(*) AS count FROM neo_todos');cached.get();record=true;assert.throws(()=>cached.get(),/Todo add SQL executed on daemon main/);record=false;assert.equal(mainSql,1);mainSql=0;result.cachedSqlGuardVerified=true;
  const before=await visible();
- db.exec("CREATE TRIGGER refuse_start BEFORE INSERT ON neo_questions BEGIN SELECT RAISE(ABORT,'synthetic late add rollback'); END");
+ db.exec("CREATE TRIGGER refuse_start BEFORE INSERT ON neo_todo_sessions BEGIN SELECT RAISE(ABORT,'synthetic late add rollback'); END");
  record=true;await assert.rejects(call(input('rollback')),/synthetic late add rollback/);record=false;
  assert.equal(tables.length,0);assert.deepEqual(await visible(),before);assert.equal(sessions.get('rollback'),null);db.exec('DROP TRIGGER refuse_start');result.rollbackAtomic=true;
  const text='完整工作 🦊\n'.repeat(20000),args=input('held');args.draft.instruction=text;
@@ -62,13 +62,13 @@ try{
  await new Promise(done=>setTimeout(done,1200));if(error)throw error;assert.equal(replied,false);assert.equal(tables.length,0);assert.deepEqual(await visible(),before);
  const healthStart=performance.now();await hub.request('system.health',{});const healthMs=performance.now()-healthStart;
  db.exec('ROLLBACK');held=false;const receipt=await pending;const affectedMs=performance.now()-sent;record=false;
- assert(receipt.ok && receipt.todo);assert.equal(receipt.todo.instruction,text);assert.equal(receipt.todo.state,'blocked');assert.equal(receipt.todo.priority,'high');assert.equal(sessions.get('held')?.verb,'start');
- const card=await visible();assert.equal(card.entry.todos[0].instruction,text);assert(tables.includes('neo_questions'));assert.equal(store.listQuestions('ask').length,1);
+ assert(receipt.ok && receipt.todo);assert.equal(receipt.todo.instruction,text);assert.equal(receipt.todo.state,'todo');assert.equal(receipt.start,'held');assert.equal(receipt.todo.priority,'high');assert.equal(sessions.get('held')?.verb,'start');
+ const card=await visible();assert.equal(card.entry.todos[0].instruction,text);assert(tables.includes('neo_todo_sessions'));assert.equal(store.listQuestions('ask').length,0);
  result.fullInstruction={bytes:Buffer.byteLength(text),sha256:createHash('sha256').update(card.entry.todos[0].instruction!).digest('hex')};result.commitBeforeReply=true;
  result.contention={affectedMs,targetMs:250,targetMet:affectedMs<250,healthMs,maxLagMs};assert(affectedMs>=1200);assert(healthMs<250);assert(maxLagMs<1000);
  record=true;const raced=await Promise.all([call(input('one')),call(input('two'))]);record=false;assert(raced.every(item=>item.ok));
- assert.deepEqual(store.listQuestions('ask').map(card=>card.startTodos),[['held','one','two']]);result.concurrentQuestionMembership=true;
- const start=input('start');start.draft.start=true;record=true;const intent=await call(start);record=false;assert(intent.ok && intent.start==='start');assert.equal(store.listQuestions('ask')[0].startTodos?.includes('start'),false);result.dispatchDeferred=true;
+ assert.deepEqual(raced.map(item=>item.start),['one','two']);assert.equal(store.listQuestions('ask').length,0);result.concurrentNoStartCard=true;
+ const checkOnly=input('check-only');checkOnly.draft.instruction=null;delete checkOnly.draft.target;record=true;const intent=await call(checkOnly);record=false;assert(intent.ok && !('start' in intent));result.checkOnlyNoStartIntent=true;
  
  const count=tables.length;const invalid=input('invalid');invalid.draft.check={pack:'missing',kind:'unknown',params:{}};record=true;const rejected=await call(invalid);record=false;assert(!rejected.ok);assert.equal(tables.length,count);assert.equal(store.getTodo('invalid'),null);result.refusalQuiet=true;
  record=true;await assert.rejects(call(args),/UNIQUE constraint/);record=false;assert.equal(tables.length,count);assert.equal(store.listTodos('ask').filter(todo=>todo.id==='held').length,1);result.noReplayDuplicateId=true;

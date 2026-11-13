@@ -31,6 +31,12 @@ if (phase === 'seed') {
         .run(id, title, join(run, 'workspace'), JSON.stringify({ provider, queryMode: 'manual' }));
     new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     new NeoAskTodoRepository(db).openAsk({ id: 'source-ask', sessionId: root, projectId: null, originMessageId: null, title: 'Review a worker decision', request: 'Synthetic question source verification', createdAt: Date.now() });
+    const legacy = new NeoAskTodoRepository(db);
+    for (const [id, title] of [['ordinary-ask', 'Ask a general question'], ['start-ask', 'Start old work']])
+      legacy.openAsk({ id, sessionId: root, projectId: null, originMessageId: null, title, request: 'Synthetic question source verification', createdAt: Date.now() });
+    const held = legacy.addTodo('legacy-review', 'start-ask', { title: 'First review task', doneWhen: 'Synthetic work complete', check: null, instruction: 'Synthetic work; do not start', named: null }, Date.now());
+    legacy.updateTodo(held, { state: 'blocked', blockedBy: 'question' }, Date.now());
+    legacy.askQuestion('legacy-start', 'start-ask', { text: 'Start "First review task"?', kind: 'start', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: [held.id] }, Date.now());
     new NeoAskTodoRepository(db).askQuestion('linkless-source', 'source-ask', { text: 'Terminal worker recommendation', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null, sourceSession: { adapter: 'claude-code', id: 'linkless-worker', name: 'Terminal worker', label: 'Claude Code · Terminal worker', provider: 'Claude', link: null } }, Date.now());
     new SettingsRepository(db).updateGlobalSettings({ language: 'en' });
   } finally { db.close(); }
@@ -45,22 +51,18 @@ if (phase === 'seed') {
     assert(!reply.reply.error, JSON.stringify(reply));
     return reply.reply.value ?? reply.reply;
   };
+  const openUntilAnswered = { pack: 'core', kind: 'evidence', params: { path: join(run, 'never-written') } };
   const saved = phase === 'restart' ? JSON.parse(readFileSync(evidencePath, 'utf8')) : null;
-  const source = saved?.source ?? await rpc('neo.question.ask', { askId: 'source-ask', kind: 'yesno', text: 'Approve the worker recommendation?', noLabel: 'Wait', yesLabel: 'Approve', sourceSession: ref });
+  const source = saved?.source ?? await rpc('neo.question.ask', { askId: 'source-ask', retireWhen: openUntilAnswered, kind: 'choice', text: 'Approve the worker recommendation?', options: ['Approve'], sourceSession: ref });
   assert(source.ok, JSON.stringify(source));
   const expected = { ...ref, name: 'Review worker', label: 'HyperNeo · Review worker', provider: 'glm', link: '/session/source-worker' };
   assert.deepEqual(source.question.sourceSession, expected);
-  const ordinary = saved?.ordinary ?? await rpc('neo.question.ask', { askId: 'source-ask', kind: 'reply', text: 'A general question without a single worker' });
-  assert(ordinary.ok);
+  const ordinary = saved?.ordinary ?? await rpc('neo.question.ask', { askId: 'ordinary-ask', retireWhen: openUntilAnswered, kind: 'reply', text: 'Which repository should hold the general follow-up?' });
+  assert(ordinary.ok, JSON.stringify(ordinary));
   assert(!ordinary.question.sourceSession);
-  const draft = { askId: 'source-ask', doneWhen: 'Synthetic work complete', instruction: 'Synthetic work; do not start', target: { verb: 'send', ref } };
-  let start = saved?.start;
-  if (!start) {
-    assert((await rpc('neo.todo.add', { after: [], ...draft, title: 'First review task' })).ok);
-    start = await rpc('neo.question.ask', { askId: 'source-ask', kind: 'start', text: 'Start after the worker review?', sourceSession: ref });
-    assert(start.ok);
-    assert((await rpc('neo.todo.add', { after: [], ...draft, title: 'Additional review task' })).ok);
-  }
+  const start = saved?.start ?? await rpc('neo.question.ask', { askId: 'start-ask', retireWhen: openUntilAnswered, kind: 'start', text: 'Start after the worker review?', sourceSession: ref });
+  assert(start.ok, JSON.stringify(start));
+  assert.deepEqual(start.question.startTodos, ['legacy-review']);
   const joined = await rpc('neo.question.get', { questionId: start.question.id });
   assert.equal(joined.question.state, 'open');
   assert.deepEqual(joined.question.sourceSession, expected);
@@ -72,12 +74,13 @@ if (phase === 'seed') {
   const snapshot = await rpc('neo.snapshot', {});
   const entry = snapshot.todoAsks.find((entry: { ask: { id: string } }) => entry.ask.id === 'source-ask');
   assert.deepEqual(entry.questions.find((q: { id: string }) => q.id === source.question.id).sourceSession, expected);
-  assert(!entry.questions.find((q: { id: string }) => q.id === ordinary.question.id).sourceSession);
-  const refused = await rpc('neo.question.ask', { askId: 'source-ask', kind: 'reply', text: 'Unavailable source', sourceSession: { ...ref, id: 'does-not-exist' }, replaces: source.question.id });
+  const ordinaryEntry = snapshot.todoAsks.find((entry: { ask: { id: string } }) => entry.ask.id === 'ordinary-ask');
+  assert(!ordinaryEntry.questions.find((q: { id: string }) => q.id === ordinary.question.id).sourceSession);
+  const refused = await rpc('neo.question.ask', { askId: 'source-ask', retireWhen: openUntilAnswered, kind: 'reply', text: 'Unavailable source', sourceSession: { ...ref, id: 'does-not-exist' }, replaces: source.question.id });
   assert.equal(refused.ok, false);
   assert.match(refused.reason, /source_session_unavailable/);
   if (phase === 'capture') assert.equal(got.question.state, 'open');
-  else { assert.equal(got.question.state, 'answered'); assert.equal(got.question.answer, 'yes'); }
+  else { assert.equal(got.question.state, 'answered'); assert.deepEqual(got.question.answer, ['Approve']); }
   writeFileSync(phase === 'capture' ? evidencePath : join(run, 'evidence/source-session-restart.json'), JSON.stringify({ source, ordinary, start, joined, linkless, got, entry, refused }, null, 2));
   console.log(`PASS: ${phase} source-session identity/ref survives the operation and snapshot payloads`);
 }

@@ -81,6 +81,7 @@ if (phase === 'unavailable') {
 assert.equal(proposed.status, 'proposed');
 const questionId = proposed.questionId;
 evidence.question = await rpc('neo.question.get', { questionId });
+assert.deepEqual((await rpc('neo.snapshot')).todoAsks.flatMap((ask: { questions: { id: string; options: string[] }[] }) => ask.questions).find((q: { id: string }) => q.id === questionId)?.options, ['Create private repo', 'Keep local']);
 evidence.missing = await rpc('neo.home.github', { questionId: 'unknown' });
 evidence.open = await rpc('neo.home.github', { questionId });
 assert.equal((evidence.missing as {ok:boolean}).ok, false);
@@ -88,7 +89,7 @@ assert.equal((evidence.open as {ok:boolean}).ok, false);
 assert(!(await calls()).includes('repo create'));
 assert.equal(await git('remote'), '');
 if (phase === 'decline') {
-  await rpc('neo.question.answer', { questionId, answer: 'no' });
+  await rpc('neo.question.answer', { questionId, answer: 'Keep local' });
   evidence.refused = await rpc('neo.home.github', { questionId });
   evidence.repeated = await rpc('neo.home.github', { askId });
   evidence.calls = await calls();
@@ -96,10 +97,16 @@ if (phase === 'decline') {
   assert.deepEqual(evidence.repeated, proposed);
   assert(!String(evidence.calls).includes('repo create'));
   await save();
-  console.log('PASS: human no stays local and the once-only proposal is not re-asked.');
+  console.log('PASS: Keep local stays local and the once-only proposal is not re-asked.');
   process.exit(0);
 }
-await rpc('neo.question.answer', { questionId, answer: 'yes' });
+if (phase === 'chat') await rpc('neo.message.send', { sessionId, requestId: crypto.randomUUID(), content: 'A', replyTo: { kind: 'question', id: questionId } });
+else if (phase === 'legacy') {
+  const legacy = new Database(`${run}/data/daemon.db`);
+  legacy.query("UPDATE neo_questions SET kind='yesno', options=NULL, no_label='Keep local', yes_label='Create private repo' WHERE id=?").run(questionId);
+  legacy.close();
+  await rpc('neo.question.answer', { questionId, answer: 'yes' });
+} else await rpc('neo.question.answer', { questionId, answer: 'Create private repo' });
 evidence.consent = await rpc('neo.question.get', { questionId });
 evidence.created = await rpc('neo.home.github', { questionId });
 evidence.repeated = await rpc('neo.home.github', { questionId });
@@ -120,4 +127,4 @@ assert.equal(evidence.origin, `${run}/bin/../remote.git`);
 assert.equal(evidence.upstream, evidence.head);
 assert.equal(evidence.status, '');
 assert.equal(String(evidence.calls).split('\n').filter((s) => s.startsWith('repo create ')).length, 1);
-console.log('PASS: real RPC refuses missing/open consent, accepts recorded human yes, calls private creation once and pushes only to the synthetic bare remote.');
+console.log(`PASS: real RPC refuses missing/open consent, accepts the human's ${phase === 'chat' ? 'chat letter A' : phase === 'legacy' ? 'pre-upgrade yes' : 'Create private repo button'}, calls private creation once and pushes only to the synthetic bare remote.`);

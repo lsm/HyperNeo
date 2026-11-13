@@ -8,7 +8,8 @@ to a local bare Git repository. Every other GitHub command fails. Never run this
 with the real HOME, remotes, credentials or GitHub executable on the daemon PATH.
 
 The actual RPC must refuse missing/open consent before any create call, show the
-daemon-bound repository in the question, accept its recorded human yes, and call
+daemon-bound repository in a `Create private repo` or `Keep local` choice, accept
+the human's `Create private repo` answer, and call
 private creation exactly once. The initial commit must reach only the synthetic
 remote, with upstream configured and clean status. The helper plants an executable
 pre-push hook in the writable home, pointing at a marker in its synthetic run. The
@@ -20,7 +21,8 @@ run the helper with `restart`: the persisted question/creation receipt must avoi
 another external submission. Evidence: `evidence/neo-home-github-<mode>.json` and
 `evidence/home-gh.log`.
 
-In separate fresh runs, `decline` verifies human no stays local and reuses its
+In separate fresh runs, `chat` approves by the letter `A` in chat, `legacy` turns the card into a
+pre-upgrade yes/no card and approves with yes, `decline` verifies Keep local stays local and reuses its
 question, and `unavailable` verifies failed auth is probed once with no question or
 creation. On pre-feature dev, `before` records the unknown-operation baseline.
 Focused contracts additionally refuse agent answers, foreign/retired/unrelated

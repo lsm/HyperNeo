@@ -8,7 +8,7 @@ env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/
 ```
 
 Use a fresh synthetic directory and free non-8399 port. The actual SDK calls
-`neo.todo.add` with `start:true` through MCP. The real todo runner dispatches
+`neo.todo.add` through MCP. The real todo runner dispatches
 through `work.send`, stores its receipt and reads `work.status`; the fixture
 models consumption, a mid-turn human input, a full assistant report with an empty
 terminal result, and a separate later turn. The SDK then reads receipt-bound

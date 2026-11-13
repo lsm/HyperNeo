@@ -14,10 +14,10 @@ through the daemon gateway; public add/open callers remain unchanged in this
 construction slice. Do not claim runtime activation or completion of #8712.
 
 Require the entire instruction in the receipt and opened Work card, including
-its byte length and hash. A late start-question insert failure must roll back
-the todo, target, ask stamp and notifications. Concurrent additions must join
-one start card with every todo selected. Start returns only an intent, with no
-worker dispatch or start card.
+its byte length and hash. A late target insert failure must roll back the todo,
+target, ask stamp and notifications. Every addition opens no Start card, and an
+addition with work returns its start intent without dispatching a worker; a
+check-only addition returns none. Concurrent additions both commit that way.
 Invalid checks stay quiet. Repeating the same committed todo ID must fail rather
 than create another card. Worker failure before dispatch must reject without a
 main fallback. Losing a committed worker reply must report outcome unknown;

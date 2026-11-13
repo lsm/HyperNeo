@@ -34,7 +34,7 @@ function setup() {
       new NeoTodoSessionRepository(db),
       {
         resolveTarget: existingTodoTarget,
-        start: unused,
+        advance: async () => {},
         recompute: async (todo) => todo,
         proceed: unused,
         retry: unused,

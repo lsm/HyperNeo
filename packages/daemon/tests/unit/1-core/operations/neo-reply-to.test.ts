@@ -1,5 +1,9 @@
 import { runMigration495 } from '../../../../src/storage/schema/m495-neo-answer-provenance.ts';
+import { runMigration428 } from '../../../../src/storage/schema/m428-pack-preference-proposals.ts';
+import { runMigration429 } from '../../../../src/storage/schema/m429-neo-rule-proposals.ts';
 import { runMigration502 } from '../../../../src/storage/schema/m502-neo-question-todos.ts';
+import { runMigration507 } from '../../../../src/storage/schema/m507-neo-question-option-labels.ts';
+import { runMigration508 } from '../../../../src/storage/schema/m508-neo-removed-prerequisites.ts';
 import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
 import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
@@ -68,6 +72,8 @@ describe('neo.message.send replyTo', () => {
     runMigration486(mailbox.db);
     runMigration420(mailbox.db);
     runMigration427(mailbox.db);
+    runMigration428(mailbox.db);
+    runMigration429(mailbox.db);
     runMigration433(mailbox.db);
     runMigration442(mailbox.db);
     runMigration446(mailbox.db);
@@ -77,6 +83,8 @@ describe('neo.message.send replyTo', () => {
     runMigration466(mailbox.db);
     runMigration495(mailbox.db);
     runMigration502(mailbox.db);
+    runMigration507(mailbox.db);
+    runMigration508(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     prepareCodingTodoStorage(mailbox.db);
@@ -343,6 +351,32 @@ describe('neo.message.send replyTo', () => {
     mailbox.db.exec("UPDATE neo_questions SET state = 'open', answer = NULL");
     await send(crypto.randomUUID(), '   ', { kind: 'question', id: 'q1' });
     expect(store.getQuestion('q1')?.state).toBe('open');
+  });
+
+  test('a letter reply to a removed-prerequisite card applies its decision', async () => {
+    const draft = { doneWhen: 'Observed', check: null, instruction: null, named: null };
+    const gone = store.addTodo('gone', 'ask', { ...draft, title: 'Gone', dependsOn: [] }, 1);
+    store.addTodo('next', 'ask', { ...draft, title: 'Next', dependsOn: ['gone'] }, 1);
+    store.updateTodo(gone, { state: 'removed' }, 1);
+    store.askQuestion(
+      'removed',
+      'ask',
+      {
+        text: '"Gone" was removed. Continue "Next" without it, or remove this step too?',
+        kind: 'choice',
+        options: ['Continue', 'Remove these'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todos: ['next'],
+        cause: 'removed_prerequisite',
+      },
+      1
+    );
+    await send(crypto.randomUUID(), 'B', { kind: 'question', id: 'removed' });
+    expect(store.getQuestion('removed')).toMatchObject({ answer: ['Remove these'] });
+    expect(store.getTodo('next')?.state).toBe('removed');
   });
 
   test('a letter reply to a choice question answers with that option, like a tap', async () => {

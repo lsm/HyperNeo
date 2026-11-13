@@ -26,7 +26,7 @@ let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: ReturnType<typeof createNeoService>;
 const invoke = (name: string, input: unknown, caller = neo) =>
   invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, caller);
-const publication = { requestId: 'one', shortText: 'Ready', fullText: 'The comparison is ready.' };
+const publication = { requestId: 'one', text: 'Ready', details: 'The comparison is ready.' };
 const question = { askId: 'work', kind: 'reply', text: 'Which comparison?' };
 async function received(kind = 'human', target = sessionId, consumed = true) {
   const id = crypto.randomUUID();

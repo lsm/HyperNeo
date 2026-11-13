@@ -420,6 +420,7 @@ describe('Neo MVP', () => {
       'neo.todo.close',
       'neo.ask.search',
       'neo.ask.read',
+      'neo.todo.read',
       'neo.ask.doneTodos',
       'neo.ask.open',
       'neo.ask.outcome',

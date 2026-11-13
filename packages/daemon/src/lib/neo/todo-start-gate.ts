@@ -1,6 +1,7 @@
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoStartQuestionTitle } from './start-question.ts';
+import { NEO_REMOVED_PREREQUISITE } from './todo-removal.ts';
 import {
   NEO_TODO_NOT_READY,
   NEO_TODO_PREREQUISITE_UNFINISHED,
@@ -152,6 +153,16 @@ export function planNeoQuestionPrune(
       !['done', 'removed'].includes(todo.state)
   );
   if (question.todoId && !active) return { value: { retire: 'todo no longer active' } };
+  if (
+    question.cause === NEO_REMOVED_PREREQUISITE &&
+    !family.some(
+      (todo) =>
+        question.todos.includes(todo.id) &&
+        todo.startedAt === null &&
+        !['done', 'closed_unverified', 'removed'].includes(todo.state)
+    )
+  )
+    return { value: { retire: 'nothing left to decide' } };
   if (question.kind !== 'start') return { reason: 'unchanged' };
   const listed = question.todos;
   const kept = listed.filter((id) => {
@@ -190,7 +201,12 @@ export const neoTodosAwaitingNeoDecision = (
       ask?.status === 'open' &&
       todo.askId === ask.id &&
       neoTodoCancellationPending(todo, family) &&
-      !questions.some((q) => q.state === 'open' && q.kind === 'start' && q.todos.includes(todo.id))
+      !questions.some(
+        (q) =>
+          q.state === 'open' &&
+          (q.kind === 'start' || q.cause === NEO_REMOVED_PREREQUISITE) &&
+          q.todos.includes(todo.id)
+      )
   );
 
 export function planNeoStartAnswer(

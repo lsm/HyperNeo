@@ -246,6 +246,20 @@ describe('Model Service', () => {
       });
     });
 
+    it('projects the static fallback onto the model the region serves', () => {
+      const provider = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'global' });
+      expect(provider.getCachedModels()).toBeNull();
+
+      const coding = fallbackModelsFor(provider).find((model) => model.id === 'kimi-for-coding');
+
+      expect(coding).toMatchObject({
+        name: 'Kimi K2.7',
+        contextWindow: 262_144,
+        thinkingModes: 'on',
+      });
+      expect(coding?.effortLevels).toBeUndefined();
+    });
+
     it('falls back to static metadata for the provider', () => {
       const models = fallbackModelsFor({ id: 'anthropic' } as unknown as Provider);
 

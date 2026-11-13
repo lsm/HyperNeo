@@ -7,6 +7,7 @@ import { JobQueueRepository } from './job-queue-repository.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import { planNeoRemovedPrerequisiteAnswer } from '../../lib/neo/todo-removal.ts';
 
 export type NeoAskInputClaim = {
   sessionId: string;
@@ -46,13 +47,20 @@ class NeoAskInputs {
       const ask = store.getAsk(question!.askId);
       if (!ask)
         return { reason: { ok: false, reason: 'ask_missing: the card’s ask is unavailable.' } };
+      const effects = planNeoRemovedPrerequisiteAnswer(
+        question!,
+        store.listFamilyTodos(question!.askId),
+        plan.answer,
+        input.at
+      );
       const answered = store.answerQuestion(
         question!,
         plan.answer,
         'chat',
         input.at,
         undefined,
-        plan.provenance
+        plan.provenance,
+        effects
       );
       if (!answered)
         return {

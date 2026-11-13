@@ -52,7 +52,7 @@ const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(req) {
   const messages = JSON.stringify(body.messages ?? []);
   const publish = !!invoke && messages.includes('RC Neo chat turn') && !messages.includes('rc-publication-tool');
   const block = publish ? { type: 'tool_use', id: 'rc-publication-tool', name: invoke!.name,
-    input: { name: 'neo.publication.publish', input: { requestId: 'rc-publication', shortText: neoReply, fullText: neoReply, links: [], replyTo: [requestId] } } }
+    input: { name: 'neo.publication.publish', input: { requestId: 'rc-publication', text: neoReply, links: [], replyTo: [requestId] } } }
     : { type: 'text', text: 'Release candidate life-admin session is working.' };
   requests.push({ path, stream: body.stream, tools: body.tools?.length ?? 0, publish });
   const usage = { input_tokens: 100, output_tokens: 20 };

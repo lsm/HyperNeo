@@ -58,7 +58,7 @@ try {
   }
   const listen = (enabled: boolean, index = 0) => clients[index].hub.request('operation.invoke', { name: 'neo.speech.listen', input: { sessionId, enabled } });
   const history = () => clients[0].hub.request<{ ok: boolean; items: { publicationId: string; fullText: string }[] }>('operation.invoke', { name: 'neo.publication.read', input: { conversationId } });
-  const draft = { requestId: 'spoken-result', shortText: 'Ready', fullText: 'The synthetic result is ready.', spoken: 'Here is the synthetic result.' };
+  const draft = { requestId: 'spoken-result', text: 'Ready', details: 'The synthetic result is ready.', spoken: 'Here is the synthetic result.' };
   await listen(true);
   capture = true;
   const first = await publish(draft);
@@ -70,7 +70,7 @@ try {
   assert.equal(events[0].text, draft.spoken);
   const initial = await history();
   assert(initial.ok);
-  assert.equal(initial.items[0].fullText, draft.fullText);
+  assert.equal(initial.items[0].fullText, draft.details);
   assert(!JSON.stringify(initial).includes(draft.spoken));
   const spoken = () => events.filter(e => e.kind === 'speech');
   await listen(false);
@@ -79,7 +79,7 @@ try {
   assert.equal(spoken().length, 1);
   await history();
   const beforeConflict = events.length;
-  assert.equal((await publish({ ...draft, fullText: 'Unpublished conflicting content.' })).accepted, false);
+  assert.equal((await publish({ ...draft, details: 'Unpublished conflicting content.' })).accepted, false);
   await history();
   assert.equal(events.length, beforeConflict);
   await listen(false);

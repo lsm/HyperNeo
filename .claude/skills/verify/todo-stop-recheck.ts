@@ -127,7 +127,7 @@ try {
   edit.close();
   writeFileSync(join(run, 'home/.codex/activity.jsonl'), JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'task_started', turn_id: 'synthetic-activity-turn' } }) + '\n', { flag: 'a' });
   const handler = createOperationMcpHandler(() => app!.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
-  const reply = await handler({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-stop-ask', title: 'Synthetic sibling starts', doneWhen: 'Synthetic facts observed', instruction: 'Synthetic sibling work', target: { verb: 'send', ref: { adapter: 'codex-desktop', id: 'sibling' } }, start: true } });
+  const reply = await handler({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-stop-ask', title: 'Synthetic sibling starts', doneWhen: 'Synthetic facts observed', instruction: 'Synthetic sibling work', target: { verb: 'send', ref: { adapter: 'codex-desktop', id: 'sibling' } } } });
   assert.equal(reply.content[0].type, 'text');
   const started = JSON.parse(reply.content[0].text);
   evidence.siblingStart = started;

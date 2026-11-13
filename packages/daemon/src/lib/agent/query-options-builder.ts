@@ -66,6 +66,7 @@ import {
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
 import { KimiProvider } from '../providers/kimi-provider.js';
+import { providerSessionConfigForSession } from '../providers/session-config.js';
 import {
   hasExplicitAutoCompactWindow,
   stripRejectedSessionConfig,
@@ -542,7 +543,7 @@ export class QueryOptionsBuilder {
     const sessionHasAutoCompactWindow = hasExplicitAutoCompactWindow(config);
     const providerSettings = buildProviderSettings(
       providerId,
-      modelInfo?.contextWindow,
+      this.routedContextWindow(providerId, modelInfo?.contextWindow),
       this.ctx.session.config.model,
       modelInfo?.autoCompactPercent,
       modelInfo?.autoCompactPercentOverride
@@ -553,13 +554,16 @@ export class QueryOptionsBuilder {
       (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
         ? undefined
         : modelInfo?.autoCompactPercent);
+    const compactWindow =
+      !sessionHasAutoCompactWindow && modelInfo?.autoCompactPercentOverride !== undefined
+        ? providerSettings?.autoCompactWindow
+        : undefined;
+    const windowCarriesPercent =
+      !!compactWindow &&
+      (providerId !== 'kimi' || KimiProvider.isKimiK3Model(this.ctx.session.config.model ?? ''));
     const compactEnv = {
-      ...(!sessionHasAutoCompactWindow &&
-      modelInfo?.autoCompactPercentOverride !== undefined &&
-      providerSettings?.autoCompactWindow
-        ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(providerSettings.autoCompactWindow) }
-        : {}),
-      ...(compactPercent !== undefined
+      ...(compactWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(compactWindow) } : {}),
+      ...(compactPercent !== undefined && !windowCarriesPercent
         ? { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(resolveAutoCompactPercent(compactPercent)) }
         : {}),
     };
@@ -734,62 +738,99 @@ export class QueryOptionsBuilder {
     return { type: 'enabled', budgetTokens: tokens };
   }
 
+  private routedContextWindow(
+    providerId: string,
+    contextWindow?: number | null
+  ): number | null | undefined {
+    try {
+      const provider = getProviderRegistry().get(providerId);
+      const model = this.ctx.session.config.model;
+      if (!model || !provider?.getModelContextWindow) return contextWindow;
+      return provider.getModelContextWindow(
+        model,
+        providerSessionConfigForSession(this.ctx.session)
+      );
+    } catch {
+      return contextWindow;
+    }
+  }
+
   resolveThinkingOptions(): { thinking?: ThinkingConfig; effort?: ThinkingEffort } {
     const providerId = this.ctx.session.config.provider;
     let thinkingModes: 'off' | 'on' | 'granular' =
       PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
     let effortLevels: ThinkingEffort[] | undefined;
+    let defaultEffort: ThinkingEffort | undefined;
+    let kimiRoutedModel: string | undefined;
+    let fallbackRoutedModel: string | undefined;
     try {
       if (providerId) {
         const provider = getProviderRegistry().get(providerId);
         const liveMode = provider?.capabilities?.thinkingModes;
         if (liveMode) thinkingModes = liveMode;
         const selectedModel = this.ctx.session.config.model;
+        const scoped = providerSessionConfigForSession(this.ctx.session);
         const perModelMode = selectedModel
-          ? provider?.getModelThinkingMode?.(selectedModel)
+          ? provider?.getModelThinkingMode?.(selectedModel, scoped)
           : undefined;
         if (perModelMode) thinkingModes = perModelMode;
-        effortLevels = selectedModel ? provider?.getModelEffortLevels?.(selectedModel) : undefined;
+        effortLevels = selectedModel
+          ? provider?.getModelEffortLevels?.(selectedModel, scoped)
+          : undefined;
+        kimiRoutedModel =
+          providerId === 'kimi' && selectedModel
+            ? provider?.getRoutedModelId?.(selectedModel, scoped)
+            : undefined;
+        const routedFallback =
+          this.effectiveFallbackCaptured && this.effectiveFallbackModel
+            ? this.effectiveFallbackModel
+            : this.ctx.session.config.fallbackModel;
+        fallbackRoutedModel =
+          providerId === 'kimi' && routedFallback
+            ? provider?.getRoutedModelId?.(routedFallback, scoped)
+            : undefined;
+        defaultEffort =
+          selectedModel && !this.hasChosenThinkingLevel()
+            ? provider?.getModelDefaultEffort?.(selectedModel, scoped)
+            : undefined;
       }
     } catch {}
     const thinkingLevel = this.getEffectiveThinkingLevel();
-    const effort =
+    let effort =
       thinkingModes === 'granular' && effortLevels?.length
         ? thinkingLevel === 'off'
-          ? offEffort(providerId, effortLevels)
+          ? (defaultEffort ?? offEffort(providerId, effortLevels))
           : effortForThinkingLevel(thinkingLevel, effortLevels)
         : undefined;
     let thinkingConfig: ThinkingConfig | undefined =
-      effort && thinkingLevel !== 'off'
+      effort && (thinkingLevel !== 'off' || defaultEffort)
         ? { type: 'adaptive' }
         : this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 
     const selectedModel = this.ctx.session.config.model;
     if (providerId === 'kimi' && selectedModel) {
-      if (KimiProvider.isKimiK2Point7Model(selectedModel)) {
-        if (!thinkingConfig || thinkingConfig.type === 'disabled') {
-          thinkingConfig = {
-            type: 'enabled',
-            budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
-          };
-        }
-      }
-
+      const routed = kimiRoutedModel ?? selectedModel;
+      const primaryIsK2 = KimiProvider.isKimiK2Point7Model(routed);
       const fallbackModel = this.effectiveFallbackCaptured
         ? this.effectiveFallbackModel
         : this.ctx.session.config.fallbackModel;
-      if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
-        const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
-        const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
-        const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);
-        const fallbackIsK2 = KimiProvider.isKimiK2Point7Model(fallbackModel);
-        const mixedChain = (primaryIsK3 && fallbackIsK2) || (primaryIsK2 && fallbackIsK3);
-        if (mixedChain && (!thinkingConfig || thinkingConfig.type === 'disabled')) {
-          thinkingConfig = {
-            type: 'enabled',
-            budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
-          };
-        }
+      const fallbackRouted = fallbackModel ? (fallbackRoutedModel ?? fallbackModel) : undefined;
+      const fallbackIsK2 = fallbackRouted
+        ? KimiProvider.isKimiK2Point7Model(fallbackRouted)
+        : false;
+      const mixedChain =
+        thinkingModes !== 'off' &&
+        Boolean(fallbackRouted) &&
+        !isCuratedOutModel(fallbackModel!, providerId) &&
+        fallbackIsK2 &&
+        !primaryIsK2;
+      const fixedBudgetNeeded = primaryIsK2
+        ? thinkingConfig?.type !== 'enabled' ||
+          thinkingConfig.budgetTokens !== THINKING_LEVEL_TOKENS['think16k']
+        : mixedChain && (!thinkingConfig || thinkingConfig.type === 'disabled');
+      if (fixedBudgetNeeded) {
+        thinkingConfig = { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS['think16k']! };
+        effort = undefined;
       }
     }
 
@@ -826,6 +867,15 @@ export class QueryOptionsBuilder {
     }
 
     return result as Options;
+  }
+
+  hasChosenThinkingLevel(): boolean {
+    const persisted = this.ctx.db?.getSession(this.ctx.session.id)?.config?.thinkingLevel;
+    const globalSettings = this.ctx.settingsManager.getGlobalSettings();
+    return (
+      (persisted ?? this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel) !==
+      undefined
+    );
   }
 
   getEffectiveThinkingLevel(): ThinkingLevel {
@@ -1207,7 +1257,7 @@ export class QueryOptionsBuilder {
       const todos = new NeoAskTodoRepository(this.ctx.db!.getDatabase());
       Object.assign(
         hooks,
-        neoPlanContextHooks(() => todos.read('planContext'))
+        neoPlanContextHooks((withUnanswered) => todos.read('planContext', withUnanswered))
       );
       const timeoutHook = createNeoBashTimeoutHook();
       postHooks.push({ matcher: 'Bash', hooks: [timeoutHook] });

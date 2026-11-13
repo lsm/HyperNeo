@@ -152,12 +152,14 @@ describe('bind an already running worker without dispatch', () => {
             check: pendingTodoCheck,
             title: 'Failed backfill',
             doneWhen: 'Result verified',
-            instruction: 'Original task already running',
-            target: { verb: 'send', ref },
           },
         ],
       });
-      const todo = store.updateTodo(opened.todos[0], { approvedAt: 1 }, 1);
+      const todo = store.updateTodo(
+        opened.todos[0],
+        { approvedAt: 1, instruction: 'Original task already running' },
+        1
+      );
       store.updateTodo(
         todo,
         { state: 'failed', reason: 'Delivery was not confirmed', finishedAt: 2 },

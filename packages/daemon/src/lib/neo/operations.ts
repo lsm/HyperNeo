@@ -76,6 +76,7 @@ import { SessionGoalRepository } from '../../storage/repositories/session-goal-r
 import {
   createNeoDoneTodosOperation,
   createNeoAskReadOperation,
+  createNeoTodoReadOperation,
   NeoAskEntrySchema,
   neoSnapshotAskEntries,
   neoWorkCounts,
@@ -629,7 +630,7 @@ export function createNeoOperations(
               reason: {
                 ok: false as const,
                 reason:
-                  'Cite a received human yes to the exact neo.rule.ask proposal in this conversation, or use neo.rule.ask for confirmation.',
+                  'Cite a received human answer that picked apply on the exact neo.rule.ask proposal in this conversation, or use neo.rule.ask for confirmation.',
               },
             };
       },
@@ -723,7 +724,7 @@ export function createNeoOperations(
         )
       ),
     recompute: (todo, patch) => service.todoRunner.recompute(todo, patch),
-    start: (todoId) => service.todoRunner.start(todoId),
+    advance: () => service.todoRunner.advance(),
     refreshIdentity: (todoId) => service.todoRunner.refreshIdentity(todoId),
     proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
     retry: (todoId) => service.todoRunner.retry(todoId),
@@ -822,6 +823,11 @@ export function createNeoOperations(
       service.todos,
       () => service.installedPacks(),
       (caller) => admitNeoCaller(service, caller, 'neo.ask.read'),
+      (todos) => service.todoWorkers(todos)
+    ),
+    createNeoTodoReadOperation(
+      service.todos,
+      (caller) => admitNeoCaller(service, caller, 'neo.todo.read'),
       (todos) => service.todoWorkers(todos)
     ),
     createNeoDoneTodosOperation(

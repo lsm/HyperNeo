@@ -22,7 +22,7 @@ type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; record
 export async function recordNeoTodoAdmission(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'start' | 'userFolder'>,
+  controls: Pick<NeoTodoControls, 'advance' | 'userFolder'>,
   ask: NeoAsk,
   draft: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
@@ -40,9 +40,8 @@ export async function recordNeoTodoAdmission(
   });
   if (!receipt.ok) return receipt;
   const { start, ...result } = receipt;
-  return start
-    ? { ...(await controls.start(start)), ...(result.records ? { records: result.records } : {}) }
-    : result;
+  if (start) await controls.advance();
+  return result;
 }
 
 export function wireNeoTodoAdd(

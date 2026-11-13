@@ -9,8 +9,8 @@ from after, which every todo must give: the first sets after:[].
 Each todo uses check {pack:"coding",kind:"pr_merged",params:{}} until its PR opens;
 then name that PR with neo.todo.edit {todoId,addUrls:[url]}. Do not accumulate the
 chain's PRs on one todo. Each todo after the first sets after:[previousTodoId];
-the existing queue starts it when the previous todo finishes. Give each approved
-step its own instruction, target and start:true; never manually start the next one.
+the existing queue starts it when the previous todo finishes. Give each step its own
+instruction and target; it starts by itself, so never manually start the next one.
 Keep one sub-issue per todo and have its PR close that issue. Track deployment or
 smoke separately. Keep the repository's review and merge rules. For a separate
 issue outcome, use {pack:"coding",kind:"issue_closed",params:{issue:"owner/repo#N"}}:
@@ -19,8 +19,8 @@ For release-branch PRs, explicitly link the sub-issue and close it as COMPLETED
 only after the permitted merge.
 
 Example: for a parser PR followed by a caller PR, use the place from work.find:
-- Add "Extract parser" with coding pr_merged, instruction "Extract the parser and open one PR", target {verb:"start",adapter:"codex-desktop",place}, and start:true.
-- Add "Update callers" on that ask with coding pr_merged, after:[parserTodoId], instruction "Update callers and open one PR", the same start target, and start:true.
+- Add "Extract parser" with coding pr_merged, instruction "Extract the parser and open one PR", and target {verb:"start",adapter:"codex-desktop",place}.
+- Add "Update callers" on that ask with coding pr_merged, after:[parserTodoId], instruction "Update callers and open one PR", and the same start target.
 - When the parser PR opens, call neo.todo.edit {todoId:parserTodoId,addUrls:["https://github.com/example/project/pull/123"]}. Its merge completes that todo and the queue starts the caller todo.
 - When the caller PR opens, call neo.todo.edit {todoId:callerTodoId,addUrls:["https://github.com/example/project/pull/124"]}.
 
@@ -98,15 +98,15 @@ Choose the candidate matching the most nonempty preferences, comparing harness
 to its adapter and model/effort to their corresponding fields. Break ties by the
 original default-first order. For each preference the selected target cannot
 match, report the preferred value and the fallback value being used. Pass the
-selected configuration as a `target` with `verb: "start"` to `neo.todo.add` with
-`start: true` through the existing coding todo path. Use the existing pack preference question to propose changes; never
+selected configuration as a `target` with `verb: "start"` to `neo.todo.add`
+through the existing coding todo path. Use the existing pack preference question to propose changes; never
 save unanswered defaults. Review preferences do not apply to configured bots.
 Read the saved repository preference with pack.preferences.get; an unanswered
 provenance preference falls back to on without saving a value or marking it answered.
-Keep provenance an explicit pack preference. A no answer to an Apply settings
-proposal saves nothing, so unanswered provenance stays on. To disable it, propose
-provenance false separately and apply it only after the human answers yes, or let
-the human disable it in settings.
+Keep provenance an explicit pack preference. Keeping the current settings on an
+Apply settings proposal saves nothing, so unanswered provenance stays on. To disable
+it, propose provenance false separately and apply it only after the human picks
+apply, or let the human disable it in settings.
 When on, require one unambiguous PR body line
 `Agent: <exact model id> (effort: <effort>) via <harness>`, for example
 `Agent: gpt-6.1-sol (effort: high) via Codex`.

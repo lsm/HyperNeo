@@ -3,13 +3,11 @@ import assert from 'node:assert/strict';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createHash } from 'node:crypto';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
-import { neoTodoRunnerWrites } from '../../../packages/daemon/src/storage/repositories/neo-todo-runner-state.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 
 const mode = process.argv[2],
@@ -22,37 +20,11 @@ assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 assert(!existsSync(join(run, 'data/daemon.db')));
 for (const d of ['home/.codex/app-server-control', 'workspace', 'bin', 'evidence'])
   mkdirSync(join(run, d), { recursive: true });
-const root = 'neo:10000000-0000-4000-8000-000000008229',
+const root = 'neo:10000000-0000-4000-8000-000000010483',
   at = Date.now();
-const url = (n: number) => `https://github.com/synthetic/plan/pull/${n}`;
-const report = 'Complete persisted plan report 🦊\n'.repeat(4000);
-const hash = (s: string) => createHash('sha256').update(s).digest('hex');
-const fixture = Object.fromEntries(
-  [1, 2, 3, 4, 5, 6, 7].map((n) => [
-    url(n),
-    {
-      url: url(n),
-      state: n === 1 || n === 3 || n === 7 ? 'MERGED' : 'OPEN',
-      headRefOid: 'a'.repeat(40),
-      reviews: [],
-      statusCheckRollup: [],
-      createdAt: new Date(at - 60000).toISOString(),
-      mergedAt: n === 1 || n === 3 || n === 7 ? new Date(at).toISOString() : null,
-    },
-  ])
-);
-writeFileSync(join(run, 'prs.json'), JSON.stringify(fixture));
 writeFileSync(
   join(run, 'bin/gh'),
-  `#!${process.execPath}
-const fs=require('node:fs'),root=${JSON.stringify(run)},args=process.argv.slice(2);
-fs.appendFileSync(root+'/evidence/gh.log',JSON.stringify(args)+'\\n');
-if(args[0]!=='pr'||args[1]!=='view')process.exit(2);
-const rows=JSON.parse(fs.readFileSync(root+'/prs.json','utf8')),row=rows[args.find(s=>s.startsWith('https://'))];
-if(!row)process.exit(2);
-if(row.pause){fs.writeFileSync(root+'/read-started','');const deadline=Date.now()+20000;while(!fs.existsSync(root+'/read-release')){if(Date.now()>deadline)process.exit(3);await Bun.sleep(10);}}
-process.stdout.write(JSON.stringify(row));
-`,
+  `#!/bin/sh\necho "$@" >> ${JSON.stringify(join(run, 'evidence/gh.log'))}\nexit 2\n`,
   { mode: 0o700 }
 );
 writeFileSync(join(run, 'bin/ps'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
@@ -65,14 +37,14 @@ for (const id of ['flow', 'restart', 'blocked']) {
   writeFileSync(
     rollout,
     JSON.stringify({
-      timestamp: new Date(at - 60000).toISOString(),
+      timestamp: new Date(at - 600000).toISOString(),
       type: 'event_msg',
       payload: { type: 'task_complete', last_agent_message: 'Prior synthetic turn' },
     }) + '\n'
   );
   state
     .prepare("INSERT INTO threads VALUES (?,?,'','',?,'vscode',0,?,?,NULL)")
-    .run(id, id, join(run, 'workspace'), at - 60000, rollout);
+    .run(id, id, join(run, 'workspace'), at - 600000, rollout);
 }
 state.close();
 const calls: Record<string, unknown>[] = [];
@@ -98,7 +70,6 @@ const peer = Bun.serve({
             payload: {
               type: 'message',
               role: 'user',
-              ...(mode.startsWith('chain-') ? { id: call.params.clientUserMessageId } : {}),
               content: [{ type: 'input_text', text: input }],
             },
           }) + '\n',
@@ -119,11 +90,7 @@ const peer = Bun.serve({
     },
   },
 });
-const evidence: Record<string, unknown> = {
-  mode,
-  calls,
-  inputReport: { bytes: Buffer.byteLength(report), sha256: hash(report) },
-};
+const evidence: Record<string, unknown> = { mode, calls };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
 let store: NeoAskTodoRepository, sessions: NeoTodoSessionRepository;
 const starts = () => calls.filter((c) => ['turn/start', 'thread/queue/add'].includes(String(c.method))).length;
@@ -133,8 +100,6 @@ const open = async () => {
     verbose: false,
   });
   assert.notEqual(app.server.port, 8399);
-  if (process.argv.includes('--without-coding'))
-    app.db.updateGlobalSettings({ neo: { packs: ['inbox-triage'] } });
   store = new NeoAskTodoRepository(app.db.getDatabase());
   sessions = new NeoTodoSessionRepository(app.db.getDatabase());
   ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
@@ -190,20 +155,20 @@ const ask = (id: string) =>
     originMessageId: null,
     createdAt: at,
   });
-const add = (id: string, askId: string, n: number, worker?: string) => {
+const seedUnapproved = (askId: string) => {
   const todo = store.addTodo(
-    id,
+    'unapproved',
     askId,
     {
-      title: id,
-      doneWhen: 'Synthetic PR merged',
-      check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url(n)] } },
-      instruction: worker ? `Perform ${id}` : null,
+      title: 'unapproved',
+      doneWhen: 'Synthetic result recorded',
+      check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'unapproved') } },
+      instruction: 'Perform unapproved',
       named: null,
     },
     at
   );
-  if (worker) sessions.create(id, { verb: 'send', ref: { adapter: 'codex-desktop', id: worker } });
+  sessions.create(todo.id, { verb: 'send', ref: { adapter: 'codex-desktop', id: 'flow' } });
   return todo;
 };
 try {
@@ -240,82 +205,65 @@ try {
     };
     const target = (id = 'flow') => ({ verb: 'send', ref: { adapter: 'codex-desktop', id } });
     const step = (title: string, id = 'flow') => ({ after: [], title, instruction: `Complete ${title}.`, target: target(id), check: { pack: 'core', kind: 'evidence', params: { path: join(run, title) } } });
-    const chain = async (title: string, id = 'flow') => call('neo.ask.open', { title, request: 'Approved: complete the entire chain.', todos: [{ ...step(`${title}-1`, id), start: true }, { ...step(`${title}-2`, id), after: [0] }, { ...step(`${title}-3`, id), after: [1] }] });
     const read = async (askId: string) => (await rpc('neo.ask.read', { askId })).entry;
     const complete = async (title: string) => { writeFileSync(join(run, title), 'Verified outcome'); await refresh(); };
-    const cards = (view: { questions: { state: string; kind: string; startTodos?: string[] }[] }, id: string) =>
-      view.questions.filter((q) => q.state === 'open' && q.kind === 'start' && q.startTodos?.includes(id));
+    const open = (view: { questions: { state: string }[] }) => view.questions.filter((q) => q.state === 'open');
     const state = (view: { todos: { id: string; state: string }[] }, id: string) => view.todos.find((t) => t.id === id)?.state;
-    const opened = await call('neo.ask.open', { title: 'Approved chain', request: 'Run the plan in order.', todos: [
+    const dispatched = async (count: number, what: string) => {
+      const deadline = Date.now() + 15000;
+      while (starts() < count) {
+        assert(Date.now() < deadline, `timed out waiting for ${what}`);
+        await refresh();
+      }
+      await refresh();
+      assert.equal(starts(), count, `${what} dispatched more than once`);
+    };
+    const reply = (askId: string) => {
+      const id = crypto.randomUUID();
+      store.askQuestion(id, askId, { text: 'Which release?', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null }, Date.now());
+      return id;
+    };
+    const opened = await call('neo.ask.open', { title: 'Chain', request: 'Run the plan in order.', todos: [
       { ...step('chain-1'), after: [] },
-      { ...step('chain-2') },
-      { ...step('chain-3') },
+      { ...step('chain-2', 'restart'), after: [0] },
+      { ...step('chain-3', 'blocked'), after: [1] },
       { title: 'chain-held', after: [], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'chain-held') } } },
-      ...(process.argv.includes('--approval-source-only') ? [{ ...step('direct-start'), after: [2], start: true }] : []),
     ] });
     const [one, two, three, held] = opened.todos;
-    await call('neo.todo.hold', { todoId: held.id, reason: 'Human paused this step.' });
+    await dispatched(1, 'the first step');
     const first = await read(one.askId);
-    const start = cards(first, one.id);
-    assert.equal(start.length, 1);
-    assert.deepEqual(cards(first, three.id), start);
-    assert.equal((await rpc('neo.question.answer', { questionId: (start[0] as unknown as { id: string }).id, answer: [one.id, two.id, three.id] })).ok, true);
-    await refresh();
-    const running = await read(one.askId);
-    evidence.afterStartAnswer = running;
-    assert.equal(running.todos.find((t: { id: string }) => t.id === one.id)?.approvalQuestionId, (start[0] as unknown as { id: string }).id);
-    const answered = running.questions.find((q: { id: string }) => q.id === (start[0] as unknown as { id: string }).id);
-    assert.deepEqual(answered.answer, [one.id, two.id, three.id]);
-    assert.equal(answered.answeredBy, 'button');
-    assert.equal(typeof answered.answeredAt, 'number');
-    assert.equal(running.todos.find((t: { id: string }) => t.id === held.id)?.approvalQuestionId, answered.id);
-    assert.deepEqual([state(running, one.id), state(running, two.id), state(running, three.id)], ['doing', 'todo', 'todo']);
+    evidence.afterOpen = first;
+    assert.deepEqual(open(first), []);
+    assert.deepEqual([state(first, one.id), state(first, two.id), state(first, three.id)], ['doing', 'todo', 'todo']);
     assert.equal(starts(), 1);
-    if (process.argv.includes('--approval-source-only')) {
-      assert.equal(running.todos.find((t: { id: string }) => t.id === opened.todos[4].id)?.approvalQuestionId, null);
-      evidence.verified = true;
-      console.log('PASS: card approval identifies its question; start:true has no question');
-    } else {
+    await call('neo.todo.hold', { todoId: held.id, reason: 'Human paused this step.' });
+    const unapproved = seedUnapproved(one.askId);
+    app!.db.getDatabase().prepare("UPDATE neo_todos SET state = 'blocked', blocked_by = 'question', approved_at = NULL WHERE id = ?").run(unapproved.id);
+    store.askQuestion(crypto.randomUUID(), one.askId, { text: 'Start "unapproved"?', kind: 'start', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: [unapproved.id] }, Date.now());
+    const unrelated = reply(one.askId);
+    assert.equal((await rpc('neo.question.answer', { questionId: unrelated, answer: 'The next one' })).ok, true);
+    await refresh();
+    const afterUnrelated = await read(one.askId);
+    evidence.afterUnrelatedCard = afterUnrelated;
+    assert.equal(store.getTodo(held.id)?.blockedBy, 'held');
+    assert.equal(store.getTodo(unapproved.id)?.startedAt, null);
+    assert.deepEqual(open(afterUnrelated).map((q: { kind: string }) => q.kind), ['start']);
+    assert.equal(starts(), 1);
     await complete('chain-1');
+    await dispatched(2, 'the second step');
     assert.deepEqual([state(await read(one.askId), two.id), state(await read(one.askId), three.id)], ['doing', 'todo']);
     assert.equal(starts(), 2);
     await complete('chain-2');
+    await dispatched(3, 'the third step');
     const finished = await read(one.askId);
     evidence.chainFinished = finished;
     assert.equal(state(finished, three.id), 'doing');
     assert.equal(starts(), 3);
-    assert.equal(finished.questions.filter((q: { state: string }) => q.state === 'open').length, 0);
+    assert.deepEqual(open(finished).map((q: { kind: string }) => q.kind), ['start']);
     assert.equal(store.getTodo(held.id)?.blockedBy, 'held');
-    assert.equal(store.getTodo(held.id)?.blockedReason, 'Human paused this step.');
-    await complete('chain-3');
-    const removal = await call('neo.ask.open', { title: 'Removed prerequisite', request: 'A, then B.', todos: [
-      { ...step('removed-first', 'restart'), after: [] },
-      { ...step('removed-second', 'restart'), after: [0], start: true },
-    ] });
-    const [a, b] = removal.todos;
-    const direct = await read(b.askId);
-    assert.equal(direct.todos.find((t: { id: string }) => t.id === b.id)?.approvalQuestionId, null);
-    const before = starts();
-    await call('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
-    await refresh();
-    await refresh();
-    const stopped = await read(b.askId);
-    evidence.removedStopped = stopped;
-    assert.equal(state(stopped, b.id), 'todo');
-    assert.equal(cards(stopped, b.id).length, 0);
-    assert.equal(starts(), before);
-    const denied = await call('neo.todo.edit', { todoId: b.id, after: [] }, false);
-    assert.match(denied.reason, /cancelled_dependency/);
-    assert.equal(starts(), before);
-    await call('neo.todo.proceed', { todoId: b.id });
-    await refresh();
-    const approved = await read(b.askId);
-    evidence.removedApproved = approved;
-    assert.equal(state(approved, b.id), 'doing');
-    assert.equal(starts(), before + 1);
+    assert.equal(store.getTodo(unapproved.id)?.startedAt, null);
     evidence.verified = true;
-    console.log('PASS: one Start answer ran the chain in order, the held step stayed held, a removed prerequisite stopped its dependent until Neo proceeded');
-    }
+    console.log('PASS: an added chain started step by step with no Start card; an unrelated answer left the held and the unapproved todo held');
   }
 } finally {
   ws?.close();

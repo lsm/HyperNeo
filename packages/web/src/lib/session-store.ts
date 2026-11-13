@@ -194,6 +194,7 @@ export class SessionStore {
   readonly backgroundTaskMessages = signal<ChatMessage[]>([]);
 
   readonly messagesLoaded = signal<boolean>(false);
+  readonly messagesTooLarge = signal<boolean>(false);
 
   readonly isRecovering = signal<boolean>(false);
 
@@ -355,6 +356,7 @@ export class SessionStore {
     this._contextInfo.value = null;
     this.lastAppliedRevision = 0;
     this.messagesLoaded.value = false;
+    this.messagesTooLarge.value = false;
     this.isRecovering.value = false;
     this.loadErrorKind.value = null;
     this.deleted = false;
@@ -543,6 +545,7 @@ export class SessionStore {
       if (event.code === 'MESSAGE_TOO_LARGE') {
         awaitingSnapshot = true;
         this.messagesLoaded.value = false;
+        this.messagesTooLarge.value = true;
         toast.error('Session is too large to load in one window. Try loading less history.');
         if (event.phase === 'delta') {
           hub
@@ -574,12 +577,10 @@ export class SessionStore {
       });
     } catch (err) {
       logger.error('Failed to subscribe to messages LiveQuery:', err);
-      if (
-        this.activeMessagesSubscriptionId === subscriptionId &&
-        !(err instanceof MessageHubResponseError && err.message.includes('MESSAGE_TOO_LARGE'))
-      ) {
-        this.messagesLoaded.value = true;
-      }
+      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      if (err instanceof MessageHubResponseError && err.message.includes('MESSAGE_TOO_LARGE'))
+        this.messagesTooLarge.value = true;
+      else this.messagesLoaded.value = true;
     }
   }
 
@@ -620,6 +621,7 @@ export class SessionStore {
     this.backgroundTaskMessages.value = this.extractBackgroundTaskMessages(metadata);
     this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
     this.messagesLoaded.value = true;
+    this.messagesTooLarge.value = false;
     this.messagesResyncPending = false;
     this._syncCommandsFromSDKMessages(merged);
   }

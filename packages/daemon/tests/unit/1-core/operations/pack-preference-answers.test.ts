@@ -13,11 +13,16 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { openHumanCard } from '../../../../src/lib/neo/human-card.ts';
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: ReturnType<typeof createNeoService>;
 let promptUpdated: (() => void) | undefined;
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
-const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
+const agent: OperationCaller = {
+  source: 'mcp',
+  sessionId: 'neo:10000000-0000-4000-8000-000000000003',
+  role: 'neo',
+};
 const values = [
   {
     pack: 'coding',
@@ -41,7 +46,7 @@ const values = [
 beforeEach(async () => {
   db = await createTestDb();
   promptUpdated = undefined;
-  await db.createSession(createTestSession('neo:root'));
+  await db.createSession(createTestSession('neo:10000000-0000-4000-8000-000000000003'));
   service = createNeoService(
     db,
     {
@@ -54,11 +59,15 @@ beforeEach(async () => {
     new InternalEventBus<DaemonInternalEventMap>()
   );
   service.deliverForward = async () => {};
-  service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
+  service.repo.reserveBinding({
+    sessionId: 'neo:10000000-0000-4000-8000-000000000003',
+    kind: 'neo',
+    projectId: null,
+  });
   service.todos.openAsk({
     id: 'ask',
     projectId: null,
-    sessionId: 'neo:root',
+    sessionId: 'neo:10000000-0000-4000-8000-000000000003',
     originMessageId: null,
     title: 'Settings',
     request: 'Synthetic proposal',
@@ -81,6 +90,19 @@ async function propose() {
   expect(typeof (reply as { value: { questionId: string } }).value.questionId).toBe('string');
   return (reply as { value: { questionId: string } }).value.questionId;
 }
+const option = (questionId: string, index: number) =>
+  service.todos.getQuestion(questionId)!.options![index];
+const chat = (questionId: string, content: string) =>
+  invoke(
+    'neo.message.send',
+    {
+      sessionId: 'neo:10000000-0000-4000-8000-000000000003',
+      requestId: crypto.randomUUID(),
+      content,
+      replyTo: { kind: 'question', id: questionId },
+    },
+    human
+  );
 const saved = async () => {
   const result = await invoke('pack.preferences.list', {});
   if (result.kind !== 'completed') return result;
@@ -153,7 +175,7 @@ describe('immutable human settings proposals', () => {
     expect(text).toContain('docs/a\\|b/**');
     expect(text).toContain('`` docs/`draft`/** ``');
     expect(text).toContain('docs\\windows/**');
-    await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
+    await invoke('neo.question.answer', { questionId, answer: option(questionId, 0) }, human);
     expect(await saved()).toMatchObject({
       value: {
         preferences: expect.arrayContaining(
@@ -178,9 +200,9 @@ describe('immutable human settings proposals', () => {
     });
     const updated = Promise.withResolvers<void>();
     promptUpdated = updated.resolve;
-    expect(await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)).toMatchObject(
-      { value: { ok: true } }
-    );
+    expect(
+      await invoke('neo.question.answer', { questionId, answer: option(questionId, 0) }, human)
+    ).toMatchObject({ value: { ok: true } });
     expect(await saved()).toMatchObject({
       value: {
         preferences: values.map((value) => ({
@@ -191,7 +213,9 @@ describe('immutable human settings proposals', () => {
       },
     });
     await updated.promise;
-    expect(db.getSession('neo:root')?.config.systemPrompt).toContain(
+    expect(
+      db.getSession('neo:10000000-0000-4000-8000-000000000003')?.config.systemPrompt
+    ).toContain(
       '"scope":{"kind":"repo","key":"synthetic/one"},"key":"reviewBot","value":"synthetic-bot"'
     );
     await invoke('pack.preferences.set', { ...values[0], value: 'human' }, human);
@@ -212,8 +236,8 @@ describe('immutable human settings proposals', () => {
       'CI and review bot approval',
       'Review bot',
       'CI passes',
-      'Keep current settings',
       'Apply these settings',
+      'Keep current settings',
     ],
     [
       'zh-Hans',
@@ -224,12 +248,12 @@ describe('immutable human settings proposals', () => {
       'CI 通过且审查机器人批准',
       '审查机器人',
       'CI 通过',
-      '保留当前设置',
       '应用这些设置',
+      '保留当前设置',
     ],
   ] as const)(
     'renders the bound repo-grouped proposal in %s',
-    async (language, title, setting, value, policy, review, bot, ci, noLabel, yesLabel) => {
+    async (language, title, setting, value, policy, review, bot, ci, apply, keep) => {
       db.updateGlobalSettings({ language });
       const questionId = await propose();
       const question = service.todos.getQuestion(questionId)!;
@@ -251,12 +275,12 @@ describe('immutable human settings proposals', () => {
           `| ${policy} | ${ci} |`,
         ].join('\n')
       );
-      expect(question).toMatchObject({ noLabel, yesLabel });
+      expect(question).toMatchObject({ kind: 'choice', options: [apply, keep], multiple: false });
       db.updateGlobalSettings({ language: language === 'en' ? 'zh-Hans' : 'en' });
       expect(await propose()).toBe(questionId);
       expect(service.todos.getQuestion(questionId)!.text).toBe(question.text);
       expect(
-        await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)
+        await invoke('neo.question.answer', { questionId, answer: option(questionId, 0) }, human)
       ).toMatchObject({ value: { ok: true } });
       expect(await saved()).toMatchObject({
         value: { preferences: values.map((v) => ({ ...v, setBy: 'human' })) },
@@ -287,7 +311,7 @@ describe('immutable human settings proposals', () => {
 
   test('agent post-answer payload injection and rebinding are refused', async () => {
     const questionId = await propose();
-    await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
+    await invoke('neo.question.answer', { questionId, answer: option(questionId, 0) }, human);
     const before = await saved();
     expect(
       await invoke('pack.preferences.applyAnswer', {
@@ -308,32 +332,39 @@ describe('immutable human settings proposals', () => {
     });
     expect(await saved()).toEqual(before);
   });
-  test.each(['no', 'Please change the proposal'])(
+  test.each(['button keep', 'B', 'yes', 'Please change the proposal'])(
     'human %s never writes settings',
     async (answer) => {
       const questionId = await propose();
-      if (answer === 'no') await invoke('neo.question.answer', { questionId, answer }, human);
-      else service.todos.answerQuestion(service.todos.getQuestion(questionId)!, answer, 'chat', 2);
+      if (answer === 'button keep')
+        await invoke('neo.question.answer', { questionId, answer: option(questionId, 1) }, human);
+      else await chat(questionId, answer);
+      expect(service.todos.getQuestion(questionId)?.state).toBe('answered');
       expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
         value: { ok: false },
       });
       expect(await saved()).toMatchObject({ value: { preferences: [] } });
     }
   );
-  test('a stored human chat yes applies the same immutable proposal', async () => {
-    const questionId = await propose();
-    service.todos.answerQuestion(service.todos.getQuestion(questionId)!, 'yes', 'chat', 2);
-    expect(await invoke('neo.question.get', { questionId })).toMatchObject({
-      value: { answeredByHuman: true },
-    });
-    expect(await saved()).toMatchObject({
-      value: { preferences: values.map((value) => ({ ...value, setBy: 'human' })) },
-    });
-  });
+  test.each(['A', 'the apply option'])(
+    'a human chat %s applies the same immutable proposal',
+    async (words) => {
+      const questionId = await propose();
+      await chat(questionId, words === 'A' ? words : option(questionId, 0));
+      expect(await invoke('neo.question.get', { questionId })).toMatchObject({
+        value: { answeredByHuman: true },
+      });
+      expect(await saved()).toMatchObject({
+        value: { preferences: values.map((value) => ({ ...value, setBy: 'human' })) },
+      });
+    }
+  );
 
   test('agents cannot answer; legacy/unbound human yes has no settings effect', async () => {
     const questionId = await propose();
-    expect(await invoke('neo.question.answer', { questionId, answer: 'yes' })).toMatchObject({
+    expect(
+      await invoke('neo.question.answer', { questionId, answer: option(questionId, 0) })
+    ).toMatchObject({
       kind: 'failed',
       code: 'forbidden',
     });
@@ -357,6 +388,46 @@ describe('immutable human settings proposals', () => {
     });
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
   });
+  test.each(['button', 'chat', 'applyAnswer'])(
+    'a yes/no proposal opened before the upgrade still applies on yes by %s',
+    async (surface) => {
+      const questionId = 'legacy-settings';
+      openHumanCard(
+        service.todos,
+        questionId,
+        'ask',
+        {
+          text: 'Apply these settings?',
+          kind: 'yesno',
+          options: null,
+          multiple: false,
+          noLabel: 'Keep current settings',
+          yesLabel: 'Apply these settings',
+          startTodos: null,
+        },
+        1
+      );
+      db.getDatabase()
+        .prepare(
+          'INSERT INTO neo_pack_preference_proposals (question_id, request_id, values_json, question_text) VALUES (?, ?, ?, ?)'
+        )
+        .run(questionId, 'legacy', JSON.stringify(values), 'Apply these settings?');
+      if (surface === 'chat') await chat(questionId, 'yes');
+      else await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
+      if (surface === 'applyAnswer') {
+        db.getDatabase().prepare('DELETE FROM neo_pack_preferences').run();
+        db.getDatabase()
+          .prepare('UPDATE neo_pack_preference_proposals SET applied_at=NULL WHERE question_id=?')
+          .run(questionId);
+        expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
+          value: { ok: true },
+        });
+      }
+      expect(await saved()).toMatchObject({
+        value: { preferences: values.map((value) => ({ ...value, setBy: 'human' })) },
+      });
+    }
+  );
   test('invalid values leave neither question nor proposal; retry preserves question identity', async () => {
     expect(
       await invoke('pack.preferences.ask', {
@@ -370,13 +441,18 @@ describe('immutable human settings proposals', () => {
     expect(await propose()).toBe(id);
     expect(service.todos.listQuestions('ask')).toHaveLength(1);
   });
-  test.each(['no', 'yes', 'retired'])(
+  test.each([1, 0, 'retired'] as const)(
     'retry after %s reports a closed question and a new request reaches the human',
     async (answer) => {
       const questionId = await propose();
       if (answer === 'retired')
         service.todos.retireQuestion(service.todos.getQuestion(questionId)!, 'superseded', null, 2);
-      else await invoke('neo.question.answer', { questionId, answer }, human);
+      else
+        await invoke(
+          'neo.question.answer',
+          { questionId, answer: option(questionId, answer) },
+          human
+        );
       expect(
         await invoke('pack.preferences.ask', {
           askId: 'ask',
@@ -408,9 +484,9 @@ describe('immutable human settings proposals', () => {
     db.getDatabase()
       .prepare("UPDATE neo_questions SET text='Different proposal' WHERE id=?")
       .run(questionId);
-    expect(await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)).toMatchObject(
-      { kind: 'failed' }
-    );
+    expect(
+      await invoke('neo.question.answer', { questionId, answer: option(questionId, 0) }, human)
+    ).toMatchObject({ kind: 'failed' });
     expect(service.todos.getQuestion(questionId)?.state).toBe('open');
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
   });
@@ -428,9 +504,9 @@ describe('immutable human settings proposals', () => {
     db.getDatabase().exec(
       `CREATE TRIGGER synthetic_write_failure BEFORE INSERT ON neo_pack_preferences WHEN NEW.scope_key='synthetic/two' BEGIN SELECT RAISE(ABORT,'synthetic_failure'); END`
     );
-    expect(await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)).toMatchObject(
-      { kind: 'failed' }
-    );
+    expect(
+      await invoke('neo.question.answer', { questionId, answer: option(questionId, 0) }, human)
+    ).toMatchObject({ kind: 'failed' });
     expect(service.todos.getQuestion(questionId)?.state).toBe('open');
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
   });

@@ -35,6 +35,7 @@ function setup(packs: NeoPack[] = []) {
   });
   const stopFails = { value: false };
   const duringStop = { value: (_todo: NeoTodo) => {} };
+  let advanced = 0;
   const ops = Object.fromEntries(
     createNeoTodoOperations(
       repo,
@@ -42,7 +43,9 @@ function setup(packs: NeoPack[] = []) {
       {
         resolveTarget: existingTodoTarget,
         recompute: async (todo, patch) => repo.updateTodo(todo, patch, Date.now()),
-        start: async () => ({ ok: false as const, reason: 'not started' }),
+        advance: async () => {
+          advanced++;
+        },
         proceed: async () => ({ ok: false as const, reason: 'no session' }),
         retry: async () => ({ ok: false as const, reason: 'not failed' }),
         stop: async (todo) => {
@@ -59,7 +62,16 @@ function setup(packs: NeoPack[] = []) {
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as
       | { ok: true; todo: NeoTodo; todos: NeoTodo[] }
       | { ok: false; reason: string };
-  return { db, repo, call, stopped, stopFails, duringStop, changes: () => changes };
+  return {
+    db,
+    repo,
+    call,
+    stopped,
+    stopFails,
+    duringStop,
+    changes: () => changes,
+    advanced: () => advanced,
+  };
 }
 
 describe('neo.todo operations', () => {
@@ -88,11 +100,10 @@ describe('neo.todo operations', () => {
     if (!first.ok) throw new Error(first.reason);
     expect(first.todo).toMatchObject({
       position: 0,
-      state: 'blocked',
+      state: 'todo',
       check: { pack: 'coding', kind: 'pr_merged', params: {} },
       addedAfterStart: false,
     });
-    expect(first.todo).toEqual(repo.getTodo(first.todo.id)!);
     repo.updateTodo(first.todo, { state: 'doing', startedAt: 5 }, 5);
     const second = await call('neo.todo.add', {
       after: [],
@@ -103,7 +114,7 @@ describe('neo.todo operations', () => {
     });
     if (!second.ok) throw new Error(second.reason);
     expect(second.todo).toMatchObject({ position: 1, instruction: null, addedAfterStart: true });
-    expect(second.todos.map((todo) => todo.title)).toEqual(['Fix login', 'Deploy']);
+    expect(repo.listTodos('ask').map((todo) => todo.title)).toEqual(['Fix login', 'Deploy']);
     expect(changes()).toBeGreaterThan(0);
   });
 
@@ -408,38 +419,19 @@ describe('neo.todo operations', () => {
     expect(repo.getTodo(added.todo.id)?.state).toBe('todo');
   });
 
-  test('start:true starts in any Neo turn, not only one the human started', async () => {
-    const { call } = setup();
-    expect(
-      await call('neo.todo.add', {
-        after: [],
-        check: pendingTodoCheck,
-        askId: 'ask',
-        title: 'Fix',
-        doneWhen: 'Merged',
-        instruction: 'Fix it',
-        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
-        start: true,
-      })
-    ).toEqual({ ok: false, reason: 'not started' });
-  });
-
-  test('an unstarted todo with an instruction joins the ask start question, ticked', async () => {
-    const { repo, call } = setup();
-    const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
-    const fix = await call('neo.todo.add', {
+  test('an added todo with work asks the queue to start it in any Neo turn', async () => {
+    const { call, advanced } = setup();
+    const added = await call('neo.todo.add', {
       after: [],
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
       doneWhen: 'Merged',
       instruction: 'Fix it',
-      target,
+      target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
     });
-    if (!fix.ok) throw new Error(fix.reason);
-    expect(repo.listQuestions('ask')).toMatchObject([
-      { kind: 'start', state: 'open', text: 'Start "Fix"?', startTodos: [fix.todo.id] },
-    ]);
+    expect(added).toMatchObject({ ok: true, todo: { state: 'todo', blockedBy: null } });
+    expect(advanced()).toBe(1);
     await call('neo.todo.add', {
       after: [],
       check: pendingTodoCheck,
@@ -447,54 +439,28 @@ describe('neo.todo operations', () => {
       title: 'Note',
       doneWhen: 'Written',
     });
-    const deploy = await call('neo.todo.add', {
-      check: pendingTodoCheck,
-      askId: 'ask',
-      title: 'Deploy',
-      doneWhen: 'Live',
-      instruction: 'Deploy it',
-      target,
-      after: [],
-    });
-    if (!deploy.ok) throw new Error(deploy.reason);
-    expect(repo.listQuestions('ask')).toMatchObject([
-      { kind: 'start', text: 'Start these 2?', startTodos: [fix.todo.id, deploy.todo.id] },
-    ]);
-    expect(repo.listTodos('ask').map((todo) => [todo.title, todo.state, todo.blockedBy])).toEqual([
-      ['Fix', 'blocked', 'question'],
-      ['Note', 'todo', null],
-      ['Deploy', 'blocked', 'question'],
-    ]);
+    expect(advanced()).toBe(1);
   });
 
-  test('extending the start question drops a todo that can no longer start', async () => {
+  test('an added todo with work opens no Start card', async () => {
     const { repo, call } = setup();
     const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
-    const fix = await call('neo.todo.add', {
-      after: [],
-      check: pendingTodoCheck,
-      askId: 'ask',
-      title: 'Fix',
-      doneWhen: 'Merged',
-      instruction: 'Fix it',
-      target,
-    });
-    if (!fix.ok) throw new Error(fix.reason);
-    await call('neo.todo.remove', { todoId: fix.todo.id, reason: 'not needed' });
-    const deploy = await call('neo.todo.add', {
-      check: pendingTodoCheck,
-      askId: 'ask',
-      title: 'Deploy',
-      doneWhen: 'Live',
-      instruction: 'Deploy it',
-      target,
-      after: [],
-    });
-    if (!deploy.ok) throw new Error(deploy.reason);
-    expect(repo.listQuestions('ask')).toMatchObject([
-      { state: 'retired', retiredReason: 'nothing left to start', startTodos: [] },
-      { state: 'open', text: 'Start "Deploy"?', startTodos: [deploy.todo.id] },
+    for (const title of ['Fix', 'Deploy'])
+      await call('neo.todo.add', {
+        after: [],
+        check: pendingTodoCheck,
+        askId: 'ask',
+        title,
+        doneWhen: 'Live',
+        instruction: `${title} it`,
+        target,
+      });
+    expect(repo.listQuestions('ask')).toEqual([]);
+    expect(repo.listTodos('ask').map((todo) => [todo.title, todo.state, todo.blockedBy])).toEqual([
+      ['Fix', 'todo', null],
+      ['Deploy', 'todo', null],
     ]);
+    expect(repo.listTodos('ask').every((todo) => todo.approvedAt !== null)).toBe(true);
   });
 });
 

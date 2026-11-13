@@ -145,23 +145,27 @@ test('direct and queue-driven starts share one naming lane for a default place',
   try {
     await world.open();
     const askId = world.store.listOpenAsks()[0]!.id;
-    direct = world.invoke('neo.todo.add', { askId, ...world.draft('Direct') });
+    const add = (id: string, title: string) => {
+      const todo = world.store.addTodo(
+        id,
+        askId,
+        {
+          title,
+          instruction: `Run the ${id} task.`,
+          named: null,
+          check: { pack: 'fixture', kind: 'result', params: {} },
+          doneWhen: 'Synthetic result recorded',
+          approvedAt: Date.now(),
+          dependsOn: [],
+        },
+        Date.now()
+      );
+      world.sessions.create(todo.id, { verb: 'start', adapter: 'fixture', place });
+      return todo;
+    };
+    direct = world.runner.start(add('direct', 'Direct').id);
     await entered.promise;
-    const queuedTodo = world.store.addTodo(
-      'queued',
-      askId,
-      {
-        title: 'Queued',
-        instruction: 'Run the queued task.',
-        named: null,
-        check: { pack: 'fixture', kind: 'result', params: {} },
-        doneWhen: 'Synthetic result recorded',
-        approvedAt: Date.now(),
-        dependsOn: [],
-      },
-      Date.now()
-    );
-    world.sessions.create(queuedTodo.id, { verb: 'start', adapter: 'fixture', place });
+    add('queued', 'Queued');
     fill = world.runner.fill();
     await queued.promise;
     await new Promise<void>((resolve) => setImmediate(resolve));

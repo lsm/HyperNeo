@@ -46,7 +46,7 @@ const server=Bun.serve({hostname:'127.0.0.1',port,async fetch(request){
  const body=await request.json() as {messages?:{content?:unknown}[]};
  for(const message of body.messages??[])if(Array.isArray(message.content))for(const block of message.content)if(block.type==='tool_result')results[Number(block.tool_use_id.split('-').at(-1))]=strings(block.content);
  if(step===1)for(let n=0;n<3;n++)await runner.refresh((message,error)=>errors.push(`${message}: ${error}`));
- const command=step===0?{name:'neo.todo.add',input:{ after: [],askId:'ask',title:'Report',doneWhen:'Human has the complete report',instruction:'Produce the complete report',target:{verb:'send',ref:{adapter:'hyperneo',id:'worker'}},start:true}}:step===1?{name:'work.status',input:{ref:{adapter:'hyperneo',id:'worker'},receipt}}:undefined;
+ const command=step===0?{name:'neo.todo.add',input:{ after: [],askId:'ask',title:'Report',doneWhen:'Human has the complete report',instruction:'Produce the complete report',target:{verb:'send',ref:{adapter:'hyperneo',id:'worker'}}}}:step===1?{name:'work.status',input:{ref:{adapter:'hyperneo',id:'worker'},receipt}}:undefined;
  const input=command?.input;
   const id=`read-${step++}`;
   const usage={input_tokens:20,output_tokens:20};

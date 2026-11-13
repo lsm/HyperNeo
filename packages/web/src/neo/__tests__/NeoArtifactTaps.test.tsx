@@ -216,7 +216,7 @@ describe('Neo artifact taps', () => {
         reference: '/synthetic/report.md',
       });
       expect(screen.queryByRole('dialog', { name: 'View full report' })).toBeNull();
-      await screen.findByText('This file is no longer there.');
+      await screen.findByText("This file hasn't been created yet, or no longer exists.");
       closeArtifactPreview();
       await waitFor(() => expect(document.activeElement).toBe(reportTrigger));
       const card = await screen.findByRole('button', { name: 'Open current file: report.md' });
@@ -357,7 +357,7 @@ describe('Neo artifact taps', () => {
       expect(tab.getAttribute('aria-selected')).toBe('true');
       expect(screen.getByRole('status').textContent).toBe('Loading preview…');
       refuse({ accepted: false, reason: 'missing' });
-      await screen.findByText('This file is no longer there.');
+      await screen.findByText("This file hasn't been created yet, or no longer exists.");
       expect(screen.getByRole('tab', { name: path.split('/').at(-1) })).toBe(tab);
       expect(screen.getByRole('tabpanel').id).toBe(tab.getAttribute('aria-controls'));
       expect(screen.queryByRole('button', { name: 'Back', exact: true })).toBeNull();
@@ -367,7 +367,11 @@ describe('Neo artifact taps', () => {
         id: publication().publicationId,
       });
       fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
-      await waitFor(() => expect(screen.queryByText('This file is no longer there.')).toBeNull());
+      await waitFor(() =>
+        expect(
+          screen.queryByText("This file hasn't been created yet, or no longer exists.")
+        ).toBeNull()
+      );
     });
   });
   it('opens a registered document from a question card in the existing preview', () => {

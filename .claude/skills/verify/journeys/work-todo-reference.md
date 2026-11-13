@@ -26,7 +26,7 @@ PROOF=.claude/skills/verify/work-todo-reference.ts. Its production MCP calls mus
 accept missing, unknown, closed-ask and foreign todo references with records.
 A forged input source or an id only in message prose still produces the record.
 work.start likewise accepts otherwise permitted work with a record. An owned
-open todo and trusted internal dispatch remain accepted. neo.todo.add start:true
+open todo and trusted internal dispatch remain accepted. neo.todo.add
 and neo.todo.continue must dispatch through the actual runner and local worker
 adapter. The helper owns an ephemeral non-8399 daemon and closes it in finally.
 

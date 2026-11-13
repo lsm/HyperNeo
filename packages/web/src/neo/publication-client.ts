@@ -111,7 +111,7 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
   const producer = optionalOrigin(row?.producerInput);
   const ask = optionalOrigin(row?.askOrigin);
   const shortText =
-    row?.shortText === undefined ? undefined : text(row.shortText, 2000) ? row.shortText : null;
+    row?.shortText === undefined ? undefined : text(row.shortText, 4000) ? row.shortText : null;
   if (
     !row ||
     ask === null ||
@@ -146,7 +146,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
   const answer = optionalOrigin(row.answerInput);
   const answerOrigin = optionalOrigin(row.answerOrigin);
   const shortText =
-    row.shortText === undefined ? undefined : text(row.shortText, 2000) ? row.shortText : null;
+    row.shortText === undefined ? undefined : text(row.shortText, 4000) ? row.shortText : null;
   const verbatim = row.verbatim === true;
   if (
     shortText === null ||

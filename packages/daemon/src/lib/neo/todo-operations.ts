@@ -38,18 +38,17 @@ import {
   neoTodoDependencyRefusal,
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
-import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
+import { isNeoTodoStartable } from './todo-runner.ts';
 import {
   NEO_TODO_NOT_APPROVED,
   neoTodoCancellationPending,
   neoTodoPrerequisiteRefusal,
   neoTodoProceedPatch,
-  neoTodoStartRefusal,
 } from './todo-start-gate.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
-type TodoReceipt = { ok: true; todo?: NeoTodo; todos: NeoTodo[]; records?: string[] };
+type TodoReceipt = { ok: true; todo?: NeoTodo; records?: string[] };
 type TodoPlan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
@@ -72,7 +71,7 @@ export interface NeoTodoControls {
     Gate<WorkRef> & { place?: Pick<Place, 'folder' | 'remotes'>; workerRemotes?: readonly string[] }
   >;
   refreshIdentity?(todoId: string): Promise<void>;
-  start(todoId: string): Ran;
+  advance(): Promise<unknown>;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
   proceed(todoId: string, message: string): Ran;
   retry(todoId: string): Ran;
@@ -92,7 +91,6 @@ const TodoDraft = z.object({
   instruction: Text.nullable().default(null),
   target: NeoTodoTargetSchema.optional(),
   named: z.record(z.string(), z.unknown()).nullable().default(null),
-  start: z.boolean().default(false),
   priority: TodoPriority.default('normal'),
   after: z
     .array(z.union([Text, z.number().int().min(0)]))
@@ -103,7 +101,7 @@ const TodoDraft = z.object({
 });
 
 function refineNeoTodoDraft(
-  input: Pick<z.infer<typeof TodoDraft>, 'instruction' | 'target' | 'start'>,
+  input: Pick<z.infer<typeof TodoDraft>, 'instruction' | 'target'>,
   context: z.RefinementCtx
 ): void {
   if (!input.instruction !== !input.target)
@@ -111,8 +109,6 @@ function refineNeoTodoDraft(
       code: 'custom',
       message: 'A todo with an instruction needs a target, and a target needs an instruction.',
     });
-  if (input.start && !input.target)
-    context.addIssue({ code: 'custom', message: 'start needs a target.' });
 }
 
 export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
@@ -206,7 +202,7 @@ export function neoTodoPlaceRefusal(
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'start' | 'resolveTarget' | 'userFolder'>,
+  controls: Pick<NeoTodoControls, 'advance' | 'resolveTarget' | 'userFolder'>,
   ask: NeoAsk,
   input: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
@@ -221,7 +217,7 @@ export async function addNeoTodo(
 export async function recordNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'start' | 'userFolder'>,
+  controls: Pick<NeoTodoControls, 'advance' | 'userFolder'>,
   ask: NeoAsk,
   input: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
@@ -256,34 +252,11 @@ export async function recordNeoTodo(
   if (typeof dependsOn === 'string')
     return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
   const now = Date.now();
-  const approvedAt = draft.start ? now : null;
-  const added = todos.addTodo(id, ask.id, { ...draft, dependsOn, approvedAt }, now, repo);
+  const added = todos.addTodo(id, ask.id, { ...draft, dependsOn, approvedAt: now }, now, repo);
 
   if (draft.target) sessions.create(added.id, draft.target);
-  if (draft.start) {
-    const approved = todos.approveTodo(added, now);
-    return { ...(await startNeoTodoWhenFree(todos, controls, approved)), ...records };
-  }
-  if (added.instruction) joinNeoStartQuestion(todos, added);
-  return { ok: true, todo: added, ...records };
-}
-
-export async function startNeoTodoWhenFree(
-  todos: NeoAskTodoRepository,
-  controls: Pick<NeoTodoControls, 'start'>,
-  todo: NeoTodo
-): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
-  const ask = todos.getAsk(todo.askId)!;
-  return neoTodoStartRefusal(todo, todos.listFamilyTodos(ask.id), todos.gateQuestions(ask))
-    ? { ok: true, todo }
-    : controls.start(todo.id);
-}
-
-function joinNeoStartQuestion(todos: NeoAskTodoRepository, todo: NeoTodo): void {
-  const now = Date.now();
-  todos.joinStartQuestion(todo, now);
-  const blocked = planNeoTodoAwaitingStart(todo);
-  if (blocked) todos.updateTodo(todo, blocked, now);
+  if (added.instruction) await controls.advance();
+  return { ok: true, todo: todos.getTodo(added.id) ?? added, ...records };
 }
 
 const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)
@@ -386,6 +359,12 @@ const Remove = z.object({
   todoId: Text,
   reason: Text,
   replacedBy: Text.optional(),
+  dependents: z
+    .enum(['continue', 'remove'])
+    .optional()
+    .describe(
+      'What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; the daemon then asks them.'
+    ),
 });
 
 export const NeoTodoSchema = z.object({
@@ -434,7 +413,6 @@ const TodoResult = z.union([
   z.object({
     ok: z.literal(true),
     todo: NeoTodoSchema.optional(),
-    todos: z.array(NeoTodoSchema),
     records: z.array(z.string()).optional(),
   }),
 ]);
@@ -619,10 +597,9 @@ export function createNeoTodoOperations(
   inputs: NeoInputReads = noNeoInputReads
 ) {
   const present = async (result: TodoReceipt | Rejection) => {
-    if (!result.ok) return result;
-    if (!result.todo) return { ...result, todos: await project(result.todos) };
-    const [todo, ...todos] = await project([result.todo, ...result.todos]);
-    return { ...result, todo, todos };
+    if (!result.ok || !result.todo) return result;
+    const [todo] = await project([result.todo]);
+    return { ...result, todo };
   };
   const completion = (plan: TodoPlan) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
@@ -702,7 +679,6 @@ export function createNeoTodoOperations(
     return {
       ok: true,
       todo,
-      todos: todos.listTodos(todo.askId),
       ...(plan.records ? { records: plan.records } : {}),
     };
   };
@@ -712,19 +688,12 @@ export function createNeoTodoOperations(
       ? { ok: false, reason: `${failed}; the todo is unchanged, its session may still run.` }
       : write(plan);
   };
-  const ran = async (
-    result: Awaited<ReturnType<typeof addNeoTodo>>
-  ): Promise<TodoReceipt | Rejection> =>
-    result.ok
-      ? { ...result, todos: result.todo ? todos.listTodos(result.todo.askId) : [] }
-      : result;
   const admit = (ask: NeoAsk | null, todo?: NeoTodo) =>
     ask && ask.status !== 'open'
       ? {
           reason: {
             ok: true as const,
             ...(todo ? { todo } : {}),
-            todos: todos.listTodos(ask.id),
             records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
           },
         }
@@ -759,7 +728,7 @@ export function createNeoTodoOperations(
     )
     .pipe(
       async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> =>
-        ran(await addNeoTodo(todos, sessions, controls, ask, input, packs())),
+        addNeoTodo(todos, sessions, controls, ask, input, packs()),
       ['outcome', 'input'],
       'outcome'
     )
@@ -796,7 +765,7 @@ export function createNeoTodoOperations(
             previous.daemon !== ref.daemon)
         )
           await controls.refreshIdentity?.(todo.id);
-        return ran(result);
+        return result;
       },
       ['outcome', 'input'],
       'outcome'
@@ -859,8 +828,7 @@ export function createNeoTodoOperations(
       'result:outcome'
     )
     .pipe(
-      (todo: NeoTodo, input: z.infer<typeof Continue>) =>
-        controls.proceed(todo.id, input.message).then(ran),
+      (todo: NeoTodo, input: z.infer<typeof Continue>) => controls.proceed(todo.id, input.message),
       ['outcome', 'input'],
       'outcome'
     )
@@ -882,7 +850,7 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const retry = owned(superpipe({})('neo.todo.retry') as PipelineAPI)
-    .pipe((todo: NeoTodo) => controls.retry(todo.id).then(ran), 'outcome', 'outcome')
+    .pipe((todo: NeoTodo) => controls.retry(todo.id), 'outcome', 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof Retry>,
     caller: OperationCaller

@@ -22,11 +22,12 @@ export const NEO_RESIDENT_FAMILIES = [
       'bind',
       'retry',
       'proceed',
+      'read',
     ],
   },
   {
     name: 'neo_publish',
-    description: 'Publish shortText/fullText with stable requestId.',
+    description: 'Publish text/details with stable requestId.',
     prefix: 'neo.publication',
     actions: ['publish'],
   },

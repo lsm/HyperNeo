@@ -10,6 +10,25 @@ export type NeoPlanLine = {
   omitted?: boolean;
 };
 
+export type NeoUnansweredInput = {
+  id: string;
+  text: string;
+};
+
+export function neoInputText(ask: { content?: unknown }): string {
+  const content = ask.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .flatMap((block) =>
+      block && typeof block === 'object' && (block as { type?: unknown }).type === 'text'
+        ? [(block as { text?: unknown }).text]
+        : []
+    )
+    .filter((text): text is string => typeof text === 'string' && !!text)
+    .join(' ');
+}
+
 export function neoPlanLines(
   asks: readonly NeoAsk[],
   todos: readonly NeoTodo[],
@@ -74,13 +93,51 @@ export function fitNeoPlanLines(lines: readonly NeoPlanLine[], budget: number): 
     });
 }
 
+const UNANSWERED_TEXT_LIMIT = 2_048;
+const UNANSWERED_SECTION_BUDGET = 8_192;
+
+function unansweredText(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const bytes = new TextEncoder().encode(flat);
+  if (bytes.length <= UNANSWERED_TEXT_LIMIT) return flat;
+  const cut = new TextDecoder().decode(bytes.slice(0, UNANSWERED_TEXT_LIMIT));
+  return `${cut.replace(/�+$/, '')}… (truncated; read the full message with neo.conversation.read.)`;
+}
+
+function overflowLine(more: number): string {
+  return `${more} more pending; newest first. Read them with neo.conversation.read.`;
+}
+
+function unansweredSection(unanswered: readonly NeoUnansweredInput[]): string {
+  const heading = 'Unanswered messages';
+  const kept: string[] = [];
+  let used = Buffer.byteLength(`${heading}\n`, 'utf8');
+  for (const [index, input] of unanswered.entries()) {
+    const line = `Message ${input.id} (full id; reply with replyTo: ["${input.id}"]): ${unansweredText(input.text)}`;
+    const more = unanswered.length - index;
+    const reserve = Buffer.byteLength(`${overflowLine(more)}\n`, 'utf8');
+    const bytes = Buffer.byteLength(`${line}\n`, 'utf8');
+    if (used + bytes + reserve > UNANSWERED_SECTION_BUDGET) {
+      kept.push(overflowLine(more));
+      break;
+    }
+    kept.push(line);
+    used += bytes;
+  }
+  return [heading, ...kept].join('\n');
+}
+
 export function planNeoPlanContext(
   previous: readonly NeoPlanLine[] | null,
   lines: readonly NeoPlanLine[],
-  source: 'startup' | 'resume' | 'compact' | 'prompt'
+  source: 'startup' | 'resume' | 'compact' | 'prompt',
+  unanswered: readonly NeoUnansweredInput[] = []
 ): string {
-  if (source !== 'prompt' || previous === null)
-    return `Open plans\n${lines.map((line) => line.text).join('\n') || '(none)'}`;
+  if (source !== 'prompt' || previous === null) {
+    const plans = `Open plans\n${lines.map((line) => line.text).join('\n') || '(none)'}`;
+    if (!unanswered.length) return plans;
+    return [plans, unansweredSection(unanswered)].join('\n');
+  }
   const changed = lines.filter(
     (line) =>
       !previous.some(

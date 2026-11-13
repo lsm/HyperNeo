@@ -80,10 +80,10 @@ function fixture(
                     },
             };
           }),
-        start: async (id) => {
+        advance: async () => {
           starts++;
-          options.onStart?.(todos, id);
-          return { ok: false as const, reason: 'Unexpected dispatch' };
+          const latest = todos.listTodos('ask').at(-1);
+          if (latest) options.onStart?.(todos, latest.id);
         },
         recompute: async (todo, patch) => todos.updateTodo(todo, patch, Date.now()),
         proceed: async () => ({ ok: false as const, reason: 'Unexpected dispatch' }),
@@ -95,7 +95,7 @@ function fixture(
     )
   );
   const handler = createOperationMcpHandler(registry, () => ({ sessionId: 'neo', role: 'neo' }));
-  const add = async (target: unknown, start = false) => {
+  const add = async (target: unknown) => {
     const reply = await handler({
       name: 'neo.todo.add',
       input: {
@@ -105,7 +105,6 @@ function fixture(
         check: pendingTodoCheck,
         instruction: 'Perform synthetic work',
         target,
-        start,
       },
     });
     expect(reply.isError ?? false).toBe(false);
@@ -183,10 +182,7 @@ describe('todo target identity at the MCP add door', () => {
       },
     });
     try {
-      expect(await f.add({ verb: 'start', adapter: 'hyperneo' }, true)).toMatchObject({
-        ok: false,
-        reason: 'Unexpected dispatch',
-      });
+      expect(await f.add({ verb: 'start', adapter: 'hyperneo' })).toMatchObject({ ok: true });
       expect(observed).toBe(true);
       expect(f.starts()).toBe(1);
       expect(f.todos.listTodos('ask')).toHaveLength(1);
@@ -201,10 +197,11 @@ describe('todo target identity at the MCP add door', () => {
       const added = await f.add({ verb: 'send', ref: original });
       f.todos.updateTodo(added.todo, { approvedAt: 1 }, 1);
       const ref = { adapter: 'codex-desktop', daemon: 'synthetic-peer', id: full.slice(0, 8) };
+      expect(f.starts()).toBe(1);
       const result = await f.bind(added.todo.id, ref);
       expect(result.ok).toBe(true);
       expect(f.sessions.readRef(added.todo.id)).toEqual({ ...ref, id: full });
-      expect(f.starts()).toBe(0);
+      expect(f.starts()).toBe(1);
     } finally {
       f.db.close();
     }
@@ -249,28 +246,25 @@ describe('todo target identity at the MCP add door', () => {
       const result = await f.add({ verb: 'send', ref });
       expect(result.ok).toBe(true);
       expect(f.sessions.get(result.todo.id)?.ref).toEqual({ ...ref, id: full });
+      expect(f.starts()).toBe(1);
+    } finally {
+      f.db.close();
+    }
+  });
+  test('rejects an unknown target before recording or dispatching', async () => {
+    const f = fixture();
+    try {
+      const result = await f.add({
+        verb: 'send',
+        ref: { adapter: 'codex-desktop', id: 'missing' },
+      });
+      expect(result).toEqual({ ok: false, reason: expect.stringMatching(/^target_not_found:/) });
+      expect(f.todos.listTodos('ask')).toEqual([]);
       expect(f.starts()).toBe(0);
     } finally {
       f.db.close();
     }
   });
-  test.each([false, true])(
-    'rejects an unknown target before recording or dispatching (start=%s)',
-    async (start) => {
-      const f = fixture();
-      try {
-        const result = await f.add(
-          { verb: 'send', ref: { adapter: 'codex-desktop', id: 'missing' } },
-          start
-        );
-        expect(result).toEqual({ ok: false, reason: expect.stringMatching(/^target_not_found:/) });
-        expect(f.todos.listTodos('ask')).toEqual([]);
-        expect(f.starts()).toBe(0);
-      } finally {
-        f.db.close();
-      }
-    }
-  );
   test.each([
     {
       refs: [

@@ -11,7 +11,10 @@ import { NeoSpeech } from './speech.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-track-write.ts';
-import { neoAskSettlementWrites } from '../../storage/repositories/neo-ask-settlement.ts';
+import {
+  neoAskSettlementWrites,
+  neoAskTurnedSettleWrites,
+} from '../../storage/repositories/neo-ask-settlement.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
@@ -1186,6 +1189,9 @@ export class NeoService {
     this.watching = runLagPhase('neo:driver:session_watch', async () => {
       await this.runDbOp(neoStallReminderWrite, { now: Date.now() }).catch((error) =>
         this.log.warn('Stalled todo reminders pending', error)
+      );
+      await this.runDbOp(neoAskTurnedSettleWrites, { now: Date.now() }).catch((error) =>
+        this.log.warn('Ask auto-settle pending', error)
       );
       await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
         this.log.warn('Stalled ask wake pending', error)

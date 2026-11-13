@@ -35,13 +35,13 @@ describe('Neo scheduled goal-cycle guidance', () => {
       expect(text).toContain(field);
     expect(text).toContain('nothing moved; waiting on');
   });
-  test('binds proposed mandate changes to an actual human yes before saving', () => {
+  test('binds proposed mandate changes to an actual human confirmation before saving', () => {
     const text = NEO_GOAL_CYCLE;
     for (const fact of [
       'mandateRef',
       'direction.md',
       'neo.question.ask',
-      'yesno',
+      'choice',
       'confirm',
       'sha256',
       'neo.question.get',
@@ -53,7 +53,7 @@ describe('Neo scheduled goal-cycle guidance', () => {
       expect(text).toContain(fact);
     expect(text).toContain('exact UTF-8');
     expect(text).toContain('old and new');
-    expect(text).toContain('On no');
+    expect(text).toContain('declines in chat');
   });
   test('teaches standing-outcome setup with explicit frequent cadence', () => {
     for (const text of [

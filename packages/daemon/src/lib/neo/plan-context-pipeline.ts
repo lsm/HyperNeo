@@ -5,19 +5,28 @@ import {
   neoPlanLines,
   planNeoPlanContext,
   type NeoPlanLine,
+  type NeoUnansweredInput,
 } from './plan-context.ts';
 
 export type NeoPlanFacts = {
   asks: NeoAsk[];
   todos: NeoTodo[];
   questions: NeoQuestion[];
+  unanswered?: NeoUnansweredInput[];
 };
 
-export function createNeoPlanContext(readFacts: () => Promise<NeoPlanFacts>, budget = 12_000) {
+export function createNeoPlanContext(
+  readFacts: (withUnanswered?: boolean) => Promise<NeoPlanFacts>,
+  budget = 12_000
+) {
   let previous: NeoPlanLine[] | null = null;
   return (superpipe({})('neo.plan.context') as PipelineAPI)
     .input(['source'])
-    .pipe(readFacts, 'source', 'facts')
+    .pipe(
+      (source: Parameters<typeof planNeoPlanContext>[2]) => readFacts(source === 'compact'),
+      'source',
+      'facts'
+    )
     .pipe(
       (facts: NeoPlanFacts) =>
         fitNeoPlanLines(neoPlanLines(facts.asks, facts.todos, facts.questions), budget),
@@ -25,9 +34,13 @@ export function createNeoPlanContext(readFacts: () => Promise<NeoPlanFacts>, bud
       'lines'
     )
     .pipe(
-      (lines: NeoPlanLine[], source: Parameters<typeof planNeoPlanContext>[2]) =>
-        planNeoPlanContext(previous, lines, source),
-      ['lines', 'source'],
+      (
+        lines: NeoPlanLine[],
+        source: Parameters<typeof planNeoPlanContext>[2],
+        facts: NeoPlanFacts
+      ) =>
+        planNeoPlanContext(previous, lines, source, source === 'compact' ? facts.unanswered : []),
+      ['lines', 'source', 'facts'],
       'context'
     )
     .pipe(

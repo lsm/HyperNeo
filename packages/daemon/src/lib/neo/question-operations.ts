@@ -34,6 +34,7 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
+import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
 
 const ReportLine = z
   .string()
@@ -300,11 +301,20 @@ const Asked = {
 };
 
 const AskKinds = z.discriminatedUnion('kind', [
-  z.object({ ...Asked, kind: z.literal('yesno'), noLabel: Text, yesLabel: Text }),
   z.object({
     ...Asked,
     kind: z.literal('choice'),
-    options: z.array(Text).min(2).max(6),
+    options: z.array(Text).min(1).max(6),
+    labels: z
+      .array(z.string().regex(/^[A-F]$/))
+      .max(6)
+      .refine((labels) => new Set(labels).size === labels.length, {
+        message: 'labels must be distinct uppercase letters A–F.',
+      })
+      .optional()
+      .describe(
+        'One distinct uppercase letter A–F per option, when the text names approaches by letter. Defaults to A, B, C… in order.'
+      ),
     multiple: z.boolean().default(false),
   }),
   z.object({ ...Asked, kind: z.literal('reply') }),
@@ -380,11 +390,13 @@ export const NeoQuestionSchema = z.object({
   todoId: z.string().nullable().optional(),
   document: z.string().nullable().optional(),
   replyTo: z.array(z.uuid()).optional(),
+  cause: z.string().nullable().optional(),
   id: z.string(),
   askId: z.string(),
   text: z.string(),
   kind: z.enum(['yesno', 'choice', 'reply', 'start']),
   options: z.array(z.string()).nullable(),
+  labels: z.array(z.string()).nullable().optional(),
   multiple: z.boolean(),
   noLabel: z.string().nullable(),
   yesLabel: z.string().nullable(),
@@ -540,13 +552,15 @@ export function planNeoQuestion(
         : {};
   const confirm = input.confirm ?? null;
   if (confirm) {
-    if (input.kind !== 'yesno')
-      return fail('confirmation_kind: only yes/no questions bind a home proposal.');
+    if (input.kind !== 'choice' || input.multiple || input.options.length !== 1)
+      return fail('confirmation_kind: only a one-option choice binds a home proposal.');
     const path = requireHomePath(confirm);
     if (path.reason) return fail(path.reason.reason);
     if (!isVisibleHomeProposal(input.text, confirm))
       return fail('confirmation_body: show the exact home path and SHA-256 in the question text.');
   }
+  if (input.kind === 'choice' && input.labels && input.labels.length !== input.options.length)
+    return fail('labels_count: supply exactly one label per option.');
   const draft: NeoQuestionDraft = {
     ...(input.retireWhen ? { retireWhen: input.retireWhen } : {}),
     text: input.text,
@@ -557,9 +571,10 @@ export function planNeoQuestion(
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     kind: input.kind,
     options: input.kind === 'choice' ? input.options : null,
+    labels: input.kind === 'choice' ? (input.labels ?? null) : null,
     multiple: input.kind === 'choice' && input.multiple,
-    noLabel: input.kind === 'yesno' ? input.noLabel : null,
-    yesLabel: input.kind === 'yesno' ? input.yesLabel : null,
+    noLabel: null,
+    yesLabel: null,
     startTodos: null,
     confirm,
   };
@@ -575,7 +590,7 @@ export function planNeoQuestion(
         },
       }
     : fail(
-        'no_start_question: no todo on this ask is waiting to start; add todos with an instruction and the daemon asks.'
+        'no_start_question: no old start question is open on this ask. New todos start by themselves; when the human must say yes first, ask with a choice card (one option to confirm) before adding the work.'
       );
 }
 
@@ -643,7 +658,7 @@ export function neoQuestionAnsweredNote(question: NeoQuestion, todos: NeoTodo[])
               .map((id) => todos.find((todo) => todo.id === id)?.title ?? id)
               .join(', ') || 'none'
           }`
-        : neoLabelledOptions(question.options ?? [], [answer].flat()) || 'none';
+        : neoLabelledOptions(question.options ?? [], [answer].flat(), question.labels) || 'none';
   return isAgentResolvedQuestion(question)
     ? `Neo resolved "${question.text}": ${said}. ${question.retiredReason}`
     : `The human answered "${question.text}": ${said}.`;
@@ -1008,11 +1023,39 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
-      (plan: { question: NeoQuestion; answer: NeoQuestionAnswer }) => ({
-        question: store.answerQuestion(plan.question, plan.answer, 'button', Date.now()),
-        ask: store.getAsk(plan.question.askId),
+      (plan: { question: NeoQuestion }) => ({
+        family: store.listFamilyTodos(plan.question.askId),
+        now: Date.now(),
       }),
       'outcome',
+      'facts'
+    )
+    .pipe(
+      (
+        plan: { question: NeoQuestion; answer: NeoQuestionAnswer },
+        facts: { family: NeoTodo[]; now: number }
+      ) => planNeoRemovedPrerequisiteAnswer(plan.question, facts.family, plan.answer, facts.now),
+      ['outcome', 'facts'],
+      'effects'
+    )
+    .pipe(
+      (
+        plan: { question: NeoQuestion; answer: NeoQuestionAnswer },
+        facts: { now: number },
+        effects: ReturnType<typeof planNeoRemovedPrerequisiteAnswer<NeoTodo>>
+      ) => ({
+        question: store.answerQuestion(
+          plan.question,
+          plan.answer,
+          'button',
+          facts.now,
+          undefined,
+          undefined,
+          effects
+        ),
+        ask: store.getAsk(plan.question.askId),
+      }),
+      ['outcome', 'facts', 'effects'],
       'written'
     )
     .pipe(requireNeoQuestionAnswered, 'written', 'result:outcome')

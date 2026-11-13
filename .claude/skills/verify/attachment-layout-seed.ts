@@ -15,7 +15,7 @@ if (process.argv[3] === 'cards') {
   const port = process.argv[4] ?? '9491';
   assert.notEqual(port, '8399');
   const seed = JSON.parse(readFileSync(join(root, 'evidence', 'seed.json'), 'utf8'));
-  const input = { askId: 'ask', kind: 'yesno', text: 'Try both attachment previews. On a wide screen, keep using the chat beside the document. On a phone, tap above the sheet or swipe it down.', yesLabel: 'Looks good', noLabel: 'Needs changes', artifacts: [seed.local.artifact, seed.git.artifact] };
+  const input = { askId: 'ask', kind: 'choice', text: 'Try both attachment previews. On a wide screen, keep using the chat beside the document. On a phone, tap above the sheet or swipe it down.', options: ['Looks good'], artifacts: [seed.local.artifact, seed.git.artifact] };
   const child = Bun.spawn([process.execPath, fileURLToPath(new URL('./rpc.ts', import.meta.url)), 'neo.question.ask', JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT: port }, stdout: 'pipe', stderr: 'inherit' });
   const output = await new Response(child.stdout).text();
   assert.equal(await child.exited, 0);

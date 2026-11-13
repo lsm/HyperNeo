@@ -3545,7 +3545,7 @@ describe('worker final-line blockers', () => {
           expect(wake[0]).toContain(`todo ${todo.id}`);
           expect(wake[0]).toContain('Awaiting a synthetic prerequisite');
           expect(wake[0]).toContain(
-            'neo.question.ask (yesno or choice with options) linked to this todo.'
+            'neo.question.ask (a choice with one option to confirm or several to choose, or a reply) linked to this todo.'
           );
         }
         expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);

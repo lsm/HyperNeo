@@ -125,3 +125,37 @@ describe('planNeoPlanContext', () => {
     expect(planNeoPlanContext(lines, changed.slice(1), 'prompt')).toContain('ask-0');
   });
 });
+
+describe('unanswered messages', () => {
+  test('caps each entry so one long message cannot refill the context', () => {
+    const lines = neoPlanLines([], [], []);
+    const long = 'x'.repeat(20_000);
+    const context = planNeoPlanContext(null, lines, 'compact', [
+      { id: 'first-id', text: long },
+      { id: 'second-id', text: 'short' },
+    ]);
+
+    expect(context).toContain('first-id');
+    expect(context).toContain('second-id');
+    expect(context).toContain('short');
+    expect(context).toContain('(truncated');
+    expect(Buffer.byteLength(context, 'utf8')).toBeLessThan(5_000);
+  });
+
+  test('bounds the whole unanswered section and points at the read for the rest', () => {
+    const lines = neoPlanLines([], [], []);
+    const pending = Array.from({ length: 40 }, (_, i) => ({
+      id: `pending-${39 - i}`,
+      text: 'y'.repeat(20_000),
+    }));
+
+    const context = planNeoPlanContext(null, lines, 'compact', pending);
+    const section = context.slice(context.indexOf('Unanswered messages'));
+
+    expect(Buffer.byteLength(section, 'utf8')).toBeLessThanOrEqual(8_192);
+    expect(section).toContain('pending-39 (full id');
+    expect(section).toContain('neo.conversation.read');
+    expect(section).toContain('more pending');
+    expect(section).not.toContain('pending-0 (full id');
+  });
+});

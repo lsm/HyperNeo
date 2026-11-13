@@ -85,7 +85,7 @@ async function cardFor(kind: string) {
   let source = 'daemon fallback';
   if (!open(kind).length) {
     source = 'Neo';
-    const asked = await rpc('neo.question.ask', { askId: kind, todoId: id, kind: 'yesno', text: 'Approve the synthetic step?', yesLabel: 'Approve', noLabel: 'Stop' });
+    const asked = await rpc('neo.question.ask', { askId: kind, todoId: id, kind: 'choice', text: 'Approve the synthetic step?', options: ['Approve'] });
     assert.equal(asked.ok, true, JSON.stringify(asked));
   }
   assert.equal(open(kind).length, 1);
@@ -145,7 +145,7 @@ try {
     assert.equal(rightAfter.state, 'doing');
 
     const swapped = await cardFor('replace');
-    const asked = await rpc('neo.question.ask', { askId: 'replace', todoId: swapped.id, kind: 'yesno', text: 'Better worded question?', yesLabel: 'Approve', noLabel: 'Stop', replaces: swapped.card.id });
+    const asked = await rpc('neo.question.ask', { askId: 'replace', todoId: swapped.id, kind: 'choice', text: 'Better worded question?', options: ['Approve'], replaces: swapped.card.id });
     const one = await sweeps('replace');
     report.cases.push({ case: 'Neo replaces the card', ask: brief(asked), sweeps: one, cards: cards('replace') });
     assert.equal(asked.ok, true, JSON.stringify(asked));

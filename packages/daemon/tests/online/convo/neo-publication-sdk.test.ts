@@ -205,15 +205,14 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
                   ? round === 2
                     ? {
                         requestId: 'fictional-verbatim',
-                        verbatim: true,
-                        fullText: verbatimText,
+                        text: verbatimText,
                         links: [],
                         replyTo: [requestId],
                       }
                     : {
                         requestId: 'fictional-send',
-                        shortText,
-                        fullText,
+                        text: shortText,
+                        details: fullText,
                         links: [],
                         replyTo: [requestId],
                       }
@@ -658,7 +657,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
         created: true,
         publication: { publicationId: verbatim[0].publicationId },
       },
-      { ok: false, reason: expect.stringContaining('human yes') },
+      { ok: false, reason: expect.stringContaining('picked apply') },
       { ok: true, question: { replyTo: [requestId] } },
     ]);
     expect(daemon.db.getGlobalSettings().neo?.standingRules ?? []).toEqual([]);
