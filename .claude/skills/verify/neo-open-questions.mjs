@@ -24,7 +24,7 @@ const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const now = Date.now();
 execFileSync('sqlite3', [`${run}/data/daemon.db`, `INSERT INTO neo_asks(id,session_id,title,request,status,outcome,created_at,updated_at) VALUES(${quote(ask)},${quote(opened.sessionId)},'Synthetic collapsed questions','Synthetic verification only','open','Synthetic history',${now},${now});`]);
 const questions = ['First decision', 'Second decision'].map((text) => {
-  const receipt = rpc('neo.question.ask', { retireWhen: { pack: 'core', kind: 'evidence', params: { path: `${run}/question-no-longer-needed` } }, askId: ask, kind: 'yesno', text, noLabel: 'Wait', yesLabel: 'Proceed' });
+  const receipt = rpc('neo.question.ask', { retireWhen: { pack: 'core', kind: 'evidence', params: { path: `${run}/question-no-longer-needed` } }, askId: ask, kind: 'choice', text, options: ['Proceed'] });
   assert(receipt.ok, JSON.stringify(receipt));
   return receipt.question.id;
 });
@@ -41,7 +41,7 @@ try {
     for (const id of questions) {
       const body = card.locator(`[data-ask-question="${id}"]`);
       await body.waitFor();
-      assert(await body.getByRole('button', { name: 'Proceed', exact: true }).isEnabled());
+      assert(await body.locator('[data-choice-option]', { hasText: 'Proceed' }).isEnabled());
       assert(await body.getByRole('button', { name: 'Wait', exact: true }).isEnabled());
       await page.waitForFunction(({ id, width }) => {
         const box = document.getElementById(`neo-ref-question-${id}`).getBoundingClientRect();
@@ -58,11 +58,11 @@ try {
     await page.screenshot({ path: `${run}/evidence/open-questions-${width}.png`, fullPage: true });
     if (width === 390) {
       for (const id of questions) {
-        await card.locator(`[data-ask-question="${id}"]`).getByRole('button', { name: 'Proceed', exact: true }).click();
+        await card.locator(`[data-ask-question="${id}"]`).locator('[data-choice-option]', { hasText: 'Proceed' }).click();
         await card.locator(`[data-ask-question="${id}"]`).waitFor({ state: 'detached' });
         const answer = rpc('neo.question.get', { questionId: id });
         assert.equal(answer.question.state, 'answered');
-        assert.equal(answer.question.answer, 'yes');
+        assert.deepEqual(answer.question.answer, ['Proceed']);
         assert.equal(answer.answeredByHuman, true);
       }
       assert.equal(await card.locator('[data-ask-details]').count(), 0);

@@ -277,7 +277,7 @@ const neoTodoUnreachableNote = (todo: Pick<NeoTodo, 'id' | 'title'>) =>
   `Todo "${todo.title}" (${todo.id}) has nobody working on it and the daemon cannot restart it. Continue it, remove it, or ask the human with neo.question.ask only if they must decide.`;
 
 const neoTodoBlockerReminder = (todo: Pick<NeoTodo, 'id' | 'title' | 'blockedReason'>) =>
-  `Todo "${todo.title}" (${todo.id}) still waits on its worker's blocker: ${todo.blockedReason}\nAnswer the worker. If only the human can decide, use neo.question.relay for a worker question waiting on this todo, otherwise neo.question.ask (yesno or choice) linked to this todo.`;
+  `Todo "${todo.title}" (${todo.id}) still waits on its worker's blocker: ${todo.blockedReason}\nAnswer the worker. If only the human can decide, use neo.question.relay for a worker question waiting on this todo, otherwise neo.question.ask (a choice to confirm or choose, or a reply) linked to this todo.`;
 
 const neoTodoMovedNote = (todo: Pick<NeoTodo, 'title'>, minutes: number) =>
   `Todo "${todo.title}" sat idle ${minutes} min with no progress, so the daemon moved it to a fresh worker.`;

@@ -29,7 +29,7 @@ const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const now = Date.now();
 execFileSync('sqlite3', [`${run}/data/daemon.db`, `INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES(${quote(ask)},${quote(opened.sessionId)},'Synthetic guidance examples','Synthetic verification only','open',${now},${now});`]);
 const questions = fixtures.map((fixture) => {
-      const receipt = rpc('neo.question.ask', { retireWhen: { pack: 'core', kind: 'evidence', params: { path: `${run}/question-no-longer-needed` } }, askId: ask, kind: 'yesno', text: fixture.text, noLabel: 'Release now', yesLabel: 'Preview first' });
+      const receipt = rpc('neo.question.ask', { retireWhen: { pack: 'core', kind: 'evidence', params: { path: `${run}/question-no-longer-needed` } }, askId: ask, kind: 'choice', text: fixture.text, options: ['Release now', 'Preview first'] });
       assert(receipt.ok, JSON.stringify(receipt));
       return { ...fixture, id: receipt.question.id };
     });
@@ -50,7 +50,7 @@ try {
       assert.equal(await body.locator('p').first().innerText(), fixture.title);
       assert.equal(await body.locator('ul li').count(), fixture.bullets);
       assert.equal(await body.locator('table tr').count(), fixture.tableRows);
-      assert(await body.getByRole('button', { name: 'Preview first', exact: true }).isEnabled());
+      assert(await body.locator('[data-choice-option]', { hasText: 'Preview first' }).isEnabled());
       await page.waitForFunction(({ id, width }) => {
         const box = document.getElementById(`neo-ref-question-${id}`).getBoundingClientRect();
         return box.x >= 0 && box.right <= width + 1;
@@ -62,13 +62,13 @@ try {
     await page.screenshot({ path: `${run}/evidence/neo-question-guidance-${width}.png`, fullPage: true });
     let answered = null;
     if (width === 390) {
-      await card.locator(`[id="neo-ref-question-${questions[0].id}"]`).getByRole('button', { name: 'Preview first', exact: true }).click();
+      await card.locator(`[id="neo-ref-question-${questions[0].id}"]`).locator('[data-choice-option]', { hasText: 'Preview first' }).click();
       await card.locator('[data-ask-details-toggle]').click();
       await card.locator(`[id="neo-ref-question-${questions[0].id}"] strong`).waitFor();
       assert((await card.locator(`[id="neo-ref-question-${questions[0].id}"]`).innerText()).includes('Preview first'));
       answered = rpc('neo.question.get', { questionId: questions[0].id });
       assert.equal(answered.question.state, 'answered');
-      assert.equal(answered.question.answer, 'yes');
+      assert.deepEqual(answered.question.answer, ['Preview first']);
       assert.equal(answered.answeredByHuman, true);
     }
     results.push({ width, questions, answered });

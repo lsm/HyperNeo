@@ -77,9 +77,9 @@ try {
   const path = 'projects/synthetic/mandate.md';
   const save = async (content: string, answer: 'yes' | 'no') => {
     const confirm = { path, sha256: createHash('sha256').update(content).digest('hex') };
-    const question = await rpc('neo.question.ask', { askId: 'synthetic-confirmation', kind: 'yesno', text: `Replace the mandate with:\n${content}\nPath: ${path}\nSHA-256: ${confirm.sha256}`, noLabel: 'Keep current mandate', yesLabel: 'Adopt this mandate', confirm });
+    const question = await rpc('neo.question.ask', { askId: 'synthetic-confirmation', kind: 'choice', text: `Replace the mandate with:\n${content}\nPath: ${path}\nSHA-256: ${confirm.sha256}`, options: ['Adopt this mandate'], confirm });
     assert(question.ok, JSON.stringify(question));
-    await rpc('neo.question.answer', { questionId: question.question.id, answer });
+    if (answer === 'yes') await rpc('neo.question.answer', { questionId: question.question.id, answer: ['Adopt this mandate'] });
     return rpc('neo.home.save', { path, content, message: 'Confirmed synthetic mandate', questionId: question.question.id });
   };
   const initial = await save('Publish one useful guide.\n', 'yes');

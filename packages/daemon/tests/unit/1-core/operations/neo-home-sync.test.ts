@@ -387,13 +387,12 @@ describe('Neo home save remote sync', () => {
     const question = await call('neo.question.ask', {
       retireWhen: pendingTodoCheck,
       askId: 'ask',
-      kind: 'yesno',
+      kind: 'choice',
       text: `${confirm.path} ${confirm.sha256}`,
-      noLabel: 'Keep old',
-      yesLabel: 'Use new',
+      options: ['Use new'],
       confirm,
     });
-    await call('neo.question.answer', { questionId: question.question.id, answer: 'yes' });
+    await call('neo.question.answer', { questionId: question.question.id, answer: ['Use new'] });
     const saved = await call('neo.home.save', { ...value, questionId: question.question.id });
     expect(saved.ok).toBe(true);
     expect(await git(remote, 'rev-parse', 'main')).toBe(saved.commit);

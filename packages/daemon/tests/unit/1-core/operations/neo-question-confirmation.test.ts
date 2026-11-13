@@ -148,15 +148,12 @@ describe('Neo question confirmation binding', () => {
     { kind: 'choice', options: ['Replace', 'Keep'] },
     { kind: 'choice', multiple: true },
     { kind: 'start' },
-  ])(
-    'refuses confirmation binding on %o',
-    async (card) => {
-      expect(await ask(card)).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('confirmation_kind'),
-      });
-    }
-  );
+  ])('refuses confirmation binding on %o', async (card) => {
+    expect(await ask(card)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('confirmation_kind'),
+    });
+  });
   test.each(['../outside.md', '.git/config', '.coordinators/transcript.md'])(
     'refuses an internal/outside confirmation path',
     async (path) => {

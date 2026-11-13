@@ -111,8 +111,7 @@ const proposal = async (value = input, state = 'button') => {
     owner
   );
   const questionId = asked.question.id;
-  if (state === 'button')
-    await call('neo.question.answer', { questionId, answer: ['Use new'] });
+  if (state === 'button') await call('neo.question.answer', { questionId, answer: ['Use new'] });
   if (state === 'letter') chat(questionId, 'A');
   if (state === 'other words') chat(questionId, 'later');
   if (state === 'retired')
