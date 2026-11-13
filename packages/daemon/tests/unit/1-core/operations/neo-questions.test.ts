@@ -661,7 +661,16 @@ describe('neo.question operations', () => {
         options: ['One', 'Two'],
         labels: ['A', 'A'],
       })
-    ).rejects.toThrow('labels must be distinct uppercase letters.');
+    ).rejects.toThrow('labels must be distinct uppercase letters A–F.');
+    await expect(
+      call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'choice',
+        text: 'Beyond F?',
+        options: ['One', 'Two'],
+        labels: ['X', 'Y'],
+      })
+    ).rejects.toThrow();
     expect(
       await call('neo.question.ask', {
         askId: 'ask',

@@ -305,14 +305,14 @@ const AskKinds = z.discriminatedUnion('kind', [
     kind: z.literal('choice'),
     options: z.array(Text).min(1).max(6),
     labels: z
-      .array(z.string().regex(/^[A-Z]$/))
+      .array(z.string().regex(/^[A-F]$/))
       .max(6)
       .refine((labels) => new Set(labels).size === labels.length, {
-        message: 'labels must be distinct uppercase letters.',
+        message: 'labels must be distinct uppercase letters A–F.',
       })
       .optional()
       .describe(
-        'One distinct uppercase letter per option, when the text names approaches by letter. Defaults to A, B, C… in order.'
+        'One distinct uppercase letter A–F per option, when the text names approaches by letter. Defaults to A, B, C… in order.'
       ),
     multiple: z.boolean().default(false),
   }),

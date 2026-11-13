@@ -34013,9 +34013,9 @@
                 "type": "string"
               },
               "labels": {
-                "description": "One distinct uppercase letter per option, when the text names approaches by letter. Defaults to A, B, C… in order.",
+                "description": "One distinct uppercase letter A–F per option, when the text names approaches by letter. Defaults to A, B, C… in order.",
                 "items": {
-                  "pattern": "^[A-Z]$",
+                  "pattern": "^[A-F]$",
                   "type": "string"
                 },
                 "maxItems": 6,

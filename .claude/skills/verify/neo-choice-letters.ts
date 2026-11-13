@@ -151,6 +151,16 @@ const badLabels = await mcp('neo.question.ask', {
 });
 assert.equal(badLabels.code, 'invalid_input', 'duplicate labels refused');
 assert.match(badLabels.message ?? '', /labels must be distinct/);
+const wideLabels = await mcp('neo.question.ask', {
+  askId: 'synthetic-ask-bad',
+  kind: 'choice',
+  text: 'Wide labels?',
+  options: ['One', 'Two'],
+  labels: ['X', 'Y'],
+  multiple: false,
+  retireWhen,
+});
+assert.equal(wideLabels.code, 'invalid_input', 'labels beyond F refused');
 const shortLabels = await mcp('neo.question.ask', {
   askId: 'synthetic-ask-short',
   kind: 'choice',
