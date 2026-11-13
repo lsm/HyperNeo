@@ -239,7 +239,7 @@ test('stays fast on a long-lived conversation', async () => {
   const elapsed = performance.now() - started;
 
   expect(facts.unanswered).toEqual([]);
-  expect(elapsed).toBeLessThan(1_000);
+  expect(elapsed).toBeLessThan(250);
 });
 
 test('sends unanswered messages to Neo after compaction and drops answered ones', async () => {
