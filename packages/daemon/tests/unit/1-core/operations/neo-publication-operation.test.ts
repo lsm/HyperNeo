@@ -480,19 +480,37 @@ describe('Neo publication without runtime input attribution', () => {
     );
   });
 
-  test('refuses a text over 2000 when details stay separate, but folds shorter details', async () => {
+  test('refuses a text over 300 words when details stay separate, but folds shorter details', async () => {
     const over = await publish(
-      { requestId: 'send-too-long', text: 'x'.repeat(2001), details: 'd'.repeat(2002) },
+      {
+        requestId: 'send-too-long',
+        text: Array(301).fill('word').join(' '),
+        details: 'd'.repeat(1600),
+      },
       caller
     );
     expect(over).toMatchObject({ accepted: false, reason: 'reply_summary_too_long' });
+    const atLimit = Array(300).fill('word').join(' ');
     const under = await publish(
-      { requestId: 'send-limit', text: 'x'.repeat(2000), details: 'd'.repeat(2001) },
+      { requestId: 'send-limit', text: atLimit, details: 'd'.repeat(atLimit.length + 1) },
       caller
     );
     expect(under).toMatchObject({
       accepted: true,
-      publication: { shortText: 'x'.repeat(2000), fullText: 'd'.repeat(2001) },
+      publication: { shortText: atLimit, fullText: 'd'.repeat(atLimit.length + 1) },
+    });
+    const chinese = await publish(
+      { requestId: 'send-chinese', text: '中'.repeat(400), details: 'd'.repeat(401) },
+      caller
+    );
+    expect(chinese).toMatchObject({ accepted: false, reason: 'reply_summary_too_long' });
+    const wordsOnly = await publish(
+      { requestId: 'send-words', text: 'x'.repeat(3000), details: 'd'.repeat(3001) },
+      caller
+    );
+    expect(wordsOnly).toMatchObject({
+      accepted: true,
+      publication: { shortText: 'x'.repeat(3000), fullText: 'd'.repeat(3001) },
     });
     const folded = await publish(
       { requestId: 'send-folded-long', text: 'x'.repeat(3000), details: 'short' },
@@ -504,7 +522,7 @@ describe('Neo publication without runtime input attribution', () => {
     });
     const alone = await publish({ requestId: 'send-solo', text: 'x'.repeat(3000) }, caller);
     expect(alone).toMatchObject({ accepted: true, publication: { verbatim: true } });
-    expect(ledger.list(conversationId)).toHaveLength(3);
+    expect(ledger.list(conversationId)).toHaveLength(4);
   });
 
   test('refuses folded details whose combined length passes the stored cap', async () => {

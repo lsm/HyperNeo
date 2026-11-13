@@ -27708,7 +27708,7 @@
                                     ]
                                   },
                                   "shortText": {
-                                    "maxLength": 2000,
+                                    "maxLength": 4000,
                                     "type": "string"
                                   }
                                 },
@@ -27780,7 +27780,7 @@
                             },
                             "shortText": {
                               "description": "What the human reads first; it must stand alone and summarize the message.",
-                              "maxLength": 2000,
+                              "maxLength": 4000,
                               "type": "string"
                             },
                             "triggerId": {
@@ -32625,7 +32625,7 @@
                           ]
                         },
                         "shortText": {
-                          "maxLength": 2000,
+                          "maxLength": 4000,
                           "type": "string"
                         }
                       },
@@ -32697,7 +32697,7 @@
                   },
                   "shortText": {
                     "description": "What the human reads first; it must stand alone and summarize the message.",
-                    "maxLength": 2000,
+                    "maxLength": 4000,
                     "type": "string"
                   },
                   "triggerId": {
@@ -33220,7 +33220,7 @@
                             ]
                           },
                           "shortText": {
-                            "maxLength": 2000,
+                            "maxLength": 4000,
                             "type": "string"
                           }
                         },
@@ -33292,7 +33292,7 @@
                     },
                     "shortText": {
                       "description": "What the human reads first; it must stand alone and summarize the message.",
-                      "maxLength": 2000,
+                      "maxLength": 4000,
                       "type": "string"
                     },
                     "triggerId": {

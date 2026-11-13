@@ -1388,17 +1388,41 @@ test.each(['creation', 'delivery'])(
   }
 );
 
-test('a reply with details refuses a summary over 2000 characters by name', async () => {
+test('a reply with details refuses a summary over 300 words by name', async () => {
   const { id } = await deliveredConvoInput();
+  const text = Array(301).fill('word').join(' ');
   expect(
     await convoPublish({
       requestId: 'long-summary',
       replyTo: [id],
-      shortText: 'x'.repeat(2001),
-      fullText: 'x'.repeat(2002),
+      shortText: text,
+      fullText: 'd'.repeat(text.length + 1),
     })
   ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
+});
+
+test('a reply with details accepts 300 words and refuses 301 Chinese words', async () => {
+  const { id } = await deliveredConvoInput();
+  const other = (await deliveredConvoInput()).id;
+  const text = Array(300).fill('word').join(' ');
+  expect(
+    await convoPublish({
+      requestId: 'at-limit',
+      replyTo: [id],
+      shortText: text,
+      fullText: 'd'.repeat(text.length + 1),
+    })
+  ).toMatchObject({ accepted: true });
+  const chinese = '中'.repeat(400);
+  expect(
+    await convoPublish({
+      requestId: 'chinese-long',
+      replyTo: [other],
+      shortText: chinese,
+      fullText: 'd'.repeat(chinese.length + 1),
+    })
+  ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
 });
 
 test('a reply without work_on is the final answer with no acknowledgment before it', async () => {
