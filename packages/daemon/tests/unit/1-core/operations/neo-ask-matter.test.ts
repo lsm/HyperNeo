@@ -81,6 +81,24 @@ describe('codingAskMatter', () => {
       codingAskMatter({ title: 'Compare', request: `${pull} against synthetic/proof#8` })
     ).toBeNull();
   });
+
+  test('a short form names the pull request in the ask’s own repository', () => {
+    const repos = ['synthetic/proof'];
+    for (const request of ['Review proof#7', 'Merge Proof#7 now', 'Merge #7', 'Look at PR #7'])
+      expect(codingAskMatter({ title: 'Handle it', request }, repos)).toBe('synthetic/proof#7');
+    expect(codingAskMatter({ title: 'Review proof#7', request: `It is ${pull}` }, repos)).toBe(
+      'synthetic/proof#7'
+    );
+  });
+
+  test('a short form that fits no project repository, or more than one, has no key', () => {
+    const ask = (request: string) => ({ title: 'Handle it', request });
+    expect(codingAskMatter(ask('Merge #7'), [])).toBeNull();
+    expect(codingAskMatter(ask('Merge #7'), ['synthetic/proof', 'synthetic/other'])).toBeNull();
+    expect(codingAskMatter(ask('Review other#7'), ['synthetic/proof'])).toBeNull();
+    expect(codingAskMatter(ask('Review proof#7'), ['synthetic/proof', 'mirror/proof'])).toBeNull();
+    expect(codingAskMatter(ask(`Merge #8 after ${pull}`), ['synthetic/proof'])).toBeNull();
+  });
 });
 
 describe('neoAskMatterRefusal', () => {
@@ -89,21 +107,32 @@ describe('neoAskMatterRefusal', () => {
     id,
     title,
     request: 'Synthetic request',
+    projectId: null,
     createdAt,
   });
 
   test('names the oldest open ask with the same key and its id', () => {
     const open = [stored('late', 'alpha again', 3), stored('first', 'alpha one', 1)];
-    const reason = neoAskMatterRefusal({ title: 'alpha two', request: 'More' }, open, packs);
+    const reason = neoAskMatterRefusal(
+      { title: 'alpha two', request: 'More', projectId: null },
+      open,
+      packs
+    );
     expect(reason).toStartWith('ask_open: "alpha one" (first) is already open for alpha.');
     expect(reason).not.toContain('late');
   });
 
   test('a different key, or no pack with a key, refuses nothing', () => {
     const open = [stored('first', 'alpha one', 1)];
-    expect(neoAskMatterRefusal({ title: 'beta one', request: 'More' }, open, packs)).toBeNull();
-    expect(neoAskMatterRefusal({ title: 'alpha two', request: 'More' }, open, [{}])).toBeNull();
-    expect(neoAskMatterRefusal({ title: 'alpha two', request: 'More' }, [], packs)).toBeNull();
+    expect(
+      neoAskMatterRefusal({ title: 'beta one', request: 'More', projectId: null }, open, packs)
+    ).toBeNull();
+    expect(
+      neoAskMatterRefusal({ title: 'alpha two', request: 'More', projectId: null }, open, [{}])
+    ).toBeNull();
+    expect(
+      neoAskMatterRefusal({ title: 'alpha two', request: 'More', projectId: null }, [], packs)
+    ).toBeNull();
   });
 });
 

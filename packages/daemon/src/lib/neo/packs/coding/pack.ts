@@ -52,7 +52,7 @@ export function createCodingPack(deps: {
   prSweep: CodingPrSweepRepository;
   prEvents: CodingPrEventRepository;
   prSweepDeps: Omit<CodingSweepDeps, 'host'>;
-  projectRepos: () => string[];
+  projectRepos: (projectId?: string) => string[];
   readLedgerRepo?: CodingLedgerRead;
 }): NeoPack & {
   readMergeFacts: typeof readCodingDaemonMergeFacts;
@@ -212,7 +212,7 @@ export function createCodingPack(deps: {
       },
     },
     prepareExecution: prepareCodingExecution,
-    matter: codingAskMatter,
+    matter: (ask) => codingAskMatter(ask, ask.projectId ? deps.projectRepos(ask.projectId) : []),
     review: runCodingReview,
     todos: {
       ...todos,
