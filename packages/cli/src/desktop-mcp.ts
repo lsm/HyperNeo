@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { getDataDir } from '../../daemon/src/lib/data-dir.ts';
 import { createDesktopProxy } from '../../daemon/src/lib/desktop/mcp-proxy.ts';
 import { serveDesktopMcp } from '../../daemon/src/lib/desktop/mcp-server.ts';
+import { createDesktopTargetBroker } from '../../daemon/src/lib/desktop/target-broker.ts';
 import {
   desktopRecordMissing,
   readDesktopDriverRecord,
@@ -60,6 +61,7 @@ export async function runDesktopMcp(args: string[]) {
     audit: (line) => {
       process.stderr.write(line + '\n');
     },
+    authorize: createDesktopTargetBroker(getDataDir()),
   });
   await serveDesktopMcp(proxy);
 }

@@ -10,7 +10,7 @@ type Binding = {
   driver_instance_id: string;
   target_app_id: string | null;
 };
-type Target = { pid: number; window_id: number };
+type Target = { app_id: string; pid: number | null; window_id: number | null };
 type Planned = Target & { args: Record<string, unknown> };
 type Options = {
   binding: () => Promise<Binding | null>;
@@ -24,14 +24,12 @@ type Options = {
   authorize?: (
     binding: Binding,
     name: string,
-    args: Record<string, unknown>
-  ) => Promise<Target | null>;
+    args: Record<string, unknown>,
+    callId: string
+  ) => Promise<{ value: Target } | { reason: Refusal } | null>;
 };
-type Reason =
-  | 'tool_not_allowed'
-  | 'desktop_not_opted_in'
-  | 'invalid_arguments'
-  | 'guards_unavailable';
+type Refusal = 'tool_not_allowed' | 'target_unverified' | 'target_mismatch';
+type Reason = Refusal | 'desktop_not_opted_in' | 'invalid_arguments' | 'guards_unavailable';
 const tools = catalog as unknown as Tool[];
 const refuse = (reason: Reason) => ({ reason });
 const schemas = new Map(
@@ -41,7 +39,7 @@ const schemas = new Map(
   ])
 );
 const plan = (superpipe({})('desktop-mcp-call') as PipelineAPI)
-  .input(['name', 'args', 'binding', 'authorize'])
+  .input(['name', 'args', 'binding', 'authorize', 'callId'])
   .pipe(
     (name: string) => (schemas.has(name) ? { value: name } : refuse('tool_not_allowed')),
     'name',
@@ -69,19 +67,22 @@ const plan = (superpipe({})('desktop-mcp-call') as PipelineAPI)
       binding: Binding,
       name: string,
       args: Record<string, unknown>,
-      authorize: Options['authorize']
+      authorize: Options['authorize'],
+      callId: string
     ) => {
-      const target = await authorize?.(binding, name, args);
-      return target ? { value: { ...target, args } } : refuse('guards_unavailable');
+      const target = await authorize?.(binding, name, args, callId);
+      if (!target) return refuse('guards_unavailable');
+      return 'reason' in target ? refuse(target.reason) : { value: { ...target.value, args } };
     },
-    ['binding', 'name', 'permission', 'authorize'],
+    ['binding', 'name', 'permission', 'authorize', 'callId'],
     'result:permission'
   )
   .endAsync('permission') as (
   name: string,
   args: unknown,
   binding: Binding | null,
-  authorize: Options['authorize']
+  authorize: Options['authorize'],
+  callId: string
 ) => Promise<Planned | Reason>;
 
 function easternTimestamp() {
@@ -105,6 +106,7 @@ export function createDesktopProxy(options: Options) {
     list: async () => ((await options.binding()) ? tools : []),
     call: async (name: string, args: unknown): Promise<CallToolResult> => {
       const started = Date.now();
+      const callId = randomUUID();
       let binding: Binding | null = null;
       let target: Target | null = null;
       let decision = 'refused';
@@ -112,7 +114,7 @@ export function createDesktopProxy(options: Options) {
       let dispatched = false;
       try {
         binding = schemas.has(name) ? await options.binding() : null;
-        const outcome = await plan(name, args, binding, options.authorize);
+        const outcome = await plan(name, args, binding, options.authorize, callId);
         if (typeof outcome === 'string') {
           reason = outcome;
           return { isError: true, content: [{ type: 'text', text: reason }] };
@@ -132,12 +134,12 @@ export function createDesktopProxy(options: Options) {
         options.audit(
           JSON.stringify({
             timestamp: easternTimestamp(),
-            call_id: randomUUID(),
+            call_id: callId,
             todo_id: binding?.todo_id ?? null,
             worker_id: binding?.worker_id ?? null,
             driver_instance_id: binding?.driver_instance_id ?? null,
             tool: schemas.has(name) ? name : 'unlisted',
-            target_app_id: binding?.target_app_id ?? null,
+            target_app_id: target?.app_id ?? binding?.target_app_id ?? null,
             target_pid: target?.pid ?? null,
             target_window_id: target?.window_id ?? null,
             decision,
