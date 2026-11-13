@@ -34,14 +34,21 @@ test('createDesktopTargetBroker maps a verified target and sends the call id', a
       value: { bundle_id: 'com.apple.sleep', instance: { pid: 42 }, window_id: 7 },
     },
   }));
-  expect(await broker({ worker_id: 'worker-a' }, 'click', { pid: 42 }, 'call-1')).toEqual({
+  expect(
+    await broker(
+      { worker_id: 'worker-a' },
+      'type_text',
+      { pid: 42, text: 'x'.repeat(20000) },
+      'call-1'
+    )
+  ).toEqual({
     value: { app_id: 'com.apple.sleep', pid: 42, window_id: 7 },
   });
   expect(requests).toEqual([
     {
       action: 'resolve',
       worker: 'worker-a',
-      tool: 'click',
+      tool: 'type_text',
       arguments: { pid: 42 },
       callId: 'call-1',
     },

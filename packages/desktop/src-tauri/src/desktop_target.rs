@@ -101,11 +101,9 @@ fn signer(code: *const c_void) -> Option<(String, Option<String>, String)> {
 }
 
 fn owner(window: u32) -> Option<i32> {
-    let windows: CFArray<CFDictionary<CFString, CFType>> = unsafe {
-        CFArray::wrap_under_get_rule(
-            copy_window_info(kCGWindowListOptionAll, kCGNullWindowID)?.as_concrete_TypeRef(),
-        )
-    };
+    let owned = copy_window_info(kCGWindowListOptionAll, kCGNullWindowID)?;
+    let windows: CFArray<CFDictionary<CFString, CFType>> =
+        unsafe { CFArray::wrap_under_get_rule(owned.as_concrete_TypeRef()) };
     let number = |entry: &CFDictionary<CFString, CFType>, key| {
         entry
             .find(unsafe { CFString::wrap_under_get_rule(key) })

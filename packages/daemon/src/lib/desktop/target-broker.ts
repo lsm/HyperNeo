@@ -52,7 +52,7 @@ export function createDesktopTargetBroker(dataDir: string) {
       action: 'resolve',
       worker: binding.worker_id,
       tool: name,
-      arguments: args,
+      arguments: { pid: args.pid, window_id: args.window_id, bundle_id: args.bundle_id },
       callId,
     });
     let reply: unknown = null;
