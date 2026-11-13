@@ -248,8 +248,9 @@ describe('Model Service', () => {
 
     it('projects the static fallback onto the model the region serves', () => {
       const provider = new KimiProvider({ KIMI_API_KEY: 'test-key', KIMI_REGION: 'global' });
-      const served = provider.getServedModels?.();
-      const coding = served?.find((model) => model.id === 'kimi-for-coding');
+      expect(provider.getCachedModels()).toBeNull();
+
+      const coding = fallbackModelsFor(provider).find((model) => model.id === 'kimi-for-coding');
 
       expect(coding).toMatchObject({
         name: 'Kimi K2.7',
