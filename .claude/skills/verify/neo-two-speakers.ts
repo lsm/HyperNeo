@@ -109,14 +109,14 @@ try {
     { type: 'user', uuid: id as UUID, session_id: front, parent_tool_use_id: null, message: { role: 'user', content: 'Check the build and tell me.' } },
     'submitted'
   );
-  const handoff = await call('reply', { requestId: 'ack', replyTo: [id], work_on: true, text: 'I will check the build.' });
+  const handoff = await call('reply', { requestId: 'ack', replyTo: [id], text: 'I will check the build.' });
   assert.equal(handoff.accepted, true, JSON.stringify(handoff));
   assert.equal(handoff.started, true, JSON.stringify(handoff));
   assert.equal(owner(id), 'neo');
   assert.equal(app.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id]).length, 1);
   const delivered = JSON.stringify(app.db.getSDKMessageRepo().getMessageByUuid(root, id));
   assert(delivered.includes('<already-said>') && delivered.includes('I will check the build.'), delivered);
-  const again = await call('reply', { requestId: 'work-2', replyTo: [id], work_on: true, text: 'Checking.' });
+  const again = await call('reply', { requestId: 'work-2', replyTo: [id], text: 'Checking.' });
   assert.equal(again.accepted, true, JSON.stringify(again));
   assert.equal(again.started, true, JSON.stringify(again));
   const frontFinal = await call('reply', { requestId: 'final', replyTo: [id], text: 'The build passed.' });

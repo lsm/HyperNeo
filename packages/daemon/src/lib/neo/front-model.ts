@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.ts';
 import { NeoSpeechSay } from './speech.ts';
 import { NeoPublicationDraft } from './publication-operation.ts';
-import { frontProgressId, frontSessionId } from './front-mode.ts';
+import { frontSessionId } from './front-mode.ts';
 import { catchUpBlock } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
@@ -65,42 +65,36 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       { source: 'mcp', sessionId }
     );
   };
-  const handOff = async (ask: NeoConversationAsk, messageId: string) => {
-    const said = service.publications.get(
-      conversationId,
-      frontProgressId(conversationId, [messageId])
-    );
-    const message = neoIntakeMessage(
-      { ...ask, sessionId: ask.askOrigin.sessionId },
-      ask.askOrigin.sessionId,
-      readNeoReply(ask.replyTo, service.todos),
-      null,
-      undefined,
-      ask.previewContext ?? null
-    );
-    const block = said && catchUpBlock([{ replyTo: [messageId], fullText: said.fullText }]);
+  const handOff = async (asks: NeoConversationAsk[], messageIds: string[], saidText: string) => {
+    const block = catchUpBlock([{ replyTo: messageIds, fullText: saidText }]);
     const reserved = await service.db.gateway.call(
       neoFrontInputWrites,
       'reserve',
       conversationId,
-      [messageId],
-      [
-        {
+      messageIds,
+      asks.map((ask) => {
+        const message = neoIntakeMessage(
+          { ...ask, sessionId: ask.askOrigin.sessionId },
+          ask.askOrigin.sessionId,
+          readNeoReply(ask.replyTo, service.todos),
+          null,
+          undefined,
+          ask.previewContext ?? null
+        );
+        return {
           sessionId: ask.askOrigin.sessionId,
-          message: block
-            ? {
-                ...message,
-                message: {
-                  ...message.message,
-                  content: [
-                    ...(message.message.content as Exclude<typeof message.message.content, string>),
-                    { type: 'text' as const, text: block },
-                  ],
-                },
-              }
-            : message,
-        },
-      ]
+          message: {
+            ...message,
+            message: {
+              ...message.message,
+              content: [
+                ...(message.message.content as Exclude<typeof message.message.content, string>),
+                { type: 'text' as const, text: block },
+              ],
+            },
+          },
+        };
+      })
     );
     return reserved === 'reserved'
       ? { started: true }
@@ -126,31 +120,35 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply',
-        'Send one reply per human message. text is the reply; add details only for more than five sentences or any structured report, list, table or multi-topic update, and make them add information beyond text. For anything you cannot answer from your reads (check, search, change or run), set work_on:true: text is then a one-sentence acknowledgment of at most 150 characters with no details, for exactly one replyTo ID, and the work starts in the same call. Its answer reaches the human by itself, and you will see it in <already-said> on your next turn. While [listening: yes], include spoken.',
+        'Send one reply per human message. text is the reply; add details only for more than five sentences or any structured report, list, table or multi-topic update, and make them add information beyond text. If your reads answer the message, reply with the answer; otherwise say in one brief line what will be done, without claiming it is done. Every message also goes on to be handled in full, so never promise what you cannot check. The reply reaches the human and the full session sees it in <already-said>. While [listening: yes], include spoken.',
         {
           ...replyFields,
           text: z.string().trim().min(1).max(16000),
           details: z.string().trim().min(1).max(16000).optional(),
-          work_on: z.literal(true).optional(),
         },
-        async ({ text, details, work_on, ...input }) => {
+        async ({ text, details, ...input }) => {
           const body = foldPublicationDetails({ text, details });
-          if (!work_on && replySummaryTooLong(body))
+          if (replySummaryTooLong(body))
             return result({ accepted: false, reason: 'reply_summary_too_long' });
-          if (!work_on) return result(await publish({ ...input, ...body }));
-          if (details || text.length > 150 || input.replyTo?.length !== 1)
-            return result({ accepted: false, reason: 'work_on_brief' });
-          const ask = service.asks.find(conversationId, input.replyTo[0]);
-          if (!ask) return result({ accepted: false, reason: 'unknown_reply_target' });
+          const targets = input.replyTo ?? [];
+          if (!targets.length) return result(await publish({ ...input, ...body }));
+          const asks = targets.map((id) => service.asks.find(conversationId, id));
+          if (asks.some((ask) => !ask))
+            return result({ accepted: false, reason: 'unknown_reply_target' });
           if (
             service.repo.readConversationId() !== conversationId ||
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
-          const receipt = await publish({ ...input, text, progress: true });
+          const receipt = await publish({ ...input, ...body });
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
           if (!receipt.accepted && !second) return result(receipt);
-          const handed = await handOff(ask, input.replyTo[0]);
+          const said = 'publication' in receipt ? receipt.publication.fullText : body.text;
+          const handed = await handOff(
+            asks.map((ask) => ask!),
+            targets,
+            said
+          );
           return result(
             handed.started
               ? { ...(receipt.accepted ? receipt : { accepted: true }), ...handed }

@@ -70,9 +70,7 @@ afterEach(async () => {
 });
 
 test('Front and Neo share speech rules with their own tool names', () => {
-  expect(NEO_FRONT).toContain(
-    'use reply with work_on:true and spoken to briefly acknowledge the request naturally'
-  );
+  expect(NEO_FRONT).toContain('Every message also goes on to be handled in full');
   expect(NEO_FRONT).toContain('published through reply.');
   expect(NEO_FRONT).toContain('follow its guidance to call speech_say once');
   expect(NEO_FRONT).toContain('projects_read');
@@ -81,13 +79,10 @@ test('Front and Neo share speech rules with their own tool names', () => {
   expect(NEO_FRONT).toContain('cards_read');
   expect(NEO_FRONT).not.toContain('neo.speech.say');
   expect(NEO_FRONT).not.toContain('{{');
-  expect(NEO_ROOT_TURN_END).toContain(
-    'use neo.speech.say to briefly acknowledge the request naturally, then do the work.'
-  );
+  expect(NEO_ROOT_TURN_END).not.toContain('briefly acknowledge the request naturally');
   expect(NEO_ROOT_TURN_END).toContain(
     'Every substantive answer or result must still be published through neo.publication.publish.'
   );
-  expect(NEO_ROOT_TURN_END).toContain('A spoken acknowledgment needs no publication.');
   expect(NEO_ROOT_TURN_END).toContain('follow its guidance to call neo.speech.say once');
   expect(NEO_ROOT_TURN_END).not.toContain('{{');
 });
@@ -341,10 +336,13 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
     'submitted'
   );
   const handed = await reply.handler(
-    { requestId: 'clarification', replyTo: [id], work_on: true, text: 'I will check.' },
+    { requestId: 'clarification', replyTo: [id], text: 'I will check.' },
     {} as never
   );
-  expect(JSON.parse((handed.content[0] as { text: string }).text)).toMatchObject({
+  expect(
+    JSON.parse((handed.content[0] as { text: string }).text),
+    (handed.content[0] as { text: string }).text
+  ).toMatchObject({
     accepted: true,
     started: true,
   });
@@ -360,7 +358,7 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
   ).toHaveLength(0);
   expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, id)?.owner).toBe('neo');
   const again = await reply.handler(
-    { requestId: 'again', replyTo: [id], work_on: true, text: 'Again.' },
+    { requestId: 'again', replyTo: [id], text: 'Again.' },
     {} as never
   );
   expect(JSON.parse((again.content[0] as { text: string }).text)).toMatchObject({
@@ -369,7 +367,7 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
   });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   const progress = service.publications.list(conversationId)!.map((row) => row.fullText);
-  expect(progress).toEqual(['I will check.']);
+  expect(progress).toEqual(['I will check.', 'Again.']);
 });
 
 test('in dual mode Neo speaks directly like the front', async () => {
@@ -1131,9 +1129,7 @@ async function convoPublish(input: Record<string, unknown>) {
     .tools!.find((tool) => tool.name === 'reply');
   expect(definition).toBeDefined();
   const receipt = await definition!.handler(
-    verbatim
-      ? { ...fields, text: fullText, ...(progress ? { work_on: true } : {}) }
-      : { ...fields, text: shortText, details: fullText },
+    verbatim ? { ...fields, text: fullText } : { ...fields, text: shortText, details: fullText },
     {} as never
   );
   return JSON.parse((receipt.content[0] as { text: string }).text);
@@ -1206,14 +1202,13 @@ test('Neo publishes in both modes', async () => {
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
-test('a work_on reply publishes its acknowledgment and hands off in one call', async () => {
+test('a reply publishes and hands off in one call, and a later full-session reply is accepted', async () => {
   const { id } = await deliveredConvoInput();
   const work = {
     requestId: 'ack',
     replyTo: [id],
     fullText: 'I will handle that.',
     verbatim: true,
-    progress: true,
   };
   expect(await convoPublish(work)).toMatchObject({ accepted: true, created: true, started: true });
   expect(service.publications.list(conversationId)).toHaveLength(1);
@@ -1225,7 +1220,7 @@ test('a work_on reply publishes its acknowledgment and hands off in one call', a
     accepted: true,
     started: true,
   });
-  expect(service.publications.list(conversationId)).toHaveLength(1);
+  expect(service.publications.list(conversationId)).toHaveLength(2);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(
     await convoPublish({ requestId: 'final', replyTo: [id], fullText: 'Done.', verbatim: true })
@@ -1246,39 +1241,8 @@ test('a work_on reply publishes its acknowledgment and hands off in one call', a
     )
   ).toMatchObject({ accepted: true, created: true });
   expect(
-    service.publications.list(conversationId)!.filter((row) => row.replyTo?.includes(id))
-  ).toHaveLength(3);
-});
-
-test.each([
-  ['details', { details: 'More.' }],
-  ['a long text', { text: 'x'.repeat(151) }],
-  ['two replyTo IDs', { extra: true }],
-])('a work_on reply with %s is refused before anything is published', async (_name, change) => {
-  const { id } = await deliveredConvoInput();
-  const other = (await deliveredConvoInput()).id;
-  createFrontTools(service, conversationId);
-  const reply = vi
-    .mocked(createSdkMcpServer)
-    .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'reply')!;
-  const { extra, ...fields } = change as { extra?: boolean; text?: string; details?: string };
-  const receipt = await reply.handler(
-    {
-      requestId: 'work',
-      replyTo: extra ? [id, other] : [id],
-      work_on: true,
-      text: 'I will check.',
-      ...fields,
-    },
-    {} as never
-  );
-  expect(JSON.parse((receipt.content[0] as { text: string }).text)).toEqual({
-    accepted: false,
-    reason: 'work_on_brief',
-  });
-  expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
-  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+    service.publications.list(conversationId)!.filter((row) => row.replyTo?.includes(id)).length
+  ).toBeGreaterThanOrEqual(3);
 });
 
 test('Front publication refuses an input it was never given and a stale dual-mode tool', async () => {
@@ -1427,7 +1391,7 @@ test('a reply with details accepts 300 words and refuses 301 Chinese words', asy
   ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
 });
 
-test('a reply without work_on is the final answer with no acknowledgment before it', async () => {
+test('a reply is the answer and still hands off to the full session', async () => {
   const { id } = await deliveredConvoInput();
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
@@ -1463,7 +1427,7 @@ test('a reply without work_on is the final answer with no acknowledgment before 
   });
   expect(final.verbatim).toBeUndefined();
   expect(service.publications.list(conversationId)).toHaveLength(2);
-  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
 });
 
 test('details shorter than the reply text fold into one verbatim reply', async () => {
@@ -1521,12 +1485,10 @@ test('two replies to one human message both deliver', async () => {
   });
   expect(second).toMatchObject({ accepted: true, created: true });
   expect(service.publications.list(conversationId)).toHaveLength(2);
-  expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, id)?.owner).toBe(
-    'front'
-  );
+  expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, id)?.owner).toBe('neo');
 });
 
-test('a front reply after work_on delivers', async () => {
+test('a front reply after the handoff delivers', async () => {
   const { id } = await deliveredConvoInput();
   expect(
     await convoPublish({
@@ -1726,14 +1688,14 @@ test('a redelivered front input keeps its bytes after a later message and a list
   ).toHaveLength(1);
 });
 
-test('a front input queued before the upgrade keeps its bytes and its old tool name maps to work_on', async () => {
+test('a front input queued before the upgrade keeps its bytes and its old tool name maps to run_in_background', async () => {
   const { id, job } = await frontInput();
   const mailbox = db
     .getJobQueueRepo()
     .listJobs({ queue: 'mailbox' })
     .find((item) => item.payload.messageUuid === id && item.payload.to)!;
   const stored = JSON.parse(
-    JSON.stringify(mailbox.payload).replace('with work_on:true', 'call run_in_background')
+    JSON.stringify(mailbox.payload).replace('Call reply once', 'call run_in_background; Call reply')
   );
   db.getDatabase()
     .prepare('UPDATE job_queue SET payload = ? WHERE id = ?')
@@ -1744,7 +1706,7 @@ test('a front input queued before the upgrade keeps its bytes and its old tool n
   expect(JSON.stringify(delivered(id))).toBe(before);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   expect(definitions.map((entry) => entry.name)).not.toContain('run_in_background');
-  expect(frontModeNote()).toContain('A message that names run_in_background means work_on.');
+  expect(frontModeNote()).toContain('A message that names run_in_background means work is needed.');
 });
 
 test('the front only sees its own replies in its transcript, not in the catch-up', async () => {
@@ -2006,4 +1968,50 @@ test('the daemon fallback is skipped once the input is answered', async () => {
   const replies = service.publications.list(conversationId)!;
   expect(replies).toHaveLength(1);
   expect(replies[0].fullText).toBe('A real reply landed.');
+});
+
+test('a reply that answers hands the input to the full session with that answer in already-said', async () => {
+  const { id } = await deliveredConvoInput();
+  const receipt = await convoPublish({
+    requestId: 'direct-answer',
+    replyTo: [id],
+    fullText: 'The build passed.',
+    verbatim: true,
+  });
+  expect(receipt).toMatchObject({ accepted: true, started: true });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  const delivered = await db.getSDKMessageRepo().getDeliveryContent(root, id);
+  const said = JSON.stringify(delivered?.content ?? '');
+  expect(said).toContain('<already-said>');
+  expect(said).toContain('The build passed.');
+  expect(said).not.toContain('Front');
+});
+
+test('a reply with two replyTo IDs hands both inputs off', async () => {
+  const first = await deliveredConvoInput();
+  const second = await deliveredConvoInput();
+  const receipt = await convoPublish({
+    requestId: 'two-inputs',
+    replyTo: [first.id, second.id],
+    fullText: 'Handled together.',
+    verbatim: true,
+  });
+  expect(receipt).toMatchObject({ accepted: true, started: true });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [first.id])).toHaveLength(1);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [second.id])).toHaveLength(1);
+});
+
+test('the full session prompt carries no dual-mode acknowledgment rule', () => {
+  expect(NEO_ROOT_TURN_END).not.toContain('briefly acknowledge the request naturally');
+  expect(NEO_FRONT).not.toContain('work_on');
+  expect(NEO_FRONT).toContain('never promise what you cannot check');
+});
+
+test('the per-input note stays for single mode and carries no acknowledgment in dual mode', async () => {
+  await deliveredConvoInput();
+  const loaded = { content: 'Hello', sendStatus: 'submitted', inputKind: 'human' } as const;
+  expect(service.speech.prepareInput(root, { ...loaded }).content).toContain(
+    'Before time-consuming work, publish one short reply first'
+  );
+  expect(frontModeNote()).not.toContain('work_on');
 });
