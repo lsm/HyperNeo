@@ -133,7 +133,7 @@ export function createNeoHomeGithubOperation(
               ).run(1, questionId, repository, body);
             }
             return receipt(prior()!);
-          })();
+          }, 'immediate')();
         }
         if (row!.state === 'created') return receipt(row!);
         const created = await home.createGithub(

@@ -25,6 +25,7 @@ const app = await createDaemonApp({
 });
 const evidence: Record<string, unknown> = {};
 try {
+  await app.jobProcessor.stop();
   const now = new Date().toISOString();
   await app.db.createSession({
     id: root,
@@ -51,37 +52,43 @@ try {
     () => app.sessionManager.getOperationRegistry(),
     () => ({ sessionId: root, role: 'neo' })
   );
-  const holder = Bun.spawn(
-    ['bun', join(import.meta.dir, 'neo-question-beside-writer-hold.ts'), dbPath, '800'],
-    { stdout: 'pipe', stderr: 'inherit' }
-  );
-  const lines = holder.stdout.getReader();
-  const held = new TextDecoder().decode((await lines.read()).value);
-  assert.equal(held.trim(), 'held');
-  const started = Date.now();
-  const result = await handler({
-    name: 'neo.question.ask',
-    input: {
-      askId: 'locked-card-ask',
-      kind: 'choice',
-      text: 'Which way?',
-      options: ['Server only', 'Server and client'],
-      retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } },
-    },
+  const whileHeld = async (name: string, input: Record<string, unknown>) => {
+    const holder = Bun.spawn(
+      ['bun', join(import.meta.dir, 'neo-question-beside-writer-hold.ts'), dbPath, '800'],
+      { stdout: 'pipe', stderr: 'inherit' }
+    );
+    const held = new TextDecoder().decode((await holder.stdout.getReader().read()).value);
+    assert.equal(held.trim(), 'held');
+    const started = Date.now();
+    const result = await handler({ name, input });
+    const outcome = { waitedMs: Date.now() - started, isError: !!result.isError, reply: result.content[0]?.text };
+    assert.equal(await holder.exited, 0);
+    evidence[name] = outcome;
+    return outcome;
+  };
+  const question = await whileHeld('neo.question.ask', {
+    askId: 'locked-card-ask',
+    kind: 'choice',
+    text: 'Which way?',
+    options: ['Server only', 'Server and client'],
+    retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } },
   });
-  evidence.waitedMs = Date.now() - started;
-  evidence.isError = !!result.isError;
-  evidence.reply = result.content[0]?.text;
-  assert.equal(await holder.exited, 0);
+  const rule = await whileHeld('neo.rule.ask', {
+    askId: 'locked-card-ask',
+    requestId: 'locked-rule',
+    add: ['Synthetic rule for the lock check.'],
+  });
   writeFileSync(join(run, 'evidence/neo-question-beside-writer.json'), JSON.stringify(evidence, null, 2));
-  assert(!result.isError, `neo.question.ask failed while another connection held the write lock: ${evidence.reply}`);
-  const reply = JSON.parse(String(evidence.reply));
-  assert.equal(reply.ok, true);
-  const stored = new NeoAskTodoRepository(app.db.getDatabase()).getQuestion(reply.question.id);
-  assert.equal(stored?.state, 'open');
-  console.log(
-    `PASS: neo.question.ask waited ${evidence.waitedMs} ms for the other write and opened card ${reply.question.id}. ${join(run, 'evidence/neo-question-beside-writer.json')}`
-  );
+  const store = new NeoAskTodoRepository(app.db.getDatabase());
+  for (const [name, outcome] of [['neo.question.ask', question], ['neo.rule.ask', rule]] as const) {
+    assert(!outcome.isError, `${name} failed while another connection held the write lock: ${outcome.reply}`);
+    const reply = JSON.parse(String(outcome.reply));
+    assert.equal(reply.ok, true, `${name}: ${outcome.reply}`);
+    const id = reply.question?.id ?? reply.questionId;
+    assert.equal(store.getQuestion(id)?.state, 'open');
+    console.log(`PASS: ${name} waited ${outcome.waitedMs} ms for the other write and opened card ${id}.`);
+  }
+  console.log(join(run, 'evidence/neo-question-beside-writer.json'));
 } finally {
   await app.cleanup();
 }

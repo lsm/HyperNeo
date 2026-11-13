@@ -12,10 +12,12 @@ own synthetic DB, and opens a synthetic Neo session and ask. A second process
 stands in for the DB writer lane: it opens the same DB file and holds a write
 transaction for 800 ms. While that lock is held, the helper calls
 `neo.question.ask` through Neo's MCP operation door with a two-option choice.
+It then holds the lock again and calls `neo.rule.ask`, which opens a rule card
+the same way.
 
-The call must succeed after the other write commits, and the stored card must be
-open. Before the fix it returned `execution_failed` with `database is locked`
+Each call must succeed after the other write commits, and each stored card must
+be open. Before the fix it returned `execution_failed` with `database is locked`
 at once, because the card write read first in a deferred transaction and SQLite
 refuses that read-to-write upgrade without waiting. Evidence:
 `evidence/neo-question-beside-writer.json` with `waitedMs`, `isError` and the
-reply.
+reply for each operation.
