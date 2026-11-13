@@ -66,6 +66,7 @@ try {
   const conversation = new NeoRepository(db).conversationId(),
     answeredInput = '10000000-0000-4000-8000-00000000c001',
     cardAnsweredInput = '10000000-0000-4000-8000-00000000c003',
+    longInput = '10000000-0000-4000-8000-00000000c004',
     pendingInput = '10000000-0000-4000-8000-00000000c002',
     pendingText = 'Ship the compact summary with the full message id';
   const seedInput = (id: string, owner: 'neo', text: string) => {
@@ -89,6 +90,7 @@ try {
   seedInput(answeredInput, 'neo', 'Already answered by Neo');
   seedInput(cardAnsweredInput, 'neo', 'Already answered by a card');
   seedInput(pendingInput, 'neo', pendingText);
+  seedInput(longInput, 'neo', 'P '.repeat(20_000));
   prepare(
     'INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(?,?,?,?)'
   ).run(
@@ -173,7 +175,7 @@ try {
   const perTurnFacts = await store.read('planContext');
   assert(perTurnFacts.unanswered === undefined, 'A per-prompt read runs the unanswered scan');
   const compactFacts = await store.read('planContext', true);
-  assert(compactFacts.unanswered?.length === 1, 'The compact read skips the unanswered scan');
+  assert(compactFacts.unanswered?.length === 2, 'The compact read skips the unanswered scan');
   assert.equal(facts.asks.length, 12);
   assert.equal(facts.todos.length, 480);
   assert.equal(facts.questions.length, 12);
@@ -185,9 +187,14 @@ try {
   for (const id of ids)
     assert(lines.find((line) => line.id === id)?.text.includes(`neo.ask.read ${id}`));
   assert.deepEqual(
-    facts.unanswered,
-    [{ id: pendingInput, text: pendingText }],
-    'Plan facts carry only the input Neo owns and has not answered'
+    facts.unanswered?.map((input) => input.id),
+    [pendingInput, longInput],
+    'Plan facts carry only the inputs Neo owns and has not answered'
+  );
+  assert.equal(
+    facts.unanswered[0].text,
+    pendingText,
+    'Plan facts drop the pending message text'
   );
   assert(planNeoPlanContext(null, lines, 'compact').includes('plan-11'));
   const { neoPlanContextHooks } = await import(
@@ -217,6 +224,12 @@ try {
   assert(
     !compactContext.includes(cardAnsweredInput),
     'The session hook repeats a message a card already answered'
+  );
+  const longEntry = compactContext.slice(compactContext.indexOf(longInput));
+  assert(longEntry.includes('(truncated'), 'A long unanswered message enters compaction uncapped');
+  assert(
+    Buffer.byteLength(longEntry.slice(0, longEntry.indexOf('\n')), 'utf8') < 3_000,
+    'The truncated unanswered entry still fills the context'
   );
   const startupContext = await sessionStart('startup');
   assert(!startupContext.includes(pendingInput), 'A startup session repeats the pending message');

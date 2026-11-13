@@ -93,6 +93,16 @@ export function fitNeoPlanLines(lines: readonly NeoPlanLine[], budget: number): 
     });
 }
 
+const UNANSWERED_TEXT_LIMIT = 2_048;
+
+function unansweredText(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const bytes = new TextEncoder().encode(flat);
+  if (bytes.length <= UNANSWERED_TEXT_LIMIT) return flat;
+  const cut = new TextDecoder().decode(bytes.slice(0, UNANSWERED_TEXT_LIMIT));
+  return `${cut.replace(/�+$/, '')}… (truncated; read the full message with neo.conversation.read.)`;
+}
+
 export function planNeoPlanContext(
   previous: readonly NeoPlanLine[] | null,
   lines: readonly NeoPlanLine[],
@@ -107,7 +117,7 @@ export function planNeoPlanContext(
       `Unanswered messages\n${unanswered
         .map(
           (input) =>
-            `Message ${input.id} (full id; reply with replyTo: ["${input.id}"]): ${input.text.replace(/\s+/g, ' ').trim()}`
+            `Message ${input.id} (full id; reply with replyTo: ["${input.id}"]): ${unansweredText(input.text)}`
         )
         .join('\n')}`,
     ].join('\n');
