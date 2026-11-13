@@ -81,6 +81,24 @@ describe('codingAskMatter', () => {
       codingAskMatter({ title: 'Compare', request: `${pull} against synthetic/proof#8` })
     ).toBeNull();
   });
+
+  test('a short form names the pull request in the ask’s own repository', () => {
+    const repos = ['synthetic/proof'];
+    for (const request of ['Review proof#7', 'Merge Proof#7 now', 'Merge #7', 'Look at PR #7'])
+      expect(codingAskMatter({ title: 'Handle it', request }, repos)).toBe('synthetic/proof#7');
+    expect(codingAskMatter({ title: 'Review proof#7', request: `It is ${pull}` }, repos)).toBe(
+      'synthetic/proof#7'
+    );
+  });
+
+  test('a short form that fits no project repository, or more than one, has no key', () => {
+    const ask = (request: string) => ({ title: 'Handle it', request });
+    expect(codingAskMatter(ask('Merge #7'), [])).toBeNull();
+    expect(codingAskMatter(ask('Merge #7'), ['synthetic/proof', 'synthetic/other'])).toBeNull();
+    expect(codingAskMatter(ask('Review other#7'), ['synthetic/proof'])).toBeNull();
+    expect(codingAskMatter(ask('Review proof#7'), ['synthetic/proof', 'mirror/proof'])).toBeNull();
+    expect(codingAskMatter(ask(`Merge #8 after ${pull}`), ['synthetic/proof'])).toBeNull();
+  });
 });
 
 describe('neoAskMatterRefusal', () => {
