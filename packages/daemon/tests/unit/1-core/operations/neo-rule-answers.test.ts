@@ -14,6 +14,7 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { openHumanCard } from '../../../../src/lib/neo/human-card.ts';
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: ReturnType<typeof createNeoService>;
 let published: GlobalSettings[];
@@ -24,6 +25,8 @@ const agent: OperationCaller = {
   role: 'neo',
 };
 const edit = { add: ['Ask before publishing.'], remove: ['Old synthetic rule.'] };
+const APPLY = 'Apply these rule changes';
+const KEEP = 'Keep current rules';
 beforeEach(async () => {
   db = await createTestDb();
   await db.createSession(createTestSession('neo:10000000-0000-4000-8000-000000000002'));
@@ -74,7 +77,7 @@ describe('human-approved standing rules', () => {
       {
         sessionId: agent.sessionId,
         requestId: messageId,
-        content: 'yes',
+        content: 'A',
         replyTo: { kind: 'question', id: questionId },
       },
       human
@@ -119,7 +122,7 @@ describe('human-approved standing rules', () => {
 
   test('a non-approving reply cannot borrow a previously approved proposal', async () => {
     const questionId = await propose('prior-approval', { add: edit.add, remove: [] });
-    await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
+    await invoke('neo.question.answer', { questionId, answer: APPLY }, human);
     const messageId = crypto.randomUUID();
     await invoke(
       'neo.message.send',
@@ -149,7 +152,7 @@ describe('human-approved standing rules', () => {
         {
           sessionId: agent.sessionId,
           requestId: messageId,
-          content: 'yes',
+          content: 'A',
           replyTo: { kind: 'question', id: questionId },
         },
         human
@@ -175,7 +178,7 @@ describe('human-approved standing rules', () => {
       if (surface === 'applyAnswer')
         db.updateGlobalSettings({ neo: { standingRules: ['Keep this rule.'] } });
       expect(
-        await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)
+        await invoke('neo.question.answer', { questionId, answer: APPLY }, human)
       ).toMatchObject({ value: { ok: true } });
       if (surface === 'applyAnswer') {
         db.updateGlobalSettings({
@@ -234,12 +237,12 @@ describe('human-approved standing rules', () => {
     expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
       value: { ok: false },
     });
-    expect(await invoke('neo.question.answer', { questionId: id, answer: 'yes' })).toMatchObject({
+    expect(await invoke('neo.question.answer', { questionId: id, answer: APPLY })).toMatchObject({
       kind: 'failed',
       code: 'forbidden',
     });
     expect(
-      await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
+      await invoke('neo.question.answer', { questionId: id, answer: APPLY }, human)
     ).toMatchObject({ value: { ok: true } });
     expect(await invoke('neo.question.get', { questionId: id })).toMatchObject({
       value: { answeredByHuman: true },
@@ -257,13 +260,13 @@ describe('human-approved standing rules', () => {
       const id = await propose();
       const result =
         surface === 'button'
-          ? await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
+          ? await invoke('neo.question.answer', { questionId: id, answer: APPLY }, human)
           : await invoke(
               'neo.message.send',
               {
                 sessionId: 'neo:10000000-0000-4000-8000-000000000002',
                 requestId: crypto.randomUUID(),
-                content: 'yes',
+                content: 'A',
                 replyTo: { kind: 'question', id },
               },
               human
@@ -280,7 +283,7 @@ describe('human-approved standing rules', () => {
   );
   test('post-answer payload injection and proposal rebinding are refused', async () => {
     const id = await propose();
-    await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human);
+    await invoke('neo.question.answer', { questionId: id, answer: APPLY }, human);
     const before = saved();
     expect(
       await invoke('neo.rule.applyAnswer', { questionId: id, add: ['Tampered.'] })
@@ -296,16 +299,110 @@ describe('human-approved standing rules', () => {
         .run(id)
     ).toThrow();
   });
-  test.each(['no', 'Change the wording'])('human %s leaves rules unchanged', async (answer) => {
-    const before = saved();
+  test('the card offers applying or keeping the current rules', async () => {
     const id = await propose();
-    if (answer === 'no') await invoke('neo.question.answer', { questionId: id, answer }, human);
-    else service.todos.answerQuestion(service.todos.getQuestion(id)!, answer, 'chat', 2);
-    expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
-      value: { ok: false },
+    expect(service.todos.getQuestion(id)).toMatchObject({
+      kind: 'choice',
+      options: [APPLY, KEEP],
+      multiple: false,
     });
-    expect(saved()).toEqual(before);
   });
+  test.each([APPLY, 'a'])('chat %s applies the proposal', async (content) => {
+    const id = await propose();
+    await invoke(
+      'neo.message.send',
+      {
+        sessionId: agent.sessionId,
+        requestId: crypto.randomUUID(),
+        content,
+        replyTo: { kind: 'question', id },
+      },
+      human
+    );
+    expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
+  });
+  test.each(['button keep', 'B', 'yes', 'Change the wording'])(
+    'human %s leaves rules unchanged',
+    async (answer) => {
+      const before = saved();
+      const id = await propose();
+      if (answer === 'button keep')
+        await invoke('neo.question.answer', { questionId: id, answer: KEEP }, human);
+      else
+        await invoke(
+          'neo.message.send',
+          {
+            sessionId: agent.sessionId,
+            requestId: crypto.randomUUID(),
+            content: answer,
+            replyTo: { kind: 'question', id },
+          },
+          human
+        );
+      expect(service.todos.getQuestion(id)?.state).toBe('answered');
+      expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
+        value: { ok: false },
+      });
+      expect(saved()).toEqual(before);
+    }
+  );
+  test.each(['button', 'chat', 'applyAnswer', 'rule-save'])(
+    'a yes/no proposal opened before the upgrade still applies on yes by %s',
+    async (surface) => {
+      const questionId = 'legacy-rule';
+      const text = `Apply these standing-rule changes?\n\n${JSON.stringify(edit)}`;
+      openHumanCard(
+        service.todos,
+        questionId,
+        'ask',
+        {
+          text,
+          kind: 'yesno',
+          options: null,
+          multiple: false,
+          noLabel: KEEP,
+          yesLabel: APPLY,
+          startTodos: null,
+        },
+        1
+      );
+      db.getDatabase()
+        .prepare(
+          'INSERT INTO neo_rule_proposals (question_id, request_id, edit_json, question_text) VALUES (?, ?, ?, ?)'
+        )
+        .run(questionId, 'legacy', JSON.stringify(edit), text);
+      if (surface === 'applyAnswer') db.updateGlobalSettings({ neo: { standingRules: [] } });
+      const messageId = crypto.randomUUID();
+      if (surface === 'button' || surface === 'applyAnswer')
+        await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
+      else
+        await invoke(
+          'neo.message.send',
+          {
+            sessionId: agent.sessionId,
+            requestId: messageId,
+            content: 'yes',
+            replyTo: { kind: 'question', id: questionId },
+          },
+          human
+        );
+      if (surface === 'applyAnswer') {
+        db.updateGlobalSettings({
+          neo: { standingRules: ['Old synthetic rule.', 'Keep this rule.'] },
+        });
+        expect(await invoke('neo.rule.applyAnswer', { questionId })).toMatchObject({
+          value: { ok: true },
+        });
+      }
+      if (surface === 'rule-save') {
+        db.getSDKMessageRepo().markDeliveryConsumedByUuid(agent.sessionId!, messageId);
+        expect(await invoke('neo.rule.save', { ...edit, messageId })).toMatchObject({
+          value: { ok: true, standingRules: ['Keep this rule.', ...edit.add] },
+        });
+      }
+      expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
+    }
+  );
   test('with twenty rules a proposal must replace one, and keeps the other nineteen', async () => {
     const rules = Array.from({ length: 20 }, (_, i) => `Synthetic rule ${i}.`);
     db.updateGlobalSettings({ neo: { standingRules: rules } });
@@ -313,13 +410,13 @@ describe('human-approved standing rules', () => {
       await invoke('neo.rule.ask', { askId: 'ask', requestId: 'over', add: edit.add })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('At most 20') } });
     const id = await propose('replace', { add: edit.add, remove: [rules[0]] });
-    service.todos.answerQuestion(service.todos.getQuestion(id)!, 'yes', 'chat', 2);
+    service.todos.answerQuestion(service.todos.getQuestion(id)!, [APPLY], 'chat', 2);
     expect(saved()).toEqual([...rules.slice(1), ...edit.add]);
   });
   test('pending retries keep identity, closed retries require a new request', async () => {
     const id = await propose();
     expect(await propose()).toBe(id);
-    await invoke('neo.question.answer', { questionId: id, answer: 'no' }, human);
+    await invoke('neo.question.answer', { questionId: id, answer: KEEP }, human);
     expect(
       await invoke('neo.rule.ask', { askId: 'ask', requestId: 'request', ...edit })
     ).toMatchObject({ value: { ok: false, reason: 'question_closed' } });
@@ -335,7 +432,7 @@ describe('human-approved standing rules', () => {
       ...Array.from({ length: 19 }, (_, i) => `Other rule ${i}.`),
     ];
     db.updateGlobalSettings({ neo: { standingRules: current } });
-    await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human);
+    await invoke('neo.question.answer', { questionId: id, answer: APPLY }, human);
     expect(saved()).toEqual(current);
     expect(service.todos.getQuestion(id)?.state).toBe('answered');
     expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
@@ -349,7 +446,7 @@ describe('human-approved standing rules', () => {
       .prepare("UPDATE neo_questions SET text='A different change' WHERE id=?")
       .run(id);
     expect(
-      await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
+      await invoke('neo.question.answer', { questionId: id, answer: APPLY }, human)
     ).toMatchObject({ kind: 'failed' });
     expect(service.todos.getQuestion(id)?.state).toBe('open');
     service.todos.askQuestion(
@@ -375,7 +472,7 @@ describe('human-approved standing rules', () => {
   test('a chat yes to a missing-removal stale proposal remains accepted and notifies Neo', async () => {
     const first = await propose('first', edit);
     const second = await propose('second', edit);
-    await invoke('neo.question.answer', { questionId: first, answer: 'yes' }, human);
+    await invoke('neo.question.answer', { questionId: first, answer: APPLY }, human);
     const before = saved();
     const notified: string[] = [];
     const operation = createNeoIntakeOperation(db, service.repo, (sessionId) =>
@@ -385,7 +482,7 @@ describe('human-approved standing rules', () => {
     const input = {
       sessionId: 'neo:10000000-0000-4000-8000-000000000002',
       requestId,
-      content: 'yes',
+      content: 'A',
       replyTo: { kind: 'question', id: second },
     };
     const send = () =>
@@ -399,7 +496,7 @@ describe('human-approved standing rules', () => {
     ).toHaveLength(1);
     expect(service.todos.getQuestion(second)).toMatchObject({
       state: 'answered',
-      answer: 'yes',
+      answer: [APPLY],
       answeredBy: 'chat',
     });
     expect(await invoke('neo.rule.applyAnswer', { questionId: second })).toMatchObject({
@@ -415,7 +512,7 @@ describe('human-approved standing rules', () => {
       "CREATE TRIGGER synthetic_rules_failure BEFORE INSERT ON global_settings BEGIN SELECT RAISE(ABORT,'synthetic_failure'); END"
     );
     expect(
-      await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
+      await invoke('neo.question.answer', { questionId: id, answer: APPLY }, human)
     ).toMatchObject({ kind: 'failed' });
     expect(service.todos.getQuestion(id)?.state).toBe('open');
     expect(saved()).toEqual(before);

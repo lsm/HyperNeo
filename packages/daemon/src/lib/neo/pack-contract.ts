@@ -110,7 +110,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   operations?: readonly OperationDefinition[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
-  matter?(ask: Pick<NeoAsk, 'title' | 'request'>): string | null;
+  matter?(ask: Pick<NeoAsk, 'title' | 'request' | 'projectId'>): string | null;
   tracker?: NeoTrackerAdapter;
   sweep?(now: number): Promise<void>;
   stats?(now: number): Record<string, number> | Promise<Record<string, number>>;

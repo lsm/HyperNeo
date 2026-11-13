@@ -90,7 +90,7 @@ if (worker) {
         assert.equal(message.inputKind, 'system'); current = String(input.key);
         await app.db.saveUserMessage(root, { ...message, type: 'user', uuid: current, session_id: root, parent_tool_use_id: null, isSynthetic: true } as never, 'consumed');
         assert(app.db.getJobQueueRepo().deleteJob(job.id));
-        const result = await client.callTool({ name: 'invoke', arguments: { name: 'neo.publication.publish', input: { requestId: current, verbatim: true, fullText: 'Contact A says the meeting is at noon.' } } });
+        const result = await client.callTool({ name: 'invoke', arguments: { name: 'neo.publication.publish', input: { requestId: current, text: 'Contact A says the meeting is at noon.' } } });
         assert(!result.isError); const receipt = JSON.parse((result.content as { text: string }[])[0].text); assert.equal(receipt.accepted, true);
         value = await hub.request('operation.invoke', { name: 'neo.publication.read', input: { conversationId: repo.conversationId() } });
       } else if (request.action === 'vault-failure') {

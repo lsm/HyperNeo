@@ -29,7 +29,7 @@ try {
   repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
   const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
-  const publish = async (links: unknown[]) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId: 'links-proof', shortText: 'Project update', fullText: 'Open the project below.', links } })).content[0].text);
+  const publish = async (links: unknown[]) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId: 'links-proof', text: 'Project update', details: 'Open the project below.', links } })).content[0].text);
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
   const read = () => new Promise<{ ok: boolean; items: { links: unknown[] }[] }>((resolve, reject) => {

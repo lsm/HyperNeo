@@ -1106,12 +1106,10 @@ export class NeoAskTodoRepository {
           undefined
         );
         for (const { todo, patch } of effects) this.writeTodo(todo, patch, now, false, false);
-        if (answer === 'yes') {
-          const preferences = applyPackPreferenceAnswer(this.db, question.id);
-          if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
-          const rules = applyNeoRuleAnswer(this.db, question.id, approval);
-          if (rules.ok && rules.changed) settingsChanged = 'rules';
-        }
+        const preferences = applyPackPreferenceAnswer(this.db, question.id);
+        if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
+        const rules = applyNeoRuleAnswer(this.db, question.id, approval);
+        if (rules.ok && rules.changed) settingsChanged = 'rules';
       }
       return answered;
     })();

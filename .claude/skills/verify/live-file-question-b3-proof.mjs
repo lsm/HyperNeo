@@ -96,7 +96,7 @@ export async function verifyFileQuestion(page, { run, base, width, bun }) {
   await showQuestion();
   await unlink(path);
   await card.click();
-  await page.getByText('This file is no longer there.', { exact: true }).waitFor();
+  await page.getByText("This file hasn't been created yet, or no longer exists.", { exact: true }).waitFor();
   assert.equal(await ask.count(), 0);
   await shot('missing');
   assert.equal(errors.length, 0, errors.join('\n'));

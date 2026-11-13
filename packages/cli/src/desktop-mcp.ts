@@ -1,9 +1,9 @@
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDataDir } from '../../daemon/src/lib/data-dir.ts';
-import { createDriverTransport } from '../../daemon/src/lib/desktop/driver-transport.ts';
 import { createDesktopProxy } from '../../daemon/src/lib/desktop/mcp-proxy.ts';
 import { serveDesktopMcp } from '../../daemon/src/lib/desktop/mcp-server.ts';
+import { createDesktopTargetBroker } from '../../daemon/src/lib/desktop/target-broker.ts';
 import {
   desktopRecordMissing,
   readDesktopDriverRecord,
@@ -41,7 +41,6 @@ export async function readDesktopBinding(worker: string) {
         worker_id: worker,
         driver_instance_id: `${record.pid}-${record.startedAt.seconds}-${record.startedAt.microseconds}`,
         target_app_id: null,
-        socket: record.socket,
       };
     } catch {
       return null;
@@ -54,13 +53,15 @@ export async function readDesktopBinding(worker: string) {
 export async function runDesktopMcp(args: string[]) {
   if (args.length !== 2 || args[0] !== '--worker' || !/^[A-Za-z0-9_-]{1,64}$/.test(args[1]))
     throw new Error('Usage: hyperneo desktop-mcp --worker <id>');
-  const driver = createDriverTransport();
   const proxy = createDesktopProxy({
     binding: () => readDesktopBinding(args[1]),
-    dispatch: driver.dispatch,
+    dispatch: async () => {
+      throw new Error('driver_unavailable');
+    },
     audit: (line) => {
       process.stderr.write(line + '\n');
     },
+    authorize: createDesktopTargetBroker(getDataDir()),
   });
-  await serveDesktopMcp(proxy, driver);
+  await serveDesktopMcp(proxy);
 }

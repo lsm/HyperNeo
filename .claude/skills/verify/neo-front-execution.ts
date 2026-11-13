@@ -55,7 +55,7 @@ const fixture = createServer(async (request, response) => {
   const last = body.messages?.at(-1);
   const content = JSON.stringify(last?.content ?? '');
   const front = body.tools?.some(
-    (tool: { name: string }) => tool.name === 'mcp__front__work_on'
+    (tool: { name: string }) => tool.name === 'mcp__front__reply'
   );
   if (!front && app?.db.getGlobalSettings().neo?.front?.enabled === true) {
     const names = body.tools?.map((tool: { name: string }) => tool.name) ?? [];
@@ -64,21 +64,19 @@ const fixture = createServer(async (request, response) => {
     evidence.neoToolsPresent = true;
   }
   const history = JSON.stringify(body.messages);
+  if (!front && history.includes('<already-said') && history.includes('I will handle that.'))
+    evidence.neoSawAcknowledgment = true;
   const active = [failedDeliveryId, handoffId, humanId].find(id => history.includes(id)) ?? humanId;
   const stage = stages.get(active) ?? 0;
   let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
-  if (front && stage === 0) {
-    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply_short',
-      input: { requestId: `ack-${active}`, replyTo: [active], progress: true, text: 'I will handle that.' } };
-    stages.set(active, 1);
-  } else if (front && active === handoffId && stage === 1) {
-    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__work_on',
-      input: { requestId: 'work-proof', messageIds: [handoffId] } };
-    stages.set(active, 2);
-  } else if (front && active === humanId && stage === 1) {
-    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply_short',
+  if (front && stage === 0 && active === humanId) {
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply',
       input: { requestId: `final-${active}`, replyTo: [active], text: 'Hello from Neo.' } };
     stages.set(active, 4);
+  } else if (front && stage === 0 && active === handoffId) {
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply',
+      input: { requestId: `work-${active}`, replyTo: [active], work_on: true, text: 'I will handle that.' } };
+    stages.set(active, 2);
   }
   const publish = block.type === 'tool_use';
   requests.push(front ? String(block.name ?? 'front-terminal') : 'neo-turn');
@@ -274,7 +272,7 @@ try {
   const publish = async (requestId: string, replyTo: string[], fullText: string) => {
     const result = await back({
       name: 'neo.publication.publish',
-      input: { requestId, verbatim: true, fullText, replyTo },
+      input: { requestId, text: fullText, replyTo },
     });
     return JSON.parse((result.content[0] as { text: string }).text);
   };
@@ -333,6 +331,7 @@ try {
   evidence.configuredExaExcluded = true;
   evidence.exaRequests = exaRequests;
   assert.equal(evidence.neoToolsPresent, true);
+  assert.equal(evidence.neoSawAcknowledgment, true);
   evidence.passed = true;
   evidence.nativeFrontSession = nativeId;
   evidence.replies = rows.map((row) => ({ text: row.fullText, replyTo: row.replyTo, producerInput: row.producerInput }));
@@ -351,5 +350,5 @@ try {
   writeFileSync(join(run, 'evidence/neo-front-execution.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(
-  'PASS ordinary front session, terminal reply, work_on hand-off and direct Neo updates per human input'
+  'PASS ordinary front session, terminal reply, one-call work_on hand-off and direct Neo updates per human input'
 );

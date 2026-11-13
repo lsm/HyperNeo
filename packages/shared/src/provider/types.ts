@@ -74,6 +74,17 @@ export interface ListRemoteModelsOptions {
   discoveryOnly?: boolean;
 }
 
+export interface UsageWindow {
+  label: string;
+  used: number;
+  limit: number;
+  resetAt: string | null;
+}
+
+export type ProviderUsageResult =
+  | { supported: true; provider: string; windows: UsageWindow[] }
+  | { supported: false; provider: string; reason: 'not_supported' };
+
 export interface Provider {
   readonly id: ProviderId;
 
@@ -84,6 +95,8 @@ export interface Provider {
   isAvailable(): Promise<boolean> | boolean;
 
   getModels(): Promise<ModelInfo[]>;
+
+  getUsage?(): Promise<ProviderUsageResult>;
 
   getCachedModels?(): ModelInfo[] | null;
 
@@ -138,10 +151,21 @@ export interface Provider {
 
   setCuratedModels?(models: CuratedModel[] | undefined): void;
 
-  getModelThinkingMode?(modelId: string): 'off' | 'on' | 'granular' | undefined;
+  getModelThinkingMode?(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): 'off' | 'on' | 'granular' | undefined;
   getModelEffortLevels?(
-    modelId: string
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
   ): Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'> | undefined;
+  getModelDefaultEffort?(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined;
+  getModelContextWindow?(modelId: string, sessionConfig?: ProviderSessionConfig): number;
+  getServedModels?(): ModelInfo[];
+  getRoutedModelId?(modelId: string, sessionConfig?: ProviderSessionConfig): string;
 }
 
 export interface ProviderContext {

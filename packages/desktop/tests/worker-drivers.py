@@ -1,8 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
+import ctypes
 import json
 import os
 from pathlib import Path
 import select
+import shutil
 import signal
 import socket
 import subprocess
@@ -12,46 +14,36 @@ import time
 import unittest
 
 RUNNER = Path(sys.argv.pop(1)).resolve()
-FAKE = f'#!{sys.executable}\n' + '''import json, os, socket, sys, threading, time
-if sys.argv[1:] == ['--version']:
-    print('cua-driver 0.44.0')
-    sys.exit(0)
-assert sys.argv[1] == 'serve'
-assert '--embedded' in sys.argv
-assert '--parent-liveness-stdio' in sys.argv
-path = sys.argv[sys.argv.index('--socket') + 1]
+FAKE = f'#!{sys.executable}\n' + '''import json, os, socket, sys, time
+assert sys.argv[1:3] == ['__private-worker', '--generation'] and sys.argv[4:] == ['--transport-fd=3']
 assert 'FIXTURE_PARENT_ONLY' not in os.environ
 assert not any('API_KEY' in key for key in os.environ)
-if '/slow/' in path:
-    open(path + '.starting', 'w').close()
-    while not os.path.exists(path + '.release'):
+generation, home = sys.argv[3], os.environ['HOME']
+channel = socket.socket(fileno=3)
+assert channel.family == socket.AF_UNIX and channel.type == socket.SOCK_STREAM
+open(os.path.join(home, 'd.pid'), 'w').write(str(os.getpid()))
+if '/slow/' in home:
+    open(os.path.join(home, 'd.starting'), 'w').close()
+    while not os.path.exists(os.path.join(home, 'd.release')):
         time.sleep(0.01)
-server = socket.socket(socket.AF_UNIX)
-server.bind(path)
-os.chmod(path, 0o600)
-server.listen()
-def parent_exit():
-    sys.stdin.buffer.read()
-    hold = os.path.join(os.path.dirname(os.path.dirname(path)), 'hold-stop')
-    if os.path.exists(hold):
-        open(path + '.stopping', 'w').close()
-        while os.path.exists(hold):
-            time.sleep(0.01)
-    os.unlink(path)
-    os._exit(0)
-threading.Thread(target=parent_exit, daemon=True).start()
-while True:
-    client, _ = server.accept()
-    with client, client.makefile('rwb') as stream:
-        request = json.loads(stream.readline())
-        assert request['method'] == 'metadata'
-        response = {'ok': True, 'result': {
-            'driver_version': '0.44.0', 'contract_version': '0.8.0',
-            'tools_list_schema_version': '1', 'capability_version': '1',
-            'mcp_protocol_version': '2025-06-18', 'pid': os.getpid(),
-            'embedded': True, 'host_bundle_id': 'io.hyperneo.app'}}
-        stream.write((json.dumps(response) + '\\n').encode())
+log = open(os.path.join(os.path.dirname(home), 'log-' + os.path.basename(home)), 'a', buffering=1)
+with channel.makefile('rwb') as stream:
+    for line in stream:
+        request = json.loads(line)
+        log.write(request['operation'] + '\\n')
+        result = {'ready': True, 'pid': os.getpid(), 'metadata': {
+            'driver_version': '0.44.0', 'contract_version': '0.8.0'}}
+        stream.write((json.dumps({'protocol_version': 1, 'request_id': request['request_id'],
+            'generation': generation, 'ok': request['generation'] == generation,
+            'completion': 'completed', 'result': result}) + '\\n').encode())
         stream.flush()
+log.write('eof\\n')
+hold = os.path.join(os.path.dirname(home), 'hold-stop')
+if os.path.exists(hold):
+    open(os.path.join(home, 'd.stopping'), 'w').close()
+    while os.path.exists(hold):
+        time.sleep(0.01)
+os._exit(0)
 '''
 CODESIGN = '''#!/bin/bash
 case "$1:$2" in
@@ -81,6 +73,23 @@ def alive(pid):
         return True
     except ProcessLookupError:
         return False
+
+
+def finder():
+    return int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Finder']).split()[0])
+
+
+def window_ids():
+    graphics = ctypes.CDLL('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')
+    foundation = ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+    graphics.CGWindowListCreate.restype = ctypes.c_void_p
+    graphics.CGWindowListCreate.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+    foundation.CFArrayGetCount.argtypes = [ctypes.c_void_p]
+    foundation.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+    foundation.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
+    windows = graphics.CGWindowListCreate(0, 0)
+    assert windows and foundation.CFArrayGetCount(windows) > 0, 'no window to borrow'
+    return [foundation.CFArrayGetValueAtIndex(windows, index) for index in range(min(20, foundation.CFArrayGetCount(windows)))]
 
 
 class WorkerDrivers(unittest.TestCase):
@@ -144,7 +153,7 @@ class WorkerDrivers(unittest.TestCase):
         record = directory / 'driver.json'
         saved = json.loads(record.read_text())
         self.assertEqual(saved['pid'], driver['pid'])
-        self.assertEqual(saved['socket'], driver['socket'])
+        self.assertEqual(set(saved), {'pid', 'startedAt'})
         self.assertGreater(saved['startedAt']['seconds'], 0)
         self.assertGreaterEqual(saved['startedAt']['microseconds'], 0)
         self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
@@ -175,18 +184,17 @@ class WorkerDrivers(unittest.TestCase):
         slow.mkdir()
         with ThreadPoolExecutor(max_workers=2) as pool:
             starting = pool.submit(self.call, 'start', workDir=str(slow))
-            wait_until(lambda: bool(list(slow.glob('d-*/d.sock.starting'))))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.starting'))))
             stopping = pool.submit(self.call, 'stop')
             try:
                 wait_until(lambda: (self.lifecycle() / 'stopped').exists())
                 self.assertTrue((self.lifecycle() / 'starting').exists())
             finally:
-                next(slow.glob('d-*/d.sock.starting')).with_suffix('.release').touch()
+                next(slow.glob('d-*/d.starting')).with_suffix('.release').touch()
             self.assertFalse(starting.result(timeout=15)['ok'])
             self.assertTrue(stopping.result(timeout=15)['ok'])
         record = json.loads((self.lifecycle() / 'driver.json').read_text())
         self.assertFalse(alive(record['pid']))
-        self.assertFalse(Path(record['socket']).exists())
 
     def test_stop_refuses_changed_process_identity(self):
         driver = self.start()
@@ -216,7 +224,6 @@ class WorkerDrivers(unittest.TestCase):
         self.assertFalse(self.call('start', workDir=str(self.work))['ok'])
         self.assertTrue(self.call('stop')['ok'])
         self.assertFalse(alive(driver['pid']))
-        self.assertFalse(Path(driver['socket']).exists())
 
     def test_refuses_a_symlinked_record_directory(self):
         outside = self.root / 'outside'
@@ -268,7 +275,6 @@ class WorkerDrivers(unittest.TestCase):
             result = self.call('stop', worker)
             self.assertTrue(result['ok'], result)
             self.assertFalse(alive(driver['pid']))
-            self.assertFalse(Path(driver['socket']).exists())
             self.assertFalse(self.call('start', worker, workDir=str(self.work))['ok'])
 
     def test_stop_confirms_a_driver_that_already_exited(self):
@@ -277,7 +283,6 @@ class WorkerDrivers(unittest.TestCase):
         result = self.call('stop')
         self.assertTrue(result['ok'], result)
         self.assertFalse(alive(driver['pid']))
-        self.assertFalse(Path(driver['socket']).exists())
 
     def test_latch_at_response_check_stops_the_started_driver(self):
         self.assertTrue(self.call('fixture-latch-on-response')['ok'])
@@ -286,7 +291,6 @@ class WorkerDrivers(unittest.TestCase):
         record = json.loads((self.lifecycle() / 'driver.json').read_text())
         self.pids.append(record['pid'])
         self.assertFalse(alive(record['pid']))
-        self.assertFalse(Path(record['socket']).exists())
         self.assertTrue((self.lifecycle() / 'stopped').exists())
         self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
         self.assertFalse(list(self.work.glob('d-*')))
@@ -305,61 +309,51 @@ class WorkerDrivers(unittest.TestCase):
         self.assertTrue(self.call('fixture-fail-start-cleanup')['ok'])
         result = self.call('start', workDir=str(self.work))
         self.assertFalse(result['ok'], result)
-        path = next(self.work.glob('d-*/d.sock'))
-        with socket.socket(socket.AF_UNIX) as client:
-            client.settimeout(5)
-            client.connect(str(path))
-            client.sendall(b'{"method":"metadata"}\n')
-            with client.makefile('rb') as stream:
-                pid = json.loads(stream.readline())['result']['pid']
+        path = next(self.work.glob('d-*/d.pid'))
+        pid = int(path.read_text())
         self.pids.append(pid)
         self.assertTrue(alive(pid))
-        self.assertTrue(path.is_socket())
-        print(f'combined_failure pid={pid} alive=1 socket_exists=1 incomplete_marker={int((directory / "starting").exists())}')
+        print(f'combined_failure pid={pid} alive=1 incomplete_marker={int((directory / "starting").exists())}')
         self.assertTrue((directory / 'starting').exists())
         self.assertIn('stop_unconfirmed', result['error'])
         retry = self.call('start', workDir=str(self.work))
         self.assertFalse(retry['ok'], retry)
         self.assertEqual(list(self.work.glob('d-*')), [path.parent])
         self.assertTrue((directory / 'starting').exists())
-        print(f'publication_failed=1 cleanup_failed=1 pid={pid} socket_exists=1 incomplete_marker=1 retry_refused=1')
+        print(f'publication_failed=1 cleanup_failed=1 pid={pid} incomplete_marker=1 retry_refused=1')
 
-    def test_two_workers_get_two_drivers_and_two_sockets(self):
+    def test_two_workers_get_two_drivers_and_two_channels(self):
         first, second = self.start(), self.start('worker-b')
         self.assertNotEqual(first['pid'], second['pid'])
-        self.assertNotEqual(first['socket'], second['socket'])
-        for driver in (first, second):
-            path = Path(driver['socket'])
-            self.assertTrue(path.is_socket())
-            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
-            self.assertEqual(path.parent.parent, self.work)
+        homes = [path for path in self.work.glob('d-*') if path.is_dir()]
+        self.assertEqual(len(homes), 2)
+        for home in homes:
+            self.assertEqual(home.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((home.parent / f'log-{home.name}').read_text(), 'initialize\n')
         self.assertEqual(self.call('status')['result']['pid'], first['pid'])
         self.assertEqual(self.start()['pid'], first['pid'])
-        print(f'drivers=2 distinct_pids=2 distinct_sockets=2')
+        print('drivers=2 distinct_pids=2 distinct_channels=2')
 
     def test_app_stops_a_workers_driver(self):
         driver, other = self.start(), self.start('worker-b')
         self.assertTrue(self.call('stop')['ok'])
         wait_until(lambda: not alive(driver['pid']))
-        self.assertFalse(Path(driver['socket']).exists())
         self.assertTrue(alive(other['pid']))
         self.assertEqual(self.call('status')['result']['state'], 'stopped')
-        print('stopped_pid_gone=1 stopped_socket_gone=1 other_driver_alive=1')
+        print('stopped_pid_gone=1 other_driver_alive=1')
 
     def test_driver_exits_when_the_app_exits(self):
         driver = self.start()
         self.process.kill()
         self.process.wait(timeout=10)
         wait_until(lambda: not alive(driver['pid']))
-        self.assertFalse(Path(driver['socket']).exists())
-        print(f'app_exit={self.process.returncode} driver_pid_gone=1 driver_socket_gone=1')
+        print(f'app_exit={self.process.returncode} driver_pid_gone=1')
 
     def test_app_shutdown_stops_drivers(self):
         driver = self.start()
         self.process.send_signal(signal.SIGINT)
         self.assertEqual(self.process.wait(timeout=10), 0)
         wait_until(lambda: not alive(driver['pid']))
-        self.assertFalse(Path(driver['socket']).exists())
         self.assertFalse((self.root / 'desktop/control.sock').exists())
 
     def test_refuses_signature_failure_before_start(self):
@@ -368,8 +362,11 @@ class WorkerDrivers(unittest.TestCase):
         self.assertEqual(self.call('status')['result']['state'], 'stopped')
 
     def test_refuses_version_mismatch_before_start(self):
-        self.binary.write_text(FAKE.replace('cua-driver 0.44.0', 'cua-driver 0.0.0'))
-        self.assertFalse(self.call('start', workDir=str(self.work))['ok'])
+        self.binary.write_text(FAKE.replace("'driver_version': '0.44.0'", "'driver_version': '0.0.0'"))
+        result = self.call('start', workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        self.assertIn('version', result['error'])
+        self.assertFalse([path for path in self.work.glob('d-*') if path.is_dir()])
         self.assertEqual(self.call('status')['result']['state'], 'stopped')
 
     def test_revalidates_signature_on_repeated_start(self):
@@ -406,14 +403,14 @@ class WorkerDrivers(unittest.TestCase):
         slow.mkdir()
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(self.call, 'start', 'slow-worker', workDir=str(slow))
-            wait_until(lambda: bool(list(slow.glob('d-*/d.sock.starting'))))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.starting'))))
             before = time.monotonic()
             self.assertTrue(self.call('status')['ok'])
             self.assertTrue(self.call('stop')['ok'])
             self.assertFalse(pending.done())
             print(f'other_worker_stop_seconds={time.monotonic() - before:.3f}')
             wait_until(lambda: not alive(driver['pid']))
-            marker = next(slow.glob('d-*/d.sock.starting'))
+            marker = next(slow.glob('d-*/d.starting'))
             marker.with_suffix('.release').touch()
             result = pending.result(timeout=15)
             self.assertTrue(result['ok'], result)
@@ -459,7 +456,6 @@ class WorkerDrivers(unittest.TestCase):
         self.assertFalse(self.call('start', workDir=str(self.work), fixtureEnabled=True)['ok'])
         status = self.call('status')['result']
         self.assertEqual(status['state'], 'unavailable')
-        self.assertIsNone(status['socket'])
         self.assertIsNone(status['pid'])
         self.assertFalse(list(self.work.glob('d-*')))
 
@@ -529,7 +525,7 @@ class WorkerDrivers(unittest.TestCase):
         self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
 
     def test_failed_start_releases_worker_slot(self):
-        incompatible = FAKE.replace("'contract_version': '0.8.0'", "'contract_version': 'invalid'")
+        incompatible = FAKE.replace("'driver_version': '0.44.0'", "'driver_version': '0.43.0'")
         for signature, binary in (('#!/bin/bash\nexit 1\n', FAKE), (CODESIGN, incompatible)):
             with self.subTest(signature=signature == CODESIGN):
                 self.codesign.write_text(signature)
@@ -552,7 +548,7 @@ class WorkerDrivers(unittest.TestCase):
         self.pids.append(first['pid'])
         with ThreadPoolExecutor(max_workers=2) as pool:
             stopping = pool.submit(self.call, 'stop')
-            wait_until(lambda: bool(list(queued.glob('d-*/d.sock.stopping'))))
+            wait_until(lambda: bool(list(queued.glob('d-*/d.stopping'))))
             starting = pool.submit(self.call, 'start', workDir=str(queued))
             wait_until(starting.done)
             hold.unlink()
@@ -566,13 +562,92 @@ class WorkerDrivers(unittest.TestCase):
 
     def test_fake_driver_rejects_inherited_parent_environment(self):
         result = subprocess.run(
-            [str(self.binary), 'serve', '--embedded', '--parent-liveness-stdio',
-             '--socket', str(self.root / 'inherited.sock')],
+            [str(self.binary), '__private-worker', '--generation', 'g', '--transport-fd=3'],
             env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test',
                  'FIXTURE_PARENT_ONLY': 'scrub-me'},
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('FIXTURE_PARENT_ONLY', result.stderr)
+
+    def test_worker_record_gives_a_same_user_process_no_input_endpoint(self):
+        driver = self.start()
+        record = json.loads((self.lifecycle() / 'driver.json').read_text())
+        self.assertEqual(set(record), {'pid', 'startedAt'})
+        self.assertEqual(set(self.call('status')['result']), {'state', 'pid'})
+        endpoints = [path for path in self.root.rglob('*') if path.is_socket()]
+        self.assertEqual(endpoints, [self.root / 'desktop/control.sock'])
+        log = next(self.work.glob('log-d-*'))
+        self.assertEqual(log.read_text(), 'initialize\n')
+        self.assertTrue(self.call('stop')['ok'])
+        wait_until(lambda: not alive(driver['pid']))
+        self.assertEqual(log.read_text(), 'initialize\neof\n')
+        print('record_keys=pid,startedAt driver_endpoints=0 fixture_exchange=1 stop_closed_channel=1')
+
+    def resolve(self, tool, arguments, instance=None):
+        params = dict(tool=tool, arguments=arguments, callId='call-' + tool)
+        if instance is not None:
+            params['instance'] = instance
+        result = self.call('resolve', **params)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['result'].pop('call_id'), 'call-' + tool)
+        return result['result']
+
+    def spawn(self, binary):
+        child = subprocess.Popen([str(binary), '30'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        return child.pid
+
+    def bundle(self, bundle_id, signing_id):
+        app = self.root / f'{signing_id}.app'
+        (app / 'Contents/MacOS').mkdir(parents=True)
+        shutil.copy('/bin/sleep', app / 'Contents/MacOS/Fixture')
+        (app / 'Contents/Info.plist').write_text(
+            '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string>'
+            f'<key>CFBundleIdentifier</key><string>{bundle_id}</string></dict></plist>')
+        subprocess.run(['/usr/bin/codesign', '-f', '-s', '-', '-i', signing_id, str(app)],
+                       check=True, capture_output=True)
+        return self.spawn(app / 'Contents/MacOS/Fixture')
+
+    def test_resolve_verified_process_returns_exact_app_and_class(self):
+        pid = finder()
+        target = self.resolve('click', {'pid': pid})['value']
+        self.assertEqual((target['bundle_id'], target['class']), ('com.apple.finder', 'pointer'))
+        self.assertEqual(target['requirement'], 'identifier "com.apple.finder" and anchor apple')
+        self.assertEqual(target['instance']['pid'], pid)
+        again = self.resolve('type_text', {'pid': pid}, target['instance'])['value']
+        self.assertEqual((again['bundle_id'], again['class']), ('com.apple.finder', 'keyboard'))
+        launch = self.resolve('launch_app', {'bundle_id': 'com.apple.calculator'})['value']
+        self.assertEqual((launch['path'], launch['class']), ('/System/Applications/Calculator.app', 'launch'))
+
+    def test_resolve_refuses_copied_bundle_id(self):
+        pid = self.bundle('com.apple.calculator', 'com.apple.calculator')
+        self.assertEqual(self.resolve('click', {'pid': pid}), {'reason': 'target_unverified', 'class': 'pointer'})
+        self.assertEqual(self.resolve('launch_app', {'bundle_id': 'io.hyperneo.missing'}),
+                         {'reason': 'target_unverified', 'class': 'launch'})
+
+    def test_resolve_refuses_missing_or_inconsistent_app_identity(self):
+        self.assertEqual(self.resolve('click', {'pid': self.spawn(Path('/bin/sleep'))}),
+                         {'reason': 'target_unverified', 'class': 'pointer'})
+        pid = self.bundle('io.example.bundle', 'io.example.signer')
+        self.assertEqual(self.resolve('click', {'pid': pid}), {'reason': 'target_mismatch', 'class': 'pointer'})
+
+    def test_resolve_refuses_recycled_pid(self):
+        pid = finder()
+        instance = self.resolve('click', {'pid': pid})['value']['instance']
+        recycled = dict(instance, startedAt=dict(instance['startedAt'], seconds=instance['startedAt']['seconds'] - 1))
+        self.assertEqual(self.resolve('click', {'pid': pid}, recycled), {'reason': 'target_mismatch', 'class': 'pointer'})
+
+    def test_resolve_refuses_window_owned_by_another_app(self):
+        pid = finder()
+        refusals = [self.resolve('click', {'pid': pid, 'window_id': window}) for window in window_ids()]
+        self.assertIn({'reason': 'target_mismatch', 'class': 'pointer', 'bundle_id': 'com.apple.finder'}, refusals)
+        for window in (-1, 2 ** 32 + 1, '7'):
+            self.assertEqual(self.resolve('zoom', {'pid': pid, 'window_id': window}),
+                             {'reason': 'target_unverified', 'class': 'observe', 'bundle_id': 'com.apple.finder'})
+
+    def test_resolve_refuses_tools_outside_the_allowlist(self):
+        self.assertEqual(self.resolve('kill_app', {'pid': os.getpid()}), {'reason': 'tool_not_allowed'})
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])

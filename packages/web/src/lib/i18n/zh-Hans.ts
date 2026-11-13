@@ -345,7 +345,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.loading': '正在加载预览…',
   'artifact.liveLimit': '文件太大，无法在这里预览。',
   'artifact.safeOpenUnavailable': '这个平台无法安全读取文件引用。',
-  'artifact.missing': '这个文件已经不在了。',
+  'artifact.missing': '这个文件还没有创建，或者已经不在了。',
   'artifact.fileChanged': '读取时文件发生了变化，请重新打开以读取当前版本。',
   'artifact.downloadSafeHtml': '下载安全 HTML',
   'artifact.daemonUnavailable': '连不上保存这个文件的 daemon。',

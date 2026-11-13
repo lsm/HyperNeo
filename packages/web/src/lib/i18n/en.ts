@@ -348,7 +348,7 @@ export const en = {
   'artifact.loading': 'Loading preview…',
   'artifact.liveLimit': 'This file is too large to preview here.',
   'artifact.safeOpenUnavailable': 'This platform cannot safely open file references.',
-  'artifact.missing': 'This file is no longer there.',
+  'artifact.missing': "This file hasn't been created yet, or no longer exists.",
   'artifact.fileChanged': 'This file changed while loading. Reopen it to read the current version.',
   'artifact.downloadSafeHtml': 'Download safe HTML',
   'artifact.daemonUnavailable': 'The daemon that owns this file is not reachable.',

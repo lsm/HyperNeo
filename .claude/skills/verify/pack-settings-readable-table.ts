@@ -86,7 +86,7 @@ try {
     const browser = Bun.spawn([process.env.VERIFY_NODE!, '.claude/skills/verify/pack-settings-readable-table.mjs', String(port), run], { stdout: 'inherit', stderr: 'inherit' });
     assert.equal(await browser.exited, 0, 'headless question render failed');
     const answer = await rpc('neo.question.get', { questionId: question.id });
-    assert.equal(answer.question.answer, 'yes');
+    assert.deepEqual(answer.question.answer, [store.getQuestion(question.id)!.options![0]]);
     assert.equal(answer.answeredByHuman, true);
     const saved = (await rpc('pack.preferences.list')).preferences.filter((row: { key: string }) => row.key !== 'watchedRepos');
     for (const value of values) assert(saved.some((row: any) => row.pack === value.pack && row.scope.key === value.scope.key && row.key === value.key && JSON.stringify(row.value) === JSON.stringify(value.value) && row.setBy === 'human'));

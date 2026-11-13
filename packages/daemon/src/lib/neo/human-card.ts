@@ -16,6 +16,28 @@ export function openHumanCard(
   return store.askQuestion(id, askId, draft, now);
 }
 
+export function applyOrKeepCard(text: string, apply: string, keep: string): NeoQuestionDraft {
+  return {
+    text,
+    kind: 'choice',
+    options: [apply, keep],
+    multiple: false,
+    noLabel: null,
+    yesLabel: null,
+    startTodos: null,
+  };
+}
+
+export function humanPickedApply(question: {
+  kind: string;
+  options: readonly string[] | null;
+  answer: unknown;
+}): boolean {
+  return question.kind === 'yesno'
+    ? question.answer === 'yes'
+    : question.kind === 'choice' && [question.answer].flat().join('\n') === question.options?.[0];
+}
+
 export function replaceHumanCard(
   store: NeoAskTodoRepository,
   replaced: NeoQuestion,

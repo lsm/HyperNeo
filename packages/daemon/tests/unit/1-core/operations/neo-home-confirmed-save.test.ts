@@ -5,6 +5,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
+import { openHumanCard } from '../../../../src/lib/neo/human-card.ts';
+import { readNeoReply, recordNeoReplyAnswer } from '../../../../src/lib/neo/intake.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/packs/coding/home/repository.ts';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -58,27 +60,60 @@ const call = async (name: string, input: unknown, caller = human) => {
     question: { id: string };
   };
 };
-const proposal = async (value = input, state = 'yes') => {
+const chat = (questionId: string, content: string) => {
+  const requestId = crypto.randomUUID();
+  const replyTo = { kind: 'question' as const, id: questionId };
+  recordNeoReplyAnswer(
+    { ok: true, requestId, messageId: requestId, created: true },
+    readNeoReply(replyTo, todos),
+    { sessionId: owner.sessionId!, requestId, content, replyTo },
+    todos,
+    owner.sessionId!
+  );
+};
+const proposal = async (value = input, state = 'button') => {
   const confirm = {
     path: value.path,
     sha256: createHash('sha256').update(value.content).digest('hex'),
   };
+  const text = `Old: previous mandate. New: proposed mandate. Path: ${confirm.path}\nSHA-256: ${confirm.sha256}`;
+  if (state === 'legacy') {
+    const questionId = crypto.randomUUID();
+    openHumanCard(
+      todos,
+      questionId,
+      'ask',
+      {
+        text,
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'Keep old',
+        yesLabel: 'Use new',
+        startTodos: null,
+        confirm,
+      },
+      Date.now()
+    );
+    await call('neo.question.answer', { questionId, answer: 'yes' });
+    return questionId;
+  }
   const asked = await call(
     'neo.question.ask',
     {
       retireWhen: pendingTodoCheck,
       askId: 'ask',
-      kind: 'yesno',
-      text: `Old: previous mandate. New: proposed mandate. Path: ${confirm.path}\nSHA-256: ${confirm.sha256}`,
-      noLabel: 'Keep old',
-      yesLabel: 'Use new',
+      kind: 'choice',
+      text,
+      options: ['Use new'],
       confirm,
     },
     owner
   );
   const questionId = asked.question.id;
-  if (state === 'yes' || state === 'no')
-    await call('neo.question.answer', { questionId, answer: state });
+  if (state === 'button') await call('neo.question.answer', { questionId, answer: ['Use new'] });
+  if (state === 'letter') chat(questionId, 'A');
+  if (state === 'other words') chat(questionId, 'later');
   if (state === 'retired')
     await call('neo.question.retire', { questionId, reason: 'Superseded' }, owner);
   return questionId;
@@ -142,6 +177,16 @@ describe('Neo human-confirmed home saves', () => {
     expect(await git('rev-parse', 'HEAD')).toBe(changed.commit!);
     expect(await git('status', '--porcelain')).toBe('');
   });
+  test.each(['button', 'letter', 'legacy'])(
+    'saves on the confirmed option chosen by %s',
+    async (state) => {
+      const questionId = await proposal(input, state);
+      expect(await call('neo.home.save', { ...input, questionId }, owner)).toMatchObject({
+        ok: true,
+      });
+      expect(await bytes(input.path)).toEqual(Buffer.from(input.content));
+    }
+  );
   test.each(['direction.md', input.path])(
     'commits %s with its decision and human trailer once',
     async (path) => {
@@ -178,7 +223,7 @@ describe('Neo human-confirmed home saves', () => {
     'missing',
     'unknown',
     'open',
-    'no',
+    'other words',
     'retired',
     'path',
     'hash',
@@ -189,7 +234,10 @@ describe('Neo human-confirmed home saves', () => {
   ])('refuses %s confirmation without changing the repo', async (state) => {
     let questionId = state === 'missing' ? undefined : 'unknown';
     if (!['missing', 'unknown'].includes(state))
-      questionId = await proposal(input, ['open', 'no', 'retired'].includes(state) ? state : 'yes');
+      questionId = await proposal(
+        input,
+        ['open', 'other words', 'retired'].includes(state) ? state : 'button'
+      );
     const sql = db.getDatabase();
     if (state === 'worker ask')
       sql.prepare("UPDATE neo_asks SET session_id = 'worker' WHERE id = 'ask'").run();

@@ -122,7 +122,7 @@ describe('Neo publication ledger', () => {
     { ...input, conversationId: 'not-a-uuid' },
     { ...input, publicationId: 'not-a-uuid' },
     { ...input, shortText: ' ' },
-    { ...input, shortText: 'a'.repeat(2001) },
+    { ...input, shortText: 'a'.repeat(4001) },
     { ...input, fullText: '' },
     { ...input, fullText: 'a'.repeat(16001) },
     { ...input, askOrigin: { sessionId: ' ', messageId: 'ask' } },
@@ -166,7 +166,7 @@ describe('Neo publication ledger', () => {
   test('maximum bounds, Unicode, authored whitespace and link ordering are preserved', () => {
     const bounded = {
       ...input,
-      shortText: 'a'.repeat(2000),
+      shortText: 'a'.repeat(4000),
       fullText: 'a'.repeat(16000),
       links: Array.from({ length: 16 }, (_, index) => ({
         label: 'a'.repeat(120),

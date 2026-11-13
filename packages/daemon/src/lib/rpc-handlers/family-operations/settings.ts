@@ -1,6 +1,8 @@
 import type { GlobalSettings, ModelInfo } from '@hyperneo/shared';
+import type { Provider, ProviderUsageResult } from '@hyperneo/shared/provider';
 import { z } from 'zod';
 import { findInModels, getAvailableModels } from '../../model-service.ts';
+import { initializeProviders } from '../../providers/factory.ts';
 import {
   defineOperation,
   type OperationCaller,
@@ -16,6 +18,10 @@ export interface DefaultModelDeps {
   readonly models: () => readonly ModelInfo[];
 }
 
+export interface ProviderUsageDeps {
+  readonly provider: (providerId: string) => Provider | undefined;
+}
+
 const ModelEntry = z.object({ id: z.string(), name: z.string(), provider: z.string() });
 const DefaultModel = z.object({
   model: z.string().nullable(),
@@ -24,6 +30,26 @@ const DefaultModel = z.object({
 });
 const NeoOnly = z.object({ ok: z.literal(false), reason: z.literal('neo_only') });
 const NEO_ONLY = { ok: false as const, reason: 'neo_only' as const };
+const ProviderUsageInput = z.object({ providerId: z.string().min(1) });
+const ProviderUsage = z.union([
+  z.object({
+    supported: z.literal(true),
+    provider: z.string(),
+    windows: z.array(
+      z.object({
+        label: z.string(),
+        used: z.number(),
+        limit: z.number(),
+        resetAt: z.string().nullable(),
+      })
+    ),
+  }),
+  z.object({
+    supported: z.literal(false),
+    provider: z.string(),
+    reason: z.literal('not_supported'),
+  }),
+]);
 const SetInput = z.object({
   model: z.string().min(1),
   provider: z.string().min(1).optional(),
@@ -44,6 +70,32 @@ export function readDefaultModel(deps: DefaultModelDeps): z.infer<typeof Default
 
 export function admitDefaultModelCaller(caller: OperationCaller): boolean {
   return caller.source !== 'mcp' || caller.role === 'neo';
+}
+
+export async function readProviderUsage(
+  input: z.infer<typeof ProviderUsageInput>,
+  deps: ProviderUsageDeps
+): Promise<ProviderUsageResult> {
+  const provider = deps.provider(input.providerId);
+  if (!provider?.getUsage) {
+    return { supported: false, provider: input.providerId, reason: 'not_supported' };
+  }
+  return provider.getUsage();
+}
+
+export function createProviderUsageOperations(deps: ProviderUsageDeps): OperationDefinition[] {
+  return [
+    defineOperation({
+      name: 'settings.provider.usage',
+      description:
+        'Read the current plan usage windows for a provider. Returns not_supported when the provider is missing or has no usage adapter. Credentials and endpoint configuration are never included. Only Neo and the local app may call it.',
+      inputSchema: ProviderUsageInput,
+      resultSchema: z.union([NeoOnly, ProviderUsage]),
+      policy: { safetyClass: 'read', roles: ['neo'] },
+      execute: async (input, caller) =>
+        admitDefaultModelCaller(caller) ? readProviderUsage(input, deps) : NEO_ONLY,
+    }),
+  ];
 }
 
 export function setDefaultModel(input: z.infer<typeof SetInput>, deps: DefaultModelDeps) {
@@ -113,12 +165,17 @@ export function createDefaultModelOperations(deps: DefaultModelDeps): OperationD
 
 export function registerSettingsOperations(context: FamilyOperationContext): OperationDefinition[] {
   const { settingsManager, internalEventBus, credentialManager } = context.deps;
-  return createDefaultModelOperations({
-    read: () => settingsManager.getGlobalSettings(),
-    write: (model, provider) => {
-      const updated = settingsManager.updateGlobalSettings({ model, modelProvider: provider });
-      publishGlobalSettings(internalEventBus, updated, credentialManager);
-    },
-    models: () => getAvailableModels('global'),
-  });
+  return [
+    ...createDefaultModelOperations({
+      read: () => settingsManager.getGlobalSettings(),
+      write: (model, provider) => {
+        const updated = settingsManager.updateGlobalSettings({ model, modelProvider: provider });
+        publishGlobalSettings(internalEventBus, updated, credentialManager);
+      },
+      models: () => getAvailableModels('global'),
+    }),
+    ...createProviderUsageOperations({
+      provider: (providerId) => initializeProviders().get(providerId),
+    }),
+  ];
 }

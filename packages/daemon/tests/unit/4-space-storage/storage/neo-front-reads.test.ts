@@ -109,6 +109,27 @@ test('details expose only visible status and choice fields', async () => {
   });
 });
 
+test('todo detail carries the worker report, evidence and updated time', async () => {
+  db.getDatabase()
+    .prepare(`UPDATE neo_todos SET report = ?, evidence = ?, updated_at = 99 WHERE id = 'item-01'`)
+    .run(`Summary. ${'x'.repeat(5000)}`, '{"kind":"proof","ref":"synthetic"}');
+  const detail = await read('todos', { id: 'item-01' });
+  if (!detail || 'items' in detail) throw new Error('Expected detail');
+  expect(detail).toMatchObject({
+    state: 'todo',
+    blocker: 'Visible blocker',
+    evidence: '{"kind":"proof","ref":"synthetic"}',
+    updatedAt: 99,
+  });
+  expect(detail.report).toHaveLength(4000);
+  expect(detail.report?.startsWith('Summary.')).toBe(true);
+  expect(await read('todos', { id: 'item-02' })).toMatchObject({
+    report: null,
+    evidence: null,
+    updatedAt: 10,
+  });
+});
+
 test('each read reflects fresh committed state', async () => {
   expect(await read('todos', { id: 'item-01' })).toHaveProperty('state', 'todo');
   db.getDatabase()

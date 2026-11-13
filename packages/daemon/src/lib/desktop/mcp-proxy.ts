@@ -9,9 +9,8 @@ type Binding = {
   worker_id: string;
   driver_instance_id: string;
   target_app_id: string | null;
-  socket: string;
 };
-type Target = { pid: number; window_id: number };
+type Target = { app_id: string; class: string; pid: number | null; window_id: number | null };
 type Planned = Target & { args: Record<string, unknown> };
 type Options = {
   binding: () => Promise<Binding | null>;
@@ -25,14 +24,23 @@ type Options = {
   authorize?: (
     binding: Binding,
     name: string,
-    args: Record<string, unknown>
-  ) => Promise<Target | null>;
+    args: Record<string, unknown>,
+    callId: string
+  ) => Promise<{ value: Target } | Context | null>;
 };
-type Reason =
-  | 'tool_not_allowed'
-  | 'desktop_not_opted_in'
-  | 'invalid_arguments'
-  | 'guards_unavailable';
+type Refusal = 'tool_not_allowed' | 'target_unverified' | 'target_mismatch';
+type Context = { reason: Refusal; class?: string; app_id?: string };
+const explanations: Record<string, string> = {
+  tool_not_allowed: 'This tool is not on the desktop allowlist.',
+  desktop_not_opted_in: 'This worker has no approved desktop control binding.',
+  invalid_arguments: 'The arguments do not match the tool schema or worker.',
+  guards_unavailable: 'The trusted desktop host could not check this call.',
+  target_unverified: 'The target app could not be verified from its code signature.',
+  target_mismatch: 'The addressed process, window or app does not match the verified target.',
+  driver_unavailable: 'The desktop driver is not available.',
+  driver_error: 'The desktop driver failed after the call was sent.',
+};
+type Reason = Refusal | 'desktop_not_opted_in' | 'invalid_arguments' | 'guards_unavailable';
 const tools = catalog as unknown as Tool[];
 const refuse = (reason: Reason) => ({ reason });
 const schemas = new Map(
@@ -42,7 +50,7 @@ const schemas = new Map(
   ])
 );
 const plan = (superpipe({})('desktop-mcp-call') as PipelineAPI)
-  .input(['name', 'args', 'binding', 'authorize'])
+  .input(['name', 'args', 'binding', 'authorize', 'callId'])
   .pipe(
     (name: string) => (schemas.has(name) ? { value: name } : refuse('tool_not_allowed')),
     'name',
@@ -70,19 +78,22 @@ const plan = (superpipe({})('desktop-mcp-call') as PipelineAPI)
       binding: Binding,
       name: string,
       args: Record<string, unknown>,
-      authorize: Options['authorize']
+      authorize: Options['authorize'],
+      callId: string
     ) => {
-      const target = await authorize?.(binding, name, args);
-      return target ? { value: { ...target, args } } : refuse('guards_unavailable');
+      const target = await authorize?.(binding, name, args, callId);
+      if (!target) return refuse('guards_unavailable');
+      return 'reason' in target ? refuse(target.reason) : { value: { ...target.value, args } };
     },
-    ['binding', 'name', 'permission', 'authorize'],
+    ['binding', 'name', 'permission', 'authorize', 'callId'],
     'result:permission'
   )
   .endAsync('permission') as (
   name: string,
   args: unknown,
   binding: Binding | null,
-  authorize: Options['authorize']
+  authorize: Options['authorize'],
+  callId: string
 ) => Promise<Planned | Reason>;
 
 function easternTimestamp() {
@@ -106,19 +117,41 @@ export function createDesktopProxy(options: Options) {
     list: async () => ((await options.binding()) ? tools : []),
     call: async (name: string, args: unknown): Promise<CallToolResult> => {
       const started = Date.now();
+      const callId = randomUUID();
       let binding: Binding | null = null;
       let target: Target | null = null;
       let decision = 'refused';
       let reason = 'driver_unavailable';
       let dispatched = false;
+      let context: Partial<Context> = {};
+      const authorize: Options['authorize'] =
+        options.authorize &&
+        (async (...request) => {
+          const answer = await options.authorize!(...request);
+          if (answer && 'reason' in answer) context = answer;
+          return answer;
+        });
+      const refusal = (): CallToolResult => ({
+        isError: true,
+        content: [{ type: 'text', text: reason }],
+        structuredContent: {
+          reason,
+          class: context.class ?? null,
+          bundle_id: context.app_id ?? null,
+          explanation: explanations[reason],
+          call_id: callId,
+          input_issued: dispatched ? 'unknown' : 'none',
+        },
+      });
       try {
         binding = schemas.has(name) ? await options.binding() : null;
-        const outcome = await plan(name, args, binding, options.authorize);
+        const outcome = await plan(name, args, binding, authorize, callId);
         if (typeof outcome === 'string') {
           reason = outcome;
-          return { isError: true, content: [{ type: 'text', text: reason }] };
+          return refusal();
         }
         target = outcome;
+        context = { class: outcome.class, app_id: outcome.app_id };
         const result = await options.dispatch(binding!, name, outcome.args, () => {
           dispatched = true;
         });
@@ -128,17 +161,17 @@ export function createDesktopProxy(options: Options) {
       } catch {
         decision = 'error';
         reason = dispatched ? 'driver_error' : 'driver_unavailable';
-        return { isError: true, content: [{ type: 'text', text: reason }] };
+        return refusal();
       } finally {
         options.audit(
           JSON.stringify({
             timestamp: easternTimestamp(),
-            call_id: randomUUID(),
+            call_id: callId,
             todo_id: binding?.todo_id ?? null,
             worker_id: binding?.worker_id ?? null,
             driver_instance_id: binding?.driver_instance_id ?? null,
             tool: schemas.has(name) ? name : 'unlisted',
-            target_app_id: binding?.target_app_id ?? null,
+            target_app_id: target?.app_id ?? context.app_id ?? binding?.target_app_id ?? null,
             target_pid: target?.pid ?? null,
             target_window_id: target?.window_id ?? null,
             decision,

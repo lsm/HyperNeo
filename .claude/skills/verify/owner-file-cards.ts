@@ -39,7 +39,7 @@ try {
   new NeoRepository(db).reserveBinding({ sessionId, kind: 'neo', projectId: null });
   const mcp = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId, role: 'neo' }));
   const text = `The PR changes \`CLAUDE.md\` and \`docs/guide.md\`. The review is \`${report}\`.`;
-  const response = await mcp({ name: 'neo.publication.publish', input: { requestId: 'owner-path-proof', shortText: text, fullText: text } });
+  const response = await mcp({ name: 'neo.publication.publish', input: { requestId: 'owner-path-proof', text } });
   assert(!response.isError, JSON.stringify(response));
   const published = JSON.parse(response.content[0].text);
   assert(published.accepted);

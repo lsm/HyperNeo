@@ -40,7 +40,7 @@ try {
   const asks = new NeoConversationAskRepository(raw), humanId = crypto.randomUUID();
   assert(asks.append({ conversationId, requestId: humanId, askOrigin: { sessionId: root, messageId: humanId }, content: rich }).accepted);
   const publish = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
-  const published = JSON.parse((await publish({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), shortText: rich, fullText: rich + '\n\nFull details', session: worker } })).content[0].text);
+  const published = JSON.parse((await publish({ name: 'neo.publication.publish', input: { requestId: crypto.randomUUID(), text: rich, details: rich + '\n\nFull details', session: worker } })).content[0].text);
   assert(published.accepted, JSON.stringify(published));
   await app.db.saveSDKMessage(worker, { type: 'assistant', uuid: 'overflow-report', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text: rich }] } } as SDKMessage);
   const store = new NeoAskTodoRepository(raw), links = new NeoTodoSessionRepository(raw), at = Date.now();

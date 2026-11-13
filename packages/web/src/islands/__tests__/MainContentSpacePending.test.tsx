@@ -1,7 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../BottomTabBar', () => ({ BottomTabBar: () => null }));
 vi.mock('../../components/voice/VoiceRecordingIndicator', () => ({
   VoiceRecordingIndicator: () => null,
 }));

@@ -1,4 +1,6 @@
 import { runMigration495 } from '../../../../src/storage/schema/m495-neo-answer-provenance.ts';
+import { runMigration428 } from '../../../../src/storage/schema/m428-pack-preference-proposals.ts';
+import { runMigration429 } from '../../../../src/storage/schema/m429-neo-rule-proposals.ts';
 import { runMigration502 } from '../../../../src/storage/schema/m502-neo-question-todos.ts';
 import { runMigration507 } from '../../../../src/storage/schema/m507-neo-removed-prerequisites.ts';
 import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -69,6 +71,8 @@ describe('neo.message.send replyTo', () => {
     runMigration486(mailbox.db);
     runMigration420(mailbox.db);
     runMigration427(mailbox.db);
+    runMigration428(mailbox.db);
+    runMigration429(mailbox.db);
     runMigration433(mailbox.db);
     runMigration442(mailbox.db);
     runMigration446(mailbox.db);

@@ -4,7 +4,6 @@ import { useEffect } from 'preact/hooks';
 import { currentSessionIdSignal, navSectionSignal, settingsSectionSignal } from '../lib/signals.ts';
 import { navigateToSessions } from '../lib/router.ts';
 import { webExtension, extensionNav } from '../lib/web-extensions.ts';
-import { BottomTabBar } from './BottomTabBar.tsx';
 import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndicator.tsx';
 import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
@@ -227,7 +226,6 @@ export default function MainContent() {
         {renderContent()}
       </div>
       <VoiceRecordingIndicator />
-      <BottomTabBar inline />
     </VoiceSurfaceContext.Provider>
   );
 }

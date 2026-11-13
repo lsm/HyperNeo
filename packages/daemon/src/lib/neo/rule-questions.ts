@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { NEO_STANDING_RULE_MAX_CHARS, neoStandingRules } from '@hyperneo/shared/types/settings';
 import { applyNeoRuleAnswer } from '../../storage/repositories/neo-rule-answer.ts';
 import { defineOperation } from '../operations/registry.ts';
-import { openHumanCard } from './human-card.ts';
+import { applyOrKeepCard, openHumanCard } from './human-card.ts';
 import { planNeoRuleEdit } from './saved-rules.ts';
 import type { NeoService } from './service.ts';
 
@@ -62,15 +62,7 @@ export function createNeoRuleQuestions(service: NeoService) {
             store,
             questionId,
             input.askId,
-            {
-              text,
-              kind: 'yesno',
-              options: null,
-              multiple: false,
-              noLabel: 'Keep current rules',
-              yesLabel: 'Apply these rule changes',
-              startTodos: null,
-            },
+            applyOrKeepCard(text, 'Apply these rule changes', 'Keep current rules'),
             Date.now()
           );
           db.prepare(`INSERT INTO neo_rule_proposals (question_id, request_id, edit_json, question_text)

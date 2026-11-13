@@ -10,6 +10,8 @@ import type {
   ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
+  ProviderUsageResult,
+  UsageWindow,
 } from '@hyperneo/shared/provider';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
@@ -49,6 +51,108 @@ export function resolveKimiRegion(region: unknown): KimiRegion {
     }
   }
   return 'china';
+}
+
+type UsageRecord = Record<string, unknown>;
+
+function asUsageRecord(value: unknown): UsageRecord | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as UsageRecord)
+    : null;
+}
+
+function usageNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function usageLabel(
+  item: UsageRecord,
+  detail: UsageRecord,
+  window: UsageRecord,
+  index: number,
+  fallback: string
+): string {
+  for (const record of [item, detail]) {
+    for (const key of ['name', 'title', 'scope']) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) return value;
+    }
+  }
+  const duration = usageNumber(window.duration ?? item.duration ?? detail.duration);
+  const rawUnit = window.timeUnit ?? item.timeUnit ?? detail.timeUnit;
+  const timeUnit = typeof rawUnit === 'string' ? rawUnit.toUpperCase() : '';
+  if (duration) {
+    if (timeUnit.includes('MINUTE')) {
+      return duration >= 60 && duration % 60 === 0
+        ? `${duration / 60}h limit`
+        : `${duration}m limit`;
+    }
+    if (timeUnit.includes('HOUR')) return `${duration}h limit`;
+    if (timeUnit.includes('DAY')) return `${duration}d limit`;
+    return `${duration}s limit`;
+  }
+  return fallback || `Limit #${index + 1}`;
+}
+
+function usageResetAt(record: UsageRecord): string | null {
+  const value = record.reset_at ?? record.resetAt ?? record.reset_time ?? record.resetTime;
+  if (typeof value === 'number' || (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value))) {
+    const seconds = usageNumber(value);
+    if (seconds === null) return null;
+    try {
+      return new Date(seconds * 1000).toISOString();
+    } catch {
+      return null;
+    }
+  }
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+  ) {
+    return null;
+  }
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function toUsageWindow(item: UsageRecord, index: number, fallback = ''): UsageWindow | null {
+  const detail = asUsageRecord(item.detail) ?? item;
+  const limit = usageNumber(detail.limit);
+  if (limit === null) return null;
+  const remaining = usageNumber(detail.remaining);
+  const used = usageNumber(detail.used) ?? (remaining === null ? 0 : limit - remaining);
+  return {
+    label: usageLabel(item, detail, asUsageRecord(item.window) ?? {}, index, fallback),
+    used,
+    limit,
+    resetAt: usageResetAt(detail),
+  };
+}
+
+function parseKimiUsageWindows(payload: unknown): UsageWindow[] {
+  const record = asUsageRecord(payload);
+  if (
+    !record ||
+    (record.usage !== undefined && !asUsageRecord(record.usage)) ||
+    (record.limits !== undefined && !Array.isArray(record.limits))
+  ) {
+    throw new Error('Kimi usage response was malformed.');
+  }
+  const usage = asUsageRecord(record.usage);
+  const windows = usage ? [toUsageWindow(usage, 0, 'Weekly limit')] : [];
+  for (const [index, value] of (record.limits ?? []).entries()) {
+    const item = asUsageRecord(value);
+    if (item) windows.push(toUsageWindow(item, index));
+  }
+  return windows.filter((window): window is UsageWindow => window !== null);
 }
 
 export class KimiProvider implements Provider {
@@ -117,19 +221,28 @@ export class KimiProvider implements Provider {
     },
     {
       id: 'kimi-for-coding',
-      name: 'Kimi K2.7',
+      name: 'Kimi K2.8 Preview',
       alias: 'kimi',
       family: 'kimi',
       provider: 'kimi',
-      contextWindow: 262_144,
+      contextWindow: 1_048_576,
       providerAliases: ['KIMI', 'Kimi', 'kimi-k2.7-code', 'Kimi-K2.7-Code'],
       preferContextWindowMetadata: true,
-      thinkingModes: 'on',
-      description: 'Kimi Code model from Moonshot Claude Code integration docs.',
+      thinkingModes: 'granular',
+      effortLevels: ['low', 'high', 'max'],
+      description: 'Kimi K2.8 Preview · 1M context coding model with reasoning effort',
       releaseDate: '',
       available: true,
     },
   ];
+
+  static readonly MODEL_EFFORT_LEVELS: Record<string, ThinkingEffort[]> = {
+    'kimi-for-coding': ['low', 'high', 'max'],
+  };
+
+  static readonly MODEL_DEFAULT_EFFORT: Record<string, ThinkingEffort> = {
+    'kimi-for-coding': 'high',
+  };
 
   static readonly K31_MODELS: ModelInfo[] = [
     {
@@ -275,12 +388,15 @@ export class KimiProvider implements Provider {
     );
   }
 
+  static isKimiK2Point8PreviewModel(modelId: string): boolean {
+    const id = KimiProvider.normalizeKimiModelId(modelId);
+    return id === 'kimi' || id === 'kimi-for-coding';
+  }
+
   static isKimiK2Point7Model(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
     if (KimiProvider.isKimiK3Model(modelId)) return false;
     return (
-      id === 'kimi' ||
-      id === 'kimi-for-coding' ||
       id === 'kimi-k2.7-code' ||
       id === 'kimi-k2.7-code-highspeed' ||
       id === 'kimi-for-coding-highspeed'
@@ -306,6 +422,7 @@ export class KimiProvider implements Provider {
 
   private static discoveredThinkingModesFor(modelId: string): 'granular' | 'on' | 'off' {
     if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
+    if (KimiProvider.isKimiK2Point8PreviewModel(modelId)) return 'granular';
     if (KimiProvider.resolveContextWindow(modelId) < 65_536) return 'off';
     return 'on';
   }
@@ -314,6 +431,9 @@ export class KimiProvider implements Provider {
     modelId: string
   ): { type: 'enabled'; budgetTokens: 16000 } | { type: 'disabled' } | undefined {
     if (KimiProvider.isKimiK3Model(modelId)) return undefined;
+    if (KimiProvider.isKimiK2Point8PreviewModel(modelId)) {
+      return { type: 'enabled', budgetTokens: 16_000 };
+    }
     if (KimiProvider.isKimiK2Point7Model(modelId)) {
       return { type: 'enabled', budgetTokens: 16_000 };
     }
@@ -441,11 +561,44 @@ export class KimiProvider implements Provider {
     let models: ModelInfo[];
     try {
       const discovered = await this.listRemoteModels({ discoveryOnly: true });
-      models = discovered.length ? discovered : this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
+      models = discovered.length
+        ? this.forServingRegion(discovered)
+        : this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
     } catch {
-      models = this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
+      models = this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
     }
     return models;
+  }
+
+  async getUsage(): Promise<ProviderUsageResult> {
+    if (this.resolveEffectiveRegion() === 'global') {
+      return { supported: false, provider: this.id, reason: 'not_supported' };
+    }
+    const apiKey = this.getApiKey();
+    if (!apiKey) throw new Error('Kimi API key is not configured.');
+    const url = `${normalizeBaseUrl(this.resolveModelListBaseUrl())}/usages`;
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+    } catch {
+      throw new Error('Kimi usage request failed.');
+    }
+    if (!response.ok) {
+      throw new Error(`Kimi usage request failed with status ${response.status}.`);
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new Error('Kimi usage response was malformed.');
+    }
+    return {
+      supported: true,
+      provider: this.id,
+      windows: parseKimiUsageWindows(payload),
+    };
   }
 
   setCuratedModels(models: CuratedModel[] | undefined): void {
@@ -457,11 +610,35 @@ export class KimiProvider implements Provider {
     return !discovered?.length || discovered.some((model) => model.id === modelId);
   }
 
+  getServedModels(): ModelInfo[] {
+    return this.forServingRegion(KimiProvider.MODELS);
+  }
+
   getCachedModels(): ModelInfo[] | null {
     const discovered = this.discoveryCache.get(this.discoveryFingerprint());
-    if (discovered?.length) return discovered;
+    if (discovered?.length) return this.forServingRegion(discovered);
     if (!this.curatedModels?.length) return null;
-    return this.mergeCuratedModels(KimiProvider.KNOWN_MODELS);
+    return this.forServingRegion(this.mergeCuratedModels(KimiProvider.KNOWN_MODELS));
+  }
+
+  private static k2Point7Profile<T extends ModelInfo>(model: T): T {
+    return {
+      ...model,
+      name: 'Kimi K2.7',
+      contextWindow: KimiProvider.resolveContextWindow('kimi-k2.7-code'),
+      thinkingModes: 'on',
+      effortLevels: undefined,
+      description: 'Kimi K2.7 · 256K context, fixed thinking',
+    };
+  }
+
+  private forServingRegion(models: ModelInfo[]): ModelInfo[] {
+    return models.map((model) =>
+      !KimiProvider.isKimiK2Point7Model(model.id) &&
+      KimiProvider.isKimiK2Point7Model(this.getRoutedModelId(model.id))
+        ? KimiProvider.k2Point7Profile(model)
+        : model
+    );
   }
 
   private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
@@ -559,17 +736,51 @@ export class KimiProvider implements Provider {
     return KimiProvider.DEFAULT_MODEL;
   }
 
-  getModelEffortLevels(): ThinkingEffort[] {
-    return [...THINKING_EFFORTS];
+  getRoutedModelId(modelId: string, sessionConfig?: ProviderSessionConfig): string {
+    if (!this.ownsModel(modelId)) return modelId;
+    const explicitRegion = sessionConfig?.region ?? this.env.KIMI_REGION;
+    const region = explicitRegion ? resolveKimiRegion(explicitRegion) : this.defaultRegion;
+    const baseUrl = normalizeBaseUrl(
+      sessionConfig?.baseUrl || this.env.KIMI_BASE_URL || KimiProvider.getBaseUrlForRegion(region)
+    );
+    return KimiProvider.resolveUpstreamModelId(modelId, baseUrl, region);
   }
 
-  getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
-    if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
-    if (KimiProvider.isKimiK2Point7Model(modelId)) return 'on';
+  getModelContextWindow(modelId: string, sessionConfig?: ProviderSessionConfig): number {
+    return KimiProvider.resolveContextWindow(this.getRoutedModelId(modelId, sessionConfig));
+  }
+
+  getModelEffortLevels(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): ThinkingEffort[] | undefined {
+    if (!this.ownsModel(modelId)) return undefined;
+    const routed = this.getRoutedModelId(modelId, sessionConfig);
+    const levels = KimiProvider.MODEL_EFFORT_LEVELS[routed];
+    if (levels) return [...levels];
+    return KimiProvider.isKimiK2Point7Model(routed) ? undefined : [...THINKING_EFFORTS];
+  }
+
+  getModelDefaultEffort(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): ThinkingEffort | undefined {
+    if (!this.ownsModel(modelId)) return undefined;
+    return KimiProvider.MODEL_DEFAULT_EFFORT[this.getRoutedModelId(modelId, sessionConfig)];
+  }
+
+  getModelThinkingMode(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): 'off' | 'on' | 'granular' | undefined {
+    const routed = this.getRoutedModelId(modelId, sessionConfig);
+    if (KimiProvider.isKimiK3Model(routed)) return 'granular';
+    if (KimiProvider.isKimiK2Point8PreviewModel(routed)) return 'granular';
+    if (KimiProvider.isKimiK2Point7Model(routed)) return 'on';
     if (
       this.ownsModel(modelId) &&
       !KimiProvider.hasOneMContextSuffix(modelId) &&
-      KimiProvider.resolveContextWindow(modelId) < 65_536
+      KimiProvider.resolveContextWindow(routed) < 65_536
     ) {
       return 'off';
     }
@@ -692,6 +903,7 @@ export class KimiProvider implements Provider {
     const canonical = KimiProvider.canonicalizeModelId(modelId);
     const normalized = KimiProvider.normalizeKimiModelId(canonical);
     if (normalized === 'k3-256k' || normalized === 'kimi-k3-256k') return 262_144;
+    if (normalized === 'kimi-for-coding') return 1_048_576;
     if (
       normalized === 'kimi-k3' ||
       normalized === 'kimi-k3.1-pro' ||
@@ -730,8 +942,10 @@ export class KimiProvider implements Provider {
       ? resolveKimiRegion(explicitRegion)
       : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
 
-    const contextWindow = KimiProvider.resolveContextWindow(_modelId);
     const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, baseUrl, effectiveRegion);
+    const contextWindow = KimiProvider.resolveContextWindow(
+      this.ownsModel(_modelId) ? routingModelId : _modelId
+    );
 
     return {
       envVars: {
@@ -798,7 +1012,11 @@ export class KimiProvider implements Provider {
       exactMatch !== undefined &&
       KimiProvider.hasOneMContextSuffix(model.id) &&
       !KimiProvider.hasOneMContextSuffix(exactMatch.id);
-    if (exactMatch && !exactMatchLosesSuffix) return exactMatch;
+    if (exactMatch && !exactMatchLosesSuffix)
+      return !KimiProvider.isKimiK2Point7Model(exactMatch.id) &&
+        KimiProvider.isKimiK2Point7Model(model.id)
+        ? KimiProvider.k2Point7Profile(exactMatch)
+        : exactMatch;
     let prefixMatch: { model: ModelInfo; length: number } | undefined;
     for (const candidate of KimiProvider.KNOWN_MODELS) {
       for (const rawPrefix of candidate.providerAliasPrefixes ?? []) {

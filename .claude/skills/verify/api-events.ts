@@ -67,7 +67,7 @@ hub.registerTransport(transport);
   await app.stateManager.broadcastSessionStateChange('conv:public-event-fixture');
   await hub.request('settings.global.update', { updates: { language: 'zh-Hans', voice: { enabled: true, endpoint: `${audio.url.origin}/v1/audio/transcriptions`, streamEndpoint: `ws://127.0.0.1:${asr.port}/v1/listen`, model: 'fixture', mode: 'streaming', streamProtocol: 'deepgram', allowPrivateNetwork: true } } });
   const mcp = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId, role: 'neo' }));
-  const publication = await mcp({ name: 'neo.publication.publish', input: { requestId: 'public-event', verbatim: true, fullText: 'Public publication payload fixture.' } });
+  const publication = await mcp({ name: 'neo.publication.publish', input: { requestId: 'public-event', text: 'Public publication payload fixture.' } });
   assert(JSON.parse(publication.content[0].text).accepted, JSON.stringify(publication));
   const subscribed = await hub.request<{ ok: boolean }>('liveQuery.subscribe', { queryName: 'messages.bySession', params: [sessionId, 50], subscriptionId: 'phone-message-view' });
   assert(subscribed.ok);

@@ -7,7 +7,6 @@ const binding = {
   worker_id: '10000000-0000-4000-8000-000000000002',
   driver_instance_id: '123-456-789',
   target_app_id: null,
-  socket: '/synthetic/driver.sock',
 };
 function fixture(enabled = true) {
   const audit = vi.fn();
@@ -104,7 +103,9 @@ test('schemas and session binding refuse before dispatch', async () => {
     binding: async () => binding,
     dispatch,
     audit: () => {},
-    authorize: async () => ({ pid: 42, window_id: 7 }),
+    authorize: async () => ({
+      value: { app_id: 'com.apple.sleep', class: 'pointer', pid: 42, window_id: 7 },
+    }),
   });
   for (const args of [{ private_field: true }, { pid: '42' }, { session: 'other-worker' }])
     expect(await proxy.call('list_windows', args)).toMatchObject({
@@ -112,4 +113,97 @@ test('schemas and session binding refuse before dispatch', async () => {
       content: [{ type: 'text', text: 'invalid_arguments' }],
     });
   expect(dispatch).not.toHaveBeenCalled();
+});
+
+test('typed target refusals reach the caller and the audit under one call id', async () => {
+  const audit = vi.fn();
+  const dispatch = vi.fn();
+  const proxy = createDesktopProxy({
+    binding: async () => binding,
+    dispatch,
+    audit,
+    authorize: async (_binding, name) =>
+      name === 'click'
+        ? { reason: 'target_mismatch', class: 'pointer', app_id: 'com.apple.finder' }
+        : { reason: 'target_unverified', class: 'launch' },
+  });
+  const results = [
+    await proxy.call('click', { pid: 42, window_id: 9 }),
+    await proxy.call('launch_app', { bundle_id: 'com.example.copy' }),
+  ];
+  const lines = audit.mock.calls.map(([line]) => JSON.parse(line));
+  expect(results.map((result) => result.content)).toEqual([
+    [{ type: 'text', text: 'target_mismatch' }],
+    [{ type: 'text', text: 'target_unverified' }],
+  ]);
+  expect(results.map((result) => result.structuredContent)).toEqual([
+    {
+      reason: 'target_mismatch',
+      class: 'pointer',
+      bundle_id: 'com.apple.finder',
+      explanation: expect.any(String),
+      call_id: lines[0].call_id,
+      input_issued: 'none',
+    },
+    {
+      reason: 'target_unverified',
+      class: 'launch',
+      bundle_id: null,
+      explanation: expect.any(String),
+      call_id: lines[1].call_id,
+      input_issued: 'none',
+    },
+  ]);
+  expect(lines.map((line) => [line.reason_code, line.target_app_id])).toEqual([
+    ['target_mismatch', 'com.apple.finder'],
+    ['target_unverified', null],
+  ]);
+  expect(JSON.stringify(results)).not.toContain('com.example.copy');
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
+test('a verified target is audited with its app and instance', async () => {
+  const audit = vi.fn();
+  const proxy = createDesktopProxy({
+    binding: async () => binding,
+    dispatch: async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }),
+    audit,
+    authorize: async () => ({
+      value: { app_id: 'com.apple.sleep', class: 'pointer', pid: 42, window_id: 7 },
+    }),
+  });
+  await proxy.call('click', { pid: 42, window_id: 7 });
+  expect(JSON.parse(audit.mock.calls[0][0])).toMatchObject({
+    target_app_id: 'com.apple.sleep',
+    target_pid: 42,
+    target_window_id: 7,
+    decision: 'allowed',
+  });
+});
+
+test('a verified target keeps its app and class when dispatch throws', async () => {
+  const audit = vi.fn();
+  const proxy = createDesktopProxy({
+    binding: async () => binding,
+    dispatch: async () => {
+      throw new Error('driver_unavailable');
+    },
+    audit,
+    authorize: async () => ({
+      value: { app_id: 'com.apple.finder', class: 'pointer', pid: 42, window_id: 7 },
+    }),
+  });
+  const result = await proxy.call('click', { pid: 42, window_id: 7 });
+  const line = JSON.parse(audit.mock.calls[0][0]);
+  expect(result.structuredContent).toMatchObject({
+    reason: 'driver_unavailable',
+    class: 'pointer',
+    bundle_id: 'com.apple.finder',
+    call_id: line.call_id,
+    input_issued: 'none',
+  });
+  expect(line).toMatchObject({
+    target_app_id: 'com.apple.finder',
+    reason_code: 'driver_unavailable',
+  });
 });

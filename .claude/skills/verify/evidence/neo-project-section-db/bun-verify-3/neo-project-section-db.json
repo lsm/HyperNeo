@@ -1,0 +1,228 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "consumer": "Real daemon public WebSocket neo.project.section and neo.snapshot",
+  "limitation": "Synthetic fixtures; no GUI, model, live daemon or GitHub. No held-writer latency claim.",
+  "missing": {
+    "ok": false,
+    "reason": "unknown_parent"
+  },
+  "invalid": {
+    "ok": false,
+    "reason": "invalid_epic_url"
+  },
+  "mismatch": {
+    "ok": false,
+    "reason": "section_workspace_mismatch"
+  },
+  "deletedParent": {
+    "ok": false,
+    "reason": "unknown_parent"
+  },
+  "rollback": true,
+  "race": [
+    {
+      "ok": true,
+      "projectId": "033c4880-fafe-4a2a-aa8f-2e1bda059ecd"
+    },
+    {
+      "ok": false,
+      "reason": "epic_already_has_section"
+    }
+  ],
+  "retry": {
+    "ok": true,
+    "projectId": "033c4880-fafe-4a2a-aa8f-2e1bda059ecd"
+  },
+  "snapshot": [
+    {
+      "id": "033c4880-fafe-4a2a-aa8f-2e1bda059ecd",
+      "title": "Synthetic epic",
+      "summary": "Section for https://github.com/synthetic/project/issues/7",
+      "context": "",
+      "parentId": "a",
+      "epicUrl": "https://github.com/synthetic/project/issues/7",
+      "homePath": null,
+      "workspaceAliases": [
+        "repo:synthetic/project\u0000a"
+      ],
+      "revision": 1,
+      "createdAt": 1794559560099,
+      "updatedAt": 1794559560099
+    },
+    {
+      "id": "other",
+      "title": "other",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": null,
+      "epicUrl": null,
+      "homePath": null,
+      "revision": 1,
+      "createdAt": 1794559559912,
+      "updatedAt": 1794559559912
+    },
+    {
+      "id": "b",
+      "title": "b",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": null,
+      "epicUrl": null,
+      "homePath": null,
+      "repository": "synthetic/project",
+      "revision": 1,
+      "createdAt": 1794559559911,
+      "updatedAt": 1794559559911
+    },
+    {
+      "id": "a",
+      "title": "a",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": null,
+      "epicUrl": null,
+      "homePath": null,
+      "repository": "synthetic/project",
+      "revision": 1,
+      "createdAt": 1794559559906,
+      "updatedAt": 1794559559906
+    }
+  ],
+  "reopened": [
+    {
+      "id": "033c4880-fafe-4a2a-aa8f-2e1bda059ecd",
+      "title": "Synthetic epic",
+      "summary": "Section for https://github.com/synthetic/project/issues/7",
+      "context": "",
+      "parentId": "a",
+      "epicUrl": "https://github.com/synthetic/project/issues/7",
+      "homePath": null,
+      "workspaceAliases": [
+        "repo:synthetic/project\u0000a"
+      ],
+      "revision": 1,
+      "createdAt": 1794559560099,
+      "updatedAt": 1794559560099
+    },
+    {
+      "id": "other",
+      "title": "other",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": null,
+      "epicUrl": null,
+      "homePath": null,
+      "revision": 1,
+      "createdAt": 1794559559912,
+      "updatedAt": 1794559559912
+    },
+    {
+      "id": "b",
+      "title": "b",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": null,
+      "epicUrl": null,
+      "homePath": null,
+      "repository": "synthetic/project",
+      "revision": 1,
+      "createdAt": 1794559559911,
+      "updatedAt": 1794559559911
+    },
+    {
+      "id": "a",
+      "title": "a",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": null,
+      "epicUrl": null,
+      "homePath": null,
+      "repository": "synthetic/project",
+      "revision": 1,
+      "createdAt": 1794559559906,
+      "updatedAt": 1794559559906
+    }
+  ],
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.19675000000006548,
+      "argsBytes": 42,
+      "replyBytes": 4
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.050333000000023276,
+      "argsBytes": 36,
+      "replyBytes": 194
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.03179099999999835,
+      "argsBytes": 40,
+      "replyBytes": 202
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.24662499999999454,
+      "argsBytes": 108,
+      "replyBytes": 50
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.05233399999997346,
+      "argsBytes": 41,
+      "replyBytes": 170
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.07795800000008057,
+      "argsBytes": 109,
+      "replyBytes": 38
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.07649999999989632,
+      "argsBytes": 36,
+      "replyBytes": 194
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.08391600000004473,
+      "argsBytes": 36,
+      "replyBytes": 194
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.06387499999982538,
+      "argsBytes": 36,
+      "replyBytes": 194
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.3133339999999407,
+      "argsBytes": 104,
+      "replyBytes": 62
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.7327090000001135,
+      "argsBytes": 104,
+      "replyBytes": 48
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.03974999999991269,
+      "argsBytes": 36,
+      "replyBytes": 194
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.07962500000007822,
+      "argsBytes": 104,
+      "replyBytes": 62
+    }
+  ]
+}

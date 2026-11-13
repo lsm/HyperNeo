@@ -40,8 +40,8 @@ if (phase === 'seed') {
   });
   assert(registered.accepted, JSON.stringify(registered));
   const draft = {
-    askId: 'ask', kind: 'yesno', text: 'Review the attached synthetic report?',
-    noLabel: 'Keep current', yesLabel: 'Accept report', artifacts: [registered.artifact],
+    askId: 'ask', kind: 'choice', text: 'Review the attached synthetic report?',
+    options: ['Accept report'], artifacts: [registered.artifact],
   };
   const question = saved?.question ?? (await rpc('neo.question.ask', draft)).question;
   assert(question, 'question missing');

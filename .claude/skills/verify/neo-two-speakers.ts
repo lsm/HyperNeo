@@ -109,16 +109,18 @@ try {
     { type: 'user', uuid: id as UUID, session_id: front, parent_tool_use_id: null, message: { role: 'user', content: 'Check the build and tell me.' } },
     'submitted'
   );
-  const ack = await call('reply_short', { requestId: 'ack', replyTo: [id], progress: true, text: 'I will check the build.' });
-  assert.equal(ack.accepted, true, JSON.stringify(ack));
-  const handoff = await call('work_on', { requestId: 'work', messageIds: [id] });
-  assert.deepEqual(handoff, { started: true });
+  const handoff = await call('reply', { requestId: 'ack', replyTo: [id], work_on: true, text: 'I will check the build.' });
+  assert.equal(handoff.accepted, true, JSON.stringify(handoff));
+  assert.equal(handoff.started, true, JSON.stringify(handoff));
   assert.equal(owner(id), 'neo');
   assert.equal(app.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id]).length, 1);
-  const again = await call('work_on', { requestId: 'work-2', messageIds: [id] });
-  assert.deepEqual(again, { started: false, reason: 'input_handed_off' });
-  const frontFinal = await call('reply_short', { requestId: 'final', replyTo: [id], text: 'The build passed.' });
-  assert.deepEqual(frontFinal, { accepted: false, reason: 'input_handed_off' });
+  const delivered = JSON.stringify(app.db.getSDKMessageRepo().getMessageByUuid(root, id));
+  assert(delivered.includes('<already-said>') && delivered.includes('I will check the build.'), delivered);
+  const again = await call('reply', { requestId: 'work-2', replyTo: [id], work_on: true, text: 'Checking.' });
+  assert.equal(again.accepted, true, JSON.stringify(again));
+  assert.equal(again.started, true, JSON.stringify(again));
+  const frontFinal = await call('reply', { requestId: 'final', replyTo: [id], text: 'The build passed.' });
+  assert.equal(frontFinal.accepted, true, JSON.stringify(frontFinal));
   assert(app.db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id));
   const back = createOperationMcpHandler(app.sessionManager.getOperationRegistry(), () => ({
     source: 'mcp',
@@ -127,7 +129,7 @@ try {
   }));
   const published = await back({
     name: 'neo.publication.publish',
-    input: { requestId: 'neo-answer', verbatim: true, fullText: 'The build passed on dev.', replyTo: [id] },
+    input: { requestId: 'neo-answer', text: 'The build passed on dev.', replyTo: [id] },
   });
   const receipt = JSON.parse((published.content[0] as { text: string }).text);
   assert.equal(receipt.accepted, true, JSON.stringify(receipt));
@@ -149,6 +151,7 @@ try {
     port: app.server.port,
     frontId: front,
     handoff,
+    alreadySaid: delivered.includes('<already-said>'),
     secondHandoff: again,
     frontFinal,
     neoPublish: receipt,

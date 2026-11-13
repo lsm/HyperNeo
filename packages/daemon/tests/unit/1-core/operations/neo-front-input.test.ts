@@ -28,11 +28,11 @@ test('eligibility is stamped once even when a retry flips the setting', () => {
   expect(inputs.get('conversation', 'on')?.eligible).toBe(true);
 });
 
-test('the same lane keeps answering an input and the other lane is refused', () => {
+test('either lane can answer an input and the first owner stays', () => {
   inputs.accept('conversation', 'input', true);
   expect(inputs.claim('conversation', ['input'], 'front')).toBe('claimed');
   expect(inputs.claim('conversation', ['input'], 'front')).toBe('claimed');
-  expect(inputs.claim('conversation', ['input'], 'neo')).toBe('handed_off');
+  expect(inputs.claim('conversation', ['input'], 'neo')).toBe('claimed');
   expect(inputs.get('conversation', 'input')?.owner).toBe('front');
 });
 
@@ -44,11 +44,11 @@ test('a batch with an input this lane already answered claims the rest', () => {
   expect(inputs.get('conversation', 'second')?.owner).toBe('neo');
 });
 
-test('a speakerless card reply claims only unowned inputs and is never refused', () => {
+test('a claim covers every input and fills only unowned owners', () => {
   inputs.accept('conversation', 'owned', true);
   inputs.accept('conversation', 'open', true);
   inputs.claim('conversation', ['owned'], 'front');
-  expect(inputs.claim('conversation', ['owned', 'open'], 'neo', true)).toBe('claimed');
+  expect(inputs.claim('conversation', ['owned', 'open'], 'neo')).toBe('claimed');
   expect(inputs.get('conversation', 'owned')?.owner).toBe('front');
   expect(inputs.get('conversation', 'open')?.owner).toBe('neo');
 });
@@ -217,8 +217,10 @@ test('a hand-off reserves its inputs and enqueues the human message together, or
   );
   expect(inputs.get('conversation', 'handed')?.owner).toBe('neo');
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [uuid])).toHaveLength(1);
-  expect(inputs.reserve('conversation', ['handed'], [])).toBe('handed_off');
-  expect(inputs.claim('conversation', ['handed'], 'front')).toBe('handed_off');
+  expect(inputs.reserve('conversation', ['handed'], [])).toBe('reserved');
+  expect(inputs.get('conversation', 'handed')?.owner).toBe('neo');
+  expect(inputs.claim('conversation', ['handed'], 'front')).toBe('claimed');
+  expect(inputs.get('conversation', 'handed')?.owner).toBe('neo');
 });
 
 test('a failed delivery alone cannot reserve an input for Neo', async () => {

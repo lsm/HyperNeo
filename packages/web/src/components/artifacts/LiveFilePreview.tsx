@@ -160,7 +160,10 @@ export function LiveFilePreview({
         }}
       >
         {!file ? (
-          <p role="status" class="text-sm text-fg-muted">
+          <p
+            role="status"
+            class="flex h-full items-center justify-center text-center text-sm text-fg-muted"
+          >
             {shown?.error
               ? refusal(shown.error)
               : artifactStateMessage(connected ? 'loading' : 'daemon_unavailable')}

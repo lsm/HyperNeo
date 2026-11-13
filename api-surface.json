@@ -27720,7 +27720,7 @@
                                     ]
                                   },
                                   "shortText": {
-                                    "maxLength": 2000,
+                                    "maxLength": 4000,
                                     "type": "string"
                                   }
                                 },
@@ -27792,7 +27792,7 @@
                             },
                             "shortText": {
                               "description": "What the human reads first; it must stand alone and summarize the message.",
-                              "maxLength": 2000,
+                              "maxLength": 4000,
                               "type": "string"
                             },
                             "triggerId": {
@@ -32088,8 +32088,7 @@
             ],
             "type": "object"
           },
-          "fullText": {
-            "description": "The details of the topic(s) shortText names.",
+          "details": {
             "maxLength": 16000,
             "type": "string"
           },
@@ -32154,24 +32153,18 @@
               }
             ]
           },
-          "shortText": {
-            "description": "What the human reads first; it must stand alone and summarize the message.",
-            "maxLength": 2000,
-            "type": "string"
-          },
           "spoken": {
             "maxLength": 500,
             "minLength": 1,
             "type": "string"
           },
-          "verbatim": {
-            "const": true,
-            "description": "Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.",
-            "type": "boolean"
+          "text": {
+            "maxLength": 16000,
+            "type": "string"
           }
         },
         "required": [
-          "fullText",
+          "text",
           "requestId"
         ],
         "type": "object"
@@ -32650,7 +32643,7 @@
                           ]
                         },
                         "shortText": {
-                          "maxLength": 2000,
+                          "maxLength": 4000,
                           "type": "string"
                         }
                       },
@@ -32722,7 +32715,7 @@
                   },
                   "shortText": {
                     "description": "What the human reads first; it must stand alone and summarize the message.",
-                    "maxLength": 2000,
+                    "maxLength": 4000,
                     "type": "string"
                   },
                   "triggerId": {
@@ -33245,7 +33238,7 @@
                             ]
                           },
                           "shortText": {
-                            "maxLength": 2000,
+                            "maxLength": 4000,
                             "type": "string"
                           }
                         },
@@ -33317,7 +33310,7 @@
                     },
                     "shortText": {
                       "description": "What the human reads first; it must stand alone and summarize the message.",
-                      "maxLength": 2000,
+                      "maxLength": 4000,
                       "type": "string"
                     },
                     "triggerId": {
@@ -33988,236 +33981,6 @@
                 "type": "string"
               },
               "kind": {
-                "const": "yesno",
-                "type": "string"
-              },
-              "noLabel": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "replaces": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "replyTo": {
-                "items": {
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                  "type": "string"
-                },
-                "maxItems": 100,
-                "type": "array"
-              },
-              "retireWhen": {
-                "description": "Pack check that retires this card when satisfied. Defaults to the linked todo check; required without a linked todo check.",
-                "properties": {
-                  "kind": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "pack": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "params": {
-                    "additionalProperties": {},
-                    "default": {},
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "pack",
-                  "kind"
-                ],
-                "type": "object"
-              },
-              "sourceSession": {
-                "properties": {
-                  "adapter": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "daemon": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "id": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "adapter",
-                  "id"
-                ],
-                "type": "object"
-              },
-              "text": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "todoId": {
-                "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
-                "minLength": 1,
-                "type": "string"
-              },
-              "yesLabel": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "text",
-              "kind",
-              "noLabel",
-              "yesLabel"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "artifacts": {
-                "items": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "artifactId": {
-                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                          "type": "string"
-                        },
-                        "byteLength": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "daemonId": {
-                          "format": "uuid",
-                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                          "type": "string"
-                        },
-                        "kind": {
-                          "enum": [
-                            "markdown",
-                            "html",
-                            "image",
-                            "json",
-                            "log",
-                            "text",
-                            "video"
-                          ],
-                          "type": "string"
-                        },
-                        "title": {
-                          "maxLength": 200,
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "daemonId",
-                        "artifactId",
-                        "title",
-                        "kind",
-                        "byteLength"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "artifactId": {
-                          "pattern": "^[a-f0-9]{64}$",
-                          "type": "string"
-                        },
-                        "byteLength": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "daemonId": {
-                          "format": "uuid",
-                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                          "type": "string"
-                        },
-                        "name": {
-                          "maxLength": 128,
-                          "minLength": 1,
-                          "pattern": "^[\\w][\\w .-]*$",
-                          "type": "string"
-                        },
-                        "sessionId": {
-                          "maxLength": 200,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "sha256": {
-                          "pattern": "^[a-f0-9]{64}$",
-                          "type": "string"
-                        },
-                        "type": {
-                          "const": "handoff",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "artifactId",
-                        "daemonId",
-                        "sessionId",
-                        "name",
-                        "byteLength",
-                        "sha256",
-                        "type"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                },
-                "maxItems": 16,
-                "readOnly": true,
-                "type": "array"
-              },
-              "askId": {
-                "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
-                "minLength": 1,
-                "type": "string"
-              },
-              "confirm": {
-                "properties": {
-                  "path": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "sha256": {
-                    "maxLength": 64,
-                    "minLength": 64,
-                    "pattern": "^[a-f0-9]+$",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "path",
-                  "sha256"
-                ],
-                "type": "object"
-              },
-              "document": {
-                "description": "Full detail shown apart from the short card text.",
-                "minLength": 1,
-                "type": "string"
-              },
-              "focused": {
-                "type": "boolean"
-              },
-              "input": {
-                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
-                "minLength": 1,
-                "type": "string"
-              },
-              "kind": {
                 "const": "choice",
                 "type": "string"
               },
@@ -34231,7 +33994,7 @@
                   "type": "string"
                 },
                 "maxItems": 6,
-                "minItems": 2,
+                "minItems": 1,
                 "type": "array"
               },
               "replaces": {
@@ -51911,6 +51674,119 @@
               "provider"
             ],
             "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "providerId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId"
+        ],
+        "type": "object"
+      },
+      "name": "settings.provider.usage",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "const": "neo_only",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "supported": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "windows": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        },
+                        "limit": {
+                          "type": "number"
+                        },
+                        "resetAt": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "used": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "label",
+                        "used",
+                        "limit",
+                        "resetAt"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "supported",
+                  "provider",
+                  "windows"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "const": "not_supported",
+                    "type": "string"
+                  },
+                  "supported": {
+                    "const": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "supported",
+                  "provider",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            ]
           }
         ]
       }

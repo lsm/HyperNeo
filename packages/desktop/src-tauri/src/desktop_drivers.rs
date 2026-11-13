@@ -1,9 +1,9 @@
+#[path = "desktop_driver_channel.rs"]
+mod channel;
 #[path = "desktop_driver_record.rs"]
 mod record;
-use cua_driver_sdk::{
-    EmbeddedCuaDriverHost, EmbeddedDriverHostOptions, EmbeddedDriverHostState,
-    EmbeddedEnvironmentVariable,
-};
+#[path = "desktop_target.rs"]
+mod target;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -39,7 +39,7 @@ pub(crate) fn inject_accept_failure() {
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 struct Worker {
-    host: Arc<EmbeddedCuaDriverHost>,
+    channel: channel::Channel,
     _directory: TempDir,
 }
 struct Drivers {
@@ -55,6 +55,10 @@ struct Request {
     action: String,
     worker: String,
     work_dir: Option<PathBuf>,
+    tool: Option<String>,
+    arguments: Option<Value>,
+    instance: Option<Value>,
+    call_id: Option<String>,
 }
 pub(crate) struct Control {
     drivers: Arc<Drivers>,
@@ -211,8 +215,8 @@ impl Control {
             .cloned()
             .collect();
         for slot in slots {
-            if let Some(worker) = slot.lock().await.take() {
-                if let Err(error) = worker.host.clone().stop().await {
+            if let Some(mut worker) = slot.lock().await.take() {
+                if let Err(error) = worker.channel.close().await {
                     log::error!("Driver shutdown failed: {error}");
                 }
             }
@@ -256,6 +260,13 @@ impl Drivers {
                 json!({"count": slots.len(), "references": slots.get(&request.worker).map(Arc::strong_count).unwrap_or(0)}),
             );
         }
+        if request.action == "resolve" {
+            let tool = request.tool.as_deref().unwrap_or_default();
+            let arguments = request.arguments.unwrap_or(Value::Null);
+            let mut result = target::resolve(tool, &arguments, request.instance.as_ref());
+            result["call_id"] = json!(request.call_id);
+            return Ok(result);
+        }
         let directory = self.records.join("workers").join(&request.worker);
         if matches!(request.action.as_str(), "start" | "stop") {
             record::directory(&self.records, &request.worker, true)?;
@@ -270,9 +281,9 @@ impl Drivers {
             let reason = "Driver control unavailable until worker authorization is enforced";
             return match request.action.as_str() {
                 "start" => Err(reason.into()),
-                "status" | "stop" => Ok(
-                    json!({"state": "unavailable", "reason": reason, "pid": null, "socket": null}),
-                ),
+                "status" | "stop" => {
+                    Ok(json!({"state": "unavailable", "reason": reason, "pid": null}))
+                }
                 _ => Err("Unknown Desktop control action".into()),
             };
         }
@@ -281,9 +292,7 @@ impl Drivers {
             let mut slots = self.workers.lock().await;
             if request.action != "start" && !slots.contains_key(&worker_id) {
                 return match request.action.as_str() {
-                    "status" | "stop" => {
-                        Ok(json!({"state": "stopped", "pid": null, "socket": null}))
-                    }
+                    "status" | "stop" => Ok(json!({"state": "stopped", "pid": null})),
                     _ => Err("Unknown Desktop control action".into()),
                 };
             }
@@ -316,19 +325,6 @@ impl Drivers {
                     {
                         return Err("Driver signature validation failed".into());
                     }
-                    let version = timeout(
-                        Duration::from_secs(5),
-                        Command::new(&self.binary)
-                            .arg("--version")
-                            .env_clear()
-                            .kill_on_drop(true)
-                            .output(),
-                    )
-                    .await
-                    .map_err(|_| "Driver version validation timed out")??;
-                    if !version.status.success() || version.stdout != b"cua-driver 0.44.0\n" {
-                        return Err("Driver version validation failed".into());
-                    }
                     if worker.is_none() {
                         let directory = tempfile::Builder::new()
                             .prefix("d-")
@@ -343,61 +339,25 @@ impl Drivers {
                             .path()
                             .to_str()
                             .ok_or("Invalid worker directory")?;
-                        let host =
-                            EmbeddedCuaDriverHost::with_options(EmbeddedDriverHostOptions {
-                                binary_path: self
-                                    .binary
-                                    .to_str()
-                                    .ok_or("Invalid driver path")?
-                                    .into(),
-                                host_bundle_id: "io.hyperneo.app".into(),
-                                socket_path: Some(
-                                    directory
-                                        .path()
-                                        .join("d.sock")
-                                        .to_str()
-                                        .ok_or("Invalid socket path")?
-                                        .into(),
-                                ),
-                                startup_timeout_ms: Some(10000),
-                                shutdown_timeout_ms: Some(2000),
-                                permission_mode: None,
-                                capability_manifest_path: None,
-                                approve_capability_manifest: false,
-                                session_policy_path: None,
-                                approve_session_policy: false,
-                                dangerously_bypass_approvals: false,
-                                environment: [
-                                    ("HOME", home),
-                                    ("TMPDIR", home),
-                                    ("CUA_DRIVER_RS_HOME", home),
-                                    ("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0"),
-                                    ("CUA_DRIVER_RS_UPDATE_CHECK", "0"),
-                                ]
-                                .into_iter()
-                                .map(|(name, value)| EmbeddedEnvironmentVariable {
-                                    name: name.into(),
-                                    value: value.into(),
-                                })
-                                .collect(),
-                                inherit_stderr: false,
-                                no_overlay: true,
-                                capture_stderr: false,
-                            })?;
+                        let channel = channel::Channel::open(
+                            &self.binary,
+                            &[
+                                ("HOME", home),
+                                ("TMPDIR", home),
+                                ("CUA_DRIVER_RS_HOME", home),
+                                ("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0"),
+                                ("CUA_DRIVER_RS_UPDATE_CHECK", "0"),
+                            ],
+                        )
+                        .await?;
                         *worker = Some(Worker {
-                            host,
+                            channel,
                             _directory: directory,
                         });
                     }
-                    let host = worker.as_ref().unwrap().host.clone();
-                    host.clone().start().await?;
-                    let connection = host.connection().ok_or("Driver connection missing")?;
-                    if let Err(error) = record::publish(
-                        &directory,
-                        connection.pid,
-                        connection.socket_path.clone().into(),
-                    )
-                    .and_then(|_| record::ensure_enabled(&directory))
+                    let pid = worker.as_ref().unwrap().channel.pid;
+                    if let Err(error) = record::publish(&directory, pid)
+                        .and_then(|_| record::ensure_enabled(&directory))
                     {
                         starting.preserve();
                         let _cleanup: Result<()> = async {
@@ -405,86 +365,61 @@ impl Drivers {
                             if FAIL_START_CLEANUP.swap(false, Ordering::Relaxed) {
                                 return Err("Fixture start cleanup failed".into());
                             }
-                            host.stop().await?;
+                            worker.as_mut().unwrap().channel.close().await?;
                             Ok(())
                         }
                         .await;
-                        record::verify_gone(
-                            connection.pid,
-                            std::path::Path::new(&connection.socket_path),
-                        )?;
+                        record::verify_gone(pid)?;
                         starting.cleanup_verified();
                         return Err(error);
                     }
                 }
                 "stop" => {
-                    if let Some(worker) = worker.as_ref() {
-                        if let Some(connection) = worker.host.connection() {
-                            record::verify(
-                                &directory,
-                                connection.pid,
-                                std::path::Path::new(&connection.socket_path),
-                            )
-                            .map_err(|error| format!("stop_unconfirmed: {error}"))?;
-                            worker
-                                .host
-                                .clone()
-                                .stop()
-                                .await
+                    if let Some(worker) = worker.as_mut() {
+                        let pid = worker.channel.pid;
+                        if worker.channel.running() {
+                            record::verify(&directory, pid)
                                 .map_err(|error| format!("stop_unconfirmed: {error}"))?;
-                            record::verify_gone(
-                                connection.pid,
-                                std::path::Path::new(&connection.socket_path),
-                            )?;
-                        } else {
-                            worker.host.clone().stop().await?;
                         }
+                        worker
+                            .channel
+                            .close()
+                            .await
+                            .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                        record::verify_gone(pid)?;
                     }
                     *worker = None;
                 }
                 "status" => {}
                 _ => return Err("Unknown Desktop control action".into()),
             }
-            if let Some(worker) = worker.as_ref() {
-                let connection = worker.host.connection();
-                if let Some(connection) = &connection {
-                    #[cfg(test)]
-                    if request.action == "start" && LATCH_ON_RESPONSE.swap(false, Ordering::Relaxed)
-                    {
-                        record::latch(&directory)?;
+            if let Some(worker) = worker.as_mut() {
+                let pid = worker.channel.pid;
+                #[cfg(test)]
+                if request.action == "start" && LATCH_ON_RESPONSE.swap(false, Ordering::Relaxed) {
+                    record::latch(&directory)?;
+                }
+                let valid = record::directory(&self.records, &request.worker, false)
+                    .and_then(|_| record::ensure_enabled(&directory))
+                    .and_then(|_| record::verify(&directory, pid));
+                if let Err(error) = valid {
+                    if request.action == "start" {
+                        worker
+                            .channel
+                            .close()
+                            .await
+                            .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                        record::verify_gone(pid)?;
                     }
-                    let valid = record::directory(&self.records, &request.worker, false)
-                        .and_then(|_| record::ensure_enabled(&directory))
-                        .and_then(|_| {
-                            record::verify(
-                                &directory,
-                                connection.pid,
-                                std::path::Path::new(&connection.socket_path),
-                            )
-                        });
-                    if let Err(error) = valid {
-                        if request.action == "start" {
-                            worker
-                                .host
-                                .clone()
-                                .stop()
-                                .await
-                                .map_err(|error| format!("stop_unconfirmed: {error}"))?;
-                            record::verify_gone(
-                                connection.pid,
-                                std::path::Path::new(&connection.socket_path),
-                            )?;
-                        }
-                        return Err(error);
-                    }
+                    return Err(error);
                 }
             }
             Ok(())
         }
         .await;
         if worker
-            .as_ref()
-            .is_some_and(|worker| worker.host.state() == EmbeddedDriverHostState::Stopped)
+            .as_mut()
+            .is_some_and(|worker| !worker.channel.running())
         {
             *worker = None;
         }
@@ -497,11 +432,8 @@ impl Drivers {
         }
         result?;
         Ok(match worker.as_ref() {
-            Some(worker) => {
-                let connection = worker.host.connection();
-                json!({"state": format!("{:?}", worker.host.state()).to_lowercase(), "pid": connection.as_ref().map(|c| c.pid), "socket": connection.map(|c| c.socket_path)})
-            }
-            None => json!({"state": "stopped", "pid": null, "socket": null}),
+            Some(worker) => json!({"state": "running", "pid": worker.channel.pid}),
+            None => json!({"state": "stopped", "pid": null}),
         })
     }
 }
