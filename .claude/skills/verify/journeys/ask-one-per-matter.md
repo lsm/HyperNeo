@@ -18,7 +18,7 @@ Through the real agent MCP door, as a Neo session, on the daemon's own packs:
 - An ask for another pull request and an ask that names none both open.
 - After `neo.ask.settle` on the first ask, the refused ask opens.
 - In a project bound to the synthetic repository, asks that write the same pull
-  request as `PR #n`, `repo#n` or `Repo#n` are refused with the first ask's id.
+  request as `PR #n`, `repo#n`, `Repo#n`, `#00n` or `repo#00n` are refused with the first ask's id.
   `#n` in an ask with no project, and another number in the project, both open.
 
 Evidence is `observed.json` and `proof.log`. This proves the refusal at the

@@ -15,7 +15,7 @@ In dual-model mode, the front prompt already tells Neo to answer from its reads 
 
 ## Not changed
 
-The acknowledgment-first rule, `work_on`, delivery of the full session's answer, and single-model mode. Asks, cards and projects keep their current detail.
+Delivery of the full session's answer and single-model mode. The acknowledgment and hand-off are changed by `one-reply.md`. Asks, cards and projects keep their current detail.
 
 ## Change
 

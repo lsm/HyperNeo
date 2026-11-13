@@ -71,9 +71,9 @@ afterEach(async () => {
 
 test('Front and Neo share speech rules with their own tool names', () => {
   expect(NEO_FRONT).toContain(
-    'use reply_short with progress:true and spoken to briefly acknowledge the request naturally'
+    'use reply with work_on:true and spoken to briefly acknowledge the request naturally'
   );
-  expect(NEO_FRONT).toContain('published through reply_short or reply_detailed.');
+  expect(NEO_FRONT).toContain('published through reply.');
   expect(NEO_FRONT).toContain('follow its guidance to call speech_say once');
   expect(NEO_FRONT).toContain('projects_read');
   expect(NEO_FRONT).toContain('asks_read');
@@ -93,10 +93,8 @@ test('Front and Neo share speech rules with their own tool names', () => {
 });
 
 test('Front mode note asks for spoken only while listening', () => {
-  expect(frontModeNote(true)).toContain('progress:true, spoken');
-  expect(frontModeNote(true)).toContain(
-    'every reply_short and reply_detailed call includes spoken'
-  );
+  expect(frontModeNote(true)).toContain('original replyTo ID and spoken');
+  expect(frontModeNote(true)).toContain('every reply call includes spoken');
   expect(frontModeNote(false)).not.toContain('spoken');
   expect(frontModeNote()).not.toMatch(/\b(Neo|Convo|Back|background|front)\b/i);
 });
@@ -114,7 +112,7 @@ test('Front uses the ordinary immediate session with its role and tools', async 
   expect(session.config.allowedTools).toContain('mcp__front__speech_say');
   expect(session.config.systemPrompt).toContain('You are Neo, talking with the human.');
   expect(session.config.systemPrompt).not.toMatch(/\b(Convo|Back|background|handoff)\b/);
-  expect(session.config.systemPrompt).toContain('Your first tool call');
+  expect(session.config.systemPrompt).toContain('Call reply once for each human input');
   expect(attach).toHaveBeenCalled();
 });
 
@@ -325,7 +323,7 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
   const { id } = await accept();
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
-  const send = definitions.find((tool) => tool.name === 'work_on')!;
+  const reply = definitions.find((tool) => tool.name === 'reply')!;
   await frontSession(
     service,
     { conversationId, askOrigin: { sessionId: root, messageId: id } },
@@ -342,23 +340,18 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
     },
     'submitted'
   );
-  await convoPublish({
-    requestId: 'ack',
-    replyTo: [id],
-    fullText: 'I will check.',
-    verbatim: true,
-    progress: true,
-  });
-  const handed = await send.handler(
-    {
-      requestId: 'clarification',
-      messageIds: [id],
-      text: 'Human message original-id needs clarification.',
-    },
+  const handed = await reply.handler(
+    { requestId: 'clarification', replyTo: [id], work_on: true, text: 'I will check.' },
     {} as never
   );
-  expect(JSON.parse((handed.content[0] as { text: string }).text)).toEqual({ started: true });
+  expect(JSON.parse((handed.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+    started: true,
+  });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  const delivered = JSON.stringify(db.getSDKMessageRepo().getMessageByUuid(root, id));
+  expect(delivered).toContain('<already-said>');
+  expect(delivered).toContain('I will check.</said>');
   expect(
     db
       .getJobQueueRepo()
@@ -366,12 +359,12 @@ test('a hand-off gives Neo the recorded human message once and restates nothing'
       .filter((j) => JSON.stringify(j.payload).includes('original-id'))
   ).toHaveLength(0);
   expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, id)?.owner).toBe('neo');
-  const again = await send.handler(
-    { requestId: 'clarification', messageIds: [id], text: 'Again.' },
+  const again = await reply.handler(
+    { requestId: 'again', replyTo: [id], work_on: true, text: 'Again.' },
     {} as never
   );
   expect(JSON.parse((again.content[0] as { text: string }).text)).toEqual({
-    started: false,
+    accepted: false,
     reason: 'input_handed_off',
   });
 });
@@ -431,8 +424,8 @@ test('Front keeps ordinary model settings and preserves a usable conversation', 
     autoCompactPercent: 80,
     queryMode: 'immediate',
   });
-  expect(next.config.allowedTools).toContain('mcp__front__work_on');
-  expect(next.config.allowedTools).toContain('mcp__front__reply_short');
+  expect(next.config.allowedTools).toContain('mcp__front__reply');
+  expect(next.config.allowedTools).not.toContain('mcp__front__work_on');
 });
 
 test('Neo cannot use message.send to reach the front session', async () => {
@@ -475,11 +468,6 @@ test('Front receives the quoted card and forwards the original human input only 
   await createNeoFrontHandler(service)(job);
   const jobs = db.getJobQueueRepo().listJobs({ queue: 'mailbox' });
   expect(JSON.stringify(jobs)).toContain(replyTo.excerpt);
-  createFrontTools(service, conversationId);
-  const send = vi
-    .mocked(createSdkMcpServer)
-    .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'work_on')!;
   await db.saveUserMessage(
     front,
     {
@@ -492,16 +480,12 @@ test('Front receives the quoted card and forwards the original human input only 
     'submitted'
   );
   await convoPublish({
-    requestId: 'ack',
+    requestId: 'screenshot',
     replyTo: [id],
     fullText: 'I will get that screenshot.',
     verbatim: true,
     progress: true,
   });
-  await send.handler(
-    { requestId: 'screenshot', messageIds: [id], text: 'Capture the quoted settings window.' },
-    {} as never
-  );
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
 });
 
@@ -513,17 +497,15 @@ test('single mode still delivers the human message directly to Back', async () =
 });
 
 test('an unknown Front handoff creates no Back delivery', async () => {
-  createFrontTools(service, conversationId);
-  const send = vi
-    .mocked(createSdkMcpServer)
-    .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'work_on')!;
   const id = crypto.randomUUID();
-  const response = await send.handler(
-    { requestId: 'unknown', messageIds: [id], text: 'Do this.' },
-    {} as never
-  );
-  expect(JSON.stringify(response)).toContain('unknown_reply_target');
+  const response = await convoPublish({
+    requestId: 'unknown',
+    replyTo: [id],
+    fullText: 'Do this.',
+    verbatim: true,
+    progress: true,
+  });
+  expect(response).toMatchObject({ accepted: false, reason: 'unknown_reply_target' });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
   expect(db.getJobQueueRepo().listJobs({ queue: 'mailbox' })).toHaveLength(0);
 });
@@ -608,18 +590,16 @@ test('Front publishes an unrequested background result without borrowing a human
   ).toHaveLength(0);
 });
 
-test('Front exposes reads, work_on and one publication path', () => {
+test('Front exposes reads and one reply tool', () => {
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   expect(definitions.map((entry) => entry.name).sort()).toEqual([
     'asks_read',
     'cards_read',
     'projects_read',
-    'reply_detailed',
-    'reply_short',
+    'reply',
     'speech_say',
     'todos_read',
-    'work_on',
   ]);
 });
 
@@ -723,7 +703,7 @@ test.each([
   }
 );
 
-test('a Front turn that only acknowledged gets the fixed notice after Neo delivery failed', async () => {
+test('a Front turn with no reply gets the fixed notice after Neo delivery failed', async () => {
   const { id, job } = await accept();
   const handler = createNeoFrontHandler(service);
   await handler(job);
@@ -739,15 +719,6 @@ test('a Front turn that only acknowledged gets the fixed notice after Neo delive
     'enqueued'
   );
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
-  expect(
-    await convoPublish({
-      requestId: 'ack',
-      replyTo: [id],
-      fullText: 'I will check that.',
-      verbatim: true,
-      progress: true,
-    })
-  ).toMatchObject({ accepted: true });
   await db.saveUserMessage(
     root,
     neoIntakeMessage({ sessionId: root, requestId: id, content: 'Check the build' }),
@@ -809,15 +780,6 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
     expect(await handler(previous.job)).toMatchObject({ delivered: true });
     expect(service.publications.list(conversationId)).toHaveLength(1);
     expect(service.publications.list(conversationId)![0].replyTo).toEqual([previous.id]);
-    expect(
-      await convoPublish({
-        requestId: 'current-ack',
-        replyTo: [current.id],
-        fullText: 'I will check that.',
-        verbatim: true,
-        progress: true,
-      })
-    ).toMatchObject({ accepted: true });
     await db.saveSDKMessage(front, {
       type: 'result',
       subtype: 'success',
@@ -1116,14 +1078,16 @@ test.each(['disabled', 'dual'])(
 
 async function convoPublish(input: Record<string, unknown>) {
   createFrontTools(service, conversationId);
-  const { fullText, shortText, verbatim, ...fields } = input;
+  const { fullText, shortText, verbatim, progress, ...fields } = input;
   const definition = vi
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === (verbatim ? 'reply_short' : 'reply_detailed'));
+    .tools!.find((tool) => tool.name === 'reply');
   expect(definition).toBeDefined();
   const receipt = await definition!.handler(
-    verbatim ? { ...fields, text: fullText } : { ...fields, summary: shortText, details: fullText },
+    verbatim
+      ? { ...fields, text: fullText, ...(progress ? { work_on: true } : {}) }
+      : { ...fields, text: shortText, details: fullText },
     {} as never
   );
   return JSON.parse((receipt.content[0] as { text: string }).text);
@@ -1153,11 +1117,10 @@ test('Front leaves Markdown silent and requests a spoken line from the model', a
     spokenDelivered: false,
   });
   const receipt = await convoPublish({
-    requestId: 'markdown-progress',
+    requestId: 'markdown-reply',
     replyTo: [id],
     fullText: '**Report** with 12345 and /example/report.md',
     verbatim: true,
-    progress: true,
   });
   expect(receipt.accepted).toBe(true);
   expect(speech).toHaveBeenCalledWith(root, expect.any(String), undefined);
@@ -1172,7 +1135,7 @@ test('Front rejects a new reply without spoken while the human is listening', as
     listening: 'yes',
     spokenDelivered: true,
   });
-  const draft = { replyTo: [id], fullText: 'Done.', verbatim: true, progress: true };
+  const draft = { replyTo: [id], fullText: 'Done.', verbatim: true };
   expect(await convoPublish({ ...draft, requestId: 'silent' })).toEqual({
     accepted: false,
     reason: 'spoken_required',
@@ -1197,34 +1160,25 @@ test('Neo publishes in both modes', async () => {
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
-test('after a visible progress reply, a hand-off leaves the answers to Neo', async () => {
+test('a work_on reply publishes its acknowledgment and hands off in one call', async () => {
   const { id } = await deliveredConvoInput();
-  createFrontTools(service, conversationId);
-  const send = vi
-    .mocked(createSdkMcpServer)
-    .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'work_on')!;
-  const input = { requestId: 'work', messageIds: [id], text: 'Handle this request.' };
-  const early = await send.handler(input, {} as never);
-  expect(JSON.parse((early.content[0] as { text: string }).text)).toMatchObject({
-    started: false,
-  });
-  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBeNull();
-  const progress = {
+  const work = {
     requestId: 'ack',
     replyTo: [id],
     fullText: 'I will handle that.',
     verbatim: true,
     progress: true,
   };
-  expect(await convoPublish(progress)).toMatchObject({ accepted: true, created: true });
-  expect(await convoPublish({ ...progress, requestId: 'ack-retry' })).toMatchObject({
-    accepted: true,
-    created: false,
+  expect(await convoPublish(work)).toMatchObject({ accepted: true, created: true, started: true });
+  expect(service.publications.list(conversationId)).toHaveLength(1);
+  expect(service.publications.list(conversationId)![0]).toMatchObject({
+    fullText: 'I will handle that.',
+  });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  expect(await convoPublish({ ...work, requestId: 'ack-retry' })).toMatchObject({
+    reason: 'input_handed_off',
   });
   expect(service.publications.list(conversationId)).toHaveLength(1);
-  expect(service.publications.list(conversationId)![0].replyTo ?? []).toEqual([]);
-  expect(await send.handler(input, {} as never)).toBeTruthy();
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(
     await convoPublish({ requestId: 'final', replyTo: [id], fullText: 'Done.', verbatim: true })
@@ -1251,6 +1205,37 @@ test('after a visible progress reply, a hand-off leaves the answers to Neo', asy
   expect(
     service.publications.list(conversationId)!.filter((row) => row.replyTo?.includes(id))
   ).toHaveLength(2);
+});
+
+test.each([
+  ['details', { details: 'More.' }],
+  ['a long text', { text: 'x'.repeat(151) }],
+  ['two replyTo IDs', { extra: true }],
+])('a work_on reply with %s is refused before anything is published', async (_name, change) => {
+  const { id } = await deliveredConvoInput();
+  const other = (await deliveredConvoInput()).id;
+  createFrontTools(service, conversationId);
+  const reply = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'reply')!;
+  const { extra, ...fields } = change as { extra?: boolean; text?: string; details?: string };
+  const receipt = await reply.handler(
+    {
+      requestId: 'work',
+      replyTo: extra ? [id, other] : [id],
+      work_on: true,
+      text: 'I will check.',
+      ...fields,
+    },
+    {} as never
+  );
+  expect(JSON.parse((receipt.content[0] as { text: string }).text)).toEqual({
+    accepted: false,
+    reason: 'work_on_brief',
+  });
+  expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
 });
 
 test('Front publication refuses an input it was never given and a stale dual-mode tool', async () => {
@@ -1362,35 +1347,45 @@ test.each(['creation', 'delivery'])(
   }
 );
 
-test('Front uses distinct short and detailed reply tools with no format switch', async () => {
+test('a reply with details refuses a summary over 2000 characters by name', async () => {
+  const { id } = await deliveredConvoInput();
+  expect(
+    await convoPublish({
+      requestId: 'long-summary',
+      replyTo: [id],
+      shortText: 'x'.repeat(2001),
+      fullText: 'Details.',
+    })
+  ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
+  expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
+});
+
+test('a reply without work_on is the final answer with no acknowledgment before it', async () => {
   const { id } = await deliveredConvoInput();
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
-  const short = definitions.find((tool) => tool.name === 'reply_short');
-  const detailed = definitions.find((tool) => tool.name === 'reply_detailed');
-  expect(short).toBeDefined();
-  expect(detailed).toBeDefined();
+  const reply = definitions.find((tool) => tool.name === 'reply')!;
   expect(definitions.some((tool) => tool.name === 'publication_publish')).toBe(false);
-  const acknowledgment = await short!.handler(
-    { requestId: 'short-ack', replyTo: [id], text: 'I will check.', progress: true },
+  const answer = await reply.handler(
+    { requestId: 'short-answer', replyTo: [id], text: 'The build passed.' },
     {} as never
   );
-  expect(JSON.parse((acknowledgment.content[0] as { text: string }).text)).toMatchObject({
+  expect(JSON.parse((answer.content[0] as { text: string }).text)).toMatchObject({
     accepted: true,
   });
   const first = service.publications.list(conversationId)![0];
-  expect(first).toMatchObject({ verbatim: true, fullText: 'I will check.' });
+  expect(first).toMatchObject({ verbatim: true, fullText: 'The build passed.', replyTo: [id] });
   expect(first.shortText).toBeUndefined();
-  const answer = await detailed!.handler(
+  const detailed = await reply.handler(
     {
       requestId: 'long-result',
       replyTo: [id],
-      summary: 'The result',
+      text: 'The result',
       details: 'Additional evidence and explanation.',
     },
     {} as never
   );
-  expect(JSON.parse((answer.content[0] as { text: string }).text)).toMatchObject({
+  expect(JSON.parse((detailed.content[0] as { text: string }).text)).toMatchObject({
     accepted: true,
   });
   const final = service.publications.list(conversationId)![1];
@@ -1401,6 +1396,7 @@ test('Front uses distinct short and detailed reply tools with no format switch',
   });
   expect(final.verbatim).toBeUndefined();
   expect(service.publications.list(conversationId)).toHaveLength(2);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
 });
 
 test('Front prompt, tool descriptions and intake agree on the five-sentence boundary', async () => {
@@ -1409,14 +1405,11 @@ test('Front prompt, tool descriptions and intake agree on the five-sentence boun
   expect(db.getSession(front)!.config.systemPrompt).toContain('at most five short sentences');
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
-  expect(definitions.find((tool) => tool.name === 'reply_short')!.description).toContain(
-    'at most five short sentences'
-  );
-  expect(definitions.find((tool) => tool.name === 'reply_detailed')!.description).toContain(
+  expect(definitions.find((tool) => tool.name === 'reply')!.description).toContain(
     'more than five sentences'
   );
   const intake = JSON.stringify(db.getJobQueueRepo().listJobs({ queue: 'mailbox' }));
-  expect(intake).toContain('at most five short sentences');
+  expect(intake).toContain('more than five sentences');
   expect(intake).toContain('structured report');
 });
 
@@ -1581,7 +1574,7 @@ test('a front input queued before the upgrade keeps its bytes and its old tool n
     .listJobs({ queue: 'mailbox' })
     .find((item) => item.payload.messageUuid === id && item.payload.to)!;
   const stored = JSON.parse(
-    JSON.stringify(mailbox.payload).replace('call work_on', 'call run_in_background')
+    JSON.stringify(mailbox.payload).replace('with work_on:true', 'call run_in_background')
   );
   db.getDatabase()
     .prepare('UPDATE job_queue SET payload = ? WHERE id = ?')
@@ -1642,19 +1635,13 @@ test('the listening note reaches Neo and the front', async () => {
 
 test('a handed-off input settles as handed off with no extra message', async () => {
   const { id, job } = await deliveredConvoInput();
-  createFrontTools(service, conversationId);
-  const send = vi
-    .mocked(createSdkMcpServer)
-    .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'work_on')!;
   await convoPublish({
-    requestId: 'ack',
+    requestId: 'work',
     replyTo: [id],
     fullText: 'On it.',
     verbatim: true,
     progress: true,
   });
-  await send.handler({ requestId: 'work', messageIds: [id], text: 'Do it.' }, {} as never);
   const count = service.publications.list(conversationId)!.length;
   expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
     delivered: true,

@@ -1,12 +1,15 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
-  front_ack_required:
-    'First use reply_short with progress:true to publish a brief acknowledgment for each original human replyTo ID, then call work_on.',
+  reply_summary_too_long:
+    'With details, keep text to a standalone summary of at most 2000 characters and put the rest in details.',
+  work_on_brief:
+    'With work_on:true, reply with one acknowledgment of at most 150 characters, one replyTo ID and no details.',
 
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
   input_handed_off:
     'You are already working on this message; its answer reaches the human by itself.',
-  front_not_speaking: 'work_on is available only while fast replies are on for this conversation.',
+  front_not_speaking:
+    'reply with work_on is available only while fast replies are on for this conversation.',
   front_model_required: 'Choose a fast reply model before turning on fast replies.',
 
   updating:

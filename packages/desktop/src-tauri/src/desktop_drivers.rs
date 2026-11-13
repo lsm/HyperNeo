@@ -2,6 +2,8 @@
 mod channel;
 #[path = "desktop_driver_record.rs"]
 mod record;
+#[path = "desktop_target.rs"]
+mod target;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -53,6 +55,10 @@ struct Request {
     action: String,
     worker: String,
     work_dir: Option<PathBuf>,
+    tool: Option<String>,
+    arguments: Option<Value>,
+    instance: Option<Value>,
+    call_id: Option<String>,
 }
 pub(crate) struct Control {
     drivers: Arc<Drivers>,
@@ -253,6 +259,13 @@ impl Drivers {
             return Ok(
                 json!({"count": slots.len(), "references": slots.get(&request.worker).map(Arc::strong_count).unwrap_or(0)}),
             );
+        }
+        if request.action == "resolve" {
+            let tool = request.tool.as_deref().unwrap_or_default();
+            let arguments = request.arguments.unwrap_or(Value::Null);
+            let mut result = target::resolve(tool, &arguments, request.instance.as_ref());
+            result["call_id"] = json!(request.call_id);
+            return Ok(result);
         }
         let directory = self.records.join("workers").join(&request.worker);
         if matches!(request.action.as_str(), "start" | "stop") {
