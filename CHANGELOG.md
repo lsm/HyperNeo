@@ -4,6 +4,33 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-11-13
+
+- Rework Neo around a minimal ask/todo/card model: cards confirm, choose or reply, a card covers a list of todos, todos complete without a gate, and waiting on the human is read from cards (#10477, #10490, #10494, #10502, #10503, #10537).
+- Make the front and Neo one identity in dual mode, with one front reply per human message, richer front answers from its own reads, and Neo answering the human directly (#10499, #10521, #10524, #10522, #10496, #10493).
+- Rework todo lifecycle: todos start automatically, dependents decide their own step when a prerequisite is removed, every todo requires an explicit `after`, and changes return only the changed todo (#10529, #10511, #10510, #10548).
+- Settle asks once their stalled-ask wake turn ends, refuse a second open ask for the same matter, keep unanswered message ids through compaction, and make the ask auto-settle sweep cheap at live scale (#10550, #10500, #10552, #10560).
+- Ship the v2 one-time QR pairing flow over `/pair2/*`, list pending phones with cancel, pair from a QR on the web device page, and tell a later phone it waits for an owner device (#10440, #10474, #10555, #10558).
+- Treat kimi-for-coding as the K2.8 preview and expose Kimi usage through provider operations (#10534, #10531).
+- Let choice cards carry their own option letters, publish replies as text plus optional details, and send every human input to the full session (#10553, #10536, #10556).
+- Make rule, setting and home-repository cards apply or keep, merge overlapping removal cards into one, and pin pack snapshot rows onto todo details (#10543, #10562, #10532).
+- Fix web details: drop the mobile bottom tab bar, show a stopped query once inside its API Error card, show Your work once beside the right tabs panel, apply auto-compact percentages once, normalize numbers in short pull request forms, and read short pull request forms in the ask matter key (#10541, #10546, #10526, #10544, #10519, #10517).
+- Run each desktop driver over a private inherited stream and resolve the verified desktop target and action class; forward Copilot images through the Anthropic bridge (#10513, #10515, #10491).
+- Say a missing preview file may not be written yet, send the fixed notice when an acknowledged input gets no answer, and remove editing a sent message (#10539, #10507, #10489).
+- Refactor GitHub watched storage into per-scope storage and create project sections on the DB writer (#10497, #9176).
+
+### API compatibility
+
+Compared with v0.57.1, the pinned phone source inventory reports 1 breaking, 1 risky, and 3 safe methods. Across all schema changes, the report lists 26 breaking, 1 risky, and 40 safe changes.
+
+- Neo todo results remove the embedded `todos` list; `neo.todo.read` and `neo.todo.done` are added instead. `neo.todo.add` makes `after` required and removes `start`.
+- `neo.question.ask` removes an input union alternative and changes `options` minItems.
+- `neo.publication.read` raises `shortText` maxLength from 2000 to 4000; flagged breaking by the schema diff, but the phone reads it without a length limit.
+- `neo.ask.read` adds a short todo-line result alternative returned only to MCP callers; RPC callers such as the phone keep receiving full todo entries.
+- New operations: `neo.todo.done`, `neo.todo.read`, `settings.provider.usage`.
+
+The inventory describes source usage at `5a35d4d4bcabb7866ddfc95212a775ebc465979b` (phone app 0.5.0 (6)), which predates the installed build; installed-client compatibility remains unverified. The [complete compatibility report](https://github.com/lsm/HyperNeo/releases/download/v0.58.0/api-diff.json) includes every classified change.
+
 ## [0.57.1] - 2026-11-11
 
 - Ship the 0.57.0 changes below; the 0.57.0 tag was never published because its Intel macOS desktop build failed.
