@@ -198,6 +198,13 @@ describe('Writer-backed todo operation activation', () => {
     expect(order.slice(0, 2)).toEqual(['commit', 'announce']);
   });
 
+  test('a todo change returns only the changed todo', async () => {
+    const result = await call('neo.todo.hold', { todoId: 'first', reason: 'Human said wait.' });
+    expect(result).toMatchObject({ ok: true, todo: { id: 'first', state: 'blocked' } });
+    expect(JSON.stringify(result)).not.toContain('Next task');
+    expect('todos' in result).toBe(false);
+  });
+
   test('hold holds and releases through the atomic command', async () => {
     expect(
       await call('neo.todo.hold', { todoId: 'peer', reason: 'Human said wait.' })
