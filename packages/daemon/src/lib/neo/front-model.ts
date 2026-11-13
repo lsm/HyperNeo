@@ -148,7 +148,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             : null;
           if (second && !existing)
             return result({ accepted: false, reason: 'publication_conflict' });
-          const said = existing?.fullText ?? body.text;
+          const said = existing?.fullText ?? body.details ?? body.text;
           const handed = await handOff(
             asks.map((ask) => ask!),
             targets,

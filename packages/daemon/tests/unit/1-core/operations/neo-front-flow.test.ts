@@ -2303,3 +2303,48 @@ test('a stranded first input and an unanswered second settle with one group fall
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [first.id])).toHaveLength(0);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [second.id])).toHaveLength(0);
 });
+
+test('a detailed front reply hands off the details the human received', async () => {
+  const { id } = await deliveredConvoInput();
+  await convoPublish({
+    requestId: 'detailed',
+    replyTo: [id],
+    shortText: 'The build passed.',
+    fullText: 'The build passed on dev and on the release branch, with the flaky test rerun twice.',
+  });
+
+  const delivered = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+  expect(delivered, delivered).toContain('on the release branch');
+});
+
+test('a second settle job does not repeat a grouped fallback the first one posted', async () => {
+  const first = await deliveredConvoInput();
+  const second = await deliveredConvoInput();
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id IN (?, ?)"
+    )
+    .run(conversationId, first.id, second.id);
+  for (const { id } of [first, second]) {
+    expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  }
+  expect(
+    service.publications.append(
+      {
+        conversationId,
+        publicationId: frontFallbackId(conversationId, [first.id, second.id]),
+        verbatim: true,
+        fullText: FRONT_FALLBACK_TEXT,
+        replyTo: [first.id, second.id],
+        links: [],
+      },
+      front
+    )
+  ).toMatchObject({ accepted: true });
+
+  await settleConvoInput(service, second.job, conversationId, front, second.id, 'delivery');
+
+  expect(
+    service.publications.list(conversationId)!.filter((row) => row.fullText === FRONT_FALLBACK_TEXT)
+  ).toHaveLength(1);
+});
