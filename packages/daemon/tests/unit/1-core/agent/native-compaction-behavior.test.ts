@@ -172,10 +172,13 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     expect(getModelContextWindow('codex-6-luna')).toBe(1_050_000);
   });
 
-  it('Kimi buildSdkConfig arms CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (K2.7=262144, K3=1M)', () => {
+  it('Kimi buildSdkConfig arms CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (K2.7 Code=262144, K2.8=1M, K3=1M)', () => {
     const provider = new KimiProvider({ KIMI_API_KEY: 'key' });
-    expect(provider.buildSdkConfig('kimi-k2.7-code').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
-      '262144'
+    expect(
+      provider.buildSdkConfig('kimi-k2.7-code-highspeed').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    ).toBe('262144');
+    expect(provider.buildSdkConfig('kimi-for-coding').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+      '1000000'
     );
     expect(provider.buildSdkConfig('kimi-k3').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
       '1048576'

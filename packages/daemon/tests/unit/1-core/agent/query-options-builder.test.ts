@@ -1963,7 +1963,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('forces thinking enabled for regular kimi K2.7 models when level is off', async () => {
       mockSession.config.provider = 'kimi';
-      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.model = 'kimi-k2.7-code';
       mockSession.config.thinkingLevel = 'off';
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
@@ -2191,7 +2191,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('allows mixed Kimi K2.7 primary and K3 fallback when K2.7 forces enabled thinking', () => {
       mockSession.config.provider = 'kimi';
-      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.model = 'kimi-k2.7-code';
       mockSession.config.fallbackModel = 'k3';
       mockSession.config.thinkingLevel = 'off';
 
@@ -2224,6 +2224,22 @@ describe('QueryOptionsBuilder', () => {
       expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
     });
 
+    it('asks Kimi K2.8 Preview for high effort by default and keeps only its three levels', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      expect(builder.addSessionStateOptions({}).effort).toBe('high');
+      expect(builder.addSessionStateOptions({}).thinking).toEqual({ type: 'adaptive' });
+
+      mockSession.config.thinkingLevel = 'think24k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('high');
+
+      mockSession.config.thinkingLevel = 'think48k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('max');
+
+      mockSession.config.thinkingLevel = 'think8k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('low');
+    });
+
     it('maps DeepSeek levels onto its effort scale', () => {
       mockSession.config.provider = 'deepseek';
       mockSession.config.model = 'deepseek-v4-pro';
@@ -2235,7 +2251,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('allows Kimi K2.7 primary and K2.7 fallback with enabled thinking', () => {
       mockSession.config.provider = 'kimi';
-      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.model = 'kimi-k2.7-code';
       mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
       mockSession.config.thinkingLevel = 'off';
 

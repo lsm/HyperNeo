@@ -117,19 +117,28 @@ export class KimiProvider implements Provider {
     },
     {
       id: 'kimi-for-coding',
-      name: 'Kimi K2.7',
+      name: 'Kimi K2.8 Preview',
       alias: 'kimi',
       family: 'kimi',
       provider: 'kimi',
-      contextWindow: 262_144,
+      contextWindow: 1_000_000,
       providerAliases: ['KIMI', 'Kimi', 'kimi-k2.7-code', 'Kimi-K2.7-Code'],
       preferContextWindowMetadata: true,
-      thinkingModes: 'on',
-      description: 'Kimi Code model from Moonshot Claude Code integration docs.',
+      thinkingModes: 'granular',
+      effortLevels: ['low', 'high', 'max'],
+      description: 'Kimi K2.8 Preview · 1M context coding model with reasoning effort',
       releaseDate: '',
       available: true,
     },
   ];
+
+  static readonly MODEL_EFFORT_LEVELS: Record<string, ThinkingEffort[]> = {
+    'kimi-for-coding': ['low', 'high', 'max'],
+  };
+
+  static readonly MODEL_DEFAULT_EFFORT: Record<string, ThinkingEffort> = {
+    'kimi-for-coding': 'high',
+  };
 
   static readonly K31_MODELS: ModelInfo[] = [
     {
@@ -275,12 +284,15 @@ export class KimiProvider implements Provider {
     );
   }
 
+  static isKimiK2Point8PreviewModel(modelId: string): boolean {
+    const id = KimiProvider.normalizeKimiModelId(modelId);
+    return id === 'kimi' || id === 'kimi-for-coding';
+  }
+
   static isKimiK2Point7Model(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
     if (KimiProvider.isKimiK3Model(modelId)) return false;
     return (
-      id === 'kimi' ||
-      id === 'kimi-for-coding' ||
       id === 'kimi-k2.7-code' ||
       id === 'kimi-k2.7-code-highspeed' ||
       id === 'kimi-for-coding-highspeed'
@@ -306,6 +318,7 @@ export class KimiProvider implements Provider {
 
   private static discoveredThinkingModesFor(modelId: string): 'granular' | 'on' | 'off' {
     if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
+    if (KimiProvider.isKimiK2Point8PreviewModel(modelId)) return 'granular';
     if (KimiProvider.resolveContextWindow(modelId) < 65_536) return 'off';
     return 'on';
   }
@@ -314,6 +327,7 @@ export class KimiProvider implements Provider {
     modelId: string
   ): { type: 'enabled'; budgetTokens: 16000 } | { type: 'disabled' } | undefined {
     if (KimiProvider.isKimiK3Model(modelId)) return undefined;
+    if (KimiProvider.isKimiK2Point8PreviewModel(modelId)) return undefined;
     if (KimiProvider.isKimiK2Point7Model(modelId)) {
       return { type: 'enabled', budgetTokens: 16_000 };
     }
@@ -559,12 +573,23 @@ export class KimiProvider implements Provider {
     return KimiProvider.DEFAULT_MODEL;
   }
 
-  getModelEffortLevels(): ThinkingEffort[] {
-    return [...THINKING_EFFORTS];
+  getModelEffortLevels(modelId: string): ThinkingEffort[] | undefined {
+    if (!this.ownsModel(modelId)) return undefined;
+    return (
+      KimiProvider.MODEL_EFFORT_LEVELS[KimiProvider.canonicalizeModelId(modelId)] ?? [
+        ...THINKING_EFFORTS,
+      ]
+    );
+  }
+
+  getModelDefaultEffort(modelId: string): ThinkingEffort | undefined {
+    if (!this.ownsModel(modelId)) return undefined;
+    return KimiProvider.MODEL_DEFAULT_EFFORT[KimiProvider.canonicalizeModelId(modelId)];
   }
 
   getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
     if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
+    if (KimiProvider.isKimiK2Point8PreviewModel(modelId)) return 'granular';
     if (KimiProvider.isKimiK2Point7Model(modelId)) return 'on';
     if (
       this.ownsModel(modelId) &&
@@ -692,6 +717,7 @@ export class KimiProvider implements Provider {
     const canonical = KimiProvider.canonicalizeModelId(modelId);
     const normalized = KimiProvider.normalizeKimiModelId(canonical);
     if (normalized === 'k3-256k' || normalized === 'kimi-k3-256k') return 262_144;
+    if (normalized === 'kimi-for-coding') return 1_000_000;
     if (
       normalized === 'kimi-k3' ||
       normalized === 'kimi-k3.1-pro' ||
@@ -730,8 +756,10 @@ export class KimiProvider implements Provider {
       ? resolveKimiRegion(explicitRegion)
       : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
 
-    const contextWindow = KimiProvider.resolveContextWindow(_modelId);
     const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, baseUrl, effectiveRegion);
+    const contextWindow = KimiProvider.resolveContextWindow(
+      this.ownsModel(_modelId) ? routingModelId : _modelId
+    );
 
     return {
       envVars: {

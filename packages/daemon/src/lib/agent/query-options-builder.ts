@@ -739,6 +739,7 @@ export class QueryOptionsBuilder {
     let thinkingModes: 'off' | 'on' | 'granular' =
       PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
     let effortLevels: ThinkingEffort[] | undefined;
+    let defaultEffort: ThinkingEffort | undefined;
     try {
       if (providerId) {
         const provider = getProviderRegistry().get(providerId);
@@ -750,17 +751,21 @@ export class QueryOptionsBuilder {
           : undefined;
         if (perModelMode) thinkingModes = perModelMode;
         effortLevels = selectedModel ? provider?.getModelEffortLevels?.(selectedModel) : undefined;
+        defaultEffort =
+          selectedModel && !this.hasChosenThinkingLevel()
+            ? provider?.getModelDefaultEffort?.(selectedModel)
+            : undefined;
       }
     } catch {}
     const thinkingLevel = this.getEffectiveThinkingLevel();
     const effort =
       thinkingModes === 'granular' && effortLevels?.length
         ? thinkingLevel === 'off'
-          ? offEffort(providerId, effortLevels)
+          ? (defaultEffort ?? offEffort(providerId, effortLevels))
           : effortForThinkingLevel(thinkingLevel, effortLevels)
         : undefined;
     let thinkingConfig: ThinkingConfig | undefined =
-      effort && thinkingLevel !== 'off'
+      effort && (thinkingLevel !== 'off' || defaultEffort)
         ? { type: 'adaptive' }
         : this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 
@@ -826,6 +831,15 @@ export class QueryOptionsBuilder {
     }
 
     return result as Options;
+  }
+
+  hasChosenThinkingLevel(): boolean {
+    const persisted = this.ctx.db?.getSession(this.ctx.session.id)?.config?.thinkingLevel;
+    const globalSettings = this.ctx.settingsManager.getGlobalSettings();
+    return (
+      (persisted ?? this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel) !==
+      undefined
+    );
   }
 
   getEffectiveThinkingLevel(): ThinkingLevel {

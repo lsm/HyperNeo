@@ -142,6 +142,7 @@ export interface Provider {
   getModelEffortLevels?(
     modelId: string
   ): Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'> | undefined;
+  getModelDefaultEffort?(modelId: string): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined;
 }
 
 export interface ProviderContext {
