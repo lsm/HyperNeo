@@ -384,7 +384,9 @@ type CodingTodoFacts = {
 
 export function createCodingTodoPolicy(
   repo: Pick<CodingTodoPrRepository, 'urls' | 'place'>
-): Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'>> {
+): Required<
+  Pick<NeoTodoPack, 'writerAdd' | 'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'>
+> {
   const places = new WeakMap<NeoTodoPolicyScope, CodingTodoPlace>();
   const readPlace = (scope: NeoTodoPolicyScope) => {
     let place = places.get(scope);
@@ -401,6 +403,7 @@ export function createCodingTodoPolicy(
       scope && readPlace(scope)
     );
   return {
+    writerAdd: true,
     repository,
     doneWhen: codingTodoDoneWhen,
     addUrls: (todo, urls) =>

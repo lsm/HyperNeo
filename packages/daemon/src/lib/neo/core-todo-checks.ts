@@ -180,6 +180,7 @@ export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
     },
     todos: {
       schema: () => {},
+      writerAdd: true,
       check,
       ...coreTodoPolicy,
       statusLine: () => null,

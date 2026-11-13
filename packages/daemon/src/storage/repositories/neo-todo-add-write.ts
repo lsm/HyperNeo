@@ -2,6 +2,7 @@ import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { z } from 'zod';
 import { neoEvidenceRefusal, withAssignedEvidence } from '../../lib/neo/core-todo-checks.ts';
+import { neoUserFolder } from '../../lib/neo/folder.ts';
 import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import {
@@ -27,7 +28,7 @@ type Input = {
   todoId: string;
   draft: z.infer<typeof NeoTodoDraftSchema> & { workerRemotes?: readonly string[] };
   now: number;
-  userFolder: string;
+  userFolder?: string;
 };
 type Receipt =
   | { ok: false; reason: string }
@@ -80,7 +81,7 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       const repo = neoTodoRepository(draft, policies, scope);
       const placeless = neoTodoPlaceRefusal(draft, policies, scope);
       if (placeless) return { reason: { ok: false, reason: placeless } };
-      const misplaced = neoEvidenceRefusal(check, repo, input.userFolder);
+      const misplaced = neoEvidenceRefusal(check, repo, input.userFolder ?? neoUserFolder());
       if (misplaced) return { reason: { ok: false, reason: misplaced } };
       const peers = store.listTodos(ask.id);
       const accepted = planNeoTodoDraft(draft, policies, peers);

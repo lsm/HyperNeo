@@ -29,7 +29,7 @@ export async function recordNeoTodoAdmission(
   draft: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
 ): Promise<Result> {
-  if (!['core', 'coding'].includes(draft.check.pack))
+  if (!packs.find((pack) => pack.id === draft.check.pack)?.todos?.writerAdd)
     return recordNeoTodo(store, sessions, controls, ask, draft, packs);
   const receipt = await store.commitAdd({
     askId: ask.id,
