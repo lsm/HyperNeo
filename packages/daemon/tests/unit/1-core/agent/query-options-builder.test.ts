@@ -2233,6 +2233,19 @@ describe('QueryOptionsBuilder', () => {
       expect(result.effort).toBe('high');
     });
 
+    it('forces the 16k budget when a K2.8 primary pairs with a K2.7 fallback', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
+      mockSession.config.thinkingLevel = 'off';
+
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+      expect(result.effort).toBeUndefined();
+    });
+
     it('allows Kimi K3 primary and K3 fallback with granular thinking', () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';

@@ -818,8 +818,8 @@ export class QueryOptionsBuilder {
       const mixedChain =
         Boolean(fallbackRouted) &&
         !isCuratedOutModel(fallbackModel!, providerId) &&
-        ((KimiProvider.isKimiK3Model(routed) && fallbackIsK2) ||
-          (primaryIsK2 && KimiProvider.isKimiK3Model(fallbackRouted!)));
+        fallbackIsK2 &&
+        !primaryIsK2;
       const fixedBudgetNeeded = primaryIsK2
         ? thinkingConfig?.type !== 'enabled' ||
           thinkingConfig.budgetTokens !== THINKING_LEVEL_TOKENS['think16k']
