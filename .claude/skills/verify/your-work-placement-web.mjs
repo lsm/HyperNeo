@@ -44,17 +44,38 @@ try {
       tabs: await page.getByRole('tab').allInnerTexts(),
       selected: await page.locator('[role="tab"][aria-selected="true"]').allInnerTexts(),
     });
+    const settled = async () => {
+      await page.getByText(/^Loading/).first().waitFor({ state: 'detached', timeout: 15000 });
+      await page.waitForFunction(() =>
+        document.getAnimations().every((animation) => animation.playState !== 'running')
+      );
+      await page.waitForTimeout(400);
+    };
     await page.goto(`${base}/pair#${pairCode()}`);
     await page.getByRole('button', { name: 'Pair this browser' }).click();
     await page.getByText('This browser is paired.').waitFor({ timeout: 10000 });
     await page.goto(`${base}/neo`);
     await column.waitFor({ state: 'visible' });
+    await page.getByRole('button', { name: /^Open .*Report/ }).first().waitFor();
+    await settled();
     observed[`${width}-closed`] = await state();
     await page.screenshot({ path: join(run, 'evidence', `your-work-${width}-closed.png`) });
     await page.getByRole('button', { name: /^Open .*Report/ }).first().click();
     await page.getByRole('dialog').waitFor();
+    await page.getByRole('textbox', { name: /Message this chat/ }).waitFor();
+    await settled();
     observed[`${width}-open`] = await state();
     await page.screenshot({ path: join(run, 'evidence', `your-work-${width}-open.png`) });
+    if (width === 1600) {
+      await workTab.click();
+      await page.setViewportSize({ width: 2600, height: 1000 });
+      await settled();
+      observed['work-selected-widened'] = await state();
+      await page.screenshot({ path: join(run, 'evidence', 'your-work-selected-widened.png') });
+      await page.setViewportSize({ width: 1600, height: 1000 });
+      await settled();
+      observed['work-selected-narrowed'] = await state();
+    }
     await context.close();
   }
 } finally {
@@ -87,4 +108,6 @@ assert.deepEqual(observed['2600-open'], {
   tabs: ['HyperNeo · Synthetic'],
   selected: ['HyperNeo · Synthetic'],
 });
+assert.deepEqual(observed['work-selected-widened'], observed['2600-open']);
+assert.deepEqual(observed['work-selected-narrowed'], observed['1600-open']);
 console.log('PASS: Your work shows once, first and unselected in the panel below 2400px');

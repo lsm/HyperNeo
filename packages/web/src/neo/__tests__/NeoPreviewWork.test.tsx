@@ -437,6 +437,28 @@ describe('Neo preview Work layout', () => {
     expect((draft as HTMLTextAreaElement).value).toBe('Keep this discussion draft');
   });
 
+  it('shows Your work once when it is selected and the window crosses the wide breakpoint', async () => {
+    viewport = 1600;
+    const { container } = mount();
+    const work = container.querySelector<HTMLElement>('.neo-scene-list')!;
+    await open('a');
+    fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
+    expect(screen.getByRole('tabpanel', { name: 'Your work · 1' })).toBe(work);
+    resize(2600);
+    await waitFor(() => expect(screen.queryByRole('tab', { name: /Your work/ })).toBeNull());
+    expect(container.querySelector('.neo-preview-work')).toBeNull();
+    expect(work.getAttribute('role')).toBe('region');
+    expect(work.hidden).toBe(false);
+    expect(screen.getByRole('tab', { name: 'File a' }).getAttribute('aria-selected')).toBe('true');
+    resize(1600);
+    await waitFor(() => expect(work.hidden).toBe(true));
+    expect(screen.queryAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Your work · 1',
+      'File a',
+    ]);
+    expect(screen.getByRole('tab', { name: 'File a' }).getAttribute('aria-selected')).toBe('true');
+  });
+
   it('falls back to Work after the first file and leaves no tabs after the last', async () => {
     viewport = 1500;
     mount();
