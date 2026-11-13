@@ -254,6 +254,16 @@ describe('publication speech follows the committed version', () => {
       fullText: 'Ready',
       cardReply,
     });
+    for (const [requestId, text, details] of [
+      ['card-text-over', 'x'.repeat(4001), undefined],
+      ['card-folded-over', 'x'.repeat(3900), 'd'.repeat(200)],
+    ] as const) {
+      const refused = await send({ ...textOnly, requestId, text, details, cardReply });
+      expect(refused).toMatchObject({ accepted: false });
+      expect(String(refused.reason)).toContain('reply_summary_too_long');
+      expect(String(refused.reason)).toContain('4000');
+    }
+    expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
   test('new card versions speak once; retries of older versions never speak the latest content', async () => {

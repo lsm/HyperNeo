@@ -17,6 +17,7 @@ import {
   NeoPublicationReplyFields,
   NeoPublicationResultSchema,
   replySummaryTooLong,
+  SUMMARY_CHAR_LIMIT,
   workerSession,
 } from './publication.ts';
 
@@ -162,10 +163,15 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .input(['input', 'caller'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe(
-      (draft: Draft) =>
-        replySummaryTooLong(foldPublicationDetails({ text: draft.text, details: draft.details }))
+      (draft: Draft) => {
+        const body = foldPublicationDetails({ text: draft.text, details: draft.details });
+        return replySummaryTooLong(body) ||
+          (draft.cardReply !== undefined &&
+            body.details === undefined &&
+            body.text.length > SUMMARY_CHAR_LIMIT)
           ? { reason: { accepted: false as const, reason: 'reply_summary_too_long' } }
-          : { value: draft },
+          : { value: draft };
+      },
       'publication',
       'result:publication'
     )
