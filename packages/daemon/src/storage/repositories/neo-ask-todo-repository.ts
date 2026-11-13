@@ -335,19 +335,21 @@ export class NeoAskTodoRepository {
 
   listUnansweredInputs(): NeoUnansweredInput[] {
     const rows = this.db
-      .prepare(`SELECT f.message_id AS id, a.payload_json AS payload
+      .prepare(`WITH answered(id) AS (
+          SELECT value FROM neo_publications p, json_each(p.payload_json, '$.replyTo')
+          UNION SELECT value FROM neo_publications p,
+            json_each(p.payload_json, '$.cardReply.sourceMessageIds')
+          UNION SELECT json_extract(p.payload_json, '$.producerInput.messageId')
+            FROM neo_publications p
+          UNION SELECT json_extract(r.value, '$.producerInput.messageId')
+            FROM neo_publications p, json_each(p.payload_json, '$.revisions') r)
+        SELECT a.request_id AS id, a.payload_json AS payload
         FROM neo_front_inputs f
-        JOIN neo_conversation c ON c.id = f.conversation_id
         JOIN neo_conversation_asks a ON a.conversation_id = f.conversation_id
           AND a.request_id = f.message_id
-        WHERE f.owner = 'neo' AND NOT EXISTS (
-          SELECT 1 FROM neo_publications p WHERE p.conversation_id = f.conversation_id AND (
-            f.message_id IN (SELECT value FROM json_each(p.payload_json, '$.replyTo'))
-            OR f.message_id IN (
-              SELECT value FROM json_each(p.payload_json, '$.cardReply.sourceMessageIds'))
-            OR (json_extract(p.payload_json, '$.producerInput.messageId') = f.message_id
-              AND json_type(p.payload_json, '$.revisionId') = 'text')))
-        ORDER BY a.sequence`)
+        WHERE f.owner = 'neo'
+          AND NOT EXISTS (SELECT 1 FROM answered WHERE answered.id = f.message_id)
+        ORDER BY a.sequence DESC`)
       .all() as { id: string; payload: string }[];
     return rows.map((row) => ({
       id: row.id,

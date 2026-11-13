@@ -104,20 +104,27 @@ function unansweredText(text: string): string {
   return `${cut.replace(/�+$/, '')}… (truncated; read the full message with neo.conversation.read.)`;
 }
 
+function overflowLine(more: number): string {
+  return `${more} more pending; newest first. Read them with neo.conversation.read.`;
+}
+
 function unansweredSection(unanswered: readonly NeoUnansweredInput[]): string {
+  const heading = 'Unanswered messages';
   const kept: string[] = [];
-  let used = 0;
-  for (const input of unanswered) {
+  let used = Buffer.byteLength(`${heading}\n`, 'utf8');
+  for (const [index, input] of unanswered.entries()) {
     const line = `Message ${input.id} (full id; reply with replyTo: ["${input.id}"]): ${unansweredText(input.text)}`;
-    const bytes = Buffer.byteLength(line, 'utf8') + 1;
-    if (used + bytes > UNANSWERED_SECTION_BUDGET) break;
+    const more = unanswered.length - index;
+    const reserve = Buffer.byteLength(`${overflowLine(more)}\n`, 'utf8');
+    const bytes = Buffer.byteLength(`${line}\n`, 'utf8');
+    if (used + bytes + reserve > UNANSWERED_SECTION_BUDGET) {
+      kept.push(overflowLine(more));
+      break;
+    }
     kept.push(line);
     used += bytes;
   }
-  const more = unanswered.length - kept.length;
-  if (more > 0)
-    kept.push(`${more} more pending; older messages first. Read them with neo.conversation.read.`);
-  return `Unanswered messages\n${kept.join('\n')}`;
+  return [heading, ...kept].join('\n');
 }
 
 export function planNeoPlanContext(

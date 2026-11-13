@@ -66,6 +66,7 @@ try {
   const conversation = new NeoRepository(db).conversationId(),
     answeredInput = '10000000-0000-4000-8000-00000000c001',
     cardAnsweredInput = '10000000-0000-4000-8000-00000000c003',
+    plainAnsweredInput = '10000000-0000-4000-8000-00000000c005',
     longInput = '10000000-0000-4000-8000-00000000c004',
     pendingInput = '10000000-0000-4000-8000-00000000c002',
     pendingText = 'Ship the compact summary with the full message id';
@@ -88,6 +89,7 @@ try {
     ).run(conversation, id, owner);
   };
   seedInput(answeredInput, 'neo', 'Already answered by Neo');
+  seedInput(plainAnsweredInput, 'neo', 'Already answered by an ordinary reply');
   seedInput(cardAnsweredInput, 'neo', 'Already answered by a card');
   seedInput(pendingInput, 'neo', pendingText);
   seedInput(longInput, 'neo', 'P '.repeat(20_000));
@@ -97,6 +99,22 @@ try {
     conversation,
     'synthetic-answer',
     JSON.stringify({ fullText: 'Synthetic answer', replyTo: [answeredInput], publishedBy: 'neo' }),
+    new Date().toISOString()
+  );
+  prepare(
+    'INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(?,?,?,?)'
+  ).run(
+    conversation,
+    'synthetic-plain-answer',
+    JSON.stringify({
+      conversationId: conversation,
+      publicationId: 'synthetic-plain-answer',
+      producerInput: { sessionId: root, messageId: plainAnsweredInput },
+      verbatim: true,
+      fullText: 'Synthetic ordinary reply',
+      links: [],
+      publishedBy: 'neo',
+    }),
     new Date().toISOString()
   );
   prepare(
@@ -188,11 +206,11 @@ try {
     assert(lines.find((line) => line.id === id)?.text.includes(`neo.ask.read ${id}`));
   assert.deepEqual(
     facts.unanswered?.map((input) => input.id),
-    [pendingInput, longInput],
+    [longInput, pendingInput],
     'Plan facts carry only the inputs Neo owns and has not answered'
   );
   assert.equal(
-    facts.unanswered[0].text,
+    facts.unanswered.find((input) => input.id === pendingInput)?.text,
     pendingText,
     'Plan facts drop the pending message text'
   );
@@ -221,6 +239,10 @@ try {
   assert(compactContext.includes(pendingInput), 'The session hook never passes the compact source');
   assert(compactContext.includes(pendingText), 'The session hook drops the unanswered text');
   assert(!compactContext.includes(answeredInput), 'The session hook repeats an answered message');
+  assert(
+    !compactContext.includes(plainAnsweredInput),
+    'The session hook repeats a message an ordinary reply already answered'
+  );
   assert(
     !compactContext.includes(cardAnsweredInput),
     'The session hook repeats a message a card already answered'

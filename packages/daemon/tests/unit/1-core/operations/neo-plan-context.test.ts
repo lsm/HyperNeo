@@ -145,17 +145,17 @@ describe('unanswered messages', () => {
   test('bounds the whole unanswered section and points at the read for the rest', () => {
     const lines = neoPlanLines([], [], []);
     const pending = Array.from({ length: 40 }, (_, i) => ({
-      id: `pending-${i}`,
+      id: `pending-${39 - i}`,
       text: 'y'.repeat(20_000),
     }));
 
     const context = planNeoPlanContext(null, lines, 'compact', pending);
     const section = context.slice(context.indexOf('Unanswered messages'));
 
-    expect(Buffer.byteLength(section, 'utf8')).toBeLessThan(9_000);
-    expect(section).toContain('pending-0');
+    expect(Buffer.byteLength(section, 'utf8')).toBeLessThanOrEqual(8_192);
+    expect(section).toContain('pending-39 (full id');
     expect(section).toContain('neo.conversation.read');
     expect(section).toContain('more pending');
-    expect(section).not.toContain('pending-39 (full id');
+    expect(section).not.toContain('pending-0 (full id');
   });
 });
