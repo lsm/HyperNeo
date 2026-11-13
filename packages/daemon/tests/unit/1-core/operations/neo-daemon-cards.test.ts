@@ -314,6 +314,28 @@ describe('daemon cards in the store', () => {
     ]);
   });
 
+  test('an answer saved before a restart is carried out by the next sweep, once', async () => {
+    await sweep(DAY);
+    const [overdue] = open();
+    store.answerQuestion(overdue, ['Mark done'], 'button', DAY + 1);
+    const calls: string[] = [];
+    const deliver = createNeoQuestionAnswerDelivery(
+      store,
+      new NeoTodoSessionRepository(db),
+      async (_caller, name) => {
+        calls.push(name);
+        store.updateTodo(store.getTodo('check')!, { state: 'done' }, DAY + 2);
+        return { kind: 'completed', value: { ok: true } };
+      },
+      async () => {},
+      async (todo) => todo,
+      () => {}
+    );
+    await deliver();
+    await deliver();
+    expect(calls).toEqual(['neo.todo.done']);
+  });
+
   test('the daemon carries out the human answer on its card', async () => {
     await sweep(DAY);
     const [overdue] = open();

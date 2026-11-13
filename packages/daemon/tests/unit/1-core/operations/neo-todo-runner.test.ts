@@ -4028,7 +4028,9 @@ describe('worker blocker ownership', () => {
         await sweep();
         await sweep();
         expect(calls).toEqual([action]);
-        expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+        expect(h.store.questionAnswers.list(card.id).map((route) => route.state)).toEqual([
+          'accepted',
+        ]);
       } finally {
         clock.mockRestore();
         h.db.close();
