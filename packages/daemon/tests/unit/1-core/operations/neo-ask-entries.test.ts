@@ -356,6 +356,84 @@ describe('projectNeoAskEntries', () => {
       textCodes: [{ code: 'question.startOne', params: { title: 'Rows' } }],
     });
   });
+
+  test('a removal card carries codes for its text and its options', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const sessions = new NeoTodoSessionRepository(db);
+    const opened = store.openAsk({
+      id: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Ship',
+      request: 'Ship it',
+      createdAt: 1,
+    });
+    const draft = { doneWhen: 'Merged', check: null, instruction: 'Do', named: null };
+    store.addTodo('gone', 'ask', { ...draft, title: 'Build' }, 1);
+    store.addTodo('next', 'ask', { ...draft, title: 'Deploy' }, 1);
+    store.addTodo('last', 'ask', { ...draft, title: 'Announce' }, 1);
+    store.updateTodo(store.getTodo('gone')!, { state: 'removed', reason: 'Not needed' }, 2);
+    const card = (id: string, todos: string[], text: string) =>
+      store.askQuestion(
+        id,
+        'ask',
+        {
+          text,
+          kind: 'choice',
+          options: ['Continue', 'Remove these'],
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          todos,
+          cause: 'removed_prerequisite',
+        },
+        2
+      );
+    card(
+      'r1',
+      ['next', 'gone'],
+      '"Build" was removed. Continue "Deploy" without it, or remove this step too?'
+    );
+    card(
+      'r2',
+      ['next', 'last', 'gone'],
+      '"Build" was removed. Continue "Deploy", "Announce" without it, or remove these steps too?'
+    );
+    const [entry] = projectNeoAskEntries([opened], facts(store, sessions, [opened]), []);
+    const optionCodes = [
+      { code: 'question.removedContinue', params: {} },
+      { code: 'question.removedRemove', params: {} },
+    ];
+    expect(entry.questions).toMatchObject([
+      {
+        id: 'r1',
+        optionLabels: ['A', 'B'],
+        textCodes: [
+          { code: 'question.removedOneOne', params: { removed: '"Build"', steps: '"Deploy"' } },
+        ],
+        optionCodes,
+      },
+      {
+        id: 'r2',
+        textCodes: [
+          {
+            code: 'question.removedOneMany',
+            params: { removed: '"Build"', steps: '"Deploy", "Announce"' },
+          },
+        ],
+        optionCodes,
+      },
+    ]);
+    store.updateTodo(store.getTodo('next')!, { title: 'Release' }, 3);
+    const [renamed] = projectNeoAskEntries([opened], facts(store, sessions, [opened]), []);
+    expect(renamed.questions[0]).not.toHaveProperty('textCodes');
+    expect(renamed.questions[0]).toMatchObject({ optionCodes });
+  });
 });
 
 describe('projectNeoAskEntries todo order and done todos', () => {

@@ -16,6 +16,14 @@ export function neoQuestionText(question: Pick<NeoQuestionEntry, 'text' | 'textC
   return neoCodedText(question.text, question.textCodes);
 }
 
+export function neoQuestionOption(
+  question: Pick<NeoQuestionEntry, 'options' | 'optionCodes'>,
+  option: string
+): string {
+  const code = question.optionCodes?.[question.options?.indexOf(option) ?? -1];
+  return code ? neoCodedText(option, [code]) : option;
+}
+
 export function neoTodoNextAction(
   todo: Pick<NeoTodoEntry, 'state' | 'blockedBy' | 'nextAction'>
 ): string | null {

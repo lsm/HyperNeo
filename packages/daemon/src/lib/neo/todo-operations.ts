@@ -385,6 +385,12 @@ const Remove = z.object({
   todoId: Text,
   reason: Text,
   replacedBy: Text.optional(),
+  dependents: z
+    .enum(['continue', 'remove'])
+    .optional()
+    .describe(
+      'What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; the daemon then asks them.'
+    ),
 });
 
 export const NeoTodoSchema = z.object({

@@ -32,6 +32,7 @@ import { neoImageSize } from './image-size.ts';
 import { neoLocalTimeLine } from './local-time.ts';
 import { admitNeoPreviewContext } from './preview-context.ts';
 import { NeoPreviewContextSchema, NeoPreviewReferenceSchema } from './preview-context-schema.ts';
+import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
 
 const Input = z
   .object({
@@ -247,14 +248,24 @@ export function recordNeoReplyAnswer(
     reply?.question?.state === 'open' &&
     reply.question.kind !== 'start' &&
     reply.ask?.sessionId === sessionId
-  )
+  ) {
+    const answer = neoChoiceByLetter(words, reply.question) ?? words;
+    const now = Date.now();
     store.answerQuestion(
       reply.question,
-      neoChoiceByLetter(words, reply.question) ?? words,
+      answer,
       'chat',
-      Date.now(),
-      { sessionId, messageId: input.requestId }
+      now,
+      { sessionId, messageId: input.requestId },
+      undefined,
+      planNeoRemovedPrerequisiteAnswer(
+        reply.question,
+        store.listFamilyTodos(reply.question.askId),
+        answer,
+        now
+      )
     );
+  }
   return receipt;
 }
 
