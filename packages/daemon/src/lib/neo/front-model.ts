@@ -2,7 +2,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.ts';
 import { NeoSpeechSay } from './speech.ts';
-import { NeoPublicationDraft } from './publication-operation.ts';
+import { NeoPublicationDraft, publicationIdFor } from './publication-operation.ts';
 import { frontSessionId } from './front-mode.ts';
 import { catchUpBlock } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
@@ -143,7 +143,12 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           const receipt = await publish({ ...input, ...body });
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
           if (!receipt.accepted && !second) return result(receipt);
-          const said = 'publication' in receipt ? receipt.publication.fullText : body.text;
+          const existing = second
+            ? service.publications.get(conversationId, publicationIdFor(sessionId, input.requestId))
+            : null;
+          if (second && !existing)
+            return result({ accepted: false, reason: 'publication_conflict' });
+          const said = existing?.fullText ?? body.text;
           const handed = await handOff(
             asks.map((ask) => ask!),
             targets,

@@ -2079,3 +2079,29 @@ test('a front-owned input whose turn ended without a hand-off gets the fallback'
   const fallback = service.publications.get(conversationId, frontFallbackId(conversationId, [id]));
   expect(fallback?.fullText).toBe(FRONT_FALLBACK_TEXT);
 });
+
+test('a refused duplicate reply does not claim the refused text was delivered', async () => {
+  const first = await deliveredConvoInput();
+  const second = await deliveredConvoInput();
+  createFrontTools(service, conversationId);
+  const reply = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'reply')!;
+  const send = async (input: Record<string, unknown>) =>
+    JSON.parse(((await reply.handler(input, {} as never)).content[0] as { text: string }).text);
+  expect(
+    await send({ requestId: 'reused', replyTo: [first.id], text: 'The first answer.' })
+  ).toMatchObject({ accepted: true });
+  const refused = await send({
+    requestId: 'reused',
+    replyTo: [second.id],
+    text: 'An answer the human never saw.',
+  });
+  expect(refused, JSON.stringify(refused)).toMatchObject({ accepted: true });
+
+  const delivered = JSON.stringify(
+    db.getSDKMessageRepo().getDeliveryContent(root, second.id) ?? ''
+  );
+  expect(delivered, delivered).not.toContain('An answer the human never saw.');
+});
