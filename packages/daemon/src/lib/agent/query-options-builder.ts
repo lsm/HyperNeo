@@ -554,14 +554,19 @@ export class QueryOptionsBuilder {
       (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
         ? undefined
         : modelInfo?.autoCompactPercent);
-    const compactEnv =
-      !sessionHasAutoCompactWindow &&
-      modelInfo?.autoCompactPercentOverride !== undefined &&
-      providerSettings?.autoCompactWindow
-        ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(providerSettings.autoCompactWindow) }
-        : compactPercent !== undefined
-          ? { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(resolveAutoCompactPercent(compactPercent)) }
-          : {};
+    const compactWindow =
+      !sessionHasAutoCompactWindow && modelInfo?.autoCompactPercentOverride !== undefined
+        ? providerSettings?.autoCompactWindow
+        : undefined;
+    const windowCarriesPercent =
+      !!compactWindow &&
+      (providerId !== 'kimi' || KimiProvider.isKimiK3Model(this.ctx.session.config.model ?? ''));
+    const compactEnv = {
+      ...(compactWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(compactWindow) } : {}),
+      ...(compactPercent !== undefined && !windowCarriesPercent
+        ? { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(resolveAutoCompactPercent(compactPercent)) }
+        : {}),
+    };
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = await this.getSDKCliPath();
 

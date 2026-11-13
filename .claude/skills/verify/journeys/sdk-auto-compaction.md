@@ -38,8 +38,9 @@ Official references: [automatic compaction](https://code.claude.com/docs/en/agen
 [window configuration](https://code.claude.com/docs/en/model-config#set-the-auto-compact-window).
 The installed SDK's `sdk.d.ts` documents `precomputeCompactionEnabled`.
 The proof records the existing 153K window and a real 120K auto-compact threshold
-at 60%. The daemon sends that window or the SDK percentage, never both: the window
-already carries the percentage, and the SDK would apply it again. The threshold
+at 60%. When that window already carries the percentage, the daemon sends no SDK
+percentage, which would apply it again; a Kimi window other than K3 is the raw
+context window, so it still gets the percentage. The threshold
 `getContextUsage` reports ignores the SDK percentage, so read the debug log's
 threshold instead. The web docs do not explicitly promise
 that compaction never rejects a tool; the observed successful receipts prove that
