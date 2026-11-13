@@ -475,6 +475,10 @@ export class KimiProvider implements Provider {
     return !discovered?.length || discovered.some((model) => model.id === modelId);
   }
 
+  getServedModels(): ModelInfo[] {
+    return this.forServingRegion(KimiProvider.MODELS);
+  }
+
   getCachedModels(): ModelInfo[] | null {
     const discovered = this.discoveryCache.get(this.discoveryFingerprint());
     if (discovered?.length) return this.forServingRegion(discovered);

@@ -151,6 +151,7 @@ export interface Provider {
     sessionConfig?: ProviderSessionConfig
   ): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined;
   getModelContextWindow?(modelId: string, sessionConfig?: ProviderSessionConfig): number;
+  getServedModels?(): ModelInfo[];
   getRoutedModelId?(modelId: string, sessionConfig?: ProviderSessionConfig): string;
 }
 
