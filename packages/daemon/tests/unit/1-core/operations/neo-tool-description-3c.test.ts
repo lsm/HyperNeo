@@ -26,12 +26,12 @@ const moved = [
   {
     file: 'preference-questions.ts',
     name: 'pack.preferences.ask',
-    text: 'Ask the human to apply typed pack settings. The daemon displays and binds this exact immutable proposal; no settings change until human yes. Reuse requestId for pending retries; question_closed means use a new requestId to ask again.',
+    text: 'Ask the human to apply typed pack settings. The daemon displays and binds this exact immutable proposal as a choice to apply these settings or keep the current ones; no settings change until the human picks apply. Reuse requestId for pending retries; question_closed means use a new requestId to ask again.',
   },
   {
     file: 'preference-questions.ts',
     name: 'pack.preferences.applyAnswer',
-    text: 'Retry applying a bound settings question by questionId only. Requires the recorded human yes; accepts no replacement values. Already-applied answers never overwrite later human changes.',
+    text: "Retry applying a bound settings question by questionId only. Requires the human's recorded apply answer; accepts no replacement values. Already-applied answers never overwrite later human changes.",
   },
   {
     file: 'question-operations.ts',
@@ -66,12 +66,12 @@ const moved = [
   {
     file: 'rule-questions.ts',
     name: 'neo.rule.ask',
-    text: 'Default path for standing-rule edits in any Neo turn: ask human yes to the exact add/remove arrays. Removal uses exact saved text. No rule changes before human yes. Pending retries reuse requestId; question_closed needs a new requestId.',
+    text: 'Default path for standing-rule edits in any Neo turn: ask the human to apply or keep the exact add/remove arrays. Removal uses exact saved text. No rule changes until the human picks apply. Pending retries reuse requestId; question_closed needs a new requestId.',
   },
   {
     file: 'rule-questions.ts',
     name: 'neo.rule.applyAnswer',
-    text: 'Apply only the immutable rule edit bound to questionId after recorded human yes, in any turn. Accepts no replacement values. Check this result after human yes: changed current rules can prevent application; a refusal leaves them unchanged. Repeated application never overwrites later changes.',
+    text: "Apply only the immutable rule edit bound to questionId after the human's recorded apply answer, in any turn. Accepts no replacement values. Check this result after that answer: changed current rules can prevent application; a refusal leaves them unchanged. Repeated application never overwrites later changes.",
   },
   {
     file: 'todo-operations.ts',
