@@ -119,6 +119,18 @@ try {
   const again = await call('reply', { requestId: 'work-2', replyTo: [id], text: 'Checking.' });
   assert.equal(again.accepted, true, JSON.stringify(again));
   assert.equal(again.started, true, JSON.stringify(again));
+  const secondInput = crypto.randomUUID();
+  await send(secondInput, 'And the tests?');
+  await app.db.saveUserMessage(
+    front,
+    { type: 'user', uuid: secondInput as UUID, session_id: front, parent_tool_use_id: null, message: { role: 'user', content: 'And the tests?' } },
+    'submitted'
+  );
+  const both = await call('reply', { requestId: 'both', replyTo: [id, secondInput], text: 'Checking both.' });
+  assert.equal(both.accepted, true, JSON.stringify(both));
+  assert.equal(both.started, true, JSON.stringify(both));
+  assert.equal(owner(secondInput), 'neo');
+  assert(app.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [secondInput]).length === 1);
   const frontFinal = await call('reply', { requestId: 'final', replyTo: [id], text: 'The build passed.' });
   assert.equal(frontFinal.accepted, true, JSON.stringify(frontFinal));
   assert(app.db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id));

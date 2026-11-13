@@ -12,7 +12,9 @@ call must publish the reply, report `started: true`, store owner `neo` and give
 Neo the recorded human message with that reply in `<already-said>`; no part of
 that block names who wrote it. A second reply for the same input publishes
 again and still reports `started: true`, and the reserve enqueues the input only
-once. A reply that carries two `replyTo` IDs hands off both inputs. Neo then
+once. A second human input then goes through the same door, and one reply
+carrying both `replyTo` IDs hands off both: each input ends with owner `neo` and
+one delivery to the full session. Neo then
 publishes its answer with the original `replyTo` through
 `neo.publication.publish`, and the stored row records `publishedBy: 'neo'`. The
 full session's prompt carries no instruction to acknowledge before working, no
