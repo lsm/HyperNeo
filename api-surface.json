@@ -51856,6 +51856,119 @@
     {
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "providerId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId"
+        ],
+        "type": "object"
+      },
+      "name": "settings.provider.usage",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "const": "neo_only",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "supported": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "windows": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        },
+                        "limit": {
+                          "type": "number"
+                        },
+                        "resetAt": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "used": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "label",
+                        "used",
+                        "limit",
+                        "resetAt"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "supported",
+                  "provider",
+                  "windows"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "const": "not_supported",
+                    "type": "string"
+                  },
+                  "supported": {
+                    "const": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "supported",
+                  "provider",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
           "limit": {
