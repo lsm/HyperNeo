@@ -37,7 +37,7 @@ while saved.exists():
     saved = base / f'{name}-{attempt}'
     attempt += 1
 saved.mkdir()
-run = Path(tempfile.mkdtemp(prefix='neo-project-section-proof-', dir='/private/tmp'))
+run = Path(tempfile.mkdtemp(prefix='neo-project-section-proof-'))
 originals = {}
 baseline = None
 result = None
@@ -72,7 +72,6 @@ finally:
         'baselineFilesFrom': baseline,
         'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(),
         'temporaryDaemonDataRemoved': True,
-        'freeGiBBefore': free / 1024**3, 'freeMemoryPercentBefore': free_memory_percent,
     }, indent=2) + '\n')
     shutil.rmtree(run)
 print(json.dumps({'saved': str(saved), 'exitCode': result.returncode if result else None,

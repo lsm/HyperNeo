@@ -4,7 +4,5 @@
   "exitCode": 0,
   "baselineFilesFrom": null,
   "head": "19c61a69c2233991cca463514dc9c10d09933275",
-  "temporaryDaemonDataRemoved": true,
-  "freeGiBBefore": 123.25812530517578,
-  "freeMemoryPercentBefore": 48
+  "temporaryDaemonDataRemoved": true
 }
