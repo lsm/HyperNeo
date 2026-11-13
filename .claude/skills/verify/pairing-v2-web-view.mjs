@@ -128,6 +128,16 @@ try {
   await page.getByRole('button', { name: 'Show a new QR' }).click();
   await page.getByRole('img', { name: 'Pairing QR code' }).waitFor({ timeout: 15000 });
   await shot('6-qr-dark');
+  const zh = await browser.newContext({ locale: 'zh-CN', ignoreHTTPSErrors: true, viewport: { width: 1280, height: 900 } });
+  await zh.addCookies(await context.cookies());
+  const zhPage = await zh.newPage();
+  await zhPage.goto(`${secure}/settings?tab=devices`);
+  result.zhIntro = await zhPage.getByText('开始配对，把手机上的 Neo app 连到这个 daemon。').innerText();
+  await zhPage.getByRole('button', { name: 'Start pairing' }).click();
+  await zhPage.getByRole('img', { name: '配对二维码' }).waitFor({ timeout: 15000 });
+  await zhPage.waitForTimeout(800);
+  await zhPage.screenshot({ path: `${run}/evidence/7-qr-zh-Hans.png` });
+  await zh.close();
   writeFileSync(`${run}/evidence/pairing-v2-web.json`, JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
 } finally {

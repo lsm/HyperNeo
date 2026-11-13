@@ -18,6 +18,7 @@ vi.mock('../../../lib/state.ts', async () => {
   };
 });
 
+import { locale } from '../../../lib/i18n/index.ts';
 import { PairPhoneFlow } from '../PairPhoneFlow.tsx';
 
 type Invocation = { name: string; input: Record<string, unknown> };
@@ -327,6 +328,21 @@ describe('PairPhoneFlow with pairing v2', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await screen.findByText('Pairing cancelled.');
     expect(screen.getByRole('button', { name: 'Show a new QR' })).toBeTruthy();
+  });
+
+  it('shows the QR steps in Simplified Chinese', async () => {
+    locale.value = 'zh-Hans';
+    try {
+      render(<PairPhoneFlow pollMs={20} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+      await screen.findByRole('img', { name: '配对二维码' });
+      expect(screen.getByText('添加手机。用 Neo 扫这个二维码。')).toBeTruthy();
+      expect(screen.getByText(/\d+ 秒后过期/)).toBeTruthy();
+      status = { ...status, state: 'granted', name: 'Kitchen iPhone' };
+      await screen.findByText('已和 Kitchen iPhone 配对。');
+    } finally {
+      locale.value = 'en';
+    }
   });
 
   it('keeps the code flow on a plain-http page instead of guessing an HTTPS address', async () => {

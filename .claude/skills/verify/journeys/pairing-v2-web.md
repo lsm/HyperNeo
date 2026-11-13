@@ -28,5 +28,6 @@ End state:
   `Paired with Late iPhone.`
 - A Cancel that wins says `Pairing cancelled.` with `Show a new QR`; the dark-mode QR
   keeps its white quiet zone.
+- In a zh-Hans browser the intro and QR steps are Chinese (`7-qr-zh-Hans.png`).
 - With the switch off (no `/pair2` route) Start pairing keeps the typed-code flow;
   `PairPhoneFlow.test.tsx` covers that case.

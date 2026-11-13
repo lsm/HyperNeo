@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import qrcode from 'qrcode-generator';
 import { connectionManager } from '../../lib/connection-manager';
+import { t, type MessageKey } from '../../lib/i18n/index.ts';
 import { invokeOperation } from '../../lib/operations.ts';
 import { globalSettings } from '../../lib/state.ts';
 import { Button } from '../ui/Button.tsx';
@@ -50,10 +51,10 @@ async function pair2<T>(path: string, body?: object): Promise<T | null> {
 const seen = (requestId: string) =>
   pair2<Seen>(`/pair2/status?requestId=${encodeURIComponent(requestId)}`);
 
-const ENDED: Record<string, string> = {
-  cancelled: 'Pairing cancelled.',
-  denied: 'Pairing was denied.',
-  expired: 'The QR expired before a phone paired.',
+const ENDED: Record<string, MessageKey> = {
+  cancelled: 'pair.cancelled',
+  denied: 'pair.denied',
+  expired: 'pair.expired',
 };
 
 function Countdown({ until }: { until: number }) {
@@ -63,7 +64,9 @@ function Countdown({ until }: { until: number }) {
     return () => clearInterval(timer);
   }, []);
   return (
-    <p class="text-xs text-fg-faint">Expires in {Math.max(0, Math.ceil((until - now) / 1000))} s</p>
+    <p class="text-xs text-fg-faint">
+      {t('pair.expiresIn', { seconds: Math.max(0, Math.ceil((until - now) / 1000)) })}
+    </p>
   );
 }
 
@@ -96,12 +99,15 @@ export function PairPhoneFlow({
 
   const settle = (requestId: string, status: Seen | null): boolean => {
     if (status?.state === 'granted') {
-      setFlow({ kind: 'paired', text: `Paired with ${status.name ?? 'the phone'}.` });
+      setFlow({
+        kind: 'paired',
+        text: t('pair.pairedWith', { name: status.name ?? t('pair.thePhone') }),
+      });
       onPaired?.();
       return true;
     }
     const ended = status && ENDED[status.state];
-    if (ended) setFlow({ kind: 'ended', message: ended });
+    if (ended) setFlow({ kind: 'ended', message: t(ended) });
     else if (status?.state === 'bound' || status?.state === 'approved')
       setFlow({ kind: 'scanned', requestId });
     return Boolean(ended);
@@ -195,10 +201,7 @@ export function PairPhoneFlow({
       <div class="space-y-3 rounded-xl border border-line bg-surface p-4 text-sm text-fg-soft">
         {flow.kind === 'idle' && (
           <>
-            <p class="text-fg-muted">
-              Start pairing, then enter the address and code it shows into the Neo app on your
-              phone.
-            </p>
+            <p class="text-fg-muted">{t('pair.intro')}</p>
             <Button onClick={() => void start()}>Start pairing</Button>
           </>
         )}
@@ -248,15 +251,15 @@ export function PairPhoneFlow({
         )}
         {flow.kind === 'qr' && (
           <>
-            <p class="text-fg">Add a phone. Scan this QR with Neo.</p>
-            <img src={flow.image} alt="Pairing QR code" class="h-48 w-48 rounded-lg" />
+            <p class="text-fg">{t('pair.scanPrompt')}</p>
+            <img src={flow.image} alt={t('pair.qrLabel')} class="h-48 w-48 rounded-lg" />
             <div class="font-mono break-all text-fg">{flow.address}</div>
             <Countdown until={flow.expiresAt} />
           </>
         )}
         {flow.kind === 'scanned' && (
           <p role="status" class="text-fg-muted">
-            Phone scanned. Waiting for confirmation.
+            {t('pair.scanned')}
           </p>
         )}
         {(flow.kind === 'qr' || flow.kind === 'scanned') && (
@@ -267,7 +270,7 @@ export function PairPhoneFlow({
         {flow.kind === 'ended' && (
           <>
             <p class="text-fg-muted">{flow.message}</p>
-            <Button onClick={() => void start()}>Show a new QR</Button>
+            <Button onClick={() => void start()}>{t('pair.newQr')}</Button>
           </>
         )}
         {flow.kind === 'paired' && (
