@@ -13,6 +13,7 @@ import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-track-write.ts';
 import {
   neoAskSettlementWrites,
+  neoAskTurnedSettleReads,
   neoAskTurnedSettleWrites,
 } from '../../storage/repositories/neo-ask-settlement.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
@@ -291,7 +292,8 @@ export class NeoService {
       (id) => {
         const conversation = this.repo.readConversationId();
         return conversation && id === frontSessionId(conversation) ? `neo:${conversation}` : id;
-      }
+      },
+      () => this.db.getGlobalSettings().neo?.front?.enabled === true
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
@@ -1191,9 +1193,15 @@ export class NeoService {
       await this.runDbOp(neoStallReminderWrite, { now: Date.now() }).catch((error) =>
         this.log.warn('Stalled todo reminders pending', error)
       );
-      await this.runDbOp(neoAskTurnedSettleWrites, { now: Date.now() }).catch((error) =>
-        this.log.warn('Ask auto-settle pending', error)
-      );
+      const settleReady = await this.runDbOp(neoAskTurnedSettleReads, {}).catch((error) => {
+        this.log.warn('Ask auto-settle pending', error);
+        return null;
+      });
+      if (settleReady?.length)
+        await this.runDbOp(neoAskTurnedSettleWrites, {
+          now: Date.now(),
+          ids: settleReady,
+        }).catch((error) => this.log.warn('Ask auto-settle pending', error));
       await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
         this.log.warn('Stalled ask wake pending', error)
       );

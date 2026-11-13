@@ -71,7 +71,7 @@ export function createNeoFrontHandler(service: NeoService) {
             [
               {
                 type: 'text',
-                text: `Human message ${messageId}. Call reply once with replyTo:["${messageId}"]${service.speech.isListening(service.defaultSessionId() ?? ask.askOrigin.sessionId) ? ' and spoken' : ''}: the answer, or with work_on:true a one-sentence acknowledgment when work is needed. Add details only for more than five sentences or any structured report, list, table or multi-topic update. Preserve this ID throughout.`,
+                text: `Human message ${messageId}. Call reply once with replyTo:["${messageId}"]${service.speech.isListening(service.defaultSessionId() ?? ask.askOrigin.sessionId) ? ' and spoken' : ''}: the answer if your reads answer it, otherwise one brief line on what will be done. Every message also goes on to be handled in full. Add details only for more than five sentences or any structured report, list, table or multi-topic update. Preserve this ID throughout.`,
               },
               ...(ask.replyTo
                 ? [

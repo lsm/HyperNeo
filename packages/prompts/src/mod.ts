@@ -655,15 +655,11 @@ export const {
 } = buildPromptRegistry(registry);
 
 export const NEO_ROOT_TURN_END = fillPrompt(NEO_ROOT_TURN_END_TEMPLATE, {
-  ACK_TOOL: 'neo.speech.say',
-  ACK_NOTE: 'A spoken acknowledgment needs no publication.',
   PUBLISH_TOOL: 'neo.publication.publish',
   SAY_TOOL: 'neo.speech.say',
 });
 
 export const NEO_FRONT = fillPrompt(NEO_FRONT_TEMPLATE, {
-  ACK_TOOL: 'reply with work_on:true and spoken',
-  ACK_NOTE: 'The acknowledgment is the work_on reply and includes spoken.',
   PUBLISH_TOOL: 'reply',
   SAY_TOOL: 'speech_say',
 });
