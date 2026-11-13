@@ -4,6 +4,7 @@ import {
   neoFrontInputReads,
   neoFrontInputWrites,
 } from '../../storage/repositories/neo-front-input-worker.ts';
+import { sdkMessageWrites } from '../../storage/repositories/sdk-message-writes.ts';
 import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
@@ -31,7 +32,12 @@ export async function settleConvoInput(
     );
     if (claimed?.owner !== 'front') return { delivered: true, outcome: 'handed_off' };
     await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, [messageId]);
-    sdk.markDeliveryFailedByUuidInclusive(ask.askOrigin.sessionId, messageId);
+    await service.db.gateway.call(
+      sdkMessageWrites,
+      'markDeliveryFailedByUuidInclusive',
+      ask.askOrigin.sessionId,
+      messageId
+    );
     return { delivered: true, outcome: 'failed' };
   }
   const deadline = Date.parse(ask.createdAt) + SETTLEMENT_TIMEOUT_MS;
@@ -85,8 +91,19 @@ export async function settleConvoInput(
   }
   await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, open);
   for (const id of open) {
-    const marked = sdk.markDeliveryFailedByUuidInclusive(sessionId, id);
-    if (!marked) sdk.markDeliveryFailedByUuidInclusive(ask.askOrigin.sessionId, id);
+    const marked = await service.db.gateway.call(
+      sdkMessageWrites,
+      'markDeliveryFailedByUuidInclusive',
+      sessionId,
+      id
+    );
+    if (!marked)
+      await service.db.gateway.call(
+        sdkMessageWrites,
+        'markDeliveryFailedByUuidInclusive',
+        ask.askOrigin.sessionId,
+        id
+      );
   }
   return { delivered: true, outcome: 'failed' };
 }
