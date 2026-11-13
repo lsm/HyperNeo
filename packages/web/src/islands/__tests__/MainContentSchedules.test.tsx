@@ -30,7 +30,6 @@ vi.mock('../../components/space/SpaceIsland.tsx', () => ({
   default: () => <main>Space chat</main>,
 }));
 vi.mock('../../components/space/SpaceCreateDialog', () => ({ SpaceCreateDialog: () => null }));
-vi.mock('../BottomTabBar', () => ({ BottomTabBar: () => null }));
 vi.mock('../../components/voice/VoiceRecordingIndicator', () => ({
   VoiceRecordingIndicator: () => null,
 }));
