@@ -25,6 +25,11 @@ describe('root Neo system prompt', () => {
       expect(prompt).not.toContain('Human requests use input, never askId');
     }
   );
+  test('tells Neo to check provider quota before assigning work', () => {
+    expect(neoPrompt([])).toContain(
+      "Before assigning work to a model, call invoke settings.provider.usage with that model's provider. If any window has used at or above limit, choose a worker on another provider or wait until its resetAt, and say which; if resetAt is null, say the reset time is unknown. not_supported or an error means unknown: assign as usual."
+    );
+  });
   test('tells Neo to answer a worker question itself before asking the human', () => {
     expect(NEO_ROOT_TURN_END).toContain(
       'A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.relay, so the card links the session and the answer reaches the worker.'
