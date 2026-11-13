@@ -11,7 +11,9 @@ database. It registers no provider and starts no worker or model turn. Through
 the production MCP handler, adding send and bind targets using a uniquely
 resolvable HyperNeo session prefix must store the full ID. An unknown prefix
 must be refused before creating a todo or delivery input.
-The separate neo.todo.bind door must also resolve a prefix to the full ID;
+Instructed todos wait behind an unfinished check-only step so none starts by itself.
+The separate neo.todo.bind door, on a todo seeded as a legacy unapproved row with no
+prerequisite, must first refuse with not_approved, then resolve a prefix to the full ID;
 an unknown rebind must fail while retaining the previous worker reference.
 A multi-todo neo.ask.open with one resolvable prefix followed by an unknown
 prefix must refuse the whole batch before opening an ask or adding any todo or
