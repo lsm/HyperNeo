@@ -11,6 +11,7 @@ import { neoDerivedId } from './derived-id.ts';
 import {
   NEO_DAEMON_CAUSES,
   neoDaemonCardChoice,
+  neoDaemonCardCovers,
   planNeoDaemonCardActions,
 } from './daemon-cards.ts';
 import { neoQuestionAnsweredNote } from './question-operations.ts';
@@ -196,7 +197,7 @@ export function createNeoQuestionAnswerDelivery(
         : outcome.kind === 'failed'
           ? outcome.message
           : null;
-      if (reason)
+      if (reason && neoDaemonCardCovers(card.cause, store.getTodo(todo.id) ?? todo))
         await tell(
           ask.sessionId,
           `neo-card-refused:${card.id}:${action.todoId}`,

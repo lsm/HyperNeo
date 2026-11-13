@@ -120,6 +120,9 @@ const covers: Record<Cause, (todo: Covered) => boolean> = {
     !!todo.check && (todo.state === 'todo' || blockedBy(todo, 'question')),
 };
 
+export const neoDaemonCardCovers = (cause: string | null | undefined, todo: Covered) =>
+  isCause(cause) && covers[cause](todo);
+
 export function planNeoDaemonCardPrune(
   question: Pick<NeoQuestion, 'cause' | 'todos' | 'text'>,
   family: readonly Covered[]
