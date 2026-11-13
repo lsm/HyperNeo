@@ -650,7 +650,7 @@ test('a todo detail carries the pack rows pinned to it as packFacts', async () =
 test('in dual mode Neo publishes to the human directly', async () => {
   expect(
     await service.publish(
-      { requestId: 'canonical', fullText: 'Canonical answer', verbatim: true },
+      { requestId: 'canonical', text: 'Canonical answer' },
       { source: 'mcp', role: 'neo', sessionId: root }
     )
   ).toMatchObject({ accepted: true });
@@ -1106,8 +1106,7 @@ test.each(['disabled', 'dual'])(
         await service.publish(
           {
             requestId: 'held-answer',
-            fullText: 'The requested answer',
-            verbatim: true,
+            text: 'The requested answer',
             replyTo: [id],
           },
           { source: 'mcp', role: 'neo', sessionId: root }
@@ -1195,7 +1194,7 @@ test('Front rejects a new reply without spoken while the human is listening', as
 
 test('Neo publishes in both modes', async () => {
   const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
-  const input = { requestId: 'back-answer', fullText: 'Back answer', verbatim: true };
+  const input = { requestId: 'back-answer', text: 'Back answer' };
   expect(await service.publish(input, caller)).toMatchObject({ accepted: true });
   await db.updateGlobalSettings({ neo: { front: { enabled: false, model } } });
   expect(await service.publish({ ...input, requestId: 'single' }, caller)).toMatchObject({
@@ -1230,18 +1229,14 @@ test('a work_on reply publishes its acknowledgment and hands off in one call', a
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id)).not.toBeNull();
   const neo = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
   expect(
-    await service.publish(
-      { requestId: 'neo-final', replyTo: [id], fullText: 'Done.', verbatim: true },
-      neo
-    )
+    await service.publish({ requestId: 'neo-final', replyTo: [id], text: 'Done.' }, neo)
   ).toMatchObject({ accepted: true });
   expect(
     await service.publish(
       {
         requestId: 'later-result',
         replyTo: [id],
-        fullText: 'The review is complete. Here is the result.',
-        verbatim: true,
+        text: 'The review is complete. Here is the result.',
       },
       neo
     )
@@ -1398,7 +1393,7 @@ test('a reply with details refuses a summary over 2000 characters by name', asyn
       requestId: 'long-summary',
       replyTo: [id],
       shortText: 'x'.repeat(2001),
-      fullText: 'Details.',
+      fullText: 'x'.repeat(2002),
     })
   ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
@@ -1441,6 +1436,75 @@ test('a reply without work_on is the final answer with no acknowledgment before 
   expect(final.verbatim).toBeUndefined();
   expect(service.publications.list(conversationId)).toHaveLength(2);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+});
+
+test('details shorter than the reply text fold into one verbatim reply', async () => {
+  const { id } = await deliveredConvoInput();
+  createFrontTools(service, conversationId);
+  const reply = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'reply')!;
+  const folded = await reply.handler(
+    {
+      requestId: 'folded-reply',
+      replyTo: [id],
+      text: 'The full answer with everything the human needs to know.',
+      details: 'a short addendum',
+    },
+    {} as never
+  );
+  expect(JSON.parse((folded.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+  });
+  const stored = service.publications.list(conversationId)![0];
+  expect(stored).toMatchObject({
+    verbatim: true,
+    fullText: 'The full answer with everything the human needs to know.\n\na short addendum',
+    replyTo: [id],
+  });
+  expect(stored.shortText).toBeUndefined();
+  const split = await reply.handler(
+    {
+      requestId: 'split-reply',
+      replyTo: [id],
+      text: 'The result',
+      details: 'Additional evidence and explanation.',
+    },
+    {} as never
+  );
+  expect(JSON.parse((split.content[0] as { text: string }).text)).toMatchObject({
+    accepted: true,
+  });
+  expect(service.publications.list(conversationId)![1]).toMatchObject({
+    shortText: 'The result',
+    fullText: 'Additional evidence and explanation.',
+  });
+});
+
+test('work_on on an input the front already answered refuses as input_answered', async () => {
+  const { id } = await deliveredConvoInput();
+  createFrontTools(service, conversationId);
+  const reply = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'reply')!;
+  await reply.handler(
+    { requestId: 'first-answer', replyTo: [id], text: 'The build passed.' },
+    {} as never
+  );
+  expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, id)?.owner).toBe(
+    'front'
+  );
+  const rework = await reply.handler(
+    { requestId: 'rework', replyTo: [id], work_on: true, text: 'On it.' },
+    {} as never
+  );
+  expect(JSON.parse((rework.content[0] as { text: string }).text)).toEqual({
+    accepted: false,
+    reason: 'input_answered',
+  });
+  expect(service.publications.list(conversationId)).toHaveLength(1);
 });
 
 test('Front prompt, tool descriptions and intake agree on the five-sentence boundary', async () => {

@@ -87,6 +87,11 @@ export const NeoPublicationObject = z
 export const workerSession = (session?: string | null) =>
   session && !session.startsWith('neo:') ? session : undefined;
 
+export const NeoPublicationReplyFields = {
+  text: text(16000),
+  details: text(16000).optional(),
+};
+
 export function publicationTextRule(
   value: { verbatim?: true; shortText?: string; cardReply?: unknown },
   ctx: z.RefinementCtx
@@ -100,6 +105,15 @@ export function publicationTextRule(
     });
   if (value.verbatim !== true && value.shortText === undefined)
     ctx.addIssue({ code: 'custom', message: 'shortText is required without verbatim' });
+}
+
+export function foldPublicationDetails(value: { text: string; details?: string }): {
+  text: string;
+  details?: string;
+} {
+  return value.details !== undefined && value.details.length < value.text.length
+    ? { text: `${value.text}\n\n${value.details}` }
+    : value;
 }
 
 export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);

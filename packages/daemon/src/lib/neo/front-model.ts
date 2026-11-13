@@ -12,6 +12,7 @@ import {
   neoFrontInputReads,
   neoFrontInputWrites,
 } from '../../storage/repositories/neo-front-input-worker.ts';
+import { foldPublicationDetails } from './publication.ts';
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -136,16 +137,10 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           work_on: z.literal(true).optional(),
         },
         async ({ text, details, work_on, ...input }) => {
-          if (!work_on && details && text.length > 2000)
+          const body = foldPublicationDetails({ text, details });
+          if (!work_on && body.details !== undefined && body.text.length > 2000)
             return result({ accepted: false, reason: 'reply_summary_too_long' });
-          if (!work_on)
-            return result(
-              await publish(
-                details
-                  ? { ...input, shortText: text, fullText: details }
-                  : { ...input, fullText: text, verbatim: true }
-              )
-            );
+          if (!work_on) return result(await publish({ ...input, ...body }));
           if (details || text.length > 150 || input.replyTo?.length !== 1)
             return result({ accepted: false, reason: 'work_on_brief' });
           const ask = service.asks.find(conversationId, input.replyTo[0]);
@@ -155,23 +150,17 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
-          if (
-            (
-              await service.db.gateway.call(
-                neoFrontInputReads,
-                'get',
-                conversationId,
-                input.replyTo[0]
-              )
-            )?.owner
-          )
-            return result({ accepted: false, reason: 'input_handed_off' });
-          const receipt = await publish({
-            ...input,
-            fullText: text,
-            verbatim: true,
-            progress: true,
-          });
+          const owned = (
+            await service.db.gateway.call(
+              neoFrontInputReads,
+              'get',
+              conversationId,
+              input.replyTo[0]
+            )
+          )?.owner;
+          if (owned === 'front') return result({ accepted: false, reason: 'input_answered' });
+          if (owned) return result({ accepted: false, reason: 'input_handed_off' });
+          const receipt = await publish({ ...input, text, progress: true });
           if (!receipt.accepted) return result(receipt);
           const handed = await handOff(ask, input.replyTo[0]);
           return result(handed.started ? { ...receipt, ...handed } : handed);

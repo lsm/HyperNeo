@@ -26,8 +26,8 @@ const sessionId = `neo:${conversationId}`;
 const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId };
 const draft = {
   requestId: 'result',
-  shortText: 'Ready',
-  fullText: 'The result is ready.',
+  text: 'Ready',
+  details: 'The result is ready.',
   spoken: 'Here is the result.',
 };
 
@@ -221,7 +221,7 @@ describe('publication speech follows the committed version', () => {
     await listen(true);
     await send();
     events = [];
-    expect(await send({ ...draft, fullText: 'Conflicting result.' })).toMatchObject({
+    expect(await send({ ...draft, details: 'Conflicting result.' })).toMatchObject({
       accepted: false,
       reason: 'publication_conflict',
     });
@@ -250,7 +250,7 @@ describe('publication speech follows the committed version', () => {
       ...draft,
       requestId: 'revision',
       cardReply,
-      fullText: 'Updated result.',
+      details: 'Updated result.',
       spoken: 'The updated result.',
     });
     expect(first).toMatchObject({ accepted: true, spokenDelivered: true });
@@ -291,7 +291,7 @@ describe('publication speech follows the committed version', () => {
         ...draft,
         requestId: 'revision-attachment',
         cardReply,
-        fullText: 'Updated.',
+        details: 'Updated.',
         artifacts: [reference],
       });
       expect(updated).toMatchObject({ accepted: true, publication: { artifacts: [reference] } });
@@ -302,7 +302,7 @@ describe('publication speech follows the committed version', () => {
           ...draft,
           requestId: 'remove-attachment',
           cardReply,
-          fullText: 'Another update.',
+          details: 'Another update.',
           artifacts: [],
         })
       ).toMatchObject({ accepted: false, reason: 'publication_conflict' });

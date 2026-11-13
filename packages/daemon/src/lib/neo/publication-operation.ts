@@ -12,9 +12,10 @@ import type { NeoPublicationWriteResult } from '../../storage/repositories/neo-p
 import { isMainNeoBinding } from './binding-roles.ts';
 import { neoDerivedId } from './derived-id.ts';
 import {
+  foldPublicationDetails,
   NeoPublicationObject,
+  NeoPublicationReplyFields,
   NeoPublicationResultSchema,
-  publicationTextRule,
   workerSession,
 } from './publication.ts';
 
@@ -32,8 +33,12 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
   revisionId: true,
   revisions: true,
   publishedBy: true,
+  shortText: true,
+  verbatim: true,
+  fullText: true,
 })
   .extend({
+    ...NeoPublicationReplyFields,
     requestId: z.string().min(1).max(160),
     progress: z.literal(true).optional(),
     spoken: z.string().trim().min(1).max(500).optional(),
@@ -46,8 +51,7 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
       .default([]),
   })
   .superRefine((value, ctx) => {
-    publicationTextRule(value, ctx);
-    if (value.progress && (value.replyTo?.length !== 1 || value.fullText.length > 150))
+    if (value.progress && (value.replyTo?.length !== 1 || value.text.length > 150))
       ctx.addIssue({
         code: 'custom',
         message:
@@ -292,7 +296,18 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(
       (draft: Draft, proof: Proof) => {
-        const { requestId, spoken: _spoken, progress, ...message } = draft;
+        const {
+          requestId,
+          spoken: _spoken,
+          progress,
+          text: _rawText,
+          details: _rawDetails,
+          ...message
+        } = draft;
+        const { text, details } = foldPublicationDetails({
+          text: _rawText,
+          details: _rawDetails,
+        });
         return runtime.append(
           {
             ...(progress
@@ -304,6 +319,9 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
                 }
               : {}),
             ...message,
+            ...(details === undefined
+              ? { fullText: text, verbatim: true }
+              : { shortText: text, fullText: details }),
             session: message.session ?? undefined,
             replyTo: progress ? undefined : message.replyTo,
             publicationId: neoDerivedId(

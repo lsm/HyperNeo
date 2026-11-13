@@ -177,27 +177,24 @@ describe('root Neo system prompt', () => {
 
   test('gives questions and publications the same concise Markdown guidance', () => {
     const prompt = neoPrompt([]);
-    expect(prompt).toContain('For neo.question.ask text and publication shortText, use Markdown');
+    expect(prompt).toContain('For neo.question.ask text and publication text, use Markdown');
     expect(prompt).toContain('a short title line, then a few bullets or a small comparison table');
     expect(prompt).toContain('Bold the key choice');
     expect(prompt).toContain('Avoid walls of text');
     expect(prompt).toContain('Preserve required proposal text, path and hash');
   });
 
-  test('guides verbatim publications next to the shortText and fullText rules', () => {
+  test('guides text-only deliverables next to the text and details rules', () => {
     const prompt = neoPrompt([]);
     expect(prompt).toContain(
-      'Use verbatim: true for deliverables the human will copy: translations, drafted emails/messages, text to paste'
+      'Send deliverables the human will copy as text alone: translations, drafted emails/messages, text to paste'
     );
-    expect(prompt).toContain(
-      'A verbatim message holds only the deliverable; any lead-in line is a separate normal message or is skipped'
-    );
+    expect(prompt).toContain('any lead-in line is a separate normal message or is skipped');
     expect(prompt).toContain('One message per deliverable');
     expect(prompt).toContain(
       'Plain text for emails and translations; Markdown or code only when the human wants it'
     );
-    expect(prompt).toContain('Everything else stays shortText + fullText ("more")');
-    expect(prompt).toContain('Anything over the verbatim limit goes as a file');
+    expect(prompt).toContain('Anything over the text limit goes as a file');
   });
 
   test('appends the pack briefing only when packs are enabled', () => {
