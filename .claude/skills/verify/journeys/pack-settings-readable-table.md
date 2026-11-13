@@ -20,8 +20,8 @@ It opens Neo through real WebSocket RPC and proposes settings through Neo's MCP
 operation adapter. For English and Chinese, the real `/neo` card must render two
 repo headings and two Setting/Value tables at desktop 1280 and mobile 390 widths.
 Enum names are translated, while bot logins and path patterns remain literal,
-including pipes, backticks and backslashes. The mobile Apply button records a
-human yes and applies exactly the stored `values_json` with human provenance.
+including pipes, backticks and backslashes. The mobile `A Apply these settings` option
+records that option and applies exactly the stored `values_json` with human provenance.
 Changing language and retrying a pending request must keep its original text.
 
 Evidence is `evidence/observed.json`, `table-{en,zh-Hans}.json` and four matching

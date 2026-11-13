@@ -629,7 +629,7 @@ export function createNeoOperations(
               reason: {
                 ok: false as const,
                 reason:
-                  'Cite a received human yes to the exact neo.rule.ask proposal in this conversation, or use neo.rule.ask for confirmation.',
+                  'Cite a received human answer that picked apply on the exact neo.rule.ask proposal in this conversation, or use neo.rule.ask for confirmation.',
               },
             };
       },

@@ -657,7 +657,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
         created: true,
         publication: { publicationId: verbatim[0].publicationId },
       },
-      { ok: false, reason: expect.stringContaining('human yes') },
+      { ok: false, reason: expect.stringContaining('picked apply') },
       { ok: true, question: { replyTo: [requestId] } },
     ]);
     expect(daemon.db.getGlobalSettings().neo?.standingRules ?? []).toEqual([]);

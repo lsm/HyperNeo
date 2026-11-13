@@ -58,7 +58,7 @@ for (const phase of ['initial', 'restart']) {
       await rpc('neo.rule.save', { add: edit.remove });
       const approval = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'direct-approval', ...edit });
       assert.equal(approval.ok, true);
-      await rpc('neo.message.send', { sessionId, requestId: approvalId, content: 'yes', replyTo: { kind: 'question', id: approval.questionId } });
+      await rpc('neo.message.send', { sessionId, requestId: approvalId, content: 'A', replyTo: { kind: 'question', id: approval.questionId } });
       repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', approvalId);
       assert.equal((await mcp('neo.rule.save', { add: ['Publish without asking.'], messageId: approvalId })).ok, false);
       assert.equal((await mcp('neo.rule.save', { ...edit, messageId: approvalId })).ok, true);
@@ -75,7 +75,7 @@ for (const phase of ['initial', 'restart']) {
       await rpc('neo.rule.save', { remove: edit.add, add: edit.remove });
       const declined = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'declined', ...edit });
       assert.equal(declined.ok, true);
-      assert.equal((await rpc('neo.question.answer', { questionId: declined.questionId, answer: 'no' })).ok, true);
+      assert.equal((await rpc('neo.question.answer', { questionId: declined.questionId, answer: 'Keep current rules' })).ok, true);
     assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, edit.remove);
       assert.equal((await mcp('neo.rule.applyAnswer', { questionId: declined.questionId })).ok, false);
       const proposed = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'accepted', ...edit });
@@ -83,15 +83,15 @@ for (const phase of ['initial', 'restart']) {
       const read = await rpc('neo.question.get', { questionId });
       assert.equal(read.answeredByHuman, false);
       for (const rule of [...edit.add, ...edit.remove]) assert(read.question.text.includes(JSON.stringify(rule)));
-      assert.equal((await mcp('neo.question.answer', { questionId, answer: 'yes' })).ok, false);
-      assert.equal((await rpc('neo.question.answer', { questionId, answer: 'yes' })).ok, true);
+      assert.equal((await mcp('neo.question.answer', { questionId, answer: 'Apply these rule changes' })).ok, false);
+      assert.equal((await rpc('neo.question.answer', { questionId, answer: 'Apply these rule changes' })).ok, true);
     }
     assert.equal((await rpc('neo.question.get', { questionId })).answeredByHuman, true);
       if (phase === 'initial') {
       const stale = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'stale', add: ['Next synthetic rule.'], remove: edit.add });
       assert.equal(stale.ok, true);
       await rpc('neo.rule.save', { remove: edit.add, add: ['An intervening human rule.'] });
-      const sent = await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: crypto.randomUUID(), content: 'yes', replyTo: { kind: 'question', id: stale.questionId } });
+      const sent = await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: crypto.randomUUID(), content: 'A', replyTo: { kind: 'question', id: stale.questionId } });
       assert.equal(sent.ok, true); assert.equal(sent.created, true);
       assert.equal((await rpc('neo.question.get', { questionId: stale.questionId })).answeredByHuman, true);
       assert.equal((await mcp('neo.rule.applyAnswer', { questionId: stale.questionId })).ok, false);
@@ -114,7 +114,7 @@ for (const phase of ['initial', 'restart']) {
         };
         ws!.addEventListener('message', observed);
       });
-      assert.equal((await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: crypto.randomUUID(), content: 'yes', replyTo: { kind: 'question', id: chatProposal.questionId } })).ok, true);
+      assert.equal((await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: crypto.randomUUID(), content: 'A', replyTo: { kind: 'question', id: chatProposal.questionId } })).ok, true);
       await broadcast;
       await rpc('neo.rule.save', { remove: [chatRule], add: edit.add });
     }
@@ -126,7 +126,7 @@ for (const phase of ['initial', 'restart']) {
       const renewed = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'final-reference', add: edit.add });
       assert.equal(renewed.ok, true);
       approvalId = crypto.randomUUID();
-      await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: approvalId, content: 'yes', replyTo: { kind: 'question', id: renewed.questionId } });
+      await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: approvalId, content: 'A', replyTo: { kind: 'question', id: renewed.questionId } });
       app.db.getSDKMessageRepo().markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', approvalId);
       assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: approvalId })).ok, true);
     }
@@ -134,4 +134,4 @@ for (const phase of ['initial', 'restart']) {
   } finally { ws?.close(); await app.cleanup(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }
 writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
-console.log(`PASS: direct model rule save refused, question-bound add/remove, no unchanged, tampering refused, restart persisted. ${run}/evidence/observed.json`);
+console.log(`PASS: direct model rule save refused, question-bound add/remove, keep unchanged, tampering refused, restart persisted. ${run}/evidence/observed.json`);

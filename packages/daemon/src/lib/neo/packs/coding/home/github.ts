@@ -7,7 +7,7 @@ import { neoFolderPath } from '../../../folder.ts';
 import { readNeoQuestion } from '../../../question-operations.ts';
 import type { NeoService } from '../../../service.ts';
 import { NeoHomeRepository } from './repository.ts';
-import { openHumanCard } from '../../../human-card.ts';
+import { applyOrKeepCard, humanPickedApply, openHumanCard } from '../../../human-card.ts';
 
 const Input = z.union([
   z.object({ askId: z.string().min(1) }).strict(),
@@ -78,15 +78,14 @@ export function createNeoHomeGithubOperation(
             q &&
             read.ok &&
             read.answeredByHuman &&
-            q.kind === 'yesno' &&
-            q.answer === 'yes' &&
+            humanPickedApply(q) &&
             q.answeredAt !== null &&
             q.text === row.question_text &&
             q.text === text(row.repository) &&
             service.todos.getAsk(q.askId)?.sessionId === service.defaultSessionId()
             ? { value: input }
             : fail(
-                'confirmation_required: use the bound root-Neo question answered yes by the human.'
+                'confirmation_required: use the bound root-Neo question where the human picked Create private repo.'
               );
         }
         const ask = service.todos.getAsk(input.askId);
@@ -126,15 +125,7 @@ export function createNeoHomeGithubOperation(
                 service.todos,
                 questionId,
                 input.askId,
-                {
-                  text: body,
-                  kind: 'yesno',
-                  options: null,
-                  multiple: false,
-                  noLabel: 'Keep local',
-                  yesLabel: 'Create private repo',
-                  startTodos: null,
-                },
+                applyOrKeepCard(body, 'Create private repo', 'Keep local'),
                 Date.now()
               );
               db.prepare(

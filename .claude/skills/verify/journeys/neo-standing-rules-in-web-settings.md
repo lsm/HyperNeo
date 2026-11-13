@@ -23,5 +23,5 @@ control fits. Evidence: `evidence/neo-rules-settings.json`, the confirmation and
 desktop/mobile PNGs. The helper-owned daemon and browser close on success or failure.
 
 The web page uses the local-human `neo.rule.save` path. Agent edits still need
-`neo.rule.ask` and the human's yes; see
+`neo.rule.ask` and the human's apply answer; see
 [human-approved standing-rule edits](human-approved-standing-rule-edits.md).
