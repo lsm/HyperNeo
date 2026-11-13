@@ -2136,6 +2136,47 @@ test('a hand-off landing after the open set is read leaves the input unfailed', 
   expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('consumed');
 });
 
+test('a hand-off after settlement fails is refused instead of adding a second row', async () => {
+  const { id, job } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No reply',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id = ?"
+    )
+    .run(conversationId, id);
+
+  const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
+  expect(settled).toEqual({ delivered: true, outcome: 'failed' });
+
+  const reserved = new NeoFrontInputRepository(db.getDatabase()).reserve(
+    conversationId,
+    [id],
+    [
+      {
+        sessionId: root,
+        message: neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+      },
+    ]
+  );
+
+  expect(reserved).toBe('undeliverable');
+  const rows = db
+    .getDatabase()
+    .prepare(
+      "SELECT send_status FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'"
+    )
+    .all(root, id);
+  expect(rows).toEqual([{ send_status: 'failed' }]);
+});
+
 test('settlement leaves an input Neo already consumed as handed off', async () => {
   const { id, job } = await deliveredConvoInput();
   await db.saveUserMessage(
