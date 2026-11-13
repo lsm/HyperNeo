@@ -165,8 +165,8 @@ test('a publication answers exactly its explicit consumed ids; asking back does 
       'neo.publication.publish',
       {
         requestId: 'reply',
-        shortText: 'Ready',
-        fullText: 'Synthetic comparison.',
+        text: 'Ready',
+        details: 'Synthetic comparison.',
         replyTo: [ids[0], ids[2]],
       },
       neo

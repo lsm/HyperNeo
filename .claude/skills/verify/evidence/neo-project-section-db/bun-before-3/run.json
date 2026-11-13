@@ -1,0 +1,8 @@
+{
+  "runtime": "bun",
+  "mode": "before",
+  "exitCode": 0,
+  "baselineFilesFrom": "575b701acc394f49e4d536112bc9bc1928be8a97",
+  "head": "a47352a0e2a91491ae89da0ef9807503044ee426",
+  "temporaryDaemonDataRemoved": true
+}

@@ -28,7 +28,18 @@ const input = { path: 'projects/verify/mandate.md', content: 'Confirmed new mand
 async function ask(value = input) {
   const confirm = { path: value.path, sha256: createHash('sha256').update(value.content).digest('hex') };
   const text = `Old: previous mandate. New: ${value.content}\nPath: ${confirm.path}\nSHA-256: ${confirm.sha256}`;
-  return (await rpc('neo.question.ask', { askId, kind: 'yesno', text, noLabel: 'Keep old', yesLabel: 'Use new', confirm })).question.id;
+  return (await rpc('neo.question.ask', { retireWhen: { pack: 'core', kind: 'evidence', params: { path: `${run}/question-no-longer-needed` } }, askId, kind: 'choice', text, options: ['Use new'], confirm })).question.id;
+}
+async function chat(questionId: string, content: string) {
+  await rpc('neo.message.send', { sessionId, requestId: crypto.randomUUID(), content, replyTo: { kind: 'question', id: questionId } });
+}
+function legacyYesNo(value = input) {
+  const id = crypto.randomUUID();
+  const confirm = { path: value.path, sha256: createHash('sha256').update(value.content).digest('hex') };
+  const text = `Old: previous mandate. New: ${value.content}\nPath: ${confirm.path}\nSHA-256: ${confirm.sha256}`;
+  const db = new Database(`${run}/data/daemon.db`);
+  try { db.query("INSERT INTO neo_questions (id,ask_id,text,kind,options,multiple,no_label,yes_label,confirm_json,created_at) VALUES (?,?,?,'yesno',NULL,0,'Keep old','Use new',?,?)").run(id, askId, text, JSON.stringify(confirm), Date.now()); } finally { db.close(); }
+  return id;
 }
 const decisions = `${root}/projects/verify/decisions.md`;
 await rpc('neo.home.save', { path: 'projects/verify/decisions.md', content: 'Prior decision.\n', message: 'Seed synthetic history' });
@@ -36,10 +47,10 @@ const before = await git('rev-parse', 'HEAD');
 const missing = await rpc('neo.home.save', input);
 const questionId = await ask();
 const open = await rpc('neo.home.save', { ...input, questionId });
-await rpc('neo.question.answer', { questionId, answer: 'no' });
+await chat(questionId, 'later');
 const no = await rpc('neo.home.save', { ...input, questionId });
 const yesId = await ask();
-await rpc('neo.question.answer', { questionId: yesId, answer: 'yes' });
+await chat(yesId, 'A');
 const question = await rpc('neo.question.get', { questionId: yesId });
 const wrongHash = await rpc('neo.home.save', { ...input, content: 'Different unapproved content.', questionId: yesId });
 const wrongPath = await rpc('neo.home.save', { ...input, path: 'direction.md', questionId: yesId });
@@ -48,7 +59,7 @@ const accepted = await rpc('neo.home.save', { ...input, questionId: yesId });
 const evidence: Record<string, unknown> = { phase, input, before, missing, open, no, question, wrongHash, wrongPath, unchangedBeforeYes, accepted };
 const saveEvidence = () => writeFile(`${run}/evidence/neo-home-confirmed-save-${phase}.json`, JSON.stringify(evidence, null, 2));
 await saveEvidence();
-if (phase === 'before') throw new Error('Observed pre-H2 save gate: matching human yes still refused; evidence retained');
+if (phase === 'before') throw new Error('Observed old save gate: the confirm option is still refused; evidence retained');
 if ([missing, open, no, wrongHash, wrongPath].some((reply) => reply.ok || !reply.reason?.includes('confirmation')) || !unchangedBeforeYes || !question.answeredByHuman || !accepted.ok) throw new Error('Protected save authorization contract failed');
 const content = await readFile(`${root}/${input.path}`, 'utf8');
 const history = await readFile(decisions, 'utf8');
@@ -58,7 +69,7 @@ const repeated = await rpc('neo.home.save', { ...input, questionId: yesId });
 const retryUnchanged = accepted.commit === repeated.commit && history === await readFile(decisions, 'utf8');
 const next = { ...input, content: 'Confirmed follow-up mandate.\n' };
 const nextId = await ask(next);
-await rpc('neo.question.answer', { questionId: nextId, answer: 'yes' });
+await rpc('neo.question.answer', { questionId: nextId, answer: ['Use new'] });
 await git('config', 'user.name', '');
 await git('config', 'user.email', '');
 const failure = await rpc('neo.home.save', { ...next, questionId: nextId });
@@ -66,7 +77,11 @@ const rollback = content === await readFile(`${root}/${input.path}`, 'utf8') && 
 await git('config', 'user.name', 'Verify Neo');
 await git('config', 'user.email', 'verify@example.invalid');
 const retry = await rpc('neo.home.save', { ...next, questionId: nextId });
-Object.assign(evidence, { content, history, paths, commitMessage, repeated, retryUnchanged, failure, rollback, retry, finalStatus: await git('status', '--porcelain') });
+const legacy = { ...input, content: 'Mandate proposed before the upgrade.\n' };
+const legacyId = legacyYesNo(legacy);
+await rpc('neo.question.answer', { questionId: legacyId, answer: 'yes' });
+const legacySave = await rpc('neo.home.save', { ...legacy, questionId: legacyId });
+Object.assign(evidence, { content, history, paths, commitMessage, repeated, retryUnchanged, failure, rollback, retry, legacySave, finalStatus: await git('status', '--porcelain') });
 await saveEvidence();
-if (content !== input.content || !history.startsWith('Prior decision.\n') || !history.includes(yesId) || !history.includes(question.question.confirm.sha256) || paths !== 'projects/verify/decisions.md\nprojects/verify/mandate.md' || !commitMessage.includes(`Neo-Confirmed-By: question ${yesId}`) || !retryUnchanged || !String(failure.error).includes('Author identity unknown') || !rollback || !retry.ok || evidence.finalStatus) throw new Error('Protected paired commit/rollback contract failed');
-console.log('PASS: real RPC refuses missing/open/no/mismatched confirmations, accepts human yes, commits both files with trailer, retries unchanged and rolls both files back after commit failure.');
+if (content !== input.content || !history.startsWith('Prior decision.\n') || !history.includes(yesId) || !history.includes(question.question.confirm.sha256) || paths !== 'projects/verify/decisions.md\nprojects/verify/mandate.md' || !commitMessage.includes(`Neo-Confirmed-By: question ${yesId}`) || !retryUnchanged || !String(failure.error).includes('Author identity unknown') || !rollback || !retry.ok || !legacySave.ok || evidence.finalStatus) throw new Error('Protected paired commit/rollback contract failed');
+console.log('PASS: real RPC refuses missing/open/other-words/mismatched confirmations, accepts the confirm option by chat letter and by button and a pre-upgrade yes, commits both files with trailer, retries unchanged and rolls both files back after commit failure.');

@@ -31,12 +31,12 @@ try {
   const registry = app.sessionManager.getOperationRegistry();
   evidence.registered = { publish: !!registry.get('neo.publication.publish'), edit: !!registry.get('neo.publication.edit') };
   assert.deepEqual(evidence.registered, { publish: true, edit: false });
-  const first = await call('neo.publication.publish', { requestId: 'first', verbatim: true, fullText: 'The build is green.' });
+  const first = await call('neo.publication.publish', { requestId: 'first', text: 'The build is green.' });
   assert(!first.isError && first.body.accepted, JSON.stringify(first));
   const edit = await call('neo.publication.edit', { requestId: 'edit', publicationId: first.body.publication.publicationId, fullText: 'Correction: the build is red.' });
   evidence.edit = edit;
   assert(edit.isError, JSON.stringify(edit));
-  const correction = await call('neo.publication.publish', { requestId: 'correction', verbatim: true, fullText: 'Correction: the build is red.' });
+  const correction = await call('neo.publication.publish', { requestId: 'correction', text: 'Correction: the build is red.' });
   assert(!correction.isError && correction.body.accepted, JSON.stringify(correction));
   const rows = new NeoPublicationRepository(app.db.getDatabase()).list(conversationId)!;
   evidence.rows = rows.map((row) => ({ publicationId: row.publicationId, fullText: row.fullText, revisions: row.revisions?.length ?? 0 }));

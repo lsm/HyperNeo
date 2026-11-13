@@ -218,7 +218,7 @@ describe('neo.question operations', () => {
     }
   });
 
-  test.each(['reply', 'yesno', 'choice', 'start'] as const)(
+  test.each(['reply', 'choice', 'start'] as const)(
     'refuses a %s question if its ask settles during source lookup',
     async (kind) => {
       let entered!: () => void;
@@ -240,8 +240,6 @@ describe('neo.question operations', () => {
           kind,
           text: 'Worker recommendation',
           options: ['First', 'Second'],
-          noLabel: 'Wait',
-          yesLabel: 'Approve',
           sourceSession: { adapter: 'codex-desktop', id: 'worker' },
           focused: true,
         });
@@ -410,10 +408,9 @@ describe('neo.question operations', () => {
     const { asked, call, store } = setup();
     const source = { adapter: 'codex-desktop', id: 'source-worker', daemon: 'remote-machine' };
     const question = await asked({
-      kind: 'yesno',
+      kind: 'choice',
       text: 'Review the worker output?',
-      noLabel: 'Wait',
-      yesLabel: 'Approve',
+      options: ['Approve'],
       sourceSession: source,
     });
     expect(question).toMatchObject({ sourceSession: source });
@@ -422,8 +419,10 @@ describe('neo.question operations', () => {
       question: { sourceSession: source },
     });
     expect(
-      await call('neo.question.answer', { questionId: question.id, answer: 'yes' }, human)
-    ).toMatchObject({ question: { state: 'answered', answer: 'yes', sourceSession: source } });
+      await call('neo.question.answer', { questionId: question.id, answer: 'Approve' }, human)
+    ).toMatchObject({
+      question: { state: 'answered', answer: ['Approve'], sourceSession: source },
+    });
     expect(store.listQuestionsForAsks(['ask'])).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -604,18 +603,21 @@ describe('neo.question operations', () => {
     ]);
   });
 
-  test('yesno, choice and reply questions take only their own answers', async () => {
+  test('confirm, choice and reply questions take only their own answers', async () => {
     const { asked, call, told } = setup();
-    const yesno = await asked({
-      kind: 'yesno',
+    const confirm = await asked({
+      kind: 'choice',
       text: 'Use HyperNeo dev-1 instead?',
-      noLabel: 'Keep iOS-2',
-      yesLabel: 'Use HyperNeo dev-1',
+      options: ['Use HyperNeo dev-1'],
     });
     expect(
-      (await call('neo.question.answer', { questionId: yesno.id, answer: 'maybe' }, human)).ok
+      (await call('neo.question.answer', { questionId: confirm.id, answer: 'yes' }, human)).ok
     ).toBe(false);
-    await call('neo.question.answer', { questionId: yesno.id, answer: 'yes' }, human);
+    await call(
+      'neo.question.answer',
+      { questionId: confirm.id, answer: 'Use HyperNeo dev-1' },
+      human
+    );
     const pick = await asked({ kind: 'choice', text: 'Which?', options: ['A', 'B'] });
     expect(
       (await call('neo.question.answer', { questionId: pick.id, answer: ['A', 'B'] }, human)).ok
@@ -633,7 +635,7 @@ describe('neo.question operations', () => {
     const reply = await asked({ kind: 'reply', text: 'What should it say?' });
     await call('neo.question.answer', { questionId: reply.id, answer: 'Say hi' }, human);
     expect(told).toEqual([
-      'The human answered "Use HyperNeo dev-1 instead?": yes (Use HyperNeo dev-1).',
+      'The human answered "Use HyperNeo dev-1 instead?": A (Use HyperNeo dev-1).',
       'The human answered "Which?": B (B).',
       'The human answered "Which ones?": none.',
       'The human answered "What should it say?": Say hi.',
@@ -653,20 +655,19 @@ describe('neo.question operations', () => {
     const { call, asked } = setup();
     const worker: OperationCaller = { source: 'mcp', sessionId: 'worker-1' };
     const merge = await asked({
-      kind: 'yesno',
+      kind: 'choice',
       text: 'Merge it?',
-      noLabel: 'Wait',
-      yesLabel: 'Merge',
+      options: ['Merge'],
     });
     expect(await call('neo.question.get', { questionId: merge.id }, worker)).toMatchObject({
       ok: true,
       question: { state: 'open', answer: null },
       answeredByHuman: false,
     });
-    await call('neo.question.answer', { questionId: merge.id, answer: 'yes' }, human);
+    await call('neo.question.answer', { questionId: merge.id, answer: 'Merge' }, human);
     expect(await call('neo.question.get', { questionId: merge.id }, worker)).toMatchObject({
       ok: true,
-      question: { text: 'Merge it?', state: 'answered', answer: 'yes' },
+      question: { text: 'Merge it?', state: 'answered', answer: ['Merge'] },
       answeredByHuman: true,
     });
     expect(await call('neo.question.get', { questionId: 'made-up' }, worker)).toEqual({
@@ -695,7 +696,7 @@ describe("Neo's start question", () => {
     expect(await call('neo.question.ask', { askId: 'ask', kind: 'start', text: 'Go?' })).toEqual({
       ok: false,
       reason:
-        'no_start_question: no old start question is open on this ask. New todos start by themselves; when the human must say yes first, ask with a yesno or choice card before adding the work.',
+        'no_start_question: no old start question is open on this ask. New todos start by themselves; when the human must say yes first, ask with a choice card (one option to confirm) before adding the work.',
     });
     expect(store.listQuestions('ask')).toEqual([]);
   });
@@ -899,10 +900,9 @@ describe('neo.question.retire and replaces', () => {
     const { store, call, asked } = setup();
     const old = await asked({ kind: 'reply', text: 'Allow a placeholder key?' });
     const next = await asked({
-      kind: 'yesno',
+      kind: 'choice',
       text: 'Use the dev proxy instead?',
-      noLabel: 'Keep',
-      yesLabel: 'Switch',
+      options: ['Switch'],
       replaces: old.id,
     });
     expect(store.getQuestion(old.id)).toMatchObject({
@@ -1045,23 +1045,22 @@ describe('question reference gates warn or omit instead of refusing', () => {
   test('retiring an answered question leaves the recorded answer untouched', async () => {
     const { store, call, asked } = setup();
     const decided = await asked({
-      kind: 'yesno',
+      kind: 'choice',
       text: 'Merge it?',
-      noLabel: 'Wait',
-      yesLabel: 'Merge',
+      options: ['Merge'],
     });
-    await call('neo.question.answer', { questionId: decided.id, answer: 'yes' }, human);
+    await call('neo.question.answer', { questionId: decided.id, answer: 'Merge' }, human);
     const retired = await call('neo.question.retire', {
       questionId: decided.id,
       reason: 'tidying up',
     });
     expect(retired).toMatchObject({
       ok: true,
-      question: { id: decided.id, state: 'answered', answer: 'yes' },
+      question: { id: decided.id, state: 'answered', answer: ['Merge'] },
     });
     expect(store.getQuestion(decided.id)).toMatchObject({
       state: 'answered',
-      answer: 'yes',
+      answer: ['Merge'],
       retiredReason: null,
     });
   });

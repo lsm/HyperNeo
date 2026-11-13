@@ -415,7 +415,9 @@ export function fallbackModelsFor(
   persistedDiscovered: ReadonlyArray<PersistedDiscoveredEntry> = []
 ): ModelInfo[] {
   const cached = provider.getCachedModels?.();
-  const staticSlice = STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
+  const staticSlice = (provider.getServedModels?.() ?? STATIC_MODEL_METADATA).filter(
+    (model) => model.provider === provider.id
+  );
   const base = cached && cached.length > 0 ? cached : staticSlice;
   if (persistedDiscovered.length === 0) return base;
   const knownIds = new Set(base.map((model) => model.id));

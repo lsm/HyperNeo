@@ -7,10 +7,14 @@ handler by hand and calls the front session's real tools, so no provider turn
 runs.
 
 Enable dual mode and send a human input. Mark it received by the front, then
-have the front publish a progress reply and call `work_on`. Require
-the hand-off to report `started: true`, store owner `neo` and give Neo the
-recorded human message. A second hand-off and a later front reply for that input
-must both be refused with `input_handed_off`. Neo then publishes its answer with
+have the front call `reply` with `work_on: true` and a one-sentence
+acknowledgment. Require that one call to publish the acknowledgment, report
+`started: true`, store owner `neo` and give Neo the recorded human message with
+the acknowledgment in `<already-said>`. A second `work_on` reply for that input
+still hands off and reports `started: true`: the progress publication dedupes on
+its derived id, and the reserve enqueues nothing the second time. A later
+ordinary front `reply` for the same input is still accepted, since
+publish no longer refuses on an existing owner. Neo then publishes its answer with
 the original `replyTo` through `neo.publication.publish`, and the stored row
 records `publishedBy: 'neo'`. Neo speech must pass the speaker gate (it stops at
 `voice_replies_off` because no client listens). The input settles as handed off.

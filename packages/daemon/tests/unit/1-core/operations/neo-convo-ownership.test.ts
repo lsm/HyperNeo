@@ -80,12 +80,13 @@ const speak = (speaker: string, ids: string[], publicationId = crypto.randomUUID
     speaker
   );
 
-test('the other lane cannot answer an input one lane owns', async () => {
+test('either lane can answer an input the other lane answered', async () => {
   await db.updateGlobalSettings({ neo: { front: { enabled: true } } });
   const id = crypto.randomUUID();
   inputs.accept(conversationId, id, true);
   expect(speak(root, [id])).toMatchObject({ accepted: true });
-  expect(speak(front, [id])).toEqual({ accepted: false, reason: 'input_handed_off' });
+  expect(speak(front, [id])).toMatchObject({ accepted: true, created: true });
+  expect(inputs.get(conversationId, id)?.owner).toBe('neo');
   expect(speak(root, [id])).toMatchObject({ accepted: true, created: true });
 });
 
@@ -119,7 +120,7 @@ test('a card reply on an input the front owns is accepted with its card', async 
   expect(inputs.get(conversationId, id)?.owner).toBe('front');
 });
 
-test('after the upgrade an input answered by inferred owner refuses the other lane', async () => {
+test('after the upgrade an input answered by inferred owner keeps answering from either lane', async () => {
   await db.updateGlobalSettings({ neo: { front: { enabled: true } } });
   const id = crypto.randomUUID();
   const publicationId = crypto.randomUUID();
@@ -127,6 +128,6 @@ test('after the upgrade an input answered by inferred owner refuses the other la
   inputs.accept(conversationId, id, true);
   runMigration504(db.getDatabase());
   expect(inputs.get(conversationId, id)?.owner).toBe('neo');
-  expect(speak(front, [id])).toEqual({ accepted: false, reason: 'input_handed_off' });
+  expect(speak(front, [id])).toMatchObject({ accepted: true, created: true });
   expect(publish([id], publicationId)).toMatchObject({ accepted: true, created: false });
 });

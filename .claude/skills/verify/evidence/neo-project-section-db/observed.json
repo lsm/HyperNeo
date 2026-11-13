@@ -1,0 +1,19 @@
+{
+  "verified": true,
+  "bunVerified": true,
+  "productionLines": 34,
+  "redRegressionCommit": "575b701acc",
+  "testedCodeCommit": "924acad9b9125dbf9b64c38882e8cb92d7dbe3f7",
+  "testedGitTree": "6aac451ad490c531cb652d122054aaf5019e5fc6",
+  "applicationTrees": {
+    "packages": "0135ea419352b016c1ae842c7f8a307cbc704d8b",
+    "scripts": "fb9783bbe8354484932da4d80d50fdc0023d2640"
+  },
+  "baselineMainSql": 28,
+  "fixedBunMainSql": 0,
+  "fixedBunCommands": 13,
+  "bunRun": "bun-verify-3",
+  "redRun": "bun-before-3",
+  "checks": "Full bun run check passed; 20 project tree and neo operation tests passed.",
+  "limitations": "No GUI, real GitHub, whole-daemon SQL absence or held-writer latency proof. No merge is authorized without exact-head approval and required CI."
+}

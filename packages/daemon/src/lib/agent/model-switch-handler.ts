@@ -317,16 +317,24 @@ export class ModelSwitchHandler {
       }),
     ]);
     const efforts = getProviderRegistry().get(newProvider);
+    const scoped = providerSessionConfigForSession(session);
+    const scopedWindow = (model: string, fallbackWindow: number | undefined) => {
+      try {
+        return efforts?.getModelContextWindow?.(model, scoped) ?? fallbackWindow;
+      } catch {
+        return fallbackWindow;
+      }
+    };
     return canSwitchModelLive(
       {
         provider,
-        contextWindow: current.modelInfo?.contextWindow,
-        effortLevels: efforts?.getModelEffortLevels?.(session.config.model),
+        contextWindow: scopedWindow(session.config.model, current.modelInfo?.contextWindow),
+        effortLevels: efforts?.getModelEffortLevels?.(session.config.model, scoped),
       },
       {
         provider: newProvider,
-        contextWindow: next.modelInfo?.contextWindow,
-        effortLevels: efforts?.getModelEffortLevels?.(newModel),
+        contextWindow: scopedWindow(newModel, next.modelInfo?.contextWindow),
+        effortLevels: efforts?.getModelEffortLevels?.(newModel, scoped),
       }
     );
   }

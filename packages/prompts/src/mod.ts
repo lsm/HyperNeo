@@ -661,9 +661,9 @@ export const NEO_ROOT_TURN_END = fillPrompt(NEO_ROOT_TURN_END_TEMPLATE, {
 });
 
 export const NEO_FRONT = fillPrompt(NEO_FRONT_TEMPLATE, {
-  ACK_TOOL: 'reply_short with progress:true and spoken',
-  ACK_NOTE: 'The acknowledgment is a progress reply that includes spoken.',
-  PUBLISH_TOOL: 'reply_short or reply_detailed',
+  ACK_TOOL: 'reply with work_on:true and spoken',
+  ACK_NOTE: 'The acknowledgment is the work_on reply and includes spoken.',
+  PUBLISH_TOOL: 'reply',
   SAY_TOOL: 'speech_say',
 });
 

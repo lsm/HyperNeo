@@ -8,6 +8,8 @@ export type {
   ProviderInfo,
   ProviderSdkConfig,
   ProviderSessionConfig,
+  ProviderUsageResult,
+  UsageWindow,
   ModelTier,
   ProviderAuthStatusInfo,
   ProviderOAuthFlowData,

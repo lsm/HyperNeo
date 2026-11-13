@@ -56,7 +56,7 @@ try {
       : scenario === 'ordinary' ? 'operations.describe' : 'neo.publication.publish';
     const input = operation === 'neo.speech.say' ? { requestId: scenario, text: 'Synthetic spoken reply.' }
       : operation === 'operations.describe' ? { name: 'neo.publication.publish' }
-      : { requestId: scenario, shortText: 'Synthetic visible reply.', fullText: 'Synthetic visible reply.', links: [] };
+      : { requestId: scenario, text: 'Synthetic visible reply.', links: [] };
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
       if (!request.url.includes('/v1/messages')) return new Response('{}');
       const body = await request.json() as { messages?: { content?: unknown }[] };

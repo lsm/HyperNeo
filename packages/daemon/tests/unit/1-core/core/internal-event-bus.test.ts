@@ -4,6 +4,7 @@ import {
   createDaemonInternalEventBus,
   InternalEventBus,
   InternalEventBusPublishError,
+  type SettingsUpdatedEvent,
 } from '../../../../src/lib/internal-event-bus';
 
 interface TestEventMap {
@@ -131,15 +132,33 @@ describe('InternalEventBus', () => {
     it('should deliver to both session-scoped and global handlers', async () => {
       const hits: string[] = [];
 
-      bus.subscribe('session.created', () => hits.push('global'), { subscriberName: 'global' });
-      bus.subscribe('session.created', () => hits.push('scoped'), {
-        subscriberName: 'scoped',
-        namespaceId: 's1',
-      });
-      bus.subscribe('session.created', () => hits.push('other-scope'), {
-        subscriberName: 'other',
-        namespaceId: 's2',
-      });
+      bus.subscribe(
+        'session.created',
+        () => {
+          hits.push('global');
+        },
+        { subscriberName: 'global' }
+      );
+      bus.subscribe(
+        'session.created',
+        () => {
+          hits.push('scoped');
+        },
+        {
+          subscriberName: 'scoped',
+          namespaceId: 's1',
+        }
+      );
+      bus.subscribe(
+        'session.created',
+        () => {
+          hits.push('other-scope');
+        },
+        {
+          subscriberName: 'other',
+          namespaceId: 's2',
+        }
+      );
 
       const result = await bus.publish('session.created', {
         namespaceId: 's1',
@@ -153,7 +172,13 @@ describe('InternalEventBus', () => {
     it('should not double-deliver when namespaceId equals the global sentinel', async () => {
       const hits: string[] = [];
 
-      bus.subscribe('session.created', () => hits.push('global'), { subscriberName: 'global' });
+      bus.subscribe(
+        'session.created',
+        () => {
+          hits.push('global');
+        },
+        { subscriberName: 'global' }
+      );
 
       const result = await bus.publish('session.created', {
         namespaceId: '__global__',
@@ -387,8 +412,20 @@ describe('InternalEventBus', () => {
 
     it('should clear all handlers', async () => {
       const hits: string[] = [];
-      bus.subscribe('session.created', () => hits.push('a'), { subscriberName: 'a' });
-      bus.subscribe('session.updated', () => hits.push('b'), { subscriberName: 'b' });
+      bus.subscribe(
+        'session.created',
+        () => {
+          hits.push('a');
+        },
+        { subscriberName: 'a' }
+      );
+      bus.subscribe(
+        'session.updated',
+        () => {
+          hits.push('b');
+        },
+        { subscriberName: 'b' }
+      );
 
       bus.clear();
 
@@ -400,8 +437,20 @@ describe('InternalEventBus', () => {
 
     it('should clear handlers for a specific event via off()', async () => {
       const hits: string[] = [];
-      bus.subscribe('session.created', () => hits.push('created'), { subscriberName: 'c' });
-      bus.subscribe('session.deleted', () => hits.push('deleted'), { subscriberName: 'd' });
+      bus.subscribe(
+        'session.created',
+        () => {
+          hits.push('created');
+        },
+        { subscriberName: 'c' }
+      );
+      bus.subscribe(
+        'session.deleted',
+        () => {
+          hits.push('deleted');
+        },
+        { subscriberName: 'd' }
+      );
 
       bus.off('session.created');
 
@@ -439,7 +488,11 @@ describe('InternalEventBus keyed interface compatibility', () => {
 describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
   it('should flow through createDaemonInternalEventBus with typed payload', async () => {
     const bus = createDaemonInternalEventBus();
-    const received: Array<{ namespaceId: string; settings: Record<string, unknown> }> = [];
+    const received: SettingsUpdatedEvent[] = [];
+    const settings: SettingsUpdatedEvent['settings'] = {
+      model: 'claude-sonnet-4',
+      settingSources: [],
+    };
 
     bus.subscribe(
       'settings.updated',
@@ -451,16 +504,14 @@ describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
 
     const result = await bus.publish('settings.updated', {
       namespaceId: 'global',
-      settings: {
-        model: 'claude-sonnet-4',
-      } as unknown as import('@hyperneo/shared').GlobalSettings,
+      settings,
     });
 
     expect(result.delivered).toBe(1);
     expect(result.failures).toHaveLength(0);
     expect(received).toHaveLength(1);
     expect(received[0].namespaceId).toBe('global');
-    expect(received[0].settings).toEqual({ model: 'claude-sonnet-4' });
+    expect(received[0].settings).toEqual(settings);
   });
 
   it('should fire-and-forget via publishAsync', async () => {
@@ -479,7 +530,7 @@ describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
     const start = performance.now();
     bus.publishAsync('settings.updated', {
       namespaceId: 'global',
-      settings: {} as unknown as import('@hyperneo/shared').GlobalSettings,
+      settings: { settingSources: [] },
     });
     const elapsed = performance.now() - start;
 

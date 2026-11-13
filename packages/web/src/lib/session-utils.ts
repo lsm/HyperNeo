@@ -40,6 +40,7 @@ export function getModelLabel(modelId: string | null | undefined): string {
 
   if (lower.startsWith('kimi-')) {
     if (lower === 'kimi-k3') return 'Kimi K3';
+    if (lower === 'kimi-for-coding') return 'Kimi K2.8 Preview';
     if (lower === 'kimi-k2.7-code') return 'Kimi K2.7 Code';
     if (lower === 'kimi-k2.7-code-highspeed') return 'Kimi K2.7 Code Highspeed';
     const rest = modelId.slice('kimi-'.length).replace(/-/g, ' ');

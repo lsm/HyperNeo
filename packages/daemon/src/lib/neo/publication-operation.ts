@@ -12,9 +12,12 @@ import type { NeoPublicationWriteResult } from '../../storage/repositories/neo-p
 import { isMainNeoBinding } from './binding-roles.ts';
 import { neoDerivedId } from './derived-id.ts';
 import {
+  foldPublicationDetails,
   NeoPublicationObject,
+  NeoPublicationReplyFields,
   NeoPublicationResultSchema,
-  publicationTextRule,
+  replySummaryTooLong,
+  SUMMARY_CHAR_LIMIT,
   workerSession,
 } from './publication.ts';
 
@@ -32,8 +35,12 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
   revisionId: true,
   revisions: true,
   publishedBy: true,
+  shortText: true,
+  verbatim: true,
+  fullText: true,
 })
   .extend({
+    ...NeoPublicationReplyFields,
     requestId: z.string().min(1).max(160),
     progress: z.literal(true).optional(),
     spoken: z.string().trim().min(1).max(500).optional(),
@@ -46,12 +53,21 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
       .default([]),
   })
   .superRefine((value, ctx) => {
-    publicationTextRule(value, ctx);
-    if (value.progress && (value.replyTo?.length !== 1 || value.fullText.length > 300))
+    if (value.progress && (value.replyTo?.length !== 1 || value.text.length > 150))
       ctx.addIssue({
         code: 'custom',
         message:
-          'Progress requires one replyTo ID and a brief acknowledgment of at most 300 characters.',
+          'Progress requires one replyTo ID and a brief acknowledgment of at most 150 characters.',
+      });
+    if (
+      value.details !== undefined &&
+      value.details.length < value.text.length &&
+      value.text.length + value.details.length + 2 > 16000
+    )
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Details shorter than the text fold into it; their combined length must fit 16000 characters.',
       });
   });
 const Draft = NeoPublicationDraft;
@@ -146,6 +162,19 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
   return (superpipe({})('neo-publication-publish') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
+    .pipe(
+      (draft: Draft) => {
+        const body = foldPublicationDetails({ text: draft.text, details: draft.details });
+        return replySummaryTooLong(body) ||
+          (draft.cardReply !== undefined &&
+            body.details === undefined &&
+            body.text.length > SUMMARY_CHAR_LIMIT)
+          ? { reason: { accepted: false as const, reason: 'reply_summary_too_long' } }
+          : { value: draft };
+      },
+      'publication',
+      'result:publication'
+    )
     .pipe((draft: Draft) => draft, 'publication', 'submitted')
     .pipe(
       (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),
@@ -292,7 +321,18 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(
       (draft: Draft, proof: Proof) => {
-        const { requestId, spoken: _spoken, progress, ...message } = draft;
+        const {
+          requestId,
+          spoken: _spoken,
+          progress,
+          text: _rawText,
+          details: _rawDetails,
+          ...message
+        } = draft;
+        const { text, details } = foldPublicationDetails({
+          text: _rawText,
+          details: _rawDetails,
+        });
         return runtime.append(
           {
             ...(progress
@@ -304,6 +344,11 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
                 }
               : {}),
             ...message,
+            ...(details === undefined
+              ? message.cardReply
+                ? { shortText: text, fullText: text }
+                : { fullText: text, verbatim: true }
+              : { shortText: text, fullText: details }),
             session: message.session ?? undefined,
             replyTo: progress ? undefined : message.replyTo,
             publicationId: neoDerivedId(

@@ -43,7 +43,7 @@ try{
  app.sessionManager.setOperationRegistryProvider(()=>registry);
  const call=createOperationMcpHandler(()=>registry,()=>({sessionId:root,role:'neo'}));
  const invoke=async(name:string,input:unknown)=>JSON.parse((await call({name,input})).content[0].text);
- const draft={requestId:crypto.randomUUID(),shortText:'Open this session',fullText:'Synthetic Open target',session:'codex-desktop:native-thread'};
+ const draft={requestId:crypto.randomUUID(),text:'Open this session',details:'Synthetic Open target',session:'codex-desktop:native-thread'};
  const first=await invoke('neo.publication.publish',draft);
  assert(first.accepted,JSON.stringify(first));
  assert.equal(first.publication.sessionSource?.adapter,'codex-desktop','publication must carry the native Open target');
@@ -55,7 +55,7 @@ try{
  for(const [session,adapter,link] of [['native-thread','codex-desktop','codex://threads/native-thread'],['codex-desktop:unsafe','codex-desktop',null],['codex-desktop:linkless','codex-desktop',null],['claude-desktop:native-session','claude-desktop','claude://claude.ai/epitaxy/native-session'],['local','hyperneo','/session/local'],['space-session','hyperneo','/session/space-session']] as const){
   const result=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session});assert(result.accepted,JSON.stringify(result));assert.equal(result.publication.sessionSource.adapter,adapter);assert.equal(result.publication.sessionSource.link,link);assert.equal(result.publication.session,session);
  }
- const noSession=await invoke('neo.publication.publish',{requestId:crypto.randomUUID(),shortText:'Ordinary reply',fullText:'No session'});assert(noSession.accepted);assert.equal(noSession.publication.sessionSource,undefined);
+ const noSession=await invoke('neo.publication.publish',{requestId:crypto.randomUUID(),text:'No session'});assert(noSession.accepted);assert.equal(noSession.publication.sessionSource,undefined);
  const beforeInjection=app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get();
  const injected=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),sessionSource:{adapter:'codex-desktop',link:'javascript:alert(1)'}});assert.notEqual(injected.accepted,true);assert.deepEqual(app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get(),beforeInjection);
  const ambiguous=await invoke('neo.session.link',{session:'ambiguous'});assert.equal(ambiguous.ok,false);
