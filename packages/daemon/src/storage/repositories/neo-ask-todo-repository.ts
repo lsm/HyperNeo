@@ -321,7 +321,7 @@ export class NeoAskTodoRepository {
     };
   }
 
-  planContext() {
+  planContext(withUnanswered = false) {
     const asks = this.listOpenAsks();
     const families = [...new Set(asks.map((ask) => ask.parentId ?? ask.id))];
     const todos = families.flatMap((id) => this.listFamilyTodos(id));
@@ -329,7 +329,7 @@ export class NeoAskTodoRepository {
       asks,
       todos: [...new Map(todos.map((todo) => [todo.id, todo])).values()],
       questions: this.listQuestionsForAsks(asks.map((ask) => ask.id)),
-      unanswered: this.listUnansweredInputs(),
+      ...(withUnanswered ? { unanswered: this.listUnansweredInputs() } : {}),
     };
   }
 
@@ -349,10 +349,10 @@ export class NeoAskTodoRepository {
               AND json_type(p.payload_json, '$.revisionId') = 'text')))
         ORDER BY a.sequence`)
       .all() as { id: string; payload: string }[];
-    return rows.flatMap((row) => {
-      const text = neoInputText(JSON.parse(row.payload) as { content?: unknown });
-      return text ? [{ id: row.id, text }] : [];
-    });
+    return rows.map((row) => ({
+      id: row.id,
+      text: neoInputText(JSON.parse(row.payload) as { content?: unknown }) || '(non-text message)',
+    }));
   }
 
   openWorkFacts() {

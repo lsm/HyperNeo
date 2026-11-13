@@ -169,7 +169,11 @@ try {
     'Open asks are never dropped from the real MCP compact snapshot'
   );
   assert.equal(reads, 0, 'Snapshot read ran target SQL on main');
-  const facts = await store.read('planContext');
+  const facts = await store.read('planContext', true);
+  const perTurnFacts = await store.read('planContext');
+  assert(perTurnFacts.unanswered === undefined, 'A per-prompt read runs the unanswered scan');
+  const compactFacts = await store.read('planContext', true);
+  assert(compactFacts.unanswered?.length === 1, 'The compact read skips the unanswered scan');
   assert.equal(facts.asks.length, 12);
   assert.equal(facts.todos.length, 480);
   assert.equal(facts.questions.length, 12);
@@ -189,7 +193,9 @@ try {
   const { neoPlanContextHooks } = await import(
     '../../../packages/daemon/src/lib/agent/neo-plan-hook.ts'
   );
-  const hooks = neoPlanContextHooks(() => store.read('planContext'));
+  const hooks = neoPlanContextHooks((withUnanswered) =>
+    store.read('planContext', withUnanswered)
+  );
   const sessionStart = async (source: 'startup' | 'compact') =>
     (
       (await hooks.SessionStart![0].hooks[0](

@@ -64,9 +64,52 @@ test('reads the inputs Neo owns and has not answered, with the full id and text'
   seedInput(pendingSecond, 'front', secondText);
   seedAnswer(answered);
 
-  const facts = await new NeoAskTodoRepository(db).read('planContext');
+  const facts = await new NeoAskTodoRepository(db).read('planContext', true);
 
   expect(facts.unanswered).toEqual([{ id: pending, text: pendingText }]);
+});
+
+test('scans unanswered inputs only for the compact context', async () => {
+  seedInput(pending, 'neo', pendingText);
+  const todos = new NeoAskTodoRepository(db);
+  let scans = 0;
+  const prepare = db.prepare.bind(db);
+  db.prepare = ((sql: string) => {
+    if (sql.includes('neo_front_inputs')) scans++;
+    return prepare(sql);
+  }) as typeof db.prepare;
+
+  expect((await todos.read('planContext')).unanswered).toBeUndefined();
+  expect(scans).toBe(0);
+
+  expect((await todos.read('planContext', true)).unanswered).toEqual([
+    { id: pending, text: pendingText },
+  ]);
+  expect(scans).toBeGreaterThan(0);
+  db.prepare = prepare;
+});
+
+test('lists an image-only input by its id with placeholder text', async () => {
+  db.prepare(
+    'INSERT INTO neo_conversation_asks(conversation_id, request_id, payload_json, created_at) VALUES (?,?,?,?)'
+  ).run(
+    conversation,
+    pending,
+    JSON.stringify({
+      conversationId: conversation,
+      requestId: pending,
+      askOrigin: { sessionId: 'neo:source', messageId: pending },
+      content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA' } }],
+    }),
+    new Date().toISOString()
+  );
+  db.prepare(
+    'INSERT INTO neo_front_inputs (conversation_id, message_id, eligible, owner) VALUES (?,?,1,?)'
+  ).run(conversation, pending, 'neo');
+
+  const facts = await new NeoAskTodoRepository(db).read('planContext', true);
+
+  expect(facts.unanswered).toEqual([{ id: pending, text: '(non-text message)' }]);
 });
 
 test('counts a card reply and a text revision as answers', async () => {
@@ -104,7 +147,7 @@ test('counts a card reply and a text revision as answers', async () => {
     new Date().toISOString()
   );
 
-  const facts = await new NeoAskTodoRepository(db).read('planContext');
+  const facts = await new NeoAskTodoRepository(db).read('planContext', true);
 
   expect(facts.unanswered).toEqual([{ id: pending, text: pendingText }]);
 });
@@ -115,7 +158,7 @@ test('sends unanswered messages to Neo after compaction and drops answered ones'
   seedAnswer(answered);
   const todos = new NeoAskTodoRepository(db);
 
-  const hooks = neoPlanContextHooks(() => todos.read('planContext'));
+  const hooks = neoPlanContextHooks(() => todos.read('planContext', true));
   const input = { session_id: 'synthetic', transcript_path: '', cwd: '/synthetic' };
   const context = await hooks.SessionStart![0].hooks[0](
     { ...input, hook_event_name: 'SessionStart', source: 'compact' } as never,
@@ -136,7 +179,7 @@ test('leaves a fresh startup without unanswered messages', async () => {
   seedInput(pending, 'neo', pendingText);
   const todos = new NeoAskTodoRepository(db);
 
-  const hooks = neoPlanContextHooks(() => todos.read('planContext'));
+  const hooks = neoPlanContextHooks(() => todos.read('planContext', true));
   const context = await hooks.SessionStart![0].hooks[0](
     {
       session_id: 'synthetic',

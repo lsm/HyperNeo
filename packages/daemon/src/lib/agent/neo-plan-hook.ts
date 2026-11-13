@@ -2,7 +2,7 @@ import type { HookCallback, Options, SessionStartHookInput } from '@anthropic-ai
 import { createNeoPlanContext, type NeoPlanFacts } from '../neo/plan-context-pipeline.ts';
 
 export function neoPlanContextHooks(
-  readFacts: () => Promise<NeoPlanFacts>
+  readFacts: (withUnanswered?: boolean) => Promise<NeoPlanFacts>
 ): Pick<NonNullable<Options['hooks']>, 'SessionStart' | 'UserPromptSubmit'> {
   const context = createNeoPlanContext(readFacts);
   const start: HookCallback = async (input) => {
