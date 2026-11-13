@@ -39,7 +39,7 @@ try {
     const bounds = await body.boundingBox();
     assert(bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
     if (width === 390) {
-      await body.getByRole('button', { name: question.yesLabel, exact: true }).click();
+      await body.getByRole('button', { name: `A ${question.options[0]}`, exact: true }).click();
       await card.locator('[data-ask-details-toggle]').click();
       await card.locator(`[id="neo-ref-question-${question.id}"]`).waitFor();
     }

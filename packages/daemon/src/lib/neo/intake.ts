@@ -186,7 +186,7 @@ export function readNeoReply(
 export function neoReplyFact(reply: NeoReply | null, words = ''): string | null {
   const picked = neoChoiceByLetter(words, reply?.question ?? null);
   if (reply?.question && picked)
-    return `The human answered your question "${reply.question.text}" with ${neoLabelledOptions(reply.question.options ?? [], picked)}:`;
+    return `The human answered your question "${reply.question.text}" with ${neoLabelledOptions(reply.question.options ?? [], picked, reply.question.labels)}:`;
   if (reply?.question?.kind === 'start')
     return `The human replied about your start question "${reply.question.text}" (it stays open; only its Start button starts todos):`;
   if (reply?.question) return `The human answered your question "${reply.question.text}":`;

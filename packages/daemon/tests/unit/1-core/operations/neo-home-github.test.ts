@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { neoChoiceByLetter } from '@hyperneo/shared/types/neo-ask';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -66,7 +67,8 @@ const call = async (input: unknown, caller = owner, name = 'neo.home.github') =>
     repository?: string;
   };
 };
-const answer = (questionId: string, value = 'yes', caller = human) =>
+const CREATE = 'Create private repo';
+const answer = (questionId: string, value: string | string[] = CREATE, caller = human) =>
   call({ questionId, answer: value }, caller, 'neo.question.answer');
 const log = async () => readFile(join(fixture, 'calls'), 'utf8').catch(() => '');
 beforeEach(async () => {
@@ -258,7 +260,9 @@ describe('Neo private GitHub home proposal', () => {
     });
     expect(todos.getQuestion(proposed.questionId)).toMatchObject({
       state: 'open',
-      kind: 'yesno',
+      kind: 'choice',
+      options: [CREATE, 'Keep local'],
+      multiple: false,
       text: expect.stringContaining('fixture-owner/neo-home'),
     });
     expect(await git('remote')).toBe('');
@@ -266,7 +270,7 @@ describe('Neo private GitHub home proposal', () => {
     expect(await call({ askId: 'ask' })).toEqual(proposed);
     expect(todos.listQuestions('ask')).toHaveLength(1);
     expect((await call({ questionId: proposed.questionId })).ok).toBe(false);
-    await expect(answer(proposed.questionId, 'yes', owner)).rejects.toThrow(
+    await expect(answer(proposed.questionId, CREATE, owner)).rejects.toThrow(
       'Operation neo.question.answer is not available to this caller'
     );
     expect(await log()).not.toContain('repo create');
@@ -284,45 +288,78 @@ describe('Neo private GitHub home proposal', () => {
     expect((await log()).match(/repo create/g)).toHaveLength(1);
     expect(await git('status', '--porcelain')).toBe('');
   });
-  test.each(['missing', 'no', 'retired', 'unrelated', 'foreign ask', 'changed body'])(
-    'refuses %s consent without creating anything',
-    async (state) => {
-      const proposed = await call({ askId: 'ask' });
-      let questionId = proposed.questionId;
-      if (state === 'missing') questionId = 'missing';
-      else if (state === 'retired')
-        await call({ questionId, reason: 'No longer needed' }, owner, 'neo.question.retire');
-      else if (state === 'unrelated') {
-        const q = todos.askQuestion(
-          'other',
-          'ask',
-          {
-            text: 'Approve something else?',
-            kind: 'yesno',
-            options: null,
-            multiple: false,
-            noLabel: 'No',
-            yesLabel: 'Yes',
-            startTodos: null,
-          },
+  test.each([
+    'missing',
+    'keep',
+    'chat B',
+    'chat yes',
+    'retired',
+    'unrelated',
+    'foreign ask',
+    'changed body',
+  ])('refuses %s consent without creating anything', async (state) => {
+    const proposed = await call({ askId: 'ask' });
+    let questionId = proposed.questionId;
+    if (state === 'missing') questionId = 'missing';
+    else if (state === 'retired')
+      await call({ questionId, reason: 'No longer needed' }, owner, 'neo.question.retire');
+    else if (state === 'unrelated') {
+      const q = todos.askQuestion(
+        'other',
+        'ask',
+        {
+          text: 'Approve something else?',
+          kind: 'yesno',
+          options: null,
+          multiple: false,
+          noLabel: 'No',
+          yesLabel: 'Yes',
+          startTodos: null,
+        },
+        Date.now()
+      );
+      questionId = q.id;
+      await answer(questionId, 'yes');
+    } else if (state.startsWith('chat ')) {
+      const words = state.slice(5);
+      const q = todos.getQuestion(questionId)!;
+      todos.answerQuestion(q, neoChoiceByLetter(words, q) ?? words, 'chat', Date.now());
+    } else {
+      await answer(questionId, state === 'keep' ? 'Keep local' : CREATE);
+      if (state === 'foreign ask')
+        db.getDatabase().prepare("UPDATE neo_asks SET session_id='worker' WHERE id='ask'").run();
+      if (state === 'changed body')
+        db.getDatabase()
+          .prepare("UPDATE neo_questions SET text='Something else' WHERE id=?")
+          .run(questionId);
+    }
+    expect(await call({ questionId })).toMatchObject({ ok: false });
+    expect(await log()).not.toContain('repo create');
+    expect(await git('remote')).toBe('');
+    if (state === 'keep')
+      expect((await call({ askId: 'ask' })).questionId).toBe(proposed.questionId);
+  });
+  test.each(['chat A', 'chat exact words', 'pre-upgrade yes'])(
+    'creates the bound repository on %s',
+    async (how) => {
+      const { questionId } = await call({ askId: 'ask' });
+      const q = todos.getQuestion(questionId)!;
+      if (how === 'pre-upgrade yes') {
+        db.getDatabase()
+          .prepare(
+            "UPDATE neo_questions SET kind='yesno', options=NULL, no_label='Keep local', yes_label=? WHERE id=?"
+          )
+          .run(CREATE, questionId);
+        await answer(questionId, 'yes');
+      } else
+        todos.answerQuestion(
+          q,
+          how === 'chat A' ? neoChoiceByLetter('A', q)! : CREATE,
+          'chat',
           Date.now()
         );
-        questionId = q.id;
-        await answer(questionId);
-      } else {
-        await answer(questionId, state === 'no' ? 'no' : 'yes');
-        if (state === 'foreign ask')
-          db.getDatabase().prepare("UPDATE neo_asks SET session_id='worker' WHERE id='ask'").run();
-        if (state === 'changed body')
-          db.getDatabase()
-            .prepare("UPDATE neo_questions SET text='Something else' WHERE id=?")
-            .run(questionId);
-      }
-      expect(await call({ questionId })).toMatchObject({ ok: false });
-      expect(await log()).not.toContain('repo create');
-      expect(await git('remote')).toBe('');
-      if (state === 'no')
-        expect((await call({ askId: 'ask' })).questionId).toBe(proposed.questionId);
+      expect(await call({ questionId })).toMatchObject({ ok: true, status: 'created' });
+      expect((await log()).match(/repo create/g)).toHaveLength(1);
     }
   );
   test('stays local without GitHub and does not probe or ask again after restart', async () => {

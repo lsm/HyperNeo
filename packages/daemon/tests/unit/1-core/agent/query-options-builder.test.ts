@@ -1214,6 +1214,45 @@ describe('QueryOptionsBuilder', () => {
       expect(options.settings?.autoCompactWindow).toBeUndefined();
     });
 
+    it('makes the SDK compact a 1M Anthropic session at 45% near 450k, not 45% twice', async () => {
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'fixture-native',
+                name: 'Fixture',
+                provider: 'anthropic',
+                available: true,
+                contextWindow: 1_000_000,
+              },
+            ],
+          ],
+        ]) as Parameters<typeof setModelsCache>[0]
+      );
+      try {
+        builder = new QueryOptionsBuilder({ ...mockContext, db: undefined });
+        mockSession.id = 'neo:fixture';
+        mockSession.config.model = 'fixture-native';
+        mockSession.config.autoCompactPercent = 45;
+        const options = await builder.build();
+        const window = Number(
+          options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW ??
+            (options.settings as { autoCompactWindow?: number } | undefined)?.autoCompactWindow
+        );
+        const effective = window - 20_000;
+        const percent = Number(options.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE);
+        const threshold =
+          percent > 0 && percent <= 100
+            ? Math.min(Math.floor((effective * percent) / 100), effective - 13_000)
+            : effective - 13_000;
+        expect(threshold).toBe(450_000);
+      } finally {
+        setModelsCache(new Map());
+      }
+    });
+
     it('uses the same explicit native percentage for an ordinary session and Neo', async () => {
       setModelsCache(
         new Map([
@@ -1239,12 +1278,12 @@ describe('QueryOptionsBuilder', () => {
         const overridden = await builder.build();
         expect(overridden.settings?.autoCompactWindow).toBe(733_000);
         expect(overridden.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('733000');
-        expect(overridden.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('70');
+        expect(overridden.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBeUndefined();
         expect(overridden.settings?.precomputeCompactionEnabled).toBe(true);
         mockSession.id = 'ordinary';
         const ordinary = await builder.build();
         expect(ordinary.settings?.autoCompactWindow).toBe(733_000);
-        expect(ordinary.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('70');
+        expect(ordinary.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBeUndefined();
         mockSession.id = 'neo:fixture';
         delete mockSession.config.autoCompactPercent;
         const inherited = await builder.build();
@@ -1607,6 +1646,22 @@ describe('QueryOptionsBuilder', () => {
       const settings = typeof options.settings === 'object' ? options.settings : undefined;
       expect(settings?.autoCompactWindow).toBe(450_000);
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    });
+
+    it('a Kimi session percentage still reaches the SDK, since its window does not carry it', async () => {
+      builder = new QueryOptionsBuilder({ ...mockContext, db: undefined });
+      mockSession.config.autoCompactPercent = 60;
+      const options = await builder.build();
+      const settings = typeof options.settings === 'object' ? options.settings : undefined;
+      const effective =
+        Number(options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? settings?.autoCompactWindow) -
+        20_000;
+      const percent = Number(options.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE);
+      const threshold =
+        percent > 0 && percent <= 100
+          ? Math.min(Math.floor((effective * percent) / 100), effective - 13_000)
+          : effective - 13_000;
+      expect(threshold).toBe(588_000);
     });
 
     it('the same session without an explicit value still gets the provider window', async () => {

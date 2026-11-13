@@ -10,6 +10,7 @@ import type {
 import {
   createNeoDoneTodosOperation,
   createNeoAskReadOperation,
+  createNeoTodoReadOperation,
   neoAskEntryState,
   neoSnapshotAskEntries,
   neoTodoStatusLine,
@@ -23,6 +24,7 @@ import {
 } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 
 import { NEO_TODO_STALLED_CARD_TAIL } from '../../../../src/lib/neo/todo-state.ts';
 import { todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
@@ -453,6 +455,47 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(await read('missing')).toEqual({ ok: false, reason: 'not_found: no such ask.' });
     allowed = false;
     expect(await read('ask')).toEqual({ ok: false, reason: 'denied' });
+  });
+
+  test('neo.ask.read gives an agent one line per todo and neo.todo.read gives one todo in full', async () => {
+    const { store } = seed(['doing', 'todo']);
+    store.updateTodo(
+      store.getTodo('t0')!,
+      { instruction: 'Build the parser', report: 'Opened the pull request' },
+      2
+    );
+    const admit = (caller: OperationCaller) => ({ value: caller });
+    const project = async <T extends NeoTodo>(todos: readonly T[]) => [...todos];
+    const mcp = { source: 'mcp' as const, sessionId: 'neo', role: 'neo' as const };
+    const askRead = createNeoAskReadOperation(store, () => [], admit, project);
+    type Read = { ok: true; entry: { todos: object[] } } | { ok: false; reason: string };
+    const agent = (await askRead.execute(askRead.inputSchema.parse({ askId: 'ask' }), mcp)) as Read;
+    expect(agent).toMatchObject({ ok: true, entry: { ask: { id: 'ask' } } });
+    expect(agent.ok && agent.entry.todos).toEqual([
+      { id: 't0', title: 'T0', state: 'doing' },
+      { id: 't1', title: 'T1', state: 'todo' },
+    ]);
+    const human = (await askRead.execute(askRead.inputSchema.parse({ askId: 'ask' }), {
+      source: 'rpc',
+    })) as Read;
+    expect(human.ok && human.entry.todos[0]).toMatchObject({ instruction: 'Build the parser' });
+    const todoRead = createNeoTodoReadOperation(store, admit, project);
+    expect(await todoRead.execute(todoRead.inputSchema.parse({ todoId: 't0' }), mcp)).toMatchObject(
+      {
+        ok: true,
+        todo: {
+          id: 't0',
+          state: 'doing',
+          instruction: 'Build the parser',
+          report: 'Opened the pull request',
+          check: null,
+        },
+      }
+    );
+    expect(await todoRead.execute(todoRead.inputSchema.parse({ todoId: 'missing' }), mcp)).toEqual({
+      ok: false,
+      reason: 'not_found: no such todo.',
+    });
   });
 
   test('neo.ask.doneTodos pages the done todos in list order', async () => {

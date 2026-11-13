@@ -47,7 +47,7 @@ import {
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
-type TodoReceipt = { ok: true; todo?: NeoTodo; todos: NeoTodo[]; records?: string[] };
+type TodoReceipt = { ok: true; todo?: NeoTodo; records?: string[] };
 type TodoPlan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
@@ -406,7 +406,6 @@ const TodoResult = z.union([
   z.object({
     ok: z.literal(true),
     todo: NeoTodoSchema.optional(),
-    todos: z.array(NeoTodoSchema),
     records: z.array(z.string()).optional(),
   }),
 ]);
@@ -591,10 +590,9 @@ export function createNeoTodoOperations(
   inputs: NeoInputReads = noNeoInputReads
 ) {
   const present = async (result: TodoReceipt | Rejection) => {
-    if (!result.ok) return result;
-    if (!result.todo) return { ...result, todos: await project(result.todos) };
-    const [todo, ...todos] = await project([result.todo, ...result.todos]);
-    return { ...result, todo, todos };
+    if (!result.ok || !result.todo) return result;
+    const [todo] = await project([result.todo]);
+    return { ...result, todo };
   };
   const completion = (plan: TodoPlan) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
@@ -674,7 +672,6 @@ export function createNeoTodoOperations(
     return {
       ok: true,
       todo,
-      todos: todos.listTodos(todo.askId),
       ...(plan.records ? { records: plan.records } : {}),
     };
   };
@@ -684,19 +681,12 @@ export function createNeoTodoOperations(
       ? { ok: false, reason: `${failed}; the todo is unchanged, its session may still run.` }
       : write(plan);
   };
-  const ran = async (
-    result: Awaited<ReturnType<typeof addNeoTodo>>
-  ): Promise<TodoReceipt | Rejection> =>
-    result.ok
-      ? { ...result, todos: result.todo ? todos.listTodos(result.todo.askId) : [] }
-      : result;
   const admit = (ask: NeoAsk | null, todo?: NeoTodo) =>
     ask && ask.status !== 'open'
       ? {
           reason: {
             ok: true as const,
             ...(todo ? { todo } : {}),
-            todos: todos.listTodos(ask.id),
             records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
           },
         }
@@ -731,7 +721,7 @@ export function createNeoTodoOperations(
     )
     .pipe(
       async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> =>
-        ran(await addNeoTodo(todos, sessions, controls, ask, input, packs())),
+        addNeoTodo(todos, sessions, controls, ask, input, packs()),
       ['outcome', 'input'],
       'outcome'
     )
@@ -768,7 +758,7 @@ export function createNeoTodoOperations(
             previous.daemon !== ref.daemon)
         )
           await controls.refreshIdentity?.(todo.id);
-        return ran(result);
+        return result;
       },
       ['outcome', 'input'],
       'outcome'
@@ -831,8 +821,7 @@ export function createNeoTodoOperations(
       'result:outcome'
     )
     .pipe(
-      (todo: NeoTodo, input: z.infer<typeof Continue>) =>
-        controls.proceed(todo.id, input.message).then(ran),
+      (todo: NeoTodo, input: z.infer<typeof Continue>) => controls.proceed(todo.id, input.message),
       ['outcome', 'input'],
       'outcome'
     )
@@ -854,7 +843,7 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const retry = owned(superpipe({})('neo.todo.retry') as PipelineAPI)
-    .pipe((todo: NeoTodo) => controls.retry(todo.id).then(ran), 'outcome', 'outcome')
+    .pipe((todo: NeoTodo) => controls.retry(todo.id), 'outcome', 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof Retry>,
     caller: OperationCaller

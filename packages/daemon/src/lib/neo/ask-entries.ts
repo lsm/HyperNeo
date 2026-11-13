@@ -244,7 +244,7 @@ export function projectNeoAskEntries(
       doneCount: todos.filter((todo) => todo.state === 'done').length,
       questions: questions.map((question) => {
         if (question.kind === 'choice' && question.options)
-          return { ...question, optionLabels: neoOptionLabels(question.options) };
+          return { ...question, optionLabels: neoOptionLabels(question.options, question.labels) };
         if (question.kind !== 'start' || !question.todos.length) return question;
         const line = neoStartQuestionLine(
           question.todos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
@@ -424,6 +424,20 @@ export function createNeoAskReadOperation(
       'facts',
       'outcome'
     )
+    .pipe(
+      (outcome: { ok: true; entry: NeoAskEntry }, caller: OperationCaller) =>
+        caller.source === 'mcp'
+          ? {
+              ...outcome,
+              entry: {
+                ...outcome.entry,
+                todos: outcome.entry.todos.map(({ id, title, state }) => ({ id, title, state })),
+              },
+            }
+          : outcome,
+      ['outcome', 'caller'],
+      'outcome'
+    )
     .endAsync('outcome') as (
     input: z.infer<typeof inputSchema>,
     caller: OperationCaller
@@ -434,7 +448,52 @@ export function createNeoAskReadOperation(
     inputSchema,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),
-      z.object({ ok: z.literal(true), entry: NeoAskEntrySchema }),
+      z.object({
+        ok: z.literal(true),
+        entry: NeoAskEntrySchema.extend({
+          todos: z.array(z.union([NeoTodoEntrySchema, TodoLine])),
+        }),
+      }),
+    ]),
+    policy: { safetyClass: 'read', roles: ['neo'] },
+    execute: read,
+  });
+}
+
+const TodoLine = NeoTodoSchema.pick({ id: true, title: true, state: true });
+
+export function createNeoTodoReadOperation(
+  store: NeoAskTodoRepository,
+  admit: (caller: OperationCaller) => { value: OperationCaller } | { reason: Rejection },
+  project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]>
+) {
+  const inputSchema = z.object({ todoId: z.string().trim().min(1) });
+  const read = (superpipe({})('neo.todo.read') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admit, 'caller', 'result:outcome')
+    .pipe((input: z.infer<typeof inputSchema>) => store.getTodo(input.todoId), 'input', 'todo')
+    .pipe(
+      (todo: NeoTodo | null) =>
+        todo ? { value: todo } : { reason: { ok: false, reason: 'not_found: no such todo.' } },
+      'todo',
+      'result:outcome'
+    )
+    .pipe(
+      async (todo: NeoTodo) => ({ ok: true as const, todo: (await project([todo]))[0]! }),
+      'outcome',
+      'outcome'
+    )
+    .endAsync('outcome') as (
+    input: z.infer<typeof inputSchema>,
+    caller: OperationCaller
+  ) => Promise<{ ok: true; todo: NeoTodo } | Rejection>;
+  return defineOperation({
+    name: 'neo.todo.read',
+    description: neoToolDescription('neo.todo.read'),
+    inputSchema,
+    resultSchema: z.union([
+      z.object({ ok: z.literal(false), reason: z.string() }),
+      z.object({ ok: z.literal(true), todo: NeoTodoSchema }),
     ]),
     policy: { safetyClass: 'read', roles: ['neo'] },
     execute: read,

@@ -72,7 +72,7 @@ it('opens current Markdown from a visible path, reloads edits and reports deleti
   fireEvent.click(screen.getByRole('button', { name: 'Back' }));
   text = null;
   fireEvent.click(tap);
-  await screen.findByText('This file is no longer there.');
+  await screen.findByText("This file hasn't been created yet, or no longer exists.");
   expect(request.mock.calls.every(([, { name }]) => name === 'file.reference.read')).toBe(true);
 });
 

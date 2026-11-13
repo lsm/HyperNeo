@@ -29,6 +29,7 @@ import { neoPublicationWrites } from '../repositories/neo-publication-repository
 import {
   neoAskSettlementReads,
   neoAskSettlementWrites,
+  neoAskTurnedSettleWrites,
 } from '../repositories/neo-ask-settlement.ts';
 import { neoTodoMutationReads } from '../repositories/neo-todo-mutation-planning.ts';
 import { neoTodoMutations } from '../repositories/neo-todo-mutation-commit.ts';
@@ -226,6 +227,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoFrontReads,
     neoAskSettlementReads,
     neoAskSettlementWrites,
+    neoAskTurnedSettleWrites,
     neoTodoMutationReads,
     neoTodoMutations,
     neoTodoRunnerWrites,

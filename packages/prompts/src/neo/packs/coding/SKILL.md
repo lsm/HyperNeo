@@ -103,10 +103,10 @@ through the existing coding todo path. Use the existing pack preference question
 save unanswered defaults. Review preferences do not apply to configured bots.
 Read the saved repository preference with pack.preferences.get; an unanswered
 provenance preference falls back to on without saving a value or marking it answered.
-Keep provenance an explicit pack preference. A no answer to an Apply settings
-proposal saves nothing, so unanswered provenance stays on. To disable it, propose
-provenance false separately and apply it only after the human answers yes, or let
-the human disable it in settings.
+Keep provenance an explicit pack preference. Keeping the current settings on an
+Apply settings proposal saves nothing, so unanswered provenance stays on. To disable
+it, propose provenance false separately and apply it only after the human picks
+apply, or let the human disable it in settings.
 When on, require one unambiguous PR body line
 `Agent: <exact model id> (effort: <effort>) via <harness>`, for example
 `Agent: gpt-6.1-sol (effort: high) via Codex`.

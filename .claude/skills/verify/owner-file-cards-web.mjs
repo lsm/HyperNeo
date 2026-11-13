@@ -33,7 +33,7 @@ export async function verifyOwnerFileCards(page, { base, report, evidence, width
   }
   await unlink(report);
   await card.click();
-  await page.getByText('This file is no longer there.', { exact: true }).waitFor();
+  await page.getByText("This file hasn't been created yet, or no longer exists.", { exact: true }).waitFor();
   await shot('owner-missing');
   await close();
   await writeFile(report, '# Review A\n');

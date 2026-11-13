@@ -114,7 +114,7 @@ describe('neo.todo operations', () => {
     });
     if (!second.ok) throw new Error(second.reason);
     expect(second.todo).toMatchObject({ position: 1, instruction: null, addedAfterStart: true });
-    expect(second.todos.map((todo) => todo.title)).toEqual(['Fix login', 'Deploy']);
+    expect(repo.listTodos('ask').map((todo) => todo.title)).toEqual(['Fix login', 'Deploy']);
     expect(changes()).toBeGreaterThan(0);
   });
 
@@ -168,7 +168,6 @@ describe('neo.todo operations', () => {
       })
     ).toEqual({
       ok: true,
-      todos: [],
       records: ['ask_settled: this ask is done; no change was made.'],
     });
     expect(

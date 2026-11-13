@@ -96,7 +96,7 @@ try {
       await sweep(ids.evidence);
       blocked(store.getTodo(ids.pr)!, 'check_unmet:');
       blocked(store.getTodo(ids.evidence)!, 'check_unmet:');
-      const read = JSON.stringify(await invoke('neo.ask.read', { askId: store.getTodo(ids.pr)!.askId }));
+      const read = JSON.stringify(await invoke('neo.snapshot', {}));
       assert(read.includes('Waiting for its result'), read);
       assert(!read.includes('Blocked: check_unmet:'), read);
       assert(!read.includes('Closed unverified'), read);

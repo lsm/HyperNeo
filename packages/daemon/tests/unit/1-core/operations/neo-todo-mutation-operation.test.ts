@@ -12,9 +12,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTodoCheckPacks } from '../../helpers/todo-check-packs.ts';
 
-type Receipt =
-  | { ok: false; reason: string }
-  | { ok: true; todo: NeoTodo; todos: NeoTodo[]; records?: string[] };
+type Receipt = { ok: false; reason: string } | { ok: true; todo: NeoTodo; records?: string[] };
 describe('Writer-backed todo operation activation', () => {
   let db: Database;
   let store: NeoAskTodoRepository;
@@ -198,6 +196,13 @@ describe('Writer-backed todo operation activation', () => {
     expect(order.slice(0, 2)).toEqual(['commit', 'announce']);
   });
 
+  test('a todo change returns only the changed todo', async () => {
+    const result = await call('neo.todo.hold', { todoId: 'first', reason: 'Human said wait.' });
+    expect(result).toMatchObject({ ok: true, todo: { id: 'first', state: 'blocked' } });
+    expect(JSON.stringify(result)).not.toContain('Next task');
+    expect('todos' in result).toBe(false);
+  });
+
   test('hold holds and releases through the atomic command', async () => {
     expect(
       await call('neo.todo.hold', { todoId: 'peer', reason: 'Human said wait.' })
@@ -212,11 +217,11 @@ describe('Writer-backed todo operation activation', () => {
     expect(order).toEqual(['commit', 'announce', 'commit', 'announce']);
   });
 
-  test('close stops first, commits, then lets the queue start the successor and returns its state', async () => {
+  test('close stops first, commits, then lets the queue start the successor', async () => {
     const result = await call('neo.todo.close', { todoId: 'first', reason: 'Finished' });
     expect(result).toMatchObject({ ok: true, todo: { state: 'done' } });
     expect(order).toEqual(['stop', 'commit', 'announce', 'start:peer']);
-    expect(result.ok && result.todos.find((todo) => todo.id === 'peer')?.state).toBe('doing');
+    expect(store.getTodo('peer')?.state).toBe('doing');
   });
 
   test('close refuses a never-started todo whose check has not passed and points to remove', async () => {
@@ -236,7 +241,7 @@ describe('Writer-backed todo operation activation', () => {
       todo: { id: 'first', state: 'done', startedAt: null, evidence: null, blockedBy: null },
     });
     expect(order).toEqual(['stop', 'commit', 'announce', 'start:peer']);
-    expect(result.ok && result.todos.find((todo) => todo.id === 'peer')?.state).toBe('doing');
+    expect(store.getTodo('peer')?.state).toBe('doing');
   });
 
   test('done is not refused by an open card or a block on the human; its own card retires and a shared card stays open', async () => {

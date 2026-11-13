@@ -147,6 +147,7 @@ export type NeoQuestionDraft = Pick<
   | 'retireWhen'
   | 'kind'
   | 'options'
+  | 'labels'
   | 'multiple'
   | 'noLabel'
   | 'yesLabel'
@@ -159,7 +160,7 @@ export type NeoQuestionDraft = Pick<
   | 'sourceSession'
 >;
 
-const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, multiple, no_label AS noLabel,
+const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
   retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, created_at AS createdAt FROM neo_questions`;
@@ -184,6 +185,7 @@ type QuestionRow = Omit<
   confirmJson: string | null;
   replyToJson: string | null;
   options: string | null;
+  labels: string | null;
   multiple: number;
   startTodos: string | null;
   todos: string;
@@ -215,6 +217,7 @@ const toQuestion = ({
   ...(replyToJson ? { replyTo: JSON.parse(replyToJson) as string[] } : {}),
   confirm: parsed<NonNullable<NeoQuestion['confirm']>>(confirmJson),
   options: parsed<string[]>(row.options),
+  labels: parsed<string[]>(row.labels),
   multiple: row.multiple === 1,
   startTodos: parsed<string[]>(row.startTodos),
   todos: JSON.parse(row.todos) as string[],
@@ -963,8 +966,8 @@ export class NeoAskTodoRepository {
   askQuestion(id: string, askId: string, draft: NeoQuestionDraft, now: number): NeoQuestion {
     this.db
       .prepare(
-        `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO neo_questions (id, ask_id, text, kind, options, labels, multiple, no_label, yes_label,
+           start_todos, todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -972,6 +975,7 @@ export class NeoAskTodoRepository {
         draft.text,
         draft.kind,
         draft.options ? JSON.stringify(draft.options) : null,
+        draft.labels ? JSON.stringify(draft.labels) : null,
         draft.multiple ? 1 : 0,
         draft.noLabel,
         draft.yesLabel,
@@ -1097,12 +1101,10 @@ export class NeoAskTodoRepository {
           question.kind === 'start' ? [answer].flat().map(String) : undefined,
           undefined
         );
-        if (answer === 'yes') {
-          const preferences = applyPackPreferenceAnswer(this.db, question.id);
-          if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
-          const rules = applyNeoRuleAnswer(this.db, question.id, approval);
-          if (rules.ok && rules.changed) settingsChanged = 'rules';
-        }
+        const preferences = applyPackPreferenceAnswer(this.db, question.id);
+        if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
+        const rules = applyNeoRuleAnswer(this.db, question.id, approval);
+        if (rules.ok && rules.changed) settingsChanged = 'rules';
       }
       return answered;
     })();
