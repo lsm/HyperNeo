@@ -256,6 +256,10 @@ export function createTables(db: BunDatabase): void {
       ON sdk_messages(session_id, sdk_uuid)
     `);
   db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_consumed
+      ON sdk_messages(session_id, consumed_seq)
+    `);
+  db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sdk_messages_unnormalized_replacements
       ON sdk_messages(id) WHERE replacement_metadata_normalized = 0
     `);
