@@ -2101,6 +2101,38 @@ test('settlement fails an input the front replied to but nobody handed on', asyn
   expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('failed');
 });
 
+test('a hand-off landing after the open set is read leaves the input unfailed', async () => {
+  const { id, job } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'No reply',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id = ?"
+    )
+    .run(conversationId, id);
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let reads = 0;
+  vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
+    if (args[1] === 'get' && args[3] === id && ++reads === 3)
+      expect(new NeoFrontInputRepository(db.getDatabase()).reserve(conversationId, [id], [])).toBe(
+        'reserved'
+      );
+    return (call as (...rest: unknown[]) => unknown)(...args);
+  }) as never);
+
+  await settleConvoInput(service, job, conversationId, front, id, 'delivery');
+
+  expect(reads).toBe(3);
+  expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('consumed');
+});
+
 test('settlement leaves an input Neo already consumed as handed off', async () => {
   const { id, job } = await deliveredConvoInput();
   await db.saveUserMessage(

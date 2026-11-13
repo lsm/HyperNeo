@@ -66,6 +66,8 @@ export async function settleConvoInput(
     open.push(id);
   }
   const markFailed = async (id: string) => {
+    const input = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, id);
+    if (input?.owner === 'neo') return;
     const failedAsk = id === messageId ? ask : service.asks.find(conversationId, id);
     if (!failedAsk) return;
     const origin = failedAsk.askOrigin.sessionId;
