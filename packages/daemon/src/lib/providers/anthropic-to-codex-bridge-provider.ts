@@ -49,6 +49,7 @@ type CodexUsageWindow = {
   resetsAt?: unknown;
 };
 type CodexUsageSnapshot = {
+  limitId?: unknown;
   limitName?: unknown;
   primary?: CodexUsageWindow | null;
   secondary?: CodexUsageWindow | null;
@@ -60,7 +61,11 @@ type CodexRateLimitsResponse = {
 };
 
 const codexUsageWindowLabel = (durationMins: number | null): string =>
-  durationMins === 300 ? '5 hours' : durationMins === 10080 ? '7 days' : 'rolling window';
+  durationMins === 300
+    ? '5 hours'
+    : durationMins === 10080
+      ? '7 days'
+      : `${durationMins ?? '?'} minutes`;
 
 function codexUsageWindows(
   snapshot: CodexUsageSnapshot | null | undefined,
@@ -287,28 +292,37 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getUsage(): Promise<ProviderUsageResult> {
-    const credentials = this.cachedCredentials;
+    const credentials = await this.loadCredentials();
     const accountId =
       credentials?.accountId ?? (credentials?.access && this.extractAccountId(credentials.access));
     if (!accountId) {
       return { supported: false, provider: this.id, reason: 'not_supported' };
     }
-    const server = await this.codexAppServer();
+    let server: Pick<CodexAppServer, 'call' | 'close'> | undefined;
     let response: CodexRateLimitsResponse;
     try {
+      server = await this.codexAppServer();
       response = (await server.call('account/rateLimits/read', {})) as CodexRateLimitsResponse;
     } catch {
       throw new Error('Codex usage request failed.');
     } finally {
-      await server.close();
+      await server?.close();
     }
     if (typeof response.accountId === 'string' && response.accountId !== accountId) {
       return { supported: false, provider: this.id, reason: 'not_supported' };
     }
-    const windows = codexUsageWindows(response.rateLimits);
-    for (const snapshot of Object.values(response.rateLimitsByLimitId ?? {})) {
+    const defaultLimitId =
+      typeof response.rateLimits?.limitId === 'string' ? response.rateLimits.limitId : null;
+    const buckets = Object.entries(response.rateLimitsByLimitId ?? {});
+    const windows: UsageWindow[] = [];
+    if (!buckets.some(([limitId]) => limitId === defaultLimitId)) {
+      windows.push(...codexUsageWindows(response.rateLimits));
+    }
+    for (const [limitId, snapshot] of buckets) {
       const prefix =
-        snapshot && typeof snapshot.limitName === 'string' ? `${snapshot.limitName} ` : '';
+        limitId !== defaultLimitId && typeof snapshot?.limitName === 'string'
+          ? `${snapshot.limitName} `
+          : '';
       windows.push(...codexUsageWindows(snapshot, prefix));
     }
     return { supported: true, provider: this.id, windows };

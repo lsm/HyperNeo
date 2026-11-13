@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server.ts';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider.ts';
 
@@ -11,7 +12,7 @@ const fixture = (accountId: string | null) => ({
   ordinaryUsageAllowed: true,
   rateLimits: {
     limitId: 'codex',
-    limitName: 'Codex',
+    limitName: 'Codex' as string | null,
     normalModelSlug: null,
     primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: epoch5h },
     secondary: { usedPercent: 10, windowDurationMins: 10080, resetsAt: epoch7d },
@@ -91,11 +92,63 @@ describe('AnthropicToCodexBridgeProvider.getUsage', () => {
       windows: [
         { label: '5 hours', used: 42, limit: 100, resetAt: reset5h },
         { label: '7 days', used: 10, limit: 100, resetAt: reset7d },
-        { label: 'Codex 5 hours', used: 42, limit: 100, resetAt: reset5h },
-        { label: 'Codex 7 days', used: 10, limit: 100, resetAt: reset7d },
         { label: 'Codex Spark 5 hours', used: 1, limit: 100, resetAt: reset5h },
       ],
     });
+  });
+
+  test('reports the mirrored bucket once when the map lacks limitName, and names other durations', async () => {
+    const response = fixture('acct-1');
+    response.rateLimits.limitName = null;
+    const mirrored = {
+      ...response,
+      rateLimitsByLimitId: {
+        codex: { ...response.rateLimits, limitName: null },
+        odd: {
+          ...response.rateLimits,
+          limitId: 'odd',
+          limitName: null,
+          primary: { usedPercent: 3, windowDurationMins: 1440, resetsAt: epoch5h },
+          secondary: null,
+        },
+      },
+    };
+    const { server } = serverWith(mirrored);
+    expect(await provider(server).getUsage()).toEqual({
+      supported: true,
+      provider: 'anthropic-codex',
+      windows: [
+        { label: '5 hours', used: 42, limit: 100, resetAt: reset5h },
+        { label: '7 days', used: 10, limit: 100, resetAt: reset7d },
+        { label: '1440 minutes', used: 3, limit: 100, resetAt: reset5h },
+      ],
+    });
+  });
+
+  test('reads the stored account from auth.json without setCredentials', async () => {
+    const authDir = `${import.meta.dir}/.tmp-codex-usage-auth`;
+    await mkdir(authDir, { recursive: true });
+    await writeFile(
+      `${authDir}/auth.json`,
+      JSON.stringify({
+        openai: { type: 'oauth', access: 'synthetic-token', accountId: 'acct-1' },
+      })
+    );
+    try {
+      const { server } = serverWith(fixture('acct-1'));
+      const bridge = new AnthropicToCodexBridgeProvider(
+        {},
+        authDir,
+        `${authDir}/codex-home`,
+        undefined,
+        async () => server
+      );
+      const result = await bridge.getUsage();
+      expect(result.supported).toBe(true);
+      if (result.supported) expect(result.windows[0].label).toBe('5 hours');
+    } finally {
+      await rm(authDir, { recursive: true, force: true });
+    }
   });
 
   test('returns not_supported when the app-server account differs from the bridge account', async () => {
