@@ -8149,6 +8149,21 @@ describe('QueryRunner', () => {
   });
 
   describe('mid-turn SDK process exit', () => {
+    let savedApiKey: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+    });
+
     it('clears processing when the upstream abort ends the SDK without a result', async () => {
       const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
       const fakeProc = {
