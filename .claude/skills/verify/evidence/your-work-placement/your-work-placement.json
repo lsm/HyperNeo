@@ -1,0 +1,26 @@
+{
+  "1600-closed": {
+    "columnVisible": true,
+    "columnIsTabPanel": false,
+    "workTabs": 0,
+    "panelOpen": false
+  },
+  "1600-open": {
+    "columnVisible": false,
+    "columnIsTabPanel": false,
+    "workTabs": 1,
+    "panelOpen": true
+  },
+  "2600-closed": {
+    "columnVisible": true,
+    "columnIsTabPanel": false,
+    "workTabs": 0,
+    "panelOpen": false
+  },
+  "2600-open": {
+    "columnVisible": true,
+    "columnIsTabPanel": false,
+    "workTabs": 0,
+    "panelOpen": true
+  }
+}

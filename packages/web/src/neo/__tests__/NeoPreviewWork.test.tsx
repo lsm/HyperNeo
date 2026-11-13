@@ -213,7 +213,7 @@ describe('Neo preview Work layout', () => {
     expect(screen.queryByRole('separator')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Restore side by side' }));
     expect(handle().getAttribute('aria-valuenow')).toBe('68');
-    resize(1500);
+    resize(2600);
     expect(handle().getAttribute('aria-valuenow')).toBe('46');
     fireEvent.keyDown(handle(), { key: 'Home' });
     expect(shell.style.getPropertyValue('--neo-preview-width')).toBe('32%');
@@ -229,7 +229,7 @@ describe('Neo preview Work layout', () => {
     expect(handle().getAttribute('aria-valuenow')).toBe('56');
   });
 
-  it.each([900, 1500])('expands and restores the same file/Work workspace at %s', async (width) => {
+  it.each([900, 2600])('expands and restores the same file/Work workspace at %s', async (width) => {
     viewport = width;
     const { container } = mount();
     const draft = screen.getByRole('textbox', { name: 'Draft' });
@@ -254,7 +254,8 @@ describe('Neo preview Work layout', () => {
     expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
     expect((draft as HTMLTextAreaElement).value).toBe('Keep this discussion');
     expect(container.querySelector('.neo-scene-list')).toBe(work);
-    expect(work.hidden).toBe(width < 1440);
+    expect(work.hidden).toBe(width < 2400);
+    expect(!!screen.queryByRole('tab', { name: 'Your work · 1' })).toBe(width < 2400);
     expect(
       request.mock.calls.filter(
         ([, { name, input }]) => name === 'artifact.file.read' && input.artifactId === 'a'
@@ -416,9 +417,9 @@ describe('Neo preview Work layout', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'File a' }));
     work.scrollTop = 0;
     fireEvent.scroll(work);
-    resize(1500);
+    resize(2600);
     await waitFor(() => expect(work.hidden).toBe(false));
-    expect(screen.getByRole('tab', { name: /Your work/ })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: /Your work/ })).toBeNull();
     expect(screen.getByRole('region', { name: 'Work scenes' })).toBe(work);
     expect(work.hidden).toBe(false);
     expect(work.scrollTop).toBe(73);
@@ -428,7 +429,7 @@ describe('Neo preview Work layout', () => {
     expect(work.hidden).toBe(true);
     work.scrollTop = 0;
     fireEvent.scroll(work);
-    resize(1500);
+    resize(2600);
     await waitFor(() => expect(work.hidden).toBe(false));
     expect(work.scrollTop).toBe(73);
     expect(container.querySelector('.neo-scene-list')).toBe(work);
@@ -487,11 +488,14 @@ describe('Neo preview Work layout', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('shows Your work first at wide widths too', async () => {
-    viewport = 1500;
+  it('shows Your work first below the wide breakpoint and only as its column above it', async () => {
+    viewport = 1600;
     mount(false, true);
     openWorker();
     expect(tabNames()).toEqual(['Your work · 1', 'Todo worker']);
+    resize(2600);
+    await waitFor(() => expect(tabNames()).toEqual(['Todo worker']));
+    expect(screen.getByRole('region', { name: 'Work scenes' }).hidden).toBe(false);
   });
 
   it('keeps a phone session full screen with no tab strip', () => {

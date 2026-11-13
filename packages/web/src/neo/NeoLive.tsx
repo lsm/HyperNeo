@@ -128,7 +128,7 @@ export function NeoLive() {
   const [previewDesktop, setPreviewDesktop] = useState(
     () => window.matchMedia('(min-width: 720px)').matches
   );
-  const [roomy, setRoomy] = useState(() => window.matchMedia('(min-width: 1440px)').matches);
+  const [roomy, setRoomy] = useState(() => window.matchMedia('(min-width: 2400px)').matches);
   const [cardTarget, setCardTarget] = useState<NeoWorkFocus | null>(null);
   const [cardUnavailable, setCardUnavailable] = useState(false);
   const [cardOpening, setCardOpening] = useState(false);
@@ -503,7 +503,7 @@ export function NeoLive() {
       }
       setNarrow(!desktop);
       setPreviewDesktop(previewWidth);
-      setRoomy(window.matchMedia('(min-width: 1440px)').matches);
+      setRoomy(window.matchMedia('(min-width: 2400px)').matches);
       const previous = scroll.current;
       scroll.current =
         columns && (desktop || (previewWidth && previewOpen && !chat && !referenceWork))
@@ -1275,7 +1275,11 @@ export function NeoLive() {
           expandable ? { expanded, toggle: () => setPreviewExpanded(!expanded) } : undefined
         }
         suspended={!!chat || referenceWork}
-        work={columns ? { id: 'neo-preview-work-panel', count: workCount } : undefined}
+        work={
+          columns && !(focusPreview && !workHidden && !previewWork)
+            ? { id: 'neo-preview-work-panel', count: workCount }
+            : undefined
+        }
         renderSession={(sessionId) => {
           const named = artifactPreviewWorkspace.state.value.files.find(
             (file) => file.sessionId === sessionId
