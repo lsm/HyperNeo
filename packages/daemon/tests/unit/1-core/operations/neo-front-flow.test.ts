@@ -2166,3 +2166,82 @@ test('a second input does not get its own fallback when the group already has on
 
   expect(service.publications.list(conversationId)).toHaveLength(before);
 });
+
+test('the terminal read keeps a front-owned input until its notice exists', async () => {
+  const { id } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'Done',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const inputs = new NeoFrontInputRepository(db.getDatabase());
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id = ?"
+    )
+    .run(conversationId, id);
+
+  expect(inputs.terminal(conversationId, front, id)?.messageIds).toEqual([id]);
+
+  expect(
+    service.publications.append(
+      {
+        conversationId,
+        publicationId: frontFallbackId(conversationId, [id]),
+        verbatim: true,
+        fullText: FRONT_FALLBACK_TEXT,
+        replyTo: [id],
+        links: [],
+      },
+      front
+    )
+  ).toMatchObject({ accepted: true });
+  expect(inputs.terminal(conversationId, front, id)?.messageIds).toEqual([]);
+});
+
+test('a stranded input gets its notice without touching an input the full session took', async () => {
+  const handed = await deliveredConvoInput();
+  await convoPublish({
+    requestId: 'handed-answer',
+    replyTo: [handed.id],
+    fullText: 'Handled in full.',
+    verbatim: true,
+  });
+  const stranded = await accept();
+  await db.saveUserMessage(
+    front,
+    {
+      type: 'user',
+      uuid: stranded.id as UUID,
+      session_id: front,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Hello' },
+    },
+    'submitted'
+  );
+  await service.publish(
+    { requestId: 'front-answer', replyTo: [stranded.id], text: 'The answer.' },
+    { source: 'mcp', sessionId: front }
+  );
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [handed.id])).toHaveLength(1);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [stranded.id])).toHaveLength(0);
+
+  const settled = await settleConvoInput(
+    service,
+    stranded.job,
+    conversationId,
+    front,
+    stranded.id,
+    'delivery'
+  );
+
+  expect(settled).toEqual({ delivered: true, outcome: 'answered' });
+  expect(service.publications.hasFallbackFor(conversationId, stranded.id)).toBe(true);
+  expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, handed.id)?.owner).toBe(
+    'neo'
+  );
+});

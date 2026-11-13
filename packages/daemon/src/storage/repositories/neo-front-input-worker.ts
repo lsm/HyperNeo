@@ -80,9 +80,18 @@ export class NeoFrontInputRepository {
     if (!row || (!row.body && row.sendStatus !== 'failed')) return null;
     const ids = JSON.parse(row.messageIds ?? '[]') as string[];
     return {
-      messageIds: (ids.length ? ids : [messageId]).filter(
-        (id) => this.get(conversationId, id)?.owner !== 'neo'
-      ),
+      messageIds: (ids.length ? ids : [messageId]).filter((id) => {
+        const owner = this.get(conversationId, id)?.owner;
+        if (owner === 'neo') return false;
+        if (owner !== 'front') return true;
+        return !this.db
+          .prepare(
+            `SELECT 1 FROM neo_publications p, json_each(p.payload_json, '$.replyTo') ref
+            WHERE p.conversation_id = ? AND ref.value = ?
+              AND json_extract(p.payload_json, '$.fullText') = ? LIMIT 1`
+          )
+          .get(conversationId, id, FRONT_FALLBACK_TEXT);
+      }),
     };
   }
 
