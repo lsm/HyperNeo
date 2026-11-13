@@ -74,8 +74,17 @@ after creation:
 - In an SDK session, `oap-codex` models are hidden.
 - Space and Neo sessions never list them, since admission would refuse them.
 
-A switch that would change the engine is refused with the existing
-`codexSessionRefusal` reason. The user sees why, not a silent fallback.
+Hiding is only the UI side. The daemon also needs a new refusal, since no
+check exists today. `session.model.switch` runs through
+`AgentSession.requestModelSwitch` and `ModelSwitchHandler`, and neither reads
+`harness`. Without a check, a switch to `oap-codex` in an SDK session would
+leave it on the SDK. A switch away from `oap-codex` in a Codex session would
+"succeed" while OAP keeps running Codex. `ModelSwitchHandler.invalidModel` gains
+one pure decision: the target provider's engine (`codex` for `oap-codex`,
+`sdk` for every other provider) must equal the session's `harness`. Otherwise
+the switch returns `success: false` with "Model switch cannot change the
+session engine; start a new chat". The user sees why instead of getting a
+silent no-op.
 
 ### What the daemon calls
 
@@ -86,10 +95,19 @@ Nothing new on the run path. Today's path stays:
 then `session.open.request`, `session.message.submit.request` and the run
 events, translated to SDK messages by `oap-sdk-translator.ts`.
 
-The only runtime change: `createOapRuntime` reads `OapEngineOptions` from the
-`oap-codex` provider record at each open, not once from startup config.
-`OapEngine` already keys its hub on those options. A settings edit therefore
-starts a fresh hub on the next open and leaves running sessions on the old one.
+Two runtime changes:
+
+- `createOapRuntime` reads `OapEngineOptions` from the `oap-codex` provider
+  record at each open, not once from startup config.
+- `OapEngine` holds one hub. `getHub` throws "OAP hub configuration differs
+  from the running hub" when the options change while a hub is live, and a new
+  hub starts only after the old one fails or the daemon shuts down. So saving
+  changed settings must also replace the hub. `OapEngine` gains `restart()`,
+  which closes the current slot the same way a hub failure does. Each Codex
+  session then sees `isCurrentHub` turn false and reopens its thread on its
+  next turn through the existing reopen path (`oap-runtime.ts`,
+  `oap-reopen.ts`). A run in flight at save time ends as if the hub had been
+  lost. The Settings form says so when Codex sessions are running.
 
 The `oap-codex` provider never builds an SDK config. Its `buildSdkConfig`
 throws, and the engine selector routes the session to the OAP path before any
