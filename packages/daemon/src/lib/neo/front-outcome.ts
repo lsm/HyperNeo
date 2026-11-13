@@ -5,6 +5,7 @@ import {
   neoFrontInputWrites,
 } from '../../storage/repositories/neo-front-input-worker.ts';
 import { sdkMessageWrites } from '../../storage/repositories/sdk-message-writes.ts';
+import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
@@ -23,23 +24,7 @@ export async function settleConvoInput(
   if (!ask) return { delivered: false };
   const sdk = service.db.getSDKMessageRepo();
   const status = sdk.getUserSendStatus(ask.askOrigin.sessionId, messageId);
-  if (status === 'consumed') {
-    const claimed = await service.db.gateway.call(
-      neoFrontInputReads,
-      'get',
-      conversationId,
-      messageId
-    );
-    if (claimed?.owner !== 'front') return { delivered: true, outcome: 'handed_off' };
-    await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, [messageId]);
-    await service.db.gateway.call(
-      sdkMessageWrites,
-      'markDeliveryFailedByUuidInclusive',
-      ask.askOrigin.sessionId,
-      messageId
-    );
-    return { delivered: true, outcome: 'failed' };
-  }
+  if (status === 'consumed') return { delivered: true, outcome: 'handed_off' };
   const deadline = Date.parse(ask.createdAt) + SETTLEMENT_TIMEOUT_MS;
   const pending = async () => {
     const now = Date.now();
@@ -80,6 +65,32 @@ export async function settleConvoInput(
     if (input?.owner === 'neo') continue;
     open.push(id);
   }
+  const markFailed = async (id: string) => {
+    const failedAsk = id === messageId ? ask : service.asks.find(conversationId, id);
+    if (!failedAsk || sdk.getUserSendStatus(failedAsk.askOrigin.sessionId, id) === 'consumed')
+      return;
+    await service.db.gateway.call(
+      sdkMessageWrites,
+      'markDeliveryFailedByUuidInclusive',
+      sessionId,
+      id
+    );
+    if (sdk.getUserSendStatus(failedAsk.askOrigin.sessionId, id) !== null) return;
+    await service.db.gateway.call(
+      sdkMessageWrites,
+      'saveUserMessage',
+      failedAsk.askOrigin.sessionId,
+      neoIntakeMessage(
+        { ...failedAsk, sessionId: failedAsk.askOrigin.sessionId },
+        failedAsk.askOrigin.sessionId,
+        readNeoReply(failedAsk.replyTo, service.todos),
+        null,
+        undefined,
+        failedAsk.previewContext ?? null
+      ),
+      'failed'
+    );
+  };
   if (!open.includes(messageId)) {
     const self = await service.db.gateway.call(
       neoFrontInputReads,
@@ -87,23 +98,11 @@ export async function settleConvoInput(
       conversationId,
       messageId
     );
-    return { delivered: true, outcome: self?.owner === 'neo' ? 'handed_off' : 'answered' };
+    if (self?.owner === 'neo') return { delivered: true, outcome: 'handed_off' };
+    await markFailed(messageId);
+    return { delivered: true, outcome: 'failed' };
   }
   await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, open);
-  for (const id of open) {
-    const marked = await service.db.gateway.call(
-      sdkMessageWrites,
-      'markDeliveryFailedByUuidInclusive',
-      sessionId,
-      id
-    );
-    if (!marked)
-      await service.db.gateway.call(
-        sdkMessageWrites,
-        'markDeliveryFailedByUuidInclusive',
-        ask.askOrigin.sessionId,
-        id
-      );
-  }
+  for (const id of open) await markFailed(id);
   return { delivered: true, outcome: 'failed' };
 }

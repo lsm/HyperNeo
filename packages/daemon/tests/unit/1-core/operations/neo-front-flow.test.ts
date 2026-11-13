@@ -1329,7 +1329,7 @@ test.each(['creation', 'delivery'])(
     else vi.spyOn(service, 'deliverFront').mockRejectedValue(new Error('Front unavailable'));
     const handler = createNeoFrontHandler(service);
     expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'failed' });
-    expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBeNull();
+    expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('failed');
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
     await handler(job);
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
@@ -2082,7 +2082,7 @@ test('the terminal read keeps a front-owned input so settlement can fail it', as
   expect(inputs.terminal(conversationId, front, id)?.messageIds).toEqual([id]);
 });
 
-test('settlement reports answered, not handed off, for an input Neo never received', async () => {
+test('settlement fails an input the front replied to but nobody handed on', async () => {
   const { id, job } = await deliveredConvoInput();
   await service.publish(
     { requestId: 'reply', replyTo: [id], text: 'The answer.' },
@@ -2098,9 +2098,10 @@ test('settlement reports answered, not handed off, for an input Neo never receiv
   const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
 
   expect(settled).toEqual({ delivered: true, outcome: 'failed' });
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('failed');
 });
 
-test('settlement marks the original row when the front never stored one', async () => {
+test('settlement leaves an input Neo already consumed as handed off', async () => {
   const { id, job } = await deliveredConvoInput();
   await db.saveUserMessage(
     root,
@@ -2119,7 +2120,8 @@ test('settlement marks the original row when the front never stored one', async 
     .run(conversationId, id);
   expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('consumed');
 
-  await settleConvoInput(service, job, conversationId, front, id, 'delivery');
+  const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
 
-  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('failed');
+  expect(settled).toEqual({ delivered: true, outcome: 'handed_off' });
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('consumed');
 });
