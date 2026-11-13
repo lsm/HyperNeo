@@ -2105,3 +2105,64 @@ test('a refused duplicate reply does not claim the refused text was delivered', 
   );
   expect(delivered, delivered).not.toContain('An answer the human never saw.');
 });
+
+test('a grouped fallback counts for every input it names', async () => {
+  const first = await deliveredConvoInput();
+  const second = await deliveredConvoInput();
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id IN (?, ?)"
+    )
+    .run(conversationId, first.id, second.id);
+  expect(
+    service.publications.append(
+      {
+        conversationId,
+        publicationId: frontFallbackId(conversationId, [first.id, second.id]),
+        verbatim: true,
+        fullText: FRONT_FALLBACK_TEXT,
+        replyTo: [first.id, second.id],
+        links: [],
+      },
+      front
+    )
+  ).toMatchObject({ accepted: true });
+
+  expect(await settleConvoInput(service, first.job, conversationId, front, first.id)).toEqual({
+    delivered: true,
+    outcome: 'answered',
+  });
+  expect(await settleConvoInput(service, second.job, conversationId, front, second.id)).toEqual({
+    delivered: true,
+    outcome: 'answered',
+  });
+});
+
+test('a second input does not get its own fallback when the group already has one', async () => {
+  const first = await deliveredConvoInput();
+  const second = await deliveredConvoInput();
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id IN (?, ?)"
+    )
+    .run(conversationId, first.id, second.id);
+  expect(
+    service.publications.append(
+      {
+        conversationId,
+        publicationId: frontFallbackId(conversationId, [first.id, second.id]),
+        verbatim: true,
+        fullText: FRONT_FALLBACK_TEXT,
+        replyTo: [first.id, second.id],
+        links: [],
+      },
+      front
+    )
+  ).toMatchObject({ accepted: true });
+  const before = service.publications.list(conversationId)!.length;
+
+  await settleConvoInput(service, first.job, conversationId, front, first.id);
+  await settleConvoInput(service, second.job, conversationId, front, second.id);
+
+  expect(service.publications.list(conversationId)).toHaveLength(before);
+});

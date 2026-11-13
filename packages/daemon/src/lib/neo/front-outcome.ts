@@ -11,6 +11,14 @@ import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
 
+function hasFallbackNotice(
+  service: NeoService,
+  conversationId: string,
+  messageId: string
+): boolean {
+  return service.publications.hasFallbackFor(conversationId, messageId);
+}
+
 export async function settleConvoInput(
   service: NeoService,
   job: Job,
@@ -21,13 +29,8 @@ export async function settleConvoInput(
 ) {
   const owner = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, messageId);
   if (owner?.owner === 'neo') return { delivered: true, outcome: 'handed_off' };
-  if (owner?.owner === 'front') {
-    const notice = service.publications.get(
-      conversationId,
-      frontFallbackId(conversationId, [messageId])
-    );
-    if (notice) return { delivered: true, outcome: 'answered' };
-  }
+  if (owner?.owner === 'front' && hasFallbackNotice(service, conversationId, messageId))
+    return { delivered: true, outcome: 'answered' };
   const ask = service.asks.find(conversationId, messageId);
   if (!ask) return { delivered: false };
   const sdk = service.db.getSDKMessageRepo();
@@ -71,11 +74,7 @@ export async function settleConvoInput(
   for (const id of ids) {
     const input = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, id);
     if (input?.owner === 'neo') continue;
-    if (
-      input?.owner === 'front' &&
-      service.publications.get(conversationId, frontFallbackId(conversationId, [id]))
-    )
-      continue;
+    if (input?.owner === 'front' && hasFallbackNotice(service, conversationId, id)) continue;
     open.push(id);
   }
   if (!open.includes(messageId)) {
@@ -88,9 +87,7 @@ export async function settleConvoInput(
     return { delivered: true, outcome: self?.owner === 'neo' ? 'handed_off' : 'answered' };
   }
   await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, open);
-  const answeredMeanwhile = open.some((id) =>
-    service.publications.get(conversationId, frontFallbackId(conversationId, [id]))
-  );
+  const answeredMeanwhile = open.some((id) => hasFallbackNotice(service, conversationId, id));
   if (answeredMeanwhile) return { delivered: true, outcome: 'answered' };
   const receipt = await service.db.gateway.call(
     neoPublicationWrites,

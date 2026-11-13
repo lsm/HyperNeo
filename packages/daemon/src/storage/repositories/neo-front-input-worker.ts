@@ -54,7 +54,14 @@ export class NeoFrontInputRepository {
       ORDER BY consumed_seq LIMIT 1
     ) SELECT input.send_status AS sendStatus, ended.body,
       (SELECT json_group_array(u.sdk_uuid) FROM sdk_messages u
-        JOIN neo_front_inputs f ON f.conversation_id = ?3 AND f.message_id = u.sdk_uuid AND f.eligible = 1 AND f.owner IS NULL
+        JOIN neo_front_inputs f ON f.conversation_id = ?3 AND f.message_id = u.sdk_uuid
+          AND f.eligible = 1
+          AND (f.owner IS NULL OR (f.owner = 'front' AND NOT EXISTS (
+            SELECT 1 FROM neo_publications p
+            WHERE p.conversation_id = f.conversation_id
+              AND json_extract(p.payload_json, '$.fullText') = ?4
+              AND EXISTS (SELECT 1 FROM json_each(p.payload_json, '$.replyTo')
+                WHERE value = f.message_id))))
         WHERE u.session_id = ?1 AND ${CONSUMED_INPUT}
         AND CASE WHEN json_type(ended.body, '$.user_message_uuid') IS NOT NULL
           OR json_type(ended.body, '$.user_message_uuids') IS NOT NULL
@@ -65,7 +72,7 @@ export class NeoFrontInputRepository {
             AND consumed_seq < ended.consumed_seq), 0) END
         AND u.consumed_seq < ended.consumed_seq) AS messageIds
       FROM input LEFT JOIN ended ON 1`)
-      .get(sessionId, messageId, conversationId) as {
+      .get(sessionId, messageId, conversationId, FRONT_FALLBACK_TEXT) as {
       sendStatus: string | null;
       body: string | null;
       messageIds: string | null;
