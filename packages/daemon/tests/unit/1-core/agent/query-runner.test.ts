@@ -41,7 +41,8 @@ import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/o
 import * as oapQueryModule from '../../../../src/lib/oap/oap-query';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import { hyperneoWorkStatus } from '../../../../src/lib/drivers/hyperneo-adapter';
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
@@ -8144,6 +8145,73 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('mid-turn SDK process exit', () => {
+    it('clears processing when the upstream abort ends the SDK without a result', async () => {
+      const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+      const fakeProc = {
+        pid: 4242,
+        exitCode: null,
+        once: (event: string, listener: (code: number | null, signal: string | null) => void) => {
+          if (event === 'exit') exitListeners.push(listener);
+        },
+      };
+      buildSpy.mockResolvedValue({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+        spawnClaudeCodeProcess: () => fakeProc,
+      });
+      let notifyFirstFrame: () => void = () => {};
+      const firstFrame = new Promise<void>((resolve) => {
+        notifyFirstFrame = resolve;
+      });
+      (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
+        (arg: { options?: Record<string, unknown> }) => {
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)({});
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              yield { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+              await new Promise<void>(() => {});
+            },
+          } as unknown as QueryLike;
+        }
+      );
+      mockSession.workspacePath = undefined;
+
+      let persisted = '';
+      mockDb.updateSession = mock(async (_id: string, update: { processingState?: string }) => {
+        if (update.processingState !== undefined) persisted = update.processingState;
+        return mockSession;
+      }) as unknown as Database['updateSession'];
+      const ctx = createContext();
+      const stateManager = new ProcessingStateManager(mockSession.id, ctx.internalEventBus, mockDb);
+      stateManager.noteQueryOwnerGeneration(1);
+      await stateManager.setProcessing('synthetic-turn', 'thinking');
+      ctx.stateManager = stateManager;
+      ctx.onSDKMessage = mock(async () => {
+        notifyFirstFrame();
+      });
+      runner = new QueryRunner(ctx);
+
+      try {
+        runner.start();
+        await firstFrame;
+        expect(exitListeners).toHaveLength(1);
+        expect(stateManager.getState().status).toBe('processing');
+
+        exitListeners[0]?.(1, null);
+        for (let i = 0; i < 50; i++) await Promise.resolve();
+
+        const persistedStatus = JSON.parse(persisted).status as string;
+        expect(persistedStatus).toBe('idle');
+        expect(hyperneoWorkStatus('active', persistedStatus)).not.toBe('running');
+      } finally {
+        ctx.queryAbortController?.abort();
+        await ctx.queryPromise?.catch(() => {});
+      }
     });
   });
 });
