@@ -93,7 +93,7 @@ describe('planNeoTodoRemoval', () => {
     ]);
     expect(plan.card).toEqual({
       askId: 'home',
-      replaces: null,
+      replaces: [],
       todos: ['b', 'c', 'a'],
       text: '"a" was removed. Continue "b", "c" without it, or remove these steps too?',
     });
@@ -129,7 +129,7 @@ describe('planNeoTodoRemoval', () => {
     };
     expect(planNeoTodoRemoval(twice[1], twice, [earlier], { root: 'ask' }, 9).card).toEqual({
       askId: 'ask',
-      replaces: earlier,
+      replaces: [earlier],
       todos: ['c', 'a', 'b'],
       text: '"a", "b" were removed. Continue "c" without them, or remove this step too?',
     });

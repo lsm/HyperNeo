@@ -19,6 +19,9 @@ and C after A, then D after B:
   B and C and the removed A it decides; both keep their edge to A.
 - The human answers that card through `neo.question.answer` on the human door.
   `Continue` drops the edge of B and C; `Remove these` removes B, C and D.
+- Overlap: X waits for A and C, Y for B and C. Removing A, then B, then C leaves
+  one open card naming A, B, C and X, Y; the two earlier cards are retired.
+  `Continue` leaves X and Y waiting for nothing.
 
 Evidence is `observed.json` and `proof.log`. This proves the operations and the
 stored rows, not how Neo words its next turn or how the card renders.

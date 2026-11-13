@@ -593,6 +593,40 @@ describe('cancelled prerequisites', () => {
     }
   });
 
+  test('a removal that overlaps two open cards merges them into one', async () => {
+    const { db, store, invoke, step, runner, sent, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Overlapping removals',
+        request: 'Finish A and C before X, and B and C before Y.',
+        todos: [
+          step('A', []),
+          step('B', []),
+          step('C', []),
+          { ...step('X', [0, 2]), ...work },
+          { ...step('Y', [1, 2]), ...work },
+        ],
+      });
+      const [a, b, c, x, y] = opened.todos;
+      for (const gone of [a, b, c])
+        await invoke('neo.todo.remove', { todoId: gone.id, reason: 'Cancelled by the human.' });
+      const open = store
+        .listQuestions(x.askId)
+        .filter((q) => q.state === 'open' && q.cause === 'removed_prerequisite');
+      expect(open.map((q) => q.text)).toEqual([
+        '"A", "B", "C" were removed. Continue "X", "Y" without them, or remove these steps too?',
+      ]);
+      decide(store, x, 'Continue');
+      await runner.refresh(() => {});
+      await runner.advance();
+      expect(store.getTodo(x.id)?.dependsOn).toEqual([]);
+      expect(store.getTodo(y.id)?.dependsOn).toEqual([]);
+      expect(sent.length).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a dependent in a sibling ask sees the card, filed on the root ask', async () => {
     const { db, store, invoke, step } = setup();
     try {

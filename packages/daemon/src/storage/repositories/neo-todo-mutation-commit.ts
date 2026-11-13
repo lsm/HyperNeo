@@ -140,9 +140,12 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
           todos: removal.card.todos,
           cause: NEO_REMOVED_PREREQUISITE,
         };
-        if (removal.card.replaces)
-          replaceHumanCard(todos, removal.card.replaces, crypto.randomUUID(), draft, args.now);
-        else openHumanCard(todos, crypto.randomUUID(), removal.card.askId, draft, args.now);
+        const id = crypto.randomUUID();
+        const [first, ...rest] = removal.card.replaces;
+        if (first) replaceHumanCard(todos, first, id, draft, args.now);
+        else openHumanCard(todos, id, removal.card.askId, draft, args.now);
+        for (const card of rest)
+          todos.retireQuestion(card, 'replaced by the new question', id, args.now);
       }
       if (args.input.kind === 'edit' && args.input.target)
         new NeoTodoSessionRepository(db, changes).create(plan.todo.id, args.input.target);
