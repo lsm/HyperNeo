@@ -55,7 +55,7 @@ export class NeoFrontInputRepository {
     ) SELECT input.send_status AS sendStatus, ended.body,
       (SELECT json_group_array(u.sdk_uuid) FROM sdk_messages u
         JOIN neo_front_inputs f ON f.conversation_id = ?3 AND f.message_id = u.sdk_uuid
-          AND f.eligible = 1 AND f.owner IS NULL
+          AND f.eligible = 1 AND (f.owner IS NULL OR f.owner = 'front')
         WHERE u.session_id = ?1 AND ${CONSUMED_INPUT}
         AND CASE WHEN json_type(ended.body, '$.user_message_uuid') IS NOT NULL
           OR json_type(ended.body, '$.user_message_uuids') IS NOT NULL
@@ -75,7 +75,7 @@ export class NeoFrontInputRepository {
     const ids = JSON.parse(row.messageIds ?? '[]') as string[];
     return {
       messageIds: (ids.length ? ids : [messageId]).filter(
-        (id) => !this.get(conversationId, id)?.owner
+        (id) => this.get(conversationId, id)?.owner !== 'neo'
       ),
     };
   }

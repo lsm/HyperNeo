@@ -63,7 +63,15 @@ export async function settleConvoInput(
     if (input?.owner === 'neo') continue;
     open.push(id);
   }
-  if (!open.includes(messageId)) return { delivered: true, outcome: 'handed_off' };
+  if (!open.includes(messageId)) {
+    const self = await service.db.gateway.call(
+      neoFrontInputReads,
+      'get',
+      conversationId,
+      messageId
+    );
+    return { delivered: true, outcome: self?.owner === 'neo' ? 'handed_off' : 'answered' };
+  }
   await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, open);
   for (const id of open) sdk.markDeliveryFailedByUuidInclusive(sessionId, id);
   return { delivered: true, outcome: 'failed' };

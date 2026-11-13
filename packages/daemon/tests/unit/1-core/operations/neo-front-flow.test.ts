@@ -2040,3 +2040,62 @@ test('a detailed front reply hands off the details the human received', async ()
   const delivered = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
   expect(delivered, delivered).toContain('on the release branch');
 });
+
+test('a front-owned input whose turn ended without a hand-off ends failed for retry', async () => {
+  const { id, job } = await deliveredConvoInput();
+  const published = await service.publish(
+    { requestId: 'reply', replyTo: [id], text: 'The answer.' },
+    { source: 'mcp', sessionId: front }
+  );
+  expect(published, JSON.stringify(published)).toMatchObject({ accepted: true });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id = ?"
+    )
+    .run(conversationId, id);
+
+  const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
+
+  expect(settled).toEqual({ delivered: true, outcome: 'failed' });
+  expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('failed');
+});
+
+test('the terminal read keeps a front-owned input so settlement can fail it', async () => {
+  const { id } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: 'Done',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const inputs = new NeoFrontInputRepository(db.getDatabase());
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id = ?"
+    )
+    .run(conversationId, id);
+
+  expect(inputs.terminal(conversationId, front, id)?.messageIds).toEqual([id]);
+});
+
+test('settlement reports answered, not handed off, for an input Neo never received', async () => {
+  const { id, job } = await deliveredConvoInput();
+  await service.publish(
+    { requestId: 'reply', replyTo: [id], text: 'The answer.' },
+    { source: 'mcp', sessionId: front }
+  );
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_front_inputs SET owner = 'front' WHERE conversation_id = ? AND message_id = ?"
+    )
+    .run(conversationId, id);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+
+  const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
+
+  expect(settled).toEqual({ delivered: true, outcome: 'failed' });
+});
