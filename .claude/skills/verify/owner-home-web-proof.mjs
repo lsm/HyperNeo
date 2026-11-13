@@ -72,7 +72,7 @@ export async function verifyOwnerHomeLabels(page, { run, base, width }) {
   await close();
   await unlink(path);
   await card.click();
-  await page.getByText('This file is no longer there.', { exact: true }).waitFor();
+  await page.getByText("This file hasn't been created yet, or no longer exists.", { exact: true }).waitFor();
   await shot('missing');
   await close();
   await page.getByRole('button', { name: 'Open preview: Synthetic notes', exact: true }).click();
