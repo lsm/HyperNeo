@@ -336,6 +336,28 @@ describe('daemon cards in the store', () => {
     expect(calls).toEqual(['neo.todo.done']);
   });
 
+  test('a saved answer is carried out after a restart even if its todo changed since', async () => {
+    await sweep(DAY);
+    const [overdue] = open();
+    store.answerQuestion(overdue, ['Remove'], 'button', DAY + 1);
+    store.updateTodo(store.getTodo('check')!, { title: 'Merged soon' }, DAY + 5);
+    const calls: string[] = [];
+    const deliver = createNeoQuestionAnswerDelivery(
+      store,
+      new NeoTodoSessionRepository(db),
+      async (_caller, name) => {
+        calls.push(name);
+        return { kind: 'completed', value: { ok: true } };
+      },
+      async () => {},
+      async (todo) => todo,
+      () => {}
+    );
+    await deliver();
+    await deliver();
+    expect(calls).toEqual(['neo.todo.remove']);
+  });
+
   test('the daemon carries out the human answer on its card', async () => {
     await sweep(DAY);
     const [overdue] = open();
