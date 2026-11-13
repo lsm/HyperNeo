@@ -8195,22 +8195,17 @@ describe('QueryRunner', () => {
       });
       runner = new QueryRunner(ctx);
 
-      try {
-        runner.start();
-        await firstFrame;
-        expect(exitListeners).toHaveLength(1);
-        expect(stateManager.getState().status).toBe('processing');
+      runner.start();
+      await firstFrame;
+      expect(exitListeners).toHaveLength(1);
+      expect(stateManager.getState().status).toBe('processing');
 
-        exitListeners[0]?.(1, null);
-        for (let i = 0; i < 50; i++) await Promise.resolve();
+      exitListeners[0]?.(1, null);
+      await ctx.queryPromise;
 
-        const persistedStatus = JSON.parse(persisted).status as string;
-        expect(persistedStatus).toBe('idle');
-        expect(hyperneoWorkStatus('active', persistedStatus)).not.toBe('running');
-      } finally {
-        ctx.queryAbortController?.abort();
-        await ctx.queryPromise?.catch(() => {});
-      }
+      const persistedStatus = JSON.parse(persisted).status as string;
+      expect(persistedStatus).toBe('idle');
+      expect(hyperneoWorkStatus('active', persistedStatus)).not.toBe('running');
     });
     it('attributes a watched exit to in-flight rate-limit recovery', async () => {
       const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
