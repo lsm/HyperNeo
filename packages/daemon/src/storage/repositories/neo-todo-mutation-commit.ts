@@ -149,7 +149,10 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
       return {
         ok: true,
         todo: committed.todo!,
-        startNext: committed.startNext ?? removal?.writes[0]?.todo.id ?? null,
+        startNext:
+          committed.startNext ??
+          removal?.writes.find(({ patch }) => patch.state !== 'removed')?.todo.id ??
+          null,
         ...(plan.records ? { records: plan.records } : {}),
       };
     },

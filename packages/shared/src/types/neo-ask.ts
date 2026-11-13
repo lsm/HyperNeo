@@ -197,6 +197,7 @@ export type NeoAskEntryState = 'waiting' | 'doing' | 'done' | 'dropped' | 'todo'
 export interface NeoQuestionEntry extends NeoQuestion {
   textCodes?: NeoStatusCode[];
   optionLabels?: string[];
+  optionCodes?: NeoStatusCode[];
 }
 
 export interface NeoAskEntry {

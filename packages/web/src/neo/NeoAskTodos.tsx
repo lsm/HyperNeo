@@ -34,6 +34,7 @@ import { neoRelativeTime, neoNow } from './neo-time.ts';
 import { locale, t, type MessageKey } from '../lib/i18n/index.ts';
 import { copyToClipboard } from '../lib/utils.ts';
 import {
+  neoQuestionOption,
   neoQuestionText,
   neoTodoDetail,
   neoTodoHasMore,
@@ -520,12 +521,12 @@ function QuestionBox({
               <input
                 type="checkbox"
                 class="mt-1 shrink-0"
-                aria-label={`${choiceLetter(question, option)} ${option}`.trim()}
+                aria-label={`${choiceLetter(question, option)} ${neoQuestionOption(question, option)}`.trim()}
                 checked={picked.includes(option)}
                 onChange={(event) => toggle(option, (event.target as HTMLInputElement).checked)}
               />
               <ChoiceLetter label={choiceLetter(question, option)} />
-              <span class="min-w-0">{option}</span>
+              <span class="min-w-0">{neoQuestionOption(question, option)}</span>
             </label>
           ))}
         </div>
@@ -538,12 +539,12 @@ function QuestionBox({
               type="button"
               data-choice-option
               class={choiceClass}
-              aria-label={`${choiceLetter(question, option)} ${option}`.trim()}
+              aria-label={`${choiceLetter(question, option)} ${neoQuestionOption(question, option)}`.trim()}
               disabled={disabled}
               onClick={() => onAnswer([option])}
             >
               <ChoiceLetter label={choiceLetter(question, option)} />
-              <span class="min-w-0">{option}</span>
+              <span class="min-w-0">{neoQuestionOption(question, option)}</span>
             </button>
           ))}
         </div>

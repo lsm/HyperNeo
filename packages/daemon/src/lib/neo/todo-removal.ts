@@ -1,5 +1,11 @@
-import type { NeoQuestion, NeoQuestionAnswer, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type {
+  NeoQuestion,
+  NeoQuestionAnswer,
+  NeoStatusCode,
+  NeoTodo,
+} from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { neoStatusLine } from './status-codes.ts';
 import {
   type NeoTodoEdge,
   neoTodoCancelledDependencies,
@@ -9,6 +15,18 @@ import {
 
 export const NEO_REMOVED_PREREQUISITE = 'removed_prerequisite';
 export const NEO_REMOVED_PREREQUISITE_OPTIONS = ['Continue', 'Remove these'];
+const OPTION_CODES = ['question.removedContinue', 'question.removedRemove'];
+
+const REMOVED_EN = {
+  'question.removedOneOne':
+    '{removed} was removed. Continue {steps} without it, or remove this step too?',
+  'question.removedOneMany':
+    '{removed} was removed. Continue {steps} without it, or remove these steps too?',
+  'question.removedManyOne':
+    '{removed} were removed. Continue {steps} without them, or remove this step too?',
+  'question.removedManyMany':
+    '{removed} were removed. Continue {steps} without them, or remove these steps too?',
+} as const;
 
 type Card = Pick<NeoQuestion, 'state' | 'kind' | 'todos' | 'cause'>;
 type Row = NeoTodoEdge & Pick<NeoTodo, 'title'>;
@@ -72,12 +90,37 @@ function removeLine<T extends Row>(
   return writes;
 }
 
-const quoted = (todos: readonly Row[]) => todos.map((todo) => `"${todo.title}"`).join(', ');
+const quoted = (todos: readonly Pick<Row, 'title'>[]) =>
+  todos.map((todo) => `"${todo.title}"`).join(', ');
+
+const removedLine = (gone: readonly Pick<Row, 'title'>[], steps: readonly Pick<Row, 'title'>[]) =>
+  neoStatusLine(REMOVED_EN, [
+    {
+      code: `question.removed${gone.length > 1 ? 'Many' : 'One'}${steps.length > 1 ? 'Many' : 'One'}`,
+      params: { removed: quoted(gone), steps: quoted(steps) },
+    },
+  ]);
 
 export const neoRemovedPrerequisiteText = (gone: readonly Row[], dependents: readonly Row[]) =>
-  `${quoted(gone)} ${gone.length > 1 ? 'were' : 'was'} removed. Continue ${quoted(dependents)} without ${
-    gone.length > 1 ? 'them' : 'it'
-  }, or remove ${dependents.length > 1 ? 'these steps' : 'this step'} too?`;
+  removedLine(gone, dependents).status;
+
+export function neoRemovedPrerequisiteCodes(
+  question: Pick<NeoQuestion, 'cause' | 'text' | 'todos' | 'options'>,
+  family: readonly Pick<NeoTodo, 'id' | 'title' | 'state'>[]
+): { textCodes?: NeoStatusCode[]; optionCodes?: NeoStatusCode[] } {
+  if (question.cause !== NEO_REMOVED_PREREQUISITE) return {};
+  const rows = question.todos.flatMap((id) => family.filter((todo) => todo.id === id));
+  const gone = rows.filter((todo) => ['closed_unverified', 'removed'].includes(todo.state));
+  const line = removedLine(
+    gone,
+    rows.filter((todo) => !gone.includes(todo))
+  );
+  const standard = question.options?.join('\n') === NEO_REMOVED_PREREQUISITE_OPTIONS.join('\n');
+  return {
+    ...(line.status === question.text ? { textCodes: line.statusCodes } : {}),
+    ...(standard ? { optionCodes: OPTION_CODES.map((code) => ({ code, params: {} })) } : {}),
+  };
+}
 
 const onCard = (card: Card, id: string, kind: 'start' | 'removal') =>
   card.state === 'open' &&

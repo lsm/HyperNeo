@@ -20956,6 +20956,31 @@
                               "null"
                             ]
                           },
+                          "optionCodes": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "params": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "params"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
                           "optionLabels": {
                             "items": {
                               "type": "string"
@@ -23410,6 +23435,31 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "optionCodes": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "params": {
+                                "additionalProperties": {
+                                  "type": "string"
+                                },
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "params"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
                         },
                         "optionLabels": {
                           "items": {
@@ -30185,6 +30235,31 @@
                               "string",
                               "null"
                             ]
+                          },
+                          "optionCodes": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "params": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "params"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
                           },
                           "optionLabels": {
                             "items": {
@@ -39045,6 +39120,31 @@
                               "string",
                               "null"
                             ]
+                          },
+                          "optionCodes": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "params": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "params"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
                           },
                           "optionLabels": {
                             "items": {

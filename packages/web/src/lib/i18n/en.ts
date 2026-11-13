@@ -295,6 +295,16 @@ export const en = {
   'composer.stopSendTitle': 'Stop recording and send it now',
   'question.startOne': 'Start "{title}"?',
   'question.startMany': 'Start these {count}?',
+  'question.removedOneOne':
+    '{removed} was removed. Continue {steps} without it, or remove this step too?',
+  'question.removedOneMany':
+    '{removed} was removed. Continue {steps} without it, or remove these steps too?',
+  'question.removedManyOne':
+    '{removed} were removed. Continue {steps} without them, or remove this step too?',
+  'question.removedManyMany':
+    '{removed} were removed. Continue {steps} without them, or remove these steps too?',
+  'question.removedContinue': 'Continue',
+  'question.removedRemove': 'Remove these',
   'session.back': 'Back to Neo',
   'session.chat': '{title} chat',
   'session.opening': 'Opening chat…',

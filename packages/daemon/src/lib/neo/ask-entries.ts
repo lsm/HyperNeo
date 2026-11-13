@@ -15,6 +15,7 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoPack } from './pack-contract.ts';
 import { neoStartQuestionLine } from './start-question.ts';
+import { neoRemovedPrerequisiteCodes } from './todo-removal.ts';
 import {
   NeoStatusCodesSchema,
   neoStatusLine,
@@ -244,7 +245,11 @@ export function projectNeoAskEntries(
       doneCount: todos.filter((todo) => todo.state === 'done').length,
       questions: questions.map((question) => {
         if (question.kind === 'choice' && question.options)
-          return { ...question, optionLabels: neoOptionLabels(question.options) };
+          return {
+            ...question,
+            optionLabels: neoOptionLabels(question.options),
+            ...neoRemovedPrerequisiteCodes(question, allTodos),
+          };
         if (question.kind !== 'start' || !question.todos.length) return question;
         const line = neoStartQuestionLine(
           question.todos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
@@ -299,6 +304,7 @@ export const NeoAskEntrySchema = z.object({
     NeoQuestionSchema.extend({
       textCodes: NeoStatusCodesSchema,
       optionLabels: z.array(z.string()).optional(),
+      optionCodes: NeoStatusCodesSchema,
     })
   ),
 });
