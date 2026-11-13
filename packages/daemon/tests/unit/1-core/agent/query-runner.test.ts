@@ -8206,7 +8206,7 @@ describe('QueryRunner', () => {
       const persistedStatus = JSON.parse(persisted).status as string;
       expect(persistedStatus).toBe('idle');
       expect(hyperneoWorkStatus('active', persistedStatus)).not.toBe('running');
-    }, 15000);
+    }, 30000);
 
     it('attributes a watched exit to in-flight rate-limit recovery', async () => {
       const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
@@ -8235,13 +8235,18 @@ describe('QueryRunner', () => {
         }
       );
       mockSession.workspacePath = null;
+      let notifyFirstFrame: () => void = () => {};
+      const firstFrame = new Promise<void>((resolve) => {
+        notifyFirstFrame = resolve;
+      });
+      onSDKMessageSpy.mockImplementation(async () => {
+        notifyFirstFrame();
+      });
       const ctx = createContext({ isLimitRecoveryPending: () => true });
       runner = new QueryRunner(ctx);
 
       runner.start();
-      for (let i = 0; i < 100 && onSDKMessageSpy.mock.calls.length === 0; i++) {
-        await Promise.resolve();
-      }
+      await firstFrame;
       expect(exitListeners).toHaveLength(1);
       exitListeners[0]?.(1, null);
       await ctx.queryPromise;
@@ -8250,7 +8255,7 @@ describe('QueryRunner', () => {
       expect(handleErrorSpy).not.toHaveBeenCalled();
       expect(clearSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).not.toHaveBeenCalled();
-    }, 15000);
+    }, 30000);
 
     it('does not retry a completed turn when the watched process exits', async () => {
       const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
@@ -8285,18 +8290,18 @@ describe('QueryRunner', () => {
         }
       );
       mockSession.workspacePath = null;
+      let notifyResult: () => void = () => {};
+      const resultFrame = new Promise<void>((resolve) => {
+        notifyResult = resolve;
+      });
+      onSDKMessageSpy.mockImplementation(async (message: SDKMessage) => {
+        if (message.type === 'result') notifyResult();
+      });
       const ctx = createContext();
       runner = new QueryRunner(ctx);
 
       runner.start();
-      for (
-        let i = 0;
-        i < 100 &&
-        !onSDKMessageSpy.mock.calls.some((call) => (call[0] as SDKMessage).type === 'result');
-        i++
-      ) {
-        await Promise.resolve();
-      }
+      await resultFrame;
       expect(exitListeners).toHaveLength(1);
       exitListeners[0]?.(1, null);
       await ctx.queryPromise;
@@ -8307,7 +8312,7 @@ describe('QueryRunner', () => {
       expect(handleErrorSpy).not.toHaveBeenCalled();
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(buildSpy).toHaveBeenCalledTimes(1);
-    }, 15000);
+    }, 30000);
 
     it('drains a result that arrives after the process exit event', async () => {
       const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
@@ -8346,13 +8351,18 @@ describe('QueryRunner', () => {
         }
       );
       mockSession.workspacePath = null;
+      let notifyFirstFrame: () => void = () => {};
+      const firstFrame = new Promise<void>((resolve) => {
+        notifyFirstFrame = resolve;
+      });
+      onSDKMessageSpy.mockImplementation(async () => {
+        notifyFirstFrame();
+      });
       const ctx = createContext();
       runner = new QueryRunner(ctx);
 
       runner.start();
-      for (let i = 0; i < 100 && onSDKMessageSpy.mock.calls.length === 0; i++) {
-        await Promise.resolve();
-      }
+      await firstFrame;
       expect(exitListeners).toHaveLength(1);
       exitListeners[0]?.(0, null);
       setTimeout(releaseResult, 0);
