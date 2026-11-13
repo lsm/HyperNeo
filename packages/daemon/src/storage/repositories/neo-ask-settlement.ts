@@ -2,7 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import { requireNeoOpenAsk } from '../../lib/neo/todo-operations.ts';
-import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
@@ -129,3 +129,65 @@ export const neoAskSettlementWrites = defineRepositoryOp(
   NeoAskSettlement,
   ['settle']
 );
+
+const WAKE_NOTE_PREFIX = 'neo-stalled-ask:';
+
+const settleReadyAsks = (db: Database): string[] =>
+  (
+    db
+      .prepare(`SELECT id FROM neo_asks WHERE status = 'open'
+    AND NOT EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id
+      AND t.state IN ('todo', 'doing', 'blocked'))
+    AND NOT EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open')
+    AND EXISTS (
+      SELECT 1 FROM sdk_messages m WHERE m.session_id = neo_asks.session_id
+        AND m.message_type = 'user' AND m.consumed_seq IS NOT NULL
+        AND (m.sdk_uuid LIKE ? || neo_asks.id || ':%'
+          OR m.sdk_uuid IN (SELECT json_extract(j.payload, '$.neoBatchUuid')
+            FROM job_queue j WHERE j.queue = 'neo_notes' AND j.status = 'completed'
+            AND json_extract(j.payload, '$.to.sessionId') = neo_asks.session_id
+            AND json_extract(j.payload, '$.messageUuid') LIKE ? || neo_asks.id || ':%'))
+        AND EXISTS (SELECT 1 FROM sdk_messages r WHERE r.session_id = m.session_id
+          AND r.message_type = 'result' AND r.is_terminal = 1
+          AND r.parent_tool_use_id IS NULL AND COALESCE(r.internal_compaction_turn, 0) = 0
+          AND r.consumed_seq >= m.consumed_seq))`)
+      .all(WAKE_NOTE_PREFIX, WAKE_NOTE_PREFIX) as { id: string }[]
+  ).map((row) => row.id);
+
+const settleOutcomeSentence = (todos: readonly NeoTodo[]): string => {
+  const names = (states: readonly string[]) =>
+    todos
+      .filter((todo) => states.includes(todo.state))
+      .map((todo) => todo.title)
+      .join(', ');
+  const finished = names(['done', 'closed_unverified']);
+  const dropped = names(['removed', 'failed']);
+  const sentence = [
+    ...(finished ? [`Finished ${finished}`] : []),
+    ...(dropped ? [`cancelled or removed ${dropped}`] : []),
+  ].join('; ');
+  return sentence ? `${sentence[0]!.toUpperCase()}${sentence.slice(1)}.` : 'No steps recorded.';
+};
+
+export const neoAskTurnedSettleWrites = defineDbOp<{ now: number }, string[]>({
+  name: 'neo.turnedAskSettles',
+  mode: 'write',
+  run(db, { now }, changes) {
+    const store = new NeoAskTodoRepository(db, undefined, undefined, undefined, changes);
+    const settled: string[] = [];
+    for (const id of settleReadyAsks(db)) {
+      const ask = store.getAsk(id);
+      if (!ask || ask.status !== 'open') continue;
+      const todos = store.listTodos(id);
+      if (todos.some((todo) => ['todo', 'doing', 'blocked'].includes(todo.state))) continue;
+      if (store.listQuestions(id).some((card) => card.state === 'open')) continue;
+      const status = todos.some((todo) => ['done', 'closed_unverified'].includes(todo.state))
+        ? 'done'
+        : 'dropped';
+      store.settleAsk(ask, status, ask.outcome ?? settleOutcomeSentence(todos), now);
+      changes.notifyChange('neo_asks');
+      settled.push(id);
+    }
+    return settled;
+  },
+});
