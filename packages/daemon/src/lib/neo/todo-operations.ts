@@ -37,13 +37,12 @@ import {
   requireNeoTodoMayFinish,
   sameNeoTodoCheck,
 } from './todo-completion.ts';
-import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
+import { isNeoTodoStartable } from './todo-runner.ts';
 import {
   NEO_TODO_NOT_APPROVED,
   neoTodoCancellationPending,
   neoTodoProceedPatch,
   neoTodoPrerequisiteRefusal,
-  neoTodoStartRefusal,
 } from './todo-start-gate.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -71,7 +70,7 @@ export interface NeoTodoControls {
     Gate<WorkRef> & { place?: Pick<Place, 'folder' | 'remotes'>; workerRemotes?: readonly string[] }
   >;
   refreshIdentity?(todoId: string): Promise<void>;
-  start(todoId: string): Ran;
+  advance(): Promise<unknown>;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
   proceed(todoId: string, message: string): Ran;
   retry(todoId: string): Ran;
@@ -91,7 +90,6 @@ const TodoDraft = z.object({
   instruction: Text.nullable().default(null),
   target: NeoTodoTargetSchema.optional(),
   named: z.record(z.string(), z.unknown()).nullable().default(null),
-  start: z.boolean().default(false),
   priority: TodoPriority.default('normal'),
   after: z
     .array(z.union([Text, z.number().int().min(0)]))
@@ -102,7 +100,7 @@ const TodoDraft = z.object({
 });
 
 function refineNeoTodoDraft(
-  input: Pick<z.infer<typeof TodoDraft>, 'instruction' | 'target' | 'start'>,
+  input: Pick<z.infer<typeof TodoDraft>, 'instruction' | 'target'>,
   context: z.RefinementCtx
 ): void {
   if (!input.instruction !== !input.target)
@@ -110,8 +108,6 @@ function refineNeoTodoDraft(
       code: 'custom',
       message: 'A todo with an instruction needs a target, and a target needs an instruction.',
     });
-  if (input.start && !input.target)
-    context.addIssue({ code: 'custom', message: 'start needs a target.' });
 }
 
 export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
@@ -205,7 +201,7 @@ export function neoTodoPlaceRefusal(
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'start' | 'resolveTarget' | 'userFolder'>,
+  controls: Pick<NeoTodoControls, 'advance' | 'resolveTarget' | 'userFolder'>,
   ask: NeoAsk,
   input: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
@@ -220,7 +216,7 @@ export async function addNeoTodo(
 export async function recordNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'start' | 'userFolder'>,
+  controls: Pick<NeoTodoControls, 'advance' | 'userFolder'>,
   ask: NeoAsk,
   input: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
@@ -255,34 +251,11 @@ export async function recordNeoTodo(
   if (typeof dependsOn === 'string')
     return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
   const now = Date.now();
-  const approvedAt = draft.start ? now : null;
-  const added = todos.addTodo(id, ask.id, { ...draft, dependsOn, approvedAt }, now, repo);
+  const added = todos.addTodo(id, ask.id, { ...draft, dependsOn, approvedAt: now }, now, repo);
 
   if (draft.target) sessions.create(added.id, draft.target);
-  if (draft.start) {
-    const approved = todos.approveTodo(added, now);
-    return { ...(await startNeoTodoWhenFree(todos, controls, approved)), ...records };
-  }
-  if (added.instruction) joinNeoStartQuestion(todos, added);
-  return { ok: true, todo: added, ...records };
-}
-
-export async function startNeoTodoWhenFree(
-  todos: NeoAskTodoRepository,
-  controls: Pick<NeoTodoControls, 'start'>,
-  todo: NeoTodo
-): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
-  const ask = todos.getAsk(todo.askId)!;
-  return neoTodoStartRefusal(todo, todos.listFamilyTodos(ask.id), todos.gateQuestions(ask))
-    ? { ok: true, todo }
-    : controls.start(todo.id);
-}
-
-function joinNeoStartQuestion(todos: NeoAskTodoRepository, todo: NeoTodo): void {
-  const now = Date.now();
-  todos.joinStartQuestion(todo, now);
-  const blocked = planNeoTodoAwaitingStart(todo);
-  if (blocked) todos.updateTodo(todo, blocked, now);
+  if (added.instruction) await controls.advance();
+  return { ok: true, todo: todos.getTodo(added.id) ?? added, ...records };
 }
 
 const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)

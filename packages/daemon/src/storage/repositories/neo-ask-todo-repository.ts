@@ -1293,14 +1293,6 @@ export class NeoAskTodoRepository {
     }
   }
 
-  approveTodo(todo: NeoTodo, now: number): NeoTodo {
-    return this.db.transaction(() => {
-      if (todo.approvedAt === null) this.writeTodo(todo, { approvedAt: now }, now);
-      this.pruneQuestions(todo.askId, now);
-      return this.getTodo(todo.id)!;
-    })();
-  }
-
   private static readonly releaseStartTodos = (
     superpipe({})('neo.question.release-start') as PipelineAPI
   )

@@ -60,14 +60,19 @@ function setup() {
     ...createNeoTodoOperations(
       store,
       sessions,
-      { ...runner, resolveTarget: existingTodoTarget },
+      { ...runner, resolveTarget: existingTodoTarget, advance: async () => {} },
       () => createTodoCheckPacks(db),
       () => null
     ),
     ...createNeoAskRecordOperations(
       store,
       sessions,
-      { ...runner, resolveTarget: existingTodoTarget, stop: async () => null },
+      {
+        ...runner,
+        resolveTarget: existingTodoTarget,
+        stop: async () => null,
+        advance: async () => {},
+      },
       () => null,
       () => true,
       () => [],
@@ -102,7 +107,7 @@ function setup() {
 }
 
 describe('todo and ask bookkeeping records through MCP', () => {
-  test('opens an ask with an existing worker without dispatching it', async () => {
+  test('opens an ask with an existing worker and leaves its start to the queue', async () => {
     const h = setup();
     try {
       const ref = { adapter: 'hyperneo', id: '10000000-0000-4000-8000-000000000001' };

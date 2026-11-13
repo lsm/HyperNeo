@@ -111,15 +111,13 @@ export function packWorkerStartFixture(
     instruction: 'Run the synthetic task.',
     target: { verb: 'start', adapter: 'fixture' },
     after: [],
-    start: true,
   });
   const open = () =>
     invoke('neo.ask.open', { title: 'Synthetic matter', request: 'Track tasks', todos: [] });
-  const bind = (todoId: string, id: string, daemon?: string) =>
-    sessions.recordRef(
-      todoId,
-      { adapter: 'fixture', id, ...(daemon ? { daemon } : {}) },
-      Date.now()
-    );
+  const bind = (todoId: string, id: string, daemon?: string) => {
+    const ref = { adapter: 'fixture', id, ...(daemon ? { daemon } : {}) };
+    if (!sessions.get(todoId)) sessions.create(todoId, { verb: 'adopt', ref });
+    sessions.recordRef(todoId, ref, Date.now());
+  };
   return { store, sessions, runner, operations, calls, checked, invoke, draft, open, bind };
 }

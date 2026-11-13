@@ -302,64 +302,66 @@ describe('neo.question operations', () => {
     expect(general).not.toHaveProperty('sourceSession');
   });
 
-  test.each(['add', 'move'] as const)(
-    'retains the captured source when an instructed todo joins through %s',
-    async (operation) => {
-      const { db, store, asked, call, daemonStart } = setup();
-      try {
-        daemonStart(['t1']);
-        const question = await asked({
-          kind: 'start',
-          text: 'Start after the worker review?',
-          sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
-        });
-        const draft = NeoTodoDraftSchema.parse({
+  test('an instructed todo added to an ask leaves its open start question alone', async () => {
+    const { db, store, asked, daemonStart } = setup();
+    try {
+      daemonStart(['t1']);
+      const question = await asked({ kind: 'start', text: 'Start the reviewed work?' });
+      const result = await addNeoTodo(
+        store,
+        new NeoTodoSessionRepository(db),
+        { advance: async () => {}, resolveTarget: async (ref) => ({ value: ref }) },
+        store.getAsk('ask')!,
+        NeoTodoDraftSchema.parse({
           after: [],
           check: pendingTodoCheck,
           title: 'Additional work',
-          doneWhen: 'Merged',
           instruction: 'Do the additional work',
           target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
-        });
-        let joinedId: string;
-        if (operation === 'add') {
-          const result = await addNeoTodo(
-            store,
-            new NeoTodoSessionRepository(db),
-            {
-              start: async () => ({ ok: false, reason: 'not started' }),
-              resolveTarget: async (ref) => ({ value: ref }),
-            },
-            store.getAsk('ask')!,
-            draft,
-            createTodoCheckPacks(db)
-          );
-          if (!result.ok) throw new Error(result.reason);
-          joinedId = result.todo.id;
-        } else {
-          const todo = store.addTodo(
-            'recorded',
-            'ask',
-            { ...draft, doneWhen: 'Observed result' },
-            1
-          );
-          store.joinStartQuestion(todo, 2);
-          joinedId = todo.id;
-        }
-        expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
-          ok: true,
-          question: {
-            id: question.id,
-            state: 'open',
-            sourceSession: question.sourceSession,
-          },
-        });
-        expect(store.getQuestion(question.id)?.startTodos).toEqual(['t1', joinedId]);
-      } finally {
-        db.close();
-      }
+        }),
+        createTodoCheckPacks(db)
+      );
+      if (!result.ok) throw new Error(result.reason);
+      expect(result.todo).toMatchObject({ state: 'todo', blockedBy: null });
+      expect(store.getQuestion(question.id)?.startTodos).toEqual(['t1']);
+    } finally {
+      db.close();
     }
-  );
+  });
+
+  test('retains the captured source when an instructed todo joins the start question', async () => {
+    const { db, store, asked, call, daemonStart } = setup();
+    try {
+      daemonStart(['t1']);
+      const question = await asked({
+        kind: 'start',
+        text: 'Start after the worker review?',
+        sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+      });
+      const draft = NeoTodoDraftSchema.parse({
+        after: [],
+        check: pendingTodoCheck,
+        title: 'Additional work',
+        doneWhen: 'Merged',
+        instruction: 'Do the additional work',
+        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+      });
+      const todo = store.addTodo('recorded', 'ask', { ...draft, doneWhen: 'Observed result' }, 1);
+      store.joinStartQuestion(todo, 2);
+      const joinedId = todo.id;
+      expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
+        ok: true,
+        question: {
+          id: question.id,
+          state: 'open',
+          sourceSession: question.sourceSession,
+        },
+      });
+      expect(store.getQuestion(question.id)?.startTodos).toEqual(['t1', joinedId]);
+    } finally {
+      db.close();
+    }
+  });
 
   test('keeps the explicitly focused session on the ask after card retirement', async () => {
     const { asked, call, store } = setup();

@@ -21760,10 +21760,6 @@
                   ],
                   "type": "string"
                 },
-                "start": {
-                  "default": false,
-                  "type": "boolean"
-                },
                 "target": {
                   "oneOf": [
                     {
@@ -40368,10 +40364,6 @@
               "urgent"
             ],
             "type": "string"
-          },
-          "start": {
-            "default": false,
-            "type": "boolean"
           },
           "target": {
             "oneOf": [

@@ -74,7 +74,7 @@ describe('remote todo worker repository resolution', () => {
     async ({ remotes }) => {
       const ref = { ...draft.target.ref, daemon: 'remote-owner' };
       const resolved = await resolveNeoTodoDraft(
-        { ...draft, target: { verb: 'send', ref }, start: false, priority: 'normal' },
+        { ...draft, target: { verb: 'send', ref }, priority: 'normal' },
         async () => ({
           value: ref,
           place: { folder: '/not-a-local-worker', remotes: remotes ? [...remotes] : undefined },
@@ -155,7 +155,7 @@ test.each([
       remotes,
     };
     const resolved = await resolveNeoTodoDraft(
-      { ...draft, target: { verb: 'send', ref }, start: false, priority: 'normal' },
+      { ...draft, target: { verb: 'send', ref }, priority: 'normal' },
       (candidate) =>
         resolveNeoTodoTarget(candidate, async (name, input) => {
           calls.push({ name, input });
@@ -230,7 +230,6 @@ ${succeeds ? 'printf \'%s\\n\' \'{"full_name":"example/repo"}\'' : 'exit 1'}
         ...draft,
         named: { repository: `example/${repository}` },
         target: { verb: 'send', ref },
-        start: false,
         priority: 'normal',
       },
       async () => ({ value: ref, place: { remotes: [remote] } })

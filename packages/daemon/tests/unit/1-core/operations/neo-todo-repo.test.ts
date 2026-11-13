@@ -23,7 +23,6 @@ const draft = {
   check: pendingTodoCheck,
   instruction: null,
   named: null,
-  start: false,
 };
 const recordedRepo = (db: Database, todoId: string) =>
   (
@@ -148,7 +147,7 @@ describe('neo.todo.add repo', () => {
       {
         resolveTarget: existingTodoTarget,
         recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
-        start: async () => ({ ok: false as const, reason: 'no' }),
+        advance: async () => {},
         proceed: async () => ({ ok: false as const, reason: 'no' }),
         retry: async () => ({ ok: false as const, reason: 'no' }),
         stop: async () => null,
@@ -198,7 +197,7 @@ describe('neo.ask.open repo', () => {
       {
         resolveTarget: existingTodoTarget,
         recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
-        start: async () => ({ ok: false as const, reason: 'no' }),
+        advance: async () => {},
         proceed: async () => ({ ok: false as const, reason: 'no' }),
         retry: async () => ({ ok: false as const, reason: 'no' }),
         stop: async () => null,
@@ -235,7 +234,7 @@ describe('repository steps on one card', () => {
     },
   });
   const controls = {
-    start: async () => ({ ok: false as const, reason: 'no' }),
+    advance: async () => {},
     proceed: async () => ({ ok: false as const, reason: 'no' }),
     retry: async () => ({ ok: false as const, reason: 'no' }),
     stop: async () => null,

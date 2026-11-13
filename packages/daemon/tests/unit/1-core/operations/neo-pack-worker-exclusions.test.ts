@@ -20,13 +20,15 @@ describe('core todo starts respect pack worker exclusions', () => {
       const author = await world.invoke('neo.todo.add', {
         askId: ask.id,
         ...world.draft('Author'),
-        start: false,
+        instruction: null,
+        target: undefined,
       });
       world.bind(author.todo.id, 'author');
       const prior = await world.invoke('neo.todo.add', {
         askId: ask.id,
         ...world.draft('Earlier actor'),
-        start: false,
+        instruction: null,
+        target: undefined,
       });
       world.bind(prior.todo.id, 'prior');
       const result = await world.invoke('neo.todo.add', {
@@ -126,7 +128,8 @@ describe('core todo starts respect pack worker exclusions', () => {
       const author = await world.invoke('neo.todo.add', {
         askId: ask.id,
         ...world.draft('Author'),
-        start: false,
+        instruction: null,
+        target: undefined,
       });
       const failed = await world.invoke('neo.todo.add', {
         askId: ask.id,

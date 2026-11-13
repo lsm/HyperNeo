@@ -36,7 +36,7 @@ function fixture() {
     {
       resolveTarget: existingTodoTarget,
       recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
-      start: async () => ({ ok: false as const, reason: 'no worker' }),
+      advance: async () => {},
       proceed: async () => ({ ok: false as const, reason: 'no worker' }),
       retry: async () => ({ ok: false as const, reason: 'no worker' }),
       stop: async () => null,

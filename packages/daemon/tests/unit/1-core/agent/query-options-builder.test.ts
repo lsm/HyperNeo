@@ -205,7 +205,7 @@ describe('QueryOptionsBuilder', () => {
           );
           expect(routed).toMatchObject({
             hookSpecificOutput: {
-              additionalContext: expect.stringContaining('neo.todo.add {start:true}'),
+              additionalContext: expect.stringContaining('neo.todo.add, or neo.todo.continue'),
             },
           });
           expect(routed).toMatchObject({

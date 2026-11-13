@@ -48,13 +48,14 @@ function setup() {
       sessions,
       {
         resolveTarget: existingTodoTarget,
-        start: async (todoId) => {
-          if (refuse.value) return { ok: false, reason: 'busy' };
-          started.push(todoId);
-          return {
-            ok: true,
-            todo: store.updateTodo(store.getTodo(todoId)!, { state: 'doing' }, 2),
-          };
+        advance: async () => {
+          if (refuse.value) return;
+          for (const ask of store.listOpenAsks())
+            for (const todo of store.listTodos(ask.id))
+              if (todo.state === 'todo' && todo.instruction) {
+                started.push(todo.id);
+                store.updateTodo(todo, { state: 'doing' }, 2);
+              }
         },
         proceed: async () => ({ ok: false, reason: 'unused' }),
         retry: async () => ({ ok: false, reason: 'unused' }),
@@ -89,7 +90,6 @@ const opening = {
       check: { pack: 'coding', kind: 'pr_merged' },
       instruction: 'Fix the login bug.',
       target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'dev-1' } },
-      start: true,
     },
     { after: [], check: pendingTodoCheck, title: 'Deploy', doneWhen: 'Both daemons run it' },
   ],
@@ -376,7 +376,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
       expect.arrayContaining([result.ask.id, child.id])
     );
   });
-  test('opens an ask with its todos once per turn and starts the ones asked to start', async () => {
+  test('opens an ask with its todos once per turn and starts the ones with work', async () => {
     const { call, started } = setup();
     const first = await call('neo.ask.open', opening, turn('m1'));
     if (!first.ok) throw new Error(first.reason);
@@ -397,24 +397,17 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(started).toHaveLength(1);
   });
 
-  test('a retry after a refused start adds the todos that are still missing', async () => {
-    const { call, refuse, started } = setup();
+  test('a queue with no free slot leaves the todos queued and the ask open', async () => {
+    const { call, refuse, started, store } = setup();
     refuse.value = true;
-    expect(await call('neo.ask.open', opening, turn('m3'))).toEqual({
-      ok: false,
-      reason: 'busy',
-    });
-    refuse.value = false;
-    const retry = await call(
-      'neo.ask.open',
-      { ...opening, todos: [opening.todos[1], opening.todos[0]] },
-      turn('m3')
-    );
-    expect(retry.ok && retry.todos.map((todo) => todo.title)).toEqual(['Fix it', 'Deploy']);
-    expect(started).toEqual([retry.ok && retry.todos[0].id]);
+    const opened = await call('neo.ask.open', opening, turn('m3'));
+    if (!opened.ok) throw new Error(opened.reason);
+    expect(store.listTodos(opened.ask.id).map((todo) => todo.state)).toEqual(['todo', 'todo']);
+    expect(store.listQuestions(opened.ask.id)).toEqual([]);
+    expect(started).toEqual([]);
   });
 
-  test('start in a turn the human did not start still starts', async () => {
+  test('a todo added in a turn the human did not start still starts', async () => {
     const { call, started } = setup();
     const opened = await call('neo.ask.open', opening, turn('m2', false));
     if (!opened.ok) throw new Error(opened.reason);
