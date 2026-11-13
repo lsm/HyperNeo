@@ -86,7 +86,7 @@ describe('PairPhoneFlow', () => {
       { name: 'device.pair.create', input: { kind: 'human' } },
     ]);
     devices.current = [desk, phone];
-    await screen.findByText('Paired: Kitchen iPhone', undefined, { timeout: 3000 });
+    await screen.findByText('Paired with Kitchen iPhone.', undefined, { timeout: 3000 });
     expect(onPaired).toHaveBeenCalledOnce();
   });
 
@@ -148,7 +148,7 @@ describe('PairPhoneFlow', () => {
     });
     render(<PairPhoneFlow pollMs={20} />);
     fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
-    await screen.findByText('Paired: Kitchen iPhone', undefined, { timeout: 3000 });
+    await screen.findByText('Paired with Kitchen iPhone.', undefined, { timeout: 3000 });
     expect(screen.queryByText(/expired before the phone paired/)).toBeNull();
   });
 
@@ -229,7 +229,7 @@ describe('PairPhoneFlow', () => {
     render(<PairPhoneFlow pollMs={20} />);
     fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
     await screen.findByText('NEWCODE234');
-    await screen.findByText('Paired: Kitchen iPhone', undefined, { timeout: 3000 });
+    await screen.findByText('Paired with Kitchen iPhone.', undefined, { timeout: 3000 });
   });
 
   it('reports an unreachable daemon when polls keep failing instead of waiting for expiry', async () => {
@@ -317,6 +317,19 @@ describe('PairPhoneFlow with pairing v2', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await screen.findByText('Paired with Kitchen iPhone.');
     expect(posted).toEqual(['/pair2/request', '/pair2/cancel']);
+    expect(screen.queryByRole('button', { name: 'Start pairing' })).toBeNull();
+  });
+
+  it('says the QR may still work when a cancel cannot be confirmed', async () => {
+    render(<PairPhoneFlow pollMs={5000} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start pairing' }));
+    await screen.findByRole('img', { name: 'Pairing QR code' });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 503 }))
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByText('Could not cancel. The QR still works until it expires.');
     expect(screen.queryByRole('button', { name: 'Start pairing' })).toBeNull();
   });
 
