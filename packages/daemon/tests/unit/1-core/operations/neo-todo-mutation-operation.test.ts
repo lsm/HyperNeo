@@ -86,7 +86,7 @@ describe('Writer-backed todo operation activation', () => {
         recompute: async () => {
           throw new Error('Legacy mutation write was called');
         },
-        start,
+        advance: async () => {},
         stop,
         proceed: async () => ({ ok: false as const, reason: 'unused' }),
         retry: async () => ({ ok: false as const, reason: 'unused' }),

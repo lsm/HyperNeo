@@ -16,8 +16,10 @@ Keep the daemon in an owned shell/EXIT trap; wait for its HTTP listener. Run
 `question-source-session.ts "$RUN" capture 9482` with that same clean environment.
 It invokes the real question API with `sourceSession:{adapter,id,daemon?}` and
 checks `neo.question.get` and `neo.snapshot` retain the adapter-resolved source.
-The helper also rewords a start question with a source, then adds another instructed
-todo through `neo.todo.add`; the mechanical join must preserve the captured source.
+The seed also opens a legacy start question for an old unapproved todo on its own ask
+(new todos start by themselves and never open one). The helper rewords it with a
+source; the reworded start question keeps its todo and the captured source. Each card
+sits on its own ask, since an ask holds one open card.
 An absent source stays absent; an unavailable source cannot replace the card.
 
 With headless Playwright available through NODE_PATH, run:
@@ -33,7 +35,7 @@ At 1440px and 390px, the source question shows only a short "Open" button at top
 with its harness/app logo and no visible source title or provider.
 See neo-open-controls.md for both-theme visual proof and color checks. Its accessible name still identifies
 the destination as "Open session: Review worker",
-and the start question keeps its working opener after the todo join. Open enters the existing HyperNeo session pane. Back retains the
+and the reworded start question keeps its working opener. Open enters the existing HyperNeo session pane. Back retains the
 answer buttons. The general question has no session opener. A synthetic persisted source with
 `link:null` has no source header or opener; this checks rendering
 of an adapter with no navigable destination, not a real Claude native session. The mobile check
@@ -42,7 +44,7 @@ and receipts stay in `$RUN/evidence/`. No native app is opened: the Codex opener
 callback is covered by the component contract, not a real Desktop acceptance test.
 
 Stop and wait for only that test daemon, restart it against the same synthetic DB,
-then run the helper with `restart`. Its answered question and open joined start question must still retain the
+then run the helper with `restart`. Its answered question and open reworded start question must still retain the
 source, including the ref used by the separate iOS follow-up: `question.sourceSession`
 contains `adapter`, `id`, optional `daemon`, plus captured `name`, `provider`,
 `label` and `link`. No source is inferred from prose or multiple workers. Stop the

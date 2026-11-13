@@ -19,7 +19,9 @@ import {
 
 const caller: OperationCaller = { source: 'mcp', sessionId: 'synthetic-neo', role: 'neo' };
 
-function setup() {
+function setup(
+  options: { running?: number; stop?: (todo: NeoTodo) => Promise<string | null> } = {}
+) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -29,7 +31,7 @@ function setup() {
   const packs = createTodoCheckPacks(db);
   const sent: Record<string, unknown>[] = [];
   const runner = createNeoTodoRunner({
-    limits: () => ({ running: 99, perGroup: 99 }),
+    limits: () => ({ running: options.running ?? 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
@@ -72,7 +74,8 @@ function setup() {
         write: gateway.run.bind(gateway),
         packs: () => packs,
         artifact: () => null,
-        stop: async () => null,
+        userFolder: '/synthetic/user-folder',
+        stop: options.stop ?? (async () => null),
         resolveTarget: existingTodoTarget,
         advance: () => runner.advance(),
         changed: () => {},
@@ -108,9 +111,28 @@ function setup() {
     after,
   });
   const target = { verb: 'send' as const, ref: { adapter: 'hyperneo', id: 'w' } };
-  const work = { target, instruction: 'Perform the approved step.' };
-  const seedLegacy = (todo: NeoTodo) => {
-    store.updateTodo(todo, { state: 'blocked', blockedBy: 'question' }, Date.now());
+  const work = { target, instruction: 'Perform the step.' };
+  const reply = (askId: string) =>
+    store.askQuestion(
+      crypto.randomUUID(),
+      askId,
+      {
+        text: 'Which release?',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      Date.now()
+    );
+  const seedUnapproved = (todo: NeoTodo) => {
+    store.updateTodo(
+      todo,
+      { state: 'blocked', blockedBy: 'question', approvedAt: null },
+      Date.now()
+    );
     store.askQuestion(
       crypto.randomUUID(),
       todo.askId,
@@ -126,19 +148,17 @@ function setup() {
       Date.now()
     );
   };
-  return { db, store, sessions, invoke, step, runner, sent, target, work, seedLegacy };
+  return { db, store, sessions, invoke, step, runner, sent, target, work, reply, seedUnapproved };
 }
 
 const complete = (runner: ReturnType<typeof createNeoTodoRunner>, todo: NeoTodo) =>
   runner.recompute(todo, {}, Date.now(), { state: 'done', evidence: 'Completed.' });
 
-const card = (store: NeoAskTodoRepository, todo: NeoTodo) =>
-  store
-    .listQuestions(store.getTodo(todo.id)!.askId)
-    .find((q) => q.state === 'open' && q.startTodos?.includes(todo.id));
+const openCards = (store: NeoAskTodoRepository, askId: string) =>
+  store.listQuestions(askId).filter((q) => q.state === 'open');
 
-describe('todo approval', () => {
-  test('one Start answer approves the whole chain and asks nothing more', async () => {
+describe('todo automatic start', () => {
+  test('an added chain starts step by step with no Start card', async () => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
@@ -151,10 +171,9 @@ describe('todo approval', () => {
         ],
       });
       const [a, b, c] = opened.todos;
-      store.answerQuestion(card(store, a)!, [a.id, b.id, c.id], 'button', Date.now());
-      await runner.refresh(() => {});
-      expect(store.getTodo(c.id)?.approvedAt).not.toBeNull();
+      expect(openCards(store, a.askId)).toEqual([]);
       expect(store.getTodo(a.id)?.state).toBe('doing');
+      expect(store.getTodo(b.id)).toMatchObject({ state: 'todo', startedAt: null });
       await complete(runner, store.getTodo(a.id)!);
       await runner.refresh(() => {});
       expect(store.getTodo(b.id)?.state).toBe('doing');
@@ -162,124 +181,94 @@ describe('todo approval', () => {
       await complete(runner, store.getTodo(b.id)!);
       await runner.refresh(() => {});
       expect(store.getTodo(c.id)?.state).toBe('doing');
-      expect(store.listQuestions(a.askId).filter((q) => q.state === 'open')).toHaveLength(0);
+      expect(openCards(store, a.askId)).toEqual([]);
       expect(sent).toHaveLength(3);
     } finally {
       db.close();
     }
   });
 
-  test('start:true records approval and the queue runs the step once it is ready', async () => {
-    const { db, store, invoke, step, runner, sent, work } = setup();
+  test('a todo added to a running ask starts with no Start card', async () => {
+    const { db, store, invoke, step, sent, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
-        title: 'Approved plan',
-        request: 'A, then B.',
-        todos: [
-          { ...step('A', []), ...work, start: true },
-          { ...step('B', [0]), ...work, start: true },
-        ],
+        title: 'Running',
+        request: 'A now, B later.',
+        todos: [{ ...step('A', []), ...work }],
       });
-      expect(opened).toMatchObject({ ok: true });
-      const [a, b] = opened.todos;
-      expect(card(store, b)).toBeUndefined();
-      expect(store.getTodo(b.id)).toMatchObject({ state: 'todo', startedAt: null });
-      await complete(runner, store.getTodo(a.id)!);
-      await runner.refresh(() => {});
-      expect(store.getTodo(b.id)?.state).toBe('doing');
+      const added = await invoke('neo.todo.add', {
+        askId: opened.todos[0].askId,
+        ...step('B', []),
+        ...work,
+        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w2' } },
+      });
+      expect(added).toMatchObject({ ok: true });
+      expect(store.getTodo(added.todo.id)?.state).toBe('doing');
+      expect(openCards(store, added.todo.askId)).toEqual([]);
       expect(sent).toHaveLength(2);
     } finally {
       db.close();
     }
   });
 
-  test('another step having started never approves an unapproved step', async () => {
-    const { db, store, invoke, step, runner, sent, work } = setup();
+  test('closing an unrelated card leaves a held todo held', async () => {
+    const { db, store, invoke, step, runner, sent, work, reply } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
-        title: 'Partly approved',
-        request: 'A now, B needs a yes.',
-        todos: [
-          { ...step('A', []), ...work, start: true },
-          { ...step('B'), ...work },
-        ],
+        title: 'Held',
+        request: 'B waits for the human.',
+        todos: [step('X', []), { ...step('B', [0]), ...work }],
       });
-      const [a, b] = opened.todos;
-      await complete(runner, store.getTodo(a.id)!);
-      store.retireQuestion(card(store, b)!, 'Neo withdrew the card.', null, Date.now());
-      await invoke('neo.todo.hold', { todoId: b.id, reason: null });
+      const [x, b] = opened.todos;
+      await invoke('neo.todo.hold', { todoId: b.id, reason: 'Human said wait.' });
+      const unrelated = reply(x.askId);
+      store.updateTodo(store.getTodo(x.id)!, { state: 'done' }, Date.now());
+      store.answerQuestion(unrelated, 'The next one', 'button', Date.now());
       await runner.refresh(() => {});
-      expect(store.getTodo(b.id)).toMatchObject({ approvedAt: null, startedAt: null });
-      expect(card(store, b)).toBeUndefined();
-      expect(sent).toHaveLength(1);
-    } finally {
-      db.close();
-    }
-  });
-
-  test('edits never touch approval or take a step off its card', async () => {
-    const { db, store, invoke, step, runner, sent, work } = setup();
-    try {
-      const opened = await invoke('neo.ask.open', {
-        title: 'Unapproved',
-        request: 'Independent steps.',
-        todos: [{ ...step('X', []) }, { ...step('A', []), ...work }, { ...step('B', []), ...work }],
+      expect(store.getTodo(b.id)).toMatchObject({
+        state: 'blocked',
+        blockedBy: 'held',
+        startedAt: null,
       });
-      const [x, a, b] = opened.todos;
-      store.updateTodo(x, { state: 'done' }, Date.now());
-      expect(await invoke('neo.todo.edit', { todoId: a.id, after: [x.id] })).toMatchObject({
-        ok: true,
-      });
-      await runner.refresh(() => {});
-      for (const todo of [a, b]) {
-        expect(store.getTodo(todo.id)).toMatchObject({
-          approvedAt: null,
-          state: 'blocked',
-          blockedBy: 'question',
-        });
-        expect(card(store, todo)).toBeDefined();
-      }
-      store.answerQuestion(card(store, b)!, [], 'button', Date.now());
-      await runner.refresh(() => {});
-      expect(store.getTodo(b.id)?.blockedBy).toBe('held');
       expect(sent).toHaveLength(0);
     } finally {
       db.close();
     }
   });
 
-  test('a held step stays held through a Start answer that approves its ask', async () => {
-    const { db, store, invoke, step, runner, sent, work } = setup();
+  test('closing an unrelated card leaves an unapproved todo held', async () => {
+    const { db, store, invoke, step, runner, sent, work, reply, seedUnapproved } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
-        title: 'Held',
-        request: 'A now; the check waits for the human.',
-        todos: [{ ...step('A', []), ...work }, step('Check only', [])],
+        title: 'Unapproved',
+        request: 'B waits for its Start card.',
+        todos: [step('X', []), { ...step('B', [0]), ...work }],
       });
-      const [a, check] = opened.todos;
-      await invoke('neo.todo.hold', { todoId: check.id, reason: 'Human said wait.' });
-      store.answerQuestion(card(store, a)!, [a.id], 'button', Date.now());
+      const [x, b] = opened.todos;
+      seedUnapproved(b);
+      const unrelated = reply(x.askId);
+      store.updateTodo(store.getTodo(x.id)!, { state: 'done' }, Date.now());
+      store.answerQuestion(unrelated, 'The next one', 'button', Date.now());
       await runner.refresh(() => {});
-      expect(store.getTodo(check.id)).toMatchObject({
-        state: 'blocked',
-        blockedBy: 'held',
-        blockedReason: 'Human said wait.',
-      });
-      expect(sent).toHaveLength(1);
+      expect(store.getTodo(b.id)).toMatchObject({ approvedAt: null, startedAt: null });
+      expect(openCards(store, b.askId).map((q) => q.kind)).toEqual(['start']);
+      expect(sent).toHaveLength(0);
     } finally {
       db.close();
     }
   });
 
-  test('every start path uses the gate', async () => {
-    const { db, store, invoke, step, runner, sent, work } = setup();
+  test('every start path refuses an unapproved todo', async () => {
+    const { db, store, invoke, step, runner, sent, work, seedUnapproved } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Gate',
-        request: 'B needs a yes.',
-        todos: [{ ...step('B', []), ...work }, step('Check only', [])],
+        request: 'B waits for its Start card.',
+        todos: [step('X', []), { ...step('B', [0]), ...work }],
       });
-      const [b, check] = opened.todos;
+      const [x, b] = opened.todos;
+      seedUnapproved(b);
+      store.updateTodo(store.getTodo(x.id)!, { state: 'done' }, Date.now());
       expect(await runner.start(b.id)).toMatchObject({
         ok: false,
         reason: expect.stringContaining('not_approved'),
@@ -287,16 +276,6 @@ describe('todo approval', () => {
       expect(
         await invoke('neo.todo.bind', { todoId: b.id, ref: { adapter: 'hyperneo', id: 'other' } })
       ).toMatchObject({ ok: false, reason: expect.stringContaining('not_approved') });
-      store.updateTodo(store.getTodo(b.id)!, { state: 'failed', reason: 'Check failed.' }, 2);
-      expect(
-        await invoke('neo.todo.bind', { todoId: b.id, ref: { adapter: 'hyperneo', id: 'other' } })
-      ).toMatchObject({ ok: false, reason: expect.stringContaining('not_approved') });
-      expect(
-        await invoke('neo.todo.bind', {
-          todoId: check.id,
-          ref: { adapter: 'hyperneo', id: 'other' },
-        })
-      ).toMatchObject({ ok: true });
       expect(store.getTodo(b.id)?.startedAt).toBeNull();
       expect(sent).toHaveLength(0);
     } finally {
@@ -304,13 +283,13 @@ describe('todo approval', () => {
     }
   });
 
-  test('an open question on the parent ask holds an approved child step', async () => {
-    const { db, store, invoke, step, runner, sent, work } = setup();
+  test('an open question on the parent ask holds a child step', async () => {
+    const { db, store, invoke, step, runner, sent, work, reply } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Split',
         request: 'A here, B elsewhere.',
-        todos: [step('A', []), { ...step('B', []), ...work }],
+        todos: [step('A', []), { ...step('B', [0]), ...work }],
       });
       const [a, b] = opened.todos;
       const child = store.openAsk({
@@ -319,35 +298,63 @@ describe('todo approval', () => {
         parentId: a.askId,
       });
       db.prepare('UPDATE neo_todos SET ask_id = ? WHERE id = ?').run(child.id, b.id);
-      store.retireQuestions(a.askId, Date.now());
-      store.joinStartQuestion(store.getTodo(a.id)!, Date.now());
-      store.joinStartQuestion(store.getTodo(b.id)!, Date.now());
-      const parent = crypto.randomUUID();
-      store.askQuestion(
-        parent,
-        a.askId,
-        {
-          text: 'Which release?',
-          kind: 'reply',
-          options: null,
-          multiple: false,
-          noLabel: null,
-          yesLabel: null,
-          startTodos: null,
-        },
-        Date.now()
-      );
-      store.answerQuestion(card(store, b)!, [b.id], 'button', Date.now());
+      const parent = reply(a.askId);
+      store.updateTodo(store.getTodo(a.id)!, { state: 'done' }, Date.now());
       expect(await runner.start(b.id)).toMatchObject({
         ok: false,
         reason: expect.stringContaining('question_open'),
       });
       await runner.refresh(() => {});
       expect(sent).toHaveLength(0);
-      store.answerQuestion(store.getQuestion(parent)!, 'Next one', 'button', Date.now());
+      store.answerQuestion(parent, 'Next one', 'button', Date.now());
       await runner.refresh(() => {});
       expect(store.getTodo(b.id)?.state).toBe('doing');
     } finally {
+      db.close();
+    }
+  });
+  test('a fill that overlaps a stop admits nothing over the limit', async () => {
+    const stopping = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const { db, store, invoke, step, runner, sent, work } = setup({
+      running: 1,
+      stop: async () => {
+        stopping.resolve();
+        await release.promise;
+        return null;
+      },
+    });
+    let removing: Promise<unknown> | undefined;
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Limit',
+        request: 'One at a time.',
+        todos: [
+          { ...step('A', []), ...work },
+          {
+            ...step('B', []),
+            ...work,
+            target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w2' } },
+          },
+        ],
+      });
+      const [a, b] = opened.todos;
+      expect(store.getTodo(a.id)?.state).toBe('doing');
+      expect(store.getTodo(b.id)?.state).toBe('todo');
+      removing = invoke('neo.todo.remove', { todoId: a.id, reason: 'Not needed.' });
+      await stopping.promise;
+      await runner.fill();
+      expect(store.getTodo(b.id)).toMatchObject({ state: 'todo', startedAt: null });
+      expect(sent).toHaveLength(1);
+      release.resolve();
+      await removing;
+      await runner.fill();
+      expect(store.getTodo(a.id)?.state).toBe('removed');
+      expect(store.getTodo(b.id)?.state).toBe('doing');
+      expect(sent).toHaveLength(2);
+    } finally {
+      release.resolve();
+      await removing;
       db.close();
     }
   });

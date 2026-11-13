@@ -24,7 +24,6 @@ describe('Whole todo-add writer', () => {
     instruction: 'Do the whole job',
     target: { verb: 'start', adapter: 'hyperneo' },
     named: null,
-    start: false,
     priority: 'high',
   });
   beforeEach(() => {
@@ -56,18 +55,18 @@ describe('Whole todo-add writer', () => {
     if (!op) throw new Error('Whole todo-add command unavailable');
     return gateway.run(op, { askId: 'ask', todoId: id, draft: input, now: 10 });
   };
-  test('commits target, complete instruction and one shared start question', async () => {
+  test('commits target, complete instruction and start intent with no Start card', async () => {
     const input = { ...draft(), instruction: '完整工作 🦊\n'.repeat(20000) };
     expect(await add('one', input)).toMatchObject({
       ok: true,
-      todo: { id: 'one', instruction: input.instruction, state: 'blocked', priority: 'high' },
+      start: 'one',
+      todo: { id: 'one', instruction: input.instruction, state: 'todo', approvedAt: 10 },
     });
-    expect(await add('two')).toMatchObject({ ok: true });
-    expect(store.listQuestions('ask')).toMatchObject([
-      { kind: 'start', startTodos: ['one', 'two'] },
-    ]);
+    expect(await add('two')).toMatchObject({ ok: true, start: 'two' });
+    expect(store.listQuestions('ask')).toEqual([]);
     expect(new NeoTodoSessionRepository(db).get('one')).toMatchObject(input.target);
-    expect(changes).toContain('neo_questions');
+    expect(changes).toContain('neo_todo_sessions');
+    expect(changes).not.toContain('neo_questions');
   });
   test('different repositories commit to the same ask without creating children', async () => {
     const first = await add('one', { ...draft(), named: { repository: 'synthetic/first' } });
@@ -89,20 +88,21 @@ describe('Whole todo-add writer', () => {
     expect(store.getAsk('ask')?.status).toBe('open');
     expect(store.listChildAsks('ask')).toEqual([]);
   });
-  test('late question failure rolls back todo, target and all notifications', async () => {
+  test('late target failure rolls back todo, target and all notifications', async () => {
     db.exec(
-      "CREATE TRIGGER refuse_start BEFORE INSERT ON neo_questions BEGIN SELECT RAISE(ABORT, 'late start failure'); END"
+      "CREATE TRIGGER refuse_target BEFORE INSERT ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'late target failure'); END"
     );
     const before = store.getAsk('ask');
-    await expect(add('one')).rejects.toThrow('late start failure');
+    await expect(add('one')).rejects.toThrow('late target failure');
     expect(store.getAsk('ask')).toEqual(before);
     expect(store.listTodos('ask')).toEqual([]);
     expect(new NeoTodoSessionRepository(db).get('one')).toBeNull();
     expect(changes).toEqual([]);
   });
-  test('concurrent additions join one question without losing a selected todo', async () => {
+  test('concurrent additions both commit with no Start card', async () => {
     await Promise.all([add('one'), add('two')]);
-    expect(store.listQuestions('ask')).toMatchObject([{ startTodos: ['one', 'two'] }]);
+    expect(store.listTodos('ask').map((todo) => todo.id)).toEqual(['one', 'two']);
+    expect(store.listQuestions('ask')).toEqual([]);
   });
   test('settled ask is an accepted quiet no-op', async () => {
     store.settleAsk(store.getAsk('ask')!, 'dropped', 'No longer needed', 2);
@@ -113,13 +113,10 @@ describe('Whole todo-add writer', () => {
     expect(store.listTodos('ask')).toEqual([]);
     expect(changes).toEqual([]);
   });
-  test('returns start intent without starting a worker or creating a start card', async () => {
-    expect(await add('one', { ...draft(), start: true })).toMatchObject({
-      ok: true,
-      start: 'one',
-      todo: { state: 'todo' },
-    });
-    expect(store.listQuestions('ask')).toEqual([]);
+  test('a check-only todo returns no start intent', async () => {
+    const result = await add('one', { ...draft(), instruction: null, target: undefined });
+    expect(result).toMatchObject({ ok: true, todo: { state: 'todo' } });
+    expect(result).not.toHaveProperty('start');
   });
   test('unsupported check refuses without side effects', async () => {
     expect(
@@ -147,10 +144,10 @@ describe('Whole todo-add writer', () => {
     });
     expect(store.listTodos('ask')).toHaveLength(2);
   });
-  test('a late question failure also rolls back a newly routed child ask', async () => {
+  test('a late target failure also rolls back a newly routed child ask', async () => {
     db.exec("UPDATE neo_asks SET repo='synthetic/original' WHERE id='ask'");
     db.exec(
-      "CREATE TRIGGER refuse_child_start BEFORE INSERT ON neo_questions BEGIN SELECT RAISE(ABORT, 'child start failure'); END"
+      "CREATE TRIGGER refuse_child_target BEFORE INSERT ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'child start failure'); END"
     );
     const coding = {
       ...draft(),

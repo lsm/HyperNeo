@@ -80,7 +80,7 @@ function setup() {
     )) as { ok: true; question: NeoQuestion; records?: string[] } | { ok: false; reason: string };
   const controls = {
     resolveTarget: async (ref) => ({ value: ref }),
-    start: async () => ({ ok: false, reason: 'unused' }),
+    advance: async () => {},
   } as unknown as NeoTodoControls;
   const todoOps = createNeoTodoOperations(
     store,

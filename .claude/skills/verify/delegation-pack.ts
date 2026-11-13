@@ -150,7 +150,6 @@ try {
         place: { machine: 'synthetic', name: 'Proof', folder: run },
       },
       after: [],
-      start: true,
     });
   const first = await start('Before preference change', 'Long task. '.repeat(2000));
   assert.equal(first.todo.state, 'doing');

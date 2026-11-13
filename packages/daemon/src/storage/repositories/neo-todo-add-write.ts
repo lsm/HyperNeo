@@ -8,7 +8,6 @@ import {
   neoTodoDependencyRefusal,
   planNeoTodoDependencies,
 } from '../../lib/neo/todo-dependencies.ts';
-import { planNeoTodoAwaitingStart } from '../../lib/neo/todo-runner.ts';
 import { ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
@@ -102,25 +101,19 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       changes: ChangeRecorder
     ): Receipt => {
       const { draft } = plan;
-      let todo = store.addTodo(
+      const todo = store.addTodo(
         input.todoId,
         plan.ask.id,
-        { ...draft, dependsOn: plan.dependsOn },
+        { ...draft, dependsOn: plan.dependsOn, approvedAt: input.now },
         input.now,
         plan.repo
       );
       if (draft.target) new NeoTodoSessionRepository(db).create(todo.id, draft.target);
-      if (!draft.start && todo.instruction) {
-        store.joinStartQuestion(todo, input.now);
-        changes.notifyChange('neo_questions');
-        const blocked = planNeoTodoAwaitingStart(todo);
-        if (blocked) todo = store.updateTodo(todo, blocked, input.now);
-      }
       if (draft.target) changes.notifyChange('neo_todo_sessions');
       return {
         ok: true,
         todo,
-        ...(draft.start ? { start: todo.id } : {}),
+        ...(todo.instruction ? { start: todo.id } : {}),
         ...(draft.records ? { records: draft.records } : {}),
       };
     },

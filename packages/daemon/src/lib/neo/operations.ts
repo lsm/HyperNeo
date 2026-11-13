@@ -724,7 +724,7 @@ export function createNeoOperations(
         )
       ),
     recompute: (todo, patch) => service.todoRunner.recompute(todo, patch),
-    start: (todoId) => service.todoRunner.start(todoId),
+    advance: () => service.todoRunner.advance(),
     refreshIdentity: (todoId) => service.todoRunner.refreshIdentity(todoId),
     proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
     retry: (todoId) => service.todoRunner.retry(todoId),

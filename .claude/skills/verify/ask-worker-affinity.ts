@@ -46,7 +46,7 @@ try {
   });
   const open = async () => { await world.open(); return world.store.listOpenAsks()[0].id; };
   const bind = async (askId: string, id: string, at: number) => {
-    const result = await world.invoke('neo.todo.add', { after: [], askId, ...world.draft(id), start: false });
+    const result = await world.invoke('neo.todo.add', { after: [], askId, ...world.draft(id), instruction: null, target: undefined });
     world.bind(result.todo.id, id);
     world.store.updateTodo(world.store.getTodo(result.todo.id)!, { state: 'done', startedAt: at }, at);
     assert.equal(world.store.getTodo(result.todo.id)?.state, 'done');

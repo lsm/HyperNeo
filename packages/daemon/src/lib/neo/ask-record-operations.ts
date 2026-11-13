@@ -16,14 +16,12 @@ import {
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
   recordNeoTodo,
-  startNeoTodoWhenFree,
   resolveNeoTodoDraft,
   type NeoTodoControls,
   NeoTodoDraftSchema,
   planNeoTodoDraft,
   requireNeoOpenAsk,
 } from './todo-operations.ts';
-import { isNeoTodoStartable } from './todo-runner.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
@@ -329,9 +327,7 @@ export function createNeoAskRecordOperations(
                 { ...todo, after },
                 policies
               )
-            : todo.start && isNeoTodoStartable(row)
-              ? await startNeoTodoWhenFree(store, controls, store.approveTodo(row, Date.now()))
-              : { ok: true as const };
+            : { ok: true as const };
           if (!added.ok) return added;
           if (row && [...after].sort().join() !== [...(row.dependsOn ?? [])].sort().join())
             records.push(
