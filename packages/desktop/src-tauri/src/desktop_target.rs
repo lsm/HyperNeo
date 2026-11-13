@@ -15,12 +15,13 @@ use security_framework::os::macos::code_signing::{
 use serde_json::{json, Value};
 use std::{ffi::c_void, str::FromStr};
 
-const ANCHOR: &str = "anchor apple or anchor apple generic";
+const ANCHOR: &str = "anchor apple or (anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists)";
 
 #[link(name = "Security", kind = "framework")]
 extern "C" {
     static kSecCodeInfoIdentifier: CFStringRef;
     static kSecCodeInfoTeamIdentifier: CFStringRef;
+    static kSecCodeInfoPList: CFStringRef;
     fn SecCodeCopySigningInformation(
         code: *const c_void,
         flags: u32,
@@ -71,32 +72,60 @@ fn started_at(pid: i32) -> Option<(u64, u64)> {
         .then_some((info.pbi_start_tvsec, info.pbi_start_tvusec))
 }
 
-fn signer(code: *const c_void) -> Option<(String, Option<String>, String)> {
-    let mut info: CFDictionaryRef = std::ptr::null();
-    let mut requirement = std::ptr::null();
-    let mut text: CFStringRef = std::ptr::null();
+struct Signer {
+    bundle_id: String,
+    team_id: Option<String>,
+    requirement: String,
+}
+
+fn string(value: Option<CFType>) -> Option<String> {
+    value
+        .and_then(|value| value.downcast::<CFString>())
+        .map(|value| value.to_string())
+}
+
+fn signer(code: *const c_void) -> Result<Signer, &'static str> {
     unsafe {
-        if SecCodeCopySigningInformation(code, 2, &mut info) != 0
-            || SecCodeCopyDesignatedRequirement(code, 0, &mut requirement) != 0
-        {
-            return None;
+        let mut info: CFDictionaryRef = std::ptr::null();
+        if SecCodeCopySigningInformation(code, 2, &mut info) != 0 || info.is_null() {
+            return Err("target_unverified");
         }
         let info: CFDictionary<CFString, CFType> = TCFType::wrap_under_create_rule(info);
-        let requirement: SecRequirement = TCFType::wrap_under_create_rule(requirement as _);
-        if SecRequirementCopyString(requirement.as_concrete_TypeRef() as _, 0, &mut text) != 0 {
-            return None;
-        }
-        let read = |key: CFStringRef| {
+        let field = |key: CFStringRef| {
             info.find(CFString::wrap_under_get_rule(key))
-                .and_then(|value| value.downcast::<CFString>())
-                .map(|value| value.to_string())
+                .map(|value| value.clone())
         };
-        let identifier = read(kSecCodeInfoIdentifier)?;
-        Some((
-            identifier,
-            read(kSecCodeInfoTeamIdentifier),
-            CFString::wrap_under_create_rule(text).to_string(),
-        ))
+        let identifier = string(field(kSecCodeInfoIdentifier)).ok_or("target_unverified")?;
+        let bundle = field(kSecCodeInfoPList)
+            .and_then(|plist| plist.downcast::<CFDictionary>())
+            .and_then(|plist| {
+                plist
+                    .find(CFString::from_static_string("CFBundleIdentifier").as_CFTypeRef())
+                    .map(|value| CFType::wrap_under_get_rule(*value))
+            });
+        match string(bundle) {
+            Some(bundle) if bundle == identifier => {}
+            Some(_) => return Err("target_mismatch"),
+            None => return Err("target_unverified"),
+        }
+        let mut requirement = std::ptr::null();
+        if SecCodeCopyDesignatedRequirement(code, 0, &mut requirement) != 0 || requirement.is_null()
+        {
+            return Err("target_unverified");
+        }
+        let requirement: SecRequirement = TCFType::wrap_under_create_rule(requirement as _);
+        let mut text: CFStringRef = std::ptr::null();
+        if SecRequirementCopyString(requirement.as_concrete_TypeRef() as _, 0, &mut text) != 0
+            || text.is_null()
+        {
+            return Err("target_unverified");
+        }
+        let text = CFString::wrap_under_create_rule(text).to_string();
+        Ok(Signer {
+            bundle_id: identifier,
+            team_id: string(field(kSecCodeInfoTeamIdentifier)),
+            requirement: text,
+        })
     }
 }
 
@@ -118,10 +147,10 @@ fn owner(window: u32) -> Option<i32> {
 }
 
 pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -> Value {
-    let refuse = |reason: &str| json!({"reason": reason});
     let Some(class) = class(tool) else {
-        return refuse("tool_not_allowed");
+        return json!({"reason": "tool_not_allowed"});
     };
+    let refuse = |reason: &str| json!({"reason": reason, "class": class});
     let anchor = SecRequirement::from_str(ANCHOR).expect("valid anchor requirement");
     if class == "launch" {
         let Some(bundle) = arguments["bundle_id"].as_str() else {
@@ -144,19 +173,20 @@ pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -
         let Ok(code) = SecStaticCode::from_path(&url, Flags::NONE) else {
             return refuse("target_unverified");
         };
+        let signer = match signer(code.as_concrete_TypeRef() as _) {
+            Ok(signer) if signer.bundle_id == bundle => signer,
+            Ok(_) => return refuse("target_mismatch"),
+            Err(reason) => return refuse(reason),
+        };
         if code
             .check_validity(Flags::STRICT_VALIDATE, &anchor)
             .is_err()
         {
             return refuse("target_unverified");
         }
-        return match signer(code.as_concrete_TypeRef() as _) {
-            Some((id, team, requirement)) if id == bundle => json!({"value": {
-                "bundle_id": id, "team_id": team, "requirement": requirement, "class": class,
-                "path": url.to_path().map(|path| path.display().to_string())}}),
-            Some(_) => refuse("target_mismatch"),
-            None => refuse("target_unverified"),
-        };
+        return json!({"value": {
+            "bundle_id": signer.bundle_id, "team_id": signer.team_id, "requirement": signer.requirement,
+            "class": class, "path": url.to_path().map(|path| path.display().to_string())}});
     }
     let Some(pid) = arguments["pid"]
         .as_i64()
@@ -168,10 +198,9 @@ pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -
     let Some(before) = started_at(pid) else {
         return refuse("target_unverified");
     };
-    if instance.is_some_and(|expected| {
-        expected
-            != &json!({"pid": pid, "startedAt": {"seconds": before.0, "microseconds": before.1}})
-    }) {
+    let observed =
+        json!({"pid": pid, "startedAt": {"seconds": before.0, "microseconds": before.1}});
+    if instance.is_some_and(|expected| expected != &observed) {
         return refuse("target_mismatch");
     }
     let mut attributes = GuestAttributes::new();
@@ -179,16 +208,18 @@ pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -
     let Ok(code) = SecCode::copy_guest_with_attribues(None, &attributes, Flags::NONE) else {
         return refuse("target_unverified");
     };
+    let signer = signer(code.as_concrete_TypeRef() as _);
     let verified = code.check_validity(Flags::STRICT_VALIDATE, &anchor).is_ok();
-    let signer = verified
-        .then(|| signer(code.as_concrete_TypeRef() as _))
-        .flatten();
     if started_at(pid) != Some(before) {
         return refuse("target_mismatch");
     }
-    let Some((id, team, requirement)) = signer else {
-        return refuse("target_unverified");
+    let signer = match signer {
+        Ok(signer) if verified => signer,
+        Ok(_) => return refuse("target_unverified"),
+        Err(reason) => return refuse(reason),
     };
+    let refuse =
+        |reason: &str| json!({"reason": reason, "class": class, "bundle_id": signer.bundle_id});
     let window = match &arguments["window_id"] {
         Value::Null => None,
         value => match value.as_u64().and_then(|window| u32::try_from(window).ok()) {
@@ -203,6 +234,6 @@ pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -
             None => return refuse("target_unverified"),
         }
     }
-    json!({"value": {"bundle_id": id, "team_id": team, "requirement": requirement, "class": class,
-        "instance": {"pid": pid, "startedAt": {"seconds": before.0, "microseconds": before.1}}, "window_id": window}})
+    json!({"value": {"bundle_id": signer.bundle_id, "team_id": signer.team_id, "requirement": signer.requirement,
+        "class": class, "instance": observed, "window_id": window}})
 }

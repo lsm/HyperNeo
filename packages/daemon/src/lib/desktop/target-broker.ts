@@ -8,6 +8,8 @@ const Reply = z.object({
     z.object({
       call_id: z.string(),
       reason: z.enum(['tool_not_allowed', 'target_unverified', 'target_mismatch']),
+      class: z.string().optional(),
+      bundle_id: z.string().optional(),
     }),
     z.object({
       call_id: z.string(),
@@ -64,7 +66,8 @@ export function createDesktopTargetBroker(dataDir: string) {
     const parsed = Reply.safeParse(reply);
     if (!parsed.success || parsed.data.result.call_id !== callId) return null;
     const result = parsed.data.result;
-    if ('reason' in result) return { reason: result.reason };
+    if ('reason' in result)
+      return { reason: result.reason, class: result.class, app_id: result.bundle_id };
     return {
       value: {
         app_id: result.value.bundle_id,

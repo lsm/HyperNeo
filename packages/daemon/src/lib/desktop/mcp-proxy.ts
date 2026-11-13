@@ -26,9 +26,20 @@ type Options = {
     name: string,
     args: Record<string, unknown>,
     callId: string
-  ) => Promise<{ value: Target } | { reason: Refusal } | null>;
+  ) => Promise<{ value: Target } | Context | null>;
 };
 type Refusal = 'tool_not_allowed' | 'target_unverified' | 'target_mismatch';
+type Context = { reason: Refusal; class?: string; app_id?: string };
+const explanations: Record<string, string> = {
+  tool_not_allowed: 'This tool is not on the desktop allowlist.',
+  desktop_not_opted_in: 'This worker has no approved desktop control binding.',
+  invalid_arguments: 'The arguments do not match the tool schema or worker.',
+  guards_unavailable: 'The trusted desktop host could not check this call.',
+  target_unverified: 'The target app could not be verified from its code signature.',
+  target_mismatch: 'The addressed process, window or app does not match the verified target.',
+  driver_unavailable: 'The desktop driver is not available.',
+  driver_error: 'The desktop driver failed after the call was sent.',
+};
 type Reason = Refusal | 'desktop_not_opted_in' | 'invalid_arguments' | 'guards_unavailable';
 const tools = catalog as unknown as Tool[];
 const refuse = (reason: Reason) => ({ reason });
@@ -112,12 +123,32 @@ export function createDesktopProxy(options: Options) {
       let decision = 'refused';
       let reason = 'driver_unavailable';
       let dispatched = false;
+      let context: Partial<Context> = {};
+      const authorize: Options['authorize'] =
+        options.authorize &&
+        (async (...request) => {
+          const answer = await options.authorize!(...request);
+          if (answer && 'reason' in answer) context = answer;
+          return answer;
+        });
+      const refusal = (): CallToolResult => ({
+        isError: true,
+        content: [{ type: 'text', text: reason }],
+        structuredContent: {
+          reason,
+          class: context.class ?? null,
+          bundle_id: context.app_id ?? null,
+          explanation: explanations[reason],
+          call_id: callId,
+          input_issued: dispatched ? 'unknown' : 'none',
+        },
+      });
       try {
         binding = schemas.has(name) ? await options.binding() : null;
-        const outcome = await plan(name, args, binding, options.authorize, callId);
+        const outcome = await plan(name, args, binding, authorize, callId);
         if (typeof outcome === 'string') {
           reason = outcome;
-          return { isError: true, content: [{ type: 'text', text: reason }] };
+          return refusal();
         }
         target = outcome;
         const result = await options.dispatch(binding!, name, outcome.args, () => {
@@ -129,7 +160,7 @@ export function createDesktopProxy(options: Options) {
       } catch {
         decision = 'error';
         reason = dispatched ? 'driver_error' : 'driver_unavailable';
-        return { isError: true, content: [{ type: 'text', text: reason }] };
+        return refusal();
       } finally {
         options.audit(
           JSON.stringify({
@@ -139,7 +170,7 @@ export function createDesktopProxy(options: Options) {
             worker_id: binding?.worker_id ?? null,
             driver_instance_id: binding?.driver_instance_id ?? null,
             tool: schemas.has(name) ? name : 'unlisted',
-            target_app_id: target?.app_id ?? binding?.target_app_id ?? null,
+            target_app_id: target?.app_id ?? context.app_id ?? binding?.target_app_id ?? null,
             target_pid: target?.pid ?? null,
             target_window_id: target?.window_id ?? null,
             decision,
