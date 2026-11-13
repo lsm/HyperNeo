@@ -178,11 +178,15 @@ describe('todo target identity at the MCP add door', () => {
         expect(f.sessions.get(id)).toEqual({ verb: 'start', adapter: 'hyperneo' });
         f.db.exec('BEGIN IMMEDIATE');
         f.db.exec('ROLLBACK');
+        todos.updateTodo(todos.getTodo(id)!, { state: 'doing', startedAt: 1 }, 1);
         observed = true;
       },
     });
     try {
-      expect(await f.add({ verb: 'start', adapter: 'hyperneo' })).toMatchObject({ ok: true });
+      expect(await f.add({ verb: 'start', adapter: 'hyperneo' })).toMatchObject({
+        ok: true,
+        todo: { state: 'doing', startedAt: 1 },
+      });
       expect(observed).toBe(true);
       expect(f.starts()).toBe(1);
       expect(f.todos.listTodos('ask')).toHaveLength(1);

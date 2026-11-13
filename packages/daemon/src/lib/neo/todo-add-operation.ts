@@ -41,7 +41,10 @@ export async function recordNeoTodoAdmission(
   if (!receipt.ok) return receipt;
   const { start, ...result } = receipt;
   if (start) await controls.advance();
-  return result;
+  return {
+    ...result,
+    ...(result.todo ? { todo: (await store.read('getTodo', result.todo.id)) ?? result.todo } : {}),
+  };
 }
 
 export function wireNeoTodoAdd(
@@ -69,7 +72,6 @@ export function wireNeoTodoAdd(
           ? {
               reason: {
                 ok: true as const,
-                todos: await project(await store.read('listTodosForAsks', [ask.id])),
                 records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
               },
             }
@@ -97,10 +99,9 @@ export function wireNeoTodoAdd(
     )
     .pipe(
       async (result: Result) => {
-        if (!result.ok) return result;
-        const todos = result.todo ? await store.read('listTodosForAsks', [result.todo.askId]) : [];
-        const [todo, ...projected] = await project(result.todo ? [result.todo, ...todos] : todos);
-        return { ...result, ...(result.todo ? { todo } : {}), todos: result.todo ? projected : [] };
+        if (!result.ok || !result.todo) return result;
+        const [todo] = await project([result.todo]);
+        return { ...result, todo };
       },
       'outcome',
       'outcome'

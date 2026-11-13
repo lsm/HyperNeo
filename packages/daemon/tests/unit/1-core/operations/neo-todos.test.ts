@@ -168,7 +168,6 @@ describe('neo.todo operations', () => {
       })
     ).toEqual({
       ok: true,
-      todos: [],
       records: ['ask_settled: this ask is done; no change was made.'],
     });
     expect(
