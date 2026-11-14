@@ -14,9 +14,18 @@ const TONE: Record<DesktopState, string> = {
   stop_unconfirmed: 'bg-danger',
 };
 
-export function DesktopControl({ worker, class: className }: { worker?: string; class?: string }) {
+export function DesktopControl({
+  worker,
+  class: className,
+  onOpen,
+}: {
+  worker?: string;
+  class?: string;
+  onOpen?: (worker: string, todo: string | null) => void;
+}) {
   const [workers, setWorkers] = useState<DesktopWorker[]>([]);
   const [stopping, setStopping] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   const live = useRef(true);
   const read = useCallback(async () => {
     const hub = connectionManager.getHubIfConnected();
@@ -42,10 +51,17 @@ export function DesktopControl({ worker, class: className }: { worker?: string; 
   }, [read, active]);
   const stop = async (id: string) => {
     setStopping(id);
+    setFailed(null);
     const hub = connectionManager.getHubIfConnected();
-    if (hub) await invokeOperation(hub, 'desktop.stop', { worker: id }).catch(() => null);
+    const result = hub
+      ? await invokeOperation<{ state?: string }>(hub, 'desktop.stop', { worker: id }).catch(
+          () => null
+        )
+      : null;
     await read();
-    if (live.current) setStopping(null);
+    if (!live.current) return;
+    setStopping(null);
+    if (!result?.state) setFailed(id);
   };
   if (workers.length === 0) return null;
   return (
@@ -62,7 +78,17 @@ export function DesktopControl({ worker, class: className }: { worker?: string; 
           <span aria-hidden="true" class={`h-2.5 w-2.5 rounded-full ${TONE[entry.state]}`} />
           <span class="min-w-0 flex-1">
             <span class="block">{t(`desktop.state.${entry.state}`)}</span>
-            {entry.todo && <span class="block truncate text-xs text-fg-muted">{entry.todo}</span>}
+            {entry.todo && onOpen ? (
+              <button
+                type="button"
+                onClick={() => onOpen(entry.worker, entry.todo)}
+                class="block max-w-full truncate text-left text-xs text-fg-muted underline-offset-2 hover:text-fg hover:underline"
+              >
+                {entry.todo}
+              </button>
+            ) : (
+              entry.todo && <span class="block truncate text-xs text-fg-muted">{entry.todo}</span>
+            )}
           </span>
           {entry.state !== 'stopped' && (
             <button
@@ -77,6 +103,11 @@ export function DesktopControl({ worker, class: className }: { worker?: string; 
                   ? t('desktop.retry')
                   : t('desktop.stop')}
             </button>
+          )}
+          {failed === entry.worker && (
+            <p role="alert" class="w-full text-xs text-danger">
+              {t('desktop.stopFailed')}
+            </p>
           )}
         </div>
       ))}

@@ -23,12 +23,14 @@ export function NeoDrawer({
   connection,
   onReconnect,
   onRefresh,
+  onOpenSession,
 }: {
   open: boolean;
   onClose: () => void;
   connection: ConnectionState;
   onReconnect: () => void;
   onRefresh: () => void;
+  onOpenSession?: (sessionId: string, label?: string) => void;
 }) {
   const dragFrom = useRef<number | null>(null);
   const panel = useRef<HTMLElement>(null);
@@ -132,7 +134,16 @@ export function NeoDrawer({
             </select>
           </label>
         </section>
-        <DesktopControl class="mb-6" />
+        <DesktopControl
+          class="mb-6"
+          onOpen={
+            onOpenSession &&
+            ((sessionId, todo) => {
+              onClose();
+              onOpenSession(sessionId, todo ?? undefined);
+            })
+          }
+        />
         <PendingDevices connection={connection} />
       </aside>
     </div>

@@ -53,6 +53,7 @@ export const en = {
   'desktop.stop': 'Stop and take over',
   'desktop.stopping': 'Stopping…',
   'desktop.retry': 'Try stopping again',
+  'desktop.stopFailed': 'The stop request failed. Try again.',
   'goalDetails.failed': 'Could not read goal details',
   'goalDetails.journal': 'Journal',
   'goalDetails.worked': 'What worked',
