@@ -192,10 +192,7 @@ Space: the file grows from 943 MB to 1,190 MB in the benchmark (+26%), with 249 
 
 The earlier design estimated 1–2 s for the laptop rebuild and roughly a minute for an older iMac row count. These are not measured downtime-path acceptance numbers. Re-measure the current synthetic 1.455 GB fixture and include backup/verification/rollback before proposing a window; the iMac separately needs its actual build, row count and free-space assessment.
 
-Rollback has two paths:
-
-- **The reverse script** is the durable path: stop the daemon, then run `bun packages/daemon/scripts/restore-sdk-message-bodies.ts <DB path> --restore-legacy`. It acquires the same DB PID lock, copies complete bodies back in yielding byte-bounded chunks, and re-adds the legacy column if absent. It retains the side table and pinned backup, preserving messages written after the backup. A reversed marker disables automatic copy; slice 11 must require completion without that marker before rebuilding. No automatic rollback, side-table deletion or message deletion is added.
-- **Restoring the step-1 backup** loses everything written since that snapshot and is a manual fallback only. This pinned backup is not subject to the three-backup rotation used by unrelated schema migrations.
+Rollback keeps one path: **restoring the step-1 backup** loses everything written since that snapshot and is a manual fallback only. This pinned backup is not subject to the three-backup rotation used by unrelated schema migrations. The retired reverse script no longer exists; the `reversed` marker it wrote is still read by the admission check. No automatic rollback, side-table deletion or message deletion is added.
 
 ## Benefit measured
 

@@ -233,18 +233,6 @@ describe('SpaceTasks', () => {
     expect(getByText('No completed tasks')).toBeTruthy();
   });
 
-  it('treats legacy archived routes as completed', async () => {
-    mockCurrentSpaceTasksFilterTabSignal.value = 'archived';
-    mockTasks.value = [makeTask('t1', 'archived')];
-    const { findByText, getAllByText } = render(<SpaceTasks spaceId="space-1" />);
-    const completedButtons = getAllByText('Completed');
-    expect(
-      completedButtons.some((el) => el.closest('button')?.getAttribute('aria-pressed') === 'true')
-    ).toBe(true);
-    expect(await findByText('Task t1')).toBeTruthy();
-    expect(await findByText(/Archived \(1\)/)).toBeTruthy();
-  });
-
   it('displays tasks in active tab (open + in_progress)', async () => {
     mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'in_progress')];
     const { findByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);

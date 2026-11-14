@@ -17,27 +17,6 @@ const FLUSH_DELAY_MS = 500;
 const RETRY_DELAY_MS = 5_000;
 const MAX_RETRY_DELAY_MS = 60_000;
 
-const LEGACY_KEY_PREFIXES = [
-  'hyperneo_voice_transcript_outbox_v1.entry.landed.',
-  'hyperneo_voice_transcript_outbox_v1.draft.',
-  'hyperneo_voice_transcript_outbox_v1.clear.',
-  'hyperneo_voice_transcript_outbox_v1.superseded.',
-  'hyperneo_tab_heartbeat.',
-];
-
-function sweepLegacyKeys(): void {
-  try {
-    const staleKeys: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && LEGACY_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) {
-        staleKeys.push(key);
-      }
-    }
-    for (const key of staleKeys) localStorage.removeItem(key);
-  } catch {}
-}
-
 const mirror = new Map<string, PendingTranscript>();
 
 function entryKey(id: string): string {
@@ -221,7 +200,6 @@ function handleStorageEvent(event: StorageEvent): void {
 export function startVoiceTranscriptOutboxFlush(): void {
   if (cleanupAutoFlush) return;
   pruneExpired();
-  sweepLegacyKeys();
   window.addEventListener('storage', handleStorageEvent);
   cleanupStorageListener = () => window.removeEventListener('storage', handleStorageEvent);
   cleanupAutoFlush = effect(() => {

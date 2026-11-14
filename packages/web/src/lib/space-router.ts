@@ -29,13 +29,11 @@ const SPACES_ROUTE_PATTERN = /^\/spaces$/;
 const SPACE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)$/;
 const SPACE_CONFIGURE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/configure$/;
 const SPACE_CONFIGURE_TAB_ROUTE_PATTERN =
-  /^\/space\/([a-z0-9-]+)\/configure\/(general|runtime|tools|events|agent-templates|workflow-templates|advanced|agents|workflows|settings)$/;
+  /^\/space\/([a-z0-9-]+)\/configure\/(general|runtime|tools|events|agent-templates|workflow-templates|advanced)$/;
 const SPACE_GOALS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/goals$/;
 const SPACE_MEMORIES_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/memories$/;
 const SPACE_EVOLVE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/evolve$/;
-const SPACE_FORGE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/forge$/;
 const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
-const SPACE_TASKS_ARCHIVED_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks\/archived$/;
 const SPACE_TASKS_TAB_ROUTE_PATTERN =
   /^\/space\/([a-z0-9-]+)\/tasks\/(action|active|draft|completed|scheduled)$/;
 const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/(?:agent|agents)$/;
@@ -44,7 +42,6 @@ const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-zA-Z0-
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)$/;
 const SPACE_TASK_VIEW_ROUTE_PATTERN =
   /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)\/(thread|timeline|log|canvas|artifacts)$/;
-const LEGACY_SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
 
 export function getSpaceIdFromPath(path: string): string | null {
   const configureTabMatch = path.match(SPACE_CONFIGURE_TAB_ROUTE_PATTERN);
@@ -52,9 +49,6 @@ export function getSpaceIdFromPath(path: string): string | null {
 
   const configureMatch = path.match(SPACE_CONFIGURE_ROUTE_PATTERN);
   if (configureMatch) return configureMatch[1];
-
-  const archivedTasksMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
-  if (archivedTasksMatch) return archivedTasksMatch[1];
 
   const tasksTabMatch = path.match(SPACE_TASKS_TAB_ROUTE_PATTERN);
   if (tasksTabMatch) return tasksTabMatch[1];
@@ -67,9 +61,6 @@ export function getSpaceIdFromPath(path: string): string | null {
 
   const evolveMatch = path.match(SPACE_EVOLVE_ROUTE_PATTERN);
   if (evolveMatch) return evolveMatch[1];
-
-  const forgeMatch = path.match(SPACE_FORGE_ROUTE_PATTERN);
-  if (forgeMatch) return forgeMatch[1];
 
   const tasksMatch = path.match(SPACE_TASKS_ROUTE_PATTERN);
   if (tasksMatch) return tasksMatch[1];
@@ -115,12 +106,12 @@ export function getSpaceConfigureFromPath(path: string): string | null {
 
 export function getSpaceConfigureTabFromPath(
   path: string
-): { spaceId: string; tab: SpaceSettingsTab | 'agents' | 'workflows' | 'settings' } | null {
+): { spaceId: string; tab: SpaceSettingsTab } | null {
   const match = path.match(SPACE_CONFIGURE_TAB_ROUTE_PATTERN);
   if (!match) return null;
   return {
     spaceId: match[1],
-    tab: match[2] as SpaceSettingsTab | 'agents' | 'workflows' | 'settings',
+    tab: match[2] as SpaceSettingsTab,
   };
 }
 
@@ -136,9 +127,7 @@ export function getSpaceMemoriesFromPath(path: string): string | null {
 
 export function getSpaceEvolveFromPath(path: string): string | null {
   const evolveMatch = path.match(SPACE_EVOLVE_ROUTE_PATTERN);
-  if (evolveMatch) return evolveMatch[1];
-  const forgeMatch = path.match(SPACE_FORGE_ROUTE_PATTERN);
-  return forgeMatch ? forgeMatch[1] : null;
+  return evolveMatch ? evolveMatch[1] : null;
 }
 
 export function getSpaceTasksFromPath(path: string): string | null {
@@ -150,9 +139,6 @@ export function getSpaceTasksTabFromPath(path: string): {
   spaceId: string;
   tab: 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
 } | null {
-  const archivedMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
-  if (archivedMatch) return { spaceId: archivedMatch[1], tab: 'completed' };
-
   const match = path.match(SPACE_TASKS_TAB_ROUTE_PATTERN);
   if (!match) return null;
   return {
@@ -570,52 +556,7 @@ function setSpacesListRoute(): void {
 }
 
 function applySpacePath(requestedPath: string): boolean {
-  let path = requestedPath;
-  const legacySessionsMatch = path.match(LEGACY_SPACE_SESSIONS_ROUTE_PATTERN);
-  if (legacySessionsMatch) {
-    path = createSpacePath(legacySessionsMatch[1]);
-    pushPath(path, { spaceId: legacySessionsMatch[1] }, true);
-  }
-
-  const legacyArchivedTasksMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
-  if (legacyArchivedTasksMatch) {
-    pushPath(
-      createSpaceTasksPath(legacyArchivedTasksMatch[1], 'completed'),
-      {
-        spaceId: legacyArchivedTasksMatch[1],
-      },
-      true
-    );
-  }
-
-  const legacyForgeMatch = path.match(SPACE_FORGE_ROUTE_PATTERN);
-  if (legacyForgeMatch) {
-    pushPath(
-      createSpaceEvolvePath(legacyForgeMatch[1]),
-      {
-        spaceId: legacyForgeMatch[1],
-      },
-      true
-    );
-  }
-
-  const legacyConfigureTab = getSpaceConfigureTabFromPath(path);
-  if (
-    legacyConfigureTab &&
-    (legacyConfigureTab.tab === 'agents' ||
-      legacyConfigureTab.tab === 'workflows' ||
-      legacyConfigureTab.tab === 'settings')
-  ) {
-    const legacyTarget =
-      legacyConfigureTab.tab === 'workflows'
-        ? createSpaceConfigurePath(legacyConfigureTab.spaceId, 'workflow-templates')
-        : legacyConfigureTab.tab === 'agents'
-          ? createSpaceAgentPath(legacyConfigureTab.spaceId)
-          : createSpaceConfigurePath(legacyConfigureTab.spaceId);
-    pushPath(legacyTarget, { spaceId: legacyConfigureTab.spaceId }, true);
-    path = legacyTarget;
-  }
-
+  const path = requestedPath;
   const spaceConfigureTab = getSpaceConfigureTabFromPath(path);
   const spaceConfigure = spaceConfigureTab
     ? spaceConfigureTab.spaceId

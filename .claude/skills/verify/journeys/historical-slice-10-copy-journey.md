@@ -45,19 +45,10 @@ are recorded separately. Seed and final offline hashing are outside daemon lag
 measurement. A backup manifest mismatch or missing original backup must reject
 verification without altering source bodies; `backup-rejection.json` records it.
 
-Exercise the offline reverse tool only after both children stop:
-
-```bash
-env -i PATH="$PATH" NODE_ENV=test bun packages/daemon/scripts/restore-sdk-message-bodies.ts \
-  "$RUN/data/daemon.db" --restore-legacy > "$RUN/evidence/reverse.log"
-env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
-  bun .claude/skills/verify/sdk-body-copy.ts inspect 9338 "$RUN" > "$RUN/evidence/reverse-after.json"
-```
-
-The reverse hash must match `before.json`. Side bodies and the pinned backup
-remain; the reversed marker disables automatic copying. All children, workers
-and sockets must stop; delete only this run's synthetic data after retaining
-evidence. Unit suites run in CI, including insufficient/unknown disk refusal,
+The offline reverse tool was retired with the low-risk compatibility pass; the
+copy completion and pinned backup are the only rollback surface left. All
+children, workers and sockets must stop; delete only this run's synthetic data
+after retaining evidence. Unit suites run in CI, including insufficient/unknown disk refusal,
 verification failure, runtime-capacity/worker refusal, durable backup reservation,
 rollback, restart, authoritative-side conflicts, malformed
 bytes and concurrent normal writers. No GUI, model or credentials are used.
