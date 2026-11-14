@@ -56,6 +56,24 @@ try {
     result.hoverAlpha = await opacity(plus(page, 'alpha'));
     result.hoverBeta = await opacity(plus(page, 'beta'));
     await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-hover.png` });
+    const remove = page.getByRole('button', { name: 'Remove project alpha' });
+    const size = async (locator) => {
+      const box = await locator.boundingBox();
+      return `${Math.round(box.width)}x${Math.round(box.height)}`;
+    };
+    const background = (locator) => locator.evaluate((el) => getComputedStyle(el).backgroundColor);
+    result.plusSize = await size(plus(page, 'alpha'));
+    result.removeSize = await size(remove);
+    result.plusRestBackground = await background(plus(page, 'alpha'));
+    await plus(page, 'alpha').hover();
+    await page.waitForTimeout(300);
+    result.plusHoverBackground = await background(plus(page, 'alpha'));
+    await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-hover-plus.png` });
+    await remove.hover();
+    await page.waitForTimeout(300);
+    result.removeHoverBackground = await background(remove);
+    result.removeIsTrash = await remove.locator('path[d="M3 6h18"]').count();
+    await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-hover-remove.png` });
     await page.mouse.move(900, 700);
     await page.getByTestId('project-group-header').filter({ hasText: 'beta' }).focus();
     await page.waitForTimeout(400);
@@ -103,6 +121,10 @@ try {
     assert.match(result.chipText ?? '', /alpha/);
     assert.equal(result.addProjectForms, 0);
     assert.equal(result.addedFolderInMenu, true);
+    assert.equal(result.plusSize, result.removeSize);
+    assert.notEqual(result.plusHoverBackground, result.plusRestBackground);
+    assert.equal(result.removeHoverBackground, result.plusHoverBackground);
+    assert.equal(result.removeIsTrash, 1);
     assert.deepEqual(result.pageErrors, []);
     await context.close();
   }
