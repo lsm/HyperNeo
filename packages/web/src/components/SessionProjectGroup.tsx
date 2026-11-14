@@ -6,7 +6,7 @@ interface SessionProjectGroupProps {
   name: string;
   path: string;
   folders?: string[];
-  onAddFolder?: () => void;
+  onNewSession?: () => void;
   sessions: Session[];
   collapsed: boolean;
   onToggle: () => void;
@@ -20,7 +20,7 @@ export function SessionProjectGroup({
   name,
   path,
   folders,
-  onAddFolder,
+  onNewSession,
   sessions,
   collapsed,
   onToggle,
@@ -69,13 +69,14 @@ export function SessionProjectGroup({
           </span>
           <span class="flex-1 min-w-0 truncate text-left font-medium">{name}</span>
         </button>
-        {onAddFolder && (
+        {onNewSession && (
           <button
             type="button"
-            onClick={onAddFolder}
-            aria-label={`Add folder to ${name}`}
-            title="Add folder"
-            class="p-1 text-xs text-fg-faint hover:text-fg"
+            data-testid="project-new-session"
+            onClick={onNewSession}
+            aria-label={`New session in ${name}`}
+            title={`New session in ${name}`}
+            class="opacity-100 pointer-fine:opacity-0 pointer-fine:group-hover/project:opacity-100 pointer-fine:group-focus-within/project:opacity-100 pointer-fine:focus-visible:opacity-100 p-1 text-xs text-fg-faint hover:text-fg transition-opacity"
           >
             +
           </button>

@@ -10,6 +10,8 @@ export const slashCommandsSignal = signal<string[]>([]);
 export type NavSection = string;
 export const navSectionSignal = signal<NavSection>('chats');
 
+export const pendingNewChatProjectSignal = signal<string | null>(null);
+
 export interface SearchMessageLoadTarget {
   sessionId: string;
   before?: number;

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useSignalEffect } from '@preact/signals';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
 import type {
   CreateSessionRequest,
@@ -9,6 +10,7 @@ import type {
   WorkspaceHistoryEntry,
 } from '@hyperneo/shared';
 import { connectionState, globalSettings, sessions } from '../lib/state.ts';
+import { pendingNewChatProjectSignal } from '../lib/signals.ts';
 import { navigateToSession } from '../lib/router.ts';
 import {
   createSession,
@@ -183,6 +185,13 @@ export function SessionsPage() {
       .then(setHistory)
       .catch(() => {});
   }, []);
+
+  useSignalEffect(() => {
+    const requested = pendingNewChatProjectSignal.value;
+    if (!requested) return;
+    pendingNewChatProjectSignal.value = null;
+    setProject(requested);
+  });
 
   useEffect(() => {
     saveNewChatSelection({
