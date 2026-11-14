@@ -7,6 +7,8 @@ import { getConfig } from '../../../../src/config.ts';
 import { globalSettingsWrites } from '../../../../src/storage/repositories/global-settings-writes.ts';
 import { toolDefaultTransitions } from '../../../../src/storage/repositories/tool-default-transition.ts';
 import { createLocalSocket } from '../../../../src/lib/pairing/local-credential.ts';
+import { createTestDb } from '../../../helpers/database.ts';
+import { migrateSessionToolSelections } from '../../../../src/storage/repositories/session-tool-selection-migration.ts';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 
 test('committed settings stay visible while repeated facade reads avoid SQLite', async () => {
@@ -39,7 +41,7 @@ test('committed settings stay visible while repeated facade reads avoid SQLite',
   };
   try {
     await app.jobProcessor.stop();
-    await transport.connect();
+    await transport.initialize();
     read();
     app.db.saveGlobalSettings({ ...read(), outputStyle: 'saved' });
     expect(read().outputStyle).toBe('saved');
@@ -83,3 +85,37 @@ test('committed settings stay visible while repeated facade reads avoid SQLite',
     rmSync(directory, { recursive: true, force: true });
   }
 }, 60_000);
+
+test('a warmed settings cache exposes startup tool-choice migration', async () => {
+  const db = await createTestDb();
+  try {
+    db.saveGlobalSettings({ ...db.getGlobalSettings(), toolSelectionDefaults: undefined });
+    expect(db.getGlobalSettings().toolSelectionDefaults).toBeUndefined();
+    expect(
+      migrateSessionToolSelections(db.getDatabase(), { skills: [], registry: [], overrides: [] })
+    ).toBe(1);
+    expect(db.getGlobalSettings().toolSelectionDefaults).toEqual({ version: 1, choices: {} });
+  } finally {
+    await db.close();
+  }
+});
+
+test('a settings read inside a rolled-back transaction cannot poison the cache', async () => {
+  const db = await createTestDb();
+  try {
+    db.updateGlobalSettings({ outputStyle: 'committed' });
+    expect(db.getGlobalSettings().outputStyle).toBe('committed');
+    expect(() =>
+      db.getDatabase().transaction(() => {
+        db.updateGlobalSettings({
+          outputStyle: 'rolled-back',
+        });
+        expect(db.getGlobalSettings().outputStyle).toBe('rolled-back');
+        throw new Error('synthetic rollback');
+      })()
+    ).toThrow('synthetic rollback');
+    expect(db.getGlobalSettings().outputStyle).toBe('committed');
+  } finally {
+    await db.close();
+  }
+});
