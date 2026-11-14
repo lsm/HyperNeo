@@ -204,7 +204,7 @@ describe('SessionsPage', () => {
     expect(mockAddFolderToProject).not.toHaveBeenCalled();
   });
 
-  it('refuses when history loaded but the current list cannot be read', async () => {
+  it('refuses when the current list cannot be read and the last one lacks the project', async () => {
     mockGetWorkspaceHistory.mockResolvedValue([
       { path: '/code', lastUsedAt: 1, useCount: 1 },
       { path: '/gone', lastUsedAt: 1, useCount: 1 },
@@ -216,10 +216,13 @@ describe('SessionsPage', () => {
     );
     fireEvent.click(goneChip);
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Add folder to gone…' }));
-    mockGetWorkspaceHistory.mockRejectedValue(new Error('Disconnected'));
+    mockGetWorkspaceHistory.mockResolvedValueOnce([{ path: '/code', lastUsedAt: 1, useCount: 1 }]);
+    workspaceHistoryVersionSignal.value += 1;
+    await waitFor(() => expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(2));
+    mockGetWorkspaceHistory.mockRejectedValueOnce(new Error('Disconnected'));
     fireEvent.input(screen.getByPlaceholderText('Folder path'), { target: { value: '/assets' } });
     fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
-    expect(await screen.findByText(/could not check its project/)).toBeTruthy();
+    expect(await screen.findByText(/Could not check its project for this folder/)).toBeTruthy();
     expect(mockAddFolderToProject).not.toHaveBeenCalled();
   });
 
