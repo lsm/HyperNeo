@@ -508,6 +508,10 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: false,
       reason: 'reply_needs_details',
     });
+    const email = `Dear Sam,\n\n${long}\n\nThanks,\nMarc\n\nP.S. ${'QUJD'.repeat(125)}`;
+    expect(
+      await publish({ requestId: 'deliverable', text: email, deliverable: true }, caller)
+    ).toMatchObject({ accepted: true, publication: { verbatim: true, fullText: email } });
     for (const [requestId, text] of [
       ['short', '**Merged**\n- CI green\n- 已部署'],
       ['words-at-limit', Array(60).fill('word').join(' ')],
@@ -518,7 +522,7 @@ describe('Neo publication without runtime input attribution', () => {
         accepted: true,
         publication: { verbatim: true, fullText: text },
       });
-    expect(ledger.list(conversationId)).toHaveLength(5);
+    expect(ledger.list(conversationId)).toHaveLength(6);
   });
 
   test('refuses folded details whose combined length passes the stored cap', async () => {

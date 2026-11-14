@@ -202,6 +202,9 @@ describe('root Neo system prompt', () => {
     expect(prompt).toContain('any lead-in line is a separate normal message or is skipped');
     expect(prompt).toContain('One message per deliverable');
     expect(prompt).toContain(
+      'Publish each with deliverable: true; deliverables are exempt from the body length limit.'
+    );
+    expect(prompt).toContain(
       'Plain text for emails and translations; Markdown or code only when the human wants it'
     );
     expect(prompt).toContain('Anything over the text limit goes as a file');
