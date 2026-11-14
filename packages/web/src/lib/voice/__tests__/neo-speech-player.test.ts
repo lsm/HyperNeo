@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import { openNeoSpeechPlayer } from '../neo-speech-player.ts';
 
@@ -117,6 +117,94 @@ const audio = (id: string, seq: number, bytes: Uint8Array, sessionId = 'neo') =>
 const end = (id: string, seq: number) => ({ type: 'end', id, sessionId: 'neo', seq });
 
 describe('openNeoSpeechPlayer', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps the playing reply on time when a reply queued behind it fails', () => {
+    const { hub, emit } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    emit(say(ID_B));
+    emit(audio(ID_A, 0, pcm(...new Array(2400).fill(16384))));
+    emit({ type: 'failed', id: ID_B, sessionId: 'neo' });
+    emit(audio(ID_A, 1, pcm(16384)));
+    expect(sound.sources[1].when).toBeCloseTo(0.1);
+  });
+
+  it('gives up on a reply whose audio never arrives so later replies still play', async () => {
+    vi.useFakeTimers();
+    const { hub, emit, acks } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    emit(say(ID_B));
+    emit(audio(ID_B, 0, pcm(-16384)));
+    emit(end(ID_B, 1));
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(sound.sources).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(acks()).toEqual(['A:failed', 'B:playing']);
+    expect(sound.sources.map((source) => source.samples)).toEqual([[-0.5]]);
+  });
+
+  it('gives up on a stalled reply even while the next reply keeps streaming', async () => {
+    vi.useFakeTimers();
+    const { hub, emit, acks } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    emit(say(ID_B));
+    for (let seq = 0; seq < 3; seq++) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      emit(audio(ID_B, seq, pcm(-16384)));
+    }
+    expect(acks()).toEqual(['A:failed', 'B:playing']);
+    expect(sound.sources.map((source) => source.samples)).toEqual([[-0.5], [-0.5], [-0.5]]);
+  });
+
+  it('starts a queued reply wait only when it reaches the front', async () => {
+    vi.useFakeTimers();
+    const { hub, emit, acks } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    emit(say(ID_B));
+    emit(audio(ID_A, 0, pcm(16384)));
+    emit(end(ID_A, 1));
+    await vi.advanceTimersByTimeAsync(40_000);
+    sound.finish(0);
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(acks()).toEqual(['A:playing', 'A:played']);
+    emit(audio(ID_B, 0, pcm(-16384)));
+    expect(sound.sources.map((source) => source.samples)).toEqual([[0.5], [-0.5]]);
+  });
+
+  it('does not give up on a reply while its audio is playing', async () => {
+    vi.useFakeTimers();
+    const { hub, emit, acks } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    emit(audio(ID_A, 0, pcm(16384)));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(acks()).toEqual(['A:playing']);
+    expect(sound.sources[0].stopped).toBe(false);
+  });
+
+  it('keeps the first copy of a chunk delivered twice', () => {
+    const { hub, emit } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    emit(audio(ID_A, 1, pcm(-16384)));
+    emit(audio(ID_A, 1, pcm(8192)));
+    emit(audio(ID_A, 0, pcm(16384)));
+    emit(audio(ID_A, 0, pcm(8192)));
+    expect(sound.sources.map((source) => source.samples)).toEqual([[0.5], [-0.5]]);
+  });
+
   it('plays chunks in sequence order and acknowledges playing then played', async () => {
     const { hub, emit, acks } = fakeHub();
     const sound = fakeAudio();
