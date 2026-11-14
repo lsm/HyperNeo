@@ -36,13 +36,15 @@ interface FakeSource {
   onended: (() => void) | null;
 }
 
-function fakeAudio() {
+function fakeAudio(blocked = false) {
   const sources: FakeSource[] = [];
   let closed = false;
   const context = {
     currentTime: 0,
     destination: {},
-    resume: vi.fn(async () => {}),
+    resume: vi.fn(async () => {
+      if (blocked) throw new Error('NotAllowedError');
+    }),
     close: vi.fn(async () => {
       closed = true;
     }),
@@ -211,6 +213,18 @@ describe('openNeoSpeechPlayer', () => {
     const sound = fakeAudio();
     openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
     expect(sound.resumed()).toBe(true);
+  });
+
+  it('reports replies as failed when the browser refuses to start audio', async () => {
+    const { hub, emit, acks } = fakeHub();
+    const sound = fakeAudio(true);
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    await vi.waitFor(() => expect(acks()).toEqual(['A:failed']));
+    emit(say(ID_B));
+    emit(audio(ID_B, 0, pcm(16384)));
+    expect(sound.sources).toHaveLength(0);
+    await vi.waitFor(() => expect(acks()).toEqual(['A:failed', 'B:failed']));
   });
 
   for (const [label, cut] of [
