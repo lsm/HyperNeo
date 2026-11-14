@@ -50,14 +50,14 @@ The existing dialog stays the only approval path, and a forwarding token must al
 
 ### 4. Every action is recorded, and input has no other route
 
-Each forwarded call has one durable row, written in two phases. The row is not a single write that both gates dispatch and reports its result; the outcome fields stay empty until the dispatch has finished.
+Each call that gets past the pre-dispatch commit has one durable row, written in two phases. The row is not a single write that both gates dispatch and reports its result; the outcome fields stay empty until the dispatch has finished.
 
-1. **Pre-dispatch.** Before any token is sent, the daemon commits the row with task, session, worker, driver instance, app, action class, tool, time and the call ID, a phase of `pending`, and the outcome fields — decision, result, reached-the-driver, duration — left empty. The commit must succeed first; if it fails, the call is refused with no dispatch and the worker gets that reason. That refusal is a pre-dispatch row, not a driver result.
+1. **Pre-dispatch.** Before any token is sent, the daemon commits the row with task, session, worker, driver instance, app, action class, tool, time and the call ID, a phase of `pending`, and the outcome fields — decision, result, reached-the-driver, duration — left empty. The commit must succeed first; if it fails, nothing is dispatched, nothing is recorded, and the worker gets the refusal.
 2. **Finalize.** When the host returns, the daemon writes those outcome fields into the same row, committed before the worker's reply is written. If finalize fails, the pre-dispatch row stands and the reply is withheld: the worker gets an error that the outcome is unrecorded rather than a result. A row still in `pending` with empty outcome fields therefore always means the outcome was never recorded, and a reader never sees an outcome that was not written.
 
-A refusal that never dispatched — a failed pre-dispatch commit, a missing opt-in, a token mismatch, a store or grant refusal — ends with that row marked `refused` and no host record, never with a driver result. Only a call the host actually dispatched ends in phase `finalized` with populated outcome fields and the host's own record, which the host writes and commits before returning, so a daemon fault cannot hide an action.
+Nothing is recorded when the store cannot take it: if the pre-dispatch commit fails, or a check ends the call before that commit (no opt-in, no token), there is no daemon row and no host record, the call is not dispatched, and the worker gets the refusal — refusing to write is the point, so no row is claimed where none exists. Every refusal decided after the row is committed — a class or target mismatch the host rejects, a store or grant refusal — finalizes that row as `refused`, and the host record exists whenever the host was reached.
 
-Input reaches a driver only through the host's dispatch action. There is no direct socket to the driver and no second entry point. Every dispatched call has both records, and no call returns a result whose outcome is missing from the daemon's row.
+Only a call the host actually dispatched ends in phase `finalized` with populated outcome fields and the host's own record, which the host writes and commits before returning, so a daemon fault cannot hide an action. Input reaches a driver only through the host's dispatch action: there is no direct socket to the driver and no second entry point.
 
 ## What this does not protect against
 
