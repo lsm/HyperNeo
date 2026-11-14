@@ -532,7 +532,7 @@
     "packages/daemon/tests/unit/5-space/runtime/workspace-flow-gates.test.ts": 7,
     "packages/daemon/tests/unit/5-space/space-adapter.test.ts": 1,
     "packages/daemon/tests/unit/5-space/tools/task-transition-routing.test.ts": 4,
-    "packages/daemon/tests/unit/5-space/workflow/built-in-workflows.test.ts": 30,
+    "packages/daemon/tests/unit/5-space/workflow/built-in-workflows.test.ts": 31,
     "packages/daemon/tests/unit/5-space/workflow/hook-validation.test.ts": 1,
     "packages/daemon/tests/unit/5-space/workflow/run-template-snapshot.test.ts": 1,
     "packages/daemon/tests/unit/5-space/workflow/template-hash.test.ts": 11,

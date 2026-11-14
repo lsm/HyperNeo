@@ -42,6 +42,8 @@ import {
   CODING_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   getBuiltInWorkflows,
+  LEGACY_CODING_TEMPLATE_IDENTITIES,
+  resolveBuiltInWorkflowTemplate,
   RESEARCH_PROMPT,
   RESEARCH_REVIEW_PROMPT,
   RESEARCH_WORKFLOW,
@@ -1025,6 +1027,33 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 describe('getBuiltInWorkflows()', () => {
   test('returns exactly five templates', () => {
     expect(getBuiltInWorkflows()).toHaveLength(5);
+  });
+
+  test('legacy template identities map to canonical stable templates', () => {
+    const legacyNames: string[] = LEGACY_CODING_TEMPLATE_IDENTITIES.map((i) => i.legacyName);
+    const canonicalNames: string[] = LEGACY_CODING_TEMPLATE_IDENTITIES.map((i) => i.name);
+    expect(legacyNames).toEqual(['Coding Workflow', 'Coding with QA Workflow']);
+    expect(canonicalNames).toEqual([STABLE_CODING_WORKFLOW.name, CODING_WITH_QA_WORKFLOW.name]);
+  });
+
+  test('resolves a stored legacy template name to its canonical template', () => {
+    expect(resolveBuiltInWorkflowTemplate('Coding Workflow')?.name).toBe('Coding');
+    expect(resolveBuiltInWorkflowTemplate('Coding with QA Workflow')?.name).toBe('Coding with QA');
+    expect(resolveBuiltInWorkflowTemplate('Coding')).toBe(
+      getBuiltInWorkflows().find((w) => w.name === 'Coding')
+    );
+    expect(resolveBuiltInWorkflowTemplate('no-such-template')).toBeUndefined();
+  });
+
+  test('identifies merge-required workflows by stored template name', () => {
+    expect(builtInWorkflowRequiresPrMerge('Coding')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Coding Workflow')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Coding with QA')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Research Workflow')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Review-Only')).toBe(false);
+    expect(builtInWorkflowRequiresPrMerge('Coder-Only Workflow')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('custom workflow')).toBe(false);
+    expect(builtInWorkflowRequiresPrMerge(null)).toBe(false);
   });
 
   test('includes CODING_WORKFLOW', () => {
@@ -2438,7 +2467,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.nodes.some((n) => n.id === 'retired-pa')).toBe(true);
   });
 
-  test('keeps the legacy "Coding Workflow" template name instead of renaming it', () => {
+  test('migrates a legacy "Coding Workflow" row to the stable identity', () => {
     seedBuiltInWorkflows(SPACE_ID, manager);
     const seededCoding = manager
       .listWorkflows(SPACE_ID)
@@ -2446,12 +2475,166 @@ describe('seedBuiltInWorkflows()', () => {
     const codingId = seededCoding.id;
     revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
 
-    seedBuiltInWorkflows(SPACE_ID, manager);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    expect(after.name).toBe('Coding');
+    expect(after.handle).toBe('coding');
+    expect(after.templateName).toBe('Coding');
+    expect(result.errors).toEqual([]);
+    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(5);
+  });
+
+  test('migrating a legacy row does not seed a duplicate canonical workflow', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    revertToLegacyIdentity(seededCoding.id, 'Coding Workflow', 'coding-workflow');
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
+
+    expect(result.seeded).toEqual([]);
+    const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
+    expect(names.filter((name) => name === 'Coding')).toHaveLength(1);
+    expect(names).not.toContain('Coding Workflow');
+  });
+
+  test('partial legacy migration: a rename collision stamps templateName so the row still groups for cleanup', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seeded = manager.listWorkflows(SPACE_ID);
+    const codingRow = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const stableQa = seeded.find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
+
+    revertToLegacyIdentity(codingRow.id, 'Coding Workflow', 'coding-workflow');
+    db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(stableQa.id);
+
+    manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Coding',
+      nodes: [{ name: 'Code', agentId: CODER_ID }],
+    });
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
+
+    const after = manager.listWorkflows(SPACE_ID);
+    expect(after.find((w) => w.id === codingRow.id)!.name).toBe('Coding Workflow');
+    expect(after.find((w) => w.id === codingRow.id)!.templateName).toBe('Coding');
+    expect(after.find((w) => w.id === codingRow.id)!.handle).toBe('coding-workflow');
+    expect(after.filter((w) => w.name === 'Coding')).toHaveLength(1);
+    expect(result.errors).toEqual([]);
+  });
+
+  test('duplicate legacy rows: every row is migrated, not just the newest', () => {
+    const older = manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Coding Workflow (dup-a)',
+      nodes: [
+        { id: 'o-c', name: 'Coding', agents: [{ agentId: CODER_ID, name: 'coder' }] },
+        { id: 'o-r', name: 'Review', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+      ],
+      startNodeId: 'o-c',
+      endNodeId: 'o-r',
+      templateName: 'Coding Workflow',
+    });
+    const newer = manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Coding Workflow',
+      nodes: [
+        { id: 'n-c', name: 'Coding', agents: [{ agentId: CODER_ID, name: 'coder' }] },
+        { id: 'n-r', name: 'Review', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+      ],
+      startNodeId: 'n-c',
+      endNodeId: 'n-r',
+      templateName: 'Coding Workflow',
+    });
+    db.prepare(`UPDATE space_workflows SET created_at = ? WHERE id = ?`).run(1000, older.id);
+    db.prepare(`UPDATE space_workflows SET created_at = ? WHERE id = ?`).run(2000, newer.id);
+    expect(
+      manager.listWorkflows(SPACE_ID).filter((w) => w.templateName === 'Coding Workflow')
+    ).toHaveLength(2);
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
+    expect(result.errors).toEqual([]);
+
+    const after = manager.listWorkflows(SPACE_ID);
+    expect(after.filter((w) => w.templateName === 'Coding Workflow')).toHaveLength(0);
+    expect(after.filter((w) => w.templateName === 'Coding')).toHaveLength(2);
+    expect(after.find((w) => w.id === newer.id)!.name).toBe('Coding');
+    expect(after.find((w) => w.id === older.id)!.name).toBe('Coding Workflow (dup-a)');
+    expect(after.find((w) => w.id === older.id)!.templateName).toBe('Coding');
+  });
+
+  test('user-renamed legacy row keeps its custom name/handle (templateName only)', () => {
+    const custom = manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'My Team Coding',
+      nodes: [
+        { id: 'u-c', name: 'Coding', agents: [{ agentId: CODER_ID, name: 'coder' }] },
+        { id: 'u-r', name: 'Review', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+      ],
+      startNodeId: 'u-c',
+      endNodeId: 'u-r',
+      templateName: 'Coding Workflow',
+    });
+    db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`).run(
+      'my-team-coding',
+      custom.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
+    expect(result.errors).toEqual([]);
+
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === custom.id)!;
+    expect(after.name).toBe('My Team Coding');
+    expect(after.handle).toBe('my-team-coding');
+    expect(after.templateName).toBe('Coding');
+  });
+
+  test('handle-only legacy customization is preserved (name unchanged, handle customized)', () => {
+    const custom = manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Coding Workflow',
+      nodes: [
+        { id: 'h-c', name: 'Coding', agents: [{ agentId: CODER_ID, name: 'coder' }] },
+        { id: 'h-r', name: 'Review', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+      ],
+      startNodeId: 'h-c',
+      endNodeId: 'h-r',
+      templateName: 'Coding Workflow',
+    });
+    db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`).run(
+      'team-coding-flow',
+      custom.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
+    expect(result.errors).toEqual([]);
+
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === custom.id)!;
     expect(after.name).toBe('Coding Workflow');
-    expect(after.handle).toBe('coding-workflow');
-    expect(after.templateName).toBe('Coding Workflow');
+    expect(after.handle).toBe('team-coding-flow');
+    expect(after.templateName).toBe('Coding');
+  });
+
+  test('legacy identity migration strips the stale default tag from non-default rows', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seeded = manager.listWorkflows(SPACE_ID);
+    const qaRow = seeded.find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
+    const stableCoding = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    revertToLegacyIdentity(qaRow.id, 'Coding with QA Workflow', 'coding-with-qa-workflow');
+    db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`).run(
+      JSON.stringify(['fullstack', 'qa', 'default']),
+      qaRow.id
+    );
+
+    seedBuiltInWorkflows(SPACE_ID, manager);
+
+    const after = manager.listWorkflows(SPACE_ID);
+    const migrated = after.find((w) => w.id === qaRow.id)!;
+    expect(migrated.name).toBe('Coding with QA');
+    expect(migrated.tags).not.toContain('default');
+    expect(after.find((w) => w.id === stableCoding.id)!.tags).not.toContain('default');
   });
 
   test('handle collision on a new stable template fails safely without aborting the seed', () => {
