@@ -534,9 +534,18 @@ describe('Neo publication without runtime input attribution', () => {
     const fiveLines = 'Merged.\n- CI green\n- Reviewed\n- Deployed\n- Docs updated';
     expect(await send('five-lines-short-details', fiveLines, 'Flag rolled back.')).toMatchObject({
       accepted: true,
-      publication: { verbatim: true, fullText: `${fiveLines}\n\nFlag rolled back.` },
+      publication: { shortText: fiveLines, fullText: 'Flag rolled back.' },
     });
-    expect(ledger.list(conversationId)).toHaveLength(7);
+    const han = '中'.repeat(150);
+    expect(await send('han-short-details', han, '文'.repeat(140))).toMatchObject({
+      accepted: true,
+      publication: { shortText: han, fullText: '文'.repeat(140) },
+    });
+    expect(await send('short-details-fold', 'Merged and green.', 'CI.')).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, fullText: 'Merged and green.\n\nCI.' },
+    });
+    expect(ledger.list(conversationId)).toHaveLength(9);
   });
 
   test('refuses folded details whose combined length passes the stored cap', async () => {
