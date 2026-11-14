@@ -1,3 +1,12 @@
+import { Database as DaemonDatabase } from '../../../../src/storage/index.ts';
+import { Database as SQLiteDatabase } from '../../../../src/storage/sqlite-compat.ts';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
+import {
+  DbGateway,
+  type DbGatewayRequest,
+  type DbGatewayReply,
+} from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { ChangeRecorder } from '../../../../src/storage/db-gateway/db-op.ts';
 import { test, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -198,3 +207,67 @@ test('a settings read inside a rolled-back transaction cannot poison the cache',
     await db.close();
   }
 });
+
+test.each(['timeout', 'crash'])(
+  'a committed settings write with a lost %s reply refreshes the next read',
+  async (failure) => {
+    const directory = mkdtempSync(join(tmpdir(), 'settings-lost-reply-'));
+    const path = join(directory, 'daemon.db');
+    const db = new DaemonDatabase(path);
+    let writer: SQLiteDatabase | undefined;
+    const worker = {
+      onmessage: null as ((event: MessageEvent<DbGatewayReply>) => void) | null,
+      onerror: null as ((event: ErrorEvent) => void) | null,
+      stopped: false,
+      postMessage(request: DbGatewayRequest) {
+        if (request.op === null) {
+          this.onmessage?.({ data: { id: request.id } } as MessageEvent<DbGatewayReply>);
+          return;
+        }
+        globalSettingsWrites.run(
+          writer!,
+          request.args as Parameters<typeof globalSettingsWrites.run>[1],
+          new ChangeRecorder()
+        );
+        if (failure === 'crash') {
+          this.onerror?.({
+            message: 'synthetic post-commit failure',
+            preventDefault() {},
+          } as ErrorEvent);
+        }
+      },
+      terminate() {
+        this.stopped = true;
+      },
+    };
+    const gateway = new DbGateway(
+      path,
+      null,
+      undefined,
+      () => {
+        queueMicrotask(() =>
+          worker.onmessage?.({ data: { ready: true } } as MessageEvent<DbGatewayReply>)
+        );
+        return worker as unknown as Worker;
+      },
+      20
+    );
+    Reflect.set(db, 'dbGateway', gateway);
+    try {
+      await db.initialize(createReactiveDatabase(db));
+      writer = new SQLiteDatabase(path);
+      db.updateGlobalSettings({ outputStyle: 'before-lost-reply' });
+      expect(db.getGlobalSettings().outputStyle).toBe('before-lost-reply');
+      await expect(
+        gateway.call(globalSettingsWrites, 'apply', { outputStyle: 'committed-without-reply' })
+      ).rejects.toThrow(failure === 'crash' ? 'synthetic post-commit failure' : 'outcome unknown');
+      expect(worker.stopped).toBe(true);
+      expect(db.getGlobalSettings().outputStyle).toBe('committed-without-reply');
+      expect(db.getGlobalSettings().outputStyle).toBe('committed-without-reply');
+    } finally {
+      await db.close();
+      writer?.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+);
