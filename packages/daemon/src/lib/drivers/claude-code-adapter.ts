@@ -314,12 +314,13 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
   const liveSessionsListed = deps.liveSessionsListed
     ? shareInFlight(deps.liveSessionsListed)
     : liveSessions;
-  const status: WorkAdapter['status'] = liveSessionsListed
+  const statusReader = liveSessions ?? liveSessionsListed;
+  const status: WorkAdapter['status'] = statusReader
     ? (ref, since, receipt) =>
         readClaudeCliStatus(ref, since, receipt, {
           machine: deps.machine,
           projectsDir: projectsDir ?? '',
-          liveSessions: liveSessionsListed,
+          liveSessions: statusReader,
           folder: async (id) =>
             (await scan()).find((record) => record.sessionId === id)?.folder ?? null,
         })
