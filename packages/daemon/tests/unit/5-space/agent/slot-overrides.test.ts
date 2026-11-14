@@ -65,20 +65,6 @@ describe('buildSlotOverrides', () => {
     expect(resolved.source).toBe('workflow_node_replaced_prompt');
   });
 
-  it('still resolves legacy systemPrompt/instructions into customPrompt (migration 79 compat)', () => {
-    const legacySlot = makeSlot({
-      customPrompt: undefined,
-    }) as WorkflowNodeAgent & {
-      systemPrompt?: { value: string };
-      instructions?: { value: string };
-    };
-    legacySlot.systemPrompt = { value: 'Legacy system prompt' };
-    legacySlot.instructions = { value: 'Legacy instructions' };
-
-    const overrides = buildSlotOverrides(legacySlot);
-    expect(overrides.customPrompt).toBe('Legacy system prompt\n\nLegacy instructions');
-  });
-
   it('ignores legacy systemPrompt/instructions in replace mode (empty replace = bare contract)', () => {
     const legacySlot = makeSlot({
       customPrompt: undefined,

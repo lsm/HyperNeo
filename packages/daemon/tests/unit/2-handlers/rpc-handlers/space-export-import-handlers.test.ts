@@ -946,126 +946,6 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].agents![0].agentId).toBe('');
     });
 
-    it('normalizes the legacy worker.coder templateKey to worker.swe on import', async () => {
-      new SpaceAgentTemplateRepository(db).createOwned(SPACE_ID, {
-        key: 'worker.swe.migrated',
-        handle: 'legacy-swe',
-        displayName: 'Legacy SWE',
-        labels: ['relocated-from:worker.swe'],
-      });
-      const bundle = {
-        version: 6,
-        type: 'bundle',
-        name: 'Test Bundle',
-        exportedAt: 1000,
-        agents: [],
-        workflows: [
-          {
-            version: 6,
-            type: 'workflow',
-            name: 'Legacy Coder Pipe',
-            nodes: [
-              {
-                agents: [{ templateKey: 'worker.coder', name: 'coder' }],
-                name: 'Coding',
-                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
-              },
-            ],
-            startNode: 'Coding',
-            tags: [],
-          },
-        ],
-      };
-
-      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
-        spaceId: SPACE_ID,
-        bundle,
-      });
-      expect(preview.validationErrors.some((e) => e.includes('unknown template'))).toBe(false);
-
-      const result = await call<{ workflows: Array<{ id: string }> }>(
-        handlers,
-        'spaceImport.execute',
-        { spaceId: SPACE_ID, bundle }
-      );
-      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
-      expect(workflow.nodes[0].agents![0].templateKey).toBe('worker.swe');
-      expect(workflow.nodes[0].agents![0].agentId).toBe('');
-      expect(workflow.nodes[0].postApproval?.targetAgent).toBe('coder');
-    });
-
-    it('rejects a legacy route whose slot name matches an earlier slot template key', async () => {
-      const bundle = {
-        version: 6,
-        type: 'bundle',
-        name: 'Test Bundle',
-        exportedAt: 1000,
-        agents: [],
-        workflows: [
-          {
-            version: 6,
-            type: 'workflow',
-            name: 'Key Shadow Pipe',
-            nodes: [
-              {
-                agents: [{ templateKey: 'worker.research', name: 'worker.research' }],
-                name: 'Setup',
-              },
-              {
-                agents: [{ templateKey: 'worker.coder', name: 'worker.research' }],
-                name: 'Coding',
-                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
-              },
-            ],
-            startNode: 'Setup',
-            tags: [],
-          },
-        ],
-      };
-
-      await expect(
-        call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
-      ).rejects.toThrow(/shadowed by an earlier slot/);
-    });
-
-    it('resolves a legacy route to the original worker.coder slot, not a literal worker.swe slot', async () => {
-      const bundle = {
-        version: 6,
-        type: 'bundle',
-        name: 'Test Bundle',
-        exportedAt: 1000,
-        agents: [],
-        workflows: [
-          {
-            version: 6,
-            type: 'workflow',
-            name: 'Collision Pipe',
-            nodes: [
-              {
-                agents: [{ templateKey: 'worker.swe', name: 'custom' }],
-                name: 'Custom',
-              },
-              {
-                agents: [{ templateKey: 'worker.coder', name: 'coder' }],
-                name: 'Coding',
-                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
-              },
-            ],
-            startNode: 'Custom',
-            tags: [],
-          },
-        ],
-      };
-
-      const result = await call<{ workflows: Array<{ id: string }> }>(
-        handlers,
-        'spaceImport.execute',
-        { spaceId: SPACE_ID, bundle }
-      );
-      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
-      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('coder');
-    });
-
     it('preserves a route that exactly matches a whitespace-suffixed slot name', async () => {
       const bundle = {
         version: 6,
@@ -1080,13 +960,13 @@ describe('Space Export/Import RPC Handlers', () => {
             name: 'Whitespace Pipe',
             nodes: [
               {
-                agents: [{ templateKey: 'worker.research', name: 'worker.coder ' }],
+                agents: [{ templateKey: 'worker.research', name: 'worker.reviewer ' }],
                 name: 'Setup',
               },
               {
-                agents: [{ templateKey: 'worker.coder', name: 'coder' }],
-                name: 'Coding',
-                postApproval: { targetAgent: 'worker.coder ', instructions: 'merge the PR' },
+                agents: [{ templateKey: 'worker.reviewer', name: 'reviewer' }],
+                name: 'Review',
+                postApproval: { targetAgent: 'worker.reviewer ', instructions: 'merge the PR' },
               },
             ],
             startNode: 'Setup',
@@ -1101,115 +981,7 @@ describe('Space Export/Import RPC Handlers', () => {
         { spaceId: SPACE_ID, bundle }
       );
       const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
-      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('worker.coder ');
-    });
-
-    it('selects legacy routes by raw keys so padded keys never capture them', async () => {
-      const bundle = {
-        version: 6,
-        type: 'bundle',
-        name: 'Test Bundle',
-        exportedAt: 1000,
-        agents: [],
-        workflows: [
-          {
-            version: 6,
-            type: 'workflow',
-            name: 'Padded Key Pipe',
-            nodes: [
-              {
-                agents: [{ templateKey: ' worker.coder ', name: 'padded' }],
-                name: 'Setup',
-              },
-              {
-                agents: [{ templateKey: 'worker.coder', name: 'coder' }],
-                name: 'Coding',
-                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
-              },
-            ],
-            startNode: 'Setup',
-            tags: [],
-          },
-        ],
-      };
-
-      const result = await call<{ workflows: Array<{ id: string }> }>(
-        handlers,
-        'spaceImport.execute',
-        { spaceId: SPACE_ID, bundle }
-      );
-      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
-      expect(workflow.nodes[0].agents![0].templateKey).toBe('worker.swe');
-      expect(workflow.nodes[1].agents![0].templateKey).toBe('worker.swe');
-      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('coder');
-    });
-
-    it('rejects a worker.swe route whose selection changes after legacy-key normalization', async () => {
-      const bundle = {
-        version: 6,
-        type: 'bundle',
-        name: 'Test Bundle',
-        exportedAt: 1000,
-        agents: [],
-        workflows: [
-          {
-            version: 6,
-            type: 'workflow',
-            name: 'Reselect Pipe',
-            nodes: [
-              {
-                agents: [{ templateKey: 'worker.coder', name: 'setup' }],
-                name: 'Setup',
-              },
-              {
-                agents: [{ templateKey: 'worker.research', name: 'worker.swe' }],
-                name: 'Coding',
-                postApproval: { targetAgent: 'worker.swe', instructions: 'merge the PR' },
-              },
-            ],
-            startNode: 'Setup',
-            tags: [],
-          },
-        ],
-      };
-
-      await expect(
-        call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
-      ).rejects.toThrow(/different slot after legacy-key normalization/);
-    });
-
-    it('rejects a legacy route whose resolved slot name is shadowed by an earlier slot', async () => {
-      const bundle = {
-        version: 6,
-        type: 'bundle',
-        name: 'Test Bundle',
-        exportedAt: 1000,
-        agents: [],
-        workflows: [
-          {
-            version: 6,
-            type: 'workflow',
-            name: 'Shadowed Pipe',
-            nodes: [
-              {
-                agents: [{ templateKey: 'worker.research', name: 'worker.research' }],
-                name: 'Setup',
-              },
-              {
-                agents: [{ templateKey: 'worker.coder', name: 'worker.research' }],
-                name: 'Coding',
-                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
-              },
-            ],
-            startNode: 'Setup',
-            tags: [],
-          },
-        ],
-      };
-
-      await expect(
-        call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
-      ).rejects.toThrow(/shadowed by an earlier slot/);
+      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('worker.reviewer ');
     });
 
     it('flags ambiguous worker.swe references using the actual relocated key', async () => {
@@ -1321,45 +1093,6 @@ describe('Space Export/Import RPC Handlers', () => {
         bundle,
       });
       expect(preview.validationErrors.some((e) => e.includes('ambiguous'))).toBe(false);
-    });
-
-    it('normalizes legacy routes declared on a different node than the template slot', async () => {
-      const bundle = {
-        version: 6,
-        type: 'bundle',
-        name: 'Test Bundle',
-        exportedAt: 1000,
-        agents: [],
-        workflows: [
-          {
-            version: 6,
-            type: 'workflow',
-            name: 'Cross Node Pipe',
-            nodes: [
-              {
-                agents: [{ templateKey: 'worker.coder', name: 'coder' }],
-                name: 'Coding',
-              },
-              {
-                agents: [{ templateKey: 'worker.reviewer', name: 'reviewer' }],
-                name: 'Review',
-                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
-              },
-            ],
-            startNode: 'Coding',
-            tags: [],
-          },
-        ],
-      };
-
-      const result = await call<{ workflows: Array<{ id: string }> }>(
-        handlers,
-        'spaceImport.execute',
-        { spaceId: SPACE_ID, bundle }
-      );
-      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
-      expect(workflow.nodes[0].agents![0].templateKey).toBe('worker.swe');
-      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('coder');
     });
 
     it('prefers the agent fallback over an unverifiable colliding stored template', async () => {

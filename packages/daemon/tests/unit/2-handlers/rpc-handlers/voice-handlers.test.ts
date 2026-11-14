@@ -304,6 +304,7 @@ describe('voice RPC handlers', () => {
 
   it('adds bearer authorization for keyed OpenAI-compatible backends', async () => {
     const hubData = createMockMessageHub();
+    const credentialManager = createCredentialManager('sk-test');
     registerVoiceHandlers(
       hubData.hub,
       createSettings({
@@ -311,9 +312,11 @@ describe('voice RPC handlers', () => {
           enabled: true,
           endpoint: 'https://api.openai.com/v1/audio/transcriptions',
           model: 'whisper-1',
-          apiKey: 'sk-test',
+          hasApiKey: true,
+          apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
         },
-      })
+      }),
+      credentialManager.manager
     );
 
     let init: RequestInit | undefined;
@@ -336,6 +339,7 @@ describe('voice RPC handlers', () => {
 
   it('refuses to send API keys over plaintext HTTP endpoints', async () => {
     const hubData = createMockMessageHub();
+    const credentialManager = createCredentialManager('sk-test');
     registerVoiceHandlers(
       hubData.hub,
       createSettings({
@@ -343,9 +347,11 @@ describe('voice RPC handlers', () => {
           enabled: true,
           endpoint: 'http://ai0:9002/v1/audio/transcriptions',
           model: 'qwen3-asr',
-          apiKey: 'sk-test',
+          hasApiKey: true,
+          apiKeyEndpoint: 'http://ai0:9002/v1/audio/transcriptions',
         },
-      })
+      }),
+      credentialManager.manager
     );
     globalThis.fetch = mock(
       async () => new Response(JSON.stringify({ text: 'nope' }))
@@ -1020,6 +1026,7 @@ describe('voice RPC handlers', () => {
 
   it('strips authorization on cross-host redirects', async () => {
     const hubData = createMockMessageHub();
+    const credentialManager = createCredentialManager('sk-test');
     registerVoiceHandlers(
       hubData.hub,
       createSettings({
@@ -1027,9 +1034,11 @@ describe('voice RPC handlers', () => {
           enabled: true,
           endpoint: 'https://api.openai.com/v1/audio/transcriptions',
           model: 'whisper-1',
-          apiKey: 'sk-test',
+          hasApiKey: true,
+          apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
         },
-      })
+      }),
+      credentialManager.manager
     );
     const redirectLocations = ['https://other.example.com/v1/audio/transcriptions'];
     let call = 0;
