@@ -31,9 +31,7 @@ const addProjectFolder = (superpipe({})('workspace-project-add-folder') as Pipel
   .pipe(validateFolders, ['input', 'repository'], 'result:result')
   .pipe(
     (plan: Plan, repository: WorkspaceHistoryRepository) =>
-      repository.addProjectFolder(plan.projectPath, plan.path, plan.name)
-        ? { accepted: true as const }
-        : { accepted: false as const, reason: 'Folder already belongs to another project.' },
+      repository.addProjectFolder(plan.projectPath, plan.path, plan.name),
     ['result', 'repository'],
     'result'
   )
@@ -46,7 +44,7 @@ export function createProjectFolderOperation(repository: WorkspaceHistoryReposit
   return defineOperation({
     name: 'work.project.addFolder',
     description:
-      'Add a folder to the HyperNeo project containing projectPath. Creates a project for a previously standalone folder. Refuses to move a folder out of another project.',
+      'Add a folder to the HyperNeo project containing projectPath. Creates a project for a previously standalone folder still in history. Refuses when projectPath left history (removed project) or to move a folder out of another project.',
     inputSchema: Input,
     resultSchema: z.union([z.object({ accepted: z.literal(true) }), Rejected]),
     policy: { safetyClass: 'mutate' },

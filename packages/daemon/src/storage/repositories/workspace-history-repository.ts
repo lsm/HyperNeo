@@ -27,14 +27,25 @@ export class WorkspaceHistoryRepository {
     return [...projects.values()];
   }
 
-  addProjectFolder(projectPath: string, path: string, name: string): boolean {
+  addProjectFolder(
+    projectPath: string,
+    path: string,
+    name: string
+  ): { accepted: true } | { accepted: false; reason: string } {
     return this.db.transaction(() => {
+      if (!this.get(projectPath)) {
+        return { accepted: false as const, reason: 'Project no longer exists.' };
+      }
       const membership = this.db.prepare(
         'SELECT project_id FROM workspace_project_folders WHERE path = ?'
       );
       const target = membership.get(projectPath) as { project_id: string } | null;
       const current = membership.get(path) as { project_id: string } | null;
-      if (current) return current.project_id === target?.project_id;
+      if (current) {
+        return current.project_id === target?.project_id
+          ? { accepted: true as const }
+          : { accepted: false as const, reason: 'Folder already belongs to another project.' };
+      }
       const id = target?.project_id ?? crypto.randomUUID();
       this.db
         .prepare('INSERT OR IGNORE INTO workspace_projects (id, name) VALUES (?, ?)')
@@ -47,7 +58,7 @@ export class WorkspaceHistoryRepository {
           )
           .run(folder, id);
       }
-      return true;
+      return { accepted: true as const };
     })();
   }
 

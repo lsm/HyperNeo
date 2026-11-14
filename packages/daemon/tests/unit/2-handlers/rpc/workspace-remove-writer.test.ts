@@ -61,7 +61,8 @@ describe('workspace.remove DB writer', () => {
     writer.close();
   });
   const seed = (path = '/synthetic/workspace') => {
-    expect(repo.addProjectFolder(path, path, 'Synthetic project')).toBe(true);
+    repo.upsert(path);
+    expect(repo.addProjectFolder(path, path, 'Synthetic project')).toEqual({ accepted: true });
     return path;
   };
   const projects = () => writer.prepare('SELECT id FROM workspace_projects').all();
@@ -77,9 +78,10 @@ describe('workspace.remove DB writer', () => {
     expect(mainSql).toBe(0);
   });
   test('a remaining project folder keeps its project and history', async () => {
+    repo.upsert('/synthetic/one');
     expect(
       repo.addProjectFolder('/synthetic/one', '/synthetic/two', 'Synthetic shared project')
-    ).toBe(true);
+    ).toEqual({ accepted: true });
     expect(await remove({ path: '/synthetic/one' })).toEqual({ success: true });
     expect(repo.get('/synthetic/one')).toBeNull();
     expect(repo.get('/synthetic/two')).not.toBeNull();
