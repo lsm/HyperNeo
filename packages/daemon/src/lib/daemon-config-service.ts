@@ -119,6 +119,10 @@ function superseded(applied: boolean | undefined): boolean {
   return applied === false;
 }
 
+function adopted(existingRow: DaemonConfigRow | null | undefined): boolean {
+  return existingRow != null;
+}
+
 function loadConfigRow(
   readConfigRow: () => DaemonConfigRow | null | undefined
 ): DaemonConfigRow | null | undefined {
@@ -207,6 +211,55 @@ const runUpdateDaemonConfig = (
   publishConfigUpdated: (changedKeys: string[]) => void
 ) => DaemonConfigUpdateResult;
 
+interface DaemonConfigSeedPlan {
+  patch: Record<string, Record<string, number | boolean>>;
+  seededKeys: number;
+}
+
+function planLegacySeed(env: Record<string, string | undefined>): DaemonConfigSeedPlan {
+  const patch: Record<string, Record<string, number | boolean>> = {};
+  let seededKeys = 0;
+  for (const entry of DAEMON_CONFIG_KEY_CATALOG) {
+    const raw = env[entry.legacyEnvName];
+    if (raw === undefined) continue;
+    const resolved = resolveDaemonConfig({
+      [entry.family]: { [entry.key]: raw },
+    } as Partial<DaemonBehaviorConfig>);
+    const value = catalogValue(resolved, entry);
+    if (value === undefined) continue;
+    const familyPatch = (patch[entry.family] ??= {});
+    familyPatch[entry.key] = value;
+    seededKeys++;
+  }
+  return { patch, seededKeys };
+}
+
+function completeLegacySeed(claimed: boolean, seedPlan: DaemonConfigSeedPlan): { seeded: boolean } {
+  return { seeded: claimed && seedPlan.seededKeys > 0 };
+}
+
+function persistLegacySeed(
+  claimStoredConfig: (config: Partial<DaemonBehaviorConfig>) => boolean,
+  seedPlan: DaemonConfigSeedPlan
+): boolean {
+  return claimStoredConfig(seedPlan.patch as Partial<DaemonBehaviorConfig>);
+}
+
+const runSeedDaemonConfigFromLegacyEnv = (
+  superpipe({ adopted })('seed-daemon-config-from-legacy-env') as PipelineAPI
+)
+  .input(['env', 'readConfigRow', 'claimStoredConfig'])
+  .pipe(loadConfigRow, 'readConfigRow', 'existingRow')
+  .pipe(planLegacySeed, 'env', 'seedPlan')
+  .pipe('!adopted', 'existingRow')
+  .pipe(persistLegacySeed, ['claimStoredConfig', 'seedPlan'], 'claimed')
+  .pipe(completeLegacySeed, ['claimed', 'seedPlan'], 'result')
+  .end('result') as (
+  env: Record<string, string | undefined>,
+  readConfigRow: () => DaemonConfigRow | null | undefined,
+  claimStoredConfig: (config: Partial<DaemonBehaviorConfig>) => boolean
+) => { seeded: boolean } | undefined;
+
 export class DaemonConfigService {
   private cachedConfig: DaemonBehaviorConfig | undefined;
 
@@ -241,6 +294,16 @@ export class DaemonConfigService {
     };
   }
 
+  seedFromLegacyEnv(env: Record<string, string | undefined> = process.env): boolean {
+    const outcome = runSeedDaemonConfigFromLegacyEnv(
+      env,
+      () => this.readConfigRow(),
+      (config) => this.claimStoredConfig(config)
+    );
+    if (outcome === undefined) this.cachedConfig = undefined;
+    return outcome?.seeded ?? false;
+  }
+
   private readConfigRow(): DaemonConfigRow | null | undefined {
     return this.db.prepare(`SELECT config_json FROM daemon_config WHERE id = 1`).get() as
       | DaemonConfigRow
@@ -257,6 +320,12 @@ export class DaemonConfigService {
     config: Partial<DaemonBehaviorConfig>
   ): boolean {
     const applied = casDaemonConfigRow(this.db, expectedConfigJson, config);
+    this.cachedConfig = undefined;
+    return applied;
+  }
+
+  private claimStoredConfig(config: Partial<DaemonBehaviorConfig>): boolean {
+    const applied = casDaemonConfigRow(this.db, null, config);
     this.cachedConfig = undefined;
     return applied;
   }

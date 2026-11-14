@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DAEMON_CONFIG_KEY_CATALOG } from '@hyperneo/shared';
@@ -75,7 +76,7 @@ describe('Daemon App daemon-config bootstrap', () => {
     }
   });
 
-  test('a legacy env var no longer reaches the daemon_config row at boot', {
+  test('seeds a set legacy env var into the daemon_config row at boot', {
     timeout: 20_000,
   }, async () => {
     process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT = '7';
@@ -85,12 +86,53 @@ describe('Daemon App daemon-config bootstrap', () => {
       standalone: false,
     });
     try {
-      expect(readConfigOverlay(daemonContext)).toEqual({});
+      expect(readConfigOverlay(daemonContext)).toEqual({
+        deliveryPolicy: { messageDeliveryMaxConcurrent: 7 },
+      });
       expect(
         daemonContext.daemonConfigService.getConfig().deliveryPolicy?.messageDeliveryMaxConcurrent
-      ).toBe(64);
+      ).toBe(7);
     } finally {
       await daemonContext.cleanup();
+    }
+  });
+
+  test('seeds exactly once across restarts against a persistent DB', {
+    timeout: 40_000,
+  }, async () => {
+    const tmpDir = join(
+      tmpdir(),
+      `hyperneo-dc04-bootstrap-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    mkdirSync(tmpDir, { recursive: true });
+    const dbPath = join(tmpDir, 'daemon.db');
+    try {
+      process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT = '7';
+      const firstBoot = await createDaemonApp({
+        config: { ...config, dbPath },
+        verbose: false,
+        standalone: false,
+      });
+      await firstBoot.cleanup();
+
+      process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT = '11';
+      const secondBoot = await createDaemonApp({
+        config: { ...config, dbPath },
+        verbose: false,
+        standalone: false,
+      });
+      try {
+        expect(readConfigOverlay(secondBoot)).toEqual({
+          deliveryPolicy: { messageDeliveryMaxConcurrent: 7 },
+        });
+        expect(
+          secondBoot.daemonConfigService.getConfig().deliveryPolicy?.messageDeliveryMaxConcurrent
+        ).toBe(7);
+      } finally {
+        await secondBoot.cleanup();
+      }
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 

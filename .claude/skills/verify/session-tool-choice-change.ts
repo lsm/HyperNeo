@@ -13,7 +13,7 @@ assert(!existsSync(join(run, 'data')));
 for (const name of ['home', 'workspace', 'evidence']) mkdirSync(join(run, name), { recursive: true });
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
-const { pinnedSlotVetoes } = await import('../../../packages/daemon/src/storage/repositories/pinned-slot-vetoes.ts');
+const { pinnedSlotVetoes } = await import('../../../packages/daemon/src/storage/repositories/session-tool-selection-migration.ts');
 const { SpaceRepository } = await import('../../../packages/daemon/src/storage/repositories/space-repository.ts');
 const { SpaceWorkflowRepository } = await import('../../../packages/daemon/src/storage/repositories/space-workflow-repository.ts');
 const { SpaceWorkflowRunRepository } = await import('../../../packages/daemon/src/storage/repositories/space-workflow-run-repository.ts');

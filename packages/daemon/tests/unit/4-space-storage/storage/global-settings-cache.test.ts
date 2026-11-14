@@ -20,6 +20,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { neoAskInputWrites } from '../../../../src/storage/repositories/neo-ask-input-worker.ts';
 import { createTestSession } from '../../../helpers/database.ts';
 import { createTestDb } from '../../../helpers/database.ts';
+import { migrateSessionToolSelections } from '../../../../src/storage/repositories/session-tool-selection-migration.ts';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 
 test('committed settings stay visible while repeated facade reads avoid SQLite', async () => {
@@ -172,6 +173,20 @@ test('committed settings stay visible while repeated facade reads avoid SQLite',
     rmSync(directory, { recursive: true, force: true });
   }
 }, 60_000);
+
+test('a warmed settings cache exposes startup tool-choice migration', async () => {
+  const db = await createTestDb();
+  try {
+    db.saveGlobalSettings({ ...db.getGlobalSettings(), toolSelectionDefaults: undefined });
+    expect(db.getGlobalSettings().toolSelectionDefaults).toBeUndefined();
+    expect(
+      migrateSessionToolSelections(db.getDatabase(), { skills: [], registry: [], overrides: [] })
+    ).toBe(1);
+    expect(db.getGlobalSettings().toolSelectionDefaults).toEqual({ version: 1, choices: {} });
+  } finally {
+    await db.close();
+  }
+});
 
 test('a settings read inside a rolled-back transaction cannot poison the cache', async () => {
   const db = await createTestDb();
