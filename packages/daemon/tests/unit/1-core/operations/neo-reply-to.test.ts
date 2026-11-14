@@ -465,7 +465,7 @@ describe('neo.message.send replyTo', () => {
     expect(sent.text).toContain(`\n<human-message id="${id}" ask="ask" question="q1">\n`);
     expect(sent.words).toBe('在做');
     expect(sent.reference).toBe('');
-    expect(sent.text).toMatch(/[^>\n]\n<\/human-message>$/);
+    expect(sent.text).toMatch(/\n\n<\/human-message>$/);
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 

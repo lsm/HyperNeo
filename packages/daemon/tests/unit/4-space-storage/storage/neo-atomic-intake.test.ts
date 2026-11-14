@@ -177,8 +177,9 @@ describe('atomic public ask intake primitive', () => {
     expect(accepted(prompt(content))).toMatchObject({ accepted: true, ask: { content } });
     expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content).toEqual([
       { type: 'text', text: `<human-message id="${requestId}">\n` },
+      { type: 'text', text: '\n' },
       ...content,
-      { type: 'text', text: '\n</human-message>' },
+      { type: 'text', text: '\n\n</human-message>' },
     ]);
     expect(accepted(prompt([photo], crypto.randomUUID()))).toMatchObject({
       accepted: true,

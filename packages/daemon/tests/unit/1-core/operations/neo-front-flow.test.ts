@@ -1478,7 +1478,7 @@ test('the first front input after the upgrade carries no catch-up', async () => 
   const { id } = await frontInput();
   const content = delivered(id);
   expect(JSON.stringify(content)).not.toContain('already-said');
-  expect(content.at(-1)).toEqual({ type: 'text', text: '\n</human-message>' });
+  expect(content.at(-1)).toEqual({ type: 'text', text: '\n\n</human-message>' });
 });
 
 test('the front input starts with what Neo said since the last input and escapes every part', async () => {

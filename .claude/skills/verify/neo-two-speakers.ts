@@ -122,9 +122,10 @@ try {
   assert(blocks[0]?.startsWith('<already-said>'), delivered);
   assert.equal(blocks.join('').match(/<human-message [^>]*>/g)?.length, 1, delivered);
   assert(!blocks.join('').includes('[message id:'), delivered);
-  assert.equal(blocks.at(-1), '\n</human-message>');
+  assert.equal(blocks.at(-1), '\n\n</human-message>');
   assert(blocks.at(-2) === 'Check the build and tell me.', delivered);
-  assert(blocks.at(-3)?.includes(`<human-message id="${id}"`), delivered);
+  assert.equal(blocks.at(-3), '\n', delivered);
+  assert(blocks.at(-4)?.includes(`<human-message id="${id}"`), delivered);
   const again = await call('reply', { requestId: 'work-2', replyTo: [id], text: 'Checking.' });
   assert.equal(again.accepted, true, JSON.stringify(again));
   assert.equal(again.started, true, JSON.stringify(again));
