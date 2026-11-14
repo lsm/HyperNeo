@@ -748,6 +748,7 @@ export function NeoLive() {
         connection={connectionState.value}
         onReconnect={() => void connectionManager.reconnect()}
         onRefresh={open}
+        onOpenSession={(sessionId, label) => openSession(`/session/${sessionId}`, label)}
       />
       <header class="neo-float-dock" inert={expanded} aria-hidden={expanded || undefined}>
         <button

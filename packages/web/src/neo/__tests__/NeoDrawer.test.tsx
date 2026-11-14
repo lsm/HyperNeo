@@ -11,6 +11,7 @@ vi.mock('../../lib/connection-manager.ts', () => ({
   },
 }));
 vi.mock('../../lib/operations.ts', () => ({ invokeOperation: invoke }));
+vi.mock('../../components/DesktopControl.tsx', () => ({ DesktopControl: () => null }));
 beforeEach(() => {
   setTheme('system');
   locale.value = 'en';
