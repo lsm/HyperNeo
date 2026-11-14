@@ -43,7 +43,7 @@ try {
 
   await drawer.getByRole('button', { name: 'Book the dentist on the clinic site' }).click();
   await drawer.waitFor({ state: 'detached' });
-  await page.getByText('Desktop takeover proof').first().waitFor();
+  await page.locator('.neo-session-pane').first().waitFor();
   await page.waitForTimeout(800);
   await page.screenshot({ path: join(out, 'drawer-opened-session.png') });
   observations.push({ view: 'drawer', opened: 'session' });
