@@ -181,3 +181,10 @@ test('an opted-in worker whose driver is still starting keeps its Stop', async (
   alive = false;
   expect(await status({ worker })).toMatchObject(one('running'));
 });
+
+test('a driver that exited without the human stop keeps its Stop', async () => {
+  await openApp();
+  await recordDriver();
+  alive = false;
+  expect(await status({ worker })).toMatchObject(one('running'));
+});
