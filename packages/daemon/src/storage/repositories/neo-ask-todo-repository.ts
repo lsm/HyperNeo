@@ -749,7 +749,7 @@ export class NeoAskTodoRepository {
         draft.doneWhen,
         draft.check ? JSON.stringify(draft.check) : null,
         draft.instruction,
-        draft.named ? JSON.stringify(draft.named) : null,
+        draft.named ? JSON.stringify({ ...draft.named, desktopControl: undefined }) : null,
         askId,
         draft.priority ?? 'normal',
         JSON.stringify(draft.dependsOn ?? []),

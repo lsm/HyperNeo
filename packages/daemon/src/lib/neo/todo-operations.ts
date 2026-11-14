@@ -90,7 +90,14 @@ const TodoDraft = z.object({
   check: TodoCheck,
   instruction: Text.nullable().default(null),
   target: NeoTodoTargetSchema.optional(),
-  named: z.record(z.string(), z.unknown()).nullable().default(null),
+  named: z
+    .record(z.string(), z.unknown())
+    .refine((named) => !('desktopControl' in named), {
+      message:
+        'Only the human can turn desktop control on, from the todo on the Neo page. Leave desktopControl out of named.',
+    })
+    .nullable()
+    .default(null),
   priority: TodoPriority.default('normal'),
   after: z
     .array(z.union([Text, z.number().int().min(0)]))
