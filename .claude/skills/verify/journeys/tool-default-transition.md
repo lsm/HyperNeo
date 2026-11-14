@@ -47,8 +47,8 @@ remain false. No attachment
 or Use here UI proof is claimed. All owned resources close in finally.
 
 Run tool-default-transition.test.ts alongside tool-preference-commit,
-legacy-tool-preferences, write-session-tool-preferences,
-session-tool-selection-migration and change-session-tool-choice suites. These
+legacy-tool-preferences, write-session-tool-preferences and
+change-session-tool-choice suites. These
 cover invalid versions, missing targets, atomic batch refusal, Space scope,
 no notification replay after rollback, frozen aliases and unchanged timestamps
 when a catalog edit changes no canonical default. The worker reuses the existing

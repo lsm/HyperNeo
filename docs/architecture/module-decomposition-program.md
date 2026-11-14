@@ -104,12 +104,13 @@ subscription topic grammar.
     (Verified byte-identical pre-move via `diff`, exit 0 — so consolidation is provably
     behavior-preserving.)
   - *Coverage:* the family had **no** direct unit tests; characterization tests now pin
-    every branch of `composeGitHubSubscriptionPattern` and `legacyGitHubTopic`.
+    every branch of `composeGitHubSubscriptionPattern`.
   - *Regression risk:* low — pure functions, all module-private (no external callers), so
     no facade re-export was needed.
-- **Narrow surface:** only `composeGitHubSubscriptionPattern` and `legacyGitHubTopic` are
-  exported; the six validators/splitters and the `GITHUB_EVENT_RESOURCES` constant stay
-  module-private.
+- **Narrow surface:** only `composeGitHubSubscriptionPattern` is exported; the six
+  validators/splitters and the `GITHUB_EVENT_RESOURCES` constant stay module-private.
+  (The second export, `legacyGitHubTopic`, was removed once the compatibility deletion
+  proved no stored subscription could ever match it.)
 - **Dependency direction:** the new leaf lives in `external-events/` (alongside
   `topic-validator.ts`); both consumers already depended downward on `external-events/`, so
   no new direction was introduced.
@@ -152,7 +153,7 @@ seam started in Increment 2 (the item previously marked "deferred").
   two leaves it depends on; both consumers already imported downward from
   `external-events/`, so no new direction was introduced. The now-unused
   `KNOWN_SOURCES` / `composeGitHubSubscriptionPattern` imports were removed from
-  both consumers (their remaining `validate*` / `legacyGitHubTopic` imports stay).
+  both consumers (their remaining `validate*` imports stay).
 - **Note:** `validateLongHorizonSubscriptionPattern` — a thin non-duplicated wrapper
   in `space-long-horizon-agent-handlers.ts` — was intentionally left in place; it
   now calls the shared leaf. Extracting it would not consolidate anything and would

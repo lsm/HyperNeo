@@ -28,8 +28,7 @@ must remain unchanged. The helper asserts every result, closes all resources,
 and writes `evidence/session-tool-migration.json`. `pass` must be true and both
 boot records present.
 
-Focused tests are `session-tool-selection-migration.test.ts`,
-`session-tool-choice.test.ts`, `create-session-config.test.ts`,
+Focused tests are `session-tool-choice.test.ts`, `create-session-config.test.ts`,
 `resolve-mcp-servers.test.ts` and `query-options-builder.test.ts`. They also cover
 pinned workflow-slot vetoes, preservation of future versions and unrelated config,
 newly found legacy sessions, malformed/non-object configs skipped without rewriting,
