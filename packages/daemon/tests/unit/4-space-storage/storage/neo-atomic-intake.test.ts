@@ -176,10 +176,9 @@ describe('atomic public ask intake primitive', () => {
     const content = [photo, { type: 'text' as const, text: '```txt\nfile notes\n```' }];
     expect(accepted(prompt(content))).toMatchObject({ accepted: true, ask: { content } });
     expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content).toEqual([
-      { type: 'text', text: `[message id: ${requestId}]` },
-      { type: 'text', text: `<human-message id="${requestId}">` },
+      { type: 'text', text: `<human-message id="${requestId}">\n` },
       ...content,
-      { type: 'text', text: '</human-message>' },
+      { type: 'text', text: '\n</human-message>' },
     ]);
     expect(accepted(prompt([photo], crypto.randomUUID()))).toMatchObject({
       accepted: true,

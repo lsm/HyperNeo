@@ -145,17 +145,26 @@ describe('neo.message.send replyTo', () => {
       human
     );
   const prompt = (requestId: string) => {
-    const stored = JSON.parse(
+    const raw: {
+      session_id?: string;
+      message: { content: { text?: string }[] };
+    } = JSON.parse(
       (
         mailbox.db
           .prepare('SELECT session_id, sdk_message FROM sdk_messages WHERE sdk_uuid = ?')
           .get(requestId) as { sdk_message: string }
       ).sdk_message
     );
-    const [identifier, time, ...content] = stored.message.content;
-    expect(identifier.text).toBe(`[message id: ${requestId}]`);
-    expect(time.text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/);
-    return { ...stored, message: { ...stored.message, content } };
+    const blocks = raw.message.content;
+    expect(blocks[0].text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/);
+    expect(blocks[1].text).toStartWith(`<human-message id="${requestId}"`);
+    expect(blocks.at(-1)?.text).toEndWith('</human-message>');
+    const inside = blocks.slice(2, -1);
+    return {
+      ...raw,
+      reference: inside[0]?.text?.startsWith('<reference') ? inside[0].text : '',
+      words: inside.at(-1)?.text ?? '',
+    };
   };
   const ledger = (requestId: string) =>
     JSON.parse(
@@ -174,13 +183,13 @@ describe('neo.message.send replyTo', () => {
     expect(prompt(id)).toMatchObject({
       session_id: root,
       replyTo: { kind: 'question', id: 'q1' },
+      reference:
+        '<reference question="q1" ask="ask">\nThe human answered your question "What should the status say?":\n</reference>\n\n',
+      words: '在做 / 做完',
       message: {
-        content: [
-          { type: 'text', text: 'The human answered your question "What should the status say?":' },
-          { type: 'text', text: `<human-message id="${id}">` },
-          { type: 'text', text: '在做 / 做完' },
-          { type: 'text', text: '</human-message>' },
-        ],
+        content: expect.arrayContaining([
+          { type: 'text', text: `<human-message id="${id}" ask="ask" question="q1">\n` },
+        ]),
       },
     });
     expect(ledger(id)).toMatchObject({
@@ -339,7 +348,7 @@ describe('neo.message.send replyTo', () => {
     );
     const id = crypto.randomUUID();
     await send(id, 'yes, but use the new session', { kind: 'question', id: 'q2' });
-    expect(prompt(id).message.content[0].text).toBe(
+    expect(prompt(id).reference).toContain(
       'The human replied about your start question "Start "Todo rows"?" (it stays open; only its Start button starts todos):'
     );
     expect(store.getQuestion('q2')).toMatchObject({ state: 'open', answer: null });
@@ -411,7 +420,7 @@ describe('neo.message.send replyTo', () => {
       const id = crypto.randomUUID();
       await send(id, words, { kind: 'question', id: `c${index}` });
       expect(store.getQuestion(`c${index}`)).toMatchObject({ answer, answeredBy: 'chat' });
-      expect(prompt(id).message.content[0].text).toBe(
+      expect(prompt(id).reference).toContain(
         `The human answered your question "Which layout?" with ${words.match(/[a-c]/i)?.[0].toUpperCase()} (${answer[0]}):`
       );
     }
@@ -437,7 +446,7 @@ describe('neo.message.send replyTo', () => {
   test('a reply about a todo goes to root Neo without answering anything', async () => {
     const id = crypto.randomUUID();
     await send(id, 'Use the new session', { kind: 'todo', id: 't1' });
-    expect(prompt(id).message.content[0].text).toBe('The human replied about todo t1:');
+    expect(prompt(id).reference).toContain('The human replied about todo t1:');
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
@@ -447,14 +456,9 @@ describe('neo.message.send replyTo', () => {
     expect(prompt(id)).toMatchObject({
       session_id: root,
       replyTo: { kind: 'ask', id: 'ask' },
-      message: {
-        content: [
-          { type: 'text', text: 'The human replied to the work card "iOS card":' },
-          { type: 'text', text: `<human-message id="${id}">` },
-          { type: 'text', text: 'Where is this stuck?' },
-          { type: 'text', text: '</human-message>' },
-        ],
-      },
+      reference:
+        '<reference ask="ask">\nThe human replied to the work card "iOS card":\n</reference>\n\n',
+      words: 'Where is this stuck?',
       humanContent: [{ type: 'text', text: 'Where is this stuck?' }],
     });
     expect(store.getQuestion('q1')?.state).toBe('open');
@@ -468,9 +472,10 @@ describe('neo.message.send replyTo', () => {
       session_id: root,
       message: {
         content: [
-          { type: 'text', text: `<human-message id="${id}">` },
+          { type: 'text', text: expect.stringMatching(/^\(local time: /) },
+          { type: 'text', text: `<human-message id="${id}" ask="ask" question="q1">\n` },
           { type: 'text', text: '在做' },
-          { type: 'text', text: '</human-message>' },
+          { type: 'text', text: '\n</human-message>' },
         ],
       },
     });
@@ -516,14 +521,9 @@ describe('neo.message.send replyTo', () => {
     expect(prompt(id)).toMatchObject({
       session_id: root,
       replyTo: snapshot,
-      message: {
-        content: [
-          { type: 'text', text: 'The human replied to the Neo message "Card is redone.":' },
-          { type: 'text', text: `<human-message id="${id}">` },
-          { type: 'text', text: 'Thanks' },
-          { type: 'text', text: '</human-message>' },
-        ],
-      },
+      reference:
+        '<reference>\nThe human replied to the Neo message "Card is redone.":\n</reference>\n\n',
+      words: 'Thanks',
     });
     expect(ledger(id)).toEqual(
       expect.objectContaining({ content: [{ type: 'text', text: 'Thanks' }], replyTo: snapshot })
@@ -531,13 +531,9 @@ describe('neo.message.send replyTo', () => {
     const unknown = crypto.randomUUID();
     await reply(unknown, 'pub-1');
     expect(prompt(unknown).session_id).toBe(root);
-    expect([ledger(unknown).replyTo, prompt(unknown).message.content]).toEqual([
+    expect([ledger(unknown).replyTo, prompt(unknown).words]).toEqual([
       { kind: 'message', id: 'pub-1' },
-      [
-        { type: 'text', text: `<human-message id="${unknown}">` },
-        { type: 'text', text: 'Thanks' },
-        { type: 'text', text: '</human-message>' },
-      ],
+      'Thanks',
     ]);
   });
 

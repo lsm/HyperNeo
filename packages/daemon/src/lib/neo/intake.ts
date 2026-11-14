@@ -24,7 +24,7 @@ import {
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
-import { escapeSessionText } from '../messaging/session-envelope.ts';
+import { attribute, escapeSessionText } from '../messaging/session-envelope.ts';
 import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
@@ -132,9 +132,10 @@ export function neoIntakeMessage(
       : null;
   const has = (text: string) =>
     storedBlocks?.some(
-      (block: { type: string; text?: string }) => block.type === 'text' && block.text === text
+      (block: { type: string; text?: string }) =>
+        block.type === 'text' && block.text?.startsWith(text) === true
     ) === true;
-  const legacy = stored !== undefined && !has(`<human-message id="${input.requestId}">`);
+  const legacy = stored !== undefined && !has('<human-message');
   const identifier = !stored || has(messageId) ? messageId : null;
   const storedSaid = storedBlocks?.find(
     (block: { type: string; text?: string }) =>
@@ -154,19 +155,30 @@ export function neoIntakeMessage(
       uuid: input.requestId as UUID,
       session_id: sessionId,
       parent_tool_use_id: null,
-      message: { role: 'user', content: facts.length ? [...facts, ...content] : content },
+      message: { role: 'user', content: [...facts, ...content] },
       inputKind: 'human',
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(previewContext ? { previewContext } : {}),
       ...(facts.length ? { humanContent: content } : {}),
     };
   }
-  const opening = [identifier, localTime, sourceFact].flatMap((text) =>
-    text ? [{ type: 'text' as const, text }] : []
+  const opening = [[localTime, sourceFact].filter(Boolean).join(' '), previewFact].flatMap(
+    (text) => (text ? [{ type: 'text' as const, text }] : [])
   );
-  const context = [fact, previewFact].flatMap((text) =>
-    text ? [{ type: 'text' as const, text }] : []
-  );
+  const context = fact ? [fact] : [];
+  const askId = reply?.question?.askId ?? reply?.ask?.id ?? null;
+  const questionId = reply?.question?.id ?? null;
+  const reference = [
+    questionId ? ` question="${attribute(questionId)}"` : '',
+    askId ? ` ask="${attribute(askId)}"` : '',
+  ].join('');
+  const envelope = [
+    `id="${attribute(input.requestId)}"`,
+    askId ? `ask="${attribute(askId)}"` : '',
+    questionId ? `question="${attribute(questionId)}"` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   const human = content.map((block) =>
     block.type === 'text' ? { ...block, text: escapeSessionText(block.text) } : block
   );
@@ -180,10 +192,17 @@ export function neoIntakeMessage(
       content: [
         ...(said ? [{ type: 'text' as const, text: said }] : []),
         ...opening,
-        ...context,
-        { type: 'text' as const, text: `<human-message id="${input.requestId}">` },
+        { type: 'text' as const, text: `<human-message ${envelope}>\n` },
+        ...(context.length
+          ? [
+              {
+                type: 'text' as const,
+                text: `<reference${reference}>\n${escapeSessionText(context.join('\n\n'))}\n</reference>\n\n`,
+              },
+            ]
+          : []),
         ...human,
-        { type: 'text' as const, text: '</human-message>' },
+        { type: 'text' as const, text: `${context.length ? '\n\n' : '\n'}</human-message>` },
       ],
     },
     inputKind: 'human',

@@ -81,22 +81,14 @@ export function createNeoFrontHandler(service: NeoService) {
                     },
                   ]
                 : []),
-              { type: 'text', text: `<human-message id="${attribute(messageId)}">` },
               ...(typeof message.message.content === 'string'
-                ? [{ type: 'text' as const, text: escapeSessionText(message.message.content) }]
-                : (message.message.content as Exclude<MailboxMessageContent, string>)
-                    .filter(
-                      (block) =>
-                        block.type !== 'text' ||
-                        (block.text !== `<human-message id="${messageId}">` &&
-                          block.text !== '</human-message>')
-                    )
-                    .map((block) =>
-                      block.type === 'text'
-                        ? { ...block, text: escapeSessionText(block.text) }
-                        : block
-                    )),
-              { type: 'text', text: '</human-message>' },
+                ? [
+                    {
+                      type: 'text' as const,
+                      text: `<human-message id="${attribute(messageId)}">\n${escapeSessionText(message.message.content)}\n</human-message>`,
+                    },
+                  ]
+                : (message.message.content as Exclude<MailboxMessageContent, string>)),
             ],
             ask.askOrigin.sessionId,
             conversationId
