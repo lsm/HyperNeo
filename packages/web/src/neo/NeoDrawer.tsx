@@ -1,3 +1,4 @@
+import { DesktopControl } from '../components/DesktopControl.tsx';
 import { PairConfirmInput, pairApprovalReady } from '../components/settings/PairConfirmInput.tsx';
 import type { ConnectionState } from '../lib/state.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -131,6 +132,7 @@ export function NeoDrawer({
             </select>
           </label>
         </section>
+        <DesktopControl class="mb-6" />
         <PendingDevices connection={connection} />
       </aside>
     </div>

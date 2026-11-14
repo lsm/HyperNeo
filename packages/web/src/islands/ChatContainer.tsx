@@ -23,6 +23,7 @@ import { ChatHeader } from '../components/ChatHeader.tsx';
 import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
 import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
+import { DesktopControl } from '../components/DesktopControl.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import { ImageDropOverlay } from '../components/ImageDropOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
@@ -1076,6 +1077,8 @@ export default function ChatContainer({
             actions={errorActions.length > 0 ? errorActions : undefined}
           />
         )}
+
+      {!readonly && <DesktopControl worker={sessionId} class="border-b border-line px-4 py-2" />}
 
       {showRecovering && (
         <div
