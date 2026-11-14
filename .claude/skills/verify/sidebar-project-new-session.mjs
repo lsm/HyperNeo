@@ -15,6 +15,8 @@ const seen = {};
 const retargetFolders = [];
 const opacity = (locator) => locator.evaluate((el) => getComputedStyle(el).opacity);
 const plus = (page, name) => page.getByRole('button', { name: `New session in ${name}` });
+const chipFor = (page, path) =>
+  page.locator(`button:not([data-testid]):not([role="menuitem"])[title$="${path}"]`);
 
 async function pairedContext(options) {
   const context = await browser.newContext(options);
@@ -114,6 +116,15 @@ try {
       .catch(() => false);
     await page.waitForTimeout(600);
     await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-folder-added.png` });
+    await page.getByRole('menuitem', { name: `assets-${scheme}` }).click();
+    await page.waitForTimeout(400);
+    await chipFor(page, `/projects/assets-${scheme}`).click();
+    result.secondaryFolderMenu = await page
+      .getByRole('menuitem', { name: 'Add folder to alpha…' })
+      .count();
+    result.secondaryFolderOwnName = await page
+      .getByRole('menuitem', { name: `Add folder to assets-${scheme}…` })
+      .count();
     await page.keyboard.press('Escape');
     await page.mouse.move(900, 700);
     await plus(page, 'alpha').hover();
@@ -133,6 +144,23 @@ try {
     await retargetInput.waitFor({ state: 'detached', timeout: 10000 });
     retargetFolders.push(`${run}/projects/assets-${scheme}-retarget`);
     await page.keyboard.press('Escape');
+    await page.mouse.move(900, 700);
+    await plus(page, 'alpha').hover();
+    await plus(page, 'alpha').click();
+    await chip.waitFor({ timeout: 10000 });
+    await page.getByTestId('add-project-button').click();
+    await page.getByTestId('add-project-path-input').fill(`${run}/projects/gamma-${scheme}`);
+    await page.getByTestId('add-project-path-input').press('Enter');
+    await page.waitForTimeout(1000);
+    await page.keyboard.press('Escape');
+    await page.mouse.move(900, 700);
+    await chip.click();
+    result.newProjectInPageMenu = await page
+      .getByRole('menuitem', { name: `gamma-${scheme}` })
+      .waitFor({ timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    await page.keyboard.press('Escape');
     result.pageErrors = errors;
     seen[scheme] = result;
     assert.equal(result.hoverMedia, true);
@@ -150,6 +178,9 @@ try {
     assert.equal(result.addedFolderInSidebar, true);
     assert.equal(result.retargetFormOpen, 1);
     assert.equal(result.retargetHint, 1);
+    assert.equal(result.secondaryFolderMenu, 1);
+    assert.equal(result.secondaryFolderOwnName, 0);
+    assert.equal(result.newProjectInPageMenu, true);
     assert.equal(result.plusSize, result.removeSize);
     assert.notEqual(result.plusHoverBackground, result.plusRestBackground);
     assert.equal(result.removeHoverBackground, result.plusHoverBackground);

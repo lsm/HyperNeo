@@ -15,6 +15,9 @@ It owns its daemon, adds two projects (`alpha`, `beta`), pairs a browser and cle
   names alpha in its hint, and the path submitted there joins alpha, not beta. The runner
   checks the folder's owning project through `rpc:workspace.history` and writes
   `retarget-project.txt`.
+- Select the added secondary folder: the menu still reads `Add folder to alpha…`, never
+  `Add folder to <folder>…`, and the form hint names alpha.
+- Add a project from the open page's sidebar: the page's folder menu lists it without a reload.
 - Touch device (`hover: none`): the button stays visible.
 - Screenshots: `sidebar-{light,dark}-{rest,hover,hover-plus,hover-remove,new-session,folder-menu,folder-added}.png` and
   `sidebar-touch-rest.png`. Run with `TMPDIR=/private/tmp` so folder paths in the sidebar stay generic.
