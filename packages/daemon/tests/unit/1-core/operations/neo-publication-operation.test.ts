@@ -7,10 +7,13 @@ import {
 } from '../../../../src/lib/neo/publication-operation.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { NeoFrontInputRepository } from '../../../../src/storage/repositories/neo-front-input-worker.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
+import { runMigration496 } from '../../../../src/storage/schema/m496-neo-front-inputs.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
@@ -39,23 +42,31 @@ describe('Neo publication without runtime input attribution', () => {
   let held: Promise<void> | null;
   let failWrite: boolean;
   let sourceSession: string | undefined;
+  let received: Set<string>;
+  let current: string[];
+  let inputs: NeoFrontInputRepository;
   beforeEach(() => {
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
     runMigration283(mailbox.db);
     runMigration288(mailbox.db);
+    runMigration387(mailbox.db);
+    runMigration496(mailbox.db);
     const repo = new NeoRepository(mailbox.db);
     mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(root.sessionId);
     repo.reserveBinding(root);
     repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
     ledger = new NeoPublicationRepository(mailbox.db);
+    inputs = new NeoFrontInputRepository(mailbox.db);
     notify.mockClear();
     held = null;
     failWrite = false;
     sourceSession = undefined;
+    received = new Set();
+    current = [];
     publish = createNeoPublisher({
-      receivedHumanInput: () => false,
-      currentHumanInputs: () => [],
+      receivedHumanInput: (_sessionId, id) => received.has(id),
+      currentHumanInputs: () => current,
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
@@ -420,6 +431,57 @@ describe('Neo publication without runtime input attribution', () => {
     expect(await publish(draft, caller)).toMatchObject({ accepted: true, created: false });
     expect(ledger.list(conversationId)).toHaveLength(1);
     expect(ledger.list(conversationId)[0].session).toBeUndefined();
+  });
+
+  test('an omitted replyTo answers nothing even while human inputs wait', async () => {
+    const pending = [
+      '00000000-0000-4000-8000-000000000010',
+      '00000000-0000-4000-8000-000000000011',
+    ];
+    for (const id of pending) inputs.accept(conversationId, id, true);
+    received = new Set(pending);
+    current = [...pending];
+    const receipt = await publish(draft, caller);
+    expect(receipt).toMatchObject({ accepted: true, created: true });
+    expect(ledger.list(conversationId)[0].replyTo).toBeUndefined();
+    for (const id of pending) expect(inputs.get(conversationId, id)?.owner).toBeNull();
+  });
+
+  test('an explicit replyTo answers exactly those inputs and no others', async () => {
+    const answered = '00000000-0000-4000-8000-000000000010';
+    const pending = '00000000-0000-4000-8000-000000000011';
+    for (const id of [answered, pending]) inputs.accept(conversationId, id, true);
+    received = new Set([answered, pending]);
+    current = [answered, pending];
+    const receipt = await publish({ ...draft, replyTo: [answered] }, caller);
+    expect(receipt).toMatchObject({
+      accepted: true,
+      created: true,
+      publication: { replyTo: [answered] },
+    });
+    expect(inputs.get(conversationId, answered)?.owner).toBe('neo');
+    expect(inputs.get(conversationId, pending)?.owner).toBeNull();
+  });
+
+  test('a card reply claims its source message ids through cardReply alone', async () => {
+    const source = '00000000-0000-4000-8000-000000000010';
+    inputs.accept(conversationId, source, true);
+    received = new Set([source]);
+    mailbox.db
+      .prepare(
+        "INSERT INTO neo_questions(id,ask_id,text,kind,start_todos,created_at) VALUES ('question','ask','Review?','choice','[]',1)"
+      )
+      .run();
+    const cardReply = {
+      askId: 'ask',
+      questionId: 'question',
+      mutationId: '30000000-0000-4000-8000-000000000009',
+      sourceMessageIds: [source],
+    };
+    const receipt = await publish({ ...draft, cardReply }, caller);
+    expect(receipt).toMatchObject({ accepted: true, created: true });
+    expect(ledger.list(conversationId)[0].cardReply).toEqual(cardReply);
+    expect(inputs.get(conversationId, source)?.owner).toBe('neo');
   });
 
   test('omits unknown reply ids without attributing a human answer', async () => {
