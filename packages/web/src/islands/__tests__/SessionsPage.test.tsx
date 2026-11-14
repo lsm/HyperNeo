@@ -167,6 +167,25 @@ describe('SessionsPage', () => {
     expect(mockAddFolderToProject).not.toHaveBeenCalled();
   });
 
+  it('still adds a folder when the history never loaded', async () => {
+    mockGetWorkspaceHistory.mockRejectedValue(new Error('Disconnected'));
+    newChatProjectSignal.value = '/code';
+    render(<SessionsPage />);
+    await waitFor(() =>
+      expect(
+        screen.getAllByText((_, element) => Boolean(element?.getAttribute('title') === '/code'))[0]
+      ).toBeTruthy()
+    );
+    fireEvent.click(
+      screen.getAllByText((_, element) => Boolean(element?.getAttribute('title') === '/code'))[0]
+    );
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add folder to code…' }));
+    fireEvent.input(screen.getByPlaceholderText('Folder path'), { target: { value: '/assets' } });
+    mockAddFolderToProject.mockResolvedValue(undefined);
+    fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
+    await waitFor(() => expect(mockAddFolderToProject).toHaveBeenCalledWith('/code', '/assets'));
+  });
+
   it('keeps the folder form open with the reason when the daemon refuses', async () => {
     newChatProjectSignal.value = '/code';
     render(<SessionsPage />);
