@@ -118,20 +118,23 @@ export function foldPublicationDetails(value: { text: string; details?: string }
 
 const wordSegments = new Intl.Segmenter(undefined, { granularity: 'word' });
 
-export function wordCount(text: string): number {
+const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
+
+function wordCount(text: string): number {
   let count = 0;
   for (const segment of wordSegments.segment(text)) if (segment.isWordLike) count++;
   return count;
 }
 
-export const SUMMARY_WORD_LIMIT = 300;
-export const SUMMARY_CHAR_LIMIT = 4000;
-
-export function replySummaryTooLong(body: { text: string; details?: string }): boolean {
-  return (
-    body.details !== undefined &&
-    (wordCount(body.text) > SUMMARY_WORD_LIMIT || body.text.length > SUMMARY_CHAR_LIMIT)
-  );
+export function replyBodyRefusal(body: {
+  text: string;
+  details?: string;
+}): 'reply_needs_details' | 'reply_summary_too_long' | undefined {
+  const lines = body.text.split('\n').filter((line) => line.trim()).length;
+  const share =
+    (body.text.match(cjk)?.length ?? 0) / 150 + wordCount(body.text.replace(cjk, ' ')) / 60;
+  if (lines <= 5 && share <= 1) return undefined;
+  return body.details === undefined ? 'reply_needs_details' : 'reply_summary_too_long';
 }
 
 export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);

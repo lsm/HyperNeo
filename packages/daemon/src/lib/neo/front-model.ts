@@ -9,7 +9,8 @@ import type { NeoService } from './service.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
-import { foldPublicationDetails, replySummaryTooLong } from './publication.ts';
+import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
+import { foldPublicationDetails, replyBodyRefusal } from './publication.ts';
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -128,8 +129,8 @@ export function createFrontTools(service: NeoService, conversationId: string) {
         },
         async ({ text, details, ...input }) => {
           const body = foldPublicationDetails({ text, details });
-          if (replySummaryTooLong(body))
-            return result({ accepted: false, reason: 'reply_summary_too_long' });
+          const refusal = replyBodyRefusal(body);
+          if (refusal) return result(explainNeoRefusal({ accepted: false, reason: refusal }));
           const targets = input.replyTo ?? [];
           if (!targets.length) return result(await publish({ ...input, ...body }));
           const asks = targets.map((id) => service.asks.find(conversationId, id));

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 
 const run = process.argv[2];
@@ -30,7 +31,8 @@ try {
   repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
   const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
   const publish = async (links: unknown[]) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId: 'links-proof', text: 'Project update', details: 'Open the project below.', links } })).content[0].text);
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  const credential = readLocalCredential(join(run, 'data/local-rpc.credential'));
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${credential}` } } as unknown as string[]);
   await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
   const read = () => new Promise<{ ok: boolean; items: { links: unknown[] }[] }>((resolve, reject) => {
     const id = crypto.randomUUID();
