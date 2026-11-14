@@ -48,9 +48,13 @@ The existing dialog stays the only approval path, and a forwarding token must al
 
 ### 4. Every action is recorded, and input has no other route
 
-The daemon writes one audit record per forwarded call: task, session, worker, driver instance, app, action class, tool, time, decision, result and whether the driver was reached. The daemon commits that record before it answers the worker, and it answers the worker only after the call has returned, so the record covers the outcome the worker sees. If the record cannot be committed the daemon refuses the call and does not forward, with a reason the worker can report; a call that was not forwarded cannot produce a reply. The host writes its own record for every dispatch it performs, refusals and driver errors included, from the verified token claims and what actually happened, and commits it before replying, so a daemon fault cannot hide an action.
+The daemon writes one audit row per forwarded call. It first commits that row as an intent record — task, session, worker, driver instance, app, action class, tool, time and the call ID, with the outcome still empty — and only after that commit does it forward. If the intent commit fails it refuses the call without forwarding, with a reason the worker can report.
 
-Input reaches a driver only through the host's dispatch action. There is no direct socket to the driver, no second entry point and no path that returns a result without a record on both sides.
+After forwarding it updates the same row with the outcome it is about to report: decision, result, whether the driver was reached, and the duration. That update is committed before the worker's reply is written. If the update fails, the intent row stays as committed and the reply is withheld: the worker gets an error that the outcome is unrecorded rather than a result, so no caller sees a success or failure that the row does not show, and the row is left visibly without an outcome rather than looking complete. A later read of that row therefore never claims an outcome that was not recorded.
+
+The host writes its own record for every dispatch it performs, refusals and driver errors included, from the verified token claims and what actually happened, and commits it before replying, so a daemon fault cannot hide an action. A refusal before the host is reached has no host record, and its daemon row says so.
+
+Input reaches a driver only through the host's dispatch action. There is no direct socket to the driver and no second entry point. Every call that is forwarded has both records, and no call returns a result whose outcome is missing from the daemon's row.
 
 ## What this does not protect against
 
