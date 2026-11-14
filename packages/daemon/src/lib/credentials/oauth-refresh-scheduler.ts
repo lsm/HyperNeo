@@ -155,16 +155,16 @@ export class OAuthRefreshScheduler {
     }
 
     if (outcome === 'refreshed') {
-      this.clocks.set(provider.id, {
-        nextRefreshAt: this.now() + REFRESH_DELAY_FIRST_MS,
-        attempt: 0,
-        lastOutcome: 'refreshed',
-      });
       if ('value' in due && due.value === 'credential_failure') clearProviderFailure(provider.id);
       const nextCredentials = await this.credentialsFromProvider(provider, credentials);
       if (nextCredentials) {
         await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
       }
+      this.clocks.set(provider.id, {
+        nextRefreshAt: this.now() + REFRESH_DELAY_FIRST_MS,
+        attempt: 0,
+        lastOutcome: 'refreshed',
+      });
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
       await this.recoverDormant(provider.id);
       this.onProviderChanged?.(provider.id);

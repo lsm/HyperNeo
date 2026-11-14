@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import type { Provider, TokenRefreshOutcome } from '@hyperneo/shared/provider';
 import { ProviderRegistry } from '../../../../src/lib/providers/registry';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import {
   OAuthRefreshScheduler,
   refreshDelayMs,
@@ -891,5 +893,65 @@ describe('refresh clock', () => {
       attempt: 0,
       lastOutcome: 'none',
     });
+  });
+
+  it('two sessions on one provider refresh once through the credential write hook', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE providers (
+        id TEXT PRIMARY KEY,
+        provider_id TEXT UNIQUE NOT NULL,
+        auth_type TEXT NOT NULL DEFAULT 'none',
+        health_status TEXT NOT NULL DEFAULT 'unknown',
+        last_health_check_at INTEGER,
+        needs_login_at INTEGER DEFAULT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    db.query('INSERT INTO providers (id, provider_id, updated_at) VALUES (?, ?, ?)').run(
+      'row-1',
+      'oauth-provider',
+      1
+    );
+    const manager = ProviderCredentialManager.create(db, {});
+    await manager.storeOAuthTokens('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const registry = new ProviderRegistry();
+    let refreshes = 0;
+    const provider = createProvider('refreshed');
+    provider.refreshToken = async () => {
+      refreshes += 1;
+      return 'refreshed';
+    };
+    registry.register(provider);
+    const scheduler = new OAuthRefreshScheduler(manager, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+    manager.setCredentialWriteHooks({
+      onCredentialsWritten: (providerId) => scheduler.resetClock(providerId),
+    });
+
+    try {
+      const outcomes = await Promise.all([
+        scheduler.refreshNow('oauth-provider'),
+        scheduler.refreshNow('oauth-provider'),
+      ]);
+
+      expect(outcomes).toEqual(['refreshed', 'refreshed']);
+      expect(refreshes).toBe(1);
+      expect(scheduler.clock('oauth-provider')).toEqual({
+        nextRefreshAt: 5 * 60_000,
+        attempt: 0,
+        lastOutcome: 'refreshed',
+      });
+    } finally {
+      db.close();
+    }
   });
 });

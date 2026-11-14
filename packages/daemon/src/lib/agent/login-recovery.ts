@@ -64,7 +64,7 @@ export interface LoginRecoveryTimer {
 export interface LoginRecoveryDeps {
   facts(providerId: string, retried: boolean): LoginRecoveryFacts;
   refresh(providerId: string): Promise<RefreshNowOutcome>;
-  enterSignIn(providerId: string): Promise<void>;
+  enterSignIn(providerId: string): void;
   enterTransient(providerId: string): void;
   timer: LoginRecoveryTimer;
 }
@@ -77,51 +77,89 @@ export function loginHoldDelayMs(nextRefreshAt: number, now: number): number {
 
 export function createLoginRecovery(deps: LoginRecoveryDeps) {
   const holds = new Map<string, LoginHoldState>();
+  const writes = new Map<string, number>();
+  const entering = new Set<string>();
+
+  const writeCount = (providerId: string) => writes.get(providerId) ?? 0;
 
   async function recover(
     providerId: string,
     prompt: HeldPrompt | null,
     retried: boolean
   ): Promise<LoginRecoveryPlan> {
-    const plan = await runLoginRecovery({
-      facts: async () => deps.facts(providerId, retried),
-      refresh: () => deps.refresh(providerId),
-    });
-    if (plan === 'retry') return plan;
-    if (plan === 'sign_in') await deps.enterSignIn(providerId);
-    else deps.enterTransient(providerId);
-    startHold(providerId, prompt, plan);
-    return plan;
+    const seenWrites = writeCount(providerId);
+    const written = () => writeCount(providerId) !== seenWrites;
+    entering.add(providerId);
+    try {
+      const plan = await runLoginRecovery({
+        facts: async () => deps.facts(providerId, retried),
+        refresh: () => deps.refresh(providerId),
+      });
+      if (plan === 'retry') return plan;
+      const state = startHold(providerId, prompt, plan === 'sign_in');
+      if (!state.active) return plan;
+      await persist(providerId, state);
+      if (!state.active) return plan;
+      if (written() && mayResume(deps.facts(providerId, false))) {
+        stop(providerId);
+        return 'retry' as const;
+      }
+      if (plan === 'sign_in') deps.enterSignIn(providerId);
+      else deps.enterTransient(providerId);
+      if (!state.active) return plan;
+      armTimer(providerId, state);
+      if (written() && mayResume(deps.facts(providerId, false))) await resume(providerId, state);
+      return plan;
+    } finally {
+      entering.delete(providerId);
+    }
   }
 
-  function startHold(providerId: string, prompt: HeldPrompt | null, plan: LoginRecoveryPlan): void {
+  function startHold(
+    providerId: string,
+    prompt: HeldPrompt | null,
+    awaitingSignIn: boolean
+  ): LoginHoldState {
     const existing = holds.get(providerId);
     if (existing) {
-      if (prompt) existing.prompt = prompt;
-      return;
+      if (prompt && !existing.prompt) existing.prompt = prompt;
+      if (awaitingSignIn && !existing.awaitingSignIn) {
+        existing.awaitingSignIn = true;
+        existing.cancel?.();
+        existing.cancel = null;
+      }
+      return existing;
     }
-    const state: LoginHoldState = {
-      prompt,
-      cancel: null,
-      active: true,
-      awaitingSignIn: plan === 'sign_in',
-    };
+    const state: LoginHoldState = { prompt, cancel: null, active: true, awaitingSignIn };
     holds.set(providerId, state);
-    void arm(providerId, state).catch((error: unknown) => stop(providerId, error));
+    return state;
   }
 
-  async function arm(providerId: string, state: LoginHoldState): Promise<void> {
+  async function persist(providerId: string, state: LoginHoldState): Promise<void> {
+    if (!state.active) return;
+    await deps.timer.hold(
+      loginHoldDelayMs(deps.facts(providerId, false).refresh.nextRefreshAt, deps.timer.now()),
+      state.prompt
+    );
+  }
+
+  function armTimer(providerId: string, state: LoginHoldState): void {
+    if (!state.active || state.awaitingSignIn) return;
     const delayMs = loginHoldDelayMs(
       deps.facts(providerId, false).refresh.nextRefreshAt,
       deps.timer.now()
     );
-    await deps.timer.hold(delayMs, state.prompt);
-    if (!state.active) return;
-    if (state.awaitingSignIn) return;
     state.cancel = deps.timer.schedule(
       () => void tick(providerId, state).catch((error: unknown) => stop(providerId, error)),
       delayMs
     );
+  }
+
+  async function arm(providerId: string, state: LoginHoldState): Promise<void> {
+    if (!state.active) return;
+    if (mayResume(deps.facts(providerId, false))) return resume(providerId, state);
+    await persist(providerId, state);
+    armTimer(providerId, state);
   }
 
   async function tick(providerId: string, state: LoginHoldState): Promise<void> {
@@ -139,9 +177,22 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
     await arm(providerId, state);
   }
 
+  async function hold(providerId: string, prompt: HeldPrompt | null): Promise<boolean> {
+    if (holds.get(providerId)?.active) return true;
+    const facts = deps.facts(providerId, false);
+    if (mayResume(facts)) return false;
+    const state = startHold(providerId, prompt, facts.needsLoginAt !== null);
+    if (state.active) await arm(providerId, state);
+    return state.active;
+  }
+
   async function maybeResume(providerId: string): Promise<boolean> {
+    writes.set(providerId, writeCount(providerId) + 1);
+    if (entering.has(providerId)) return false;
+    const writesWhenResumed = writeCount(providerId);
     const state = holds.get(providerId);
     if (!state?.active || !mayResume(deps.facts(providerId, false))) return false;
+    if (writeCount(providerId) !== writesWhenResumed) return false;
     await resume(providerId, state);
     return true;
   }
@@ -167,7 +218,7 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
     return holds.get(providerId)?.active === true;
   }
 
-  return { recover, maybeResume, isHeld, stop };
+  return { recover, hold, maybeResume, isHeld, stop };
 }
 
 interface LoginHoldState {

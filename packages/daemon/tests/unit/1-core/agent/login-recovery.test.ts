@@ -98,7 +98,13 @@ describe('runLoginRecovery', () => {
   });
 });
 
-function recoveryDeps(overrides: { outcomes?: RefreshNowOutcome[] } = {}) {
+function recoveryDeps(
+  overrides: {
+    outcomes?: RefreshNowOutcome[];
+    onSignIn?: (state: { needsLoginAt: number | null }) => void;
+    onRefresh?: (write: () => Promise<boolean>) => void;
+  } = {}
+) {
   const outcomes = [...(overrides.outcomes ?? [])];
   const state: { needsLoginAt: number | null; lastOutcome: RefreshNowOutcome | 'none' } = {
     needsLoginAt: null,
@@ -106,7 +112,9 @@ function recoveryDeps(overrides: { outcomes?: RefreshNowOutcome[] } = {}) {
   };
   const timers: Array<() => void> = [];
   const held: number[] = [];
+  const heldPrompts: Array<unknown> = [];
   const resumed: Array<unknown> = [];
+  let recovery: { maybeResume(providerId: string): Promise<boolean> } | null = null;
   const deps = {
     facts: () => ({
       retried: false,
@@ -114,12 +122,14 @@ function recoveryDeps(overrides: { outcomes?: RefreshNowOutcome[] } = {}) {
       refresh: { nextRefreshAt: 1_000, attempt: 0, lastOutcome: state.lastOutcome },
     }),
     refresh: async () => {
+      overrides.onRefresh?.(() => recovery?.maybeResume('anthropic') ?? Promise.resolve(false));
       const outcome = outcomes.shift() ?? 'transient';
       state.lastOutcome = outcome;
       return outcome;
     },
-    enterSignIn: async () => {
+    enterSignIn: () => {
       state.needsLoginAt = Date.now();
+      overrides.onSignIn?.(state);
     },
     enterTransient: () => {},
     timer: {
@@ -128,8 +138,9 @@ function recoveryDeps(overrides: { outcomes?: RefreshNowOutcome[] } = {}) {
         timers.push(run);
         return () => {};
       },
-      hold: async (delayMs: number) => {
+      hold: async (delayMs: number, prompt: unknown) => {
         held.push(delayMs);
+        heldPrompts.push(prompt);
       },
       resume: async (prompt: unknown) => {
         resumed.push(prompt);
@@ -137,7 +148,10 @@ function recoveryDeps(overrides: { outcomes?: RefreshNowOutcome[] } = {}) {
       log: () => {},
     },
   };
-  return { deps, state, timers, held, resumed };
+  const attach = (value: { maybeResume(providerId: string): Promise<boolean> }) => {
+    recovery = value;
+  };
+  return { deps, state, timers, held, heldPrompts, resumed, attach };
 }
 
 describe('createLoginRecovery', () => {
@@ -168,6 +182,59 @@ describe('createLoginRecovery', () => {
     h.state.needsLoginAt = null;
     expect(await recovery.maybeResume('anthropic')).toBe(true);
     expect(h.resumed).toHaveLength(1);
+  });
+
+  test('a credential write that lands while the hold installs does not wait for another write', async () => {
+    const h = recoveryDeps({
+      outcomes: ['definitive'],
+      onRefresh: (write) => {
+        h.state.needsLoginAt = null;
+        void write();
+      },
+    });
+    const recovery = createLoginRecovery(h.deps);
+    h.attach(recovery);
+
+    expect(await recovery.recover('anthropic', null, false)).toBe('retry');
+
+    expect(recovery.isHeld('anthropic')).toBe(false);
+    expect(h.resumed).toHaveLength(0);
+  });
+
+  test('a credential write during the refresh makes the turn retry instead of holding', async () => {
+    const h = recoveryDeps({ outcomes: ['definitive'] });
+    const recovery = createLoginRecovery(h.deps);
+    h.state.needsLoginAt = null;
+
+    const pending = recovery.recover('anthropic', null, false);
+    expect(await recovery.maybeResume('anthropic')).toBe(false);
+
+    expect(await pending).toBe('retry');
+    expect(recovery.isHeld('anthropic')).toBe(false);
+  });
+
+  test('repeated credential writes resume exactly once', async () => {
+    const h = recoveryDeps({ outcomes: ['definitive'] });
+    const recovery = createLoginRecovery(h.deps);
+    await recovery.recover('anthropic', null, false);
+
+    h.state.needsLoginAt = null;
+    expect(await recovery.maybeResume('anthropic')).toBe(true);
+    expect(await recovery.maybeResume('anthropic')).toBe(false);
+
+    expect(h.resumed).toHaveLength(1);
+  });
+
+  test('a second hold keeps the prompt it already holds', async () => {
+    const h = recoveryDeps({ outcomes: ['definitive'] });
+    const recovery = createLoginRecovery(h.deps);
+    const first = { uuid: 'first', content: 'the original ask' };
+    const second = { uuid: 'second', content: 'a later ask' };
+
+    await recovery.recover('anthropic', first, false);
+    await recovery.recover('anthropic', second, false);
+
+    expect(h.heldPrompts).toEqual([first, first]);
   });
 
   test('a health-only change leaves a login hold in place', async () => {

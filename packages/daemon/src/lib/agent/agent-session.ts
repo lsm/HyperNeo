@@ -1101,6 +1101,22 @@ export class AgentSession
         reason?: unknown;
         heldPrompt?: { uuid?: unknown; content?: unknown };
       };
+      if (
+        parsed.status === 'rate_limit_cooldown' &&
+        parsed.reason === 'login' &&
+        this.loginRecovery
+      ) {
+        const prompt = this.persistedHeldPrompt(parsed);
+        void this.loginRecovery
+          .hold(this.providerId(), prompt)
+          .then((held) => {
+            if (!held && prompt) void this.stateManager.setIdle().catch(() => {});
+          })
+          .catch((error: unknown) =>
+            this.logger.warn(`Restoring a login hold failed: ${String(error)}`)
+          );
+        return;
+      }
       if (parsed.status === 'rate_limit_cooldown' && parsed.reason === 'network') {
         void this.networkPause
           .start(
@@ -2967,10 +2983,10 @@ export class AgentSession
     return createLoginRecovery({
       facts: () => this.loginFacts(),
       refresh: () => port?.refresh(this.providerId()) ?? Promise.resolve('skipped' as const),
-      enterSignIn: async () => {
-        port?.setNeedsLogin(this.providerId(), Date.now());
+      enterSignIn: (providerId) => {
+        port?.setNeedsLogin(providerId, Date.now());
         const failure = { errorKind: 'credential' as const, message: 'Claude login is required' };
-        recordClassifiedProviderFailure(this.providerId(), failure);
+        recordClassifiedProviderFailure(providerId, failure);
       },
       enterTransient: () => {},
       timer: {
@@ -3260,7 +3276,10 @@ export class AgentSession
 
           if (this.networkPause.isActive()) await this.resumeNetworkPauseFor(messageUuid);
 
-          if (this.loginNeedsLoginAt() !== null && !this.isLoginHeld()) {
+          if (this.isLoginHeld())
+            return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
+
+          if (this.loginNeedsLoginAt() !== null) {
             await this.enterLoginHoldForWaitingMessage(messageUuid);
             return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
           }
