@@ -116,6 +116,36 @@ describe('SessionsPage', () => {
     expect(mockAddFolderToProject).not.toHaveBeenCalledWith('/other', '/assets');
   });
 
+  it('names the project a folder belongs to, not the folder itself', async () => {
+    const project = { id: 'p1', name: 'Product', folders: ['/code', '/docs'] };
+    mockGetWorkspaceHistory.mockResolvedValue(
+      project.folders.map((path) => ({ path, lastUsedAt: 1, useCount: 1, project }))
+    );
+    newChatProjectSignal.value = '/docs';
+    render(<SessionsPage />);
+    const chip = await screen.findByText((_, element) =>
+      Boolean(element?.getAttribute('title') === '/docs')
+    );
+    fireEvent.click(chip);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add folder to Product…' }));
+    expect(screen.getByText(/Adds a folder to Product\./)).toBeTruthy();
+  });
+
+  it('reloads the folder list when the sidebar changes projects', async () => {
+    newChatProjectSignal.value = '/code';
+    render(<SessionsPage />);
+    await waitFor(() => expect(folderChip().textContent).toContain('code'));
+    mockGetWorkspaceHistory.mockResolvedValue([
+      { path: '/code', lastUsedAt: 1, useCount: 1 },
+      { path: '/added-elsewhere', lastUsedAt: 2, useCount: 1 },
+    ]);
+    workspaceHistoryVersionSignal.value += 1;
+    fireEvent.click(
+      await screen.findByText((_, element) => Boolean(element?.getAttribute('title') === '/code'))
+    );
+    expect(await screen.findByRole('menuitem', { name: 'added-elsewhere' })).toBeTruthy();
+  });
+
   it('keeps the folder form open with the reason when the daemon refuses', async () => {
     newChatProjectSignal.value = '/code';
     render(<SessionsPage />);
