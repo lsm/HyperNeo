@@ -84,6 +84,29 @@ describe('NeoRealtimeVoice', () => {
     expect(listens()).toEqual([{ sessionId: 'neo-1', enabled: true, audio: true }]);
   });
 
+  it('ignores the stop from its own earlier disable during a quick restart', async () => {
+    render(<NeoRealtimeVoice collapsed={false} sessionId="neo-1" connected onError={vi.fn()} />);
+    fireEvent.click(button());
+    await waitFor(() => expect(button().getAttribute('aria-pressed')).toBe('true'));
+    fireEvent.click(button());
+    await waitFor(() => expect(button().getAttribute('aria-pressed')).toBe('false'));
+    let accept: (value: unknown) => void = () => {};
+    mocks.request.mockImplementation(
+      async (_method: string, data: { name: string; input: { enabled?: boolean } }) =>
+        data.name === 'neo.speech.listen' && data.input.enabled
+          ? new Promise((resolve) => {
+              accept = resolve;
+            })
+          : { ok: true }
+    );
+    fireEvent.click(button());
+    await waitFor(() => expect(listens()).toHaveLength(3));
+    mocks.players[1].onStop?.();
+    accept({ ok: true });
+    await waitFor(() => expect(button().getAttribute('aria-pressed')).toBe('true'));
+    expect(mocks.players[1].close).not.toHaveBeenCalled();
+  });
+
   it('leaves the daemon not listening when stopped during a start that succeeds', async () => {
     let accept: (value: unknown) => void = () => {};
     mocks.request.mockImplementation(
