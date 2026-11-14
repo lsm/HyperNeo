@@ -42,6 +42,7 @@ import {
   neoTodoStatus,
 } from './todo-status.ts';
 import { neoTopicColor } from './topic-color.ts';
+import { FORM_CHECKBOX_CLASS } from '../components/ui/FormField.tsx';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning', 'font-semibold'],
@@ -291,6 +292,7 @@ function TodoRow({
                   <label class="mt-1 flex w-fit items-center gap-2 text-xs text-fg-muted">
                     <input
                       type="checkbox"
+                      class={`${FORM_CHECKBOX_CLASS} accent-accent`}
                       checked={todo.named?.desktopControl === true}
                       onChange={(event) =>
                         onDesktopControl(todo.id, (event.target as HTMLInputElement).checked)
