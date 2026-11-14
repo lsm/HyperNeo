@@ -199,7 +199,6 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(
       (draft: Draft, caller: OperationCaller, proof: Proof) =>
-        caller.sessionId === frontSessionId(proof.root.sessionId.slice(4)) &&
         draft.replyTo?.some((id) => !runtime.receivedHumanInput(caller.sessionId!, id))
           ? { reason: { accepted: false as const, reason: 'unknown_reply_target' } }
           : { value: proof },
@@ -289,7 +288,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         return {
           ...draft,
           session: proof.session,
-          replyTo: draft.replyTo?.filter((id) => runtime.receivedHumanInput(sessionId, id)),
+          replyTo: draft.replyTo,
           cardReply: draft.cardReply?.sourceMessageIds.every((id) =>
             runtime.receivedHumanInput(sessionId, id)
           )

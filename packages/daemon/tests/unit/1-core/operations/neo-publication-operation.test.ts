@@ -43,6 +43,7 @@ describe('Neo publication without runtime input attribution', () => {
   let failWrite: boolean;
   let sourceSession: string | undefined;
   let received: Set<string>;
+  let current: string[];
   let inputs: NeoFrontInputRepository;
   beforeEach(() => {
     mailbox = createMailboxTestDb();
@@ -62,7 +63,9 @@ describe('Neo publication without runtime input attribution', () => {
     failWrite = false;
     sourceSession = undefined;
     received = new Set();
+    current = [];
     publish = createNeoPublisher({
+      ...{ currentHumanInputs: () => current },
       receivedHumanInput: (_sessionId, id) => received.has(id),
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
@@ -437,6 +440,7 @@ describe('Neo publication without runtime input attribution', () => {
     ];
     for (const id of pending) inputs.accept(conversationId, id, true);
     received = new Set(pending);
+    current = [...pending];
     const receipt = await publish(draft, caller);
     expect(receipt).toMatchObject({ accepted: true, created: true });
     expect(ledger.list(conversationId)![0].replyTo).toBeUndefined();
@@ -448,6 +452,7 @@ describe('Neo publication without runtime input attribution', () => {
     const pending = '00000000-0000-4000-8000-000000000011';
     for (const id of [answered, pending]) inputs.accept(conversationId, id, true);
     received = new Set([answered, pending]);
+    current = [answered, pending];
     const receipt = await publish({ ...draft, replyTo: [answered] }, caller);
     expect(receipt).toMatchObject({
       accepted: true,
@@ -479,10 +484,23 @@ describe('Neo publication without runtime input attribution', () => {
     expect(inputs.get(conversationId, source)?.owner).toBe('neo');
   });
 
-  test('omits unknown reply ids without attributing a human answer', async () => {
-    const receipt = await publish({ ...draft, replyTo: [conversationId] }, caller);
-    expect(receipt).toMatchObject({ accepted: true, publication: { replyTo: [] } });
-    expect(ledger.list(conversationId)![0].producerInput).toBeUndefined();
+  test('a replyTo naming an unknown id rejects the whole publication', async () => {
+    const unknown = '00000000-0000-4000-8000-0000000000ff';
+    const receipt = await publish({ ...draft, replyTo: [unknown] }, caller);
+    expect(receipt).toMatchObject({ accepted: false, reason: 'unknown_reply_target' });
+    expect(ledger.list(conversationId)).toHaveLength(0);
+  });
+
+  test('a replyTo mixing one valid and one unknown id appends and claims nothing', async () => {
+    const answered = '00000000-0000-4000-8000-000000000010';
+    const unknown = '00000000-0000-4000-8000-0000000000ff';
+    inputs.accept(conversationId, answered, true);
+    inputs.accept(conversationId, unknown, true);
+    received = new Set([answered]);
+    const receipt = await publish({ ...draft, replyTo: [answered, unknown] }, caller);
+    expect(receipt).toMatchObject({ accepted: false, reason: 'unknown_reply_target' });
+    expect(ledger.list(conversationId)).toHaveLength(0);
+    expect(inputs.get(conversationId, answered)?.owner).toBeNull();
   });
 
   test('publishes a text-only reply from one text field and stores it verbatim', async () => {
