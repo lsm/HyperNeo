@@ -9,6 +9,7 @@ const ID_B = '00000000-0000-4000-8000-00000000000b';
 
 function fakeHub() {
   const handlers = new Set<Handler>();
+  const connection = new Set<(state: string) => void>();
   const request = vi.fn(async () => ({ ok: true }));
   const hub = {
     request,
@@ -16,7 +17,14 @@ function fakeHub() {
       if (method === 'neo.speech') handlers.add(handler);
       return () => handlers.delete(handler);
     },
+    onConnection: (handler: (state: string) => void) => {
+      connection.add(handler);
+      return () => connection.delete(handler);
+    },
   } as unknown as MessageHub;
+  const connect = (state: string) => {
+    for (const handler of [...connection]) handler(state);
+  };
   const emit = (data: unknown) => {
     for (const handler of [...handlers]) handler(data);
   };
@@ -26,7 +34,7 @@ function fakeHub() {
       .map((call) => (call as unknown[])[1] as { name: string; input: Record<string, unknown> })
       .filter((call) => call.name === 'neo.speech.ack')
       .map((call) => `${call.input.id === ID_A ? 'A' : 'B'}:${call.input.state}`);
-  return { hub, emit, acks, listeners: () => handlers.size };
+  return { hub, emit, acks, connect, listeners: () => handlers.size + connection.size };
 }
 
 interface FakeSource {
@@ -252,6 +260,20 @@ describe('openNeoSpeechPlayer', () => {
       expect(sound.sources[1].when).toBe(0);
     });
   }
+
+  it('drops a reply stranded by a lost connection so the next one plays', () => {
+    const { hub, emit, connect } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    emit(audio(ID_A, 0, pcm(16384)));
+    connect('reconnecting');
+    expect(sound.sources[0].stopped).toBe(true);
+    connect('connected');
+    emit(say(ID_B));
+    emit(audio(ID_B, 0, pcm(-16384)));
+    expect(sound.sources.map((source) => source.samples)).toEqual([[0.5], [-0.5]]);
+  });
 
   it('stops listening for speech and releases audio on close', async () => {
     const { hub, emit, acks, listeners } = fakeHub();
