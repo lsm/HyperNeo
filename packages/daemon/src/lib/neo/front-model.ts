@@ -10,7 +10,6 @@ import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
 
-// One or two short sentences; the full session answers in depth.
 const FRONT_REPLY_MAX_CHARS = 300;
 
 const Read = {
