@@ -85,10 +85,17 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
   async function recover(
     providerId: string,
     prompt: HeldPrompt | null,
-    retried: boolean
+    retried: boolean,
+    attemptEpoch?: number
   ): Promise<LoginRecoveryPlan> {
     const seenWrites = writeCount(providerId);
     const written = () => writeCount(providerId) !== seenWrites;
+    if (
+      attemptEpoch !== undefined &&
+      writeCount(providerId) > attemptEpoch &&
+      mayResume(deps.facts(providerId, false))
+    )
+      return 'retry' as const;
     entering.add(providerId);
     try {
       const plan = await runLoginRecovery({
@@ -222,7 +229,11 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
     for (const providerId of Array.from(holds.keys())) stop(providerId);
   }
 
-  return { recover, hold, maybeResume, isHeld, stop, stopAll };
+  function epoch(providerId: string): number {
+    return writeCount(providerId);
+  }
+
+  return { recover, hold, maybeResume, isHeld, stop, stopAll, epoch };
 }
 
 interface LoginHoldState {

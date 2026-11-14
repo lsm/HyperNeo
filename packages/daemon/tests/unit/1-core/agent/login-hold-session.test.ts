@@ -277,6 +277,22 @@ describe('login hold', () => {
     await h.agent.cleanup();
   });
 
+  it('an interrupt releases the login hold and its cooldown', async () => {
+    const h = await harness();
+    h.setNeedsLogin('anthropic', Date.now());
+    await h.agent.driveDeliveryTurn('human-login', 'do the thing', null, false, () => true);
+    expect(h.agent.isLoginHeld()).toBe(true);
+
+    await h.agent.handleInterrupt({ skipDeferredReplay: true }).catch(() => {});
+
+    expect(h.agent.isLoginHeld()).toBe(false);
+    expect(h.agent.getProcessingState()).not.toMatchObject({
+      status: 'rate_limit_cooldown',
+      reason: 'login',
+    });
+    await h.agent.cleanup();
+  });
+
   it('cleanup stops a hold it no longer tracks under the current provider', async () => {
     const h = await harness();
     h.setNeedsLogin('anthropic', Date.now());

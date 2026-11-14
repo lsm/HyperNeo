@@ -237,6 +237,16 @@ describe('createLoginRecovery', () => {
     expect(h.heldPrompts).toEqual([first, first]);
   });
 
+  test('a rejection that predates a credential write retries instead of asking for sign-in', async () => {
+    const h = recoveryDeps({ outcomes: ['skipped'] });
+    const recovery = createLoginRecovery(h.deps);
+    await recovery.maybeResume('anthropic');
+
+    expect(await recovery.recover('anthropic', null, false, 0)).toBe('retry');
+    expect(h.state.needsLoginAt).toBeNull();
+    expect(recovery.isHeld('anthropic')).toBe(false);
+  });
+
   test('a health-only change leaves a login hold in place', async () => {
     const h = recoveryDeps({ outcomes: ['definitive'] });
     const recovery = createLoginRecovery(h.deps);

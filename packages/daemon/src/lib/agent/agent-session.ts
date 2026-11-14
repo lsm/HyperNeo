@@ -443,6 +443,7 @@ export class AgentSession
   private authRejected = false;
   private loginRetriedInTurn = false;
   private loginRetryPromptUuid: string | null = null;
+  private loginAttemptEpoch: number | null = null;
   private interruptedAt = 0;
 
   queryObject: QueryLike | null = null;
@@ -1291,6 +1292,7 @@ export class AgentSession
     try {
       this.rateLimitWatchdog.cancel();
       this.networkPause.stop();
+      this.stopLoginHold();
       this.messageHandler.cancelSuppressedResultWait();
       const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
       if (
@@ -1409,6 +1411,7 @@ export class AgentSession
   }): Promise<{ success: boolean; error?: string; blocked?: boolean }> {
     this.rateLimitWatchdog.cancel();
     this.networkPause.stop();
+    this.stopLoginHold();
     if (options?.hardReset && this.queryRunner instanceof QueryRunner)
       await this.queryRunner.resetFailureEpisode();
     if (options?.hardReset && this.stateManager.getState().status === 'rate_limit_cooldown')
@@ -1712,6 +1715,7 @@ export class AgentSession
 
   async cancelRateLimitRetry(): Promise<void> {
     this.networkPause.stop();
+    this.stopLoginHold();
     const owner = this.stateManager.getCurrentIdleOwner();
     await runRateLimitManualCancel({
       db: this.db,
@@ -2160,6 +2164,7 @@ export class AgentSession
   }): Promise<{ blocked: boolean }> {
     this.rateLimitWatchdog.cancel();
     this.networkPause.stop();
+    this.stopLoginHold();
     return await this.lifecycleManager.restart(options);
   }
 
@@ -2919,6 +2924,7 @@ export class AgentSession
       this.authRejected = false;
       this.loginRetriedInTurn = false;
       this.loginRetryPromptUuid = null;
+      this.loginAttemptEpoch = null;
       const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
       if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {
@@ -3035,6 +3041,14 @@ export class AgentSession
     return this.loginRecovery?.isHeld(this.providerId()) ?? false;
   }
 
+  private stopLoginHold(): void {
+    if (!this.loginRecovery) return;
+    this.loginRecovery.stop(this.providerId());
+    const state = this.stateManager.getState();
+    if (state.status === 'rate_limit_cooldown' && state.reason === 'login')
+      void this.stateManager.setIdle().catch(() => {});
+  }
+
   hasLoginRecovery(): boolean {
     return !!this.runtimeOptions.loginRecovery;
   }
@@ -3044,7 +3058,8 @@ export class AgentSession
     const plan = await this.loginRecovery.recover(
       this.providerId(),
       prompt,
-      this.loginRetriedInTurn
+      this.loginRetriedInTurn,
+      this.loginAttemptEpoch ?? undefined
     );
     if (plan === 'retry') {
       this.loginRetriedInTurn = true;
@@ -3341,6 +3356,7 @@ export class AgentSession
             this.loginRetryPromptUuid = null;
             this.loginRetriedInTurn = false;
           }
+          this.loginAttemptEpoch = this.loginRecovery?.epoch(this.providerId()) ?? null;
           observer?.reportStage('query_ready', { generation: this.getQueryGeneration() });
           return { outcome: 'driving', acknowledgment, consumedUuids: [messageUuid] };
         },

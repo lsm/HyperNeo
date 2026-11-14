@@ -1152,9 +1152,12 @@ describe('classifyQueryRetryHold', () => {
     ).toBe('none');
   });
 
-  test('an unreachable network or a stalled stream is a network hold', () => {
+  test('an unreachable network is a network hold', () => {
     expect(classifyQueryRetryHold(signal({ isNetworkUnreachable: true }), env())).toBe('network');
-    expect(classifyQueryRetryHold(signal({ isStreamStall: true }), env())).toBe('network');
+  });
+
+  test('a stalled stream is charged like before, not held as a network outage', () => {
+    expect(classifyQueryRetryHold(signal({ isStreamStall: true }), env())).toBe('none');
   });
 
   test('a usage limit is a limit hold', () => {

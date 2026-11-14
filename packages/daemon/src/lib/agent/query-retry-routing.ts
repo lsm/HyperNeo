@@ -271,7 +271,7 @@ export function classifyQueryRetryHold(
   if (isQueryInterrupted(signal, env.lifecycle)) return 'none';
   if (env.providerFamily === 'anthropic' && isClaudeAuthenticationError(signal.rawText))
     return 'login';
-  if (signal.isNetworkUnreachable || signal.isStreamStall) return 'network';
+  if (signal.isNetworkUnreachable) return 'network';
   if (signal.isRateLimit) return 'limit';
   if (signal.isRetryableProviderError && env.attempt >= env.maxProviderRetries) return 'overloaded';
   return 'none';
