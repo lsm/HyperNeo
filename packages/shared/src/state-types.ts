@@ -121,7 +121,7 @@ export type AgentProcessingState =
       manualRetry?: boolean;
       reason?: 'network';
     }
-  | { status: 'interrupted' };
+  | { status: 'interrupted'; reason?: 'restart'; messageId?: string; resumeAt?: number };
 
 export interface CommandsData {
   availableCommands: string[];

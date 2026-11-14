@@ -122,6 +122,9 @@ export class InterruptHandler {
         if (opts?.skipDeferredReplay) {
           this.deferredReplaySuppressed = true;
         }
+        if (currentState.status === 'interrupted' && currentState.reason === 'restart') {
+          await stateManager.setInterrupted();
+        }
         return;
       }
       this.ctx.attemptTokens?.invalidateCurrent();
