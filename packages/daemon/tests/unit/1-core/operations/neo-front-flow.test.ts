@@ -1387,6 +1387,22 @@ test('a reply over the body limit is refused with the fix, with or without detai
   ).toMatchObject({ accepted: true });
 });
 
+test('a five-line reply with short details is accepted like a Neo publish', async () => {
+  const { id } = await deliveredConvoInput();
+  const fiveLines = 'Merged.\n- CI green\n- Reviewed\n- Deployed\n- Docs updated';
+  expect(
+    await convoPublish({
+      requestId: 'five-lines',
+      replyTo: [id],
+      shortText: fiveLines,
+      fullText: 'Flag rolled back.',
+    })
+  ).toMatchObject({ accepted: true });
+  expect(service.publications.list(conversationId)![0].fullText).toBe(
+    `${fiveLines}\n\nFlag rolled back.`
+  );
+});
+
 test('a reply is the answer and still hands off to the full session', async () => {
   const { id } = await deliveredConvoInput();
   createFrontTools(service, conversationId);
