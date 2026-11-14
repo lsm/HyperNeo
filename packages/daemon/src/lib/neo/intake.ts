@@ -24,6 +24,7 @@ import {
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
+import { escapeSessionText } from '../messaging/session-envelope.ts';
 import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
@@ -108,7 +109,8 @@ export function neoIntakeMessage(
   reply: NeoReply | null = null,
   localTime: string | null = null,
   stored?: SDKMessage,
-  previewContext: NeoPreviewReference | null = null
+  previewContext: NeoPreviewReference | null = null,
+  saidBlock: string | null = null
 ): SDKUserMessage & {
   uuid: UUID;
   inputKind: 'human';
@@ -126,7 +128,7 @@ export function neoIntakeMessage(
   const messageId = `[message id: ${input.requestId}]`;
   const first =
     stored?.type === 'user' && Array.isArray(stored.message.content)
-      ? stored.message.content[0]
+      ? stored.message.content.find((block: { type: string }) => block.type === 'text')
       : null;
   const identifier =
     !stored || (first?.type === 'text' && first.text === messageId) ? messageId : null;
@@ -134,8 +136,41 @@ export function neoIntakeMessage(
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
   const sourceFact = input.inputMode ? `[input: ${input.inputMode}]` : null;
-  const facts = [identifier, localTime, fact, previewFact, sourceFact].flatMap((text) =>
+  if (stored && identifier === null) {
+    const legacy = [localTime, fact, previewFact, sourceFact].flatMap((text) =>
+      text ? [{ type: 'text' as const, text }] : []
+    );
+    return {
+      type: 'user',
+      uuid: input.requestId as UUID,
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [...legacy, ...content] },
+      inputKind: 'human',
+      ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      ...(previewContext ? { previewContext } : {}),
+      ...(legacy.length ? { humanContent: content } : {}),
+    };
+  }
+  const opening = [identifier, localTime, sourceFact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
+  );
+  const context = [fact, previewFact].flatMap((text) =>
+    text ? [{ type: 'text' as const, text }] : []
+  );
+  if (!opening.length && !context.length && !saidBlock)
+    return {
+      type: 'user',
+      uuid: input.requestId as UUID,
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      message: { role: 'user', content },
+      inputKind: 'human',
+      ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      ...(previewContext ? { previewContext } : {}),
+    };
+  const human = content.map((block) =>
+    block.type === 'text' ? { ...block, text: escapeSessionText(block.text) } : block
   );
   return {
     type: 'user',
@@ -144,26 +179,37 @@ export function neoIntakeMessage(
     parent_tool_use_id: null,
     message: {
       role: 'user',
-      content: facts.length ? [...facts, ...content] : content,
+      content: [
+        ...(saidBlock
+          ? [
+              {
+                type: 'text' as const,
+                text: `${saidBlock}\nThese are your earlier replies, not the human's words. The human's words follow last.`,
+              },
+            ]
+          : []),
+        ...opening,
+        ...context,
+        { type: 'text' as const, text: `<human-message id="${input.requestId}">` },
+        ...human,
+        { type: 'text' as const, text: '</human-message>' },
+      ],
     },
     inputKind: 'human',
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     ...(previewContext ? { previewContext } : {}),
-    ...(facts.length ? { humanContent: content } : {}),
+    humanContent: content,
   };
 }
 
 export function neoRetryLocalTime(stored: SDKMessage | undefined, fresh: string): string | null {
   if (!stored) return fresh;
   const content = stored.type === 'user' ? stored.message.content : null;
-  const first = Array.isArray(content) ? content[0] : null;
-  const time =
-    first?.type === 'text' && first.text.startsWith('[message id: ')
-      ? Array.isArray(content)
-        ? content[1]
-        : null
-      : first;
-  return time?.type === 'text' && time.text.startsWith('(local time: ') ? time.text : null;
+  if (!Array.isArray(content)) return null;
+  const time = content.find(
+    (block) => block.type === 'text' && block.text.startsWith('(local time: ')
+  );
+  return time?.type === 'text' ? time.text : null;
 }
 
 export type NeoReply = {
@@ -184,13 +230,25 @@ export function readNeoReply(
   return { replyTo, question, todo, ask: askId ? store.getAsk(askId) : null };
 }
 
+function cardTitle(text: string): string {
+  const line = text.split('\n').find((candidate) => candidate.trim()) ?? '';
+  return line
+    .replace(/^[#*\s]+|\*+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
+
 export function neoReplyFact(reply: NeoReply | null, words = ''): string | null {
   const picked = neoChoiceByLetter(words, reply?.question ?? null);
+  const title = reply?.question ? cardTitle(reply.question.text) : '';
+  const named = title || 'your open question';
   if (reply?.question && picked)
-    return `The human answered your question "${reply.question.text}" with ${neoLabelledOptions(reply.question.options ?? [], picked, reply.question.labels)}:`;
+    return `The human answered the question card "${named}" with ${neoLabelledOptions(reply.question.options ?? [], picked, reply.question.labels)}. The human's words follow last:`;
   if (reply?.question?.kind === 'start')
-    return `The human replied about your start question "${reply.question.text}" (it stays open; only its Start button starts todos):`;
-  if (reply?.question) return `The human answered your question "${reply.question.text}":`;
+    return `The human replied about the start question card "${named}" (it stays open; only its Start button starts todos). The human's words follow last:`;
+  if (reply?.question)
+    return `The human answered the question card "${named}". The human's words follow last:`;
   if (reply?.todo) return `The human replied about todo ${reply.todo.id}:`;
   return reply?.replyTo.kind === 'ask' && reply.ask
     ? `The human replied to the work card "${reply.ask.title}":`
