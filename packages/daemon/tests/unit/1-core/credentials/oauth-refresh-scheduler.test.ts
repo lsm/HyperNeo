@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import type { Provider } from '@hyperneo/shared/provider';
+import type { Provider, TokenRefreshOutcome } from '@hyperneo/shared/provider';
 import { ProviderRegistry } from '../../../../src/lib/providers/registry';
 import { OAuthRefreshScheduler } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
 import {
@@ -26,7 +26,7 @@ class FakeCredentialManager {
   }
 }
 
-function createProvider(refreshResult: boolean | Error): Provider {
+function createProvider(refreshResult: TokenRefreshOutcome | Error): Provider {
   let credentials = {
     type: 'oauth' as const,
     accessToken: 'new-token',
@@ -51,7 +51,7 @@ function createProvider(refreshResult: boolean | Error): Provider {
     buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
     refreshToken: async () => {
       if (refreshResult instanceof Error) throw refreshResult;
-      if (refreshResult) {
+      if (refreshResult === 'refreshed') {
         credentials = { ...credentials, accessToken: 'new-token', expiresAt: Date.now() + 60_000 };
       }
       return refreshResult;
@@ -67,13 +67,13 @@ describe('OAuthRefreshScheduler', () => {
     let running = 0;
     let overlapped = false;
     const provider = {
-      ...createProvider(true),
+      ...createProvider('refreshed'),
       refreshToken: async () => {
         running += 1;
         overlapped ||= running > 1;
         await new Promise((resolve) => setTimeout(resolve, 10));
         running -= 1;
-        return true;
+        return 'refreshed' as const;
       },
     };
     registry.register(provider);
@@ -91,7 +91,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('runs an initial tick when started', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -122,10 +122,10 @@ describe('OAuthRefreshScheduler', () => {
       refreshToken: 'refresh-token',
       expiresAt: 1_000,
     };
-    const provider = createProvider(true);
+    const provider = createProvider('refreshed');
     provider.refreshToken = async () => {
       credentials = { ...credentials, accessToken: 'new-token', expiresAt: Date.now() + 60_000 };
-      return true;
+      return 'refreshed';
     };
     provider.getCredentials = () => credentials;
     registry.register(provider);
@@ -153,7 +153,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('refreshes OAuth credentials that expire inside refresh window', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -194,7 +194,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('marks provider unhealthy after max refresh retries', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(false));
+    registry.register(createProvider('definitive'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -251,7 +251,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('tracks retry counts per token expiry', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(false));
+    registry.register(createProvider('definitive'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -280,7 +280,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('runs dormancy recovery after a successful refresh and before the change event', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -311,7 +311,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('marks the provider unhealthy when recovery reports a failed probe', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -338,7 +338,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('swallows dormancy recovery failures so the refresh still completes', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -368,7 +368,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('does not run dormancy recovery when the refresh fails', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(false));
+    registry.register(createProvider('definitive'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -396,7 +396,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('drains an in-flight tick before stop resolves', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -443,7 +443,7 @@ describe('OAuthRefreshScheduler', () => {
       refreshToken: 'refresh-token',
       expiresAt: 1_000,
     };
-    const provider = createProvider(true);
+    const provider = createProvider('refreshed');
     provider.getCredentials = () => credentials;
     registry.register(provider);
     const manager = new FakeCredentialManager();
@@ -494,7 +494,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('stop waits for a failing tick without propagating its rejection', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -518,7 +518,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('retains unhealthy on a no-op recovery when a failure is still recorded', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -546,7 +546,7 @@ describe('OAuthRefreshScheduler', () => {
   });
   it('refreshes a pasted credential with no expiry once a credential failure is recorded', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -574,7 +574,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('leaves a pasted credential alone while no failure is recorded', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -594,7 +594,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('does not refresh a pasted credential on a transient failure', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(true));
+    registry.register(createProvider('refreshed'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -621,7 +621,7 @@ describe('OAuthRefreshScheduler', () => {
 
   it('stops retrying a revoked pasted credential after maxRetries', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider(false));
+    registry.register(createProvider('definitive'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -636,7 +636,7 @@ describe('OAuthRefreshScheduler', () => {
     const provider = registry.getAll()[0];
     provider.refreshToken = async () => {
       attempts++;
-      return false;
+      return 'definitive';
     };
     const scheduler = new OAuthRefreshScheduler(manager as never, {
       registry,
@@ -655,5 +655,83 @@ describe('OAuthRefreshScheduler', () => {
     } finally {
       clearProviderFailureRecords();
     }
+  });
+
+  describe('refreshNow outcomes', () => {
+    function expiredOauthCredentials() {
+      return {
+        type: 'oauth' as const,
+        accessToken: 'old-token',
+        refreshToken: 'refresh-token',
+        expiresAt: 1_000,
+      };
+    }
+
+    function expiredScheduler(provider: Provider) {
+      const registry = new ProviderRegistry();
+      registry.register(provider);
+      const manager = new FakeCredentialManager();
+      manager.credentials.set('oauth-provider', expiredOauthCredentials());
+      return new OAuthRefreshScheduler(manager as never, {
+        registry,
+        now: () => 0,
+        refreshWindowMs: 10_000,
+      });
+    }
+
+    it('returns refreshed after a successful refresh', async () => {
+      const scheduler = expiredScheduler(createProvider('refreshed'));
+      expect(await scheduler.refreshNow('oauth-provider')).toBe('refreshed');
+    });
+
+    it('returns transient when the provider reports a transient failure', async () => {
+      const scheduler = expiredScheduler(createProvider('transient'));
+      expect(await scheduler.refreshNow('oauth-provider')).toBe('transient');
+    });
+
+    it('returns transient when the provider throws', async () => {
+      const scheduler = expiredScheduler(createProvider(new Error('network down')));
+      expect(await scheduler.refreshNow('oauth-provider')).toBe('transient');
+    });
+
+    it('returns definitive when the provider reports a definitive failure', async () => {
+      const scheduler = expiredScheduler(createProvider('definitive'));
+      expect(await scheduler.refreshNow('oauth-provider')).toBe('definitive');
+    });
+
+    it('returns skipped for an unknown provider', async () => {
+      const scheduler = expiredScheduler(createProvider('refreshed'));
+      expect(await scheduler.refreshNow('missing-provider')).toBe('skipped');
+    });
+
+    it('returns skipped when stored credentials are not OAuth', async () => {
+      const provider = createProvider('refreshed');
+      const registry = new ProviderRegistry();
+      registry.register(provider);
+      const manager = new FakeCredentialManager();
+      manager.credentials.set('oauth-provider', { type: 'api_key', apiKey: 'sk' });
+      const scheduler = new OAuthRefreshScheduler(manager as never, {
+        registry,
+        now: () => 0,
+      });
+      expect(await scheduler.refreshNow('oauth-provider')).toBe('skipped');
+    });
+
+    it('returns skipped when OAuth credentials have no refresh token', async () => {
+      const provider = createProvider('refreshed');
+      const registry = new ProviderRegistry();
+      registry.register(provider);
+      const manager = new FakeCredentialManager();
+      manager.credentials.set('oauth-provider', {
+        type: 'oauth',
+        accessToken: 'access-only',
+        expiresAt: 1_000,
+      });
+      const scheduler = new OAuthRefreshScheduler(manager as never, {
+        registry,
+        now: () => 0,
+      });
+      expect(await scheduler.refreshNow('oauth-provider')).toBe('skipped');
+    });
   });
 });

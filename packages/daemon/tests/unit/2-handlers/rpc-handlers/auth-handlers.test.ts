@@ -1123,7 +1123,7 @@ describe('Auth RPC Handlers', () => {
 
     it('returns success when token refresh succeeds', async () => {
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => true),
+        refreshToken: mock(async () => 'refreshed' as const),
       });
       registry.register(mockProvider);
 
@@ -1154,7 +1154,7 @@ describe('Auth RPC Handlers', () => {
         expiresAt: Date.now() + 60_000,
       };
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => true),
+        refreshToken: mock(async () => 'refreshed' as const),
         getCredentials: mock(() => credentials),
       });
       registry.register(mockProvider);
@@ -1172,7 +1172,7 @@ describe('Auth RPC Handlers', () => {
 
     it('returns error when token refresh fails', async () => {
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => false),
+        refreshToken: mock(async () => 'definitive' as const),
       });
       registry.register(mockProvider);
 
@@ -1198,7 +1198,7 @@ describe('Auth RPC Handlers', () => {
         credentialManager as never
       );
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => false),
+        refreshToken: mock(async () => 'definitive' as const),
         getCredentials: mock(async () => null),
       });
       registry.register(mockProvider);
@@ -1229,7 +1229,7 @@ describe('Auth RPC Handlers', () => {
         repo as never
       );
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => false),
+        refreshToken: mock(async () => 'definitive' as const),
         getCredentials: mock(async () => null),
       });
       registry.register(mockProvider);
@@ -1268,7 +1268,7 @@ describe('Auth RPC Handlers', () => {
         repo as never
       );
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => false),
+        refreshToken: mock(async () => 'definitive' as const),
         getCredentials: mock(async () => null),
       });
       registry.register(mockProvider);
@@ -1316,7 +1316,7 @@ describe('Auth RPC Handlers', () => {
       };
       let calls = 0;
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => false),
+        refreshToken: mock(async () => 'definitive' as const),
         getCredentials: mock(async () => {
           calls += 1;
           return calls === 1 ? previousCredentials : replacementCredentials;
@@ -1356,7 +1356,7 @@ describe('Auth RPC Handlers', () => {
         credentialManager as never
       );
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => false),
+        refreshToken: mock(async () => 'definitive' as const),
         getCredentials: mock(async () => ({
           type: 'oauth' as const,
           accessToken: 'still-valid',
@@ -1397,7 +1397,7 @@ describe('Auth RPC Handlers', () => {
         repo as never
       );
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => false),
+        refreshToken: mock(async () => 'definitive' as const),
         getCredentials: mock(async () => ({
           type: 'oauth' as const,
           accessToken: 'still-valid',
@@ -1439,7 +1439,7 @@ describe('Auth RPC Handlers', () => {
         repo as never
       );
       const mockProvider = createMockProvider({
-        refreshToken: mock(async () => false),
+        refreshToken: mock(async () => 'definitive' as const),
         getCredentials: mock(async () => {
           throw new Error('credential store unreachable');
         }),

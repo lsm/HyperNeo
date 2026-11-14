@@ -454,8 +454,8 @@ export function setupAuthHandlers(
 
       try {
         bumpProviderCatalogEpoch(providerId);
-        const refreshed = await provider.refreshToken();
-        if (!refreshed) {
+        const outcome = await provider.refreshToken();
+        if (outcome !== 'refreshed') {
           let previousCredentials: ProviderCredentials | null = null;
           try {
             previousCredentials = (await credentialManager?.getCredentials?.(providerId)) ?? null;

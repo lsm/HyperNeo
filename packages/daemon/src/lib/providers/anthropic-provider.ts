@@ -9,6 +9,7 @@ import type {
   ModelTier,
   ListRemoteModelsOptions,
   ProviderUsageResult,
+  TokenRefreshOutcome,
   UsageWindow,
 } from '@hyperneo/shared/provider';
 import type { SDKControlGetUsageResponse } from '@hyperneo/shared/sdk';
@@ -257,16 +258,20 @@ export class AnthropicProvider implements Provider {
     };
   }
 
-  async refreshToken(): Promise<boolean> {
+  async refreshToken(): Promise<TokenRefreshOutcome> {
     const credentials = this.credentials;
-    if (credentials?.type !== 'oauth' || !credentials.refreshToken) return false;
-    const result = await refreshClaudeSubscriptionToken({
-      refreshToken: credentials.refreshToken,
-      fetchImpl: this.fetchImpl,
-    });
-    if (!result.ok) return false;
-    this.applyClaudeSubscriptionTokens(result.token);
-    return true;
+    if (credentials?.type !== 'oauth' || !credentials.refreshToken) return 'definitive';
+    try {
+      const result = await refreshClaudeSubscriptionToken({
+        refreshToken: credentials.refreshToken,
+        fetchImpl: this.fetchImpl,
+      });
+      if (!result.ok) return result.definitive ? 'definitive' : 'transient';
+      this.applyClaudeSubscriptionTokens(result.token);
+      return 'refreshed';
+    } catch {
+      return 'transient';
+    }
   }
 
   async logout(): Promise<void> {

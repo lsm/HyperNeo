@@ -13,6 +13,7 @@ export type {
   ModelTier,
   ProviderAuthStatusInfo,
   ProviderOAuthFlowData,
+  TokenRefreshOutcome,
   CuratedModel,
   ListRemoteModelsOptions,
 } from './types.js';

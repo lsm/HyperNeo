@@ -2143,7 +2143,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
       const refreshed = await p.refreshToken();
 
-      expect(refreshed).toBe(false);
+      expect(refreshed).toBe('definitive');
       const authStatus = await p.getAuthStatus();
       expect(authStatus.isAuthenticated).toBe(false);
       expect(await p.getApiKey()).toBeUndefined();
@@ -2168,7 +2168,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
       const refreshed = await p.refreshToken();
 
-      expect(refreshed).toBe(false);
+      expect(refreshed).toBe('definitive');
       const authStatus = await p.getAuthStatus();
       expect(authStatus.isAuthenticated).toBe(false);
       p.stopAllBridgeServers();
@@ -2188,7 +2188,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
       const refreshed = await p.refreshToken();
 
-      expect(refreshed).toBe(false);
+      expect(refreshed).toBe('transient');
       const authStatus = await p.getAuthStatus();
       expect(authStatus.isAuthenticated).toBe(true);
       expect(await p.getApiKey()).toBe('valid-access-token');
@@ -2214,7 +2214,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
       const refreshed = await p.refreshToken();
 
-      expect(refreshed).toBe(false);
+      expect(refreshed).toBe('transient');
       const authStatus = await p.getAuthStatus();
       expect(authStatus.isAuthenticated).toBe(true);
       p.stopAllBridgeServers();
@@ -2239,7 +2239,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
       const refreshed = await p.refreshToken();
 
-      expect(refreshed).toBe(false);
+      expect(refreshed).toBe('transient');
       const authStatus = await p.getAuthStatus();
       expect(authStatus.isAuthenticated).toBe(true);
       p.stopAllBridgeServers();
