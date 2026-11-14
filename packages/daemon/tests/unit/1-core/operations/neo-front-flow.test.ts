@@ -1851,6 +1851,27 @@ test('the hand-off tells the full session whether the reply answered or promised
   }
 });
 
+test('a retried reply keeps the work_on decision committed with it', async () => {
+  const first = await deliveredConvoInput();
+  const second = await deliveredConvoInput();
+  const send = (replyTo: string[], text: string, workOn: boolean) =>
+    convoPublish({
+      requestId: 'retried',
+      replyTo,
+      fullText: text,
+      verbatim: true,
+      work_on: workOn,
+    });
+  expect(await send([first.id], "I'll cancel them.", true)).toMatchObject({ started: true });
+  expect(await send([second.id], 'Two todos are open.', false)).toMatchObject({ started: true });
+
+  const delivered = JSON.stringify(
+    db.getSDKMessageRepo().getDeliveryContent(root, second.id) ?? ''
+  );
+  expect(delivered, delivered).toContain('work_on=\\"true\\"');
+  expect(delivered, delivered).toContain("I'll cancel them.");
+});
+
 test('a reply with two replyTo IDs hands both inputs off', async () => {
   const first = await deliveredConvoInput();
   const second = await deliveredConvoInput();
@@ -1869,6 +1890,8 @@ test('the full session prompt carries no dual-mode acknowledgment rule', () => {
   expect(NEO_ROOT_TURN_END).not.toContain('briefly acknowledge the request naturally');
   expect(NEO_FRONT).toContain('the answer goes to the human by itself');
   expect(NEO_FRONT).toContain('never say you cannot');
+  expect(NEO_FRONT).not.toMatch(/another session/i);
+  expect(NEO_ROOT_TURN_END).toContain('already answered it correctly with work_on="false"');
   expect(NEO_ROOT_PROMPT).toContain('if work_on="false" and right, publish nothing');
 });
 

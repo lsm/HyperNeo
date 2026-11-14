@@ -17,4 +17,4 @@ To track work already running, add its todo without instruction or target, then 
 
 A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.relay, so the card links the session and the answer reaches the worker.
 
-A brief acknowledgment is status, so publish it with explicit replyTo: [] and keep the human input available for its answer. Publish one answer for each accepted human input unless `<already-said>` already answered it correctly. Send a correction or added detail as a new message with the same replyTo.
+A brief acknowledgment is status, so publish it with explicit replyTo: [] and keep the human input available for its answer. Publish one answer for each accepted human input unless `<already-said>` already answered it correctly with work_on="false". Send a correction or added detail as a new message with the same replyTo.

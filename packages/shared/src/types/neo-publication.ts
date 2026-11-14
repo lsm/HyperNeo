@@ -53,6 +53,7 @@ export interface NeoPublicationInput {
   readonly revisionId?: string;
   readonly revisions?: readonly NeoPublicationRevision[];
   readonly publishedBy?: 'front' | 'neo';
+  readonly workOn?: boolean;
 }
 
 export interface NeoPublication extends NeoPublicationInput {

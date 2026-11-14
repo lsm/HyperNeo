@@ -58,12 +58,16 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       "Required while the latest fact is [listening: yes]: one or two natural spoken lines in the human's language, consistent with the text, without paths, IDs, hashes, long numbers or Markdown. Omit when [listening: no]."
     ),
   };
-  const publish = async (input: z.infer<typeof NeoPublicationDraft> & { replyTo?: string[] }) => {
+  const publish = async (
+    input: z.infer<typeof NeoPublicationDraft> & { replyTo?: string[] },
+    workOn?: boolean
+  ) => {
     if (!input.spoken && service.speech.isListening(service.defaultSessionId() ?? sessionId))
       return { accepted: false, reason: 'spoken_required', listening: 'yes' };
     return service.publish(
       { ...input, replyTo: input.replyTo ?? [] },
-      { source: 'mcp', sessionId }
+      { source: 'mcp', sessionId },
+      workOn
     );
   };
   const handOff = async (
@@ -144,7 +148,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
-          const receipt = await publish({ ...input, ...body });
+          const receipt = await publish({ ...input, ...body }, workOn);
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
           if (!receipt.accepted && !second) return result(receipt);
           const existing = second
@@ -152,12 +156,11 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             : null;
           if (second && !existing)
             return result({ accepted: false, reason: 'publication_conflict' });
-          const said = existing?.fullText ?? text;
           const handed = await handOff(
             asks.map((ask) => ask!),
             targets,
-            said,
-            workOn
+            existing?.fullText ?? text,
+            existing ? (existing.workOn ?? workOn) : workOn
           );
           return result(
             handed.started
