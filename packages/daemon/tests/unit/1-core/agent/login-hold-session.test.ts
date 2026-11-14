@@ -1,9 +1,10 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { ProviderRefreshClock } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
 import type { RefreshNowOutcome } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
+import { initializeProviders } from '../../../../src/lib/providers/factory';
 import { clearProviderFailure } from '../../../../src/lib/providers/provider-failure-store';
 import {
   createTestDb,
@@ -29,9 +30,15 @@ interface Harness {
   setOutcome(outcome: RefreshNowOutcome): void;
 }
 
+let availability: Array<{ mockRestore(): void }> = [];
+
 async function harness(
   options: { processingState?: string; needsLoginAt?: number } = {}
 ): Promise<Harness> {
+  availability.forEach((spy) => spy.mockRestore());
+  availability = initializeProviders()
+    .getAll()
+    .map((provider) => spyOn(provider, 'isAvailable').mockImplementation(async () => true));
   const db = await createTestDb();
   const session = createTestSession('login-hold');
   session.config.provider = 'anthropic';
@@ -142,6 +149,11 @@ async function harness(
     setOutcome,
   };
 }
+
+afterEach(() => {
+  availability.forEach((spy) => spy.mockRestore());
+  availability = [];
+});
 
 describe('login hold', () => {
   it('holds before calling the model when a restart left needs_login_at set', async () => {
