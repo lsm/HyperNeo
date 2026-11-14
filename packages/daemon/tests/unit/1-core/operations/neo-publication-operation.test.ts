@@ -43,7 +43,6 @@ describe('Neo publication without runtime input attribution', () => {
   let failWrite: boolean;
   let sourceSession: string | undefined;
   let received: Set<string>;
-  let current: string[];
   let inputs: NeoFrontInputRepository;
   beforeEach(() => {
     mailbox = createMailboxTestDb();
@@ -63,10 +62,8 @@ describe('Neo publication without runtime input attribution', () => {
     failWrite = false;
     sourceSession = undefined;
     received = new Set();
-    current = [];
     publish = createNeoPublisher({
       receivedHumanInput: (_sessionId, id) => received.has(id),
-      currentHumanInputs: () => current,
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
@@ -440,7 +437,6 @@ describe('Neo publication without runtime input attribution', () => {
     ];
     for (const id of pending) inputs.accept(conversationId, id, true);
     received = new Set(pending);
-    current = [...pending];
     const receipt = await publish(draft, caller);
     expect(receipt).toMatchObject({ accepted: true, created: true });
     expect(ledger.list(conversationId)[0].replyTo).toBeUndefined();
@@ -452,7 +448,6 @@ describe('Neo publication without runtime input attribution', () => {
     const pending = '00000000-0000-4000-8000-000000000011';
     for (const id of [answered, pending]) inputs.accept(conversationId, id, true);
     received = new Set([answered, pending]);
-    current = [answered, pending];
     const receipt = await publish({ ...draft, replyTo: [answered] }, caller);
     expect(receipt).toMatchObject({
       accepted: true,
