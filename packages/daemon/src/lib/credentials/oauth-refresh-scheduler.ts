@@ -101,9 +101,8 @@ export class OAuthRefreshScheduler {
   ): Promise<RefreshNowOutcome> {
     if (!provider.refreshToken) return 'skipped';
     const credentials = await this.credentialsForProvider(provider);
-    if (!credentials || credentials.type !== 'oauth' || !credentials.refreshToken) {
-      return 'skipped';
-    }
+    if (!credentials || credentials.type !== 'oauth') return 'skipped';
+    if (force && !credentials.refreshToken) return 'skipped';
 
     const due = decideRefreshDue({
       expiresAt: credentials.expiresAt,

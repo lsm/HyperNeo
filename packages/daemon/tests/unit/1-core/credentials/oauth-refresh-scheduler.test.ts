@@ -733,5 +733,38 @@ describe('OAuthRefreshScheduler', () => {
       });
       expect(await scheduler.refreshNow('oauth-provider')).toBe('skipped');
     });
+
+    it('still calls the provider and counts failures for access-only credentials on tick', async () => {
+      const provider = createProvider('transient');
+      let attempts = 0;
+      provider.refreshToken = async () => {
+        attempts++;
+        return 'transient';
+      };
+      const registry = new ProviderRegistry();
+      registry.register(provider);
+      const manager = new FakeCredentialManager();
+      manager.credentials.set('oauth-provider', {
+        type: 'oauth',
+        accessToken: 'access-only',
+        expiresAt: 1_000,
+      });
+      const changed: string[] = [];
+      const scheduler = new OAuthRefreshScheduler(manager as never, {
+        registry,
+        now: () => 0,
+        refreshWindowMs: 10_000,
+        maxRetries: 1,
+        onProviderChanged: (providerId) => {
+          changed.push(providerId);
+        },
+      });
+
+      await scheduler.tick();
+
+      expect(attempts).toBe(1);
+      expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+      expect(changed).toEqual(['oauth-provider']);
+    });
   });
 });
