@@ -101,6 +101,14 @@ export function openNeoSpeechPlayer(
       finish(utterance, 'played');
   };
 
+  const drop = () => {
+    queue.forEach(silence);
+    queue = [];
+  };
+  const unwatch = hub.onConnection((state) => {
+    if (state !== 'connected') drop();
+  });
+
   context.resume().catch(() => {
     audible = false;
     for (const utterance of queue.splice(0)) ack(utterance.id, 'failed');
@@ -108,11 +116,7 @@ export function openNeoSpeechPlayer(
 
   const unsubscribe = hub.onEvent<SpeechEvent>('neo.speech', (event) => {
     if (event?.sessionId !== sessionId) return;
-    if (event.type === 'stop') {
-      queue.forEach(silence);
-      queue = [];
-      return;
-    }
+    if (event.type === 'stop') return drop();
     const utterance = queue.find((item) => item.id === event.id);
     if (event.type === 'say') {
       if (event.format !== 'pcm16' || utterance) return;
@@ -148,6 +152,7 @@ export function openNeoSpeechPlayer(
     close() {
       interrupt();
       unsubscribe();
+      unwatch();
       context.close().catch(() => {});
     },
   };

@@ -99,7 +99,7 @@ writeFileSync(
 const w = window as any;
 w.acks = []; w.voiced = 0; w.peak = 0;
 const hub = { request: (method: string, data: any) => { w.acks.push({ ...data.input, at: performance.now() }); return w.hubRequest(method, data); },
-  onEvent: (_method: string, handler: any) => { w.deliver = handler; return () => { w.deliver = null; }; } };
+  onEvent: (_method: string, handler: any) => { w.deliver = handler; return () => { w.deliver = null; }; }, onConnection: () => () => {} };
 w.player = openNeoSpeechPlayer(hub as any, ${JSON.stringify(sessionId)}, { createContext: () => {
   const context = new AudioContext();
   const tap = context.createGain();
