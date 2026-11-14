@@ -17,6 +17,7 @@ interface WorkspaceChipsProps {
   onSelectProject: (path: string | null) => void;
   onBrowse: () => void;
   onEnterPath: () => void;
+  onAddFolder: () => void;
   nativeFolderPickerAvailable: boolean;
   onSelectMode: (mode: 'worktree' | 'direct') => void;
   onSelectBranch: (branch: string) => void;
@@ -71,6 +72,7 @@ export function WorkspaceChips({
   onSelectProject,
   onBrowse,
   onEnterPath,
+  onAddFolder,
   nativeFolderPickerAvailable,
   onSelectMode,
   onSelectBranch,
@@ -86,6 +88,9 @@ export function WorkspaceChips({
       onClick: () => onSelectProject(path),
     })),
     { type: 'divider' as const },
+    ...(selectedProject
+      ? [{ label: `Add folder to ${projectName(selectedProject)}…`, onClick: onAddFolder }]
+      : []),
     ...(nativeFolderPickerAvailable
       ? [{ label: 'Browse on this computer…', onClick: onBrowse }]
       : []),

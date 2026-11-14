@@ -10,6 +10,7 @@ trap '.claude/skills/verify/stop.sh "$RUN" > /dev/null; rm -rf "$RUN"' EXIT
 VERIFY_NORMAL_PRIORITY=1 VERIFY_LOG_LEVEL=error .claude/skills/verify/launch.sh "$PORT" "$RUN" | tail -1
 export HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT=$PORT
 mkdir -p "$RUN/evidence" "$OUT"
+mkdir -p "$RUN/projects/assets-light" "$RUN/projects/assets-dark"
 for name in alpha beta; do
   mkdir -p "$RUN/projects/$name" && git -C "$RUN/projects/$name" init -q
   bun .claude/skills/verify/rpc.ts rpc:workspace.add "{\"path\":\"$RUN/projects/$name\"}" > /dev/null

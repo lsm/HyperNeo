@@ -70,6 +70,25 @@ try {
     result.chipText = (await chip.textContent())?.trim();
     result.addProjectForms = await page.getByTestId('add-project-form').count();
     await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-new-session.png` });
+    await chip.click();
+    const addFolder = page.getByRole('menuitem', { name: 'Add folder to alpha…' });
+    await addFolder.waitFor({ timeout: 5000 });
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-folder-menu.png` });
+    await addFolder.click();
+    const folderInput = page.getByPlaceholder('Folder path');
+    await folderInput.fill(`${run}/projects/assets-${scheme}`);
+    await folderInput.press('Enter');
+    await folderInput.waitFor({ state: 'detached', timeout: 10000 });
+    await chip.click();
+    const added = page.getByRole('menuitem', { name: `assets-${scheme}` });
+    result.addedFolderInMenu = await added
+      .waitFor({ timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-folder-added.png` });
+    await page.keyboard.press('Escape');
     result.pageErrors = errors;
     seen[scheme] = result;
     assert.equal(result.hoverMedia, true);
@@ -83,6 +102,8 @@ try {
     assert.equal(result.pathAfterClick, '/sessions');
     assert.match(result.chipText ?? '', /alpha/);
     assert.equal(result.addProjectForms, 0);
+    assert.equal(result.addedFolderInMenu, true);
+    assert.deepEqual(result.pageErrors, []);
     await context.close();
   }
 

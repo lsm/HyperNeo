@@ -4,13 +4,11 @@ import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockGetWorkspaceHistory, mockGetGitBranches, mockAddFolderToProject } = vi.hoisted(
-  () => ({
-    mockGetWorkspaceHistory: vi.fn(),
-    mockGetGitBranches: vi.fn(),
-    mockAddFolderToProject: vi.fn(),
-  })
-);
+const { mockGetWorkspaceHistory, mockGetGitBranches, mockAddFolderToProject } = vi.hoisted(() => ({
+  mockGetWorkspaceHistory: vi.fn(),
+  mockGetGitBranches: vi.fn(),
+  mockAddFolderToProject: vi.fn(),
+}));
 
 vi.mock('../../lib/state.ts', () => ({
   connectionState: signal('connected'),
@@ -43,7 +41,9 @@ import { newChatProjectSignal } from '../../lib/signals';
 import { SessionsPage } from '../SessionsPage';
 
 function folderChip() {
-  return screen.getByText((_, element) => element?.getAttribute('title') === '/code' || false);
+  return screen.getAllByText(
+    (_, element) => element?.getAttribute('title') === '/code' || false
+  )[0];
 }
 
 describe('SessionsPage', () => {

@@ -7,6 +7,8 @@ It owns its daemon, adds two projects (`alpha`, `beta`), pairs a browser and cle
 
 - Light and dark, pointer device: no `Add folder` button; each project's `New session in <name>`
   button has opacity 0 at rest, 1 while its row is hovered or keyboard-focused, and clicking it
-  leaves `/sessions` showing that project's folder chip.
+  leaves `/sessions` showing that project's folder chip. The folder menu then offers
+  `Add folder to alpha…`; entering a path closes the form and the new folder appears in the menu.
 - Touch device (`hover: none`): the button stays visible.
-- Screenshots: `sidebar-{light,dark}-{rest,hover,new-session}.png` and `sidebar-touch-rest.png`.
+- Screenshots: `sidebar-{light,dark}-{rest,hover,new-session,folder-menu,folder-added}.png` and
+  `sidebar-touch-rest.png`. Run with `TMPDIR=/private/tmp` so folder paths in the sidebar stay generic.
