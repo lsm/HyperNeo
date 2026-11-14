@@ -146,6 +146,27 @@ describe('SessionsPage', () => {
     expect(await screen.findByRole('menuitem', { name: 'added-elsewhere' })).toBeTruthy();
   });
 
+  it('refuses a folder form whose project was removed while it was open', async () => {
+    mockGetWorkspaceHistory.mockResolvedValue([
+      { path: '/code', lastUsedAt: 1, useCount: 1 },
+      { path: '/gone', lastUsedAt: 1, useCount: 1 },
+    ]);
+    newChatProjectSignal.value = '/gone';
+    render(<SessionsPage />);
+    const goneChip = await screen.findByText((_, element) =>
+      Boolean(element?.getAttribute('title') === '/gone')
+    );
+    fireEvent.click(goneChip);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add folder to gone…' }));
+    mockGetWorkspaceHistory.mockResolvedValue([{ path: '/code', lastUsedAt: 1, useCount: 1 }]);
+    workspaceHistoryVersionSignal.value += 1;
+    await waitFor(() => expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(2));
+    fireEvent.input(screen.getByPlaceholderText('Folder path'), { target: { value: '/assets' } });
+    fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
+    expect(await screen.findByText(/gone is no longer a project/)).toBeTruthy();
+    expect(mockAddFolderToProject).not.toHaveBeenCalled();
+  });
+
   it('keeps the folder form open with the reason when the daemon refuses', async () => {
     newChatProjectSignal.value = '/code';
     render(<SessionsPage />);
