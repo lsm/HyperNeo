@@ -1240,9 +1240,6 @@ async function readHeadLines(path: string | null): Promise<string[]> {
   }
 }
 
-const claudeDesktopWorkerBrief = (folder: string) =>
-  `${workerWorkLocationsBrief(folder)}\nOpen the PR on the session's own branch; if it was opened on another branch, immediately attach it with ccd_pr bind_pr, then turn on auto_fix and address_comments with ccd_pr set_monitor.`;
-
 export async function resumeIdleClaudeSession(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
@@ -1289,7 +1286,7 @@ export async function resumeIdleClaudeSession(
             '--settings',
             join(folder, '.claude/settings.local.json'),
             '--append-system-prompt',
-            claudeDesktopWorkerBrief(folder),
+            workerWorkLocationsBrief(folder),
           ]
         : []),
       '--',
@@ -1661,7 +1658,7 @@ export async function startClaudeSession(
         ? join(cwd, '.claude/settings.local.json')
         : JSON.stringify({ env: workerWorkEnvironment(cwd) }),
       '--append-system-prompt',
-      claudeDesktopWorkerBrief(cwd),
+      `${workerWorkLocationsBrief(cwd)}\nOpen the PR on the session's own branch; if it was opened on another branch, immediately attach it with ccd_pr bind_pr, then turn on auto_fix and address_comments with ccd_pr set_monitor.`,
       '--',
       CLAUDE_DESKTOP_PREPARE,
     ],
