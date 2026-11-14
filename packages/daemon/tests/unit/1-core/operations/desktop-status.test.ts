@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
@@ -13,6 +14,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const identity = { seconds: 1, microseconds: 2 };
+const exitedPid = spawnSync(process.execPath, ['-e', '']).pid;
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const worker = 'worker-a';
 let root: string;
@@ -59,7 +61,7 @@ async function openApp() {
 async function recordDriver() {
   await writeFile(
     join(directory, 'driver.json'),
-    JSON.stringify({ pid: 4242, startedAt: identity }),
+    JSON.stringify({ pid: exitedPid, startedAt: identity }),
     {
       mode: 0o600,
     }

@@ -1164,7 +1164,9 @@ export default function ChatContainer({
 
       {headerExtra}
 
-      {!readonly && <DesktopControl worker={sessionId} class="border-b border-line px-4 py-2" />}
+      {!readonly && /^[A-Za-z0-9_-]{1,64}$/.test(sessionId) && (
+        <DesktopControl worker={sessionId} class="border-b border-line px-4 py-2" />
+      )}
 
       <div class="flex-1 relative min-h-0">
         <div
