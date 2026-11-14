@@ -126,12 +126,23 @@ export function neoIntakeMessage(
     (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply, neoAskText(input.content)) : null) ??
     neoQuoteFact(input.replyTo);
   const messageId = `[message id: ${input.requestId}]`;
-  const first =
+  const storedBlocks =
     stored?.type === 'user' && Array.isArray(stored.message.content)
-      ? stored.message.content.find((block: { type: string }) => block.type === 'text')
+      ? stored.message.content
       : null;
   const identifier =
-    !stored || (first?.type === 'text' && first.text === messageId) ? messageId : null;
+    !stored ||
+    (storedBlocks?.some(
+      (block: { type: string; text?: string }) => block.type === 'text' && block.text === messageId
+    ) ??
+      false)
+      ? messageId
+      : null;
+  const storedSaid = storedBlocks?.find(
+    (block: { type: string; text?: string }) =>
+      block.type === 'text' && block.text?.startsWith('<already-said>') === true
+  );
+  const said = saidBlock ?? (storedSaid?.type === 'text' ? (storedSaid.text ?? null) : null);
   const previewFact = previewContext
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
@@ -158,17 +169,6 @@ export function neoIntakeMessage(
   const context = [fact, previewFact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
   );
-  if (!opening.length && !context.length && !saidBlock)
-    return {
-      type: 'user',
-      uuid: input.requestId as UUID,
-      session_id: sessionId,
-      parent_tool_use_id: null,
-      message: { role: 'user', content },
-      inputKind: 'human',
-      ...(input.replyTo ? { replyTo: input.replyTo } : {}),
-      ...(previewContext ? { previewContext } : {}),
-    };
   const human = content.map((block) =>
     block.type === 'text' ? { ...block, text: escapeSessionText(block.text) } : block
   );
@@ -180,14 +180,7 @@ export function neoIntakeMessage(
     message: {
       role: 'user',
       content: [
-        ...(saidBlock
-          ? [
-              {
-                type: 'text' as const,
-                text: `${saidBlock}\nThese are your earlier replies, not the human's words. The human's words follow last.`,
-              },
-            ]
-          : []),
+        ...(said ? [{ type: 'text' as const, text: said }] : []),
         ...opening,
         ...context,
         { type: 'text' as const, text: `<human-message id="${input.requestId}">` },
@@ -230,25 +223,13 @@ export function readNeoReply(
   return { replyTo, question, todo, ask: askId ? store.getAsk(askId) : null };
 }
 
-function cardTitle(text: string): string {
-  const line = text.split('\n').find((candidate) => candidate.trim()) ?? '';
-  return line
-    .replace(/^[#*\s]+|\*+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 120);
-}
-
 export function neoReplyFact(reply: NeoReply | null, words = ''): string | null {
   const picked = neoChoiceByLetter(words, reply?.question ?? null);
-  const title = reply?.question ? cardTitle(reply.question.text) : '';
-  const named = title || 'your open question';
   if (reply?.question && picked)
-    return `The human answered the question card "${named}" with ${neoLabelledOptions(reply.question.options ?? [], picked, reply.question.labels)}. The human's words follow last:`;
+    return `The human answered your question "${reply.question.text}" with ${neoLabelledOptions(reply.question.options ?? [], picked, reply.question.labels)}:`;
   if (reply?.question?.kind === 'start')
-    return `The human replied about the start question card "${named}" (it stays open; only its Start button starts todos). The human's words follow last:`;
-  if (reply?.question)
-    return `The human answered the question card "${named}". The human's words follow last:`;
+    return `The human replied about your start question "${reply.question.text}" (it stays open; only its Start button starts todos):`;
+  if (reply?.question) return `The human answered your question "${reply.question.text}":`;
   if (reply?.todo) return `The human replied about todo ${reply.todo.id}:`;
   return reply?.replyTo.kind === 'ask' && reply.ask
     ? `The human replied to the work card "${reply.ask.title}":`
