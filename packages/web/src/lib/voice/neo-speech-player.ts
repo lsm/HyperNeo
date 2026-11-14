@@ -85,7 +85,9 @@ export function openNeoSpeechPlayer(
   };
 
   const finish = (utterance: Utterance, state?: 'played') => {
+    const head = queue[0] === utterance;
     queue = queue.filter((item) => item !== utterance);
+    if (head && queue[0]) queue[0].heard = Date.now();
     silence(utterance);
     if (state) ack(utterance.id, state);
     pump();
