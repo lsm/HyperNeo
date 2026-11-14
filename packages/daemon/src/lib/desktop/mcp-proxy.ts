@@ -28,7 +28,12 @@ type Options = {
     callId: string
   ) => Promise<{ value: Target } | Context | null>;
 };
-type Refusal = 'tool_not_allowed' | 'target_unverified' | 'target_mismatch';
+type Refusal =
+  | 'tool_not_allowed'
+  | 'target_unverified'
+  | 'target_mismatch'
+  | 'app_action_not_authorized'
+  | 'guards_unavailable';
 type Context = { reason: Refusal; class?: string; app_id?: string };
 const explanations: Record<string, string> = {
   tool_not_allowed: 'This tool is not on the desktop allowlist.',
@@ -37,6 +42,7 @@ const explanations: Record<string, string> = {
   guards_unavailable: 'The trusted desktop host could not check this call.',
   target_unverified: 'The target app could not be verified from its code signature.',
   target_mismatch: 'The addressed process, window or app does not match the verified target.',
+  app_action_not_authorized: 'The owner has not approved this action class for this app.',
   driver_unavailable: 'The desktop driver is not available.',
   driver_error: 'The desktop driver failed after the call was sent.',
 };

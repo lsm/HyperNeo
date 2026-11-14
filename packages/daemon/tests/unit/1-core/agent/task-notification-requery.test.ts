@@ -6,7 +6,6 @@ import {
   advanceTaskNotificationRequeryEpisode,
   buildTaskNotificationRequeryEscalationEvent,
   isTopLevelHollowTaskNotificationResult,
-  resolveTaskNotificationRequery,
   TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
   TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
   taskNotificationRequeryDelayMs,
@@ -134,102 +133,6 @@ describe('task-notification requery policy', () => {
       expect(
         isTopLevelHollowTaskNotificationResult({ type: 'assistant' } as unknown as SDKMessage)
       ).toBe(false);
-    });
-  });
-
-  describe('resolveTaskNotificationRequery', () => {
-    const base = { attempts: 0, exhausted: false, followUpQueued: false };
-
-    it('stands down with reset on results that show real model activity', () => {
-      expect(
-        resolveTaskNotificationRequery({ ...base, message: buildRealSuccessResult() })
-      ).toEqual({ action: 'reset' });
-      expect(
-        resolveTaskNotificationRequery({ ...base, message: buildApiErrorTerminalResult() })
-      ).toEqual({ action: 'reset' });
-    });
-
-    it('keeps an active episode armed across failed continuation results', () => {
-      expect(
-        resolveTaskNotificationRequery({
-          ...base,
-          attempts: 3,
-          message: buildApiErrorTerminalResult(),
-        })
-      ).toEqual({ action: 'requery', delayMs: taskNotificationRequeryDelayMs(3) });
-      expect(
-        resolveTaskNotificationRequery({
-          ...base,
-          attempts: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
-          message: buildApiErrorTerminalResult(),
-        })
-      ).toEqual({ action: 'escalate' });
-    });
-
-    it('treats a completed terminal reason as model activity, not an error', () => {
-      expect(
-        resolveTaskNotificationRequery({
-          ...base,
-          attempts: 3,
-          message: buildResultMessage({ terminal_reason: 'completed' }),
-        })
-      ).toEqual({ action: 'reset' });
-    });
-
-    it('holds on non-result and nested-result messages', () => {
-      expect(
-        resolveTaskNotificationRequery({ ...base, message: { type: 'user' } as SDKMessage })
-      ).toEqual({ action: 'hold' });
-      expect(
-        resolveTaskNotificationRequery({
-          ...base,
-          message: buildResultMessage({
-            origin: { kind: 'task-notification' },
-            parent_tool_use_id: 'toolu-123',
-          }),
-        })
-      ).toEqual({ action: 'hold' });
-    });
-
-    it('holds while a follow-up user message is already queued', () => {
-      expect(
-        resolveTaskNotificationRequery({
-          ...base,
-          followUpQueued: true,
-          message: buildHollowTaskNotificationResult(),
-        })
-      ).toEqual({ action: 'hold' });
-    });
-
-    it('escalates once the bounded budget is exhausted and stays held afterwards', () => {
-      expect(
-        resolveTaskNotificationRequery({
-          ...base,
-          attempts: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
-          message: buildHollowTaskNotificationResult(),
-        })
-      ).toEqual({ action: 'escalate' });
-      expect(
-        resolveTaskNotificationRequery({
-          ...base,
-          attempts: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
-          exhausted: true,
-          message: buildHollowTaskNotificationResult(),
-        })
-      ).toEqual({ action: 'hold' });
-    });
-
-    it('backs off from the first hollow result and escalates within its own budget', () => {
-      expect(
-        resolveTaskNotificationRequery({ ...base, message: buildHollowTaskNotificationResult() })
-      ).toEqual({ action: 'requery', delayMs: 500 });
-      expect(
-        resolveTaskNotificationRequery({
-          ...base,
-          attempts: 2,
-          message: buildHollowTaskNotificationResult(),
-        })
-      ).toEqual({ action: 'requery', delayMs: 1000 });
     });
   });
 

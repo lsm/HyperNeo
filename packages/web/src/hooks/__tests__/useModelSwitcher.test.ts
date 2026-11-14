@@ -6,14 +6,12 @@ import { renderHook, act, waitFor } from '@testing-library/preact';
 import {
   useModelSwitcher,
   MODEL_FAMILY_ICONS,
-  getModelFamilyIcon,
   getProviderLabel,
   groupModelsByProvider,
   mapRawModelsToModelInfos,
   filterModelsForPicker,
   filterModelsBySearch,
   isDefinitiveAuthFailure,
-  useFilteredModelsForPicker,
   findDefaultModel,
 } from '../useModelSwitcher.ts';
 
@@ -135,23 +133,6 @@ describe('useModelSwitcher', () => {
     it('should have kimi icon for Kimi models', () => {
       expect(MODEL_FAMILY_ICONS.kimi).toBeDefined();
       expect(typeof MODEL_FAMILY_ICONS.kimi).toBe('string');
-    });
-  });
-
-  describe('getModelFamilyIcon', () => {
-    it('should return correct icon for known families', () => {
-      expect(getModelFamilyIcon('opus')).toBe(MODEL_FAMILY_ICONS.opus);
-      expect(getModelFamilyIcon('sonnet')).toBe(MODEL_FAMILY_ICONS.sonnet);
-      expect(getModelFamilyIcon('haiku')).toBe(MODEL_FAMILY_ICONS.haiku);
-      expect(getModelFamilyIcon('glm')).toBe(MODEL_FAMILY_ICONS.glm);
-      expect(getModelFamilyIcon('kimi')).toBe(MODEL_FAMILY_ICONS.kimi);
-      expect(getModelFamilyIcon('openrouter')).toBe(MODEL_FAMILY_ICONS.openrouter);
-      expect(getModelFamilyIcon('gpt')).toBe(MODEL_FAMILY_ICONS.gpt);
-    });
-
-    it('should return default icon for unknown families', () => {
-      expect(getModelFamilyIcon('unknown')).toBe(MODEL_FAMILY_ICONS.__default__);
-      expect(getModelFamilyIcon('random-family')).toBe(MODEL_FAMILY_ICONS.__default__);
     });
   });
 
@@ -1866,40 +1847,6 @@ describe('filterModelsBySearch', () => {
       'openai/gpt-5.4',
     ]);
     expect(filterModelsBySearch(models, 'openrouter sonnet')).toEqual([]);
-  });
-});
-
-describe('useFilteredModelsForPicker', () => {
-  it('applies auth filtering before search filtering', () => {
-    const anthropicModel = {
-      ...makeModel('claude-sonnet', 'anthropic'),
-      name: 'Claude Sonnet',
-    };
-    const copilotModel = {
-      ...makeModel('copilot-sonnet', 'anthropic-copilot'),
-      name: 'Copilot Sonnet',
-    };
-    const codexModel = {
-      ...makeModel('gpt-codex', 'anthropic-codex'),
-      name: 'Codex GPT',
-    };
-    const authMap = new Map([
-      ['anthropic', makeAuth('anthropic', true)],
-      ['anthropic-copilot', makeAuth('anthropic-copilot', false)],
-      ['anthropic-codex', makeAuth('anthropic-codex', true)],
-    ]);
-
-    const { result } = renderHook(() =>
-      useFilteredModelsForPicker(
-        [anthropicModel, copilotModel, codexModel],
-        authMap,
-        undefined,
-        undefined,
-        'sonnet'
-      )
-    );
-
-    expect(result.current.map((model) => model.id)).toEqual(['claude-sonnet']);
   });
 });
 

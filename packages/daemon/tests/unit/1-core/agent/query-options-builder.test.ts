@@ -41,6 +41,7 @@ import { neoSecretReadRules } from '../../../../src/lib/neo/secret-read-rules';
 
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
+import { customProviderIdFor } from '../../../../src/lib/providers/custom-endpoint-provider';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
 import type { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
@@ -1593,6 +1594,170 @@ describe('QueryOptionsBuilder', () => {
         precomputeCompactionEnabled: true,
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
+    });
+  });
+
+  describe('custom endpoint context window reaches the SDK env', () => {
+    const model = {
+      id: 'swe-2-high',
+      name: 'SWE-2 High',
+      provider: 'custom:devin',
+      alias: 'swe-2-high',
+      family: 'devin',
+      contextWindow: 256_000,
+      description: 'Synthetic custom model',
+      releaseDate: '',
+      available: true,
+    };
+
+    beforeEach(() => {
+      resetProviderRegistry();
+      getProviderRegistry().register({
+        id: 'custom:devin',
+        displayName: 'Synthetic Devin',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 256_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [model],
+        ownsModel: (id: string) => id === model.id,
+        getModelForTier: () => model.id,
+        buildSdkConfig: () => ({
+          envVars: {
+            ANTHROPIC_BASE_URL: 'http://127.0.0.1:40123',
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: model.id,
+            ANTHROPIC_DEFAULT_SONNET_MODEL: model.id,
+            ANTHROPIC_DEFAULT_OPUS_MODEL: model.id,
+          },
+          isAnthropicCompatible: true,
+        }),
+      } as Provider);
+      setModelsCache(new Map([['global', [model]]]));
+      mockSession.config.provider = customProviderIdFor('devin') as Session['config']['provider'];
+      mockSession.config.model = model.id;
+    });
+
+    afterEach(() => {
+      resetProviderRegistry();
+      setModelsCache(new Map());
+    });
+
+    it('delivers the declared window and the 1M opt-out to the SDK child env', async () => {
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBe('1');
+      expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('256000');
+    });
+  });
+
+  describe('one window rule for every non-native provider', () => {
+    const kimi256 = {
+      id: 'k3-256k',
+      name: 'Kimi K3 (256K)',
+      provider: 'kimi',
+      alias: 'k3-256k',
+      family: 'kimi',
+      contextWindow: 262_144,
+      description: 'Synthetic 256k model',
+      releaseDate: '',
+      available: true,
+    };
+
+    afterEach(() => {
+      resetProviderRegistry();
+      setModelsCache(new Map());
+    });
+
+    it('a 262144-token Kimi model is declared at its real window, not 200000', async () => {
+      resetProviderRegistry();
+      getProviderRegistry().register({
+        id: 'kimi',
+        displayName: 'Synthetic Kimi',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'on',
+          maxContextWindow: 262_144,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [kimi256],
+        ownsModel: (id: string) => id === kimi256.id,
+        getModelForTier: () => kimi256.id,
+        buildSdkConfig: () => ({
+          envVars: { ANTHROPIC_BASE_URL: 'https://kimi.invalid' },
+          isAnthropicCompatible: true,
+        }),
+      } as Provider);
+      setModelsCache(new Map([['global', [kimi256]]]));
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = kimi256.id;
+
+      const options = await builder.build();
+
+      expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBe('1');
+      expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('262144');
+    });
+
+    it('a native Anthropic session sets neither variable', async () => {
+      setModelsCache(new Map());
+      mockSession.config.provider = 'anthropic';
+      mockSession.config.model = 'claude-opus-5-5';
+
+      const options = await builder.build();
+
+      expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBeUndefined();
+      expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
+    });
+
+    it('leaves a session whose SDK model id carries [1m] on the 1M path', async () => {
+      const million = {
+        id: 'deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        provider: 'deepseek',
+        alias: 'deepseek-pro',
+        family: 'deepseek',
+        contextWindow: 1_000_000,
+        description: 'Synthetic 1M model',
+        releaseDate: '',
+        available: true,
+      };
+      resetProviderRegistry();
+      getProviderRegistry().register({
+        id: 'deepseek',
+        displayName: 'Synthetic DeepSeek',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'on',
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [million],
+        ownsModel: (id: string) => id === million.id,
+        getModelForTier: () => million.id,
+        translateModelIdForSdk: () => 'claude-opus-4-6[1m]',
+        buildSdkConfig: () => ({
+          envVars: { ANTHROPIC_BASE_URL: 'https://deepseek.invalid' },
+          isAnthropicCompatible: true,
+        }),
+      } as Provider);
+      setModelsCache(new Map([['global', [million]]]));
+      mockSession.config.provider = 'deepseek';
+      mockSession.config.model = million.id;
+
+      const options = await builder.build();
+
+      expect(options.model).toBe('claude-opus-4-6[1m]');
+      expect(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT).toBeUndefined();
+      expect(options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
     });
   });
 

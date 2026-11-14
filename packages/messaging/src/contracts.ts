@@ -27,10 +27,6 @@ export type RouteMessageResult = {
   deliveries: DeliveryRecord[];
 };
 
-export interface MessageRouter {
-  routeMessage(message: MessageRecord): Promise<RouteMessageResult>;
-}
-
 export type CreateMessageInput = Omit<MessageRecord, 'messageId' | 'createdAt'> & {
   messageId?: string;
   createdAt?: number;
@@ -53,5 +49,3 @@ export interface DeliveryStore {
   listDeliveriesByMessage(messageId: string): Promise<DeliveryRecord[]>;
   updateDelivery(delivery: DeliveryRecord): Promise<DeliveryRecord>;
 }
-
-export interface MessagingStorage extends MessageStore, DeliveryStore {}

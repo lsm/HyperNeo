@@ -35,18 +35,6 @@ type Sources = {
 };
 type Gate = { value: Sources } | { reason: NeoPublicConversation };
 
-export function neoPublicationAnswerOrigins(publication: NeoPublication) {
-  if (publication.cardReply) return [];
-  return [
-    publication.askOrigin,
-    ...(publication.triggerId?.startsWith('human:') ? [] : [publication.producerInput]),
-    ...(publication.answerOrigin ? [publication.answerOrigin] : []),
-    ...(publication.answerInput ? [publication.answerInput] : []),
-    ...(publication.revisions?.map((revision) => revision.askOrigin ?? revision.producerInput) ??
-      []),
-  ].filter((origin) => !!origin);
-}
-
 function empty(conversationId: string | null): NeoPublicConversation {
   return {
     conversationId,

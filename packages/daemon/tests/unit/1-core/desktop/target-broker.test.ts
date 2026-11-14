@@ -77,6 +77,23 @@ test('createDesktopTargetBroker passes typed refusals through', async () => {
   });
 });
 
+test('createDesktopTargetBroker passes a missing grant through as its own refusal', async () => {
+  const { broker } = await desktop((request) => ({
+    ok: true,
+    result: {
+      call_id: request.callId,
+      reason: 'app_action_not_authorized',
+      class: 'keyboard',
+      bundle_id: 'com.apple.finder',
+    },
+  }));
+  expect(await broker({ worker_id: 'worker-a' }, 'type_text', { pid: 42 }, 'call-5')).toEqual({
+    reason: 'app_action_not_authorized',
+    class: 'keyboard',
+    app_id: 'com.apple.finder',
+  });
+});
+
 test('createDesktopTargetBroker refuses another call id or a failed reply', async () => {
   const { broker } = await desktop((request) =>
     request.tool === 'click'

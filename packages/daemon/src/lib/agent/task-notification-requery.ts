@@ -155,27 +155,6 @@ export function isTopLevelHollowTaskNotificationResult(message: SDKMessage): boo
   return isHollowTaskNotificationResult(message);
 }
 
-export function resolveTaskNotificationRequery(args: {
-  message: SDKMessage;
-  attempts: number;
-  exhausted: boolean;
-  followUpQueued: boolean;
-}): TaskNotificationRequeryDecision {
-  const prior: TaskNotificationRequeryEpisode = {
-    episode: 1,
-    attempts: args.attempts,
-    escalation: args.exhausted ? 'done' : 'none',
-    closed: false,
-  };
-  const { decision } = advanceTaskNotificationRequeryEpisode(
-    args.attempts <= 0 && !args.exhausted ? null : prior,
-    { kind: 'result', message: args.message },
-    { followUpQueued: args.followUpQueued }
-  );
-  if (decision.action === 'issue') return { action: 'requery', delayMs: 0 };
-  return decision;
-}
-
 export function buildTaskNotificationRequeryEscalationEvent(args: {
   sessionId: string;
   spaceId?: string | undefined;

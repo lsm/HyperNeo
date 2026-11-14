@@ -281,8 +281,10 @@ try {
   assert.equal(answer.accepted, true, JSON.stringify(answer));
   const later = await publish('neo-later', [handoffId], 'The review is complete. Here is the later result.');
   assert.equal(later.accepted, true, JSON.stringify(later));
-  assert.equal(replies().filter(row => row.replyTo?.includes(handoffId)).length, 2);
-  assert(replies().filter(row => row.replyTo?.includes(handoffId)).every(row => row.publishedBy === 'neo'));
+  assert.equal(
+    replies().filter((row) => row.replyTo?.includes(handoffId) && row.publishedBy === 'neo').length,
+    2
+  );
   evidence.neoPublishedDirectly = true;
   evidence.multipleRepliesAccepted = true;
   await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
@@ -305,25 +307,32 @@ try {
   assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(root, failedDeliveryId), 'deferred');
   assert(app.db.getSDKMessageRepo().markDeliveryFailedByUuid(root, failedDeliveryId));
   await waitFor(() => failedJob()?.status === 'completed');
-  assert.deepEqual(failedJob()?.result, { delivered: true, outcome: 'answered' });
-  const failedReplies = publications.list(conversationId)!.filter((row) => row.replyTo?.includes(failedDeliveryId));
-  assert.deepEqual(failedReplies.map((row) => row.fullText), ['This reply could not be completed. Please try again.']);
+  assert.deepEqual(failedJob()?.result, { delivered: true, outcome: 'failed' });
+  assert.deepEqual(
+    publications.list(conversationId)!.filter((row) => row.replyTo?.includes(failedDeliveryId)),
+    []
+  );
+  assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(front, failedDeliveryId), 'failed');
   evidence.queuedThenFailedSettled = failedJob()?.result;
-  evidence.failedDeliveryNotice = failedReplies[0].fullText;
+  evidence.failedDeliveryRetryable = true;
   assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
   assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
   const rows = replies();
   assert.deepEqual(rows.map((row) => row.fullText), [
-    'Hello from Neo.', 'The job is complete. All files were copied and their checksums match.',
+    'Hello from Neo.', 'I will handle that.',
+    'The job is complete. All files were copied and their checksums match.',
     'The review is complete. Here is the later result.', 'Single-mode reply.',
   ]);
   assert.equal(rows.filter((row) => row.replyTo?.includes(humanId)).length, 1);
-  assert.equal(rows.filter((row) => row.replyTo?.includes(handoffId)).length, 2);
+  assert.equal(
+    rows.filter((row) => row.replyTo?.includes(handoffId) && row.publishedBy === 'neo').length,
+    2
+  );
   assert.deepEqual(rows[0].replyTo, [humanId]);
   assert.equal(rows[0].verbatim, true);
   assert(new NeoFrontInputRepository(app.db.getDatabase()).get(conversationId, humanId)?.owner);
   evidence.humanAnswered = true;
-  assert.deepEqual(rows[1].replyTo, [handoffId]);
+  assert.deepEqual(rows[2].replyTo, [handoffId]);
   assert.equal(app.db.getSession(front)?.sdkSessionId, nativeId);
   assert(childSessions.has(front));
   assert(app.db.getSDKMessageRepo().getSDKMessages(front).messages.length > 0);

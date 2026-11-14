@@ -35,7 +35,6 @@ export * from './types/memory.ts';
 export * from './types/reference.ts';
 export * from './types/provider-record.ts';
 export * from './live-query-types.ts';
-export * from './validation/workspace-path.ts';
 export * from './lib/workflow-graph.ts';
 export * from './lib/workflow-handoff.ts';
 
@@ -49,18 +48,11 @@ export {
   clearStructuredLogSubscribers,
   emitStructuredLogEvent,
   installConsoleLogCapture,
-  resetConsoleLogCaptureForTesting,
   withConsoleLogCaptureSuppressed,
 } from './logger.ts';
 export type {
-  LoggerConfig,
-  LoggerOptions,
-  StructuredLogContext,
   StructuredLogEvent,
   StructuredLogLevel,
-  StructuredLogProcessMetadata,
-  StructuredLogSource,
-  StructuredLogSubscriber,
 } from './logger.ts';
 export * from './tool-summary-fields.ts';
 

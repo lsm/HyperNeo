@@ -1,12 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { ARTIFACT_DEFAULT_LIMITS, ARTIFACT_REFUSALS } from '@hyperneo/shared/types/artifact-file';
 import {
   ArtifactLimitsSchema,
   ArtifactRefSchema,
-  ArtifactProjectionSchema,
   ArtifactRefusalSchema,
   ArtifactReadInputSchema,
   ArtifactReadResultSchema,
@@ -21,16 +18,6 @@ const reference: ArtifactRef = {
 };
 
 describe('artifact file contracts', () => {
-  test('keeps optional publication/card references backward compatible', () => {
-    const publication: Pick<NeoPublicationInput, 'artifacts'> = { artifacts: [reference] };
-    const card: Pick<NeoTodo, 'artifacts'> = {};
-    expect(ArtifactRefSchema.parse(reference)).toEqual(reference);
-    expect(ArtifactProjectionSchema.parse(publication)).toEqual(publication);
-    expect(ArtifactProjectionSchema.parse(card)).toEqual({});
-    expect(
-      ArtifactProjectionSchema.safeParse({ artifacts: [{ ...reference, title: '' }] }).success
-    ).toBe(false);
-  });
   test.each(['path', 'token', 'url', 'ownerId'])('rejects extra authority field %s', (key) => {
     expect(ArtifactRefSchema.safeParse({ ...reference, [key]: 'synthetic' }).success).toBe(false);
   });
@@ -51,9 +38,6 @@ describe('artifact file contracts', () => {
     ]) {
       expect(ArtifactRefSchema.safeParse({ ...reference, ...patch }).success).toBe(false);
     }
-    expect(
-      ArtifactProjectionSchema.safeParse({ artifacts: Array(17).fill(reference) }).success
-    ).toBe(false);
     expect(
       ArtifactReadResultSchema.safeParse({
         accepted: true,
