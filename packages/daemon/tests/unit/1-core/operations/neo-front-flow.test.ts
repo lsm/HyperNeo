@@ -1355,41 +1355,36 @@ test.each(['creation', 'delivery'])(
   }
 );
 
-test('a reply with details refuses a summary over 300 words by name', async () => {
+test('a reply over the body limit is refused with the fix, with or without details', async () => {
   const { id } = await deliveredConvoInput();
-  const text = Array(301).fill('word').join(' ');
-  expect(
-    await convoPublish({
-      requestId: 'long-summary',
-      replyTo: [id],
-      shortText: text,
-      fullText: 'd'.repeat(text.length + 1),
-    })
-  ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
+  const long = Array(61).fill('word').join(' ');
+  const alone = await convoPublish({
+    requestId: 'long-alone',
+    replyTo: [id],
+    verbatim: true,
+    fullText: long,
+  });
+  expect(alone.accepted).toBe(false);
+  expect(alone.reason).toMatch(/^reply_needs_details: /);
+  expect(alone.reason).toContain('the rest in details');
+  const summary = await convoPublish({
+    requestId: 'long-summary',
+    replyTo: [id],
+    shortText: long,
+    fullText: `${long} ${long}`,
+  });
+  expect(summary.accepted).toBe(false);
+  expect(summary.reason).toMatch(/^reply_summary_too_long: /);
+  expect(summary.reason).toContain('shrink');
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
-});
-
-test('a reply with details accepts 300 words and refuses 301 Chinese words', async () => {
-  const { id } = await deliveredConvoInput();
-  const other = (await deliveredConvoInput()).id;
-  const text = Array(300).fill('word').join(' ');
   expect(
     await convoPublish({
-      requestId: 'at-limit',
+      requestId: 'split',
       replyTo: [id],
-      shortText: text,
-      fullText: 'd'.repeat(text.length + 1),
+      shortText: 'Merged and green.',
+      fullText: long,
     })
   ).toMatchObject({ accepted: true });
-  const chinese = '中'.repeat(400);
-  expect(
-    await convoPublish({
-      requestId: 'chinese-long',
-      replyTo: [other],
-      shortText: chinese,
-      fullText: 'd'.repeat(chinese.length + 1),
-    })
-  ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
 });
 
 test('a reply is the answer and still hands off to the full session', async () => {

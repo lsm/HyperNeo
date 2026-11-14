@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
   NEO_FOCUSED_DISCUSSION,
+  NEO_FRONT,
   NEO_GOAL_CYCLE,
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_CODING_WORKER_RULES,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
+  neoToolDescription,
 } from '@hyperneo/prompts';
 import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
@@ -180,12 +182,15 @@ describe('root Neo system prompt', () => {
       expect(prompt).toContain(rule);
   });
 
-  test('gives questions and publications the same concise Markdown guidance', () => {
+  test('gives Neo the same reply length rule the front reads', () => {
+    const rule =
+      'Keep text to at most five short sentences in one brief paragraph. For more than five sentences, or for any structured report, multi-topic update, sectioned explanation, list, table or long report, put a standalone summary in text and details that add new information; never repeat text in details.';
+    expect(NEO_FRONT).toContain(rule);
+    expect(neoToolDescription('neo.publication.publish')).toContain(rule);
     const prompt = neoPrompt([]);
-    expect(prompt).toContain('For neo.question.ask text and publication text, use Markdown');
-    expect(prompt).toContain('a short title line, then a few bullets or a small comparison table');
+    expect(prompt).not.toContain('a few bullets or a small comparison table');
+    expect(prompt).not.toContain('keep detail in publication details');
     expect(prompt).toContain('Bold the key choice');
-    expect(prompt).toContain('Avoid walls of text');
     expect(prompt).toContain('Preserve required proposal text, path and hash');
   });
 
