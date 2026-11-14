@@ -204,6 +204,25 @@ describe('SessionsPage', () => {
     expect(mockAddFolderToProject).not.toHaveBeenCalled();
   });
 
+  it('refuses when history loaded but the current list cannot be read', async () => {
+    mockGetWorkspaceHistory.mockResolvedValue([
+      { path: '/code', lastUsedAt: 1, useCount: 1 },
+      { path: '/gone', lastUsedAt: 1, useCount: 1 },
+    ]);
+    newChatProjectSignal.value = '/gone';
+    render(<SessionsPage />);
+    const goneChip = await screen.findByText((_, element) =>
+      Boolean(element?.getAttribute('title') === '/gone')
+    );
+    fireEvent.click(goneChip);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add folder to gone…' }));
+    mockGetWorkspaceHistory.mockRejectedValue(new Error('Disconnected'));
+    fireEvent.input(screen.getByPlaceholderText('Folder path'), { target: { value: '/assets' } });
+    fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
+    expect(await screen.findByText(/could not check its project/)).toBeTruthy();
+    expect(mockAddFolderToProject).not.toHaveBeenCalled();
+  });
+
   it('still adds a folder when the history never loaded', async () => {
     mockGetWorkspaceHistory.mockRejectedValue(new Error('Disconnected'));
     newChatProjectSignal.value = '/code';
