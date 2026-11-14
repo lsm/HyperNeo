@@ -636,57 +636,111 @@ describe('Neo voice', () => {
     await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(1));
   });
 
-  it('closes the mic while Neo speaks and opens it again afterwards', async () => {
+  it('keeps speech as a draft when Neo starts speaking before any partial arrives', async () => {
     voice.enabled = true;
     voice.hub = {};
     voice.start.mockImplementation(async () => {
       voice.recording = true;
     });
-    voice.cancel.mockImplementation(async () => {
-      voice.recording = false;
+    voice.openStream.mockReturnValue({
+      push: vi.fn(),
+      close: vi.fn(),
+      finish: vi.fn(async () => 'Hello'),
     });
-    voice.openStream.mockReturnValue({ push: vi.fn(), close: vi.fn(), finish: vi.fn() });
-    const view = render(liveVoice({ on: true, speaking: false }));
+    voice.submit.mockImplementation(async (_input, deps: Partial<VoiceSubmitDeps>) => {
+      voice.recording = false;
+      const result = await deps.transcribe!({
+        audioBase64: 'aGk=',
+        mimeType: 'audio/wav',
+        peakLevel: 0.5,
+      });
+      return {
+        kind: 'routed',
+        outcome: { kind: 'insert', transcript: result.text, autoSend: false },
+        recordId: 'recording',
+      };
+    });
+    const onTranscript = vi.fn();
+    const view = render(liveVoice({ on: true, speaking: false }, { onTranscript }));
     await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(1));
-    view.rerender(liveVoice({ on: true, speaking: true }));
-    await waitFor(() => expect(voice.cancel).toHaveBeenCalledTimes(1));
-    expect(voice.submit).not.toHaveBeenCalled();
-    view.rerender(liveVoice({ on: true, speaking: false }));
+    view.rerender(liveVoice({ on: true, speaking: true }, { onTranscript }));
+    await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('Hello'));
+    expect(voice.submit.mock.calls[0][0]).toMatchObject({ intent: 'draft' });
+    expect(voice.cancel).not.toHaveBeenCalled();
+    view.rerender(liveVoice({ on: true, speaking: false }, { onTranscript }));
     await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(2));
   });
 
-  it('keeps words already heard as a draft when Neo starts speaking', async () => {
+  it('says nothing when the mic live voice opened heard silence', async () => {
     voice.enabled = true;
     voice.hub = {};
     voice.start.mockImplementation(async () => {
       voice.recording = true;
     });
-    let heard: (text: string) => void = () => {};
-    voice.openStream.mockImplementation((_hub, onText) => {
-      heard = onText;
-      return { push: vi.fn(), close: vi.fn(), finish: vi.fn(async () => 'Hello') };
+    voice.openStream.mockReturnValue({ push: vi.fn(), close: vi.fn(), finish: vi.fn() });
+    voice.submit.mockImplementation(async () => {
+      voice.recording = false;
+      return { kind: 'silent-recording' };
     });
+    const onError = vi.fn();
+    const view = render(liveVoice({ on: true, speaking: false }, { onError }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(1));
+    view.rerender(liveVoice({ on: true, speaking: true }, { onError }));
+    await waitFor(() => expect(voice.submit).toHaveBeenCalledTimes(1));
+    view.rerender(liveVoice({ on: true, speaking: false }, { onError }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(2));
+    expect(onError).not.toHaveBeenCalledWith(expect.stringContaining('didn’t hear'));
+  });
+
+  it('closes the mic it opened when live voice stops, even while the mic is starting', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    let opened: () => void = () => {};
+    voice.start.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          opened = () => {
+            voice.recording = true;
+            resolve();
+          };
+        })
+    );
+    voice.openStream.mockReturnValue({ push: vi.fn(), close: vi.fn(), finish: vi.fn() });
     voice.submit.mockImplementation(() => new Promise(() => {}));
     const view = render(liveVoice({ on: true, speaking: false }));
     await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(1));
-    heard('Hello');
-    view.rerender(liveVoice({ on: true, speaking: true }));
+    view.rerender(liveVoice({ on: false, speaking: false }));
+    await act(async () => opened());
+    view.rerender(liveVoice({ on: false, speaking: false }));
     await waitFor(() => expect(voice.submit).toHaveBeenCalledTimes(1));
     expect(voice.submit.mock.calls[0][0]).toMatchObject({ intent: 'draft' });
+  });
+
+  it('leaves dictation the person started alone when live voice stops', async () => {
+    voice.enabled = true;
+    voice.recording = true;
+    const view = render(liveVoice({ on: true, speaking: false }));
+    view.rerender(liveVoice({ on: false, speaking: false }));
+    await new Promise((done) => setTimeout(done, 0));
+    expect(voice.submit).not.toHaveBeenCalled();
     expect(voice.cancel).not.toHaveBeenCalled();
+    expect(voice.start).not.toHaveBeenCalled();
   });
 });
 
-function liveVoice(live: { on: boolean; speaking: boolean }) {
+function liveVoice(
+  live: { on: boolean; speaking: boolean },
+  props: { onTranscript?: (text: string) => void; onError?: (message: string) => void } = {}
+) {
   return (
     <NeoVoice
       sessionId="neo-1"
       connected
       draftText=""
-      onTranscript={vi.fn()}
+      onTranscript={props.onTranscript ?? vi.fn()}
       onSendVoice={vi.fn()}
       onSendHandle={vi.fn()}
-      onError={vi.fn()}
+      onError={props.onError ?? vi.fn()}
       onPhase={vi.fn()}
       live={live}
     />
