@@ -32,9 +32,9 @@ export function planWorkQueue(
     const inGroup = perGroup.get(item.group) ?? 0;
     const reason =
       total >= limits.running
-        ? `${total} workers running; total limit is ${limits.running}`
+        ? `${total} worker${total === 1 ? '' : 's'} running; total limit is ${limits.running}`
         : item.group !== null && inGroup >= limits.perGroup
-          ? `${inGroup} workers running in this project; project limit is ${limits.perGroup}`
+          ? `${inGroup} worker${inGroup === 1 ? '' : 's'} running in this project; project limit is ${limits.perGroup}`
           : item.worker && busy.has(item.worker)
             ? 'the assigned worker is busy'
             : null;

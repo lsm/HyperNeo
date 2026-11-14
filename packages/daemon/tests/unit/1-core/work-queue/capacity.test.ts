@@ -30,13 +30,13 @@ for (const [name, running, limits, reason] of [
     'total',
     [{ group: 'other', worker: null }],
     { running: 1, perGroup: 5 },
-    '1 workers running; total limit is 1',
+    '1 worker running; total limit is 1',
   ],
   [
     'project',
     [{ group: 'p', worker: null }],
     { running: 5, perGroup: 1 },
-    '1 workers running in this project; project limit is 1',
+    '1 worker running in this project; project limit is 1',
   ],
   [
     'idle worker',

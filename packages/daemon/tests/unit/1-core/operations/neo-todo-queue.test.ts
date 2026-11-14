@@ -404,7 +404,7 @@ describe('queued todos start themselves', () => {
     expect(w.started).toEqual([first]);
     expect(w.told.filter((note) => note.id === next)).toHaveLength(1);
     expect(w.told.find((note) => note.id === next)?.note).toContain(
-      '1 workers running; total limit is 1'
+      '1 worker running; total limit is 1'
     );
     await w.tick();
     expect(w.told.filter((note) => note.id === next)).toHaveLength(1);
