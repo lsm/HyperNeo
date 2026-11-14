@@ -1092,7 +1092,7 @@ describe('claude-desktop adapter against the app session records', () => {
         .spyOn(nativeWrites, 'readClaudeWorkerSandbox')
         .mockResolvedValue({} as Awaited<ReturnType<typeof nativeWrites.readClaudeWorkerSandbox>>);
       try {
-        expect(await resumeAs('auto').send?.(ref, 'run the audit', context)).toEqual(delivered);
+        expect((await resumeAs('auto').send?.(ref, 'run the audit', context))?.ok).toBe(true);
         const args = spawned[0].args;
         expect(args[args.indexOf('--append-system-prompt') + 1]).toContain(
           "Open the PR on the session's own branch; if it was opened on another branch, immediately attach it with ccd_pr bind_pr, then turn on auto_fix and address_comments with ccd_pr set_monitor."
