@@ -1898,6 +1898,20 @@ test('a reused request ID for a different input is refused, not handed off', asy
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [second.id])).toHaveLength(0);
 });
 
+test('a reply without replyTo keeps work_on and cannot promise work it never starts', async () => {
+  await deliveredConvoInput();
+  expect(
+    await convoPublish({ requestId: 'no-target-work', fullText: "I'll check.", work_on: true })
+  ).toMatchObject({ accepted: false, reason: 'work_on_needs_reply_to' });
+  const receipt = await convoPublish({
+    requestId: 'no-target-answer',
+    fullText: 'All quiet.',
+    work_on: false,
+  });
+  expect(receipt).toMatchObject({ accepted: true });
+  expect(receipt.publication.workOn).toBe(false);
+});
+
 test('a reply with two replyTo IDs hands both inputs off', async () => {
   const first = await deliveredConvoInput();
   const second = await deliveredConvoInput();

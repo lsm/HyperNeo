@@ -139,7 +139,12 @@ export function createFrontTools(service: NeoService, conversationId: string) {
         async ({ text, work_on: workOn, ...input }) => {
           const body = { text };
           const targets = input.replyTo ?? [];
-          if (!targets.length) return result(await publish({ ...input, ...body }));
+          if (!targets.length)
+            return result(
+              workOn
+                ? { accepted: false, reason: 'work_on_needs_reply_to' }
+                : await publish({ ...input, ...body }, workOn)
+            );
           const asks = targets.map((id) => service.asks.find(conversationId, id));
           if (asks.some((ask) => !ask))
             return result({ accepted: false, reason: 'unknown_reply_target' });
