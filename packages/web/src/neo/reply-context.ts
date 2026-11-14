@@ -1,5 +1,4 @@
 import type { ChatMessage } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
 
 type Origin = { sessionId: string; messageId: string; replyId: string };
 type Matched = Origin & { ask: ChatMessage };
@@ -66,18 +65,6 @@ export function presentNeoReplyContext(
   const excerpt = text.length > 120 ? `${text.slice(0, 119)}…` : text;
   return { value: { messageId: matched.messageId, excerpt } };
 }
-
-export const projectNeoReplyContext = (superpipe({})('neo-reply-context') as PipelineAPI)
-  .input(['message', 'sessionId', 'messages', 'readText'])
-  .pipe(selectNeoReplyOrigin, ['message', 'sessionId'], 'result:context')
-  .pipe(matchNeoReplyInput, ['context', 'messages'], 'result:context')
-  .pipe(presentNeoReplyContext, ['context', 'readText'], 'result:context')
-  .end('context') as (
-  message: ChatMessage,
-  sessionId: string,
-  messages: readonly ChatMessage[],
-  readText: (message: ChatMessage) => string
-) => NeoReplyContext | Reason;
 
 export function neoMessageAnchor(sessionId: string, messageId: string): string {
   return `neo-message-${encodeURIComponent(sessionId)}-${encodeURIComponent(messageId)}`;

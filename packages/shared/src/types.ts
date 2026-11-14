@@ -5,9 +5,7 @@ import type { DeclarativeToolGuard } from './types/space.ts';
 import type { SessionToolProfile, SessionToolSelection } from './types/session-tool-choice.ts';
 
 export type {
-  ModelTier,
   ProviderCapabilities,
-  ProviderContext,
   ProviderId,
   ProviderSdkConfig,
   ProviderSessionConfig,
@@ -20,30 +18,14 @@ export type {
 } from './types/app-mcp-server.ts';
 export type {
   AgentDefinition,
-  AgentMcpServerSpec,
-  AgentModel,
-  AgentsConfig,
-  ClaudeCodePreset,
-  EnvironmentSettings,
   McpHttpServerConfig,
   McpServerConfig,
-  McpSettings,
   McpSSEServerConfig,
   McpStdioServerConfig,
-  ModelSettings,
-  NetworkSandboxSettings,
-  OutputFormatConfig,
-  PluginConfig,
-  SandboxIgnoreViolations,
-  SandboxSettings,
   SDKConfig,
-  SdkBeta,
-  SessionResumptionSettings,
   SystemPromptConfig,
   ThinkingConfig,
-  ToolsPreset,
   ToolsPresetConfig,
-  ToolsSettings,
   ValidationResult,
 } from './types/sdk-config.ts';
 export * from './types/daemon-config.ts';
@@ -545,29 +527,6 @@ export type EventType =
   | 'ping'
   | 'pong';
 
-export interface FileSnapshot {
-  sessionId: string;
-  timestamp: string;
-  files: {
-    path: string;
-    content: string;
-    hash: string;
-  }[];
-}
-
-export interface SubAgent {
-  id: string;
-  sessionId: string;
-  parentId?: string;
-  task: string;
-  tools: string[];
-  status: 'running' | 'completed' | 'error';
-  result?: unknown;
-  error?: string;
-  createdAt: string;
-  completedAt?: string;
-}
-
 export interface DataMigrationStatus {
   name: 'sdk_message_columns_backfill_v2';
   state: 'pending' | 'running' | 'complete' | 'failed';
@@ -587,14 +546,6 @@ export interface HealthStatus {
 }
 
 export type AuthMethod = 'oauth' | 'oauth_token' | 'api_key' | 'none';
-
-export interface OAuthTokens {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
-  scopes: string[];
-  isMax?: boolean;
-}
 
 export interface AuthStatus {
   method: AuthMethod;
@@ -623,20 +574,6 @@ export interface CommandParameter {
   type: 'string' | 'number' | 'boolean';
   required?: boolean;
   default?: unknown;
-}
-
-export interface CommandExecutionRequest {
-  command: string;
-  args?: string[];
-  rawInput: string;
-}
-
-export interface CommandExecutionResult {
-  success: boolean;
-  message?: string;
-  data?: unknown;
-  error?: string;
-  displayType?: 'text' | 'markdown' | 'json' | 'component';
 }
 
 export interface ContextCategoryBreakdown {

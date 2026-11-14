@@ -13,7 +13,6 @@ import {
   CHANNEL_EDGE_DASH_ARRAY,
   computeChannelEdgePoints,
   buildChannelPathD,
-  buildVisibleChannelPathD,
   getOrthogonalPathMidpointWithAngle,
 } from '../EdgeRenderer';
 import type { EdgeRendererProps } from '../EdgeRenderer';
@@ -417,21 +416,6 @@ describe('computeChannelEdgePoints', () => {
     expect(d).toContain('Q');
     expect(d.startsWith(`M ${pts!.sx} ${pts!.sy}`)).toBe(true);
     expect(d.endsWith(`${pts!.tx} ${pts!.ty}`)).toBe(true);
-  });
-
-  it('trims the visible bidirectional channel path so arrowheads are not buried in nodes', () => {
-    const channel: ResolvedWorkflowChannel = {
-      direction: 'bidirectional' as const,
-      fromStepId: 'step-1',
-      toStepId: 'step-2',
-      sourceSide: 'right',
-      targetSide: 'left',
-    };
-    const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
-    expect(pts).not.toBeNull();
-    const d = buildVisibleChannelPathD(channel, pts!);
-    expect(d.startsWith(`M ${pts!.sx} ${pts!.sy}`)).toBe(false);
-    expect(d.endsWith(`${pts!.tx} ${pts!.ty}`)).toBe(false);
   });
 });
 

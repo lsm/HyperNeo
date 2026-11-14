@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  getSessionLifecycleStatusClasses,
   getSessionLifecycleStatusConfig,
   SESSION_LIFECYCLE_STATUS_CONFIG,
 } from './session-lifecycle-status.js';
@@ -29,11 +28,6 @@ describe('session-lifecycle-status', () => {
   it('maps archived to neutral', () => {
     expect(SESSION_LIFECYCLE_STATUS_CONFIG.archived.tone).toBe('neutral');
     expect(SESSION_LIFECYCLE_STATUS_CONFIG.archived.label).toBe('Archived');
-  });
-
-  it('returns tone classes from getSessionLifecycleStatusClasses', () => {
-    const classes = getSessionLifecycleStatusClasses('paused');
-    expect(classes.bg).toBe('bg-warning');
   });
 
   it('getSessionLifecycleStatusConfig returns the same config as the record', () => {

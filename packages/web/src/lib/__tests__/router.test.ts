@@ -16,7 +16,6 @@ import {
   createSpaceConfigurePath,
   createSpaceGoalsPath,
   createSpaceEvolvePath,
-  createSpaceForgePath,
   createSpacePath,
   createSpaceSessionPath,
   createSpaceTaskPath,
@@ -25,7 +24,6 @@ import {
   getSpaceConfigureTabFromPath,
   getSpaceGoalsFromPath,
   getSpaceEvolveFromPath,
-  getSpaceForgeFromPath,
   getSpaceIdFromPath,
   getSpaceTaskIdFromPath,
   getSpaceTaskViewFromPath,
@@ -34,7 +32,6 @@ import {
   navigateToSpaceConfigure,
   navigateToSpaceGoals,
   navigateToSpaceEvolve,
-  navigateToSpaceForge,
   navigateToSpaceSession,
   navigateToSpacesPage,
   navigateToSpaceTask,
@@ -118,9 +115,8 @@ describe('router', () => {
     expect(createSpaceEvolvePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/evolve`);
     expect(getSpaceEvolveFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
     expect(getSpaceIdFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
-    expect(createSpaceForgePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/evolve`);
-    expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
-    expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
+    expect(getSpaceEvolveFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
+    expect(getSpaceEvolveFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
     expect(getSpaceIdFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
     expect(createSpaceTasksPath(SPACE_ID, 'action')).toBe(`/space/${SPACE_ID}/tasks/action`);
     expect(createSpaceAgentPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/agents`);
@@ -270,19 +266,6 @@ describe('router', () => {
         path: `/space/${SPACE_ID}/evolve`,
         [IN_APP_HISTORY_DEPTH_KEY]: 0,
       },
-      '',
-      `/space/${SPACE_ID}/evolve`
-    );
-  });
-
-  it('navigates to the canonical /evolve route via the legacy Forge helper', () => {
-    navigateToSpaceForge(SPACE_ID);
-    finishNavigation();
-
-    expect(currentSpaceViewModeSignal.value).toBe('forge');
-    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
-    expect(window.history.pushState).toHaveBeenLastCalledWith(
-      { spaceId: SPACE_ID, path: `/space/${SPACE_ID}/evolve`, [IN_APP_HISTORY_DEPTH_KEY]: 1 },
       '',
       `/space/${SPACE_ID}/evolve`
     );

@@ -57,14 +57,6 @@ export interface NoteArtifactData {
   kind?: string;
 }
 
-export type ArtifactShapeData =
-  | LinkArtifactData
-  | CommitSetArtifactData
-  | CheckArtifactData
-  | MetricArtifactData
-  | DecisionArtifactData
-  | NoteArtifactData;
-
 export function resolveLegacyShape(
   type: string,
   data: Record<string, unknown> | undefined

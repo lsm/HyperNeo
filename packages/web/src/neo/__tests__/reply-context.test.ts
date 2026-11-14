@@ -4,7 +4,6 @@ import {
   matchNeoReplyInput,
   neoMessageAnchor,
   presentNeoReplyContext,
-  projectNeoReplyContext,
   selectNeoReplyOrigin,
 } from '../reply-context.ts';
 
@@ -134,38 +133,6 @@ describe('presentNeoReplyContext', () => {
     expect(presentNeoReplyContext({ ...origin, ask: human('A', text) }, conversationText)).toEqual({
       reason: 'empty_ask',
     });
-  });
-});
-
-describe('projectNeoReplyContext', () => {
-  it('projects A after B independently while direct B stays uncluttered and order is unchanged', () => {
-    const a = human();
-    const b = human('B', 'Family B — what time?');
-    const answerB = reply({ sessionId: 'neo', messageId: 'B' }, { uuid: 'reply-B' });
-    const answerA = reply();
-    const messages = Object.freeze([a, b, answerB, answerA]);
-    expect(projectNeoReplyContext(answerB, 'neo', messages, conversationText)).toBe('direct_reply');
-    const context = projectNeoReplyContext(answerA, 'neo', messages, conversationText);
-    expect(context).toEqual({ messageId: 'A', excerpt: 'Project A — what is next?' });
-    expect(context).not.toBeInstanceOf(Promise);
-    expect(messages).toEqual([a, b, answerB, answerA]);
-  });
-  it('preserves stage precedence and never calls text projection for unknown lineage', () => {
-    const readText = vi.fn(() => 'Wrong borrowed answer');
-    expect(projectNeoReplyContext(reply(null), 'neo', [], readText)).toBe('unknown_origin');
-    expect(readText).not.toHaveBeenCalled();
-  });
-  it('works independently in a holder view with exact holder-human provenance', () => {
-    const a = human('A', 'Research', { session_id: 'holder' });
-    const b = human('B', 'Correction', { session_id: 'holder' });
-    const answer = reply({ sessionId: 'holder', messageId: 'A' });
-    expect(projectNeoReplyContext(answer, 'holder', [a, b, answer], conversationText)).toEqual({
-      messageId: 'A',
-      excerpt: 'Research',
-    });
-    expect(projectNeoReplyContext(answer, 'neo', [a, b, answer], conversationText)).toBe(
-      'unknown_origin'
-    );
   });
 });
 

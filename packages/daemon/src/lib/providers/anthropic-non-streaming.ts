@@ -58,7 +58,7 @@ export function assembleAnthropicMessage(
       blocks[index].input = parseToolInput(partialJson.get(index), blocks[index].input);
     }
     if (event.type === 'message_delta') {
-      message = { ...message, ...(event.delta ?? {}) };
+      message = { ...message, ...event.delta };
       if (event.usage)
         message.usage = { ...((message.usage as object | undefined) ?? {}), ...event.usage };
     }
