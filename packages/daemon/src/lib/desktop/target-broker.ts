@@ -13,6 +13,7 @@ const Reply = z.object({
         'target_mismatch',
         'app_action_not_authorized',
         'app_action_declined',
+        'app_not_grantable',
         'guards_unavailable',
       ]),
       class: z.string().optional(),

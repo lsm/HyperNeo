@@ -85,8 +85,10 @@ fn owner_allows(bundle_id: &str, class: &str) -> bool {
     {
         FIXTURE_DIALOG.lock().unwrap().1 += 1;
         loop {
-            match FIXTURE_DIALOG.lock().unwrap().0 {
+            let mode = FIXTURE_DIALOG.lock().unwrap().0;
+            match mode {
                 "hold" => {}
+                "panic" => panic!("fixture dialog failed"),
                 "real" => break,
                 mode => return mode == "allow",
             }
@@ -106,9 +108,6 @@ fn owner_allows(bundle_id: &str, class: &str) -> bool {
 }
 
 pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'static str {
-    if bundle_id == "io.hyperneo.app" {
-        return "app_action_not_authorized";
-    }
     let key = format!("{class}\n{requirement}");
     {
         let mut asks = ASKS.lock().unwrap();
@@ -134,7 +133,8 @@ pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'st
         class.to_owned(),
     );
     std::thread::spawn(move || {
-        let allowed = owner_allows(&bundle_id, &class);
+        let answer = std::panic::catch_unwind(|| owner_allows(&bundle_id, &class));
+        let allowed = answer.as_ref().is_ok_and(|allowed| *allowed);
         if allowed {
             if let Err(error) = record(&bundle_id, &requirement, &class, true) {
                 log::warn!("Desktop grant was approved but not stored: {error}");
@@ -142,10 +142,10 @@ pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'st
         }
         let mut asks = ASKS.lock().unwrap();
         let (pending, declined) = &mut *asks;
-        if allowed {
-            declined.remove(&key);
-        } else {
-            declined.insert(key.clone(), Instant::now());
+        match answer {
+            Ok(true) => _ = declined.remove(&key),
+            Ok(false) => _ = declined.insert(key.clone(), Instant::now()),
+            Err(_) => {}
         }
         pending.remove(&key);
     });

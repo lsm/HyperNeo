@@ -111,6 +111,23 @@ test('createDesktopTargetBroker passes a recent owner decline through as its own
   });
 });
 
+test('createDesktopTargetBroker passes the host app refusal through as its own reason', async () => {
+  const { broker } = await desktop((request) => ({
+    ok: true,
+    result: {
+      call_id: request.callId,
+      reason: 'app_not_grantable',
+      class: 'pointer',
+      bundle_id: 'io.hyperneo.app',
+    },
+  }));
+  expect(await broker({ worker_id: 'worker-a' }, 'click', { pid: 42 }, 'call-7')).toEqual({
+    reason: 'app_not_grantable',
+    class: 'pointer',
+    app_id: 'io.hyperneo.app',
+  });
+});
+
 test('createDesktopTargetBroker refuses another call id or a failed reply', async () => {
   const { broker } = await desktop((request) =>
     request.tool === 'click'

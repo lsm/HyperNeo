@@ -257,16 +257,17 @@ impl Drivers {
         }
         #[cfg(test)]
         if request.action == "fixture-dialog" {
-            let mut fixture = grants::FIXTURE_DIALOG.lock().unwrap();
             if let Some(mode) = request.tool.as_deref() {
-                fixture.0 = match mode {
+                grants::FIXTURE_DIALOG.lock().unwrap().0 = match mode {
                     "allow" => "allow",
                     "hold" => "hold",
+                    "panic" => "panic",
                     "real" => "real",
                     _ => "deny",
                 };
                 grants::ASKS.lock().unwrap().1.clear();
             }
+            let dialogs = grants::FIXTURE_DIALOG.lock().unwrap().1;
             let texts: serde_json::Map<String, Value> =
                 ["observe", "launch", "pointer", "keyboard", "other"]
                     .map(|class| {
@@ -277,7 +278,7 @@ impl Drivers {
                     })
                     .into_iter()
                     .collect();
-            return Ok(json!({"dialogs": fixture.1, "texts": texts}));
+            return Ok(json!({"dialogs": dialogs, "texts": texts}));
         }
         #[cfg(test)]
         if request.action == "fixture-slots" {
@@ -298,6 +299,9 @@ impl Drivers {
                 [&value["bundle_id"], &value["requirement"], &value["class"]].map(Value::as_str);
             if let [Some(bundle), Some(requirement), Some(class)] = tuple {
                 match request.action.as_str() {
+                    "resolve" if bundle == "io.hyperneo.app" => {
+                        result = json!({"reason": "app_not_grantable", "class": class, "bundle_id": bundle});
+                    }
                     "resolve" => {
                         if let Err(reason) = grants::check(bundle, requirement, class) {
                             let reason = if reason == "app_action_not_authorized" {

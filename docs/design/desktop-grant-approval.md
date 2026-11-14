@@ -16,7 +16,7 @@ The earlier plan had the host accept the paired owner's card answer delivered by
 4. The worker's refusal says approval is waiting on the Mac. The worker reports that through its normal blocker, so the Neo card only points the human to the Mac.
 5. The next ordinary call checks the grant and every other guard again. Approval never runs input by itself.
 
-The control socket has no answer or approve action, and requests with unknown fields are rejected. A worker therefore cannot submit, replay or reuse an answer. The host never offers a grant for its own app, so driver input cannot be pointed at its own dialog.
+The control socket has no answer or approve action, and requests with unknown fields are rejected. A worker therefore cannot submit, replay or reuse an answer. The host never offers a grant for its own app and refuses it with `app_not_grantable`, so driver input cannot be pointed at its own dialog.
 
 ## Limits of this slice
 

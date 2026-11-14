@@ -753,6 +753,32 @@ class WorkerDrivers(unittest.TestCase):
         self.assertEqual(self.dialogs(), base + 1)
         print('overlapping_retry=no_second_dialog')
 
+    def test_failed_dialog_does_not_strand_the_ask(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        base = self.dialogs('panic')
+        first = self.resolve('click', {'pid': pid}, action='resolve')['reason']
+        if not SIGNED:
+            self.assertEqual(first, 'guards_unavailable')
+            self.assertEqual(self.dialogs('deny'), base)
+            return
+        wait_until(lambda: self.dialogs() == base + 1)
+        time.sleep(0.2)
+        self.dialogs('deny')
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        wait_until(lambda: self.dialogs() == base + 2)
+        print('failed_dialog=no_grant asks_again')
+
+    def test_host_never_offers_a_grant_for_itself(self):
+        base = self.dialogs('allow')
+        reason = self.resolve('click', {'pid': self.process.pid}, action='resolve').get('reason')
+        if SIGNED:
+            self.assertEqual(reason, 'app_not_grantable')
+        else:
+            self.assertIsNotNone(reason)
+        self.assertEqual(self.dialogs('deny'), base)
+        print(f'self_app={reason}')
+
     def test_dialog_names_only_existing_checks(self):
         texts = self.call('fixture-dialog')['result']['texts']
         self.assertEqual(sorted(texts), ['keyboard', 'launch', 'observe', 'other', 'pointer'])

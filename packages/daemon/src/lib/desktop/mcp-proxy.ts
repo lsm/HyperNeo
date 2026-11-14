@@ -34,6 +34,7 @@ type Refusal =
   | 'target_mismatch'
   | 'app_action_not_authorized'
   | 'app_action_declined'
+  | 'app_not_grantable'
   | 'guards_unavailable';
 type Context = { reason: Refusal; class?: string; app_id?: string };
 const explanations: Record<string, string> = {
@@ -44,9 +45,10 @@ const explanations: Record<string, string> = {
   target_unverified: 'The target app could not be verified from its code signature.',
   target_mismatch: 'The addressed process, window or app does not match the verified target.',
   app_action_not_authorized:
-    'The owner has not approved this action class for this app. Approval is waiting in a dialog on the Mac.',
+    'The owner has not approved this action class for this app. The Mac asks the owner in a dialog; retry after they answer.',
   app_action_declined:
     'The owner declined this action class for this app on the Mac. It will not be asked again for 10 minutes.',
+  app_not_grantable: 'HyperNeo cannot be given control of its own app.',
   driver_unavailable: 'The desktop driver is not available.',
   driver_error: 'The desktop driver failed after the call was sent.',
 };
