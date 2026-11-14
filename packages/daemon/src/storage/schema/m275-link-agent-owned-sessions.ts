@@ -43,7 +43,7 @@ export function runMigration275(db: Database): void {
     const provenance = metadata.promptProvenance as { agentId?: unknown } | undefined;
     if (provenance?.agentId === row.agent_id && row.type !== 'space_chat') continue;
     metadata.promptProvenance = {
-      ...provenance,
+      ...(provenance ?? {}),
       source: (provenance as { source?: unknown } | undefined)?.source ?? 'linked_session',
       hash: (provenance as { hash?: unknown } | undefined)?.hash ?? row.agent_id,
       agentId: row.agent_id,

@@ -44,7 +44,7 @@ function planPreparation(request: Request): Gate<Plan> {
     !target ||
     target.startsWith('-') ||
     target === '@' ||
-    /[\s\x00-\x1f\x7f~^:?*[\\]/.test(target) ||
+    /[\s\x00-\x1f\x7f~^:?*\[\\]/.test(target) ||
     target.includes('..') ||
     target.includes('@{') ||
     target

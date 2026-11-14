@@ -863,7 +863,7 @@ export class QueryOptionsBuilder {
     }
 
     const { thinking: thinkingConfig, effort } = this.resolveThinkingOptions();
-    const env = { ...result.env };
+    const env = { ...(result.env ?? {}) };
     delete env[DISABLE_THINKING_ENV];
     if (thinkingConfig?.type === 'disabled') env[DISABLE_THINKING_ENV] = '1';
     result.env = env;

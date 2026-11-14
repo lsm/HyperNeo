@@ -320,7 +320,7 @@ function backgroundSubagentReply(
   replyText: string,
   notification: SDKTaskNotificationMessage | undefined
 ): { status: string; text: string; running: boolean; failed: boolean } | null {
-  const launched = replyText.startsWith('Async agent launched successfully');
+  const launched = /^Async agent launched successfully/.test(replyText);
   if (!input.run_in_background && !launched && !notification) return null;
   return notification
     ? {
