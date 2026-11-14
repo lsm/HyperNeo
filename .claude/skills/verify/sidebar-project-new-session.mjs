@@ -13,10 +13,52 @@ const browser = await chromium.launch({
 });
 const seen = {};
 const retargetFolders = [];
+const retargetOwners = {};
 const opacity = (locator) => locator.evaluate((el) => getComputedStyle(el).opacity);
 const plus = (page, name) => page.getByRole('button', { name: `New session in ${name}` });
+const ownerKey = (value) => value.replace(/\/{2,}/g, '/').replace(/\/+$/, '');
 const chipFor = (page, path) =>
   page.locator(`button:not([data-testid]):not([role="menuitem"])[title$="${path}"]`);
+
+async function projectOwners() {
+  const credential = process.env.VERIFY_CREDENTIAL;
+  if (!credential) throw new Error('VERIFY_CREDENTIAL is required for the history check');
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+    headers: { authorization: `Bearer ${credential}` },
+  });
+  await new Promise((resolve, reject) => {
+    socket.onopen = resolve;
+    socket.onerror = reject;
+  });
+  const id = crypto.randomUUID();
+  const reply = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('workspace.history timed out')), 30_000);
+    socket.onmessage = (event) => {
+      const message = JSON.parse(String(event.data));
+      if (message.requestId !== id && message.id !== id) return;
+      clearTimeout(timer);
+      resolve(message.error ? { error: message.error } : message.data);
+    };
+    socket.send(
+      JSON.stringify({
+        id,
+        type: 'REQ',
+        sessionId: 'global',
+        method: 'workspace.history',
+        data: {},
+        timestamp: new Date().toISOString(),
+        version: '1.0.0',
+      })
+    );
+  });
+  socket.close();
+  if (!reply || reply.error) throw new Error(`workspace.history failed: ${JSON.stringify(reply)}`);
+  return Object.fromEntries(
+    (reply?.entries ?? [])
+      .filter((entry) => entry.project)
+      .map((entry) => [ownerKey(entry.path), entry.project.name])
+  );
+}
 
 async function pairedContext(options) {
   const context = await browser.newContext(options);
@@ -157,6 +199,12 @@ try {
       );
     }
     retargetFolders.push(retargetPath);
+    const retargetOwner = (await projectOwners())[ownerKey(retargetPath)];
+    retargetOwners[ownerKey(retargetPath)] = retargetOwner;
+    if (retargetOwner !== 'alpha')
+      throw new Error(
+        `${retargetPath} belongs to ${retargetOwner ?? 'no project'} after the sidebar switched to beta`
+      );
     await page.keyboard.press('Escape');
     await page.mouse.move(900, 700);
     await plus(page, 'alpha').hover();
@@ -182,9 +230,6 @@ try {
     await staleInput.waitFor({ timeout: 5000 });
     await page.getByTestId('project-group-header').filter({ hasText: `gamma-${scheme}` }).hover();
     await page.getByRole('button', { name: `Remove project gamma-${scheme}` }).click();
-    await plus(page, `gamma-${scheme}`)
-      .waitFor({ state: 'detached', timeout: 10000 })
-      .catch(() => {});
     await page.waitForTimeout(800);
     result.staleFormOpen = await staleInput.count();
     await staleInput.fill(`${run}/projects/gamma-${scheme}-assets`);
@@ -201,6 +246,15 @@ try {
     result.staleProjectRecreated = await page
       .getByRole('menuitem', { name: `gamma-${scheme}`, exact: true })
       .count();
+    await page.keyboard.press('Escape');
+    await page.mouse.move(900, 700);
+    await plus(page, 'alpha').hover();
+    await plus(page, 'alpha').click();
+    await chip.waitFor({ timeout: 10000 });
+    await page.getByTestId('add-project-button').click();
+    await page.getByTestId('add-project-path-input').fill(`${run}/projects/delta-${scheme}`);
+    await page.getByTestId('add-project-path-input').press('Enter');
+    await page.waitForTimeout(1000);
     await page.keyboard.press('Escape');
     result.pageErrors = errors;
     seen[scheme] = result;
@@ -251,11 +305,54 @@ try {
   assert.equal(seen.touch.hoverMedia, false);
   assert.equal(seen.touch.restAlpha, '1');
   await touch.close();
+  const only = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+    storageState,
+  });
+  const onlyPage = await only.newPage();
+  const onlyErrors = [];
+  onlyPage.on('pageerror', (error) => onlyErrors.push(error.message));
+  await onlyPage.goto(`${base}/sessions`);
+  await plus(onlyPage, `delta-only`).waitFor({ state: 'attached', timeout: 15000 });
+  await onlyPage.mouse.move(900, 700);
+  await plus(onlyPage, 'delta-only').hover();
+  await plus(onlyPage, 'delta-only').click();
+  const onlyChip = chipFor(onlyPage, `/projects/delta-only`);
+  await onlyChip.waitFor({ timeout: 10000 });
+  await onlyChip.click();
+  await onlyPage.getByRole('menuitem', { name: 'Add folder to delta-only…' }).click();
+  const onlyInput = onlyPage.getByPlaceholder('Folder path');
+  await onlyInput.waitFor({ timeout: 5000 });
+  const headers = onlyPage.getByTestId('project-group-header');
+  while ((await headers.count()) > 0) {
+    const first = headers.first();
+    const name = ((await first.textContent()) ?? '').trim();
+    await first.hover();
+    await onlyPage.getByRole('button', { name: `Remove project ${name}` }).click();
+    await onlyPage.waitForTimeout(700);
+  }
+  seen.only = { formOpen: await onlyInput.count() };
+  await onlyInput.fill(`${run}/projects/delta-only-assets`);
+  await onlyInput.press('Enter');
+  await onlyPage.waitForTimeout(1000);
+  seen.only.refused = await onlyPage.getByText(/is no longer a project/).count();
+  assert.equal(seen.only.formOpen, 1);
+  assert.equal(seen.only.refused, 1);
+  seen.only.pageErrors = onlyErrors;
+  assert.deepEqual(seen.only.pageErrors, []);
+  await only.close();
+
+  writeFileSync(
+    `${run}/evidence/retarget-project.txt`,
+    Object.entries(retargetOwners)
+      .map(([path, name]) => `${path} -> project ${name}`)
+      .join('\n') + '\n'
+  );
   console.log('PASS');
 } finally {
   writeFileSync(
     `${run}/evidence/sidebar-project-new-session.json`,
-    JSON.stringify({ ...seen, retargetFolders }, null, 2)
+    JSON.stringify({ ...seen, retargetFolders, retargetOwners }, null, 2)
   );
   console.log(JSON.stringify(seen, null, 1));
   await browser.close();
