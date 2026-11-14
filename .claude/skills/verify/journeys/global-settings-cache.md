@@ -39,3 +39,9 @@ writes advance a connection-local revision even without a reactive notifier.
 Reads inside SQL transactions discard and bypass the facade cache, preventing
 uncommitted values from surviving rollback. Worker commits retain reactive
 invalidation. These checks use synthetic data only.
+
+The disk-backed daemon case also submits a rule-proposal card to the relay
+worker operation. It must return `direct_human_required`, leave the card open
+and the proposal unapplied, and retain the warmed standing rules. The Bun proof
+prints `relaySettingsSelectsOnMain: 0` to distinguish the worker connection from
+the Node runner's inline fallback. Rule proposals require direct human action.

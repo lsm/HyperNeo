@@ -7,6 +7,9 @@ import { getConfig } from '../../../../src/config.ts';
 import { globalSettingsWrites } from '../../../../src/storage/repositories/global-settings-writes.ts';
 import { toolDefaultTransitions } from '../../../../src/storage/repositories/tool-default-transition.ts';
 import { createLocalSocket } from '../../../../src/lib/pairing/local-credential.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { neoAskInputWrites } from '../../../../src/storage/repositories/neo-ask-input-worker.ts';
+import { createTestSession } from '../../../helpers/database.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 import { migrateSessionToolSelections } from '../../../../src/storage/repositories/session-tool-selection-migration.ts';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
@@ -80,7 +83,76 @@ test('committed settings stay visible while repeated facade reads avoid SQLite',
       const detached = read();
       detached.neo!.mutedSessions!.push('caller-mutation');
       expect(read().neo?.mutedSessions).not.toContain('caller-mutation');
-      console.log(JSON.stringify({ selects, repeatedReadsPerWrite: 10, paths: 7 }));
+      await app.db.createSession(createTestSession('synthetic-relay-owner'));
+      const todos = new NeoAskTodoRepository(raw);
+      todos.openAsk({
+        id: 'synthetic-relay-ask',
+        projectId: null,
+        sessionId: 'synthetic-relay-owner',
+        originMessageId: null,
+        title: 'Synthetic rule',
+        request: 'Approve rule',
+        createdAt: 1,
+      });
+      todos.askQuestion(
+        'synthetic-rule-card',
+        'synthetic-relay-ask',
+        {
+          text: 'Apply the synthetic rule?',
+          kind: 'yesno',
+          options: null,
+          multiple: false,
+          noLabel: 'Keep',
+          yesLabel: 'Apply',
+          startTodos: null,
+        },
+        1
+      );
+      raw
+        .prepare(
+          'INSERT INTO neo_rule_proposals (question_id,request_id,edit_json,question_text) VALUES (?,?,?,?)'
+        )
+        .run(
+          'synthetic-rule-card',
+          'synthetic-rule-request',
+          JSON.stringify({ add: ['Relayed rule'] }),
+          'Apply the synthetic rule?'
+        );
+      app.db.updateGlobalSettings({
+        neo: {
+          ...read().neo,
+          standingRules: ['Committed rule'],
+          relaySenders: [{ sender: 'synthetic-relay', name: 'Synthetic relay' }],
+        },
+      });
+      expect(read().neo?.standingRules).toEqual(['Committed rule']);
+      const beforeRelay = selects;
+      const relay = await app.db.gateway.call(neoAskInputWrites, 'relayAnswer', {
+        questionId: 'synthetic-rule-card',
+        sender: 'synthetic-relay',
+        where: 'Synthetic discussion',
+        when: 'Synthetic time',
+        words: 'yes',
+        at: 2,
+      });
+      expect(relay).toMatchObject({
+        reason: { ok: false, reason: expect.stringContaining('direct_human_required') },
+      });
+      expect(read().neo?.standingRules).toEqual(['Committed rule']);
+      expect(todos.getQuestion('synthetic-rule-card')?.state).toBe('open');
+      expect(
+        raw
+          .prepare('SELECT applied_at FROM neo_rule_proposals WHERE question_id=?')
+          .get('synthetic-rule-card')
+      ).toMatchObject({ applied_at: null });
+      console.log(
+        JSON.stringify({
+          selects,
+          repeatedReadsPerWrite: 10,
+          paths: 7,
+          relaySettingsSelectsOnMain: selects - beforeRelay,
+        })
+      );
     } finally {
       raw.prepare = prepare;
       await transport.close();
