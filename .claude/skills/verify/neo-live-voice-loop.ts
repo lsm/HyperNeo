@@ -252,6 +252,13 @@ try {
   await stopLive.waitFor({ state: 'visible', timeout: 10_000 });
   await recording.waitFor({ state: 'visible', timeout: 15_000 });
   evidence.micReopenedAfterInterrupt = true;
+
+  await stopLive.click();
+  await recording.waitFor({ state: 'hidden', timeout: 15_000 });
+  await page.getByRole('button', { name: 'Realtime voice' }).waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(1_000);
+  if (await recording.isVisible()) throw new Error('mic reopened after live voice stopped');
+  evidence.micClosedAfterLiveStopped = true;
   evidence.receipts = receipts().map((row) => `${row.id === short.id ? 'short' : 'long'}:${row.state}`);
   evidence.passed = true;
   console.log(JSON.stringify(evidence));

@@ -25,6 +25,7 @@ The run clicks "Realtime voice" and then requires the following:
   `[input: live_voice]`, and the mic opens again.
 - Pressing "Stop Neo speaking" during a long reply records `cancelled`, and the
   mic opens again.
+- Turning live voice off closes the mic it opened, and the mic stays closed.
 
 Inspect `listening-<theme>.png`, `speaking-<theme>.png` and
 `neo-live-voice-loop.json`, and trust the wrapper's exit status. This proves the

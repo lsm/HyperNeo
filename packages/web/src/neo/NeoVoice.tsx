@@ -86,7 +86,7 @@ export function NeoVoice({
   const latest = useRef(recorder);
   latest.current = recorder;
   const liveStream = useRef<VoiceLiveStream | null>(null);
-  const heard = useRef('');
+  const owned = useRef(false);
   const interim = useRef(onInterim);
   const recordingDraft = useRef<VoiceSendSnapshot | null>(null);
   const captureDraft = (): VoiceSendSnapshot => ({
@@ -131,8 +131,8 @@ export function NeoVoice({
     };
   }, []);
 
-  async function start() {
-    heard.current = '';
+  async function start(live = false) {
+    owned.current = live;
     setStreamFormat(null);
     recordingDraft.current = captureDraft();
     onPreviewCapture?.();
@@ -141,24 +141,17 @@ export function NeoVoice({
       const hub = connectionManager.getHubIfConnected();
       if (!hub || !latest.current.isRecording) return;
       dropLiveStream();
-      const live = openVoiceStream(
-        hub,
-        (text) => {
-          heard.current = text;
-          interim.current?.(text);
+      const live = openVoiceStream(hub, (text) => interim.current?.(text), {
+        onFormat: (format) => {
+          if (mounted.current) setStreamFormat(format);
         },
-        {
-          onFormat: (format) => {
-            if (mounted.current) setStreamFormat(format);
-          },
-          onError: (error) => {
-            if (mounted.current)
-              onError(
-                `Live transcription failed: ${error.message}. The recording will use batch transcription.`
-              );
-          },
-        }
-      );
+        onError: (error) => {
+          if (mounted.current)
+            onError(
+              `Live transcription failed: ${error.message}. The recording will use batch transcription.`
+            );
+        },
+      });
       liveStream.current = live;
       voiceRecorderStore.setPcmTap(live.push);
     } catch (error) {
@@ -184,6 +177,8 @@ export function NeoVoice({
     if (running.current || (entry && isVoiceAudioBusy(entry.id))) return;
     running.current = true;
     const id = entry?.id ?? generateUUID();
+    const quiet = !entry && owned.current;
+    owned.current = false;
     const live = entry ? null : takeLiveStream();
     let persisted: () => void = () => {};
     const task = {
@@ -266,9 +261,9 @@ export function NeoVoice({
             await deleteVoiceRecord(result.recordId);
           }
         } else if (result.outcome.reason) onError(result.outcome.reason);
-      } else if (result.kind === 'silent-recording')
-        onError('I didn’t hear anything. Try speaking closer to the microphone.');
-      else
+      } else if (result.kind === 'silent-recording') {
+        if (!quiet) onError('I didn’t hear anything. Try speaking closer to the microphone.');
+      } else
         onError(
           `${result.message}${result.persisted && !result.dequeued ? ' Your recording is saved below. You can retry.' : ''}`
         );
@@ -338,13 +333,11 @@ export function NeoVoice({
   }, [recorder.durationLimitHit]);
 
   useEffect(() => {
-    if (!live?.on || !enabled || !isVoiceRecordingSupported()) return;
-    if (!live.speaking) {
-      if (phase === 'idle' && connected) void start();
-    } else if (recorder.isRecording && !pending.current)
-      void (heard.current.trim() || !liveStream.current || streamFormat === 'batch'
-        ? transcribe('draft')
-        : cancel());
+    if (!enabled || !isVoiceRecordingSupported()) return;
+    if (live?.on && !live.speaking) {
+      if (phase === 'idle' && connected) void start(true);
+    } else if ((live?.speaking || owned.current) && recorder.isRecording && !pending.current)
+      void transcribe('draft');
   }, [live?.on, live?.speaking, phase, connected, enabled]);
 
   finishFromComposer.current = (intent) => {
