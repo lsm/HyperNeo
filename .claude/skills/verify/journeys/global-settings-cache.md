@@ -45,3 +45,10 @@ worker operation. It must return `direct_human_required`, leave the card open
 and the proposal unapplied, and retain the warmed standing rules. The Bun proof
 prints `relaySettingsSelectsOnMain: 0` to distinguish the worker connection from
 the Node runner's inline fallback. Rule proposals require direct human action.
+
+Lost-reply regressions use a second real SQLite connection to commit settings
+while a controlled worker drops its reply. Both the gateway watchdog and a
+post-commit worker error must reject the call, terminate the worker and expose
+the committed settings to the next facade read. The controlled transport keeps
+the failure timing deterministic. These checks establish committed readback
+after failure, while the disk-backed daemon case exercises native worker replies.

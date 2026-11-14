@@ -657,7 +657,9 @@ export class Database {
       return this.settingsRepo.getGlobalSettings();
     }
     const version =
-      (this.reactiveDb?.getTableVersion('global_settings') ?? 0) + globalSettingsRevision(raw);
+      (this.reactiveDb?.getTableVersion('global_settings') ?? 0) +
+      globalSettingsRevision(raw) +
+      this.gateway.writeFailureVersion;
     if (!this.globalSettingsCache || this.globalSettingsCache.version !== version) {
       this.globalSettingsCache = { version, settings: this.settingsRepo.getGlobalSettings() };
     }
