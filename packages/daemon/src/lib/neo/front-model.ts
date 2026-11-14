@@ -132,7 +132,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           const refusal = replyBodyRefusal({ text, details });
           if (refusal) return result(explainNeoRefusal({ accepted: false, reason: refusal }));
           const targets = input.replyTo ?? [];
-          if (!targets.length) return result(await publish({ ...input, ...body }));
+          if (!targets.length) return result(await publish({ ...input, text, details }));
           const asks = targets.map((id) => service.asks.find(conversationId, id));
           if (asks.some((ask) => !ask))
             return result({ accepted: false, reason: 'unknown_reply_target' });
@@ -141,7 +141,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
-          const receipt = await publish({ ...input, ...body });
+          const receipt = await publish({ ...input, text, details });
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
           if (!receipt.accepted && !second) return result(receipt);
           const existing = second
