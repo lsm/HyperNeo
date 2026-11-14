@@ -15,9 +15,6 @@ import mdagentsLongHorizonSchedulingGuardrail from './agents/long-horizon-schedu
 import mdagentsNonDelegatingGeneral from './agents/non-delegating-general.md' with { type: 'text' };
 import mdagentsPresetsCoder from './agents/presets/coder.md' with { type: 'text' };
 import mdagentsPresetsGeneral from './agents/presets/general.md' with { type: 'text' };
-import mdagentsPresetsLegacyReviewer from './agents/presets/legacy-reviewer.md' with {
-  type: 'text',
-};
 import mdagentsPresetsPlanner from './agents/presets/planner.md' with { type: 'text' };
 import mdagentsPresetsResearch from './agents/presets/research.md' with { type: 'text' };
 import mdagentsSystemContractsQaSystemContract from './agents/system-contracts/qa-system-contract.md' with {
@@ -370,7 +367,6 @@ const registry: Record<string, string> = {
   'agents/non-delegating-general.md': mdagentsNonDelegatingGeneral,
   'agents/presets/coder.md': mdagentsPresetsCoder,
   'agents/presets/general.md': mdagentsPresetsGeneral,
-  'agents/presets/legacy-reviewer.md': mdagentsPresetsLegacyReviewer,
   'agents/presets/planner.md': mdagentsPresetsPlanner,
   'agents/presets/research.md': mdagentsPresetsResearch,
   'agents/system-contracts/qa-system-contract.md': mdagentsSystemContractsQaSystemContract,
@@ -520,7 +516,6 @@ export const {
   NON_DELEGATING_GENERAL_PROMPT,
   PRESET_CODER_PROMPT,
   PRESET_GENERAL_PROMPT,
-  LEGACY_REVIEWER_PROMPT,
   PRESET_PLANNER_PROMPT,
   PRESET_RESEARCH_PROMPT,
   QA_SYSTEM_CONTRACT,
