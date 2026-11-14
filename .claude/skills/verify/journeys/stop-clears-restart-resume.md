@@ -13,8 +13,9 @@ The helper starts an isolated metadata-only daemon (`env -i`, `NODE_ENV=test`,
 its own HOME and DB, no model), creates a session, writes the restart marker
 into the run's DB while the daemon is down, restarts it, opens the session
 (`session.get`, as the UI does, so it is loaded), then stops and archives it
-over RPC. It stops its daemon on exit.
+over RPC with no wait between them. It stops its daemon on exit.
 
-End state: `stop` replies `stopped:true`, `archive` replies `archived:true`, and
+End state: the helper prints `PASS` and exits 0. `stop` replied `stopped:true`,
+`archive` replied `archived:true`, and
 the session row is `archived` with processing state `{"status":"interrupted"}`.
 Evidence is in `$RUN/evidence/`.

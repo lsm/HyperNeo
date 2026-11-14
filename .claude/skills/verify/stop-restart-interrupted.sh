@@ -49,7 +49,6 @@ REF="{\"ref\":{\"adapter\":\"hyperneo\",\"id\":\"$ID\"}}"
 rpc work.status "$REF" >"$RUN/evidence/status-before.json"
 rpc rpc:session.get "{\"sessionId\":\"$ID\"}" >"$RUN/evidence/open.json"
 rpc work.stop "$REF" >"$RUN/evidence/stop.json"
-sleep 1
 rpc neo.session.archive "$REF" >"$RUN/evidence/archive.json"
 sqlite3 -readonly "$DB" "SELECT status, processing_state FROM sessions WHERE id = '$ID';" \
   >"$RUN/evidence/session-row.txt"
@@ -59,3 +58,8 @@ for f in status-before stop archive; do
   echo "$f: $(tr -d '\n ' <"$RUN/evidence/$f.json" | cut -c1-300)"
 done
 echo "row: $(cat "$RUN/evidence/session-row.txt")"
+grep -q '"stopped": true' "$RUN/evidence/stop.json" || { echo 'FAIL: stop did not report stopped'; exit 1; }
+grep -q '"archived": true' "$RUN/evidence/archive.json" || { echo 'FAIL: archive refused'; exit 1; }
+[[ "$(cat "$RUN/evidence/session-row.txt")" == 'archived|{"status":"interrupted"}' ]] ||
+  { echo 'FAIL: session row'; exit 1; }
+echo PASS
