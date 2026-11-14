@@ -5,15 +5,19 @@ import { NeoRealtimeVoice } from '../NeoRealtimeVoice.tsx';
 const mocks = vi.hoisted(() => ({
   catalog: { ok: true } as { ok: boolean; reason?: string },
   request: vi.fn(),
-  players: [] as { sessionId: string; close: ReturnType<typeof vi.fn> }[],
+  players: [] as { sessionId: string; close: ReturnType<typeof vi.fn>; onStop?: () => void }[],
 }));
 
 vi.mock('../../lib/connection-manager.ts', () => ({
   connectionManager: { getHubIfConnected: () => ({ request: mocks.request }) },
 }));
 vi.mock('../../lib/voice/neo-speech-player.ts', () => ({
-  openNeoSpeechPlayer: (_hub: unknown, sessionId: string) => {
-    const player = { sessionId, close: vi.fn(), interrupt: vi.fn() };
+  openNeoSpeechPlayer: (
+    _hub: unknown,
+    sessionId: string,
+    options: { onStop?: () => void } = {}
+  ) => {
+    const player = { sessionId, close: vi.fn(), interrupt: vi.fn(), onStop: options.onStop };
     mocks.players.push(player);
     return player;
   },
@@ -68,6 +72,39 @@ describe('NeoRealtimeVoice', () => {
     expect(button().getAttribute('aria-pressed')).toBe('false');
     expect(listens()).toEqual([]);
     expect(mocks.players[0].close).toHaveBeenCalled();
+  });
+
+  it('turns off when another device takes over listening', async () => {
+    render(<NeoRealtimeVoice collapsed={false} sessionId="neo-1" connected onError={vi.fn()} />);
+    fireEvent.click(button());
+    await waitFor(() => expect(button().getAttribute('aria-pressed')).toBe('true'));
+    mocks.players[0].onStop?.();
+    await waitFor(() => expect(button().getAttribute('aria-pressed')).toBe('false'));
+    expect(mocks.players[0].close).toHaveBeenCalled();
+  });
+
+  it('shows no notice when a refused start was already stopped', async () => {
+    let refuse: (value: unknown) => void = () => {};
+    mocks.request.mockImplementation(async (_method: string, data: { name: string }) =>
+      data.name === 'neo.speech.catalog'
+        ? { ok: true }
+        : data.name === 'neo.speech.listen' &&
+            (data as { input: { enabled: boolean } }).input.enabled
+          ? new Promise((resolve) => {
+              refuse = resolve;
+            })
+          : { ok: true }
+    );
+    const onError = vi.fn();
+    render(<NeoRealtimeVoice collapsed={false} sessionId="neo-1" connected onError={onError} />);
+    fireEvent.click(button());
+    await waitFor(() => expect(listens()).toHaveLength(1));
+    fireEvent.click(button());
+    refuse({ ok: false, reason: 'updating' });
+    await waitFor(() => expect(listens().at(-1)).toEqual({ sessionId: 'neo-1', enabled: false }));
+    await new Promise((done) => setTimeout(done, 0));
+    expect(onError).not.toHaveBeenCalled();
+    expect(button().getAttribute('aria-pressed')).toBe('false');
   });
 
   it('turns off when the connection drops', async () => {

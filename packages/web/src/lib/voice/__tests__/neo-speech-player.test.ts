@@ -291,6 +291,17 @@ describe('openNeoSpeechPlayer', () => {
     await vi.waitFor(() => expect(acks()).toEqual(['A:playing', 'A:cancelled', 'B:cancelled']));
   });
 
+  it('tells its owner when the daemon stops listening to it', () => {
+    const { hub, emit } = fakeHub();
+    const sound = fakeAudio();
+    const onStop = vi.fn();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create, onStop });
+    emit({ type: 'stop', sessionId: 'other' });
+    expect(onStop).not.toHaveBeenCalled();
+    emit({ type: 'stop', sessionId: 'neo' });
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
   it('clears everything without receipts when the daemon stops speech', async () => {
     const { hub, emit, acks } = fakeHub();
     const sound = fakeAudio();
