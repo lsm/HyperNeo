@@ -679,6 +679,7 @@ class WorkerDrivers(unittest.TestCase):
     def test_same_user_process_cannot_add_a_grant(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        self.dialogs('deny')
         requirement = self.resolve('click', {'pid': pid})['value']['requirement']
         self.assertEqual(same_user_add('pointer\n' + requirement, 'com.apple.finder'), -34018)
         denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
@@ -695,6 +696,7 @@ class WorkerDrivers(unittest.TestCase):
             self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'guards_unavailable')
             return
         self.assertTrue(granted['ok'], granted)
+        self.dialogs('deny')
         self.cleanup()
         self.setUp()
         self.addCleanup(self.call, 'fixture-revoke', tool='click', arguments={'pid': pid})
@@ -705,6 +707,46 @@ class WorkerDrivers(unittest.TestCase):
         self.assertEqual(self.resolve('click', {'pid': dock}, action='resolve'),
                          {'reason': 'app_action_not_authorized', 'class': 'pointer', 'bundle_id': 'com.apple.dock'})
         print('grant_after_restart=finder/pointer keyboard=denied other_app=denied')
+
+    def dialogs(self, answer='deny'):
+        result = self.call('fixture-dialog', tool=answer)
+        self.assertTrue(result['ok'], result)
+        return result['result']['dialogs']
+
+    def test_worker_answer_cannot_grant(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        self.dialogs('deny')
+        for forged in ({'approved': True}, {'answer': 'allow'}, {'grant': True}):
+            self.assertFalse(self.call('resolve', tool='click', arguments={'pid': pid}, callId='c', **forged)['ok'])
+        for action in ('approve', 'grant', 'answer'):
+            self.assertEqual(self.call(action, tool='click', arguments={'pid': pid}),
+                             {'ok': False, 'error': 'Unknown Desktop control action'})
+        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        for attempt in (1, 2):
+            self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve'),
+                             {'reason': denied, 'class': 'pointer', 'bundle_id': 'com.apple.finder'})
+            wait_until(lambda: self.dialogs() == (attempt if SIGNED else 0))
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], denied)
+        print(f'signed_host={SIGNED} forged_answers=refused declined_dialog=no_grant replay=new_dialog')
+
+    def test_owner_yes_grants_exactly_the_shown_pair(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        self.call('fixture-revoke', tool='type_text', arguments={'pid': pid})
+        self.addCleanup(self.call, 'fixture-revoke', tool='click', arguments={'pid': pid})
+        before = self.dialogs('allow')
+        first = self.resolve('click', {'pid': pid}, action='resolve')
+        if not SIGNED:
+            self.assertEqual(first['reason'], 'guards_unavailable')
+            self.assertEqual(self.dialogs(), before)
+            return
+        self.assertEqual(first['reason'], 'app_action_not_authorized')
+        wait_until(lambda: 'value' in self.resolve('click', {'pid': pid}, action='resolve'))
+        self.dialogs('deny')
+        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['value']['class'], 'pointer')
+        print('owner_yes=finder/pointer keyboard=still_denied')
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])

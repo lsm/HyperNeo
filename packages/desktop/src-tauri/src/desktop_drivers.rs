@@ -256,6 +256,16 @@ impl Drivers {
             return Ok(json!({"armed": true}));
         }
         #[cfg(test)]
+        if request.action == "fixture-dialog" {
+            let mut fixture = grants::FIXTURE_DIALOG.lock().unwrap();
+            fixture.0 = match request.tool.as_deref() {
+                Some("allow") => "allow",
+                Some("real") => "real",
+                _ => "deny",
+            };
+            return Ok(json!({"dialogs": fixture.1}));
+        }
+        #[cfg(test)]
         if request.action == "fixture-slots" {
             let slots = self.workers.lock().await;
             return Ok(
@@ -276,6 +286,9 @@ impl Drivers {
                 match request.action.as_str() {
                     "resolve" => {
                         if let Err(reason) = grants::check(bundle, requirement, class) {
+                            if reason == "app_action_not_authorized" {
+                                grants::ask_owner(bundle, requirement, class);
+                            }
                             result = json!({"reason": reason, "class": class, "bundle_id": bundle});
                         }
                     }

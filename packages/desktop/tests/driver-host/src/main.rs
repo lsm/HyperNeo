@@ -13,8 +13,17 @@ impl log::Log for FixtureLogger {
 }
 static LOGGER: FixtureLogger = FixtureLogger;
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    std::thread::spawn(|| {
+        let served = std::panic::catch_unwind(|| {
+            tokio::runtime::Runtime::new().unwrap().block_on(serve())
+        });
+        std::process::exit(if served.is_ok() { 0 } else { 101 });
+    });
+    core_foundation::runloop::CFRunLoop::run_current();
+}
+
+async fn serve() {
     log::set_logger(&LOGGER).unwrap();
     log::set_max_level(log::LevelFilter::Warn);
     let args: Vec<_> = std::env::args().collect();
