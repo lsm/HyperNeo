@@ -19,12 +19,17 @@ function readConfigOverlay(ctx: DaemonAppContext): Record<string, unknown> {
   return row ? (JSON.parse(row.config_json) as Record<string, unknown>) : {};
 }
 
+const LEGACY_SEED_ENV = 'HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT';
+
 describe('Daemon App daemon-config bootstrap', () => {
   let config: Config;
   let originalTestUserSettingsDir: string | undefined;
+  let originalLegacySeedEnv: string | undefined;
   let bunServeSpy: ReturnType<typeof spyOn> | null = null;
 
   beforeEach(() => {
+    originalLegacySeedEnv = process.env[LEGACY_SEED_ENV];
+    delete process.env[LEGACY_SEED_ENV];
     originalTestUserSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
     process.env.TEST_USER_SETTINGS_DIR = join(tmpdir(), `hyperneo-test-settings-${Date.now()}`);
     bunServeSpy = spyOn(Bun, 'serve').mockImplementation(
@@ -51,6 +56,11 @@ describe('Daemon App daemon-config bootstrap', () => {
   });
 
   afterEach(() => {
+    if (originalLegacySeedEnv !== undefined) {
+      process.env[LEGACY_SEED_ENV] = originalLegacySeedEnv;
+    } else {
+      delete process.env[LEGACY_SEED_ENV];
+    }
     if (originalTestUserSettingsDir !== undefined) {
       process.env.TEST_USER_SETTINGS_DIR = originalTestUserSettingsDir;
     } else {
@@ -62,9 +72,7 @@ describe('Daemon App daemon-config bootstrap', () => {
     }
   });
 
-  test('boots without legacy env vars and serves catalog defaults', {
-    timeout: 20_000,
-  }, async () => {
+  test('boots without legacy env vars and serves catalog defaults', async () => {
     const daemonContext = await createDaemonApp({
       config,
       verbose: false,
@@ -78,5 +86,57 @@ describe('Daemon App daemon-config bootstrap', () => {
     } finally {
       await daemonContext.cleanup();
     }
-  });
+  }, 20_000);
+
+  test('no longer seeds the daemon_config row from a legacy env var at boot', async () => {
+    process.env[LEGACY_SEED_ENV] = '7';
+    const daemonContext = await createDaemonApp({
+      config,
+      verbose: false,
+      standalone: false,
+    });
+    try {
+      expect(readConfigOverlay(daemonContext)).toEqual({});
+      expect(
+        daemonContext.daemonConfigService.getConfig().deliveryPolicy?.messageDeliveryMaxConcurrent
+      ).toBe(64);
+    } finally {
+      await daemonContext.cleanup();
+    }
+  }, 20_000);
+
+  test('leaves the daemon_config row empty across restarts against a persistent DB', async () => {
+    const tmpDir = join(
+      tmpdir(),
+      `hyperneo-dc04-bootstrap-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    mkdirSync(tmpDir, { recursive: true });
+    const dbPath = join(tmpDir, 'daemon.db');
+    try {
+      process.env[LEGACY_SEED_ENV] = '7';
+      const firstBoot = await createDaemonApp({
+        config: { ...config, dbPath },
+        verbose: false,
+        standalone: false,
+      });
+      await firstBoot.cleanup();
+
+      process.env[LEGACY_SEED_ENV] = '11';
+      const secondBoot = await createDaemonApp({
+        config: { ...config, dbPath },
+        verbose: false,
+        standalone: false,
+      });
+      try {
+        expect(readConfigOverlay(secondBoot)).toEqual({});
+        expect(
+          secondBoot.daemonConfigService.getConfig().deliveryPolicy?.messageDeliveryMaxConcurrent
+        ).toBe(64);
+      } finally {
+        await secondBoot.cleanup();
+      }
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 40_000);
 });
