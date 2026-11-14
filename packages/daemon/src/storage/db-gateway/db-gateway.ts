@@ -153,6 +153,7 @@ export class DbGateway {
   private readonly lanes: Record<Lane, WorkerLane>;
   onChanges: (changes: TableChange[]) => void = () => {};
   sdkBodyWriteMode?: () => boolean;
+  writeFailureVersion = 0;
 
   constructor(
     dbPath: string,
@@ -208,7 +209,10 @@ export class DbGateway {
         if (recorder.changes.length) this.replay(recorder.changes);
         return result;
       });
-    return this.lanes[op.mode].send(op.name, args) as Promise<R>;
+    return this.lanes[op.mode].send(op.name, args).catch((error) => {
+      if (op.mode === 'write') this.writeFailureVersion += 1;
+      throw error;
+    }) as Promise<R>;
   }
 
   call<R, M extends Method<R>, K extends M>(
