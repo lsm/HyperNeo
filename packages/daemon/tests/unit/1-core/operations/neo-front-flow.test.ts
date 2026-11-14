@@ -1417,6 +1417,8 @@ test('a front reply over the shared body limit is told to shorten, not to add de
     });
     expect(refused.accepted).toBe(false);
     expect(refused.reason).toMatch(/^front_reply_too_long: Shorten/);
+    expect(refused.reason).toContain('at most 300 characters');
+    expect(refused.reason).not.toContain('500');
   }
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
 });
