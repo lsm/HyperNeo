@@ -261,10 +261,11 @@ impl Drivers {
             if let Some(mode) = request.tool.as_deref() {
                 fixture.0 = match mode {
                     "allow" => "allow",
+                    "hold" => "hold",
                     "real" => "real",
                     _ => "deny",
                 };
-                grants::DECLINED.lock().unwrap().clear();
+                grants::ASKS.lock().unwrap().1.clear();
             }
             let texts: serde_json::Map<String, Value> =
                 ["observe", "launch", "pointer", "keyboard", "other"]

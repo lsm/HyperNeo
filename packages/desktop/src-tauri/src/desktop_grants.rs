@@ -13,8 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-static PENDING: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
-pub(super) static DECLINED: Mutex<BTreeMap<String, Instant>> = Mutex::new(BTreeMap::new());
+pub(super) static ASKS: Mutex<(BTreeSet<String>, BTreeMap<String, Instant>)> =
+    Mutex::new((BTreeSet::new(), BTreeMap::new()));
 const DECLINE_COOLDOWN: Duration = Duration::from_secs(10 * 60);
 #[cfg(test)]
 pub(super) static FIXTURE_DIALOG: Mutex<(&str, u64)> = Mutex::new(("deny", 0));
@@ -83,10 +83,14 @@ fn owner_allows(bundle_id: &str, class: &str) -> bool {
     };
     #[cfg(test)]
     {
-        let mut fixture = FIXTURE_DIALOG.lock().unwrap();
-        fixture.1 += 1;
-        if fixture.0 != "real" {
-            return fixture.0 == "allow";
+        FIXTURE_DIALOG.lock().unwrap().1 += 1;
+        loop {
+            match FIXTURE_DIALOG.lock().unwrap().0 {
+                "hold" => {}
+                "real" => break,
+                mode => return mode == "allow",
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
     dispatch2::run_on_main(|mtm| {
@@ -106,12 +110,23 @@ pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'st
         return "app_action_not_authorized";
     }
     let key = format!("{class}\n{requirement}");
-    let declined = DECLINED.lock().unwrap().get(&key).copied();
-    if declined.is_some_and(|at| at.elapsed() < DECLINE_COOLDOWN) {
-        return "app_action_declined";
-    }
-    if !PENDING.lock().unwrap().insert(key.clone()) {
-        return "app_action_not_authorized";
+    {
+        let mut asks = ASKS.lock().unwrap();
+        let (pending, declined) = &mut *asks;
+        #[cfg(test)]
+        if FIXTURE_DIALOG.lock().unwrap().0 == "hold" && pending.contains(&key) {
+            FIXTURE_DIALOG.lock().unwrap().0 = "deny";
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        if declined
+            .get(&key)
+            .is_some_and(|at| at.elapsed() < DECLINE_COOLDOWN)
+        {
+            return "app_action_declined";
+        }
+        if !pending.insert(key.clone()) {
+            return "app_action_not_authorized";
+        }
     }
     let (bundle_id, requirement, class) = (
         bundle_id.to_owned(),
@@ -119,15 +134,20 @@ pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'st
         class.to_owned(),
     );
     std::thread::spawn(move || {
-        if owner_allows(&bundle_id, &class) {
-            DECLINED.lock().unwrap().remove(&key);
+        let allowed = owner_allows(&bundle_id, &class);
+        if allowed {
             if let Err(error) = record(&bundle_id, &requirement, &class, true) {
                 log::warn!("Desktop grant was approved but not stored: {error}");
             }
-        } else {
-            DECLINED.lock().unwrap().insert(key.clone(), Instant::now());
         }
-        PENDING.lock().unwrap().remove(&key);
+        let mut asks = ASKS.lock().unwrap();
+        let (pending, declined) = &mut *asks;
+        if allowed {
+            declined.remove(&key);
+        } else {
+            declined.insert(key.clone(), Instant::now());
+        }
+        pending.remove(&key);
     });
     "app_action_not_authorized"
 }

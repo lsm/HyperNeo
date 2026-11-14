@@ -737,6 +737,22 @@ class WorkerDrivers(unittest.TestCase):
             wait_until(lambda: self.dialogs() == base + 3)
         print(f'signed_host={SIGNED} forged_answers=refused declined_dialog=no_grant retry={"cooldown" if SIGNED else "no_dialog"} other_class={"new_dialog" if SIGNED else "no_dialog"}')
 
+    def test_retry_overlapping_a_decline_keeps_the_cooldown(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        base = self.dialogs('hold')
+        first = self.resolve('click', {'pid': pid}, action='resolve')['reason']
+        if not SIGNED:
+            self.assertEqual(first, 'guards_unavailable')
+            self.assertEqual(self.dialogs('deny'), base)
+            return
+        self.assertEqual(first, 'app_action_not_authorized')
+        wait_until(lambda: self.dialogs() == base + 1)
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        wait_until(lambda: self.resolve('click', {'pid': pid}, action='resolve')['reason'] == 'app_action_declined')
+        self.assertEqual(self.dialogs(), base + 1)
+        print('overlapping_retry=no_second_dialog')
+
     def test_dialog_names_only_existing_checks(self):
         texts = self.call('fixture-dialog')['result']['texts']
         self.assertEqual(sorted(texts), ['keyboard', 'launch', 'observe', 'other', 'pointer'])

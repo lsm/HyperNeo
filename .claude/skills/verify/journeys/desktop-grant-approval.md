@@ -13,7 +13,7 @@ refused, and no dialog opens.
 cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml \
   --bin desktop-driver-fixture -- --cfg test
 python3 packages/desktop/tests/worker-drivers.py \
-  packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture -k grant -k answer -k owner_yes -k dialog_names
+  packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture -k grant -k answer -k owner_yes -k dialog_names -k overlapping
 ```
 
 Signed host, on a Mac with the Developer ID identity in its keychain and the
