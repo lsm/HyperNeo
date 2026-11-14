@@ -400,7 +400,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     name: claudeInboxName(resolve(deps.config.dbPath)),
     routes: new ClaudeInboxRouteRepository(deps.db.getDatabase()),
     registrationsDir: join(homedir(), '.claude', 'sessions'),
-    liveSessions: sharedLiveSessions(spawnProcess),
+    liveSessions: sharedLiveSessions(spawnProcess).fresh,
     hasSession: (sessionId) => {
       const session = deps.sessionManager.getSessionFromDB(sessionId);
       return !!session && !['archived', 'ended'].includes(session.status);
@@ -413,14 +413,16 @@ export async function setupRPCHandlers<SpaceServices = never>(
     db: deps.db.getDatabase(),
     env: process.env,
     registrationsDir: join(homedir(), '.claude', 'sessions'),
-    liveSessions: sharedLiveSessions(spawnProcess),
+    liveSessions: sharedLiveSessions(spawnProcess).listed,
     hasSession: (id) => {
       const session = deps.sessionManager.getSessionFromDB(id);
       return !!session && !['archived', 'ended'].includes(session.status);
     },
     onError: (error) => log.warn('Claude Desktop mods bridge unavailable', error),
   });
-  void sharedLiveSessions(spawnProcess)().catch(() => {});
+  void sharedLiveSessions(spawnProcess)
+    .listed()
+    .catch(() => {});
   const sessionScheduler = new SessionScheduler(deps.db.getDatabase(), deps.jobQueue);
   const driverCleanup: (() => Promise<void>)[] = [];
   const familyContext: FamilyOperationContext = {

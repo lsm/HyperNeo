@@ -44,6 +44,7 @@ export interface ClaudeCodeAdapterDeps {
   desktopSend?: WorkAdapter['send'];
   listProcesses?: ProcessLister;
   liveSessions?: () => Promise<readonly ClaudeLiveSession[]>;
+  liveSessionsListed?: () => Promise<readonly ClaudeLiveSession[]>;
   machine: string;
   searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
   desktopSessions: () => Promise<ReadonlySet<string>>;
@@ -309,13 +310,15 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
         runLagPhase('scanner:claude_code', () => readClaudeCodeFolders(projectsDir, cache))
       )
     : async () => [];
-  const liveSessions = deps.liveSessions ? shareInFlight(deps.liveSessions) : undefined;
-  const status: WorkAdapter['status'] = liveSessions
+  const liveSessionsListed = deps.liveSessionsListed
+    ? shareInFlight(deps.liveSessionsListed)
+    : undefined;
+  const status: WorkAdapter['status'] = liveSessionsListed
     ? (ref, since, receipt) =>
         readClaudeCliStatus(ref, since, receipt, {
           machine: deps.machine,
           projectsDir: projectsDir ?? '',
-          liveSessions,
+          liveSessions: liveSessionsListed,
           folder: async (id) =>
             (await scan()).find((record) => record.sessionId === id)?.folder ?? null,
         })
@@ -332,8 +335,7 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
     : undefined;
   const sendInbox = deps.sendInbox;
   const send: WorkAdapter['send'] = sendInbox
-    ? (ref, message, context) =>
-        sendClaudeCodeMessage(ref, message, context, { ...deps, liveSessions })
+    ? (ref, message, context) => sendClaudeCodeMessage(ref, message, context, deps)
     : undefined;
   return {
     id: 'claude-code',
@@ -347,9 +349,9 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
     ...(status ? { status } : {}),
     ...(turns ? { turns } : {}),
     find: (query) => runClaudeCodeFind(query, deps, scan),
-    ...(liveSessions
+    ...(liveSessionsListed
       ? {
-          sessions: async () => claudeCodeSessions(await scan(), await liveSessions()),
+          sessions: async () => claudeCodeSessions(await scan(), await liveSessionsListed()),
         }
       : {}),
   };

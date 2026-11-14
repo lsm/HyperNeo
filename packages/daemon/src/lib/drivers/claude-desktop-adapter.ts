@@ -148,6 +148,7 @@ export interface ClaudeDesktopAdapterDeps {
   projectsDir: string;
   machine: string;
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
+  liveSessionsListed?: () => Promise<readonly ClaudeLiveSession[]>;
   listProcesses?: ProcessLister;
   spawn: SpawnFn;
   folderExists: (folder: string) => boolean;
@@ -411,35 +412,50 @@ export function reuseLiveSessions(
   now: () => number,
   freshForMs = LIVE_REUSE_MS,
   staleForMs = LIVE_STALE_MAX_MS
-): () => Promise<readonly ClaudeLiveSession[]> {
+): {
+  listed: () => Promise<readonly ClaudeLiveSession[]>;
+  fresh: () => Promise<readonly ClaudeLiveSession[]>;
+} {
   let good: { at: number; sessions: readonly ClaudeLiveSession[] } | null = null;
   let pending: Promise<readonly ClaudeLiveSession[]> | null = null;
   const refresh = () => {
-    const started = now();
     const sessions = read().finally(() => {
       if (pending === sessions) pending = null;
     });
     pending = sessions;
     void sessions
       .then((listed) => {
-        good = { at: started, sessions: listed };
+        good = { at: now(), sessions: listed };
       })
       .catch(() => {});
     return sessions;
   };
-  return () => {
-    if (good && now() - good.at < staleForMs) {
-      if (now() - good.at >= freshForMs) pending ??= refresh();
-      return Promise.resolve(good.sessions);
-    }
-    pending ??= refresh();
-    return pending;
+  return {
+    listed: () => {
+      if (good && now() - good.at < staleForMs) {
+        if (now() - good.at >= freshForMs) pending ??= refresh();
+        return Promise.resolve(good.sessions);
+      }
+      pending ??= refresh();
+      return pending;
+    },
+    fresh: async () => {
+      pending ??= refresh();
+      try {
+        return await pending;
+      } catch (error) {
+        if (good && now() - good.at < staleForMs) return good.sessions;
+        throw error;
+      }
+    },
   };
 }
 
-const sharedLiveReads = new WeakMap<SpawnFn, () => Promise<readonly ClaudeLiveSession[]>>();
+export type LiveSessionReaders = ReturnType<typeof reuseLiveSessions>;
 
-export function sharedLiveSessions(spawn: SpawnFn): () => Promise<readonly ClaudeLiveSession[]> {
+const sharedLiveReads = new WeakMap<SpawnFn, LiveSessionReaders>();
+
+export function sharedLiveSessions(spawn: SpawnFn): LiveSessionReaders {
   let shared = sharedLiveReads.get(spawn);
   if (!shared) {
     shared = reuseLiveSessions(() => readLiveClaudeSessions(spawn), Date.now);
@@ -1760,7 +1776,10 @@ const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as Pip
 
 export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): WorkAdapter {
   const cache: ClaudeRecordCache = new Map();
-  const reused = { ...deps, liveSessions: reuseLiveSessions(deps.liveSessions, Date.now) };
+  const reused = {
+    ...deps,
+    liveSessions: deps.liveSessionsListed ?? reuseLiveSessions(deps.liveSessions, Date.now).listed,
+  };
   return {
     id: 'claude-desktop',
     readInput: async (id, marker) => {
@@ -1834,7 +1853,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
     start: (request, context) => runClaudeDesktopStart(request, deps, cache, context),
     send: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     steer: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
-    status: (ref, since, receipt) => runClaudeDesktopStatus(ref, deps, cache, since, receipt),
+    status: (ref, since, receipt) => runClaudeDesktopStatus(ref, reused, cache, since, receipt),
     turns: async (ref, cursor, limit) => {
       const record = (await loadClaudeDesktopRecords(deps, cache)).find(
         (row) => row.sessionId === ref.id
