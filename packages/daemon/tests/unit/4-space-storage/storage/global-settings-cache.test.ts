@@ -190,11 +190,16 @@ test('a warmed settings cache exposes startup tool-choice migration', async () =
 
 test('a settings read inside a rolled-back transaction cannot poison the cache', async () => {
   const db = await createTestDb();
+  const raw = db.getDatabase();
+  const transactionProperty = 'inTransaction' in raw ? 'inTransaction' : 'isTransaction';
+  const transactionState = () => Reflect.get(raw, transactionProperty);
   try {
+    expect(transactionState()).toBe(false);
     db.updateGlobalSettings({ outputStyle: 'committed' });
     expect(db.getGlobalSettings().outputStyle).toBe('committed');
     expect(() =>
-      db.getDatabase().transaction(() => {
+      raw.transaction(() => {
+        expect(transactionState()).toBe(true);
         db.updateGlobalSettings({
           outputStyle: 'rolled-back',
         });
@@ -202,7 +207,9 @@ test('a settings read inside a rolled-back transaction cannot poison the cache',
         throw new Error('synthetic rollback');
       })()
     ).toThrow('synthetic rollback');
+    expect(transactionState()).toBe(false);
     expect(db.getGlobalSettings().outputStyle).toBe('committed');
+    console.log(JSON.stringify({ transactionProperty, rollbackVerified: true }));
   } finally {
     await db.close();
   }

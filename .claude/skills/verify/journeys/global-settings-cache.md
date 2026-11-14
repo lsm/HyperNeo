@@ -52,3 +52,10 @@ post-commit worker error must reject the call, terminate the worker and expose
 the committed settings to the next facade read. The controlled transport keeps
 the failure timing deterministic. These checks establish committed readback
 after failure, while the disk-backed daemon case exercises native worker replies.
+
+The rollback regression asserts the native transaction-state property is false
+before the transaction, true inside it and false after rollback. Bun supplies
+`inTransaction`. Node 24 supplies `isTransaction`, documented in the
+[Node 24 SQLite API](https://github.com/nodejs/node/blob/v24.0.0/doc/api/sqlite.md#databaseistransaction).
+Run this regression under both supported proof runtimes to verify the facade's
+transaction bypass and committed readback.
