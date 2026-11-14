@@ -31,7 +31,7 @@ read -r PORT MOCK_PORT <<< "$ports"
 VERIFY_MOCK_PORT="$MOCK_PORT" VERIFY_NORMAL_PRIORITY=1 bash .claude/skills/verify/launch.sh "$PORT" "$RUN" &
 job=$!; wait "$job"; job=''
 ENVV=(env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT="$PORT")
-SESSION=$("${ENVV[@]}" bun .claude/skills/verify/rpc.ts 'rpc:session.create' '{"title":"Desktop status proof"}' | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{const r=JSON.parse(s).reply;if(!r.sessionId)throw Error(JSON.stringify(r));console.log(r.sessionId)})')
+SESSION=$("${ENVV[@]}" bun .claude/skills/verify/rpc.ts 'rpc:session.create' '{"title":"Desktop status proof"}' | bun -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{const r=JSON.parse(s).reply;if(!r.sessionId)throw Error(JSON.stringify(r));console.log(r.sessionId)})')
 sleep 900 &
 driver=$!
 bun .claude/skills/verify/desktop-takeover-seed.ts "$RUN" "$SESSION" "$driver" | tee "$OUT/seed.json"
