@@ -10,6 +10,7 @@ import type {
 } from '@hyperneo/shared';
 import { connectionState, globalSettings, sessions } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
+import { newChatProjectSignal } from '../lib/signals.ts';
 import {
   createSession,
   getWorkspaceHistory,
@@ -183,6 +184,13 @@ export function SessionsPage() {
       .then(setHistory)
       .catch(() => {});
   }, []);
+
+  const requestedProject = newChatProjectSignal.value;
+  useEffect(() => {
+    if (!requestedProject) return;
+    setProject(requestedProject);
+    newChatProjectSignal.value = null;
+  }, [requestedProject]);
 
   useEffect(() => {
     saveNewChatSelection({
