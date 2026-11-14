@@ -1417,8 +1417,7 @@ test('a front reply over the shared body limit is told to shorten, not to add de
     });
     expect(refused.accepted).toBe(false);
     expect(refused.reason).toMatch(/^front_reply_too_long: Shorten/);
-    expect(refused.reason).toContain('at most 300 characters');
-    expect(refused.reason).not.toContain('500');
+    expect(refused.reason).toContain('150 Chinese characters, at most 500 characters and 5 lines');
   }
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
 });
@@ -1428,6 +1427,7 @@ test('the front reply is short, and its rules live only in the front prompt', as
   await createNeoFrontHandler(service)(job);
   const prompt = db.getSession(front)!.config.systemPrompt as string;
   expect(prompt).toContain('Reply in one or two short sentences');
+  expect(prompt).toContain('about 60 words or 150 Chinese characters, at most 5 lines');
   expect(prompt).toContain('say what you knew and that you will check for updates');
   expect(prompt).not.toContain('five short sentences');
   createFrontTools(service, conversationId);
@@ -1437,8 +1437,8 @@ test('the front reply is short, and its rules live only in the front prompt', as
     .tools!.find((tool) => tool.name === 'reply')!;
   const shape = z.object(reply.inputSchema as z.ZodRawShape);
   expect(Object.keys(reply.inputSchema)).not.toContain('details');
-  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(300) }).success).toBe(true);
-  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(301) }).success).toBe(false);
+  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(500) }).success).toBe(true);
+  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(501) }).success).toBe(false);
   const intake = JSON.stringify(db.getJobQueueRepo().listJobs({ queue: 'mailbox' }));
   expect(intake).not.toContain('five sentences');
   expect(frontModeNote()).not.toContain('five sentences');
