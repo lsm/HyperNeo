@@ -75,4 +75,29 @@ describe('stripThinkingBlocksFromSessionFile', () => {
     const saved = JSON.parse(readFileSync(file, 'utf-8').trim());
     expect(saved.message.content).toEqual([{ type: 'text', text: 'Listing.' }, toolUse]);
   });
+
+  test.each(['constructor', 'toString'])(
+    'an unknown %s block stays as written while its tool_use sibling is cleaned',
+    (type) => {
+      writeFileSync(
+        file,
+        `${JSON.stringify({
+          type: 'assistant',
+          uuid: 'assistant-1',
+          message: {
+            role: 'assistant',
+            content: [
+              { type, note: 'kept' },
+              { ...toolUse, text: '' },
+            ],
+          },
+        })}\n`,
+        'utf-8'
+      );
+
+      expect(stripThinkingBlocksFromSessionFile(workspace, sdkSessionId).stripped).toBe(true);
+      const saved = JSON.parse(readFileSync(file, 'utf-8').trim());
+      expect(saved.message.content).toEqual([{ type, note: 'kept' }, toolUse]);
+    }
+  );
 });
