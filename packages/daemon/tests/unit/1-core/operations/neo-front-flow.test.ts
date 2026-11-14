@@ -1516,17 +1516,19 @@ test('Neo answers a message the front already answered', async () => {
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
-test('Front prompt, tool descriptions and intake agree on the five-sentence boundary', async () => {
+test('Front prompt, tool descriptions and intake agree on the body limit', async () => {
   const { job } = await accept();
   await createNeoFrontHandler(service)(job);
-  expect(db.getSession(front)!.config.systemPrompt).toContain('at most five short sentences');
+  expect(db.getSession(front)!.config.systemPrompt).toContain(
+    'at most 5 lines including the title'
+  );
   createFrontTools(service, conversationId);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   expect(definitions.find((tool) => tool.name === 'reply')!.description).toContain(
-    'more than five sentences'
+    'a body over the limit'
   );
   const intake = JSON.stringify(db.getJobQueueRepo().listJobs({ queue: 'mailbox' }));
-  expect(intake).toContain('more than five sentences');
+  expect(intake).toContain('a body over the limit');
   expect(intake).toContain('structured report');
 });
 

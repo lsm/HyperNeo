@@ -508,6 +508,11 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: false,
       reason: 'reply_needs_details',
     });
+    const spaced = Array.from({ length: 20 }, (_, line) => `Line ${line}`).join('\n\n');
+    expect(await send('blank-separated', spaced)).toMatchObject({
+      accepted: false,
+      reason: 'reply_needs_details',
+    });
     expect(await send('base64', `Key: ${'QUJD'.repeat(125)}`)).toMatchObject({
       accepted: false,
       reason: 'reply_needs_details',
@@ -526,7 +531,12 @@ describe('Neo publication without runtime input attribution', () => {
         accepted: true,
         publication: { verbatim: true, fullText: text },
       });
-    expect(ledger.list(conversationId)).toHaveLength(6);
+    const fiveLines = 'Merged.\n- CI green\n- Reviewed\n- Deployed\n- Docs updated';
+    expect(await send('five-lines-short-details', fiveLines, 'Flag rolled back.')).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, fullText: `${fiveLines}\n\nFlag rolled back.` },
+    });
+    expect(ledger.list(conversationId)).toHaveLength(7);
   });
 
   test('refuses folded details whose combined length passes the stored cap', async () => {
