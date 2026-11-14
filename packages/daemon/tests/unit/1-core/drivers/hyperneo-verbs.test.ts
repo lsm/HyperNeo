@@ -1022,7 +1022,7 @@ describe('hyperneo adapter start and stop', () => {
       ok: true,
       value: { stopped: true },
     });
-    expect(await driver.archive?.({ adapter: 'hyperneo', id: 'idle' }, from)).toEqual({
+    expect(await driver.archive?.({ adapter: 'hyperneo', id: 'idle' }, () => null)).toEqual({
       ok: true,
       value: { archived: true },
     });
@@ -1041,7 +1041,7 @@ describe('hyperneo adapter start and stop', () => {
     await expect(driver.stop!({ adapter: 'hyperneo', id: 'idle' }, from)).rejects.toThrow(
       'disk full'
     );
-    expect(await driver.archive?.({ adapter: 'hyperneo', id: 'idle' }, from)).toMatchObject({
+    expect(await driver.archive?.({ adapter: 'hyperneo', id: 'idle' }, () => null)).toMatchObject({
       ok: false,
       reason: 'busy',
     });
