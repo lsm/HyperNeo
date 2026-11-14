@@ -44,7 +44,17 @@ export function resolveWorkflowNodeSlot(
 }
 
 export function resolveSlotCustomPrompt(slot: WorkflowNodeAgent): string | undefined {
-  return slot.customPrompt?.value || undefined;
+  const directPrompt = slot.customPrompt?.value;
+  if (directPrompt) return directPrompt;
+  if (slot.replaceAgentPrompt === true) return undefined;
+  const legacySlot = slot as {
+    systemPrompt?: { value: string };
+    instructions?: { value: string };
+  };
+  const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
+  const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
+  if (legacySp && legacyInstr) return `${legacySp}\n\n${legacyInstr}`;
+  return legacySp || legacyInstr || undefined;
 }
 
 export interface BuildSlotOverridesContext {
