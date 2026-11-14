@@ -171,6 +171,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     try {
       const entry = await addWorkspaceToHistory(trimmed);
       setHistory((prev) => [entry, ...prev.filter((e) => e.path !== entry.path)]);
+      workspaceHistoryVersionSignal.value += 1;
       setAddProjectPath('');
       setAddProjectOpen(false);
     } catch (err) {
@@ -215,11 +216,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     } catch {
       toast.error('Failed to remove project');
     } finally {
-      try {
-        setHistory(await getWorkspaceHistory());
-      } catch {
-        toast.error('Failed to refresh projects');
-      }
+      workspaceHistoryVersionSignal.value += 1;
     }
   };
 

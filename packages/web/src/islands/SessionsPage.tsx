@@ -22,7 +22,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 import { isUserSession } from '../lib/session-utils.ts';
-import { listProjectPaths, projectName } from '../lib/projects.ts';
+import { listProjectPaths, owningProjectName } from '../lib/projects.ts';
 import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
@@ -182,11 +182,12 @@ export function SessionsPage() {
     setSelectedModel({ id: selectedModelInfo.id, provider: selectedModelInfo.provider });
   }, [selectedModel, selectedModelInfo]);
 
+  const historyVersion = workspaceHistoryVersionSignal.value;
   useEffect(() => {
     getWorkspaceHistory()
       .then(setHistory)
       .catch(() => {});
-  }, []);
+  }, [historyVersion]);
 
   const requestedProject = newChatProjectSignal.value;
   useEffect(() => {
@@ -282,10 +283,9 @@ export function SessionsPage() {
     setManualProjectError(null);
     try {
       await addFolderToProject(target, trimmed);
-      workspaceHistoryVersionSignal.value += 1;
-      setHistory(await getWorkspaceHistory());
       setManualProjectPath('');
       setManualProjectOpen(false);
+      workspaceHistoryVersionSignal.value += 1;
     } catch (err) {
       setManualProjectError(err instanceof Error ? err.message : 'Failed to add folder');
     } finally {
@@ -509,6 +509,7 @@ export function SessionsPage() {
               mode={mode}
               baseBranch={baseBranch}
               onSelectProject={handleSelectProject}
+              owningProjectName={(path) => owningProjectName(path, history)}
               onBrowse={handleBrowse}
               onEnterPath={() => {
                 setAddingFolder(false);
@@ -553,7 +554,7 @@ export function SessionsPage() {
                 </div>
                 <p class="mt-1.5 text-[11px] leading-4 text-fg-faint">
                   {addingFolder && folderProject
-                    ? `Adds a folder to ${projectName(folderProject)}. Use an absolute path accessible to HyperNeo.`
+                    ? `Adds a folder to ${owningProjectName(folderProject, history)}. Use an absolute path accessible to HyperNeo.`
                     : 'Use an absolute path accessible to HyperNeo.'}
                 </p>
                 {manualProjectError && (

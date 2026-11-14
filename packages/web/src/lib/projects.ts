@@ -16,6 +16,10 @@ export function projectName(path: string): string {
   return (idx >= 0 ? trimmed.slice(idx + 1) : trimmed) || trimmed;
 }
 
+export function owningProjectName(path: string, history: readonly WorkspaceHistoryEntry[]): string {
+  return history.find((entry) => entry.path === path)?.project?.name ?? projectName(path);
+}
+
 export function listProjectPaths(sessions: Session[], history: WorkspaceHistoryEntry[]): string[] {
   const paths = new Set<string>();
   for (const session of sessions) {
