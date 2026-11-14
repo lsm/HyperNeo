@@ -3,6 +3,10 @@ import type { ArtifactRef, PublicHandoffReference } from './artifact-file.ts';
 import type { NeoInputOrigin } from './neo-message.ts';
 import type { NeoQuestionSource } from './neo-ask.ts';
 
+export const NEO_SHORT_TEXT_LIMIT = 4000;
+export const NEO_REPLY_FIELD_LIMIT = 16000;
+export const NEO_DELIVERABLE_CHAR_LIMIT = 4 * NEO_REPLY_FIELD_LIMIT;
+
 export interface NeoCardReply {
   readonly sourceMessageIds: readonly string[];
   readonly askId: string;
@@ -38,6 +42,7 @@ export interface NeoPublicationInput {
   readonly shortText?: string;
   readonly verbatim?: true;
   readonly fullText: string;
+  readonly deliverable?: true;
   readonly session?: string;
   readonly links: readonly NeoPublicationLink[];
   readonly triggerId?: string;

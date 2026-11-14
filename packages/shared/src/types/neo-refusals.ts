@@ -1,6 +1,14 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
+  reply_needs_details:
+    'The reply text is over the limit of 200 characters and 5 lines counting every line including blank ones, the title counting as a line. Put a one-sentence summary in text and the rest in details.',
   reply_summary_too_long:
-    'With details, keep text to a standalone summary of at most 300 words and 4000 characters, and put the rest in details.',
+    'The reply text is over the limit of 200 characters and 5 lines counting every line including blank ones, the title counting as a line. Shrink text to a one-sentence summary and keep the rest in details.',
+  deliverable_with_details:
+    'A deliverable carries no details. Resend it with deliverable: true, the whole copyable content in text, and no details.',
+  deliverable_card_reply:
+    'A card reply answers the question itself, within 200 characters and 5 lines, so it cannot carry a deliverable. Answer here, then send the copyable text as its own publication with deliverable: true and no details.',
+  front_reply_too_long:
+    'Shorten the reply to one or two short sentences: at most 150 characters and 5 lines.',
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
   work_on_needs_reply_to: 'work_on: true needs replyTo with the human message IDs you will act on.',

@@ -20,8 +20,7 @@ import {
   NeoPublicationObject,
   NeoPublicationReplyFields,
   NeoPublicationResultSchema,
-  replySummaryTooLong,
-  SUMMARY_CHAR_LIMIT,
+  replyBodyRefusal,
   workerSession,
 } from './publication.ts';
 
@@ -47,6 +46,12 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
   .extend({
     ...NeoPublicationReplyFields,
     requestId: z.string().min(1).max(160),
+    deliverable: z
+      .literal(true)
+      .describe(
+        'text is the whole copyable deliverable (a translation, drafted email or message, text to paste) and is exempt from the reply length limit.'
+      )
+      .optional(),
     progress: z.literal(true).optional(),
     spoken: z.string().trim().min(1).max(500).optional(),
     session: NeoPublicationObject.shape.session.nullable(),
@@ -63,16 +68,6 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
         code: 'custom',
         message:
           'Progress requires one replyTo ID and a brief acknowledgment of at most 150 characters.',
-      });
-    if (
-      value.details !== undefined &&
-      value.details.length < value.text.length &&
-      value.text.length + value.details.length + 2 > 16000
-    )
-      ctx.addIssue({
-        code: 'custom',
-        message:
-          'Details shorter than the text fold into it; their combined length must fit 16000 characters.',
       });
   });
 const Draft = NeoPublicationDraft;
@@ -168,12 +163,19 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe(
       (draft: Draft) => {
-        const body = foldPublicationDetails({ text: draft.text, details: draft.details });
-        return replySummaryTooLong(body) ||
-          (draft.cardReply !== undefined &&
-            body.details === undefined &&
-            body.text.length > SUMMARY_CHAR_LIMIT)
-          ? { reason: { accepted: false as const, reason: 'reply_summary_too_long' } }
+        if (draft.deliverable && draft.details !== undefined)
+          return {
+            reason: { accepted: false as const, reason: 'deliverable_with_details' },
+          };
+        if (draft.deliverable && draft.cardReply !== undefined)
+          return {
+            reason: { accepted: false as const, reason: 'deliverable_card_reply' },
+          };
+        const refusal = draft.deliverable
+          ? undefined
+          : replyBodyRefusal({ text: draft.text, details: draft.details });
+        return refusal
+          ? { reason: { accepted: false as const, reason: refusal } }
           : { value: draft };
       },
       'publication',
@@ -316,6 +318,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           requestId,
           spoken: _spoken,
           progress,
+          deliverable: _deliverable,
           text: _rawText,
           details: _rawDetails,
           ...message
@@ -340,6 +343,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
                 ? { shortText: text, fullText: text }
                 : { fullText: text, verbatim: true }
               : { shortText: text, fullText: details }),
+            ...(_deliverable === undefined ? {} : { deliverable: _deliverable }),
             session: message.session ?? undefined,
             replyTo: progress ? undefined : message.replyTo,
             publicationId: publicationIdFor(

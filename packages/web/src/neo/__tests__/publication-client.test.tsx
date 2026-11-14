@@ -311,6 +311,35 @@ describe('authored publication client', () => {
     });
   });
 
+  it('admits a maximum-size deliverable unchanged and refuses a long ordinary body', async () => {
+    const letter = { ...item(), verbatim: true, shortText: undefined, deliverable: true };
+    letter.fullText = `Dear Sam,\n\n${'The handover notes run through the whole week. '.repeat(1300)}`;
+    expect(letter.fullText.length).toBeGreaterThan(60000);
+    const ceiling = { ...letter, fullText: 'x'.repeat(64000) };
+    expect(await readNeoPublications(page, transport(response([ceiling])).getHub, current)).toEqual(
+      {
+        state: 'ready',
+        items: [{ ...ceiling, links: [{ kind: 'project', id: 'research', label: '查看对照 ↗' }] }],
+        nextAfter: 1,
+      }
+    );
+    expect(
+      await readNeoPublications(page, transport(response([letter])).getHub, current)
+    ).toMatchObject({ state: 'ready', items: [{ deliverable: true, fullText: letter.fullText }] });
+    const plain = { ...item(), verbatim: true, shortText: undefined };
+    plain.fullText = 'x'.repeat(16001);
+    expect(await readNeoPublications(page, transport(response([plain])).getHub, current)).toEqual({
+      state: 'unavailable',
+    });
+    const tooLong = { ...letter };
+    tooLong.fullText = 'x'.repeat(64001);
+    expect(await readNeoPublications(page, transport(response([tooLong])).getHub, current)).toEqual(
+      {
+        state: 'unavailable',
+      }
+    );
+  });
+
   it.each([
     { conversationId: foreignId },
     { publicationId: 'raw-transcript-id' },

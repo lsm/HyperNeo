@@ -27737,6 +27737,11 @@
                               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
                               "type": "string"
                             },
+                            "deliverable": {
+                              "const": true,
+                              "description": "The publication is a copyable deliverable: fullText is the whole message and may exceed the ordinary reply cap.",
+                              "type": "boolean"
+                            },
                             "editedAt": {
                               "format": "date-time",
                               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
@@ -27747,8 +27752,8 @@
                               "type": "string"
                             },
                             "fullText": {
-                              "description": "The details of the topic(s) shortText names.",
-                              "maxLength": 16000,
+                              "description": "The details of the topic(s) shortText names, or the whole deliverable.",
+                              "maxLength": 64000,
                               "type": "string"
                             },
                             "languageMismatch": {
@@ -27867,7 +27872,7 @@
                                     "type": "string"
                                   },
                                   "fullText": {
-                                    "maxLength": 16000,
+                                    "maxLength": 64000,
                                     "type": "string"
                                   },
                                   "producerInput": {
@@ -32355,6 +32360,11 @@
             ],
             "type": "object"
           },
+          "deliverable": {
+            "const": true,
+            "description": "text is the whole copyable deliverable (a translation, drafted email or message, text to paste) and is exempt from the reply length limit.",
+            "type": "boolean"
+          },
           "details": {
             "maxLength": 16000,
             "type": "string"
@@ -32426,7 +32436,7 @@
             "type": "string"
           },
           "text": {
-            "maxLength": 16000,
+            "maxLength": 64000,
             "type": "string"
           }
         },
@@ -32701,6 +32711,11 @@
                   "createdAt": {
                     "type": "string"
                   },
+                  "deliverable": {
+                    "const": true,
+                    "description": "The publication is a copyable deliverable: fullText is the whole message and may exceed the ordinary reply cap.",
+                    "type": "boolean"
+                  },
                   "editedAt": {
                     "format": "date-time",
                     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
@@ -32711,8 +32726,8 @@
                     "type": "string"
                   },
                   "fullText": {
-                    "description": "The details of the topic(s) shortText names.",
-                    "maxLength": 16000,
+                    "description": "The details of the topic(s) shortText names, or the whole deliverable.",
+                    "maxLength": 64000,
                     "type": "string"
                   },
                   "languageMismatch": {
@@ -32831,7 +32846,7 @@
                           "type": "string"
                         },
                         "fullText": {
-                          "maxLength": 16000,
+                          "maxLength": 64000,
                           "type": "string"
                         },
                         "producerInput": {
@@ -33299,6 +33314,11 @@
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
                       "type": "string"
                     },
+                    "deliverable": {
+                      "const": true,
+                      "description": "The publication is a copyable deliverable: fullText is the whole message and may exceed the ordinary reply cap.",
+                      "type": "boolean"
+                    },
                     "editedAt": {
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
@@ -33309,8 +33329,8 @@
                       "type": "string"
                     },
                     "fullText": {
-                      "description": "The details of the topic(s) shortText names.",
-                      "maxLength": 16000,
+                      "description": "The details of the topic(s) shortText names, or the whole deliverable.",
+                      "maxLength": 64000,
                       "type": "string"
                     },
                     "languageMismatch": {
@@ -33429,7 +33449,7 @@
                             "type": "string"
                           },
                           "fullText": {
-                            "maxLength": 16000,
+                            "maxLength": 64000,
                             "type": "string"
                           },
                           "producerInput": {

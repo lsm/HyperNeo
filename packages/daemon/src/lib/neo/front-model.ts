@@ -9,6 +9,7 @@ import type { NeoService } from './service.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
+import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 
 const FRONT_REPLY_MAX_CHARS = 150;
 
@@ -19,6 +20,11 @@ const Read = {
 const result = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
 });
+const bodyRefusals = new Set(['reply_needs_details', 'reply_summary_too_long']);
+const frontReceipt = <T extends { accepted: boolean; reason?: string }>(receipt: T) =>
+  !receipt.accepted && bodyRefusals.has(receipt.reason ?? '')
+    ? explainNeoRefusal({ accepted: false, reason: 'front_reply_too_long' })
+    : receipt;
 
 export function createFrontTools(service: NeoService, conversationId: string) {
   const sessionId = frontSessionId(conversationId);
@@ -143,7 +149,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             return result(
               workOn
                 ? { accepted: false, reason: 'work_on_needs_reply_to' }
-                : await publish({ ...input, ...body }, workOn)
+                : frontReceipt(await publish({ ...input, ...body }, workOn))
             );
           const asks = targets.map((id) => service.asks.find(conversationId, id));
           if (asks.some((ask) => !ask))
@@ -155,7 +161,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             return result({ accepted: false, reason: 'front_not_speaking' });
           const receipt = await publish({ ...input, ...body }, workOn);
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
-          if (!receipt.accepted && !second) return result(receipt);
+          if (!receipt.accepted && !second) return result(frontReceipt(receipt));
           const existing = second
             ? service.publications.get(conversationId, publicationIdFor(sessionId, input.requestId))
             : null;

@@ -4,7 +4,13 @@ import {
   type ArtifactRef,
   type PublicHandoffReference,
 } from '@hyperneo/shared/types/artifact-file';
-import type { NeoCardReply, NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import {
+  NEO_DELIVERABLE_CHAR_LIMIT,
+  NEO_REPLY_FIELD_LIMIT,
+  NEO_SHORT_TEXT_LIMIT,
+  type NeoCardReply,
+  type NeoPublication,
+} from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 
@@ -111,14 +117,18 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
   const producer = optionalOrigin(row?.producerInput);
   const ask = optionalOrigin(row?.askOrigin);
   const shortText =
-    row?.shortText === undefined ? undefined : text(row.shortText, 4000) ? row.shortText : null;
+    row?.shortText === undefined
+      ? undefined
+      : text(row.shortText, NEO_SHORT_TEXT_LIMIT)
+        ? row.shortText
+        : null;
   if (
     !row ||
     ask === null ||
     shortText === null ||
     typeof row.revisionId !== 'string' ||
     !uuid.test(row.revisionId) ||
-    !text(row.fullText, 16000) ||
+    !text(row.fullText, NEO_DELIVERABLE_CHAR_LIMIT) ||
     (row.session !== undefined && !text(row.session, 500)) ||
     !text(row.createdAt, 40) ||
     !Number.isFinite(Date.parse(row.createdAt)) ||
@@ -146,10 +156,16 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
   const answer = optionalOrigin(row.answerInput);
   const answerOrigin = optionalOrigin(row.answerOrigin);
   const shortText =
-    row.shortText === undefined ? undefined : text(row.shortText, 4000) ? row.shortText : null;
+    row.shortText === undefined
+      ? undefined
+      : text(row.shortText, NEO_SHORT_TEXT_LIMIT)
+        ? row.shortText
+        : null;
   const verbatim = row.verbatim === true;
+  const deliverable = row.deliverable === true;
   if (
     shortText === null ||
+    (row.deliverable !== undefined && !deliverable) ||
     row.conversationId !== page.conversationId ||
     typeof row.publicationId !== 'string' ||
     !uuid.test(row.publicationId) ||
@@ -161,7 +177,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     (row.verbatim !== undefined && !verbatim) ||
     (verbatim && shortText !== undefined) ||
     (!verbatim && shortText === undefined) ||
-    !text(row.fullText, 16000) ||
+    !text(row.fullText, deliverable ? NEO_DELIVERABLE_CHAR_LIMIT : NEO_REPLY_FIELD_LIMIT) ||
     (row.session !== undefined && !text(row.session, 500)) ||
     ask === null ||
     producer === null ||
@@ -230,6 +246,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     createdAt: row.createdAt,
     ...(shortText !== undefined ? { shortText } : {}),
     ...(verbatim ? { verbatim: true } : {}),
+    ...(deliverable ? { deliverable: true as const } : {}),
     fullText: row.fullText,
     ...(typeof row.session === 'string' ? { session: row.session } : {}),
     ...(ask ? { askOrigin: ask } : {}),

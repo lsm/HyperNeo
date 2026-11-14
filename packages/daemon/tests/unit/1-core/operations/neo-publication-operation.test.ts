@@ -20,6 +20,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, chmodSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
+import { DELIVERABLE_CHAR_LIMIT } from '../../../../src/lib/neo/publication.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
@@ -504,7 +505,7 @@ describe('Neo publication without runtime input attribution', () => {
   });
 
   test('publishes a text-only reply from one text field and stores it verbatim', async () => {
-    const content = '> quoted line\n\n```ts\nconst draft = \"as written\";\n```';
+    const content = '> quoted line\n\n```ts\nconst draft = "as written";\n```';
     const receipt = await publish({ requestId: 'send-verbatim', text: content }, caller);
     expect(receipt).toMatchObject({
       accepted: true,
@@ -555,71 +556,137 @@ describe('Neo publication without runtime input attribution', () => {
     );
   });
 
-  test('refuses a text over 300 words when details stay separate, but folds shorter details', async () => {
+  test('holds every reply text to 200 characters and 5 lines, with or without details', async () => {
+    const send = (requestId: string, text: string, details?: string) =>
+      publish({ requestId, text, ...(details === undefined ? {} : { details }) }, caller);
+    const long = `${'The build is green and the review is finished. '.repeat(5)}The branch is ready to merge.`;
+    expect(long.length).toBeGreaterThan(200);
+    expect(await send('long-alone', long)).toMatchObject({
+      accepted: false,
+      reason: 'reply_needs_details',
+    });
+    expect(await send('long-with-details', long, `${long} ${long}`)).toMatchObject({
+      accepted: false,
+      reason: 'reply_summary_too_long',
+    });
+    expect(await send('long-short-details', long, 'One more note.')).toMatchObject({
+      accepted: false,
+      reason: 'reply_summary_too_long',
+    });
+    for (const [requestId, text] of [
+      ['six-lines', 'Status\n- a\n- b\n- c\n- d\n- e'],
+      ['blank-between', 'Merged.\n\n- CI green\n- Reviewed\n- Deployed\n- Docs updated'],
+      ['blank-runs', 'Merged.\n\n\nCI green.\nReviewed.\nDone.'],
+      ['trailing-blank', 'Title\n- a\n- b\n- c\n- d\n\n'],
+      ['trailing-run', 'Title\n- a\n- b\n- c\n- d\n\n\n'],
+    ] as const)
+      expect(await send(requestId, text)).toMatchObject({
+        accepted: false,
+        reason: 'reply_needs_details',
+      });
+    expect(ledger.list(conversationId) ?? []).toHaveLength(0);
+
+    for (const [requestId, text] of [
+      ['chars-at-limit', 'x'.repeat(200)],
+      ['five-lines', 'Title\n- a\n- b\n- c\n- d'],
+      ['blank-inside-five', 'Merged.\n\n- CI green\n- Reviewed\n- Docs updated'],
+      ['terminal-newline', 'Title\n- a\n- b\n- c\n- d\n'],
+    ] as const)
+      expect(await send(requestId, text)).toMatchObject({
+        accepted: true,
+        publication: { verbatim: true, fullText: text },
+      });
+    expect(await send('split', 'Merged and green.', long)).toMatchObject({
+      accepted: true,
+      publication: { shortText: 'Merged and green.', fullText: long },
+    });
+    expect(await send('fold', `${'a'.repeat(195)}`, 'b'.repeat(3))).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, fullText: `${'a'.repeat(195)}\n\nbbb` },
+    });
+    expect(await send('no-fold', `${'a'.repeat(195)}`, 'b'.repeat(20))).toMatchObject({
+      accepted: true,
+      publication: { shortText: 'a'.repeat(195), fullText: 'b'.repeat(20) },
+    });
+    expect(ledger.list(conversationId)).toHaveLength(7);
+  });
+
+  test('exempts a deliverable from the limit and refuses details beside it', async () => {
+    const letter = `Dear Sam,\n\n${'The handover notes run through the whole week. '.repeat(12)}\n\nThanks,\nMarc`;
+    expect(letter.length).toBeGreaterThan(500);
+    expect(await publish({ requestId: 'letter', text: letter }, caller)).toMatchObject({
+      accepted: false,
+      reason: 'reply_needs_details',
+    });
+    expect(
+      await publish({ requestId: 'letter', text: letter, deliverable: true }, caller)
+    ).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, fullText: letter },
+    });
+    expect(
+      await publish(
+        { requestId: 'letter-notes', text: letter, details: 'Sign as Marc.', deliverable: true },
+        caller
+      )
+    ).toMatchObject({ accepted: false, reason: 'deliverable_with_details' });
+    const cardReply = {
+      askId: 'ask',
+      questionId: 'question',
+      mutationId: '30000000-0000-4000-8000-000000000011',
+      sourceMessageIds: [conversationId],
+    };
+    for (const [requestId, text] of [
+      ['letter-card', letter],
+      ['letter-card-4001', 'x'.repeat(4001)],
+      ['letter-card-ceiling', 'x'.repeat(DELIVERABLE_CHAR_LIMIT)],
+    ] as const)
+      expect(
+        await publish({ requestId, text, deliverable: true, cardReply }, caller)
+      ).toMatchObject({ accepted: false, reason: 'deliverable_card_reply' });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+  });
+
+  test('stores a deliverable past the reply field cap, up to its own ceiling', async () => {
+    const translation = Array.from(
+      { length: 600 },
+      (_, index) => `Line ${index + 1}: the whole paragraph is copied here as written.`
+    ).join('\n');
+    expect(translation.length).toBeGreaterThan(16000);
+    expect(await publish({ requestId: 'plain-long', text: translation }, caller)).toMatchObject({
+      accepted: false,
+      reason: 'reply_needs_details',
+    });
+    expect(
+      await publish({ requestId: 'plain-huge', text: 'x'.repeat(64001) }, caller)
+    ).toMatchObject({ accepted: false, reason: 'invalid_publication' });
+    const deliverable = await publish(
+      { requestId: 'deliverable-long', text: translation, deliverable: true },
+      caller
+    );
+    expect(deliverable).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, deliverable: true, fullText: translation },
+    });
+    expect(ledger.list(conversationId)![0]).toMatchObject({
+      deliverable: true,
+      fullText: translation,
+    });
+  });
+
+  test('classifies an over-long summary before the stored cap, and stores long details', async () => {
     const over = await publish(
-      {
-        requestId: 'send-too-long',
-        text: Array(301).fill('word').join(' '),
-        details: 'd'.repeat(1600),
-      },
+      { requestId: 'send-long-summary', text: 'x'.repeat(16000), details: 'd'.repeat(15000) },
       caller
     );
     expect(over).toMatchObject({ accepted: false, reason: 'reply_summary_too_long' });
-    const atLimit = Array(300).fill('word').join(' ');
-    const under = await publish(
-      { requestId: 'send-limit', text: atLimit, details: 'd'.repeat(atLimit.length + 1) },
-      caller
-    );
-    expect(under).toMatchObject({
-      accepted: true,
-      publication: { shortText: atLimit, fullText: 'd'.repeat(atLimit.length + 1) },
-    });
-    const chinese = await publish(
-      { requestId: 'send-chinese', text: '中'.repeat(400), details: 'd'.repeat(401) },
-      caller
-    );
-    expect(chinese).toMatchObject({ accepted: false, reason: 'reply_summary_too_long' });
-    const longToken = await publish(
-      { requestId: 'send-token', text: 'x'.repeat(4001), details: 'd'.repeat(4002) },
-      caller
-    );
-    expect(longToken).toMatchObject({ accepted: false, reason: 'reply_summary_too_long' });
-    const wordsOnly = await publish(
-      { requestId: 'send-words', text: 'x'.repeat(3000), details: 'd'.repeat(3001) },
-      caller
-    );
-    expect(wordsOnly).toMatchObject({
-      accepted: true,
-      publication: { shortText: 'x'.repeat(3000), fullText: 'd'.repeat(3001) },
-    });
-    const folded = await publish(
-      { requestId: 'send-folded-long', text: 'x'.repeat(3000), details: 'short' },
-      caller
-    );
-    expect(folded).toMatchObject({
-      accepted: true,
-      publication: { verbatim: true, fullText: `${'x'.repeat(3000)}\n\nshort` },
-    });
-    const alone = await publish({ requestId: 'send-solo', text: 'x'.repeat(3000) }, caller);
-    expect(alone).toMatchObject({ accepted: true, publication: { verbatim: true } });
-    expect(ledger.list(conversationId)).toHaveLength(4);
-  });
-
-  test('refuses folded details whose combined length passes the stored cap', async () => {
-    const over = await publish(
-      { requestId: 'send-folded-over', text: 'x'.repeat(16000), details: 'd'.repeat(15000) },
-      caller
-    );
-    expect(over).toMatchObject({ accepted: false, reason: 'invalid_publication' });
-    const exact = await publish(
-      { requestId: 'send-folded-exact', text: 'x'.repeat(15990), details: 'dddddddd' },
-      caller
-    );
-    expect(exact).toMatchObject({
-      accepted: true,
-      publication: { verbatim: true, fullText: `${'x'.repeat(15990)}\n\ndddddddd` },
-    });
-    expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(ledger.list(conversationId) ?? []).toHaveLength(0);
+    expect(
+      await publish(
+        { requestId: 'send-long-details', text: 'Merged.', details: 'd'.repeat(15000) },
+        caller
+      )
+    ).toMatchObject({ accepted: true, publication: { shortText: 'Merged.' } });
   });
 
   test('refuses the old shortText, fullText and verbatim fields', async () => {

@@ -125,6 +125,7 @@ describe('Neo publication ledger', () => {
     { ...input, shortText: 'a'.repeat(4001) },
     { ...input, fullText: '' },
     { ...input, fullText: 'a'.repeat(16001) },
+    { ...input, fullText: 'a'.repeat(64001), deliverable: true as const },
     { ...input, askOrigin: { sessionId: ' ', messageId: 'ask' } },
     { ...input, producerInput: { sessionId: 'avatar', messageId: '' } },
     { ...input, producerInput: { ...input.producerInput, authority: 'human' } },
