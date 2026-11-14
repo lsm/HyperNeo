@@ -123,8 +123,8 @@ try {
   assert(blocks[0]?.includes("not the human's words"), delivered);
   assert(blocks.indexOf(`[message id: ${id}]`) > 0, delivered);
   assert.equal(blocks.at(-1), '</human-message>');
-  assert(blocks.at(-2)?.startsWith(`<human-message id="${id}">`), delivered);
-  assert(blocks.at(-3) === 'Check the build and tell me.', delivered);
+  assert(blocks.at(-2) === 'Check the build and tell me.', delivered);
+  assert(blocks.at(-3)?.startsWith(`<human-message id="${id}">`), delivered);
   const again = await call('reply', { requestId: 'work-2', replyTo: [id], text: 'Checking.' });
   assert.equal(again.accepted, true, JSON.stringify(again));
   assert.equal(again.started, true, JSON.stringify(again));
