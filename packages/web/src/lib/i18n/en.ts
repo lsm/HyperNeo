@@ -47,7 +47,7 @@ export const en = {
   'desktop.title': 'Desktop control',
   'desktop.state.off': 'Desktop control is off',
   'desktop.state.unavailable': 'HyperNeo Desktop is not running',
-  'desktop.state.running': 'Agent is using the desktop',
+  'desktop.state.running': 'The agent can use the desktop',
   'desktop.state.stopped': 'Stopped. The desktop is yours.',
   'desktop.state.stop_unconfirmed': 'Stop not confirmed: the driver may still run',
   'desktop.stop': 'Stop and take over',

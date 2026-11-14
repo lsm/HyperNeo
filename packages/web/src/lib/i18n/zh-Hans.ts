@@ -48,7 +48,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'desktop.title': '桌面控制',
   'desktop.state.off': '桌面控制已关闭',
   'desktop.state.unavailable': 'HyperNeo 桌面版没有运行',
-  'desktop.state.running': '代理正在使用电脑',
+  'desktop.state.running': '会话可以使用电脑',
   'desktop.state.stopped': '已停止，电脑交还给你',
   'desktop.state.stop_unconfirmed': '停止未确认：驱动可能还在运行',
   'desktop.stop': '停止并接管',

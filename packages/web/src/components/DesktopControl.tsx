@@ -28,15 +28,18 @@ export function DesktopControl({ worker, class: className }: { worker?: string; 
     ).catch(() => null);
     if (live.current) setWorkers((result?.workers ?? []).filter((entry) => entry.state !== 'off'));
   }, [worker]);
+  const active = workers.length > 0;
   useEffect(() => {
     live.current = true;
     void read();
-    const timer = setInterval(() => void read(), 5000);
     return () => {
       live.current = false;
-      clearInterval(timer);
     };
   }, [read]);
+  useEffect(() => {
+    const timer = setInterval(() => void read(), active ? 5000 : 30000);
+    return () => clearInterval(timer);
+  }, [read, active]);
   const stop = async (id: string) => {
     setStopping(id);
     const hub = connectionManager.getHubIfConnected();
