@@ -4,30 +4,36 @@ When a session's model cannot run because the human has to act (sign in again) o
 
 ## Problem
 
-- **A rejected login counts as a failure.** A 401 from the Claude login goes through the ordinary retry route (`claude_auth_retry` in `query-runner.ts`), which restarts the query with the same token and never asks for a refresh. After three failures the session latches "stopped", clears its queue (`messageQueue.clear`) and waits for a new human message ("Send a message to recover").
-- **Signing in again wakes nothing.** A successful login or refresh reloads the provider's models (`recoverDormantProvider`) and re-evaluates context budgets. No code resumes the sessions that stopped. The human has to send another message.
-- **The refresh scheduler gives up silently.** `OAuthRefreshScheduler` stops after three failed refreshes of the same credential until the daemon restarts. It does not tell a network error from a revoked token (the HTTP status from `refreshClaudeSubscriptionToken` is dropped), logs nothing, and only marks the provider unhealthy on the settings page.
-- **The human cannot see it.** The session page shows a banner at the bottom. The stopped-error card only folds errors whose text is a result JSON, so a login failure still shows the banner. The Neo page and the phone know only "no network" and "waiting for the model". Login needed, usage limit and overload are invisible there, and Neo cannot report it itself because Neo runs on the same failing login.
+- **A rejected login counts as a failure.** A 401 from the Claude login goes through the ordinary retry route (`claude_auth_retry` in `query-runner.ts`), which restarts the query with the same token and never asks for a refresh. The thrown error is charged to the query failure episode before routing; the third charged failure latches the episode and clears the queue (`messageQueue.clear`). The latch blocks admission until its `retryAt`, and the stopped notice says "Send a message to recover".
+- **Overload is charged the same way.** A 529 or 503 is routed to `provider_backoff`, which retries a bounded number of times, but each attempt was already charged, so repeated overload can also latch "stopped".
+- **Signing in again wakes nothing.** A successful login or refresh reloads the provider's models (`recoverDormantProvider`). No code resumes the sessions that stopped.
+- **The refresh outcome is lost.** `refreshClaudeSubscriptionToken` already tells a definitive refusal from a transient failure, but `refreshToken()` returns a boolean and `OAuthRefreshScheduler.refreshNow` returns `void`, also for skips. The scheduler stops automatic attempts after three failures of the same credential (a forced refresh bypasses the cap), logs nothing, and only marks the provider unhealthy on the settings page.
+- **The human cannot see it.** The session page can show a banner at the bottom, depending on its suppression rules; the stopped-error card only folds errors that carry a matching result. The Neo page and the phone know only "no network" and "waiting for the model". Neo cannot report a login failure itself because Neo runs on the same login.
 
 ## Existing pieces
 
-- `NetworkOutagePause` holds the turn in `rate_limit_cooldown` with `reason: 'network'`, keeps the prompt, probes, and resumes the prompt when the provider answers.
-- `RateLimitWatchdog` holds the turn until a usage limit's `retryAt` and resumes it.
-- `oauthRefreshScheduler.refreshNow(providerId)` forces one refresh.
+- `NetworkOutagePause` holds the turn in `rate_limit_cooldown` with `reason: 'network'`, keeps the prompt (serialized as `heldPrompt`), probes, and resumes when the provider answers. After a restart, `armPersistedRateLimitCooldown` restarts it from the persisted state, and the startup pending-message replay is skipped while it is active.
+- `RateLimitWatchdog` holds the turn until a usage limit's `retryAt` and resumes it. After repeated startup failures it keeps the pause with a manual Retry.
+- `provider_backoff` in `query-runner.ts` retries provider errors with a bounded delay.
 - Session notices on the Neo session already reach the phone as alerts.
 
 ## Design
 
-1. **One hold state with a reason.** `rate_limit_cooldown.reason` becomes `'network' | 'login' | 'limit' | 'overloaded'`. Every hold keeps the held prompt and the queue. A hold never counts toward the query failure episode, so it can never latch "stopped". A login hold has no `retryAt`.
-2. **Refresh first, then hold.** On a 401 from an OAuth provider the session calls `refreshNow` once. If the refresh succeeds it retries the turn. If it fails, the session enters a login hold and the provider is marked `needs_login` (provider failure kind `credential`). A rejected API key goes straight to the login hold.
-3. **Resume on new credentials.** Storing new credentials for a provider (login, key update, successful refresh) publishes `provider.credentials.changed`. Every session in a login hold on that provider resumes its held prompt and its queue. The Neo front's unanswered inputs are delivered again through the existing catch-up, so nothing the human sent is lost.
-4. **Usage limit and overload are labelled, not changed.** The watchdog sets `reason: 'limit'` when the provider reports a usage limit (with its reset time) and `'overloaded'` for 529 or 503. Their timing stays as it is.
-5. **The refresh scheduler keeps trying.** After a transient failure (network error, 5xx, 408, 429) it retries with backoff from 5 minutes up to 1 hour, without a cap. It stops only on a definitive refusal (another 4xx) and then marks the provider `needs_login`. Every failure is logged with the HTTP status and the OAuth error code, never the token.
-6. **One line for the human, from the daemon.**
+1. **A typed refresh outcome.** `Provider.refreshToken()` returns `'refreshed' | 'transient' | 'definitive'`. The Claude provider maps the existing `definitive` flag; a thrown error is `transient`. `refreshNow` returns the same values plus `'skipped'` (no refresh token, not OAuth, or no provider). The scheduler and the session use only this outcome; no caller parses HTTP statuses.
+2. **One hold state with a reason.** `rate_limit_cooldown.reason` becomes `'network' | 'login' | 'limit' | 'overloaded'`. A hold keeps the held prompt and the queue and is never charged to the failure episode, so it cannot latch "stopped". The error is classified before charging, as `isNetworkUnreachableError` already is.
+3. **Login: refresh first, then hold.** On a 401 the session records the provider's credential generation (see 5) and calls `refreshNow` at most once for that generation in this turn:
+   - `refreshed`: retry the turn once. A second 401 on the new generation is definitive.
+   - `transient`: enter a login hold that keeps recovering by itself. The hold calls `refreshNow` again with backoff from 5 minutes up to 1 hour. A forced refresh bypasses the scheduler cap, so this does not depend on the scheduler change.
+   - `definitive` or `skipped`, or any 401 from an API key: enter a login hold without a timer and mark the provider `needs_login` (failure kind `credential`).
+4. **The login hold is owned and restored like the network pause.** A `LoginHold` next to `NetworkOutagePause` owns the state and stores `{ reason: 'login', providerId, heldPrompt }` with no `retryAt`. `armPersistedRateLimitCooldown` gets a `'login'` branch that restarts the hold with the persisted prompt and provider, instead of restoring as idle. While it is active, the startup replay and the queue do not run. Only the hold's wake and the manual Retry consume the held prompt.
+5. **Wake on committed credentials.** `storeApiKey` and `storeOAuthTokens` bump a per-provider generation after the store write commits, then publish `provider.credentials.changed { providerId, generation }`. A login hold on that provider resumes its held prompt, then its queue. On entry the hold compares the generation it recorded with the current one and resumes at once if it moved, so a login that commits during hold entry is not missed. The Neo front's unanswered inputs are delivered again by its existing catch-up once the session leaves the hold. The hold does not replay them.
+6. **Overload has one owner.** `provider_backoff` owns 529 and 503. Its attempts are not charged. When its retries run out it enters an `'overloaded'` hold through the watchdog with `retryAt` 5 minutes ahead, and the watchdog's existing re-arm and manual-retry fallback apply. This is a behavior change and has its own PR. A usage limit is labelled `'limit'`; its timing is unchanged.
+7. **The refresh scheduler keeps trying.** After a `transient` outcome it retries with backoff from 5 minutes up to 1 hour, without a cap. After `definitive` it stops and marks the provider `needs_login`. Every failure is logged with the outcome and the OAuth error code, never a token.
+8. **One line for the human, from the daemon.**
    - The Neo snapshot gets `modelHold?: { provider, reason, since, resetAt? }`, taken from the Neo session and the front session. When both are held, login is shown first.
-   - The web Neo page, the phone and the session page show it as one line in the message area above the composer, not as a banner. For example: "Claude needs you to sign in again · Sign in", "Claude usage limit · resets 11:30", "Can't reach Claude · retrying", "Claude is overloaded · retrying". "Sign in" opens the provider's login.
+   - The web Neo page, the phone and the session page show it as one line in the message area above the composer. For example: "Claude needs you to sign in again · Sign in", "Claude usage limit · resets 11:30", "Can't reach Claude · retrying", "Claude is overloaded · retrying". "Sign in" opens the provider's login.
    - A login hold, and a limit hold longer than 30 minutes, adds a `needs_you` notice on the Neo session once per hold, so the phone gets one alert. The notice clears when the hold ends.
-7. **The session page uses the same line.** The bottom banner is no longer shown for any of these reasons. The stopped-error card is kept for real failures.
+   - The session page no longer shows the bottom banner for these reasons. The stopped-error card stays for real failures.
 
 ## Not changed
 
@@ -41,10 +47,12 @@ A busy local machine slows turns but does not stop the model, so it is not a hol
 
 ## Change
 
-Five PRs, each standing alone:
+Seven PRs, each standing alone. PR 1 comes before PR 2.
 
-1. Daemon: hold reasons, refresh-first on 401, login hold, resume on `provider.credentials.changed`. Tests: a 401 with a working refresh retries once and answers; a 401 with a failing refresh holds without latching "stopped" and keeps the queue; a login resumes every session held on that provider and the front re-delivers its pending input.
-2. Refresh scheduler: backoff without a cap for transient failures, `needs_login` on a definitive refusal, failure logs. Tests for each status class.
-3. Neo snapshot `modelHold`, and the line on the web Neo page and the session page. Verify with a mock provider that returns 401 and then accepts a new key.
-4. The phone: the same line from `modelHold`.
-5. The `needs_you` notice for login and long limit holds, and its clearing.
+1. Refresh outcome: `refreshToken()` and `refreshNow` return the typed outcome; current callers keep their behavior. Tests: each status class, a thrown error, and a skip.
+2. Login hold: classification before charging, refresh-first on 401, `LoginHold` with restore, credential generation and `provider.credentials.changed`. Tests: a 401 with a working refresh retries once and answers; a 401 again after the refresh holds; a transient refresh holds and recovers on the next attempt; a definitive refusal holds without latching and keeps the queue; a restart during a login hold restores it and resumes on login; a credential write racing hold entry resumes; the front re-delivers its pending input.
+3. Overload: `provider_backoff` attempts are not charged, and exhaustion enters the `'overloaded'` hold. Tests: repeated 529 never latches "stopped"; exhaustion holds and resumes.
+4. Refresh scheduler: uncapped backoff for `transient`, `needs_login` on `definitive`, failure logs. Tests for each outcome.
+5. Neo snapshot `modelHold`, and the line on the web Neo page and the session page. Verify with a mock provider that returns 401 and then accepts a new key.
+6. The phone: the same line from `modelHold`.
+7. The `needs_you` notice for login and long limit holds, and its clearing.
