@@ -85,7 +85,11 @@ vi.mock('../../components/ArchiveConfirmDialog.tsx', () => ({
 mockSessionsSignal = signal<Session[]>([]);
 mockSessionStatusesSignal = signal(new Map());
 
-import { currentSessionIdSignal, newChatProjectSignal } from '../../lib/signals';
+import {
+  currentSessionIdSignal,
+  newChatProjectSignal,
+  workspaceHistoryVersionSignal,
+} from '../../lib/signals';
 import { SessionsSidebar } from '../SessionsSidebar';
 
 function createMockSession(
@@ -158,6 +162,22 @@ describe('SessionsSidebar', () => {
     expect(mockNavigateToSessions).toHaveBeenCalledTimes(1);
     expect(newChatProjectSignal.value).toBe('/code');
     expect(screen.queryByTestId('add-project-form')).toBeNull();
+  });
+
+  it('shows a folder added elsewhere under its project', async () => {
+    const project = { id: 'p1', name: 'Product', folders: ['/code', '/docs'] };
+    mockGetWorkspaceHistory.mockResolvedValue(
+      project.folders.map((path) => ({ ...createHistory(path), project }))
+    );
+    render(<SessionsSidebar />);
+    await waitFor(() => expect(screen.getByText('/docs')).toBeTruthy());
+    const expanded = { ...project, folders: [...project.folders, '/assets'] };
+    mockGetWorkspaceHistory.mockResolvedValue(
+      expanded.folders.map((path) => ({ ...createHistory(path), project: expanded }))
+    );
+    workspaceHistoryVersionSignal.value += 1;
+    expect(await screen.findByText('/assets')).toBeTruthy();
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
   });
 
   it('refreshes the sidebar after a partial project removal failure and retries only remaining folders', async () => {

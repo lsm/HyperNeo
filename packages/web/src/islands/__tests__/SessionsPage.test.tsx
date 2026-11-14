@@ -37,7 +37,7 @@ vi.mock('../../components/ModelPicker.tsx', () => ({
   ModelPicker: () => null,
 }));
 
-import { newChatProjectSignal } from '../../lib/signals';
+import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../../lib/signals';
 import { SessionsPage } from '../SessionsPage';
 
 function folderChip() {
@@ -51,6 +51,7 @@ describe('SessionsPage', () => {
     cleanup();
     localStorage.clear();
     newChatProjectSignal.value = null;
+    workspaceHistoryVersionSignal.value = 0;
     mockGetWorkspaceHistory.mockResolvedValue([
       { path: '/code', lastUsedAt: 1, useCount: 1 },
       { path: '/other', lastUsedAt: 1, useCount: 1 },
@@ -88,6 +89,7 @@ describe('SessionsPage', () => {
     fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
     await waitFor(() => expect(mockAddFolderToProject).toHaveBeenCalledWith('/code', '/assets'));
     await waitFor(() => expect(screen.queryByPlaceholderText('Folder path')).toBeNull());
+    expect(workspaceHistoryVersionSignal.value).toBe(1);
     expect(folderChip().textContent).toContain('code');
   });
 

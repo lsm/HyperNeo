@@ -3,6 +3,7 @@ import { signal } from '@preact/signals';
 
 export const currentSessionIdSignal = signal<string | null>(null);
 export const newChatProjectSignal = signal<string | null>(null);
+export const workspaceHistoryVersionSignal = signal(0);
 
 export const sessionsSignal = signal<Session[]>([]);
 
