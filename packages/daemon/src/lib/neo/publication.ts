@@ -111,9 +111,9 @@ export function foldPublicationDetails(value: { text: string; details?: string }
   text: string;
   details?: string;
 } {
-  return value.details !== undefined && value.details.length < value.text.length
-    ? { text: `${value.text}\n\n${value.details}` }
-    : value;
+  if (value.details === undefined || value.details.length >= value.text.length) return value;
+  const folded = { text: `${value.text}\n\n${value.details}` };
+  return replyBodyRefusal(folded) ? value : folded;
 }
 
 const wordSegments = new Intl.Segmenter(undefined, { granularity: 'word' });
