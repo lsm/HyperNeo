@@ -6,7 +6,7 @@ import {
 import { Database as BunDatabase } from '../storage/sqlite-compat.ts';
 import { withBusyRetry } from '../storage/busy-retry.ts';
 
-const FTS_MERGE_RANK = 1024;
+const FTS_MERGE_RANK = 64;
 
 type MergeWorkerRequest = {
   dbPath: string;
