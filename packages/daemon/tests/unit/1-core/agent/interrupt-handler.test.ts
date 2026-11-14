@@ -16,6 +16,11 @@ import {
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import { createTestDb, createTestSession } from '../../../helpers/database';
+import { ProcessingStateManager as RealProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import {
+  hyperneoWorkStatus,
+  readHyperneoSession,
+} from '../../../../src/lib/drivers/hyperneo-adapter';
 
 describe('InterruptHandler', () => {
   let handler: InterruptHandler;
@@ -1085,5 +1090,55 @@ describe('InterruptHandler', () => {
         f.db.close();
       }
     });
+  });
+});
+
+describe('InterruptHandler stopping a session the restart left waiting', () => {
+  it('drops the pending restart resume so the session reads as stopped', async () => {
+    const db = await createTestDb();
+    const sessionId = 'sess-restart-cooldown';
+    try {
+      const session = createTestSession(sessionId);
+      await db.createSession(session);
+      await db.updateSession(sessionId, {
+        processingState: JSON.stringify({
+          status: 'interrupted',
+          reason: 'restart',
+          messageId: 'cut-off',
+          resumeAt: Date.now() + 86_400_000,
+        }),
+      });
+      const bus = {
+        publish: mock(async () => {}),
+        publishAsync: mock(async () => {}),
+      } as unknown as InterruptHandlerContext['internalEventBus'];
+      const stateManager = new RealProcessingStateManager(sessionId, bus as never, db);
+      stateManager.restoreFromDatabase();
+      const status = () => {
+        const row = readHyperneoSession(db.getDatabase(), sessionId);
+        return row ? hyperneoWorkStatus(row.status, row.processing) : null;
+      };
+      expect(status()).toBe('queued');
+
+      await new InterruptHandler({
+        session,
+        messageHub: { event: mock(async () => {}) } as unknown as MessageHub,
+        messageQueue: new MessageQueue(),
+        stateManager,
+        logger: { info: mock(() => {}), warn: mock(() => {}) } as unknown as Logger,
+        db,
+        internalEventBus: bus,
+        queryObject: null,
+        queryPromise: null,
+        queryAbortController: new AbortController(),
+        processExitedPromise: null,
+      }).handleInterrupt();
+      for (let i = 0; i < 100 && status() !== 'stopped'; i++) await Bun.sleep(10);
+
+      expect(status()).toBe('stopped');
+      expect(db.listRestartCooldownResumes()).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 });
