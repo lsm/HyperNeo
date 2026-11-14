@@ -571,7 +571,7 @@ describe('claude-desktop start', () => {
 
   test('only the Desktop worker brief tells it to attach a PR from another branch', async () => {
     const rule =
-      "Open the PR on the session's own branch; if it was opened on another branch, immediately attach it with ccd_pr bind_pr, then turn on auto_fix and address_comments with ccd_pr set_monitor.";
+      "Open the PR on the session's own branch; if it was opened on another branch, immediately attach it by its URL with ccd_pr bind_pr. Then call ccd_pr set_monitor with that URL and auto_fix and address_comments set to true.";
     await adapter().start!(request, user);
     const opening = spawned.find((args) => args.includes('--session-id'))!;
     expect(opening[opening.indexOf('--append-system-prompt') + 1]).toContain(rule);
